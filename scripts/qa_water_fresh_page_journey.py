@@ -238,6 +238,20 @@ def exercise(browser, name, base, record):
         page.screenshot(path=str(out / (stage + ".png")), full_page=False)
         (out / "task.json").write_text(json.dumps(record, indent=2))
 
+    def visible_source_page(water, number):
+        # A ready Python thumbnail is not proof the browser displayed it.
+        # Inspect the one real native image before its unchanged review action.
+        preview = water.locator('[data-testid="stImage"] img')
+        expect(preview).to_have_count(1)
+        expect(preview).to_be_visible()
+        state = preview.evaluate("""async image => {
+            await image.decode();
+            return {complete:image.complete,width:image.naturalWidth,height:image.naturalHeight,
+                    connected:image.isConnected};
+        }""")
+        assert state["complete"] and state["connected"] and state["width"] > 0 and state["height"] > 0
+        record.setdefault("source_previews", []).append({"page":number, **state})
+
     try:
         record["phase"] = "install passive native error collector"
         page.add_init_script((ROOT / "scripts/qa_fresh_native_errors.js").read_text())
@@ -297,8 +311,9 @@ def exercise(browser, name, base, record):
         uploader.locator('input[type="file"]').set_input_files(
             {"name": NAME, "mimeType": "application/pdf", "buffer": raw})
         expect(water.get_by_text(NAME, exact=True)).to_be_visible(timeout=45000)
-        include = water.get_by_role("button", name="Include page and continue", exact=True)
+        include = water.get_by_role("button", name="Include page", exact=True)
         expect(include).to_be_enabled()
+        visible_source_page(water, 1)
         include.click()
         expect(water.get_by_role("combobox", name="Page to review", exact=True)).to_have_value(re.compile(r"^Page 2(?: ·|$)"))
         first = wait_durable(page, base, [], source="Omit", reviewed=[1])
@@ -308,7 +323,8 @@ def exercise(browser, name, base, record):
         capture("first-page-approved-nothing-included-yet", first)
 
         record["phase"] = "explicit page-two exclusion then atomic one-page inclusion"
-        water.get_by_role("button", name="Leave page out and continue", exact=True).click()
+        visible_source_page(water, 2)
+        water.get_by_role("button", name="Exclude page", exact=True).click()
         final = wait_durable(page, base, [1], reviewed=[1], excluded=[2])
         assert final["water_source"] != "Omit"
         assert final["state"]["sources"][0]["selected"] == [1]

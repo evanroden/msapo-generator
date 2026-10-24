@@ -13,7 +13,7 @@ from scripts.qa_water_widget_delivery import WaterWidgetDelivery, digest
 def test_caption_and_button_receipts_are_correlated_without_raw_values():
     rows = []
     observer = WaterWidgetDelivery(rows.append)
-    for kind, label, identifier in (("button", "Include page and continue", "page-2-action"),
+    for kind, label, identifier in (("button", "Include page", "page-2-action"),
                                     ("text_input", "Page caption", "caption-2")):
         message = ForwardMsg()
         widget = getattr(message.delta.new_element, kind)
@@ -38,7 +38,7 @@ def test_cached_action_identity_and_completion_are_observed():
     observer=WaterWidgetDelivery(rows.append)
     message=ForwardMsg(hash="entry")
     message.delta.new_element.button.id="action"
-    message.delta.new_element.button.label="Leave page out and continue"
+    message.delta.new_element.button.label="Exclude page"
     message.metadata.delta_path.extend([1,2])
     observer.message("received",message.SerializeToString())
     reference=ForwardMsg(ref_hash="entry")

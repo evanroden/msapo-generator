@@ -7,7 +7,7 @@ import json
 import streamlit as st
 
 from app import monthly_report_ai as ai, monthly_report_library as library
-from app.monthly_report_model import EvidenceFact, ReportSource
+from app.monthly_report_model import BlockSpec, EvidenceFact, ReportSource, ResolvedBlock
 from app.monthly_report_prompts import copilot_prompt, parse_copilot
 from app.monthly_report_sources import SourceContent
 from app.receipt_jobs import start_receipt
@@ -138,12 +138,17 @@ def _finish_job(draft, prefix):
                 raise ValueError(
                     "Source details changed while reading the image. Read the current version again."
                 )
-            complete_review(job["scope"], job["key"], result)
             pages = list(current.page_texts)
-            pages[job["page"] - 1] = result
-            revised = replace(
-                current, page_texts=tuple(pages), client_page_reviews=(), facts=()
-            )
+            page = job["page"]
+            if type(page) is not int or not 1 <= page <= len(pages) or not isinstance(result, str):
+                raise ValueError("The reader returned an invalid page result. Existing evidence is unchanged.")
+            complete_review(job["scope"], job["key"], result)
+            changed = pages[page - 1] != result
+            pages[page - 1] = result
+            revised = replace(current, page_texts=tuple(pages),
+                client_page_reviews=tuple(review for review in current.client_page_reviews
+                                          if not changed or review[0] != page),
+                facts=tuple(fact for fact in current.facts if not changed or fact.page != page))
             st.session_state[prefix + "_evidence"] = tuple(
                 replace(c, source=revised) if c.source.id == current.id else c
                 for c in contents
@@ -207,11 +212,49 @@ def _apply_pending_fact_approval(draft, prefix):
             or _fact_approval(draft, prefix, current, proposed[2]) != expected):
         st.warning("The source or facts changed before that choice reached the report. Review the current facts and choose Use these facts again.")
         return
-    updated = replace(current, facts=tuple(proposed[2]))
+    # Reading is bounded by source/page chunks. Use these facts accepts that
+    # chunk; it is not permission to remove previously accepted facts from
+    # this source. Deterministic fact IDs make unchanged reacceptance idempotent.
+    facts = {fact.id: fact for fact in current.facts}
+    facts.update((fact.id, fact) for fact in proposed[2])
+    updated = replace(current, facts=tuple(facts.values()))
     st.session_state[prefix + "_evidence"] = tuple(
         replace(content, source=updated) if content.source.id == current.id else content
         for content in contents)
     st.session_state.pop(prefix + "_ai_facts", None)
+
+
+def _linked_manual_text(block):
+    """Remove only the complete generated suffix, never a human substring."""
+    rendered = "\n".join("- " + paragraph.text for paragraph in block.ai_paragraphs)
+    if block.text == rendered:
+        return ""
+    suffix = "\n" + rendered
+    if rendered and block.text.endswith(suffix):
+        # One joining newline belongs to the generated suffix. All deliberate
+        # spacing within/before the human notes remains exact.
+        return block.text[:-len(suffix)]
+    # Legacy mixed layouts may place exact generated bullets elsewhere. Only
+    # a complete matching line can be owned; prefer the final occurrence so an
+    # earlier identical human line is not removed by substring replacement.
+    lines = block.text.splitlines(keepends=True)
+    for paragraph in reversed(block.ai_paragraphs):
+        owned = "- " + paragraph.text
+        index = next((n for n in range(len(lines) - 1, -1, -1)
+                      if lines[n].rstrip("\r\n") == owned), None)
+        if index is not None:
+            del lines[index]
+    return "".join(lines)
+
+
+def _linked_text_input(prefix, field, key, label, text, *, references=(), height=100):
+    # Reuse the existing native receipt/recovery protocol. Widget IDs are
+    # independent of typed text, so Clear and explicit Replace cannot revive
+    # an obsolete field value or remount the editor on every accepted edit.
+    from app.monthly_report_guided import _edit_content
+    block = ResolvedBlock(key, "This month", text=text, references=references)
+    return _edit_content(BlockSpec(key, "rich_text"), block, None, prefix, {}, field,
+                         text_label=label, text_height=height).text
 
 
 def edit_linked_paragraphs(draft, blocks, prefix, field, allowed_keys=None):
@@ -219,7 +262,17 @@ def edit_linked_paragraphs(draft, blocks, prefix, field, allowed_keys=None):
     for block in tuple(blocks.values()):
         if allowed_keys is not None and block.key not in allowed_keys:
             continue
-        if not block.ai_paragraphs or block.source == "Omit":
+        if not block.ai_paragraphs:
+            continue
+        if block.source == "Omit":
+            # Left-out source-linked wording keeps an explicit way back; it is
+            # reviewed again once included. MBCx has its own retained-notes control.
+            if block.key != "mbcx_report":
+                st.caption(LABELS.get(block.key, block.key.replace("_", " "))
+                           + " · left out of this report. Its wording and sources are kept.")
+                if st.button("Include in this report", key=prefix + "_linked_" + block.key + "_include"):
+                    blocks[block.key] = replace(block, source="This month", reviewed_fingerprint="",
+                                                client_reviewed_fingerprint="")
             continue
         with st.expander(
             LABELS.get(block.key, block.key.replace("_", " "))
@@ -227,22 +280,14 @@ def edit_linked_paragraphs(draft, blocks, prefix, field, allowed_keys=None):
             expanded=not block.reviewed,
         ):
             p = prefix + "_linked_" + block.key
-            manual = block.text
-            for paragraph in block.ai_paragraphs:
-                manual = manual.replace("- " + paragraph.text, "", 1)
-            manual = st.text_area(
-                "Your other notes",
-                key=field(p + "_manual_" + ai.digest(manual.strip()), manual.strip()),
-                height=100,
-            )
+            manual = _linked_text_input(prefix, field, "linked_" + block.key + "_manual",
+                                        "Your other notes", _linked_manual_text(block))
             paragraphs = []
             for n, paragraph in enumerate(block.ai_paragraphs):
                 identity = ai.digest((n, paragraph.fact_ids))
-                text = st.text_area(
-                    f"Report paragraph {n + 1}",
-                    key=field(p + "_text_" + identity, paragraph.text),
-                    height=90,
-                )
+                text = _linked_text_input(prefix, field, "linked_" + block.key + f"_paragraph_{n}",
+                    f"Report paragraph {n + 1}", paragraph.text,
+                    references=paragraph.fact_ids, height=90)
                 available = list(facts)
                 selected = st.multiselect(
                     f"Evidence for paragraph {n + 1}",

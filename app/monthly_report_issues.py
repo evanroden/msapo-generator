@@ -233,51 +233,280 @@ def _render_issue_actions(draft, prefix):
                 st.caption("The report changed after Clear. Use Include again for individual issues.")
 
 
-def _issue_changed(key, before):
+def _issue_identity(draft, prefix, item):
+    values = asdict(item)
+    values.pop("reviewed_fingerprint", None)
+    return _digest((_action_scope(draft, prefix), values))
+
+
+def _issue_pending_key(prefix, item):
+    return prefix + "_pending_issue_delivery_" + item.key
+
+
+def _issue_fields(item, options):
+    return (("text", item.text), ("status", item.status), ("update", item.update),
+            ("note", item.evidence_note),
+            ("sources_" + _digest(list(options)), [ref for ref in item.references if ref in options]))
+
+
+def _acknowledge_issue_delivery(key, pending):
     import streamlit as st
-    st.session_state[key + "_change"] = {"before": before, "value": st.session_state.get(key)}
+    for receipt_key, receipt in pending["receipts"].items():
+        if st.session_state.get(receipt_key) == receipt:
+            st.session_state.pop(receipt_key, None)
+    st.session_state.pop(key, None)
 
 
-def _issue_control(widget, label, key, value, field, **kwargs):
+def acknowledge_issue_controls(draft, prefix):
+    """Only the authoritative caller may acknowledge a just-rendered draft."""
+    import streamlit as st
+    for item in draft.follow_ups:
+        key = _issue_pending_key(prefix, item)
+        pending = st.session_state.get(key)
+        if (item.category == "issue" and isinstance(pending, dict)
+                and not pending.get("conflicted")
+                and (pending["result"] == _issue_identity(draft, prefix, item)
+                     or (replace(pending["after"], included=item.included) == item
+                         and _issue_identity(draft, prefix, pending["after"]) == pending["result"]))):
+            # A deferred Clear/Undo may change only inclusion after the issue
+            # renderer. The authoritative row still contains every entered field.
+            _acknowledge_issue_delivery(key, pending)
+
+
+def _show_issue_delivery(key, pending):
+    import streamlit as st
+    with st.expander("Earlier issue edit (not applied)", key=key):
+        st.caption("These entered details were not applied to the changed item or saved. "
+                   "Compare them with the current issue before copying them.")
+        item = pending["after"]
+        labels = pending["source_labels"]
+        details = [("Description", item.text), ("Status", _status_label(item.status)),
+                   ("Update", item.update), ("Evidence", item.evidence_note)]
+        details += [("Supporting source", labels.get(ref, ref)) for ref in item.references]
+        st.code("\n\n".join(label + ": " + value for label, value in details if value),
+                language=None, wrap_lines=True)
+
+
+def _recover_rejected_source_deliveries(prefix, captured):
+    """Keep a real delivered choice when its row changed before first capture.
+
+    A retired/forged receipt token is never recovered as a new user action.
+    These source-only records cannot apply anything to the canonical report.
+    """
+    import streamlit as st
+    recovery_prefix = prefix + "_source_delivery_recovery_"
+    for key in list(st.session_state):
+        if (key in captured or not key.startswith(prefix + "_issue_")
+                or "_sources_" not in key or not key.endswith("_change")):
+            continue
+        receipt = st.session_state.get(key)
+        registration = st.session_state.get(key.removesuffix("_change") + "_delivery", {})
+        if (isinstance(receipt, dict) and isinstance(receipt.get("token"), str)
+                and receipt["token"] == registration.get("token")
+                and isinstance(receipt.get("value"), list)
+                and receipt["value"] == st.session_state.get(key.removesuffix("_change"))):
+            st.session_state[recovery_prefix + _digest((key, receipt["identity"], receipt["value"]))] = receipt
+            st.session_state.pop(key, None)
+    for key in sorted(k for k in st.session_state if k.startswith(recovery_prefix)):
+        receipt = st.session_state[key]
+        with st.expander("Earlier source selection (not applied)", key=key):
+            st.caption("The issue, report or sources changed before this choice arrived. "
+                       "These entered links were not applied or saved; compare them before selecting them again.")
+            labels = receipt.get("source_labels", {})
+            st.code("\n".join(labels.get(ref, ref) for ref in receipt["value"])
+                    or "The earlier choice cleared the supporting source selection.",
+                    language=None, wrap_lines=True)
+
+
+def _capture_issue_controls(draft, prefix, options):
+    """Project delivered edits without mistaking a widget render for a commit.
+
+    A source callback can advance from A to A+B before the enclosing workspace
+    assigns A. Keep its exact before/after row until canonical acknowledgement,
+    including co-delivered issue fields needed by the row identity guard.
+    """
+    import streamlit as st
+    items, captured = [], set()
+    current_keys = {_issue_pending_key(prefix, item) for item in draft.follow_ups if item.category == "issue"}
+    for key in sorted(k for k in st.session_state if k.startswith(prefix + "_pending_issue_delivery_")):
+        if key in current_keys or "_recovery_" in key:
+            continue
+        pending = st.session_state[key]
+        if isinstance(pending, dict) and "after" in pending:
+            pending = {**pending, "conflicted": True}
+            st.session_state[key] = pending
+            _show_issue_delivery(key + "_missing_row", pending)
+    for original in draft.follow_ups:
+        if original.category != "issue":
+            items.append(original)
+            continue
+        item = original
+        key = _issue_pending_key(prefix, item)
+        for recovery_key in sorted(k for k in st.session_state if k.startswith(key + "_recovery_")):
+            _show_issue_delivery(recovery_key, st.session_state[recovery_key])
+        pending = st.session_state.get(key)
+        receipts, reapplied = {}, False
+        identity = _issue_identity(draft, prefix, item)
+        if isinstance(pending, dict):
+            captured.update(receipt_key for receipt_key, receipt in pending["receipts"].items()
+                            if st.session_state.get(receipt_key) == receipt)
+            if not pending.get("conflicted") and pending["result"] == identity:
+                # The caller's INPUT now contains the edit, not merely a local
+                # renderer return. Never retire a newer callback with it.
+                _acknowledge_issue_delivery(key, pending)
+                pending = None
+            elif not pending.get("conflicted") and pending["identity"] == identity:
+                item = pending["after"]
+                receipts = dict(pending["receipts"])
+                reapplied = True
+            else:
+                pending = {**pending, "conflicted": True}
+                st.session_state[key] = pending
+                _show_issue_delivery(key + "_conflict", pending)
+        identity = _issue_identity(draft, prefix, item)
+        changes = {}
+        original_fields = dict(_issue_fields(original, options))
+        original_identity = _issue_identity(draft, prefix, original)
+        p = prefix + "_issue_" + item.key
+        for suffix, current in _issue_fields(item, options):
+            control = p + "_" + suffix
+            receipt = st.session_state.get(control + "_change")
+            registration = st.session_state.get(control + "_delivery", {})
+            if not (isinstance(receipt, dict) and isinstance(receipt.get("token"), str)
+                    and receipt["token"] == registration.get("token")
+                    and receipt.get("value") == st.session_state.get(control)):
+                continue
+            matches = receipt.get("identity") == identity and receipt.get("before") == current
+            # If interruption preceded this widget's registration, its live
+            # callback still names the original row. Accept that exact baseline
+            # too, never a retired token or an independently changed row.
+            if not (matches or (reapplied and receipt.get("identity") == original_identity
+                                and receipt.get("before") == original_fields[suffix])):
+                continue
+            value = receipt["value"]
+            if suffix.startswith("sources_"):
+                if not isinstance(value, list) or any(ref not in options for ref in value):
+                    continue
+                changes["references"] = (*value, *(ref for ref in item.references if ref not in options))
+            elif isinstance(value, str):
+                changes["evidence_note" if suffix == "note" else suffix] = value
+            else:
+                continue
+            receipts[control + "_change"] = receipt
+            captured.add(control + "_change")
+        revised = replace(item, **changes)
+        if receipts:
+            captured.update(receipts)
+            result = _issue_identity(draft, prefix, revised)
+            receipts = {receipt_key: {**receipt, "result": result}
+                        for receipt_key, receipt in receipts.items()}
+            for receipt_key, receipt in receipts.items():
+                st.session_state[receipt_key] = receipt
+            if isinstance(pending, dict) and pending.get("conflicted"):
+                st.session_state[key + "_recovery_" + pending["result"]] = pending
+            st.session_state[key] = {
+                "identity": _issue_identity(draft, prefix, original), "result": result,
+                "after": revised, "receipts": receipts,
+                "source_labels": dict(options),
+            }
+        items.append(revised)
+    _recover_rejected_source_deliveries(prefix, captured)
+    return replace(draft, follow_ups=tuple(items))
+
+
+def _finish_issue_controls(draft, prefix, options, cycle):
+    """Include deliberate unlink/omit actions without changing native IDs.
+
+    These actions occur after their row's native fields. Finalize only callback
+    registrations whose displayed before-value still equals the returned row;
+    an interrupted earlier registration retains its already captured baseline.
+    """
+    import streamlit as st
+    for item in draft.follow_ups:
+        if item.category != "issue":
+            continue
+        identity = _issue_identity(draft, prefix, item)
+        p = prefix + "_issue_" + item.key
+        for suffix, current in _issue_fields(item, options):
+            control = p + "_" + suffix
+            registration = st.session_state.get(control + "_delivery")
+            if (isinstance(registration, dict) and registration.get("cycle") == cycle
+                    and registration.get("before") == current):
+                st.session_state[control + "_delivery"] = {**registration, "identity": identity}
+        key = _issue_pending_key(prefix, item)
+        pending = st.session_state.get(key)
+        if isinstance(pending, dict) and not pending.get("conflicted"):
+            st.session_state[key] = {**pending, "after": item, "result": identity}
+    return draft
+
+
+def _issue_changed(key, before, identity, token):
+    import streamlit as st
+    registration = st.session_state.get(key + "_delivery", {})
+    if registration.get("token") != token:
+        return  # A retired callback cannot reopen an acknowledged receipt.
+    st.session_state[key + "_change"] = {
+        "identity": registration.get("identity", identity), "token": token,
+        "before": before, "value": st.session_state.get(key),
+        "source_labels": registration.get("source_labels", {}),
+    }
+
+
+def _issue_control(widget, label, key, value, field, *, identity, cycle, **kwargs):
     """An untouched widget mirror cannot undo a replaced canonical issue."""
     import streamlit as st
     receipt = st.session_state.get(key + "_change")
-    submitted = (isinstance(receipt, dict) and receipt.get("before") == value
+    registration = st.session_state.get(key + "_delivery", {})
+    submitted = (isinstance(receipt, dict) and receipt.get("identity") == identity
+                 and receipt.get("token") == registration.get("token")
+                 and receipt.get("before") == value
                  and receipt.get("value") == st.session_state.get(key))
+    captured = (isinstance(receipt, dict) and receipt.get("result") == identity
+                and receipt.get("value") == value)
     if st.session_state.get(key, value) != value and not submitted:
         st.session_state[key] = value
+    accepted_value = receipt["value"] if submitted else value
     if widget == st.text_area:
-        # The first native mount needs the same wording as the canonical
-        # issue, not the textarea's implicit empty default. Keep the existing
-        # receipt guard and honor an explicitly submitted clear/update.
-        kwargs["value"] = receipt["value"] if submitted else value
+        kwargs["value"] = accepted_value
+    # A render is not acknowledgement. Capture is durable before registration,
+    # so even interruption before the native delta is queued keeps this value.
+    token = uuid4().hex
+    st.session_state[key + "_delivery"] = {
+        "identity": identity, "before": accepted_value, "token": token, "cycle": cycle,
+        "source_labels": ({ref: kwargs["format_func"](ref) for ref in kwargs["options"]}
+                          if widget == st.multiselect else {}),
+    }
     result = widget(label, key=field(key, value), on_change=_issue_changed,
-                    args=(key, value), **kwargs)
+                    args=(key, accepted_value, identity, token), **kwargs)
     if submitted and result != value:
         return result
-    st.session_state.pop(key + "_change", None)
+    if not captured:
+        st.session_state.pop(key + "_change", None)
     return value
 
 
-def _render_issue_evidence(item, draft, options, p, field):
+def _render_issue_evidence(item, draft, options, p, field, prefix, cycle):
     import streamlit as st
+    identity = _issue_identity(draft, prefix, item)
     update = _issue_control(st.text_area, "Issue update", p + "_update", item.update,
-                            field, height=90, max_chars=4000)
+                            field, identity=identity, cycle=cycle, height=90, max_chars=4000)
     note, references = item.evidence_note, item.references
     if item.status in ("updated", "resolved") or note:
         note = _issue_control(st.text_area, "Evidence or explanation for the status",
-                              p + "_note", note, field, height=90, max_chars=4000)
+                              p + "_note", note, field, identity=identity, cycle=cycle, height=90, max_chars=4000)
     if options or references:
         selected = _issue_control(st.multiselect, "Supporting source pages",
             p + "_sources_" + _digest(list(options)),
             [ref for ref in references if ref in options], field,
-            options=list(options), format_func=options.get) if options else []
+            identity=identity, cycle=cycle, options=list(options), format_func=options.get) if options else []
         missing = tuple(ref for ref in references if ref not in options)
         if missing:
-            st.warning("A supporting source changed or is missing.")
+            notice = st.empty()
             if st.checkbox("Remove unavailable source links",
                            key=field(p + "_remove_missing_" + _digest(missing), False)):
                 missing = ()
+            else:
+                notice.warning("A supporting source changed or is missing.")
         references = (*selected, *missing)
     if item.carried_from != draft.period.key:
         st.caption("Carried from " + item.carried_from)
@@ -290,6 +519,8 @@ def render_issue_cards(draft, prefix, field, *, defer_actions=False, evidence_pa
     draft = canonical_issues(draft)
     options = {source_reference(source, n): f"{source.filename} · page {n}"
                for source in draft.sources for n in range(1, len(source.page_texts) + 1)}
+    draft = _capture_issue_controls(draft, prefix, options)
+    cycle = uuid4().hex
     issues = [item for item in draft.follow_ups if item.category == "issue"]
     if st.button("Add issue", key=prefix + "_issue_add", disabled=len(draft.follow_ups) >= 200):
         item = ReportFollowUp("issue-" + uuid4().hex, "issue", "", draft.period.key)
@@ -308,19 +539,24 @@ def render_issue_cards(draft, prefix, field, *, defer_actions=False, evidence_pa
             continue
         item = original
         p = prefix + "_issue_" + item.key
-        surface = st.empty()
-        with surface.container(border=True):
+        identity = _issue_identity(draft, prefix, item)
+        # A placeholder emits an empty ancestor before rebuilding this card.
+        # A queue flush between those messages replaces the native input node,
+        # even when its widget key and acknowledged text have not changed.
+        with st.container(border=True, key=p + "_card"):
             text = _issue_control(st.text_area, "Issue description", p + "_text", item.text,
-                                  field, height=90, max_chars=4000)
+                                  field, identity=identity, cycle=cycle, height=90, max_chars=4000)
             status = _issue_control(st.selectbox, "Issue status", p + "_status", item.status,
-                                    field, options=ISSUE_STATUSES, format_func=_status_label)
+                                    field, identity=identity, cycle=cycle, options=ISSUE_STATUSES, format_func=_status_label)
             item = replace(item, text=text, status=status)
             warnings = st.empty()
             removed = st.button("Remove from this report", key=p + "_remove")
             if removed:
                 item = replace(item, included=False)
-        if removed:
-            surface.empty()
+                # Read the evidence edits delivered with this click below.
+                # The normal post-commit refresh retires the controls only
+                # after the complete draft and its recovery save were tried.
+                st.session_state[prefix + "_period_editor_refresh"] = True
         evidence_controls[len(items)] = (p, warnings)
         items.append(item)
     if evidence_controls or evidence_pages:
@@ -329,17 +565,14 @@ def render_issue_cards(draft, prefix, field, *, defer_actions=False, evidence_pa
         with st.expander("Evidence", expanded=needs_evidence):
             for n, (p, warnings) in evidence_controls.items():
                 item = items[n]
-                evidence_surface = st.empty()
-                with evidence_surface.container(border=True):
+                with st.container(border=True, key=p + "_evidence"):
                     label = " ".join(item.text.split()) or "Unfinished issue"
                     st.caption("Issue: " + (label if len(label) <= 120 else label[:117] + "…"))
                     # A Remove click can deliver the last native evidence edit
                     # in the same packet. Read it before retiring the controls;
                     # omission must preserve that wording and its source links.
-                    item = _render_issue_evidence(item, draft, options, p, field)
-                if not item.included:
-                    evidence_surface.empty()
-                else:
+                    item = _render_issue_evidence(item, draft, options, p, field, prefix, cycle)
+                if item.included:
                     with warnings.container():
                         for message in problems(item, draft):
                             st.warning(message)
@@ -358,4 +591,8 @@ def render_issue_cards(draft, prefix, field, *, defer_actions=False, evidence_pa
                 st.caption(_status_label(item.status))
                 if st.button("Include again", key=prefix + "_issue_restore_" + item.key):
                     draft = issue_visibility(draft, item.key, True)
-    return draft if defer_actions else apply_issue_action(draft, prefix)
+                    # Cards were drawn before this restoration. Use the normal
+                    # post-commit refresh after the complete recovery attempt.
+                    st.session_state[prefix + "_period_editor_refresh"] = True
+    draft = draft if defer_actions else apply_issue_action(draft, prefix)
+    return _finish_issue_controls(draft, prefix, options, cycle)

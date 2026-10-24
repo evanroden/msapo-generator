@@ -158,6 +158,49 @@ def mapped_rows(content, destination, table_columns=None):
 
 
 _EVENT_START = re.compile(r"^\s*(\d{4}-\d{2}-\d{2})\s*\|")
+_ACTIVITY_BULLET = re.compile(r"^\s*(?:[-*•‣▪]|\d+[.)])\s+")
+_ACTIVITY_LABEL = re.compile(
+    r"(?i)^\s*(?:vendor|contractor|service company|client|customer|technician|"
+    r"prepared by|phone|telephone|e-?mail|fax|(?:service|report|completed|work|inspection) date|"
+    r"job(?: number)?|work order)\s*[:=]")
+_ACTIVITY_CONTINUATION = re.compile(
+    r"(?i)^\s*(?:(?:did|does|do|would|could|will|had|has|have)\s+not\b|"
+    r"can(?:not|\s+not)\b|not\s+(?:yet|been|returned|completed|started)\b|"
+    r"failed\b|locked\s+out\b|out\s+of\s+service\b|"
+    r"under\s+(?:observation|repair)\b|"
+    r"(?:and|but|because|although|while|with|without|at|after|before)\b)")
+_ACTIVITY_UNFINISHED = re.compile(r"(?i)\b(?:the|a|an|its|their|that|whether)\s*$")
+_ACTIVITY_NEW_ACTION = re.compile(
+    r"(?i)^\s*(?:inspected|checked|replaced|repaired|tested|completed|installed|"
+    r"cleaned|calibrated|serviced|adjusted|verified|recorded|performed|"
+    r"(?:the\s+)?(?:technician|operator|service team)\b)")
+
+
+def _logical_activity_lines(lines):
+    """Rejoin physical wraps before deciding whether a passage is useful.
+
+    A dependent continuation, including an unfinished-service tail, belongs to
+    its preceding event. Missing punctuation alone is not continuation evidence:
+    independent PDF lines, Word rows and email/TXT entries remain separate.
+    Blank separators, bullets, metadata and price lines are always boundaries.
+    """
+    result, pending = [], ""
+    for original in lines:
+        line = original.strip()
+        boundary = bool(_ACTIVITY_BULLET.match(line) or _ACTIVITY_LABEL.match(line)
+                        or _EVENT_START.match(line) or contains_price(line))
+        ended = bool(re.search(r"[.!?][\"')\]]*$", pending))
+        continuation = bool(_ACTIVITY_CONTINUATION.match(line) or (
+            _ACTIVITY_UNFINISHED.search(pending) and not _ACTIVITY_NEW_ACTION.match(line)))
+        if pending and (not line or boundary or ended or not continuation
+                        or _ACTIVITY_LABEL.match(pending) or contains_price(pending)):
+            result.append(pending)
+            pending = ""
+        if line:
+            pending = pending + " " + line if pending else line
+    if pending:
+        result.append(pending)
+    return tuple(result)
 
 
 def _activity_lines(text, suffix, *, with_dates=False):
@@ -167,17 +210,21 @@ def _activity_lines(text, suffix, *, with_dates=False):
     Source dates are evidence, not proof that work is complete or current.
     """
     if suffix != ".txt" or not any(_EVENT_START.match(line) for line in text.splitlines()):
-        lines = tuple(text.splitlines())
+        lines = _logical_activity_lines(text.splitlines())
         return tuple((line, "") for line in lines) if with_dates else lines
     from datetime import date
     current_is_activity = False
     event_date = ""
-    result = []
+    result, event_lines = [], []
     excluded = ("training summary", "water treatment", "rfi matrix",
                 "monthly scorecards", "equipment performance issues")
     for line in text.splitlines():
         match = _EVENT_START.match(line)
         if match:
+            if current_is_activity:
+                result.extend((passage, event_date) if with_dates else passage
+                              for passage in _logical_activity_lines(event_lines))
+            event_lines = []
             try:
                 event_date = date.fromisoformat(match.group(1)).isoformat()
             except ValueError:
@@ -186,7 +233,10 @@ def _activity_lines(text, suffix, *, with_dates=False):
             current_is_activity = not any(term in label for term in excluded)
             continue
         if current_is_activity:
-            result.append((line, event_date) if with_dates else line)
+            event_lines.append(line)
+    if current_is_activity:
+        result.extend((passage, event_date) if with_dates else passage
+                      for passage in _logical_activity_lines(event_lines))
     return tuple(result)
 
 
@@ -263,6 +313,107 @@ def _csv_has_site_scope_column(content):
         for table in content.tables for title in table.columns)
 
 
+def _activity_reader_notice(content):
+    from app.monthly_report_work_order_csv import is_work_order_source
+    if is_work_order_source(content):
+        return (content.source.filename + ": work-order records use Review counted work-order rows "
+                "and Add totals to summary; this file is not sent to the Activity reader.")
+    if _csv_has_site_scope_column(content):
+        return (content.source.filename + ": site-specific rows in this CSV need an explicit target-site mapping. "
+                "This file is not sent to the Activity reader. Review the original and add only verified "
+                "work directly in Activity; the uploaded file is retained.")
+    return ""
+
+
+def reader_sources(contents, destination):
+    """Decide the safe source route before images, allowance or paid reading."""
+    return tuple(content for content in contents
+                 if destination != "activity_summary" or not _activity_reader_notice(content))
+
+
+def reader_notices(contents, destination):
+    if destination != "activity_summary":
+        return ()
+    return tuple(notice for content in contents if (notice := _activity_reader_notice(content)))
+
+
+_ACTIVITY_EMAIL = re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
+_ACTIVITY_PHONE = re.compile(
+    r"(?<!\w)(?:\+?1[ .-]?)?\(?\d{3}\)?[ .-]?\d{3}[ .-]?\d{4}(?!\w)")
+_ACTIVITY_INTERNATIONAL_PHONE = re.compile(
+    r"(?<!\w)(?:\+|00)[1-9](?:[ .()-]*\d){6,14}(?!\w)")
+_ACTIVITY_ID_LABEL = re.compile(
+    r"(?i)\b(?:asset|serial|model|tag|identifier|part|work order|job)"
+    r"(?:\s+(?:number|no\.?|id))?\s*[:#]?\s*"
+    r"(?:[A-Za-z][A-Za-z0-9/_-]{0,63}[-_/])?$")
+_ACTIVITY_PHONE_LABEL = re.compile(
+    r"(?i)\b(?:phone|telephone|tel|fax|mobile|call|contact|technician|"
+    r"prepared by|service engineer)\b[^;\n]*$")
+
+
+def _activity_text(text):
+    """Exclude source contact details without rewriting human report wording.
+
+    Bare ten-digit operating identifiers remain valid. A formatted telephone
+    or an explicitly labelled contact number is removed; explicit asset/job
+    labels keep phone-shaped identifiers. This runs only on new extracts.
+    """
+    text = _ACTIVITY_EMAIL.sub("[contact omitted]", text)
+    def phone(match):
+        value = match.group()
+        before = text[max(0, match.start() - 100):match.start()]
+        if _ACTIVITY_ID_LABEL.search(before):
+            return value
+        if not value.isdigit() or _ACTIVITY_PHONE_LABEL.search(before):
+            return "[contact omitted]"
+        return value
+    def international_phone(match):
+        before = text[max(0, match.start() - 100):match.start()]
+        if (_ACTIVITY_PHONE_LABEL.search(before)
+                and not _ACTIVITY_ID_LABEL.search(before)):
+            return "[contact omitted]"
+        return match.group()
+    text = _ACTIVITY_INTERNATIONAL_PHONE.sub(international_phone, text)
+    return _ACTIVITY_PHONE.sub(phone, text).strip()
+
+
+def _activity_contact_pages(contents, value):
+    """Text redaction cannot make the unchanged source image safe to embed.
+
+    Check the whole native page and every returned passage before selecting any
+    page, so later items (including scanned-page results) can veto an earlier
+    include_page suggestion. The reader validator still owns provenance checks.
+    """
+    by_id = {content.source.id: content.source for content in contents}
+    blocked = {(source.id, number)
+               for source in by_id.values()
+               for number, text in enumerate(source.page_texts, 1)
+               if _activity_text(text) != text.strip()}
+    for item in value.get("items", ()):
+        if not isinstance(item, dict):
+            continue
+        source_id, number, text = item.get("source"), item.get("page"), item.get("text")
+        if (isinstance(source_id, str) and source_id in by_id
+                and type(number) is int and 1 <= number <= len(by_id[source_id].page_texts)
+                and isinstance(text, str) and _activity_text(text) != text.strip()):
+            blocked.add((source_id, number))
+    return blocked
+
+
+def reader_page_notices(contents, destination, value):
+    if destination != "activity_summary":
+        return ()
+    blocked = _activity_contact_pages(contents, value)
+    requested = {(item.get("source"), item.get("page")) for item in value["items"]
+                 if item.get("include_page") is True}
+    return tuple(
+        f"{content.source.filename} · page {number}: the original page was left out "
+        "because it contains contact details. Check its privacy in Source pages "
+        "before including it; extracted Activity text is kept without those details."
+        for content in contents for number in range(1, len(content.source.page_texts) + 1)
+        if (content.source.id, number) in blocked & requested)
+
+
 def _csv_activity_entries(content):
     """Recognized vendor-work CSV columns only; never guess site or date scope.
 
@@ -293,10 +444,10 @@ def _csv_activity_entries(content):
         for row in table.rows:
             def cell(index):
                 return str(row[index]).strip() if index is not None and index < len(row) else ""
-            narrative = cell(action)
+            narrative = _activity_text(cell(action))
             if _date_only_source_label(narrative) or not useful_activity(narrative) or contains_price(narrative):
                 continue
-            status_text = cell(status)
+            status_text = _activity_text(cell(status))
             if status_text and not contains_price(status_text):
                 narrative += " (Status: " + status_text + ")"
             date_text = cell(dated) if dated is not None else content.source.service_date
@@ -330,6 +481,8 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
                     references.append(sources.source_reference(content.source, number))
                 continue
             output_identity = _non_table_activity_identity(content.source)
+            from app.monthly_report_vendor_passages import read_vendor_document
+            passage_pages = read_vendor_document(content.source)
             for number, text in enumerate(content.source.page_texts, 1):
                 reference = sources.source_reference(content.source, number)
                 # Source-referenced manual corrections and deliberate deletions
@@ -350,9 +503,11 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
                 if not tagged_txt and not useful_activity(text):
                     continue
                 # Preserve qualifiers, dates and tense: this is grounded extractive writing.
-                for line, header_date in _activity_lines(
-                        text, content.source.suffix, with_dates=True):
-                    line = line.strip()
+                activity_lines = (tuple((p.text, "") for p in passage_pages[number][0])
+                                  if number in passage_pages else
+                                  _activity_lines(text, content.source.suffix, with_dates=True))
+                for line, header_date in activity_lines:
+                    line = _activity_text(line)
                     if _date_only_source_label(line):
                         continue
                     if useful_activity(line) and not contains_price(line):
@@ -375,7 +530,9 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
 def reader_request(profile, contents, destination, page_refs=None, table_columns=None):
     """Bounded visual reading for scanned documents and unstructured quotes."""
     from app.ocr import image_blocks_for_vision
-    selected = set(page_refs) if page_refs is not None else {(c.source.id, n) for c in contents for n in range(1, len(c.source.page_texts) + 1)}
+    contents = reader_sources(contents, destination)
+    eligible = {(c.source.id, n) for c in contents for n in range(1, len(c.source.page_texts) + 1)}
+    selected = set(page_refs) & eligible if page_refs is not None else eligible
     count = len(selected)
     if count > 20 or sum(len(t) for c in contents for n, t in enumerate(c.source.page_texts, 1) if (c.source.id, n) in selected) > 60000:
         raise ValueError("Upload up to 20 pages at a time for automatic section reading.")
@@ -388,7 +545,7 @@ def reader_request(profile, contents, destination, page_refs=None, table_columns
         "Preserve negative statements and pending qualifiers. Maximum 500 items. "
     )
     if destination == "activity_summary":
-        prompt += "Extract work performed, findings and follow-ups. Set include_page true only when the entire page is relevant technical work with NO pricing, legal-only content, cover-only content, standalone logo/signature or blank page. Inspect all page images, including embedded prices. Do not include pages you cannot read. row must be empty."
+        prompt += "Extract work performed, findings and follow-ups. Set include_page true only when the entire page is relevant technical work with NO pricing, contact details, legal-only content, cover-only content, standalone logo/signature or blank page. Inspect all page images, including embedded prices and contact details. Do not include pages you cannot read. row must be empty."
     else:
         prompt += f"Extract {'capital renewal recommendations' if destination == 'capital_renewal' else 'proposal scope and decision'} into row columns {columns!r}. Missing cells stay empty. include_page must always be false: original quote pages must never enter the report."
     payload = [{"type": "text", "text": prompt}]
@@ -417,13 +574,20 @@ def reader_update(contents, destination, value, existing=None, *, table_columns=
     if not isinstance(items, list) or len(items) > 500:
         raise ValueError("The document reader returned invalid section details.")
     by_id = {c.source.id: c for c in contents}
+    contact_pages = _activity_contact_pages(contents, value) if destination == "activity_summary" else set()
     block = existing or ResolvedBlock(destination, "This month")
-    texts, rows, refs, pages = [], [], [], {}
+    texts, rows, refs, pages, blocked_notices = [], [], [], {}, []
     normal = lambda text: " ".join(text.casefold().split())
     for item in items:
         if not isinstance(item, dict) or item.get("source") not in by_id:
             raise ValueError("The document reader returned an unknown source.")
         source = by_id[item["source"]].source
+        if destination == "activity_summary" and _activity_reader_notice(by_id[source.id]):
+            # Old cached/in-flight mixed results can still mention a source
+            # whose rows need a different route. Exclude only that known source;
+            # unknown source IDs and ungrounded eligible items still fail closed.
+            blocked_notices.append(_activity_reader_notice(by_id[source.id]))
+            continue
         number = item.get("page")
         if type(number) is not int or not 1 <= number <= len(source.page_texts):
             raise ValueError("The document reader returned an unknown page.")
@@ -450,15 +614,10 @@ def reader_update(contents, destination, value, existing=None, *, table_columns=
                 continue
         if number not in source.needs_vision and any(normal(c) not in normal(source.page_texts[number - 1]) for c in cells if c.strip()):
             raise ValueError("Suggested wording was not present on the cited source page.")
-        if (destination == "activity_summary"
-                and _csv_has_site_scope_column(by_id[source.id])):
-            raise ValueError(
-                "This CSV contains site-specific rows. Check the target facility "
-                "and explicitly select the relevant work before adding Activity.")
         refs.append(sources.source_reference(source, number))
         if destination == "activity_summary":
             if text.strip() and useful_activity(text):
-                proposed = text.strip()
+                proposed = _activity_text(text)
                 # The native extractive pass may have already inserted this
                 # verbatim source passage with its reviewed event-date/vendor
                 # prefix. A later cached/network reader must not append a
@@ -472,10 +631,16 @@ def reader_update(contents, destination, value, existing=None, *, table_columns=
                          or normal(proposed) in normal(block.text)))
                 if not already_present:
                     texts.append(proposed)
-            if item.get("include_page") is True and [source.id, number] in value.get("visual_pages", []) and page_status(source.page_texts[number - 1], unreadable=number in source.needs_vision)[0] not in {"pricing", "legal", "signature"}:
+            if (item.get("include_page") is True and (source.id, number) not in contact_pages
+                    and [source.id, number] in value.get("visual_pages", [])
+                    and page_status(source.page_texts[number - 1], unreadable=number in source.needs_vision)[0] not in {"pricing", "legal", "signature"}):
                 pages.setdefault(source.id, set()).add(number)
         elif any(row):
             rows.append(tuple(row))
+    if blocked_notices and not reader_sources(contents, destination):
+        # Keep the precise sole-source scope block for callers of this validator.
+        # The UI never offers paid reading when every selected file is unrouted.
+        raise ValueError(blocked_notices[0])
     result = replace(block, text="\n\n".join(dict.fromkeys(filter(None, (*block.text.split("\n\n"), *texts)))),
                      rows=tuple(dict.fromkeys((*block.rows, *rows))),
                      references=tuple(dict.fromkeys((*block.references, *refs))), reviewed_fingerprint="")
@@ -485,6 +650,7 @@ def reader_update(contents, destination, value, existing=None, *, table_columns=
 def reader_batches(profile, contents, destination, *, table_columns=None):
     """Split internally, preserving the original source identities and page numbers."""
     chunks, current, size = [], [], 0
+    contents = reader_sources(contents, destination)
     for content in contents:
         for number, text in enumerate(content.source.page_texts, 1):
             if len(text) > 60000:

@@ -52,6 +52,9 @@ def exercise(browser, engine, width, method):
     from workspace_wire_observations import WireObservations
     wire = WireObservations(PORT)
     wire.attach(page)
+    from qa_preparer_reload_observations import ReloadObservations
+    reload_observations = ReloadObservations()
+    reload_observations.attach(page)
     from qa_widget_delivery import WidgetDelivery
     delivery = []
     WidgetDelivery(lambda kind, item: delivery.append(item) if len(delivery) < 500 else None).attach(page)
@@ -178,6 +181,11 @@ def exercise(browser, engine, width, method):
         REPORT["failures"].append(record)
     finally:
         record["browser_errors"] = browser_errors
+        try:
+            record["reload_dom_states"] = page.evaluate("window.__preparerReloadStates||[]")
+        except Exception:
+            record["reload_dom_states_unavailable"] = True
+        (OUT / (label + "-reload-metadata.json")).write_text(json.dumps(reload_observations.snapshot(), indent=2))
         (OUT / (label + "-wire.json")).write_text(json.dumps(wire.snapshot(), indent=2))
         (OUT / (label + "-widget-delivery.json")).write_text(json.dumps(delivery, indent=2))
         context.close()

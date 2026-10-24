@@ -14,8 +14,8 @@ from test_monthly_report_water_auto_include import _water_app
 
 def omitted_app(monkeypatch, tmp_path, *, pending=False):
     app = _water_app(monkeypatch, tmp_path, pdf_bytes(2))
-    button(app, "Include page and continue").click().run()
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
+    button(app, "Include page").click().run()
     app.run()
     original = app.session_state["test_blocks"]["water_reports"]
     omitted = replace(original, source="Omit", text="Retained operating note.",
@@ -35,9 +35,9 @@ def test_opening_omitted_water_reports_zero_included_without_changing_retained_c
     sources = app.session_state["test_sources"]
     assert any(item.value == "**Report pages (0)**" for item in app.markdown)
     assert not any("included in this draft" in item.value for item in app.caption)
-    button(app, "Edit pages").click().run()
+    button(app, "Report pages").click().run()
     assert not any(item.value.startswith("Included in this report") for item in app.caption)
-    button(app, "Done reviewing pages").click().run()
+    button(app, "Close report pages").click().run()
     app.run()
     assert app.session_state["test_blocks"]["water_reports"] == omitted
     assert app.session_state["test_sources"] == sources
@@ -48,7 +48,7 @@ def test_reviewing_one_omitted_page_cannot_restore_other_pages_or_native_content
     assert button(app, "Include Water treatment section in this report").disabled
     # Omitted source pages whose reviews were invalidated open directly.
     next(w for w in app.selectbox if w.label == "Page to review").set_value(1).run()
-    button(app, "Review retained page and continue").click().run()
+    button(app, "Review retained page").click().run()
     actual = app.session_state["test_blocks"]["water_reports"]
     source = app.session_state["test_sources"][0]
     assert actual.source == "Omit" and actual.asset_hashes == omitted.asset_hashes
@@ -82,7 +82,7 @@ def test_explicit_section_reinclusion_restores_all_retained_content_after_review
 
 def test_newly_submitted_caption_cannot_bypass_section_review_gate(monkeypatch, tmp_path):
     app, omitted = omitted_app(monkeypatch, tmp_path)
-    button(app, "Edit pages").click().run()
+    button(app, "Report pages").click().run()
     next(w for w in app.text_input if w.label == "Page caption").set_value("Late caption edit")
     button(app, "Include Water treatment section in this report").click().run()
     actual = app.session_state["test_blocks"]["water_reports"]
@@ -94,14 +94,14 @@ def test_newly_submitted_caption_cannot_bypass_section_review_gate(monkeypatch, 
 
 def test_omitted_section_keeps_native_content_after_removing_all_retained_pages(monkeypatch, tmp_path):
     app, omitted = omitted_app(monkeypatch, tmp_path)
-    button(app, "Edit pages").click().run()
+    button(app, "Report pages").click().run()
     for number in (1, 2):
         next(w for w in app.selectbox if w.label == "Page to review").set_value(number).run()
         button(app, "Remove retained page from this section").click().run()
     actual = app.session_state["test_blocks"]["water_reports"]
     assert actual.source == "Omit" and not actual.asset_hashes
     assert actual.text == omitted.text and actual.extra_tables == omitted.extra_tables
-    assert button(app, "Include page and continue").disabled
+    assert button(app, "Include page").disabled
     button(app, "Include Water treatment section in this report").click().run()
     actual = app.session_state["test_blocks"]["water_reports"]
     assert actual.source == "This month" and not actual.asset_hashes
@@ -121,9 +121,9 @@ def test_old_auto_inclusion_cannot_replace_an_omitted_sections_retained_content(
     assert app.session_state["test_blocks"]["water_reports"] == retained
     assert app.session_state["test_apply_count"] == count
     assert request_key not in app.session_state.filtered_state
-    button(app, "Edit pages").click().run()
+    button(app, "Report pages").click().run()
     next(w for w in app.selectbox if w.label == "Page to review").set_value(2).run()
-    assert button(app, "Include page and continue").disabled
+    assert button(app, "Include page").disabled
     button(app, "Include Water treatment section in this report").click().run()
     actual = app.session_state["test_blocks"]["water_reports"]
     assert actual.source == "This month" and actual.asset_hashes == retained.asset_hashes

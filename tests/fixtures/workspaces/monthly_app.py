@@ -82,6 +82,47 @@ if (os.environ.get("EPC_MONTHLY_TRAINING_TASK") == "1"
         render_reference(base, _field)
     st.stop()
 
+if os.environ.get("EPC_MONTHLY_LOGO_REFRESH_TASK") == "1":
+    from scripts.workspace_logo_refresh_observations import render as render_logo_refresh
+    with isolated(token):
+        render_logo_refresh(base, token, _field, _move)
+    st.stop()
+
+if os.environ.get("EPC_MONTHLY_LOGO_ADMIN_TASK") == "1":
+    if (st.query_params.get("monthly_qa") != "logo-recovery"
+            or st.query_params.get("monthly_admin") != "logos"):
+        st.error("This synthetic task requires the isolated logo administration route.")
+        st.stop()
+    from app.monthly_report_logo_recovery_sample import sample_scope, check_sample
+    from app.monthly_report_admin_ui import render_administration
+    from app import monthly_report_branding as branding
+    with sample_scope(token):
+        render_administration("logos", _field, mode="logo-recovery")
+        current = branding.load_branding()
+        if current:
+            _, checks = check_sample()
+            st.caption("QA shared-logo revision: " + str(current.revision))
+            from app.monthly_report_editor import _signature
+            inspected = st.session_state.get("report_branding_preview_", "")
+            st.caption("QA inspected logo: " + inspected)
+            st.caption("QA logo editor: " + st.session_state.get("report_branding_actor", ""))
+            st.caption("QA selected history: " + str(st.session_state.get("report_branding_history", "")))
+            note_key = "report_single_logo_" + _signature((inspected, current.revision)) + "_note"
+            st.caption("QA source note: " + st.session_state.get(note_key, ""))
+            from scripts.workspace_logo_upload_observations import upload_observation
+            import json
+            st.caption("QA upload receipt: " + json.dumps(
+                upload_observation(st.session_state, inspected, current.revision), sort_keys=True))
+            st.caption("QA selected logo asset: " + current.logos[0].asset)
+            st.caption("QA healthy logo unchanged: " + str(checks["Healthy logo and mapping unchanged"]).lower())
+            unchanged = checks["Original readable history unchanged"] and checks["Damaged collection history unchanged"]
+            st.caption("QA original histories unchanged: " + str(unchanged).lower())
+            import json
+            st.caption("QA catalog receipt: " + json.dumps({"revision": current.revision,
+                "asset": current.logos[0].asset,
+                "healthy": checks["Healthy logo and mapping unchanged"], "history": unchanged}, sort_keys=True))
+    st.stop()
+
 from scripts.workspace_browser_observations import install_synthetic_observations, emit_snapshot
 from scripts.workspace_text_observations import emit_text_snapshot
 from scripts.workspace_water_observations import emit_water_snapshot
@@ -103,5 +144,8 @@ with isolated(token):
     if os.environ.get("EPC_MONTHLY_PROGRESS_TASK") == "1":
         from scripts.workspace_progress_observations import emit_progress_snapshot
         emit_progress_snapshot(base, token)
+    if os.environ.get("EPC_MONTHLY_ROW_TASK") == "1":
+        from scripts.workspace_row_observations import emit_row_snapshot
+        emit_row_snapshot(base, token)
     st.caption("Monthly DOM isolated scope: " + str(scope()))
     st.caption("Monthly DOM blocked external attempts: " + str(len(sys._monthly_dom_attempts)))

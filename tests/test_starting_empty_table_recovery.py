@@ -41,12 +41,9 @@ def test_empty_table_cannot_hide_another_populated_table():
         merge_starting_drafts(current, draft(), current)
 
 
-def test_normal_editor_keeps_empty_schema_and_allows_recovery(monkeypatch):
-    from app import monthly_report_guided as guided
+def test_normal_editor_keeps_empty_schema_and_allows_recovery():
+    from streamlit.proto.WidgetStates_pb2 import WidgetStates
     previous = draft(table_block((("September", "Pending"),)))
-    # Simulate the grid's explicit delete-all-rows result. This exercises the
-    # actual editor/model boundary, not a claim of physical-browser input.
-    monkeypatch.setattr(guided, "_grid", lambda *args, **kwargs: [])
     app = AppTest.from_string('''
 import streamlit as st
 from app.monthly_report_guided import _edit_content
@@ -57,6 +54,13 @@ st.session_state.result = _edit_content(st.session_state.spec,
     app.session_state.spec = BlockSpec("work_orders", "table")
     app.session_state.block = previous.blocks[0]
     app.run()
+    assert not app.exception
+    # Deliver the native delete-all delta rather than patching the old grid
+    # call site. This is editor/model evidence, not physical-browser proof.
+    message = WidgetStates()
+    message.widgets.add(id=app.dataframe[0].proto.id,
+                        string_value='{"edited_rows":{},"added_rows":[],"deleted_rows":[0]}')
+    app._run(message)
     assert not app.exception
     edited = app.session_state.result
     assert edited.extra_tables and not edited.extra_tables[0].rows

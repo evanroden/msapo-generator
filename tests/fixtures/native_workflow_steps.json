@@ -1,0 +1,213 @@
+{
+  "literal-labels": [
+    {
+      "raw": "      - uses: actions/checkout@v4\n"
+    },
+    {
+      "raw": "      - uses: actions/setup-python@v5\n        with:\n          python-version: '3.12'\n          cache: pip\n          cache-dependency-path: requirements-dev.lock\n"
+    },
+    {
+      "raw": "      - name: Install locked app and literal-label browser harness\n        run: |\n          sudo python3 scripts/ci_ubuntu_mirror_priority.py\n          python -m pip install -r requirements-dev.lock\n          python scripts/patch_streamlit_frontend.py\n          python -m pip install playwright==1.58.0\n          python -m playwright install --with-deps chromium webkit\n",
+      "before": "      - name: Install locked app and literal-label browser harness\n",
+      "commands": "          sudo python3 scripts/ci_ubuntu_mirror_priority.py\n          python -m pip install -r requirements-dev.lock\n          python scripts/patch_streamlit_frontend.py\n          python -m pip install playwright==1.58.0\n          python -m playwright install --with-deps chromium webkit\n"
+    },
+    {
+      "raw": "      - name: Literal imported labels have no automatic links or formatting\n        run: python scripts/qa_monthly_literal_labels.py\n",
+      "before": "      - name: Literal imported labels have no automatic links or formatting\n",
+      "commands": "          python scripts/qa_monthly_literal_labels.py\n"
+    },
+    {
+      "raw": "      - name: Upload literal-label evidence immediately, including first failures\n        if: always()\n        uses: actions/upload-artifact@v4\n        with:\n          name: monthly-literal-label-browser-evidence\n          path: test-artifacts/monthly-literal-labels/\n          retention-days: 7\n          if-no-files-found: warn\n"
+    }
+  ],
+  "synthetic-progress-photos": [
+    {
+      "raw": "      - uses: actions/checkout@v4\n"
+    },
+    {
+      "raw": "      - uses: actions/setup-python@v5\n        with:\n          python-version: '3.12'\n          cache: pip\n          cache-dependency-path: requirements-dev.lock\n"
+    },
+    {
+      "raw": "      - name: Install locked app and native Progress photos harness\n        run: |\n          sudo python3 scripts/ci_ubuntu_mirror_priority.py\n          sudo apt-get update -qq\n          sudo apt-get install -y --no-install-recommends libreoffice-writer\n          python -m pip install -r requirements-dev.lock\n          python scripts/patch_streamlit_frontend.py\n          python -m pip install playwright==1.58.0\n          python -m playwright install --with-deps chromium webkit\n",
+      "before": "      - name: Install locked app and native Progress photos harness\n",
+      "commands": "          sudo python3 scripts/ci_ubuntu_mirror_priority.py\n          sudo apt-get update -qq\n          sudo apt-get install -y --no-install-recommends libreoffice-writer\n          python -m pip install -r requirements-dev.lock\n          python scripts/patch_streamlit_frontend.py\n          python -m pip install playwright==1.58.0\n          python -m playwright install --with-deps chromium webkit\n"
+    },
+    {
+      "raw": "      - name: Browser consent gates and actual Progress photos Word/PDF journey\n        env:\n          EPC_REQUIRE_PICTURE_BROWSER: '1'\n        run: |\n          set -e\n          python -m pytest tests/test_picture_group_browser.py -q\n          python scripts/qa_progress_photo_journey.py\n",
+      "before": "      - name: Browser consent gates and actual Progress photos Word/PDF journey\n        env:\n          EPC_REQUIRE_PICTURE_BROWSER: '1'\n",
+      "commands": "          set -e\n          python -m pytest tests/test_picture_group_browser.py -q\n          python scripts/qa_progress_photo_journey.py\n"
+    },
+    {
+      "raw": "      - name: Upload synthetic Progress photos evidence, including first failures\n        if: always()\n        uses: actions/upload-artifact@v4\n        with:\n          name: progress-photo-browser-evidence\n          path: test-artifacts/progress-photo-journey/\n          retention-days: 7\n          if-no-files-found: warn\n"
+    }
+  ],
+  "synthetic-history": [
+    {
+      "raw": "      - uses: actions/checkout@v4\n"
+    },
+    {
+      "raw": "      - uses: actions/setup-python@v5\n        with:\n          python-version: '3.12'\n          cache: pip\n          cache-dependency-path: requirements-dev.lock\n"
+    },
+    {
+      "raw": "      - name: Install locked app and history browser harness\n        run: |\n          sudo python3 scripts/ci_ubuntu_mirror_priority.py\n          sudo apt-get update -qq\n          sudo apt-get install -y --no-install-recommends libreoffice-writer\n          python -m pip install -r requirements-dev.lock\n          python scripts/patch_streamlit_frontend.py\n          python -m pip install playwright==1.58.0\n          python -m playwright install --with-deps chromium webkit\n",
+      "before": "      - name: Install locked app and history browser harness\n",
+      "commands": "          sudo python3 scripts/ci_ubuntu_mirror_priority.py\n          sudo apt-get update -qq\n          sudo apt-get install -y --no-install-recommends libreoffice-writer\n          python -m pip install -r requirements-dev.lock\n          python scripts/patch_streamlit_frontend.py\n          python -m pip install playwright==1.58.0\n          python -m playwright install --with-deps chromium webkit\n"
+    },
+    {
+      "raw": "      - name: Actual isolated shared-history saves and read-only inspection\n        run: python scripts/qa_monthly_history.py\n",
+      "before": "      - name: Actual isolated shared-history saves and read-only inspection\n",
+      "commands": "          python scripts/qa_monthly_history.py\n"
+    },
+    {
+      "raw": "      - name: Upload synthetic history evidence, including first failures\n        if: always()\n        uses: actions/upload-artifact@v4\n        with:\n          name: monthly-history-browser-evidence\n          path: test-artifacts/monthly-history/\n          retention-days: 7\n          if-no-files-found: warn\n"
+    }
+  ],
+  "synthetic-dom": [
+    {
+      "raw": "      - uses: actions/checkout@v4\n        with:\n          fetch-depth: 2\n"
+    },
+    {
+      "raw": "      - uses: actions/setup-python@v5\n        with:\n          python-version: '3.12'\n          cache: pip\n          cache-dependency-path: requirements-dev.lock\n"
+    },
+    {
+      "raw": "      - uses: actions/setup-node@v4\n        with:\n          node-version: '22'\n"
+    },
+    {
+      "raw": "      - name: Install locked app and browser harness\n        run: |\n          sudo python3 scripts/ci_ubuntu_mirror_priority.py\n          sudo apt-get update -qq\n          sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-calc\n          python -m pip install -r requirements-dev.lock\n          python scripts/patch_streamlit_frontend.py\n          python -m pip install playwright==1.58.0\n          python -m playwright install --with-deps chromium webkit\n",
+      "before": "      - name: Install locked app and browser harness\n",
+      "commands": "          sudo python3 scripts/ci_ubuntu_mirror_priority.py\n          sudo apt-get update -qq\n          sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-calc\n          python -m pip install -r requirements-dev.lock\n          python scripts/patch_streamlit_frontend.py\n          python -m pip install playwright==1.58.0\n          python -m playwright install --with-deps chromium webkit\n"
+    },
+    {
+      "raw": "      - name: Apply exact locked scalar date compatibility repair\n        run: python scripts/patch_streamlit_date_input.py\n",
+      "before": "      - name: Apply exact locked scalar date compatibility repair\n",
+      "commands": "          python scripts/patch_streamlit_date_input.py\n"
+    },
+    {
+      "raw": "      - name: Pure geometry and real Streamlit DOM\n        run: |\n          node --test tests/workspace_geometry_test.cjs\n          node --test tests/preview_view_lifecycle_test.cjs\n          node --test tests/preview_commit_gate_test.cjs\n          python scripts/qa_adaptive_workspaces.py\n",
+      "before": "      - name: Pure geometry and real Streamlit DOM\n",
+      "commands": "          node --test tests/workspace_geometry_test.cjs\n          node --test tests/preview_view_lifecycle_test.cjs\n          node --test tests/preview_commit_gate_test.cjs\n          python scripts/qa_adaptive_workspaces.py\n"
+    },
+    {
+      "raw": "      - name: Native sidebar visibility and pointer/keyboard navigation\n        if: ${{ !cancelled() }}\n        run: python scripts/qa_sidebar_navigation.py\n",
+      "before": "      - name: Native sidebar visibility and pointer/keyboard navigation\n        if: ${{ !cancelled() }}\n",
+      "commands": "          python scripts/qa_sidebar_navigation.py\n"
+    },
+    {
+      "raw": "      - name: Upload native sidebar evidence immediately, including first failures\n        if: always()\n        uses: actions/upload-artifact@v4\n        with:\n          name: native-sidebar-browser-evidence-${{ github.run_attempt }}\n          path: test-artifacts/sidebar-navigation/\n          retention-days: 7\n          if-no-files-found: warn\n"
+    },
+    {
+      "raw": "      - name: Actual Expense workflow with isolated synthetic inputs\n        if: ${{ !cancelled() }}\n        run: python scripts/qa_expense_adaptive.py\n",
+      "before": "      - name: Actual Expense workflow with isolated synthetic inputs\n        if: ${{ !cancelled() }}\n",
+      "commands": "          python scripts/qa_expense_adaptive.py\n"
+    },
+    {
+      "raw": "      - name: Actual Purchase order workflow with isolated synthetic inputs\n        if: ${{ !cancelled() }}\n        run: python scripts/qa_po_adaptive.py\n",
+      "before": "      - name: Actual Purchase order workflow with isolated synthetic inputs\n        if: ${{ !cancelled() }}\n",
+      "commands": "          python scripts/qa_po_adaptive.py\n"
+    },
+    {
+      "raw": "      - name: Actual Monthly workflow with isolated synthetic inputs\n        if: ${{ !cancelled() }}\n        run: python scripts/qa_browser_diagnostics.py qa_monthly_adaptive.py\n",
+      "before": "      - name: Actual Monthly workflow with isolated synthetic inputs\n        if: ${{ !cancelled() }}\n",
+      "commands": "          python scripts/qa_browser_diagnostics.py qa_monthly_adaptive.py\n"
+    },
+    {
+      "raw": "      - name: Source correction links reach native controls and persist after reload\n        if: ${{ !cancelled() }}\n        run: python scripts/qa_source_corrections.py\n",
+      "before": "      - name: Source correction links reach native controls and persist after reload\n        if: ${{ !cancelled() }}\n",
+      "commands": "          python scripts/qa_source_corrections.py\n"
+    },
+    {
+      "raw": "      - name: Upload source correction evidence immediately, including first failures\n        if: always()\n        uses: actions/upload-artifact@v4\n        with:\n          name: source-correction-browser-evidence-${{ github.run_attempt }}\n          path: test-artifacts/source-corrections/\n          retention-days: 7\n          if-no-files-found: warn\n"
+    },
+    {
+      "raw": "      - name: Fresh ordinary Monthly site pointer and keyboard from zero\n        if: ${{ !cancelled() }}\n        run: python scripts/qa_monthly_site_pointer.py\n",
+      "before": "      - name: Fresh ordinary Monthly site pointer and keyboard from zero\n        if: ${{ !cancelled() }}\n",
+      "commands": "          python scripts/qa_monthly_site_pointer.py\n"
+    },
+    {
+      "raw": "      - name: Prepared-by correction link reaches the native field by pointer and keyboard\n        if: ${{ !cancelled() }}\n        run: python scripts/qa_monthly_preparer_navigation.py\n",
+      "before": "      - name: Prepared-by correction link reaches the native field by pointer and keyboard\n        if: ${{ !cancelled() }}\n",
+      "commands": "          python scripts/qa_monthly_preparer_navigation.py\n"
+    },
+    {
+      "raw": "      - name: Native Training and issue text with real exports and deliberate clear/reentry\n        if: ${{ !cancelled() }}\n        run: python scripts/qa_monthly_text_hydration.py\n",
+      "before": "      - name: Native Training and issue text with real exports and deliberate clear/reentry\n        if: ${{ !cancelled() }}\n",
+      "commands": "          python scripts/qa_monthly_text_hydration.py\n"
+    },
+    {
+      "raw": "      - name: Shared fixture upload and actual Starting report workflow\n        if: ${{ !cancelled() }}\n        run: python scripts/qa_browser_diagnostics.py qa_shared_fixture_testing.py\n",
+      "before": "      - name: Shared fixture upload and actual Starting report workflow\n        if: ${{ !cancelled() }}\n",
+      "commands": "          python scripts/qa_browser_diagnostics.py qa_shared_fixture_testing.py\n"
+    },
+    {
+      "raw": "      - name: Shared logo single-record replacement, stale review and restore\n        if: ${{ !cancelled() }}\n        run: python scripts/qa_single_logo_admin.py\n",
+      "before": "      - name: Shared logo single-record replacement, stale review and restore\n        if: ${{ !cancelled() }}\n",
+      "commands": "          python scripts/qa_single_logo_admin.py\n"
+    },
+    {
+      "raw": "      - name: Upload shared-logo evidence immediately, including first failures\n        if: always()\n        uses: actions/upload-artifact@v4\n        with:\n          name: shared-logo-browser-evidence-${{ github.run_attempt }}\n          path: test-artifacts/single-logo-admin/\n          retention-days: 7\n          if-no-files-found: warn\n"
+    },
+    {
+      "raw": "      - name: Optional About company-logo refresh and durable native outputs\n        if: ${{ !cancelled() }}\n        run: |\n          python scripts/qa_about_logo_refresh.py\n",
+      "before": "      - name: Optional About company-logo refresh and durable native outputs\n        if: ${{ !cancelled() }}\n",
+      "commands": "          python scripts/qa_about_logo_refresh.py\n"
+    },
+    {
+      "raw": "      - name: Upload About-logo evidence immediately, including first failures\n        if: always()\n        uses: actions/upload-artifact@v4\n        with:\n          name: about-logo-browser-evidence-${{ github.run_attempt }}\n          path: test-artifacts/about-logo-refresh/\n          retention-days: 7\n          if-no-files-found: warn\n"
+    },
+    {
+      "raw": "      - name: Water page management across desktop and narrow browser with actual output\n        if: ${{ !cancelled() }}\n        env:\n          EPC_MONTHLY_WATER_TASK: '1'\n        run: python scripts/qa_water_page_journey.py\n",
+      "before": "      - name: Water page management across desktop and narrow browser with actual output\n        if: ${{ !cancelled() }}\n        env:\n          EPC_MONTHLY_WATER_TASK: '1'\n",
+      "commands": "          python scripts/qa_water_page_journey.py\n"
+    },
+    {
+      "raw": "      - name: Native proposal and onsite row editing with actual output\n        if: ${{ !cancelled() }}\n        env:\n          EPC_MONTHLY_ROW_TASK: '1'\n        run: python scripts/qa_report_row_cards.py\n",
+      "before": "      - name: Native proposal and onsite row editing with actual output\n        if: ${{ !cancelled() }}\n        env:\n          EPC_MONTHLY_ROW_TASK: '1'\n",
+      "commands": "          python scripts/qa_report_row_cards.py\n"
+    },
+    {
+      "raw": "      - name: Fresh ordinary Water page review from empty omitted state\n        if: ${{ !cancelled() }}\n        run: python scripts/qa_water_fresh_page_journey.py\n",
+      "before": "      - name: Fresh ordinary Water page review from empty omitted state\n        if: ${{ !cancelled() }}\n",
+      "commands": "          python scripts/qa_water_fresh_page_journey.py\n"
+    },
+    {
+      "raw": "      - name: Select explicitly requested one-shot native owner diagnostic\n        id: native_owner_request\n        if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.number == 249 && github.run_attempt == 1 }}\n        run: python scripts/qa_fresh_native_owner_diagnostic.py --emit-gate\n",
+      "before": "      - name: Select explicitly requested one-shot native owner diagnostic\n        id: native_owner_request\n        if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.number == 249 && github.run_attempt == 1 }}\n",
+      "commands": "          python scripts/qa_fresh_native_owner_diagnostic.py --emit-gate\n"
+    },
+    {
+      "raw": "      - name: One separate diagnostic-only WebKit native observer owner capture\n        if: ${{ !cancelled() && steps.native_owner_request.outputs.enabled == 'true' }}\n        run: python scripts/qa_fresh_native_owner_diagnostic.py\n",
+      "before": "      - name: One separate diagnostic-only WebKit native observer owner capture\n        if: ${{ !cancelled() && steps.native_owner_request.outputs.enabled == 'true' }}\n",
+      "commands": "          python scripts/qa_fresh_native_owner_diagnostic.py\n"
+    },
+    {
+      "raw": "      - name: Upload synthetic screenshots and geometry\n        if: always()\n        uses: actions/upload-artifact@v4\n        with:\n          name: adaptive-synthetic-browser-evidence\n          path: |\n            test-artifacts/adaptive-workspaces/\n            test-artifacts/sidebar-navigation/\n            test-artifacts/expense-adaptive/\n            test-artifacts/po-adaptive/\n            test-artifacts/monthly-adaptive/\n            test-artifacts/source-corrections/\n            test-artifacts/monthly-first-site/\n            test-artifacts/monthly-preparer-navigation/\n            test-artifacts/monthly-text-hydration/\n            test-artifacts/shared-fixture-testing/\n            test-artifacts/single-logo-admin/\n            test-artifacts/about-logo-refresh/\n            test-artifacts/water-page-journey/\n            test-artifacts/report-row-cards/\n            test-artifacts/water-fresh-page-journey/\n          retention-days: 7\n          if-no-files-found: warn\n"
+    },
+    {
+      "raw": "      - name: Upload separate native owner diagnostic evidence\n        if: always()\n        uses: actions/upload-artifact@v4\n        with:\n          name: fresh-native-owner-diagnostic-evidence\n          path: test-artifacts/fresh-native-owner-diagnostic/\n          retention-days: 7\n          if-no-files-found: warn\n\n"
+    }
+  ],
+  "training-date": [
+    {
+      "raw": "      - uses: actions/checkout@v4\n"
+    },
+    {
+      "raw": "      - uses: actions/setup-python@v5\n        with:\n          python-version: '3.12'\n          cache: pip\n          cache-dependency-path: requirements-dev.lock\n"
+    },
+    {
+      "raw": "      - uses: actions/setup-node@v4\n        with:\n          node-version: '22'\n"
+    },
+    {
+      "raw": "      - name: Install locked app and browser harness\n        run: |\n          sudo python3 scripts/ci_ubuntu_mirror_priority.py\n          sudo apt-get update -qq\n          sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-calc\n          python -m pip install -r requirements-dev.lock\n          python -m pip install playwright==1.58.0\n          python -m playwright install --with-deps chromium webkit\n",
+      "before": "      - name: Install locked app and browser harness\n",
+      "commands": "          sudo python3 scripts/ci_ubuntu_mirror_priority.py\n          sudo apt-get update -qq\n          sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-calc\n          python -m pip install -r requirements-dev.lock\n          python -m pip install playwright==1.58.0\n          python -m playwright install --with-deps chromium webkit\n"
+    },
+    {
+      "raw": "      - name: Native Training single date baseline, repair, session add/remove and actual output\n        run: python scripts/qa_monthly_training_date.py\n",
+      "before": "      - name: Native Training single date baseline, repair, session add/remove and actual output\n",
+      "commands": "          python scripts/qa_monthly_training_date.py\n"
+    },
+    {
+      "raw": "      - name: Upload synthetic Training date evidence\n        if: always()\n        uses: actions/upload-artifact@v4\n        with:\n          name: training-date-synthetic-browser-evidence\n          path: test-artifacts/monthly-training-date/\n          retention-days: 7\n          if-no-files-found: warn\n"
+    }
+  ]
+}

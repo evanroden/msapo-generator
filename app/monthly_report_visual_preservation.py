@@ -37,13 +37,18 @@ class DiagramPreservationError(ValueError):
 
 
 def diagram_source_sections(inspection, section):
-    """Return self-contained physical Word sections for a logical section."""
+    """Return self-contained Word sections, not inferred physical page numbers."""
     drawings = tuple(item for item in section.items
                      if item.kind == "unsupported"
                      and item.part == "word/document.xml"
                      and item.section == section.key)
     if not drawings:
         return ()
+    if any(item.note.startswith("Alternate Word representations") for item in drawings):
+        raise DiagramPreservationError(
+            f"The {section.title} drawing has different modern and legacy Word content. "
+            "A preview of one representation cannot approve the other. Correct this exact "
+            "source drawing before continuing; both original representations are retained.")
     if section.key not in VISUAL_SLOTS:
         raise DiagramPreservationError(
             f"The original {section.title} has artwork with no safe destination; "
@@ -59,8 +64,8 @@ def diagram_source_sections(inspection, section):
                   and item.position and item.section not in ("", "cover", section.key)}
         if others:
             raise DiagramPreservationError(
-                f"The {section.title} drawing shares a Word page with another report section. "
-                "Its destination must be resolved before copying that page.")
+                f"The {section.title} drawing shares a Word section with another report section. "
+                "A Word section can span several pages; its exact page must be resolved before copying it.")
     return sections
 
 
@@ -85,6 +90,12 @@ def preserve_section_diagrams(path, inspection, section):
     assets, records = [], []
     for page in pages:
         kind, _ = page_status(page.text, unreadable=not page.text.strip())
+        if kind == "pricing":
+            raise DiagramPreservationError(
+                f"Rendered {section.title} page {page.number} (source Word section "
+                + ", ".join(map(str, word_sections))
+                + ") contains pricing. Supply a price-free replacement for this artwork "
+                "before continuing; the original is retained. It was not dropped or approved.")
         if (page.blank or kind in ("pricing", "legal", "signature", "blank")
                 or placeholder_matches(page.text)):
             raise DiagramPreservationError(

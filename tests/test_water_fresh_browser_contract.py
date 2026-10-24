@@ -51,7 +51,7 @@ def test_ordinary_earlier_unsaved_month_has_empty_omitted_water_without_hydrated
     monkeypatch.setattr(ui.st, "file_uploader", lambda label, *a, **kw:
                         [stream] if label == "Water-treatment files" else original_uploader(label, *a, **kw))
     app.run()
-    include = next(b for b in app.button if b.label == "Include page and continue")
+    include = next(b for b in app.button if b.label == "Include page")
     assert not include.disabled
     include.click().run()
     assert not app.exception
@@ -60,7 +60,7 @@ def test_ordinary_earlier_unsaved_month_has_empty_omitted_water_without_hydrated
                    if k.startswith("report_guided_") and k.endswith("_draft")
                    and isinstance(v, ReportDraft) and v.period.key == "2026-09")
     assert next(b for b in current.blocks if b.key == "water_reports") == ResolvedBlock("water_reports", "Omit")
-    next(b for b in app.button if b.label == "Leave page out and continue").click().run()
+    next(b for b in app.button if b.label == "Exclude page").click().run()
     assert not app.exception
     current = next(v for k, v in app.session_state.filtered_state.items()
                    if k.startswith("report_guided_") and k.endswith("_draft")

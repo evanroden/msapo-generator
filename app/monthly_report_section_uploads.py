@@ -136,6 +136,8 @@ def prepare_section_pages(profile, contents, destination, blocks, assets=None, *
         updates["asset_provenance"] = tuple((asset, tuple(r for r in refs if r in references))
                                             for asset, refs in block.asset_provenance if asset in kept)
         filtered = replace(block, **updates)
+        from app.monthly_report_asset_instances import reindex_asset_instances, with_asset_instances
+        filtered = with_asset_instances(filtered, reindex_asset_instances(block, indexes))
         # Every returned page has passed the existing page-level review policy.
         from app.monthly_report_asset_review import approve_all_assets, refresh_asset_source_context
         filtered = refresh_asset_source_context(filtered, tuple(c.source for c in contents))

@@ -159,7 +159,7 @@ def open_water_with_cold_tables(page, qa, observations):
     Open the already-saved draft in a fresh browser context and hold only its
     real local DataFrame module on the first navigation,
     measure the loading page, then release its unchanged response. The button
-    and scroll position must stay put as the three preceding editors mount.
+    and scroll position must stay put as the two preceding grids mount; the onsite row cards must stay put too.
     No report state, input, geometry or control event is injected.
     """
     assert page.url == "about:blank", "Cold table coverage requires an unused browser page."
@@ -174,15 +174,31 @@ def open_water_with_cold_tables(page, qa, observations):
       const button=pair.querySelector('.epc-compact-open');
       const boxes=wanted.keys? wanted.keys.map(key=>root.querySelector('.'+CSS.escape(key))) :
         [...root.querySelectorAll('[data-testid="stElementContainer"]')].filter(node=>
-          [...node.classList].some(key=>/^st-key-report_guided_.+_edit_(work_orders|thermal_capacity|service_calls)_imported_0_/.test(key)) &&
+          [...node.classList].some(key=>/^st-key-report_guided_.+_edit_(work_orders|thermal_capacity)_imported_0_/.test(key)) &&
           node.querySelector(':scope > [data-testid="stSkeleton"]') &&
           (node.compareDocumentPosition(pair)&Node.DOCUMENT_POSITION_FOLLOWING) &&
           node.getBoundingClientRect().height>0);
+      const cards=[...root.querySelectorAll('[class*="st-key-"][class*="_row_cards_"][class*="_card_"]')].filter(node=>
+        node.closest('.st-key-epc_edit_monthly_maintenance') &&
+        [...node.classList].some(key=>/_card_[a-f0-9]{32}$/.test(key)));
       const b=button.getBoundingClientRect();
+      // Passive first-failure context for late content above the three grids.
+      // Keep the original scroll/button assertions; never restore their values.
+      const preceding=[...root.querySelectorAll('[data-testid="stElementContainer"]')]
+        .filter(node=>(node.compareDocumentPosition(pair)&Node.DOCUMENT_POSITION_FOLLOWING)
+          && node.getBoundingClientRect().height>0).slice(0,200)
+        .map((node,index)=>{const r=node.getBoundingClientRect();return {
+          key:[...node.classList].find(key=>key.startsWith('st-key-'))||'element-'+index,
+          type:node.firstElementChild?.getAttribute('data-testid')||node.firstElementChild?.tagName,
+          top:r.top,left:r.left,width:r.width,height:r.height,
+          images:[...node.querySelectorAll('img')].slice(0,4).map(image=>({
+            complete:image.complete,width:image.naturalWidth,height:image.naturalHeight}))};});
       return {button:{x:b.x,y:b.y,width:b.width,height:b.height},
         viewport:{width:document.documentElement.clientWidth,height:window.innerHeight},
         scrollTop:document.querySelector('[data-testid="stMain"]').scrollTop,
-        fullRender:root.dataset.epcFullRender,
+        fullRender:root.dataset.epcFullRender,preceding,fontStatus:document.fonts.status,
+        cards:cards.map(node=>({key:[...node.classList].find(k=>k.startsWith('st-key-')),
+          height:node.getBoundingClientRect().height})),
         grids:boxes.map(node=>({key:[...node.classList].find(k=>k.startsWith('st-key-')),
           height:node.getBoundingClientRect().height,
           loading:!!node.querySelector(':scope > [data-testid="stSkeleton"]'),
@@ -203,7 +219,8 @@ def open_water_with_cold_tables(page, qa, observations):
                 and button["y"] + button["height"] <= viewport["height"]), (
                     "Water's actual preview action must be in view before releasing the held module.", before)
         assert len(held) == 1, "Expected one held DataFrame module request: " + str(len(held))
-        assert len(before["grids"]) == 3, "Observe all three imported editors preceding Water."
+        assert len(before["grids"]) == 2, "Observe both imported native grids preceding Water."
+        assert before["cards"] and all(card["height"] > 0 for card in before["cards"]), "Observe the onsite row cards."
         keys = [item["key"] for item in before["grids"]]
         assert all(keys) and all(item["loading"] for item in before["grids"])
         result["module"] = held[0].request.url.rsplit("/", 1)[-1]
@@ -218,6 +235,9 @@ def open_water_with_cold_tables(page, qa, observations):
         assert after["fullRender"] == before["fullRender"]
         assert after["scrollTop"] == before["scrollTop"], "Do not hide a shift by restoring scroll."
         assert all(item["mounted"] for item in after["grids"])
+        assert [card["key"] for card in before["cards"]] == [card["key"] for card in after["cards"]]
+        for old, current in zip(before["cards"], after["cards"]):
+            assert abs(current["height"] - old["height"]) <= 2, (old, current)
         for old, current in zip(before["grids"], after["grids"]):
             assert abs(current["height"] - old["height"]) <= 2, (old, current)
         for axis in ("x", "y", "width", "height"):
@@ -354,13 +374,13 @@ def exercise(page, name, qa):
         baseline = initial["working"]["unrelated_sha256"]
         record("before-upload", initial)
         upload(page, raw)
-        expect(water.get_by_role("button", name="Include page and continue", exact=True)).to_be_enabled()
-        water.get_by_role("button", name="Include page and continue", exact=True).click()
+        expect(water.get_by_role("button", name="Include page", exact=True)).to_be_enabled()
+        water.get_by_role("button", name="Include page", exact=True).click()
         expect(water.get_by_role("combobox", name="Page to review", exact=True)).to_have_value(re.compile(r"^Page 2(?: ·|$)"))
         state = wait_pages(page, [], reviewed=[1])
         unchanged(state)
         record("desktop-first-page-reviewed", state)
-        water.get_by_role("button", name="Include page and continue", exact=True).click()
+        water.get_by_role("button", name="Include page", exact=True).click()
         state = wait_pages(page, [1, 2], pending=[])
         unchanged(state)
         assert len(state["working"]["sources"]) == 1
@@ -369,12 +389,12 @@ def exercise(page, name, qa):
         current_water_preview(page, qa)
         record("desktop-included", state)
 
-        water.get_by_role("button", name="Edit pages", exact=True).click()
+        water.get_by_role("button", name="Report pages", exact=True).click()
         choose_page(page, 1)
         caption = water.get_by_role("textbox", name="Page caption", exact=True)
         assert caption.input_value(), "The Done regression must clear an actual caption."
         caption.fill("")
-        water.get_by_role("button", name="Done reviewing pages", exact=True).click()
+        water.get_by_role("button", name="Close report pages", exact=True).click()
         state = wait_pages(page, [1, 2], pending=[0])
         assert state["working"]["pages"][0]["caption_sha256"] == sha256(b"").hexdigest()
         expect(caption).to_have_value("")
@@ -382,25 +402,25 @@ def exercise(page, name, qa):
         record("desktop-clear-caption-with-done", state)
         # Closing does not approve changed wording. Use the normal page review
         # before continuing the existing caption/Tab, ordering and omission task.
-        water.get_by_role("button", name="Include page and continue", exact=True).click()
+        water.get_by_role("button", name="Include page", exact=True).click()
         wait_pages(page, [1, 2], pending=[])
         # Done closed editing; completing the outstanding review now returns
         # to the normal summary. Open the real editor for the next edit.
         expect(water.get_by_role("combobox", name="Page to review", exact=True)).to_have_count(0)
-        water.get_by_role("button", name="Edit pages", exact=True).click()
+        water.get_by_role("button", name="Report pages", exact=True).click()
         choose_page(page, 1)
         caption.fill(CAPTION)
         caption.press("Tab")
         state = wait_pages(page, [1, 2], pending=[0])
         assert state["working"]["pages"][0]["caption_sha256"] == sha256(CAPTION.encode()).hexdigest()
         unchanged(state)
-        water.get_by_role("button", name="Include page and continue", exact=True).click()
+        water.get_by_role("button", name="Include page", exact=True).click()
         wait_pages(page, [1, 2], pending=[])
         water.get_by_role("button", name="Move page later", exact=True).click()
         state = wait_pages(page, [2, 1], pending=[])
         unchanged(state)
         record("desktop-caption-order", state)
-        water.get_by_role("button", name="Leave page out and continue", exact=True).click()
+        water.get_by_role("button", name="Exclude page", exact=True).click()
         state = wait_pages(page, [2], pending=[])
         unchanged(state)
         assert state["working"]["sources"][0]["excluded"] == [1]
@@ -417,9 +437,9 @@ def exercise(page, name, qa):
         unchanged(state)
         assert state["working"]["sources"][0]["excluded"] == [1]
         record("narrow-repeat-keeps-omission", state)
-        water.get_by_role("button", name="Edit pages", exact=True).click()
+        water.get_by_role("button", name="Report pages", exact=True).click()
         choose_page(page, 1)
-        water.get_by_role("button", name="Include page and continue", exact=True).click()
+        water.get_by_role("button", name="Include page", exact=True).click()
         state = wait_pages(page, [2, 1], pending=[])
         unchanged(state)
         assert state["working"]["sources"][0]["excluded"] == []
@@ -535,7 +555,7 @@ def browser_task(browser_type, name):
             assert not attempts and not errors and not page.evaluate("window.__waterShareAttempts.length")
             expect(page.get_by_text("Monthly DOM blocked external attempts: 0", exact=True)).to_be_visible()
             cold["result"] = "passed"
-            qa.check(name, "Cold saved Water session keeps all three table heights and one preview click", True)
+            qa.check(name, "Cold saved Water session keeps both grid heights, onsite cards and one preview click", True)
         except Exception as exc:
             cold["result"] = "failed"
             cold["failure"] = {"type": type(exc).__name__, "message": str(exc)[:2000]}

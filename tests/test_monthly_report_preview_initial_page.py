@@ -76,7 +76,7 @@ def test_preview_initial_page_uses_the_actually_rendered_section_number(monkeypa
 
 @requires_libreoffice
 @pytest.mark.parametrize('key,expected', [('organization', 'Synthetic contact'), ('training', 'Completed synthetic safety training')])
-def test_real_section_conversion_opens_meaningful_content_and_keeps_divider(key, expected):
+def test_real_section_conversion_opens_meaningful_content_and_keeps_divider(tmp_path, key, expected):
     report = draft()
     report = replace(report, blocks=(*report.blocks, ResolvedBlock('contact_matrix', 'This month',
         rows=(('Demo North', 'Manager', 'Synthetic contact', '', ''),))))
@@ -85,3 +85,4 @@ def test_real_section_conversion_opens_meaningful_content_and_keeps_divider(key,
     with fitz.open(stream=result.pdf, filetype='pdf') as pdf:
         assert pdf[0].get_text().startswith('Section ')
         assert expected in '\n'.join(p.get_text() for p in pdf[result.initial_page:])
+    (tmp_path / (key + '.pdf')).write_bytes(result.pdf)

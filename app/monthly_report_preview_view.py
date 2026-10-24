@@ -101,10 +101,25 @@ export default function(component) {
                 gate.blockAll = gate.blockAll || !withinPair;
                 gate.scopePair = gate.blockAll ? null : withinPair;
             };
+            // The uploader rejects files outside its accept list (and an
+            // emptied picker sends nothing) without starting an editor run.
+            // It judges files one by one, so a single accepted file still
+            // starts a run; only an all-rejected or empty change cannot.
+            const uploadStarts = input => {
+                const files = Array.from(input.files || []);
+                const accepted = (input.getAttribute?.('accept') || '').split(',')
+                    .map(token => token.trim().toLowerCase()).filter(Boolean);
+                return files.length > 0 && (!accepted.length || files.some(file => {
+                    const name = (file.name || '').toLowerCase(), kind = (file.type || '').toLowerCase();
+                    return accepted.some(token => token.startsWith('.') ? name.endsWith(token) :
+                        token.endsWith('/*') ? kind.startsWith(token.slice(0, -1)) : kind === token);
+                }));
+            };
             const nativeChange = event => {
                 const target = event.target;
                 if (!target?.matches?.('input,textarea,select') ||
                         target.closest?.('.report-preview') || target.closest?.('.epc-section-navigation')) return;
+                if (target.type === 'file' && !uploadStarts(target)) return;
                 awaitNativeEdit();
             };
             // Streamlit's checkbox/toggle label can synchronously request its
@@ -113,6 +128,17 @@ export default function(component) {
             // only deliberate checkbox/radio label activation before React
             // handles the click; never block on ordinary input focus, scroll,
             // preview Retry, file pickers, or browser-native zoom.
+            const priorChecked = new WeakMap();
+            const rememberChoice = event => {
+                const target = event.target;
+                const radio = target?.matches?.('input[type="radio"]') ? target :
+                    target?.closest?.('label')?.querySelector?.('input[type="radio"]');
+                if (!radio) return;
+                // Arrow keys select another radio of the same group, so record
+                // the whole group at the gesture's start.
+                const group = radio.closest?.('[role="radiogroup"]')?.querySelectorAll?.('input[type="radio"]');
+                for (const member of group?.length ? group : [radio]) priorChecked.set(member, member.checked);
+            };
             const nativeChoiceClick = event => {
                 const target = event.target;
                 // The reference pane's Streamlit Retry button belongs to its
@@ -132,8 +158,26 @@ export default function(component) {
                 const disclosure = target.closest('summary')?.closest('[class*="_history_open"]');
                 const historyRerun = Array.from(disclosure?.classList || []).some(
                     name => name.startsWith('st-key-') && name.endsWith('_history_open'));
-                if (label?.querySelector('input[type="checkbox"], input[type="radio"]') ||
-                        (button && !button.disabled) || historyRerun) awaitNativeEdit();
+                // A disabled choice or an already-selected radio changes
+                // nothing and starts no run, so it must not open a hold. A
+                // label click precedes the radio's activation, so its state is
+                // still the prior one; a direct activation (Space, arrows, or a
+                // click on the input) is checked before dispatch, so use the
+                // state seen at the gesture's start. With no observed start
+                // (an assistive or scripted click) the click opens nothing:
+                // if it does change the radio, its native change event opens
+                // the hold in the same task.
+                const choice = label?.querySelector('input[type="checkbox"], input[type="radio"]');
+                // A label click is followed by the browser's forwarded click on
+                // its input; record the state here so both read the same answer.
+                const direct = choice && target === choice;
+                if (choice && !direct) priorChecked.set(choice, choice.checked);
+                const wasSelected = direct ? priorChecked.get(choice) !== false : choice?.checked;
+                if (direct) priorChecked.delete(choice);
+                const choiceChanges = choice && !choice.disabled &&
+                    choice.getAttribute?.('aria-disabled') !== 'true' &&
+                    !(choice.type === 'radio' && wasSelected);
+                if (choiceChanges || (button && !button.disabled) || historyRerun) awaitNativeEdit();
             };
             // Ctrl/Command+Enter commits without blur/change. Tab/Shift+Tab
             // moves focus/scroll before its change/blur handlers can protect
@@ -173,10 +217,12 @@ export default function(component) {
             app.addEventListener('change', nativeChange, true);
             app.addEventListener('click', nativeChoiceClick, true);
             app.addEventListener('keydown', nativeEditorCommit, true);
+            app.addEventListener('pointerdown', rememberChoice, true);
+            app.addEventListener('keydown', rememberChoice, true);
             const observer = new MutationObserver(releaseAfterFullRender);
             observer.observe(workspace, {attributes:true,attributeFilter:['data-epc-full-render']});
             observer.observe(app, {attributes:true,attributeFilter:['data-test-script-state']});
-            gate.dispose = () => {app.removeEventListener('input',nativeEditorInput,true);app.removeEventListener('change',nativeChange,true);app.removeEventListener('click',nativeChoiceClick,true);app.removeEventListener('keydown',nativeEditorCommit,true);observer.disconnect();};
+            gate.dispose = () => {app.removeEventListener('input',nativeEditorInput,true);app.removeEventListener('change',nativeChange,true);app.removeEventListener('click',nativeChoiceClick,true);app.removeEventListener('keydown',nativeEditorCommit,true);app.removeEventListener('pointerdown',rememberChoice,true);app.removeEventListener('keydown',rememberChoice,true);observer.disconnect();};
             editGate = gate;
             gates.set(app, gate);
         }

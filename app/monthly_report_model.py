@@ -154,12 +154,31 @@ class ReportTable:
 
 
 @dataclass(frozen=True)
+class TrainingSessionTable(ReportTable):
+    # Identity of each accepted row snapshot. Only explicit session mutations
+    # add this metadata; plain/legacy tables keep their historical fingerprints.
+    # Tokens never become editable/exported columns.
+    row_tokens: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class OrgChartNode:
     key: str
     name: str = ""
     role: str = ""
     reports_to: str = ""
     team: str = ""
+
+
+@dataclass(frozen=True)
+class AssetInstance:
+    """One report occurrence of immutable image bytes, with its own provenance."""
+    key: str
+    asset: str
+    references: tuple[str, ...] = ()
+    # None means an older/manual image has no established source-caption base.
+    # An explicit empty source caption is a real value, not missing metadata.
+    source_caption: str | None = None
 
 
 @dataclass(frozen=True)
@@ -184,6 +203,7 @@ class ResolvedBlock:
     # provenance map is keyed by content-addressed asset reference, not position.
     client_asset_reviews: tuple[str, ...] = ()
     asset_provenance: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    asset_instances: tuple[AssetInstance, ...] = ()
 
     @property
     def fingerprint(self) -> str:
@@ -195,6 +215,13 @@ class ResolvedBlock:
         # map changes the content represented by the original fields.
         value.pop("client_asset_reviews")
         value.pop("asset_provenance")
+        # A new occurrence is a structural edit even when bytes/caption match a
+        # removed image. Bind native callbacks to its incarnation while keeping
+        # unchanged pre-occurrence historical fingerprints exactly compatible.
+        if self.asset_instances:
+            value["asset_instances"] = tuple(item.key for item in self.asset_instances)
+        else:
+            value.pop("asset_instances")
         return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
     @property
@@ -253,6 +280,11 @@ class ReportSource:
     client_page_reviews: tuple[tuple[int, str], ...] = ()
     client_page_exclusions: tuple[tuple[int, str], ...] = ()
     facts: tuple[EvidenceFact, ...] = ()
+    # Explicit source/site correction, bound to the source revision. Empty
+    # preserves all legacy fingerprints; it never implies accepted scope.
+    scope_review: str = ""
+    # Exact native PDF text-block offsets plus span digest; never inferred wraps.
+    pdf_text_blocks: tuple[tuple[int, int, int, str], ...] = ()
 
     @property
     def fingerprint(self) -> str:
@@ -301,7 +333,23 @@ class ReportSnapshot:
 
 
 def _digest(value: object) -> str:
-    return hashlib.sha256(json.dumps(asdict(value), sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    record = asdict(value)
+    # Adding optional scope evidence must not invalidate unchanged historical
+    # source/page/report fingerprints merely because the schema acquired it.
+    if isinstance(value, ReportSource) and not value.scope_review:
+        record.pop("scope_review", None)
+    if isinstance(value, ReportSource) and not value.pdf_text_blocks:
+        record.pop("pdf_text_blocks", None)
+    if isinstance(value, ReportDraft):
+        for block in record["blocks"]:
+            if not block.get("asset_instances"):
+                block.pop("asset_instances", None)
+        for source in record["sources"]:
+            if not source.get("pdf_text_blocks"):
+                source.pop("pdf_text_blocks", None)
+            if not source.get("scope_review"):
+                source.pop("scope_review", None)
+    return hashlib.sha256(json.dumps(record, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
 STOCK_TEXTS = {
@@ -412,6 +460,17 @@ def profile_sections(profile: ReportProfile) -> tuple[SectionSpec, ...]:
                                         included=section.key not in profile.excluded_sections,
                                         blocks=tuple(blocks[k] for k in order))
     return tuple(sections[k] for k in profile.section_order or tuple(sections))
+
+
+def picture_replacement_references(block: ResolvedBlock) -> tuple[str, ...]:
+    """Keep explicit native logo placement when replacing its artwork bytes.
+
+    These DOCX item references identify where the logo belongs, not approval
+    or provenance for the replacement image. Other pictures keep their existing
+    replacement behavior and must not inherit stale source-content links.
+    """
+    return (tuple(ref for ref in block.references if ref.startswith("docx:"))
+            if block.key in ("brand_logo", "client_logo") else ())
 
 
 def layout_blocks() -> tuple[BlockSpec, ...]:

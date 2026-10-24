@@ -206,3 +206,135 @@ test('ordinary Enter, composition, focus, disabled buttons and file pickers do n
     assert.equal(h.gate.blockAll,false);assert.equal(h.sent.length,1);
     h.cleanup();
 });
+
+// #293 (R6-9): a gesture that submits nothing never receives a full-render
+// receipt, so it must not open a hold that would strand every preview.
+const labelClick=choice=>({target:{closest:s=>s==='label'?{querySelector:()=>choice}:null}});
+const choice=(type,{checked=false,disabled=false,ariaDisabled=null}={})=>
+    ({type,checked,disabled,getAttribute:name=>name==='aria-disabled'?ariaDisabled:null});
+
+for(const [name,control] of [
+    ['an already-selected radio',choice('radio',{checked:true})],
+    ['a disabled checkbox',choice('checkbox',{disabled:true})],
+    ['an aria-disabled radio',choice('radio',{ariaDisabled:'true'})]])
+test('clicking the label of '+name+' does not open the preview hold',()=>{
+    const h=pendingEditorWithSibling();h.gate.pending=false;h.gate.scopePair=null;
+    h.dispatch('click',labelClick(control));
+    assert.equal(h.gate.pending,false,'no editor run follows, so no receipt could release it');
+    h.intersections[1].callback([{isIntersecting:true}]);h.fire();
+    assert.equal(h.sent.length,2,'both previews stay able to load');
+    h.cleanup();
+});
+
+for(const control of [choice('radio'),choice('checkbox'),choice('checkbox',{checked:true})])
+test('a real '+control.type+(control.checked?' uncheck':' choice')+' still holds previews until its full render',()=>{
+    const h=pendingEditorWithSibling();h.gate.pending=false;h.gate.scopePair=null;
+    h.dispatch('click',labelClick(control));
+    assert.equal(h.gate.pending,true);assert.equal(h.gate.blockAll,true);
+    h.intersections[1].callback([{isIntersecting:true}]);h.fire();assert.equal(h.sent.length,0);
+    h.workspace.dataset.epcFullRender='after-choice';h.mutations[0].callback();h.fire();
+    assert.equal(h.sent.length,2);h.cleanup();
+});
+
+const fileInput=(files,accept='.pdf,.docx,image/*')=>({type:'file',files,
+    matches:s=>s==='input,textarea,select',closest:()=>null,
+    getAttribute:name=>name==='accept'?accept:null});
+
+for(const [name,files] of [
+    ['a file type the uploader rejects',[{name:'synthetic-notes.txt',type:'text/plain'}]],
+    ['only rejected files',[{name:'synthetic.exe',type:''},{name:'synthetic.txt',type:'text/plain'}]],
+    ['an emptied file picker',[]]])
+test(name+' does not open the preview hold',()=>{
+    const h=pendingEditorWithSibling();h.gate.pending=false;h.gate.scopePair=null;
+    h.dispatch('change',{target:fileInput(files)});
+    assert.equal(h.gate.pending,false);
+    h.intersections[1].callback([{isIntersecting:true}]);h.fire();assert.equal(h.sent.length,2);
+    h.cleanup();
+});
+
+for(const [name,files,accept] of [
+    ['an accepted extension',[{name:'Synthetic Report.DOCX',type:''}],'.pdf,.docx'],
+    ['an accepted media type',[{name:'synthetic-photo',type:'image/png'}],'image/*'],
+    ['an uploader without a type list',[{name:'synthetic.bin',type:''}],null],
+    // The uploader judges each file; one accepted file still starts a run.
+    ['a mix with one accepted file',[{name:'synthetic.exe',type:''},{name:'synthetic.pdf',type:'application/pdf'}],'.pdf']])
+test(name+' still holds previews until the upload run renders',()=>{
+    const h=pendingEditorWithSibling();h.gate.pending=false;h.gate.scopePair=null;
+    h.dispatch('change',{target:fileInput(files,accept)});
+    assert.equal(h.gate.pending,true);
+    h.intersections[1].callback([{isIntersecting:true}]);h.fire();assert.equal(h.sent.length,0);
+    h.workspace.dataset.epcFullRender='after-upload';h.mutations[0].callback();h.fire();
+    assert.equal(h.sent.length,2);h.cleanup();
+});
+
+
+// A radio activated directly is checked before its click is dispatched.
+const radioInput=(checked,group=null)=>{const radio={type:'radio',checked,disabled:false,getAttribute:()=>null,
+    matches:s=>s==='input[type="radio"]'||s==='input,textarea,select'};
+    radio.closest=s=>s==='label'?{querySelector:()=>radio}:s==='[role="radiogroup"]'?group:null;return radio;};
+
+for(const gesture of ['keydown','pointerdown'])
+test('a new radio choice activated directly ('+gesture+') still holds previews',()=>{
+    const h=pendingEditorWithSibling();h.gate.pending=false;h.gate.scopePair=null;
+    const radio=radioInput(false);
+    h.dispatch(gesture,{target:radio,key:' ',isComposing:false});
+    radio.checked=true;  // the browser checks it before dispatching the click
+    h.dispatch('click',{target:radio});
+    assert.equal(h.gate.pending,true);
+    h.intersections[1].callback([{isIntersecting:true}]);h.fire();assert.equal(h.sent.length,0);
+    h.cleanup();
+});
+
+test('Space on the radio that is already selected does not open the hold',()=>{
+    const h=pendingEditorWithSibling();h.gate.pending=false;h.gate.scopePair=null;
+    const radio=radioInput(true);
+    h.dispatch('keydown',{target:radio,key:' ',isComposing:false});
+    h.dispatch('click',{target:radio});
+    assert.equal(h.gate.pending,false);
+    h.intersections[1].callback([{isIntersecting:true}]);h.fire();assert.equal(h.sent.length,2);
+    h.cleanup();
+});
+
+test('an arrow-key selection within a radio group holds previews',()=>{
+    const h=pendingEditorWithSibling();h.gate.pending=false;h.gate.scopePair=null;
+    const members=[];const group={querySelectorAll:()=>members};
+    const old=radioInput(true,group),next=radioInput(false,group);members.push(old,next);
+    h.dispatch('keydown',{target:old,key:'ArrowDown',isComposing:false});
+    old.checked=false;next.checked=true;  // the browser moves the selection
+    h.dispatch('click',{target:next});
+    assert.equal(h.gate.pending,true,'the newly selected radio was recorded unselected at keydown');
+    h.cleanup();
+});
+
+test('a scripted click on the selected radio with no gesture does not open the hold',()=>{
+    const h=pendingEditorWithSibling();h.gate.pending=false;h.gate.scopePair=null;
+    h.dispatch('click',{target:radioInput(true)});
+    assert.equal(h.gate.pending,false,'no change event follows, so no run could release a hold');
+    h.intersections[1].callback([{isIntersecting:true}]);h.fire();assert.equal(h.sent.length,2);
+    h.cleanup();
+});
+
+test('a scripted click that does change a radio is held by its change event',()=>{
+    const h=pendingEditorWithSibling();h.gate.pending=false;h.gate.scopePair=null;
+    const radio=radioInput(true);
+    h.dispatch('click',{target:radio});
+    h.dispatch('change',{target:radio});  // fired in the same task after the activation
+    assert.equal(h.gate.pending,true);
+    h.intersections[1].callback([{isIntersecting:true}]);h.fire();assert.equal(h.sent.length,0);
+    h.cleanup();
+});
+
+
+for(const selected of [true,false])
+test('a label click and its forwarded input click agree ('+(selected?'already selected':'new choice')+')',()=>{
+    const h=pendingEditorWithSibling();h.gate.pending=false;h.gate.scopePair=null;
+    const radio=radioInput(selected),text={closest:s=>s==='label'?{querySelector:()=>radio}:null};
+    h.dispatch('pointerdown',{target:text});
+    h.dispatch('click',{target:text});
+    radio.checked=true;  // the browser then forwards a click to the input
+    h.dispatch('click',{target:radio});
+    assert.equal(h.gate.pending,!selected,selected?'re-clicking the selected option starts no run':'a new choice holds');
+    h.intersections[1].callback([{isIntersecting:true}]);h.fire();
+    assert.equal(h.sent.length,selected?2:0);
+    h.cleanup();
+});

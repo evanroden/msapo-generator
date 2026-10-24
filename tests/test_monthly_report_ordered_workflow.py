@@ -20,9 +20,9 @@ def test_activity_writing_precedes_sources_and_keeps_one_native_editor(monkeypat
     assert len(editors) == 1 and editors[0].id == native_id and editors[0].value == text
     ordered = list(app.main)
     editor_position = ordered.index(editors[0])
-    uploader = next(item for item in app.get("file_uploader") if item.label == "Add activity files (optional)")
+    uploader = next(item for item in app.get("file_uploader") if item.label == "Add source files")
     manager = next(item for item in app.button if item.label == "Done with source files")
-    assert editor_position < ordered.index(uploader) < ordered.index(manager)
+    assert editor_position < ordered.index(manager) < ordered.index(uploader)
     next(item for item in app.button if item.label == "Done with source files").click().run()
     editor = next(item for item in app.text_area if item.label == "Activity summary")
     assert editor.id == native_id and editor.value == text
@@ -107,7 +107,7 @@ def test_native_core_only_design_does_not_gain_optional_sections():
 
 def test_unnamed_visitor_does_not_render_saved_contact_pages(monkeypatch, tmp_path):
     app = monthly(monkeypatch, tmp_path)
-    from app import monthly_report_section_preview_ui, monthly_report_editor
+    from app import monthly_report_section_preview_ui, monthly_report_picture_batch_ui
     calls = []
     image_reviews = []
     linked_sections = []
@@ -116,7 +116,7 @@ def test_unnamed_visitor_does_not_render_saved_contact_pages(monkeypatch, tmp_pa
                         lambda draft, blocks, prefix, field, allowed: linked_sections.append(allowed) or blocks)
     monkeypatch.setattr(monthly_report_section_preview_ui, "render_section_preview",
                         lambda draft, section, *args, **kwargs: calls.append(section))
-    monkeypatch.setattr(monthly_report_editor, "review_client_images",
+    monkeypatch.setattr(monthly_report_picture_batch_ui, "review_picture_batch",
                         lambda draft, *args, **kwargs: image_reviews.append(True) or draft)
     app.run()
     assert not app.exception

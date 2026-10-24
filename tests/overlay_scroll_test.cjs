@@ -8,7 +8,9 @@ function hook(path) {
   const start = source.indexOf('function Jt(e)');
   const end = source.indexOf('function Yt()', start);
   assert.ok(start >= 0 && end > start, 'known native hook boundary');
-  return source.slice(start, end);
+  const latestStart = source.indexOf('function Ze('), latestEnd = source.indexOf('var Qe=', latestStart);
+  assert.ok(latestStart >= 0 && latestEnd > latestStart);
+  return source.slice(latestStart, latestEnd) + source.slice(start, end);
 }
 function mount(source, {disabled = false, fallback = false} = {}) {
   class Node {
@@ -35,9 +37,10 @@ function mount(source, {disabled = false, fallback = false} = {}) {
   let cleanup, closes = 0;
   const onClose = () => closes++;
   const qt = new WeakMap([[input, onClose]]);
-  const native = new Function('u', 'z', 'Node', 'HTMLInputElement', 'HTMLTextAreaElement',
+  const native = new Function('u', 'Xe', 'z', 'Node', 'HTMLInputElement', 'HTMLTextAreaElement',
     'L', 'window', 'document', 'qt', `${source};return Jt;`)(
-    {useEffect: fn => { cleanup = fn(); }}, event => event.target,
+    {useEffect: fn => { cleanup = fn(); }, useRef: value => ({current: value}), useCallback: fn => fn},
+    fn => fn(), event => event.target,
     Node, HTMLInputElement, HTMLTextAreaElement, (parent, child) => parent.contains(child),
     window, document, qt);
   native({triggerRef: {current: input}, isOpen: !disabled, onClose: fallback ? undefined : onClose});
