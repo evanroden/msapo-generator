@@ -106,14 +106,21 @@ def _hash_generation_part(value):
     from dataclasses import asdict, is_dataclass
     from hashlib import sha256
     import json
-    from app.monthly_report_model import ResolvedBlock
+    from app.monthly_report_model import ReportFollowUp, ResolvedBlock
 
     structured = asdict(value) if is_dataclass(value) else value
     if isinstance(value, ResolvedBlock) and not value.asset_instances:
         # Keep the recorded pre-occurrence diagnostic comparable. Real
         # occurrence metadata still changes this digest and the report guards.
         structured.pop("asset_instances")
-    raw = json.dumps(structured, sort_keys=True, separators=(",", ":"), default=str)
+
+    def text(item):
+        # Likewise for follow-ups recorded before their month stamp existed.
+        if isinstance(item, ReportFollowUp) and not item.update_period:
+            return str(item).replace(", update_period=''", "")
+        return str(item)
+
+    raw = json.dumps(structured, sort_keys=True, separators=(",", ":"), default=text)
     return sha256(raw.encode("utf-8")).hexdigest()
 
 
