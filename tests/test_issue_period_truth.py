@@ -403,3 +403,23 @@ def test_an_empty_month_stamp_keeps_saved_fingerprints_and_confirmations():
     assert ReportFollowUp(**{**record['follow_ups'][0], 'references': ()}) == draft.follow_ups[0]
     stamped = replace(draft, follow_ups=(replace(draft.follow_ups[0], update_period=DECEMBER.key),))
     assert stamped.fingerprint != draft.fingerprint
+
+
+@pytest.mark.parametrize('replacement', ['row', 'editor'])
+def test_a_held_confirmation_clicked_after_the_replacement_renders_never_confirms_it(replacement):
+    """A native click can arrive after a replacement row has rendered its own button."""
+    current = new_month_draft(original(), JANUARY)
+    app = editor(current)
+    held = confirm_button(app)
+    if replacement == 'row':
+        current = replace(current, follow_ups=(replace(current.follow_ups[0], update='A different carried update.'),))
+    else:
+        app.session_state['period_issue_rich_text_epoch'] = 'replacement-editor-incarnation'
+    app.session_state['draft'] = current
+    app.run()
+    assert not app.exception
+    confirm_button(app)  # The replacement still needs its own confirmation.
+    held.click().run()
+    assert not app.exception
+    assert app.session_state['draft'] == current
+    assert period_problem(current)

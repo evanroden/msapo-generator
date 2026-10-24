@@ -681,7 +681,9 @@ def _render_issue_period_confirmation(item, draft, p, identity, cycle):
                                            "token": token, "cycle": cycle, "source_labels": {}}
     st.warning(f"This update was carried from {_period_label(item.update_period)}. Confirm it is still "
                f"current for {draft.period.label}, or edit the update or status.")
-    st.button("Confirm update for " + draft.period.label, key=key + "_confirm",
+    # The native ID names this row and report, as Clear/Undo's do: a held
+    # click must not bind to a replacement row's newly registered callback.
+    st.button("Confirm update for " + draft.period.label, key=key + "_confirm_" + identity,
               on_click=_issue_period_confirmed,
               args=(key, item.update_period, identity, token, draft.period.key))
 
