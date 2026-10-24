@@ -17,6 +17,18 @@ def _visibility_probe(paragraph, styles):
         return None
     paragraph, styles = deepcopy(paragraph), deepcopy(styles)
     for root in (paragraph, styles):
+        for props in root.iter(qn('w:rPr')):
+            # Complex-script weight/slant do not establish text visibility.
+            # Some source writers append these benign toggles after size or
+            # underline. Ignore only unique, well-formed toggles in this copy;
+            # preserve the actual typography and the stricter deletion proof.
+            for name in ('bCs', 'iCs'):
+                nodes = props.findall(qn('w:' + name))
+                if (len(nodes) == 1 and not len(nodes[0]) and not (nodes[0].text or '').strip()
+                        and set(nodes[0].attrib) <= {qn('w:val')}
+                        and nodes[0].get(qn('w:val'), '1') in
+                        ('1', 'true', 'on', '0', 'false', 'off')):
+                    props.remove(nodes[0])
         for node in list(root.iter()):
             if (node.tag in {qn('w:' + name) for name in ('vanish', 'webHidden', 'specVanish')}
                     and node.getparent() is not None and node.getparent().tag == qn('w:rPr')):
