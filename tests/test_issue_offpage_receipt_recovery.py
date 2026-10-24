@@ -188,3 +188,52 @@ def test_offpage_unlink_survives_an_interruption_before_the_report_is_assigned()
     assert app.session_state["draft"].follow_ups[0].references == ()
     assert not [key for key in app.session_state.filtered_state
                 if "_remove_missing_" in key and key.endswith("_choice")]
+
+
+def unlink_workspace():
+    rows = tuple(
+        ReportFollowUp(f"issue-{n}", "issue", f"Damper issue {n}", "2026-10",
+                       references=("removed-synthetic-source:1:digest",) if n == 0 else ())
+        for n in range(30)
+    )
+    draft = ReportDraft(synthetic_profiles()[0], ReportPeriod(2026, 10),
+                        "Synthetic operator", (), (), follow_ups=rows, synthetic=True)
+    app = AppTest.from_string(INTERRUPTIBLE, default_timeout=30)
+    app.session_state["draft"] = draft
+    app.run()
+    assert not app.exception
+    return app, draft
+
+
+def unlink_receipts(app):
+    return [key for key in app.session_state.filtered_state
+            if "_remove_missing_" in key and key.endswith("_choice")]
+
+
+def test_unlink_delivered_after_its_issue_left_the_report_never_applies_when_it_returns():
+    app, draft = unlink_workspace()
+    tick = next(w for w in app.checkbox if w.label == "Remove unavailable source links")
+    # Another editor's report without that issue arrives with the tick.
+    app.session_state["draft"] = replace(draft, follow_ups=draft.follow_ups[1:])
+    tick.check().run()
+    assert not app.exception
+    assert not unlink_receipts(app)
+    # The identical issue returns, on a page where its card is not rendered.
+    app.session_state["draft"] = draft
+    next(w for w in app.selectbox if w.label == "Issue page").set_value(2).run()
+    assert not app.exception
+    assert app.session_state["draft"].follow_ups[0].references == draft.follow_ups[0].references
+
+
+def test_a_saved_visible_unlink_cannot_reapply_after_its_links_return():
+    app, draft = unlink_workspace()
+    next(w for w in app.checkbox if w.label == "Remove unavailable source links").check().run()
+    assert not app.exception
+    assert app.session_state["draft"].follow_ups[0].references == ()
+    assert not unlink_receipts(app)
+    # Restoring the earlier report brings the links back; leaving the page
+    # must not silently remove them again.
+    app.session_state["draft"] = draft
+    next(w for w in app.selectbox if w.label == "Issue page").set_value(2).run()
+    assert not app.exception
+    assert app.session_state["draft"].follow_ups[0].references == draft.follow_ups[0].references
