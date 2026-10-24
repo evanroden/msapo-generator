@@ -1619,6 +1619,8 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     divider_word_sections = {item.word_section for position in headings for item in items[position]}
     if section_key and section_key not in set(section_by_pos.values()):
         raise NativeLayoutError(f"The source layout does not contain the {section_key} section.")
+    from app.monthly_report_native_notes import note_proofs, plain_visible, without_trailing_note
+    native_note_proofs = note_proofs(document, original, inspection, section_by_pos, _DEFAULT_TEXT)
     from app.monthly_report_native_table_context import supplied_table_context
     # Preserved placement also includes mixed picture tables edited in place.
     # Only exact current cell values may authorize retaining adjacent context;
@@ -1871,6 +1873,8 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             prototype = OxmlElement("w:p")
         return append_native(sec, prototype, before=before), prototype
 
+    from app.monthly_report_native_narrative_visibility import narrative_visibility_writer
+    visible_narrative = narrative_visibility_writer(document)
     specs = {b.key: (s.key, b) for s in draft.sections for b in s.blocks}
     render_blocks = list(draft.blocks)
     if draft.follow_ups:
@@ -1897,11 +1901,28 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
         if text_value and block.key in table_context:
             text_value = table_context[block.key][1]
         relocated_notes = []
+        duplicate_note_lines = []
         for identity, item in supplied_notes.items():
             kind, note_id = identity.split(":", 1)
             if (source_ref(item) in block.references
                     and any(node.get(qn("w:id")) == note_id for node in body.iter(qn("w:" + kind + "Reference")))):
-                text_value = text_value.replace(item.text.strip(), "", 1).strip()
+                # Current prose is not a bag of note substrings. Delete only
+                # its exact trailing duplicate after proving the same native
+                # occurrence survives in this block and remains visible.
+                proof = native_note_proofs.get(identity)
+                current_refs = [node for node in body.iter(qn("w:" + kind + "Reference"))
+                                if node.get(qn("w:id")) == note_id]
+                anchors = text_prototypes.get(block.key, ())
+                owned_refs = [node for anchor, _ in anchors
+                              for node in anchor.iter(qn("w:" + kind + "Reference"))
+                              if node.get(qn("w:id")) == note_id]
+                original_line = without_trailing_note(block.text, item.text.strip())
+                residual = without_trailing_note(text_value, item.text.strip())
+                if (proof is not None and proof[0] == block.key
+                        and len(current_refs) == 1 and current_refs[0] is proof[1]
+                        and len(owned_refs) == 1 and owned_refs[0] is proof[1]
+                        and original_line is not None and residual is not None):
+                    duplicate_note_lines.append(item.text.strip())
                 if block.key not in preserved_text:
                     references = [node for anchor, _ in text_prototypes.get(block.key, ())
                                   for node in anchor.iter(qn("w:" + kind + "Reference"))
@@ -1927,6 +1948,15 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                 prototype = anchors[0][1]
                 anchors = [(append_native(sec, prototype, before=role_anchor), prototype)]
             anchor, prototype = anchors[0]
+            prototype = visible_narrative(prototype)
+            # Context placement can select a different target than the old
+            # owning paragraph. Prove the actual final narrative prototype,
+            # after that selection, before removing any current note line.
+            if plain_visible(prototype, document.styles.element):
+                for note_line in duplicate_note_lines:
+                    residual = without_trailing_note(text_value, note_line)
+                    if residual is not None:
+                        text_value = residual
             # Current prose is one flow, not one old canvas/page per new line.
             # Unchanged, source-proved text has already bypassed this writer.
             for index, value in enumerate(text_value.splitlines() or [""]):
