@@ -21,6 +21,7 @@ if st.query_params:
     raise ValueError("The work-order fixture accepts no report query parameters.")
 
 from app import monthly_report_active_work as active, monthly_report_library as library, pdf_converter
+from app import monthly_report_recovery_save as recovery_save
 from app.monthly_report_guided import _edit_content, _refresh_period_editors_after_commit
 from app.monthly_report_model import BlockSpec
 from app.monthly_report_native_layout import build_native_docx
@@ -39,8 +40,13 @@ source_hash = sha256(source_path.read_bytes()).hexdigest()
 loaded = active.load(token, initial.profile.contract, initial.profile.key, initial.period)
 if "draft" not in st.session_state:
     st.session_state.draft = loaded.draft if loaded else initial
-    st.session_state.revision = loaded.revision if loaded else 0
-    st.session_state.generation = loaded.generation if loaded else ""
+    st.session_state[PREFIX + "_active_sequence"] = loaded.revision if loaded else 0
+    st.session_state[PREFIX + "_active_generation"] = loaded.generation if loaded else ""
+    st.session_state[PREFIX + "_revision"] = 0
+# As in the guided workspace: a run stopped after its journal write but before
+# recording the new revision is replayed and acknowledged, not a conflict.
+scope = (initial.profile.contract, initial.profile.key, initial.period.key, PREFIX, "")
+recovery_save.acknowledge(st.session_state, PREFIX, scope, token)
 before = st.session_state.draft
 if st.checkbox("Show synthetic table", value=True):
     block = next(block for block in before.blocks if block.key == "work_orders")
@@ -50,11 +56,7 @@ if st.checkbox("Show synthetic table", value=True):
         edited if block.key == "work_orders" else block for block in before.blocks))
 draft = st.session_state.draft
 if loaded is None or draft != loaded.draft:
-    saved = active.save(token, draft, expected_revision=st.session_state.revision,
-                        expected_generation=st.session_state.generation,
-                        base_snapshot_revision=0)
-    st.session_state.revision = saved.revision
-    st.session_state.generation = saved.generation
+    recovery_save.save(st.session_state, PREFIX, scope, token, draft, {})
 _refresh_period_editors_after_commit(PREFIX)
 durable = active.load(token, draft.profile.contract, draft.profile.key, draft.period)
 assert durable is not None
