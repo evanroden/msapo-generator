@@ -281,15 +281,24 @@ def acknowledge_issue_controls(draft, prefix):
         if (choice.startswith(prefix + "_issue_") and "_remove_missing_" in choice
                 and choice.endswith("_choice")):
             unlinks.setdefault(choice.split("_remove_missing_", 1)[0], []).append(choice)
+    options = None
     for item in draft.follow_ups:
-        if item.category == "issue":
-            current = None
-            for choice in unlinks.get(prefix + "_issue_" + item.key, ()):
+        choices = unlinks.pop(prefix + "_issue_" + item.key, ()) if item.category == "issue" else ()
+        if choices:
+            if options is None:
+                options = {source_reference(source, n) for source in draft.sources
+                           for n in range(1, len(source.page_texts) + 1)}
+            missing = tuple(ref for ref in item.references if ref not in options)
+            live = prefix + "_issue_" + item.key + "_remove_missing_" + _digest(missing) + "_choice"
+            identity = _issue_identity(draft, prefix, item)
+            for choice in choices:
                 receipt = st.session_state.get(choice)
-                if isinstance(receipt, dict) and "result" in receipt:
-                    current = current or _issue_identity(draft, prefix, item)
-                    if receipt["result"] == current:
-                        st.session_state.pop(choice, None)
+                # Only a tick still waiting for exactly this saved row may
+                # stay; one already saved, or naming other links or another
+                # row, could otherwise remove links that later return.
+                if not (missing and choice == live and isinstance(receipt, dict)
+                        and receipt.get("identity") == identity):
+                    st.session_state.pop(choice, None)
         key = _issue_pending_key(prefix, item)
         pending = st.session_state.get(key)
         if (item.category == "issue" and isinstance(pending, dict)
@@ -300,6 +309,9 @@ def acknowledge_issue_controls(draft, prefix):
             # A deferred Clear/Undo may change only inclusion after the issue
             # renderer. The authoritative row still contains every entered field.
             _acknowledge_issue_delivery(key, pending)
+    for choices in unlinks.values():
+        for choice in choices:  # Their issue left the authoritative report.
+            st.session_state.pop(choice, None)
 
 
 def _show_issue_delivery(key, pending):
