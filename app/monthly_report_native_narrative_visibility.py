@@ -171,9 +171,21 @@ def _visible_run_properties():
         fonts.set(qn('w:' + name), 'Calibri')
     props.append(fonts)
     for name, value in (('vanish', '0'), ('webHidden', '0'), ('color', '000000'),
-                        ('sz', '22'), ('szCs', '22'), ('specVanish', '0')):
+                        ('sz', '22'), ('szCs', '22'), ('highlight', 'none')):
         node = OxmlElement('w:' + name); node.set(qn('w:val'), value); props.append(node)
+    # A fresh paragraph style still inherits run/document defaults. Neutral
+    # black ink needs an explicit light background, not an inherited black
+    # highlight or shading pattern. Keep these overrides fallback-only.
+    props.append(_visible_background())
+    hidden = OxmlElement('w:specVanish'); hidden.set(qn('w:val'), '0'); props.append(hidden)
     return props
+
+
+def _visible_background():
+    shade = OxmlElement('w:shd')
+    for name, value in (('val', 'clear'), ('color', 'auto'), ('fill', 'FFFFFF')):
+        shade.set(qn('w:' + name), value)
+    return shade
 
 
 def _visible_narrative_prototype(prototype, styles, *, reserved_ids):
@@ -202,6 +214,7 @@ def _visible_narrative_prototype(prototype, styles, *, reserved_ids):
     selected = OxmlElement('w:pStyle'); selected.set(qn('w:val'), identity); props.append(selected)
     numbering = OxmlElement('w:numPr'); props.append(numbering)
     number = OxmlElement('w:numId'); number.set(qn('w:val'), '0'); numbering.append(number)
+    props.append(_visible_background())
     spacing = OxmlElement('w:spacing')
     for key, value in (('before', '0'), ('after', '0'), ('line', '240'), ('lineRule', 'auto')):
         spacing.set(qn('w:' + key), value)

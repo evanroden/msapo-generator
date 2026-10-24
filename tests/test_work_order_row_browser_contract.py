@@ -79,6 +79,42 @@ def test_fixture_uses_real_editor_and_disk_save_with_no_browser(monkeypatch, tmp
     assert reopened.session_state.draft == changed
 
 
+
+def test_fixture_continues_after_a_run_stops_between_its_disk_save_and_acknowledgement(monkeypatch, tmp_path):
+    """WebKit delivers the cell edit and the row action as two runs.
+
+    Streamlit yields to a pending rerun on every session-state access, so the
+    first run can stop after its journal write but before recording it.
+    """
+    import streamlit as st
+    from streamlit.runtime.scriptrunner_utils.exceptions import StopException
+    from app import monthly_report_active_work as active
+    from test_work_order_row_insertion import wire, ABOVE
+    mark(monkeypatch, tmp_path)
+    monkeypatch.setattr(type(st.context), "cookies", property(lambda self: {"epc_device_id": "c" * 32}))
+    app = AppTest.from_file(FIXTURE).run()
+    assert not app.exception
+    initial = active.load("c" * 32, app.session_state.draft.profile.contract,
+                          app.session_state.draft.profile.key, app.session_state.draft.period)
+    real_save, stopped = active.save, []
+
+    def stop_after_write(*args, **kwargs):
+        saved = real_save(*args, **kwargs)
+        if not stopped:
+            stopped.append(saved.revision)
+            raise StopException()  # The session never records this revision.
+        return saved
+
+    monkeypatch.setattr(active, "save", stop_after_write)
+    wire(app, edited={0: {"Work orders": qa.EDIT}})
+    assert stopped == [initial.revision + 1]
+    wire(app, 0, ABOVE)
+    draft = app.session_state.draft
+    durable = active.load("c" * 32, draft.profile.contract, draft.profile.key, draft.period)
+    assert qa.row_state(draft)["rows"] == qa.expected_rows("above")
+    assert durable.draft == draft and durable.generation == initial.generation
+
+
 def receipt():
     state = {"columns": list(qa.COLUMNS), "rows": qa.expected_rows("restored"),
              "reference": "synthetic:source", "fingerprint": "same", "unrelated": "same-other"}
