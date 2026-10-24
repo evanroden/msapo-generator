@@ -49,9 +49,18 @@ def test_expense_fixture_acknowledges_only_completed_matching_draft(monkeypatch)
         def acknowledgment():
             return next(item.proto.body for item in app.get('html')
                         if 'data-qa-expense-draft-ack' in item.proto.body)
+        def matches():
+            from html import unescape
+            import re
+            return json.loads(unescape(re.search(r'data-matches="([^"]+)"', acknowledgment())[1]))
         assert 'data-ready="false"' in acknowledgment()
-        next(toggle for toggle in app.toggle if toggle.label.startswith('Split this receipt')).set_value(True).run()
+        split = next(toggle for toggle in app.toggle if toggle.label.startswith('Split this receipt'))
+        split.set_value(True)
+        assert matches()['split'] is False, 'A client toggle alone is not a completed split draft'
+        app.run()
+        assert matches()['split'] is True and matches()['first_amount'] is False
         amounts = [field for field in app.text_input if field.label == 'Reimbursable amount *']
+        assert len(amounts) == 3, 'Two split lines and the independent second receipt remain editable'
         descriptions = [field for field in app.text_input if field.label == 'Description / business purpose *']
         amounts[0].set_value('13.25')
         amounts[1].set_value('11.25')

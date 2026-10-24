@@ -26,6 +26,7 @@ def test_active_recovery_roundtrip_without_any_completed_snapshot(monkeypatch, t
     assert stored.revision == 1
     loaded = active.load(DEVICE_A, draft.profile.contract, draft.profile.key, draft.period)
     assert loaded.draft == updated and loaded.revision == 1
+    assert stored.updated_at and loaded.updated_at == stored.updated_at
     assert library.load_snapshot(draft.profile.contract, draft.profile.key, draft.period) is None
     assert library.list_profiles(draft.profile.contract) == ()
     assert DEVICE_A not in '\n'.join(str(p) for p in tmp_path.rglob('*'))
@@ -50,6 +51,7 @@ def test_identical_content_does_not_create_new_disk_revision(monkeypatch, tmp_pa
     raw = path.read_bytes()
     again = active.save(DEVICE_A, draft, expected_revision=1, base_snapshot_revision=0)
     assert one.revision == again.revision == 1 and raw == path.read_bytes()
+    assert one.updated_at == again.updated_at
     updated = replace(draft, prepared_by='Corrected Editor')
     new = active.save(DEVICE_A, updated, expected_revision=1, base_snapshot_revision=0)
     assert new.revision == 2 and active.load(DEVICE_A, draft.profile.contract, draft.profile.key, draft.period).draft == updated
@@ -113,3 +115,16 @@ def test_explicit_reset_recovers_a_corrupted_browser_journal(monkeypatch, tmp_pa
         active.load(DEVICE_A, draft.profile.contract, draft.profile.key, draft.period)
     active.discard(DEVICE_A, draft.profile.contract, draft.profile.key, draft.period, expected_revision=0)
     assert active.load(DEVICE_A, draft.profile.contract, draft.profile.key, draft.period) is None
+
+
+def test_legacy_journal_without_a_timestamp_remains_readable(monkeypatch, tmp_path):
+    import json
+    monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path))
+    draft = make_draft()
+    active.save(DEVICE_A, draft, expected_revision=0, base_snapshot_revision=0)
+    path = active._directory(DEVICE_A, draft.profile.contract, draft.profile.key, draft.period) / 'working.json'
+    value = json.loads(path.read_bytes())
+    value.pop('updated_at')
+    path.write_text(json.dumps(value))
+    loaded = active.load(DEVICE_A, draft.profile.contract, draft.profile.key, draft.period)
+    assert loaded.updated_at == '' and loaded.draft == draft

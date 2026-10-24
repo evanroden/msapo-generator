@@ -207,8 +207,12 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
             return
         st.button("Done", key=prefix + "_organization_close_" + key,
                   on_click=st.session_state.__setitem__, args=(active_key, ""))
+        # These editors bypass the shared content editor, so they offer its
+        # explicit Include for a left-out part here (once per part).
+        from app.monthly_report_guided import _include_left_out
         if key == "contact_matrix":
-            changed = edit_contacts(current_draft, spec, block, prefix, assets, field, show_preview=show_preview)
+            changed = _include_left_out(spec, block, prefix)
+            changed = edit_contacts(current_draft, spec, changed, prefix, assets, field, show_preview=show_preview)
             changed = _edit_notes(changed, prefix, field, canonical_before=canonical_before)
             if changed != canonical_before:
                 from app import monthly_report_directory as directory
@@ -223,7 +227,8 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
                                "Your current report edits remain available; review the latest site contacts.")
         elif key == "org_chart":
             if block.org_nodes:
-                changed = edit_org_chart(current_draft, block, prefix, assets, field, show_preview=show_preview)
+                changed = _include_left_out(spec, block, prefix)
+                changed = edit_org_chart(current_draft, changed, prefix, assets, field, show_preview=show_preview)
                 changed = _edit_notes(changed, prefix, field, canonical_before=canonical_before)
             else:
                 changed = edit_content(spec, block)
@@ -235,8 +240,11 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
         else:
             changed = edit_content(spec, block)
         # Some older editors mark their source just by being opened. Opening
-        # and closing an unchanged part must not invalidate its saved review.
-        updated[key] = block if replace(changed, source=block.source) == block else changed
+        # and closing an unchanged part must not invalidate its saved review;
+        # an explicit Include of a left-out part is a real change.
+        from app.monthly_report_guided import included_left_out
+        updated[key] = (changed if included_left_out(prefix, key)
+                        or replace(changed, source=block.source) != block else block)
     for key, title in ORGANIZATION_PARTS:
         if key not in WORKFLOW_KEYS:
             render_part(key, title)

@@ -19,7 +19,7 @@ def photo_caption_identity(draft, block, *, scope):
     """Ordinary edits keep native IDs; replacement/reset/source changes do not."""
     block = refresh_asset_source_context(block, draft.sources)
     value = (scope, block.key, block.asset_hashes, block.references, block.asset_provenance,
-             _source_revisions(draft, block))
+             tuple(item.key for item in block.asset_instances), _source_revisions(draft, block))
     return sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
@@ -59,11 +59,15 @@ def move_photo(draft, block, request, captions, photos_per_page, *, scope, cycle
         raise ValueError(message)
     indexes = list(range(len(block.asset_hashes)))
     indexes[index], indexes[index + offset] = indexes[index + offset], indexes[index]
-    return preserve_asset_reviews(block, replace(
+    updated = replace(
         block, source="Omit" if block.source == "Omit" else "This month",
         asset_hashes=tuple(block.asset_hashes[n] for n in indexes),
         asset_captions=tuple(captions[n] for n in indexes), photos_per_page=photos_per_page,
-    ))
+    )
+    if not block.asset_instances:
+        return preserve_asset_reviews(block, updated)
+    from app.monthly_report_asset_instances import reindex_asset_instances, with_asset_instances
+    return preserve_asset_reviews(block, with_asset_instances(updated, reindex_asset_instances(block, indexes)))
 
 
 def remove_photo(draft, block, request, captions, photos_per_page, *, scope, cycle):
@@ -81,7 +85,11 @@ def remove_photo(draft, block, request, captions, photos_per_page, *, scope, cyc
             or type(photos_per_page) is not int or photos_per_page not in range(1, 7)):
         raise ValueError(message)
     indexes = tuple(n for n in range(len(block.asset_hashes)) if n != index)
-    return preserve_asset_reviews(block, replace(
+    updated = replace(
         block, source='Omit' if block.source == 'Omit' else 'This month',
         asset_hashes=tuple(block.asset_hashes[n] for n in indexes),
-        asset_captions=tuple(captions[n] for n in indexes), photos_per_page=photos_per_page))
+        asset_captions=tuple(captions[n] for n in indexes), photos_per_page=photos_per_page)
+    if not block.asset_instances:
+        return preserve_asset_reviews(block, updated)
+    from app.monthly_report_asset_instances import reindex_asset_instances, with_asset_instances
+    return preserve_asset_reviews(block, with_asset_instances(updated, reindex_asset_instances(block, indexes)))

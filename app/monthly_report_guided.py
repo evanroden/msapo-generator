@@ -407,14 +407,91 @@ def _initial_draft(state, period, prepared):
     return ReportDraft(state.profile, period, prepared, profile_sections(state.profile), tuple(blocks))
 
 
+def _retained_content(block):
+    """True when a block holds anything a report could print."""
+    def filled(rows):
+        return any(str(cell).strip() for row in rows for cell in row if cell is not None)
+    return any((block.text.strip(), filled(block.rows), block.asset_hashes,
+                any(filled(table.rows) for table in block.extra_tables), block.org_nodes, block.ai_paragraphs))
+
+
+def _include_left_out_key(prefix, key):
+    return prefix + "_edit_" + key + "_include_left_out"
+
+
+def included_left_out(prefix, key):
+    """True only in the run where this block's explicit Include was chosen."""
+    return st.session_state.get(_include_left_out_key(prefix, key)) is True
+
+
+def _include_left_out(spec, block, prefix):
+    """Offer a left-out block back to this report exactly as it stands.
+
+    Editing text or rows already includes a block again; attached pages and
+    photo grids may have nothing to edit. Source-linked wording and Water
+    pages keep their own include controls.
+    """
+    if (block.source != "Omit" or block.ai_paragraphs or spec.key == "water_reports"
+            or not _retained_content(block)):
+        return block
+    st.caption("Left out of this report. Its content is kept.")
+    if spec.key == "mbcx_report" and block.text.strip():
+        st.caption("Including these pages also includes the retained page notes below; edit or clear them first if needed.")
+    if st.button("Include in this report", key=_include_left_out_key(prefix, spec.key)):
+        return replace(block, source="This month", reviewed_fingerprint="", client_reviewed_fingerprint="")
+    return block
+
+
 def complete_guided_sections(draft):
     """Keep every standard section, including intentionally blank sections.
 
     Existing order, titles, imported schemas and content remain authoritative.
     Older partial designs gain the missing sections and standard block slots;
     this guided working copy never requires content just to retain a heading.
+    A section the user left out keeps its content left out, so making it
+    present never republishes it: its blocks become Omit (content kept, a
+    pending library replacement cancelled) and its carried issues or
+    proposals are left out of this report; an explicit edit or include
+    restores them. Left out means excluded by the profile, or off although
+    normally on; an appendix that is merely off by default (RFI) is not a
+    user's choice. A profile-excluded section missing from an older draft
+    counts too, through its standard blocks; a confirmed proposal stays
+    confirmed as left out, and legacy issue prose becomes left-out issues.
     """
+    from app.monthly_report_followups import confirmation
     from app.monthly_report_model import default_sections, optional_sections
+    chosen = set(draft.profile.excluded_sections) | {
+        section.key for section in (*default_sections(), *optional_sections()) if section.included}
+    present = {section.key: section for section in draft.sections}
+    standard_specs = {section.key: section for order in ((), draft.profile.section_order)
+                      for section in profile_sections(replace(draft.profile, excluded_sections=(), section_order=order))}
+    sections_out = {section.key for section in draft.sections if not section.included and section.key in chosen}
+    sections_out |= {key for key in draft.profile.excluded_sections if key not in present and key in standard_specs}
+    # Both the slots a legacy section still lists and the standard slots
+    # restored below: a retained block in either stays left out.
+    left_out = {block.key for key in sections_out for section in (present.get(key), standard_specs.get(key))
+                if section is not None for block in section.blocks}
+
+    def leave_out(item):
+        left = replace(item, included=False)
+        confirmed = item.reviewed_fingerprint and item.reviewed_fingerprint == confirmation(item, draft.period)
+        return replace(left, reviewed_fingerprint=confirmation(left, draft.period)) if confirmed else left
+
+    if "issues" in sections_out:
+        # Legacy issue prose becomes issue items first, so each is left out
+        # and can be included again, rather than hidden in an omitted block.
+        from app.monthly_report_issues import canonical_issues
+        try:
+            draft = canonical_issues(draft)
+        except ValueError:
+            pass
+    draft = replace(draft, blocks=tuple(
+        replace(block, source="Omit", pending_library_save=False)
+        if block.key in left_out and block.source != "Omit" and _retained_content(block) else block
+        for block in draft.blocks), follow_ups=tuple(
+        leave_out(item)
+        if item.included and ("issues" if item.category == "issue" else "proposals") in sections_out else item
+        for item in draft.follow_ups))
     native_order = (draft.profile.section_order if draft.profile.template.startswith(
         ("enfra_native:", "enfra_master:")) else ())
     optional_keys = {"rfi", *(section.key for section in optional_sections())}
@@ -519,6 +596,7 @@ def _has_request_rows(block):
 def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit_text=True,
                   manage_saved_pictures=True, inline_photo_intake=False, page_actions_open=True,
                   text_label=None, text_height=140):
+    block = _include_left_out(spec, block, prefix)
     if draft is not None and spec.type == "image_grid":
         from app.monthly_report_visual_ui import edit_photos
         return edit_photos(draft, block, prefix, assets, field, show_preview=False)
@@ -555,6 +633,7 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
     if block.extra_tables and edit_tables and not row_cards:
         from app.monthly_report_editor import _cell_text
         tables = []
+        rows_edited = False
         for n, table in enumerate(block.extra_tables):
             from app.monthly_report_table_review_ui import review_table_headings
             table = review_table_headings(table, key + f"_imported_{n}", field)
@@ -573,6 +652,7 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
                 tables.append(edit_imported_work_order_table(table, key + f"_imported_{n}", scope, prefix))
                 continue
             rows = _grid(grid_key, seed, num_rows="dynamic", hide_index=True)
+            rows_edited = rows_edited or rows != seed
             # Opening a blank imported frame must retain its original
             # structure/reference without pretending its editor slot is data.
             edited_rows = tuple(tuple(_cell_text(r.get(c)) for c in table.columns) for r in rows
@@ -580,6 +660,11 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
             tables.append(table if optional_table and (rows == seed or not edited_rows and not has_values(table.rows))
                           else replace(table, rows=edited_rows))
         if optional_table and tuple(tables) != block.extra_tables:
+            block = replace(block, source="This month", extra_tables=tuple(tables),
+                            reviewed_fingerprint="", client_reviewed_fingerprint="")
+        elif not optional_table and rows_edited and block.source == "Omit" and spec.key != "mbcx_report":
+            # As with its notes, an explicit row edit includes a left-out
+            # imported table again; merely showing it changes nothing.
             block = replace(block, source="This month", extra_tables=tuple(tables),
                             reviewed_fingerprint="", client_reviewed_fingerprint="")
         else:
@@ -705,10 +790,8 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
                         normalized = normalize_report_image(photo.getvalue(), Path(photo.name).suffix)
                         reference = library.asset_reference(normalized.data, normalized.extension)
                         assets[reference] = normalized.data
-                        if reference not in block.asset_hashes:
-                            captions = (*block.asset_captions, *("" for _ in range(len(block.asset_hashes) - len(block.asset_captions))), "")
-                            block = replace(block, source="This month", asset_hashes=(*block.asset_hashes, reference), asset_captions=captions,
-                                            reviewed_fingerprint="", client_reviewed_fingerprint="")
+                        from app.monthly_report_asset_instances import append_human_asset
+                        block = append_human_asset(block, reference)
                     except (ValueError, OSError):
                         st.error("This photo could not be read. Choose another image; the existing section is retained.")
         return block
@@ -737,8 +820,11 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
             reference = library.asset_reference(image.data, image.extension)
             assets[reference] = image.data
             previous = block
-            block = replace(block, source="Replace once", asset_hashes=(reference,), asset_captions=(),
-                            references=picture_replacement_references(block))
+            from app.monthly_report_asset_instances import new_asset_instance, with_asset_instances
+            block = with_asset_instances(replace(block, source="Replace once", asset_hashes=(reference,), asset_captions=(),
+                                                 references=picture_replacement_references(block), client_asset_reviews=(),
+                                                 reviewed_fingerprint="", client_reviewed_fingerprint=""),
+                                         (new_asset_instance(reference),))
             if spec.key in ("brand_logo", "client_logo"):
                 block = replace(block, reviewed_fingerprint="", client_reviewed_fingerprint="",
                                 asset_provenance=((reference, ()),), client_asset_reviews=())
@@ -968,6 +1054,7 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
             continue
         if spec.key in ("contact_matrix", "subcontractor_matrix"):
             from app.monthly_report_visual_ui import edit_contacts
+            block = _include_left_out(spec, block, prefix)
             block = edit_contacts(draft, spec, block, prefix, assets, field, show_preview=False)
         else:
             with writing if writing is not None and spec.key == "activity_summary" else nullcontext():
@@ -1162,19 +1249,15 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     expected_revision=active.revision, expected_generation=active_generation)
                 active = None
                 active_sequence = 0
-            elif st.session_state.get(prefix + "_recover_previous") is not True:
-                st.warning("This browser has unfinished changes based on an older saved version. Nothing has been overwritten.")
-                if st.button("Review my unfinished work", key=prefix + "_restore_active"):
-                    st.session_state[prefix + "_recover_previous"] = True
-                    st.rerun()
-                if st.button("Use the current saved version instead", key=prefix + "_discard_stale_active"):
-                    try:
-                        active_work.discard(browser_token, contract, selected, period,
-                            expected_revision=active.revision, expected_generation=active_generation)
-                        st.rerun()
-                    except (library.LibraryError, OSError):
-                        st.error("Unfinished work could not be discarded. Your saved reports remain available.")
-                return
+            else:
+                from app.monthly_report_active_conflict_ui import render_older_draft_conflict
+                chosen = render_older_draft_conflict(active, snapshot, browser_token, prefix)
+                if chosen is None:
+                    return
+                # The explicit choice was durably kept. Re-enter through the
+                # normal loader so the resolved gate does not remain above the
+                # reopened editor or offer the same action a second time.
+                st.rerun()
         prepared = remembered_report_preparer(browser_token, contract, selected)
         using_import = False
         preserve_saved_defaults = False
@@ -1221,8 +1304,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             library.imported_snapshot_revision(contract, selected) if using_import else snapshot.revision if snapshot else 0)
         st.session_state[prefix + "_active_sequence"] = active_sequence
         st.session_state[prefix + "_active_generation"] = active_generation
+        st.session_state[prefix + "_active_updated_at"] = active.updated_at if active else ""
         if recovered_work:
-            recovery_notice.success("Recovered your unfinished changes from this browser. Completed report history is unchanged.")
+            recovery_notice.success(st.session_state.pop(prefix + "_recovery_choice_notice",
+                "Recovered your unfinished changes from this browser. Completed report history is unchanged."))
     from app import monthly_report_recovery_save as recovery_save
     recovery_scope = (contract, selected, period.key, st.session_state[prefix + "_rich_text_epoch"],
                       st.session_state.get("_monthly_qa_generation", ""))
@@ -1502,6 +1587,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 previous_sequence = st.session_state.get(prefix + "_active_sequence", 0)
                 recovered = recovery_save.save(st.session_state, prefix, recovery_scope,
                                                browser_token, draft, assets)
+                st.session_state[prefix + "_active_updated_at"] = recovered.updated_at
                 save_status.browser_saved(recovered.updated_at)
                 if recovered.revision != previous_sequence or recovery_acknowledged is not None:
                     record_report_preferences(browser_token, contract, selected)
@@ -1510,8 +1596,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             except active_work.ActiveWorkConflict:
                 save_status.failed()
                 st.error("Another tab or a new working copy has newer changes. "
-                                  "These edits are still on this page but were not kept for recovery. "
-                                  "Reload and compare before trying again.")
+                         "These edits are still on this page but were not kept for recovery.")
+                from app.monthly_report_active_conflict_ui import render_browser_conflict
+                render_browser_conflict(draft, browser_token, prefix, assets,
+                                        st.session_state[prefix + "_revision"])
             except (library.LibraryError, OSError):
                 save_status.failed()
                 st.error("Automatic recovery could not keep these edits. "

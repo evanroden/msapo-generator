@@ -313,6 +313,9 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
         st.caption("Supported: PDF, DOCX, XLSX, CSV, EML, MSG, TXT, and image files including HEIC.")
         st.caption("Limits: 50 sources / 180 MB per report, 30 MB per file (DOCX 128 MB), 800,000 extracted characters, 150 embedded PDF/image pages and 20 OCR/vision pages. The file chooser and review process still enforce these limits.")
     key = prefix + "_evidence"
+    decision_key = key + "_page_decision"
+    # Only this render's submitted native action can review an attached page.
+    st.session_state.pop(decision_key, None)
     contents = st.session_state.setdefault(key, ())
     accepted_key = key + "_accepted_batch"
     pending_key = key + "_pending_acceptance"
@@ -465,9 +468,12 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                 st.caption("After each decision, the next unreviewed page opens.")
             keep, omit, advance = st.columns(3)
             action = None
-            if keep.button("Include page", key=p + "_keep_page", disabled=blocked or not preview_ok):
+            occurrence_scope = tuple((block.key, tuple(item.key for item in block.asset_instances))
+                for block in (attached_blocks or {}).values())
+            action_scope = _signature((source.id, source.sha256, page, occurrence_scope))[:16]
+            if keep.button("Include page", key=p + "_keep_page_" + action_scope, disabled=blocked or not preview_ok):
                 action = "keep"
-            if omit.button("Exclude page", key=p + "_omit_page"):
+            if omit.button("Exclude page", key=p + "_omit_page_" + action_scope):
                 action = "omit"
             if advance.button("Next page needing review", key=p + "_next_page", disabled=not any(n != page for n in left)):
                 action = "next"
@@ -475,6 +481,12 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                 chosen = set(source.selected_pages)
                 exclusions = dict(source.client_page_exclusions)
                 if action == "keep":
+                    if page not in dict(source.captions) and page in caption_defaults:
+                        # Include confirms the caption shown, including one
+                        # inherited from the attached page; record it so the
+                        # page review and its attached occurrence agree.
+                        source = replace(source, captions=tuple(sorted({**dict(source.captions), page: caption}.items())))
+                        fingerprint = page_fingerprint(source, page)
                     chosen.add(page)
                     reviews[page] = fingerprint
                     exclusions.pop(page, None)
@@ -485,6 +497,13 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                 source = replace(source, selected_pages=tuple(sorted(chosen)),
                                  client_page_reviews=tuple(sorted(reviews.items())),
                                  client_page_exclusions=tuple(sorted(exclusions.items())))
+                if not retain_accepted and action in {"keep", "omit"}:
+                    st.session_state[decision_key] = {
+                        "source": source.id, "fingerprint": source.fingerprint, "page": page,
+                        "action": action,
+                        "blocks": tuple((block.key, block.fingerprint)
+                                        for block in (attached_blocks or {}).values()),
+                    }
                 remaining = [n for n in _undecided_pages(content, source) if n != page]
                 next_page = next((n for n in remaining if n > page), remaining[0] if remaining else page)
                 by_id[selected] = replace(content, source=source)
@@ -496,7 +515,11 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                     forms[source.id] = source
                 # Apply widget changes before instantiation on the next rerun.
                 st.session_state[p + "_page_action"] = (list(source.selected_pages), next_page)
-                st.rerun()
+                if retain_accepted:
+                    st.rerun()
+                # The guided caller commits delivered fields and these source
+                # changes into one draft before retiring the page controls.
+                st.session_state[prefix + "_period_editor_refresh"] = True
             if not left:
                 st.success("Every page has been checked. Choose its destination below, then add it to the report." if checked else "Every page has been checked and left out. The original file is still saved.")
             st.caption("Leaving a page out keeps the original file. Use the page selector to revisit any page.")
@@ -585,6 +608,10 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
         try:
             with st.spinner("Adding reviewed pages and tables…"):
                 prepared = sources.prepare_pages(profile, contents, tuple(destinations)) if destinations else ()
+            if retain_accepted and accepted and accepted[0] == signature:
+                # Retrying the exact accepted selection keeps its occurrences.
+                # A real remove/re-add clears that batch and allocates new IDs.
+                prepared = tuple(accepted[1].get(block.key, block) for block in prepared)
             blocks.update((block.key, block) for block in prepared)
             if retain_accepted:
                 # The accepted report uses the exact source facts that bound
