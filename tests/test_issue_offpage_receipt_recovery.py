@@ -143,3 +143,48 @@ def test_offpage_unlink_survives_an_edit_delivered_in_the_same_event():
     current = app.session_state["draft"].follow_ups[0]
     assert current.text == "Damper issue 0, re-inspected"
     assert current.references == ()
+
+
+INTERRUPTIBLE = '''
+import inspect
+import streamlit as st
+from app import monthly_report_followups as followups
+from app import monthly_report_issues as issues
+def field(key, value):
+    st.session_state.setdefault(key, value)
+    return key
+kwargs = {"category": "issue"}
+if "defer_commit" in inspect.signature(followups.render_followups).parameters:
+    kwargs["defer_commit"] = True
+result = followups.render_followups(st.session_state["draft"], "offpage", field, **kwargs)
+if st.session_state.pop("interrupt_once", False):
+    st.stop()
+st.session_state["draft"] = result
+issues.acknowledge_issue_controls(result, "offpage")
+'''
+
+
+def test_offpage_unlink_survives_an_interruption_before_the_report_is_assigned():
+    rows = tuple(
+        ReportFollowUp(f"issue-{n}", "issue", f"Damper issue {n}", "2026-10",
+                       references=("removed-synthetic-source:1:digest",) if n == 0 else ())
+        for n in range(30)
+    )
+    draft = ReportDraft(synthetic_profiles()[0], ReportPeriod(2026, 10),
+                        "Synthetic operator", (), (), follow_ups=rows, synthetic=True)
+    app = AppTest.from_string(INTERRUPTIBLE, default_timeout=30)
+    app.session_state["draft"] = draft
+    app.run()
+    assert not app.exception
+    next(w for w in app.checkbox if w.label == "Remove unavailable source links").check()
+    next(w for w in app.selectbox if w.label == "Issue page").set_value(2)
+    app.session_state["interrupt_once"] = True
+    app.run()  # stopped before the authoritative draft is assigned
+    assert not app.exception and app.session_state["draft"] == draft
+    app.run()
+    assert not app.exception
+    assert app.session_state["draft"].follow_ups[0].references == ()
+    app.run()  # acknowledged: nothing left to apply again
+    assert app.session_state["draft"].follow_ups[0].references == ()
+    assert not [key for key in app.session_state.filtered_state
+                if "_remove_missing_" in key and key.endswith("_choice")]

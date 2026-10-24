@@ -275,7 +275,20 @@ def _acknowledge_issue_delivery(key, pending):
 def acknowledge_issue_controls(draft, prefix):
     """Only the authoritative caller may acknowledge a just-rendered draft."""
     import streamlit as st
+    unlinks = {}
+    for choice in tuple(st.session_state):
+        if (choice.startswith(prefix + "_issue_") and "_remove_missing_" in choice
+                and choice.endswith("_choice")):
+            unlinks.setdefault(choice.split("_remove_missing_", 1)[0], []).append(choice)
     for item in draft.follow_ups:
+        if item.category == "issue":
+            current = None
+            for choice in unlinks.get(prefix + "_issue_" + item.key, ()):
+                receipt = st.session_state.get(choice)
+                if isinstance(receipt, dict) and "result" in receipt:
+                    current = current or _issue_identity(draft, prefix, item)
+                    if receipt["result"] == current:
+                        st.session_state.pop(choice, None)
         key = _issue_pending_key(prefix, item)
         pending = st.session_state.get(key)
         if (item.category == "issue" and isinstance(pending, dict)
@@ -585,16 +598,20 @@ def _offpage_unlink(draft, item, prefix, options, displayed=None):
     missing = tuple(ref for ref in item.references if ref not in options)
     key = prefix + "_issue_" + item.key + "_remove_missing_" + _digest(missing)
     receipt = st.session_state.get(key + "_choice")
-    if not (missing and isinstance(receipt, dict) and receipt.get("value") is True
-            and st.session_state.get(key) is True):
+    # The receipt, not the widget mirror: an unmounted checkbox loses its state.
+    if not (missing and isinstance(receipt, dict) and receipt.get("value") is True):
         return item
-    st.session_state.pop(key + "_choice", None)
     accepted = {_issue_identity(draft, prefix, item)}
     if displayed is not None and displayed[1] is not None:
         accepted.add(_issue_identity(displayed[0], prefix, displayed[1]))
     if receipt.get("identity") not in accepted:
+        st.session_state.pop(key + "_choice", None)
         return item  # The row or report changed independently of this choice.
-    return replace(item, references=tuple(ref for ref in item.references if ref in options))
+    revised = replace(item, references=tuple(ref for ref in item.references if ref in options))
+    # Kept until the authoritative draft contains the unlink, as a pending
+    # edit is, so an interruption before that assignment can apply it again.
+    st.session_state[key + "_choice"] = {**receipt, "result": _issue_identity(draft, prefix, revised)}
+    return revised
 
 
 def _render_issue_evidence(item, draft, options, p, field, prefix, cycle):
