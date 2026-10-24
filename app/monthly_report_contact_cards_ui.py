@@ -80,8 +80,10 @@ def parent_visibility(key, *, opening):
         st.session_state[key] = record
         return
     if record.get('active') is not None and record.get('fields') and record.get('tables'):
-        _queue(key, record.get('epoch'), record['tables'], record['active'], record['fields'], 'edit')
-        record = dict(st.session_state.get(key, record))
+        corrected = _capture(record['tables'], record['active'], record['fields'])
+        if corrected != record['tables'] or record.get('pending'):
+            _queue(key, record.get('epoch'), record['tables'], record['active'], record['fields'], 'edit')
+            record = dict(st.session_state.get(key, record))
     record['parent_hidden'] = True
     st.session_state[key] = record
 

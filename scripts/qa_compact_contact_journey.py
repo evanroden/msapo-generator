@@ -189,6 +189,19 @@ def browser_task(browser_type, name):
             assert state['directory']['revision'] == prior['directory']['revision'] + 1
             assert state['directory']['sites'][0]['contacts'][0]['phone'] == phone
             assert state['working']['contacts']['source'] == 'Library'
+        # Deliver a native contact edit and parent Done in the same browser
+        # action. The canonical report/directory must update before any re-entry.
+        contacts.get_by_role('button', name='Edit contact', exact=True).first.click()
+        contacts.get_by_role('textbox', name='Phone', exact=True).fill('202-555-0199')
+        prior = state
+        contacts.get_by_role('button', name='Done', exact=True).click()
+        state = capture('native-unblurred-phone-parent-done', prior, expected_write={
+            'attempts': len(prior['attempts']) + 1,
+            'revision': prior['directory']['revision'] + 1,
+            'phone': '202-555-0199',
+        })
+        assert contacts.get_by_role('textbox', name='Phone', exact=True).count() == 0
+        assert state['directory']['sites'][0]['contacts'][0]['phone'] == '202-555-0199'
         native_events = page.evaluate('window.ENFRAContactObservation.events')
         for label in ('Add contact', 'Edit vendor contact', 'Edit contact',
                       'Retry shared contact correction'):

@@ -111,3 +111,12 @@ def test_outer_close_captures_pending_contact_fields_then_rekeys_on_reopen(monke
     assert state['card']['pending'] == retained
     assert state['card']['field_scope'] != 'native-old'
     assert state['card'].get('parent_hidden') is None
+
+def test_parent_done_with_unchanged_native_fields_does_not_queue_phantom_recovery(monkeypatch):
+    state, tables, fields = setup(monkeypatch)
+    state['phone'] = 'old'
+    state['card'].update(tables=tables, active=(0, 0), fields=fields, field_scope='native-old')
+    cards.parent_visibility('card', opening=False)
+    assert 'pending' not in state['card']
+    cards.parent_visibility('card', opening=True)
+    assert state['card']['field_scope'] != 'native-old'

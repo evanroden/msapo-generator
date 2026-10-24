@@ -248,3 +248,16 @@ def test_parent_reentry_rehydrates_phone_from_committed_directory_without_a_new_
     assert field(app, 'Phone').key != old_key
     assert any(row[3] == '202-555-0174' for row in report(app).rows)
     assert directory.load_directory(profile.contract).revision == saved_revision
+
+def test_parent_done_consumes_unblurred_native_phone_before_save_or_reload(monkeypatch, tmp_path):
+    app, profile, original, before = workspace(monkeypatch, tmp_path)
+    press(app, 'Edit contact')
+    field(app, 'Phone').set_value('delivered-with-done')  # No preliminary .run() / blur.
+    press(app, 'Done')
+    assert not app.text_input and not app.exception and not app.warning
+    assert report(app).rows[0][3] == 'delivered-with-done'
+    latest = directory.load_directory(profile.contract)
+    assert latest.revision == original.revision + 1
+    assert latest.sites[0].contacts[0].phone == 'delivered-with-done'
+    assert not any(ref.startswith('directory-pending-correction:') for ref in report(app).references)
+    assert directory.load_directory(profile.contract, original.revision) == original

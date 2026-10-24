@@ -179,6 +179,14 @@ def _change_part(prefix, active_key, selected):
         editor_key = st.session_state.get(root + "_compact_editor_key")
         if isinstance(editor_key, str) and editor_key.startswith(root + "_compact_"):
             parent_visibility(editor_key, opening=selected == "contact_matrix")
+            if current == "contact_matrix" and selected != "contact_matrix":
+                record = st.session_state.get(editor_key, {})
+                if isinstance(record, dict) and record.get('pending'):
+                    # Keep the parent mounted for one normal render/save path.
+                    # The delivered fields must become canonical before Done hides it.
+                    st.session_state[prefix + "_deferred_contact_switch"] = {
+                        "selected": selected, "editor_key": editor_key}
+                    return
     st.session_state[active_key] = selected
 
 
@@ -218,35 +226,65 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
             st.button(action, key=prefix + "_organization_open_" + key,
                       on_click=_change_part, args=(prefix, active_key, key))
             return
-        st.button("Done", key=prefix + "_organization_close_" + key,
-                  on_click=_change_part, args=(prefix, active_key, ""))
-        # These editors bypass the shared content editor, so they offer its
-        # explicit Include for a left-out part here (once per part).
-        from app.monthly_report_guided import _include_left_out
-        if key == "contact_matrix":
-            changed = _include_left_out(spec, block, prefix)
-            changed = edit_contacts(current_draft, spec, changed, prefix, assets, field, show_preview=show_preview)
-            changed = _edit_notes(changed, prefix, field, canonical_before=canonical_before)
-        elif key == "org_chart":
-            if block.org_nodes:
+        def render_editor():
+            st.button("Done", key=prefix + "_organization_close_" + key,
+                      on_click=_change_part, args=(prefix, active_key, ""))
+            # The specialized editors retain the explicit Include of a left-out part.
+            from app.monthly_report_guided import _include_left_out
+            if key == "contact_matrix":
                 changed = _include_left_out(spec, block, prefix)
-                changed = edit_org_chart(current_draft, changed, prefix, assets, field, show_preview=show_preview)
-                changed = _edit_notes(changed, prefix, field, canonical_before=canonical_before)
-            else:
+                changed = edit_contacts(current_draft, spec, changed, prefix, assets, field, show_preview=show_preview)
+                return _edit_notes(changed, prefix, field, canonical_before=canonical_before)
+            if key == "org_chart":
+                if block.org_nodes:
+                    changed = _include_left_out(spec, block, prefix)
+                    changed = edit_org_chart(current_draft, changed, prefix, assets, field, show_preview=show_preview)
+                    return _edit_notes(changed, prefix, field, canonical_before=canonical_before)
                 changed = edit_content(spec, block)
                 with st.expander("Build an editable team chart (optional)"):
                     changed = edit_org_chart(
                         replace(current_draft, blocks=tuple(changed if b.key == key else b for b in current_draft.blocks)),
                         changed, prefix, assets, field, show_preview=show_preview,
                     )
+                return changed
+            return edit_content(spec, block)
+
+        switch_key = prefix + "_deferred_contact_switch"
+        settling = key == "contact_matrix" and isinstance(st.session_state.get(switch_key), dict)
+        if settling:
+            close_slot = st.empty()
+            with close_slot.container():
+                changed = render_editor()
         else:
-            changed = edit_content(spec, block)
-        # Some older editors mark their source just by being opened. Opening
-        # and closing an unchanged part must not invalidate its saved review;
-        # an explicit Include of a left-out part is a real change.
+            changed = render_editor()
+        # Opening and closing an unchanged part must not invalidate its saved
+        # review; an explicit Include of a left-out part is a real change.
         from app.monthly_report_guided import included_left_out
         updated[key] = (changed if included_left_out(prefix, key)
                         or replace(changed, source=block.source) != block else block)
+        if settling:
+            request = st.session_state[switch_key]
+            from app.monthly_report_visual_ui import _contact_widget_prefix
+            root = _contact_widget_prefix(prefix, "contact_matrix")
+            current_key = st.session_state.get(root + "_compact_editor_key")
+            receipts = (st.session_state.get(request['editor_key']),
+                        st.session_state.get(current_key) if isinstance(current_key, str) else None)
+            unresolved = any(isinstance(receipt, dict) and receipt.get('pending')
+                             for receipt in receipts)
+            unresolved = unresolved or any(ref.startswith('directory-pending-correction:')
+                                           for ref in changed.references)
+            st.session_state.pop(switch_key, None)
+            if unresolved:
+                # Leave the recovery editor visible; it must not become an
+                # invisible receipt whose user has already clicked Done.
+                st.warning("The contact change needs review before this editor can close.")
+            else:
+                # The normal render path above has now consumed the delivered
+                # edit and returned the canonical block to the workflow saver.
+                st.session_state[active_key] = request['selected']
+                close_slot.empty()
+                st.button("Edit contacts", key=prefix + "_organization_open_" + key,
+                          on_click=_change_part, args=(prefix, active_key, key))
     for key, title in ORGANIZATION_PARTS:
         if key not in WORKFLOW_KEYS:
             render_part(key, title)
