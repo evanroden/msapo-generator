@@ -52,6 +52,8 @@ def _select_fixture():
     editor_prefix = "report_guided_" + _signature((
         fixture.CONTRACT, fixture.profile().key, fixture.PERIOD.key))
     st.session_state[editor_prefix + "_prepared"] = fixture.ACTOR
+    # This is a non-widget attribution seed; the input owns its native default.
+    st.session_state.pop(editor_prefix + "_prepared_editor", None)
 
 
 def _working_report(saved):

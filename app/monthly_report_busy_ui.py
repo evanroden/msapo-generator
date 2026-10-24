@@ -8,7 +8,7 @@ from app.monthly_report_render_jobs import RenderBusy
 
 def show_busy_retry():
     from app.monthly_report_ui import preserve_report_draft_state
-    preserve_report_draft_state()
+    preserve_report_draft_state(finalize=True)
     st.info("Another report is being prepared. Your edits are still here. Retry shortly.")
     st.button("Retry", key="report_capacity_retry")
 
