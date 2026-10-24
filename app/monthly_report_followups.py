@@ -1,13 +1,13 @@
 """Explicit carry-forward decisions; a new reporting month never resolves work."""
 
 from collections import Counter
-from dataclasses import asdict, replace
+from dataclasses import replace
 import hashlib
 import json
 import re
 from uuid import uuid4
 
-from app.monthly_report_model import ReportFollowUp, STOCK_TEXTS
+from app.monthly_report_model import ReportFollowUp, STOCK_TEXTS, followup_record
 from app.monthly_report_sources import source_reference
 from app.monthly_report_content_policy import table_price_columns
 
@@ -108,10 +108,10 @@ def unique_followup_keys(draft):
     for position, item in enumerate(draft.follow_ups):
         if item.key in seen:
             salt = 0
-            key = "follow-" + _digest(("saved-collision", item.key, position, asdict(item), salt))[:20]
+            key = "follow-" + _digest(("saved-collision", item.key, position, followup_record(item), salt))[:20]
             while key in reserved:
                 salt += 1
-                key = "follow-" + _digest(("saved-collision", item.key, position, asdict(item), salt))[:20]
+                key = "follow-" + _digest(("saved-collision", item.key, position, followup_record(item), salt))[:20]
             reserved.add(key)
             item = replace(item, key=key, reviewed_fingerprint="")
         seen.add(item.key)
@@ -509,7 +509,7 @@ def seed_followups(draft):
         replace(
             normalize_proposal(item),
             carried_from=(item.carried_from or draft.period.key) if item.category == "issue" else draft.period.key,
-            included=True, reviewed_fingerprint=""
+            included=True, reviewed_fingerprint="", update_period=_carried_update_period(item, draft.period)
         )
         for item in draft.follow_ups
         if (item.category == "issue" and item.text.strip()
@@ -579,9 +579,30 @@ def seed_followups(draft):
 
 
 def confirmation(item, period):
-    values = asdict(item)
+    values = followup_record(item)
     values.pop("reviewed_fingerprint")
     return _digest((values, period.key))
+
+
+def needs_issue_period_confirmation(item, period):
+    """An unedited update or status carried from an earlier month.
+
+    A direct edit to the update stamps it with the report month, so only
+    carried wording waits for a current-period confirmation.
+    """
+    return (item.category == "issue" and item.included
+            and (item.status == "updated" or bool(item.update.strip()))
+            and item.update_period not in ("", period.key)
+            and item.reviewed_fingerprint != confirmation(item, period))
+
+
+def _carried_update_period(item, period):
+    """The month whose review last stated this issue's update or status."""
+    if item.category != "issue" or not (item.status == "updated" or item.update.strip()):
+        return ""
+    if item.update_period == period.key or item.reviewed_fingerprint == confirmation(item, period):
+        return period.key
+    return item.update_period or period.key
 
 
 def problems(item, draft):
@@ -610,6 +631,10 @@ def problems(item, draft):
     if item.category == "proposal" and item.reviewed_fingerprint != confirmation(item, draft.period):
         messages.append(
             "Confirm this proposal's decision and whether it belongs in this report."
+        )
+    if needs_issue_period_confirmation(item, draft.period):
+        messages.append(
+            f"Confirm this update is current for {draft.period.label}, or correct the update and status."
         )
     return tuple(messages)
 

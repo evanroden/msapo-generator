@@ -91,6 +91,8 @@ def test_edit_survives_section_switch_without_repeated_issue_confirmation():
         "A vibration survey is scheduled."
     ).run()
     original = app.session_state["draft"].follow_ups[0]
+    # The direct edit is October's review (#281): no separate confirmation.
+    assert not problems(original, app.session_state["draft"])
     app.radio[0].set_value("proposal").run()
     app.radio[0].set_value("issue").run()
     assert app.session_state["draft"].follow_ups[0] == original
@@ -99,7 +101,9 @@ def test_edit_survives_section_switch_without_repeated_issue_confirmation():
     app.run()
     draft = app.session_state["draft"]
     assert draft.follow_ups[0].reviewed_fingerprint != confirmation(draft.follow_ups[0], draft.period)
-    assert not problems(draft.follow_ups[0], draft)
+    # October's stamp does not make the same wording November's update.
+    assert any("current for November 2026" in message for message in problems(draft.follow_ups[0], draft))
+    assert button(app, "Confirm update for November 2026")
 
 
 def test_missing_source_cannot_be_silently_dropped_by_opening_editor():

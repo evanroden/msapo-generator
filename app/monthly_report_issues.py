@@ -9,8 +9,9 @@ from app.monthly_report_followups import (
     ISSUE_STATUSES, _digest, _followup_text_items, _no_equipment_issues,
     _status_label, problems, unique_followup_keys, followup_limit_message,
     _visible_followup_keys, MAX_INCLUDED_FOLLOWUPS, FOLLOWUP_PAGE_SIZE, output_followups,
+    needs_issue_period_confirmation,
 )
-from app.monthly_report_model import ReportFollowUp
+from app.monthly_report_model import ReportFollowUp, ReportPeriod
 from app.monthly_report_sources import source_reference
 
 _REMOVED_STATEMENT = "issue-statement-removed:"
@@ -260,7 +261,7 @@ def _issue_pending_key(prefix, item):
 
 def _issue_fields(item, options):
     return (("text", item.text), ("status", item.status), ("update", item.update),
-            ("note", item.evidence_note),
+            ("note", item.evidence_note), ("period", item.update_period),
             ("sources_" + _digest(list(options)), [ref for ref in item.references if ref in options]))
 
 
@@ -389,7 +390,7 @@ def _recover_rejected_issue_field_deliveries(prefix, captured):
             continue
         control = key.removesuffix("_change")
         suffix = control.rsplit("_", 1)[-1]
-        if suffix not in names:
+        if suffix not in names and suffix != "period":
             continue
         receipt = st.session_state.get(key)
         if not isinstance(receipt, dict):
@@ -399,7 +400,8 @@ def _recover_rejected_issue_field_deliveries(prefix, captured):
                      and receipt["token"] == registration.get("token")
                      and isinstance(receipt.get("value"), str)
                      and receipt["value"] == st.session_state.get(control))
-        if delivered:
+        if delivered and suffix in names:
+            # A rejected period confirmation holds no entered text to copy.
             recovery_key = recovery_prefix + _digest((key, receipt.get("identity"), receipt["value"]))
             st.session_state.setdefault(recovery_key, {
                 "field": names[suffix], "value": receipt["value"],
@@ -498,8 +500,15 @@ def _capture_issue_controls(draft, prefix, options):
                 if not isinstance(value, list) or any(ref not in options for ref in value):
                     continue
                 changes["references"] = (*value, *(ref for ref in item.references if ref not in options))
+            elif suffix == "period":
+                if value != draft.period.key:
+                    continue  # A confirmation names this report's month only.
+                changes["update_period"] = value
             elif isinstance(value, str):
                 changes["evidence_note" if suffix == "note" else suffix] = value
+                if suffix == "update":
+                    # A direct edit is this month's review of the update.
+                    changes["update_period"] = draft.period.key
             else:
                 continue
             receipts[control + "_change"] = receipt
@@ -634,6 +643,51 @@ def _offpage_unlink(draft, item, prefix, options, displayed=None):
     return revised
 
 
+def _issue_period_confirmed(key, before, identity, token, period_key):
+    import streamlit as st
+    registration = st.session_state.get(key + "_delivery", {})
+    if registration.get("token") != token:
+        return  # A retired callback cannot confirm a later row or report.
+    st.session_state[key] = period_key
+    st.session_state[key + "_change"] = {
+        "identity": registration.get("identity", identity), "token": token,
+        "before": before, "value": period_key, "source_labels": {},
+    }
+
+
+def _period_label(key):
+    try:
+        year, month = (int(part) for part in key.split("-"))
+        return ReportPeriod(year, month).label
+    except ValueError:
+        return key
+
+
+def _render_issue_period_confirmation(item, draft, p, identity, cycle):
+    """One native action states that a carried update is current this month.
+
+    The delivered confirmation is captured, journaled and acknowledged like
+    the card's other fields, so it applies once, to the row it was made on.
+    """
+    import streamlit as st
+    if not needs_issue_period_confirmation(item, draft.period):
+        return
+    key = p + "_period"
+    # Capture has already applied a valid confirmation, so any left is spent.
+    st.session_state.pop(key + "_change", None)
+    st.session_state[key] = item.update_period
+    token = uuid4().hex
+    st.session_state[key + "_delivery"] = {"identity": identity, "before": item.update_period,
+                                           "token": token, "cycle": cycle, "source_labels": {}}
+    st.warning(f"This update was carried from {_period_label(item.update_period)}. Confirm it is still "
+               f"current for {draft.period.label}, or edit the update or status.")
+    # The native ID names this row and report, as Clear/Undo's do: a held
+    # click must not bind to a replacement row's newly registered callback.
+    st.button("Confirm update for " + draft.period.label, key=key + "_confirm_" + identity,
+              on_click=_issue_period_confirmed,
+              args=(key, item.update_period, identity, token, draft.period.key))
+
+
 def _render_issue_evidence(item, draft, options, p, field, prefix, cycle):
     import streamlit as st
     identity = _issue_identity(draft, prefix, item)
@@ -643,6 +697,7 @@ def _render_issue_evidence(item, draft, options, p, field, prefix, cycle):
     if item.status in ("updated", "resolved") or note:
         note = _issue_control(st.text_area, "Evidence or explanation for the status",
                               p + "_note", note, field, identity=identity, cycle=cycle, height=90, max_chars=4000)
+    _render_issue_period_confirmation(item, draft, p, identity, cycle)
     if options or references:
         selected = _issue_control(st.multiselect, "Supporting source pages",
             p + "_sources_" + _digest(list(options)),
