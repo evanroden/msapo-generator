@@ -252,19 +252,10 @@ def _render_rejected_followup_receipt(key, record):
         st.code(record["field"] + ": " + detail, language=None, wrap_lines=True)
 
 
-def _retire_rejected_followup_receipts(draft, prefix, item, options, protected=None,
-                                       receipt_keys=None):
-    """Retire off-page receipts that no longer match their exact input baseline.
-
-    A rejected delivered value remains copyable, but never becomes a later
-    authorization if a previous row identity or source selection returns.
-    """
-    import streamlit as st
-    protected = protected or {}
-    p = prefix + "_follow_" + item.key + "_compact"
-    identity = _followup_choice_identity(draft, prefix, item)
+def _followup_baselines(p, item, options):
+    """Each control's receipt key and the row value its callback must name."""
     missing = tuple(ref for ref in item.references if ref not in options)
-    expected = {
+    return {
         p + "_text_change": item.text,
         p + "_status_change": item.status,
         p + "_update_change": item.update,
@@ -274,6 +265,26 @@ def _retire_rejected_followup_receipts(draft, prefix, item, options, protected=N
         p + "_excluded_choice": not item.included,
         p + "_remove_missing_" + _digest(missing) + "_choice": False,
     }
+
+
+def _retire_rejected_followup_receipts(draft, prefix, item, options, protected=None,
+                                       receipt_keys=None, original=None):
+    """Retire off-page receipts that no longer match their exact input baseline.
+
+    A rejected delivered value remains copyable, but never becomes a later
+    authorization if a previous row identity or source selection returns.
+    While a pending edit is reapplied, a control that had not re-registered
+    still names the ``original`` row; that exact baseline stays acceptable.
+    """
+    import streamlit as st
+    protected = protected or {}
+    p = prefix + "_follow_" + item.key + "_compact"
+    identity = _followup_choice_identity(draft, prefix, item)
+    expected = _followup_baselines(p, item, options)
+    baselines = [(identity, expected)]
+    if original is not None:
+        baselines.append((_followup_choice_identity(draft, prefix, original),
+                          _followup_baselines(p, original, options)))
     for key in (tuple(st.session_state) if receipt_keys is None else receipt_keys):
         if not key.startswith(p + "_") or not key.endswith(("_change", "_choice")):
             continue
@@ -287,8 +298,9 @@ def _retire_rejected_followup_receipts(draft, prefix, item, options, protected=N
             registration = st.session_state.get(control + "_delivery", {})
             delivered = (delivered and isinstance(receipt.get("token"), str)
                          and receipt["token"] == registration.get("token"))
-        if (key in expected and receipt.get("identity") == identity
-                and receipt.get("before") == expected[key] and delivered):
+        if delivered and any(key in fields and receipt.get("identity") == accepted
+                             and receipt.get("before") == fields[key]
+                             for accepted, fields in baselines):
             continue
         # An acknowledged input needs no additional recovery copy.
         if delivered and receipt.get("result") != identity:
@@ -392,7 +404,7 @@ def _capture_followup_controls(draft, prefix, category, options):
         pending = st.session_state.get(pending_key)
         current_identity = _followup_choice_identity(draft, prefix, item)
         baseline = item
-        receipts, unlinked = {}, ()
+        receipts, unlinked, reapplied = {}, (), False
         if isinstance(pending, dict):
             if not pending.get("conflicted") and pending.get("result") == current_identity:
                 _acknowledge_followup_record(pending_key, pending)
@@ -402,6 +414,7 @@ def _capture_followup_controls(draft, prefix, category, options):
                 item = pending["after"]
                 receipts = dict(pending.get("receipts", {}))
                 unlinked = pending.get("unlinked", ())
+                reapplied = True
             else:
                 pending = {**pending, "conflicted": True}
                 st.session_state[pending_key] = pending
@@ -410,15 +423,27 @@ def _capture_followup_controls(draft, prefix, category, options):
                 _render_followup_recovery(pending_key + "_current_conflict", pending)
         p = prefix + "_follow_" + item.key + "_compact"
         _retire_rejected_followup_receipts(
-            draft, prefix, item, options, receipts, receipt_index.get(p, ()))
+            draft, prefix, item, options, receipts, receipt_index.get(p, ()),
+            original=baseline if reapplied else None)
         changes = {}
         identity = _followup_choice_identity(draft, prefix, item)
+        original_identity = _followup_choice_identity(draft, prefix, baseline)
+        original_fields = _followup_baselines(p, baseline, options)
+
+        def names_row(receipt_key, receipt, current):
+            # If interruption preceded this control's registration, its live
+            # callback still names the original row. Accept that exact
+            # baseline too, as issue capture does, never a changed row.
+            return (receipt.get("identity") == identity and receipt.get("before") == current
+                    or (reapplied and receipt_key in original_fields
+                        and receipt.get("identity") == original_identity
+                        and receipt.get("before") == original_fields[receipt_key]))
+
         for attr, suffix in (("text", "text"), ("status", "status"),
                              ("update", "update"), ("evidence_note", "note")):
             key, current = p + "_" + suffix, getattr(item, attr)
             receipt = st.session_state.get(key + "_change")
-            if (isinstance(receipt, dict) and receipt.get("identity") == identity
-                    and receipt.get("before") == current
+            if (isinstance(receipt, dict) and names_row(key + "_change", receipt, current)
                     and isinstance(receipt.get("value"), str)
                     and receipt["value"] == st.session_state.get(key)):
                 changes[attr] = receipt["value"]
@@ -426,8 +451,7 @@ def _capture_followup_controls(draft, prefix, category, options):
         key = p + "_sources_" + _digest(list(options))
         receipt = st.session_state.get(key + "_change")
         selected = [ref for ref in item.references if ref in options]
-        if (isinstance(receipt, dict) and receipt.get("identity") == identity
-                and receipt.get("before") == selected
+        if (isinstance(receipt, dict) and names_row(key + "_change", receipt, selected)
                 and isinstance(receipt.get("value"), list)
                 and receipt["value"] == st.session_state.get(key)
                 and all(ref in options for ref in receipt["value"])):
@@ -437,8 +461,7 @@ def _capture_followup_controls(draft, prefix, category, options):
         for key, before, choice in ((p + "_excluded", not item.included, "exclude"),
                                     (p + "_remove_missing_" + _digest(missing), False, "unlink")):
             receipt = st.session_state.get(key + "_choice")
-            if (isinstance(receipt, dict) and receipt.get("identity") == identity
-                    and receipt.get("before") == before
+            if (isinstance(receipt, dict) and names_row(key + "_choice", receipt, before)
                     and type(receipt.get("value")) is bool
                     and receipt["value"] == st.session_state.get(key)):
                 if choice == "exclude":
@@ -495,7 +518,7 @@ def seed_followups(draft):
     ]
     keys = {item.key for item in result}
     represented = Counter((item.category, item.text.strip()) for item in result)
-    occurrences = {}
+    occurrences, candidates = {}, []
     specs = {b.key: b for s in draft.sections for b in s.blocks}
     for block in draft.blocks:
         if block.key not in ("equipment_issues", "proposals") or block.source == "Omit":
@@ -533,26 +556,23 @@ def seed_followups(draft):
             occurrences[identity] = occurrences.get(identity, 0) + 1
             occurrence = occurrences[identity]
             key = "follow-" + _digest(identity if occurrence == 1 else (*identity, "occurrence", occurrence))[:20]
-            if not text:
-                continue
-            represented_identity = (category, text.strip())
-            # Existing source-derived keys also count as represented rows.
-            # Do not let one already-carried occurrence swallow its twin.
-            already_carried = represented[represented_identity] > 0
-            if already_carried:
-                represented[represented_identity] -= 1
-            if key in keys or already_carried:
-                continue
-            keys.add(key)
-            result.append(
-                ReportFollowUp(
-                    key,
-                    category,
-                    text,
-                    draft.period.key,
-                    status=status,
-                )
-            )
+            if text:
+                candidates.append((key, category, text, status))
+    # A source row whose key is already saved represents itself first. Only
+    # the remaining rows may be represented by an equal saved text whose key
+    # was repaired, so one saved occurrence never stands for two source rows.
+    for key, category, text, _ in candidates:
+        if key in keys:
+            represented[(category, text.strip())] -= 1
+    for key, category, text, status in candidates:
+        identity = (category, text.strip())
+        if key in keys:
+            continue
+        if represented[identity] > 0:
+            represented[identity] -= 1
+            continue
+        keys.add(key)
+        result.append(ReportFollowUp(key, category, text, draft.period.key, status=status))
     return tuple(result)
 
 

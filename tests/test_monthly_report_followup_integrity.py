@@ -67,13 +67,15 @@ def test_colliding_saved_proposals_do_not_reseed_legacy_table_rows(identical_row
     assert tuple(item.key for item in again.follow_ups) == tuple(item.key for item in current.follow_ups)
 
 
-def test_saved_one_of_two_identical_source_rows_does_not_hide_missing_twin():
+@pytest.mark.parametrize("saved", (0, 1))
+def test_saved_one_of_two_identical_source_rows_does_not_hide_missing_twin(saved):
     prior = fixture(proposals=True)
     block = prior.blocks[-1]
     prior = replace(prior, blocks=(*prior.blocks[:-1],
                                   replace(block, rows=(block.rows[0], block.rows[0]))))
     original = seed_followups(prior)
-    current = new_month_draft(replace(prior, follow_ups=(original[0],)), ReportPeriod(2026, 12))
+    # Either saved occurrence represents only itself, never its twin as well.
+    current = new_month_draft(replace(prior, follow_ups=(original[saved],)), ReportPeriod(2026, 12))
     assert len(current.follow_ups) == 2
     assert len({item.key for item in current.follow_ups}) == 2
     assert all(item.text == original[0].text for item in current.follow_ups)
