@@ -291,3 +291,45 @@ def test_new_source_delivery_conflicting_before_first_capture_remains_recoverabl
     assert not app.exception
     assert any('Earlier source selection' in w.label for w in app.expander)
     assert any('synthetic-evidence.txt · page 1' in w.proto.code_text for w in app.get('code'))
+
+
+@pytest.mark.parametrize("kind", ["source", "text", "status"])
+def test_removed_pending_issue_retains_recovery_without_raw_aba_replay(kind):
+    """A missing pending row must retire matching raw callbacks before return."""
+    app, source = workspace()
+    before = app.session_state["draft"]
+    app.session_state["interrupt_once"] = True
+    if kind == "source":
+        value = [source_reference(source, 1)]
+        control = picker(app)
+        marker = "synthetic-evidence.txt · page 1"
+    elif kind == "text":
+        value = "Interrupted issue description, before removal."
+        control = next(w for w in app.text_area if w.label == "Issue description")
+        marker = value
+    else:
+        value = "resolved"
+        control = next(w for w in app.selectbox if w.label == "Issue status")
+        marker = "Resolved"
+    control.set_value(value).run()
+    assert not app.exception
+    receipt_key = control.key + "_change"
+    assert receipt_key in app.session_state.filtered_state
+    pending_key = "delivery_pending_issue_delivery_row-one"
+    assert pending_key in app.session_state.filtered_state
+
+    removed = replace(before, follow_ups=())
+    app.session_state["draft"] = removed
+    app.run()
+    assert not app.exception and app.session_state["draft"].follow_ups == ()
+    assert receipt_key not in app.session_state.filtered_state
+    assert control.key + "_delivery" not in app.session_state.filtered_state
+    assert any(marker in w.proto.code_text for w in app.get("code"))
+    assert app.session_state.filtered_state[pending_key]["conflicted"]
+
+    # Returning to the exact old row and source set is not a new edit.
+    app.session_state["draft"] = before
+    app.run()
+    assert not app.exception
+    assert app.session_state["draft"].follow_ups == before.follow_ups
+    assert any(marker in w.proto.code_text for w in app.get("code"))
