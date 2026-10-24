@@ -305,6 +305,7 @@ export default function(component) {
         const navStyle = nav ? getComputedStyle(nav) : null;
         css('nav-top',ownsScroll ? 0 : Math.max(sample.visual?.y||0,sample.scrollport.y,sample.chromeBottom));
         css('nav-left',sample.app.x); css('nav-width',sample.app.width);
+        css('nav-space',nav ? nav.getBoundingClientRect().height : 0);
         const navTop = navStyle?.position === 'sticky' ? parseFloat(navStyle.top)||0 : 0;
         const top = Math.max(sample.visual?.y || 0, sample.scrollport.y, sample.chromeBottom, navTop) + (navigation?.height() || (nav ? nav.getBoundingClientRect().height : 0)) + 12;
         css('preview-top',top);

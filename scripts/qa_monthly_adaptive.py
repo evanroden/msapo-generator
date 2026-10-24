@@ -391,7 +391,14 @@ def exercise_natural_review_navigation(page, browser, field, layout):
     expect(selector).to_be_in_viewport()
     expect(selector).to_have_value("report_review")
     capture(page, browser, "selector-natural-review-" + layout)
-    scroll_pair(page, ACTIVITY, inset=130)
+    # Return Activity to the selector's own reading line, as the tabletop
+    # check does; a fixed inset ignores the selector's measured height.
+    reading_line = page.evaluate("""() => {
+      const header=document.querySelector('[data-testid="stHeader"]');
+      const nav=document.querySelector('.epc-section-navigation');
+      return Math.max(0, header?.getBoundingClientRect().bottom || 0) + nav.getBoundingClientRect().height;
+    }""")
+    scroll_pair(page, ACTIVITY, inset=max(0, reading_line - 4))
     page.wait_for_function("document.querySelector('.epc-workspace')?.dataset.epcReviewOpen==='false'")
     expect(selector).to_be_in_viewport()
     expect(selector).to_have_value("monthly_activity")

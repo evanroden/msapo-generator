@@ -37,12 +37,14 @@ globalThis.ENFRAWorkspaceNavigation = {
             }
             // Normal page scrolling can reach Review without a menu action.
             // Keep the same selector reachable once that heading crosses its
-            // reading line; this changes display only, without moving focus
-            // or scroll. Confined editors still use the deliberate Review
-            // choice to leave their working scroll root.
+            // reading line, or once the editor ends above it: a short final
+            // Review cannot scroll that far, yet the sticky selector leaves
+            // with the editor. This changes display only, without moving
+            // focus or scroll. Confined editors still use the deliberate
+            // Review choice to leave their working scroll root.
             const line=Math.max(sample.chromeBottom,sample.scrollport.y)+height()+12;
             if (!state.reviewNavigation && !state.navigationRequest && !state.ownsScroll &&
-                review && box(review).top <= line) {
+                review && (box(review).top <= line || box(root).bottom <= line)) {
                 state.reviewNavigation=true;
                 state.reviewScrollTop=scrollport.scrollTop;
                 state.navigationReturn=null;
@@ -52,9 +54,10 @@ globalThis.ENFRAWorkspaceNavigation = {
             // Reverse scrolling from review returns to the actual visible
             // section, preserving its paragraph offset when scroll ownership
             // changes back to the measured tabletop/confined layout.
+            // The editor's end precedes Review, so it is the return boundary.
             if (state.reviewNavigation && !state.navigationRequest && review &&
                 scrollport.scrollTop < (state.reviewScrollTop ?? scrollport.scrollTop)-1 &&
-                box(review).top > Math.max(sample.chromeBottom, sample.scrollport.y)+height()+48) {
+                box(root).bottom > Math.max(sample.chromeBottom, sample.scrollport.y)+height()+48) {
                 const id=geometry.selectActiveSection(entries.filter(item=>!item.outside).map(item=>({id:item.id,top:box(item.target).top,bottom:box(item.target).bottom})),null,line,0);
                 restore=capture(entries.find(item=>item.id===id));
                 state.reviewNavigation=false;
@@ -89,6 +92,7 @@ globalThis.ENFRAWorkspaceNavigation = {
             }
             const jump=state.navigationJump;
             let active=jump && Math.abs(owner().scrollTop-jump.scroll)<=1 ? jump.id : null;
+            if (!active && state.reviewNavigation && entries.some(item => item.outside)) active='report_review';
             if (!active) {
                 state.navigationJump=null;
                 const line=state.ownsScroll?box(root).top+height()+12:top;

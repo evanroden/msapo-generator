@@ -135,6 +135,30 @@ for(const mode of ['wide','compact'])test(`${mode} natural review entry keeps th
     assert.equal(h.counts().scheduled,0);assert.equal(h.counts().nativeEvents,0);
 });
 
+for(const mode of ['wide','compact'])test(`${mode} a short final Review enters when the editor ends, though its heading cannot reach the line`,()=>{
+    // At the end of the page, Review's heading can stay below the reading
+    // line while the workspace, and with it the sticky selector, scrolls away.
+    const h=harness(mode);h.document.activeElement=h.field;
+    h.scrollport.scrollTop=3750;h.measure();
+    assert.ok(h.root.getBoundingClientRect().bottom<128 && h.review.getBoundingClientRect().top>128);
+    assert.equal(h.root.dataset.epcReviewOpen,'true','the selector stays reachable once the editor has ended');
+    assert.equal(h.select.value,'report_review');assert.equal(h.scrollport.scrollTop,3750);
+    assert.equal(h.document.activeElement,h.field);
+    // A small reverse movement near the end does not flap back.
+    h.scrollport.scrollTop=3700;h.measure();
+    assert.equal(h.root.dataset.epcReviewOpen,'true');assert.equal(h.select.value,'report_review');
+    h.scrollport.scrollTop=3500;h.measure();
+    assert.equal(h.root.dataset.epcReviewOpen,'false');assert.equal(h.select.value,'monthly_empty');
+    assert.equal(h.scrollport.scrollTop,3500);assert.equal(h.counts().nativeEvents,0);
+});
+
+test('the selector keeps its space in the editor while it is pinned for Review',()=>{
+    const css=fs.readFileSync('app/workspace_layout.css','utf8');
+    const rule=css.split('.epc-workspace[data-epc-review-open="true"] .st-key-monthly_report_navigation {')[1]?.split('}')[0];
+    assert.ok(rule && rule.includes('min-height:var(--epc-nav-space'),'pinning must not pull later content up under the reader');
+    assert.ok(fs.readFileSync('app/workspace_layout.js','utf8').includes("css('nav-space'"));
+});
+
 test('a streamed navigation container binds through existing discovery and later replacement disposes its predecessor',()=>{
     const classes=()=>{const values=new Set();return {add:value=>values.add(value),remove:value=>values.delete(value),
         contains:value=>values.has(value),toggle:(value,on)=>on?values.add(value):values.delete(value)};};
