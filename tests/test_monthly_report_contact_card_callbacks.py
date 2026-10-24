@@ -99,3 +99,15 @@ def test_conflict_recovery_binds_current_snapshot_and_does_not_replay_removal(mo
     assert len(recovered['result'][0].rows) == 3
     cards._resolve_conflict('card', current, pending, False)
     assert state['card']['pending'] == recovered  # stale decision cannot discard recovery
+
+def test_outer_close_captures_pending_contact_fields_then_rekeys_on_reopen(monkeypatch):
+    state, tables, fields = setup(monkeypatch)
+    state['card'].update(tables=tables, active=(0, 0), fields=fields, field_scope='native-old')
+    cards.parent_visibility('card', opening=False)
+    retained = state['card']['pending']
+    assert retained['corrected'][0].rows[0][1] == 'corrected'
+    assert state['card']['parent_hidden'] is True
+    cards.parent_visibility('card', opening=True)
+    assert state['card']['pending'] == retained
+    assert state['card']['field_scope'] != 'native-old'
+    assert state['card'].get('parent_hidden') is None

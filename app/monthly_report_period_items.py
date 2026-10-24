@@ -14,7 +14,7 @@ import json
 import re
 
 from app.monthly_report_asset_review import preserve_asset_reviews
-from app.monthly_report_checks import stale_period_mentions, _MONTH_RE, _MONTHS, _DATE_RE
+from app.monthly_report_checks import stale_period_mentions, _MONTH_RE, _MONTHS, _DATE_RE, _MONTH_YEAR_RE
 from app.monthly_report_content_policy import contains_price
 
 PREFIX = "period-item:v1:"
@@ -68,8 +68,12 @@ def historical_allowed(text, period):
             return False
         if observed >= period.start:
             return False
+    for compact in _MONTH_YEAR_RE.finditer(text):
+        observed_month, observed_year = int(compact["month"]), int(compact["year"])
+        if not 1 <= observed_month <= 12 or (observed_year, observed_month) >= (period.year, period.month):
+            return False
     for named in _MONTH_RE.finditer(text):
-        if named[1] in ("may", "march") and not re.search(r"\d", named[0]):
+        if named[1].casefold() in ("may", "march") and not re.search(r"\d", named[0]):
             continue
         year, month = int(named[2]) if named[2] else period.year, _MONTHS[named[1].casefold()]
         if (year, month) >= (period.year, period.month):

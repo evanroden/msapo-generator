@@ -78,6 +78,7 @@ def test_same_action_contact_and_notes_edits_keep_both_and_do_not_write_unlinked
     app = open_editor(monkeypatch, tmp_path, "contact_matrix")
     before = dict(app.session_state["blocks"])
     key, native_id = notes(app).key, notes(app).proto.id
+    click(app, "Edit contact")
     next(widget for widget in app.text_input if widget.label == "Name").set_value("Corrected Synthetic Person")
     notes(app).set_value("Same-action corrected contact instructions.").run()
     app.run()
@@ -244,6 +245,7 @@ def test_same_action_linked_contact_and_notes_keep_standing_scope_and_history(mo
         notes(app).set_value("Same-action current site instructions.")
         click(app, "Add contact")
     else:
+        click(app, "Edit contact")
         next(widget for widget in app.text_input if widget.label == "Name").set_value("Corrected Current Person")
         notes(app).set_value("Same-action current site instructions.").run()
     assert not app.exception

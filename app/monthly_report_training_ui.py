@@ -299,6 +299,12 @@ def render_training(draft, blocks, prefix, field):
         return blocks
     block = training_block(blocks)
     original_block = block
+    from app.monthly_report_guided import _include_left_out
+    from app.monthly_report_model import BlockSpec
+    block = _include_left_out(BlockSpec("training_summary", "rich_text"), block, prefix)
+    # Seeding shared requirements while showing a left-out section is not an
+    # inclusion decision; only an explicit Include or edit is.
+    explicit = block.source != original_block.source
     key = prefix + "_training_" + _signature((draft.profile.contract, tuple(f.key for f in draft.profile.facilities), draft.period.key))
     had_conflict = bool(st.session_state.get(key + "_conflict"))
     if had_conflict:
@@ -339,6 +345,7 @@ def render_training(draft, blocks, prefix, field):
                         raise library.RevisionConflict("Shared training has newer information. Reload saved training before editing its matrix.")
                     stored = save_training(draft.profile, proposed, expected_revision=stored["revision"], actor=draft.prepared_by)
                     matrix = proposed
+                    explicit = True
                     st.session_state[store_key] = stored
                     st.session_state[matrix_key] = matrix
         sites = [facility.title for facility in draft.profile.facilities]
@@ -361,6 +368,7 @@ def render_training(draft, blocks, prefix, field):
             st.session_state[store_key] = stored
             st.session_state[matrix_key] = edited
             matrix = edited
+            explicit = True
     except library.RevisionConflict as exc:
         st.session_state[key + "_conflict"] = str(exc)
         st.error(str(exc))
@@ -373,9 +381,12 @@ def render_training(draft, blocks, prefix, field):
     # Streamlit discard a sibling widget or its in-flight value.
     from app.monthly_report_guided import _rich_text_scope
     scope = _rich_text_scope(prefix)
-    events = events_for_period(block, draft.period)
-    events = _render_monthly_sessions(events, matrix, draft.period, key, scope)
-    block = apply_tables(block, matrix, events)
+    shown_events = events_for_period(block, draft.period)
+    events = _render_monthly_sessions(shown_events, matrix, draft.period, key, scope)
+    tabled = apply_tables(block, matrix, events)
+    if block.source == "Omit" and not explicit and events == shown_events:
+        tabled = replace(tabled, source="Omit")
+    block = tabled
     # Match the native protocol default to the canonical notes, as Activity
     # already does. A one-shot session-state set_value is not the first-mount
     # default and can otherwise be echoed back as an unintended empty edit.

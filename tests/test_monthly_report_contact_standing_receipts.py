@@ -230,3 +230,21 @@ def test_reloaded_add_unavailable_baseline_keeps_visible_recovery_and_add_intent
     assert latest.revision == original.revision + 1
     assert latest.sites[0].contacts[-1].name == 'Reloaded Completed'
     assert latest.sites[1] == original.sites[1]
+
+def test_parent_reentry_rehydrates_phone_from_committed_directory_without_a_new_write(monkeypatch, tmp_path):
+    app, profile, original, before = workspace(monkeypatch, tmp_path)
+    press(app, 'Add contact')
+    for label, value in [('Facility', profile.facilities[0].title), ('Role', 'Engineer'),
+                         ('Name', 'Synthetic New Person'), ('Phone', '202-555-0174')]:
+        field(app, label).set_value(value).run()
+        assert not app.exception
+    assert any(row[3] == '202-555-0174' for row in report(app).rows)
+    old_key = field(app, 'Phone').key
+    saved_revision = directory.load_directory(profile.contract).revision
+    press(app, 'Done')
+    assert not app.text_input
+    press(app, 'Edit contacts')
+    assert field(app, 'Phone').value == '202-555-0174'
+    assert field(app, 'Phone').key != old_key
+    assert any(row[3] == '202-555-0174' for row in report(app).rows)
+    assert directory.load_directory(profile.contract).revision == saved_revision

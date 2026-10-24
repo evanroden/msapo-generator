@@ -13,8 +13,12 @@ import re
 def document_page_indexes(block, sources):
     if block.key != 'improvements':
         return frozenset()
+    from app.monthly_report_asset_instances import valid_instances
     from app.monthly_report_asset_review import current_source_page_review_matches
     source_ids = [source.id for source in sources]
+    # Exact occurrence records say which copy of equal bytes is the source
+    # page. Without them, equal bytes cannot establish intent.
+    occurrences = block.asset_instances if valid_instances(block) else None
     mapped = {}
     for asset, references in block.asset_provenance:
         if asset in mapped:
@@ -22,9 +26,10 @@ def document_page_indexes(block, sources):
         mapped[asset] = references
     result = set()
     for index, asset in enumerate(block.asset_hashes):
-        if block.asset_hashes.count(asset) != 1 or not re.fullmatch(r'[0-9a-f]{64}\.(?:png|jpg)', asset):
+        if ((occurrences is None and block.asset_hashes.count(asset) != 1)
+                or not re.fullmatch(r'[0-9a-f]{64}\.(?:png|jpg)', asset)):
             continue
-        references = mapped.get(asset, ())
+        references = occurrences[index].references if occurrences else mapped.get(asset, ())
         plain = [ref for ref in references if not ref.startswith('asset-source-context:v1:')]
         if len(plain) != 1 or plain[0] not in block.references:
             continue

@@ -210,6 +210,41 @@ def test_acknowledged_edit_clear_undo_reentry_persist_exactly_and_reload(monkeyp
     assert durable(reloaded).revision == current.revision
 
 
+def test_accepted_interrupted_clear_then_immediate_reentry_uses_cleared_revision(monkeypatch, tmp_path):
+    from app import monthly_report_active_work as active
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    app = AppTest.from_string(JOURNAL_APP, default_timeout=15).run()
+    editor(app).set_value("Earlier wording still bound to the Clear button.").run()
+    before = durable(app)
+    # Establish a legitimate changed canonical version after the last widget
+    # render. The native stale Clear must first require explicit recovery.
+    changed = replace(before.draft, blocks=tuple(
+        replace(block, text="Newer canonical wording to compare.") if block.key == "activity_summary" else block
+        for block in before.draft.blocks))
+    newer = active.save("a" * 32, changed, expected_revision=before.revision,
+        expected_generation=before.generation, base_snapshot_revision=0)
+    app.session_state["draft"] = changed
+    app.session_state["revision"] = newer.revision
+    button(app, "Clear Activity for this report").click().run()
+    assert not app.exception
+    assert any("earlier edit was interrupted" in item.value for item in app.warning)
+    assert editor(app).value == "Newer canonical wording to compare."
+    assert durable(app).draft == changed
+    button(app, "Apply interrupted edit").click().run()
+    assert not app.exception and not app.error
+    assert editor(app).value == ""
+    cleared = durable(app)
+    assert cleared.draft.fingerprint == app.session_state["draft"].fingerprint
+    editor(app).set_value("Immediate new wording after accepting the interrupted Clear.").run()
+    assert not app.exception and not app.error
+    assert not any("earlier edit was interrupted" in item.value for item in app.warning)
+    kept = durable(app)
+    assert kept.revision == cleared.revision + 1
+    assert kept.draft.fingerprint == app.session_state["draft"].fingerprint
+    reopened = AppTest.from_string(JOURNAL_APP, default_timeout=15).run()
+    assert editor(reopened).value == "Immediate new wording after accepting the interrupted Clear."
+
+
 def test_two_independent_native_sessions_reject_stale_clear_and_keep_both_versions(monkeypatch, tmp_path):
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
     first = AppTest.from_string(JOURNAL_APP, default_timeout=15).run()

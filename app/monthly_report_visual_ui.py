@@ -442,6 +442,7 @@ def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=Tru
         return block
     block = preserve_asset_reviews(block, block)
     p = _contact_widget_prefix(prefix, block.key)
+    st.session_state.pop(p + "_compact_editor_key", None)
     recovered, pending = _recover_contact_correction(draft, block, p)
     if pending:
         return recovered
@@ -579,8 +580,10 @@ def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=Tru
             block = proposed
             return current
 
+        editor_key = p + "_compact_" + _signature((tuple(table.columns for table in tables), tuple(ref for ref in block.references if not ref.startswith(("directory:", "directory-add-intent:")))))
+        st.session_state[p + "_compact_editor_key"] = editor_key
         updated, _ = edit_contact_tables(
-            tables, p + "_compact_" + _signature((tuple(table.columns for table in tables), tuple(ref for ref in block.references if not ref.startswith(("directory:", "directory-add-intent:"))))),
+            tables, editor_key,
             field, _contact_label, vendor=block.key == "subcontractor_matrix", prepare=prepare,
             can_edit=lambda: _contact_pending_marker(draft) not in block.references)
     if show_preview:
@@ -608,6 +611,7 @@ def _queue_photo_action(key, request):
 def edit_photos(draft, block, prefix, assets, field, *, show_preview=True):
     from app.monthly_report_guided import _rich_text_scope
     from app.monthly_report_photo_controls import photo_caption_identity, photo_order_identity, photo_move_request, move_photo, remove_photo
+    from app.monthly_report_asset_instances import append_human_asset, has_human_asset
     block = preserve_asset_reviews(block, block)
     p = prefix + "_photos_" + block.key
     scope = _rich_text_scope(prefix)
@@ -658,7 +662,7 @@ def edit_photos(draft, block, prefix, assets, field, *, show_preview=True):
                 for upload in uploads:
                     normalized = normalize_report_image(upload.getvalue(), Path(upload.name).suffix)
                     reference = library.asset_reference(normalized.data, normalized.extension)
-                    if reference not in block.asset_hashes:
+                    if not has_human_asset(block, reference):
                         pending[reference] = normalized.data
                 additions = pending
             except (ValueError, OSError) as exc:
@@ -675,13 +679,9 @@ def edit_photos(draft, block, prefix, assets, field, *, show_preview=True):
     def append_delivered_photos(current):
         if not additions:
             return current
-        captions = tuple(current.asset_captions[n] if n < len(current.asset_captions) else ""
-                         for n in range(len(current.asset_hashes)))
-        provenance = dict(current.asset_provenance)
-        provenance.update((reference, ()) for reference in additions)
-        updated = preserve_asset_reviews(current, replace(
-            current, source="This month", asset_hashes=(*current.asset_hashes, *additions),
-            asset_captions=(*captions, *("" for _ in additions)), asset_provenance=tuple(provenance.items())))
+        updated = current
+        for reference in additions:
+            updated = append_human_asset(updated, reference)
         assets.update(additions)
         clear_photo_fields()
         refresh_after_commit()

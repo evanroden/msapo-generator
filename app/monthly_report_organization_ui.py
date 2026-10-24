@@ -169,6 +169,19 @@ def _edit_notes(block, prefix, field, *, canonical_before):
     return block
 
 
+def _change_part(prefix, active_key, selected):
+    """Preserve a contact's input receipt when the parent editor is hidden."""
+    current = st.session_state.get(active_key)
+    if current != selected and (current == "contact_matrix" or selected == "contact_matrix"):
+        from app.monthly_report_visual_ui import _contact_widget_prefix
+        from app.monthly_report_contact_cards_ui import parent_visibility
+        root = _contact_widget_prefix(prefix, "contact_matrix")
+        editor_key = st.session_state.get(root + "_compact_editor_key")
+        if isinstance(editor_key, str) and editor_key.startswith(root + "_compact_"):
+            parent_visibility(editor_key, opening=selected == "contact_matrix")
+    st.session_state[active_key] = selected
+
+
 def render_organization(draft, blocks, specs, prefix, assets, field, edit_content, *, show_preview=True):
     """Return updated blocks; only an explicit Edit opens a part's editor.
 
@@ -203,16 +216,21 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
                 "after_hours_workflow": "Edit after-hours outage procedure",
             }[key]
             st.button(action, key=prefix + "_organization_open_" + key,
-                      on_click=st.session_state.__setitem__, args=(active_key, key))
+                      on_click=_change_part, args=(prefix, active_key, key))
             return
         st.button("Done", key=prefix + "_organization_close_" + key,
-                  on_click=st.session_state.__setitem__, args=(active_key, ""))
+                  on_click=_change_part, args=(prefix, active_key, ""))
+        # These editors bypass the shared content editor, so they offer its
+        # explicit Include for a left-out part here (once per part).
+        from app.monthly_report_guided import _include_left_out
         if key == "contact_matrix":
-            changed = edit_contacts(current_draft, spec, block, prefix, assets, field, show_preview=show_preview)
+            changed = _include_left_out(spec, block, prefix)
+            changed = edit_contacts(current_draft, spec, changed, prefix, assets, field, show_preview=show_preview)
             changed = _edit_notes(changed, prefix, field, canonical_before=canonical_before)
         elif key == "org_chart":
             if block.org_nodes:
-                changed = edit_org_chart(current_draft, block, prefix, assets, field, show_preview=show_preview)
+                changed = _include_left_out(spec, block, prefix)
+                changed = edit_org_chart(current_draft, changed, prefix, assets, field, show_preview=show_preview)
                 changed = _edit_notes(changed, prefix, field, canonical_before=canonical_before)
             else:
                 changed = edit_content(spec, block)
@@ -224,8 +242,11 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
         else:
             changed = edit_content(spec, block)
         # Some older editors mark their source just by being opened. Opening
-        # and closing an unchanged part must not invalidate its saved review.
-        updated[key] = block if replace(changed, source=block.source) == block else changed
+        # and closing an unchanged part must not invalidate its saved review;
+        # an explicit Include of a left-out part is a real change.
+        from app.monthly_report_guided import included_left_out
+        updated[key] = (changed if included_left_out(prefix, key)
+                        or replace(changed, source=block.source) != block else block)
     for key, title in ORGANIZATION_PARTS:
         if key not in WORKFLOW_KEYS:
             render_part(key, title)

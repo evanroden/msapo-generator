@@ -68,6 +68,24 @@ def _resolve_conflict(key, expected, pending, use_pending):
     st.session_state[key] = record
 
 
+def parent_visibility(key, *, opening):
+    """Carry delivered fields across a parent Done and renew on real re-entry."""
+    record = st.session_state.get(key)
+    if not isinstance(record, dict):
+        return
+    record = dict(record)
+    if opening:
+        if record.pop('parent_hidden', False):
+            record['field_scope'] = uuid4().hex
+        st.session_state[key] = record
+        return
+    if record.get('active') is not None and record.get('fields') and record.get('tables'):
+        _queue(key, record.get('epoch'), record['tables'], record['active'], record['fields'], 'edit')
+        record = dict(st.session_state.get(key, record))
+    record['parent_hidden'] = True
+    st.session_state[key] = record
+
+
 def edit_contact_tables(tables, key, field, label, *, vendor=False, prepare=None, can_edit=None):
     """Return exact tables and a removal's edit-only intermediate receipt."""
     tables = tuple(tables)
@@ -138,6 +156,7 @@ def edit_contact_tables(tables, key, field, label, *, vendor=False, prepare=None
         row = table.rows[ri] if ri < len(table.rows) else tuple('' for _ in table.columns)
         fields = tuple((key + '_' + record.setdefault('field_scope', uuid4().hex) + f'_field_{ci}', row[ci] if ci < len(row) else '')
                        for ci in range(len(table.columns)))
+    record['fields'] = fields
     st.session_state[key] = record
     args = (key, epoch, tables, active, fields)
     noun = 'vendor contact' if vendor else 'contact'

@@ -16,6 +16,32 @@ def example():
                        default_sections(), (ResolvedBlock("activity_summary", "This month", text="Saved inspection."),))
 
 
+def test_recovery_times_use_recorded_timezone_and_label_missing_or_ambiguous_values():
+    from app.monthly_report_compare_ui import recovery_time
+    assert recovery_time('2026-10-17T16:20:30-05:00') == '2026-10-17 21:20:30 UTC'
+    for value in ('', None, 'not a date', '2026-10-17T21:20:30'):
+        assert recovery_time(value) == 'Time unavailable'
+
+
+def test_source_comparison_shows_reviewed_sites_and_artwork_without_receipt_tokens():
+    from app.monthly_report_source_scope import correct_scope
+    profile = synthetic_profiles()[1]
+    source = ReportSource('synthetic-source', 'Synthetic source.pdf', 'source-sha', 'pdf')
+    saved = replace(example(), profile=profile, sources=(source,))
+    combined = correct_scope(source, profile, tuple(site.key for site in profile.facilities))
+    change, = compare_drafts(replace(saved, sources=(combined,)), saved)
+    assert 'Site not established' in change.saved
+    assert all(site.title in change.working for site in profile.facilities)
+    assert combined.scope_review not in change.working
+    artwork = correct_scope(source, profile, contract_artwork=True, artwork_keys=('client_logo',))
+    change, = compare_drafts(replace(saved, sources=(artwork,)), saved)
+    assert 'Shared contract artwork' in change.working
+    assert artwork.scope_review not in change.working
+    stale = replace(combined, actions='New extraction changed this source.')
+    change, = compare_drafts(replace(saved, sources=(stale,)), saved)
+    assert 'Scope needs review' in change.working
+
+
 def test_comparison_covers_membership_sections_tables_and_followups_without_internal_ids():
     saved = example()
     saved = replace(saved, blocks=(*saved.blocks, ResolvedBlock("thermal_capacity", "This month", rows=(("Synthetic Site", "Steam", 0, False),))))

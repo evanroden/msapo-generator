@@ -127,8 +127,8 @@ def revise_included_page(block, source, number, action, *, caption=None, all_sou
                           client_page_reviews=tuple(sorted(reviews.items())),
                           client_page_exclusions=tuple(sorted(exclusions.items())))
         removed = remove_saved_picture(block, index)
-        if block.key == "water_reports":
-            from app.monthly_report_section_uploads import included_pages, SOURCE_ROUTE_PREFIX
+        from app.monthly_report_section_uploads import included_pages, SOURCE_ROUTE_PREFIX, SECTION_UPLOADS
+        if block.key in SECTION_UPLOADS:
             if not any(identity == source.id for identity, _ in included_pages({block.key:removed})):
                 # The last page supplied the durable route after a reload.
                 # Retain only its placement; exclusions and ordinary review
@@ -145,6 +145,8 @@ def revise_included_page(block, source, number, action, *, caption=None, all_sou
         updated = replace(block, asset_hashes=tuple(block.asset_hashes[n] for n in order),
                           asset_captions=tuple(block.asset_captions[n] if n < len(block.asset_captions) else "" for n in order),
                           reviewed_fingerprint="", client_reviewed_fingerprint="")
+        from app.monthly_report_asset_instances import reindex_asset_instances, with_asset_instances
+        updated = with_asset_instances(updated, reindex_asset_instances(block, order))
         return preserve_asset_reviews(block, updated), source
     if action not in {"caption", "review"}:
         raise ValueError("Unknown report-page action. No pages were changed.")
@@ -156,6 +158,10 @@ def revise_included_page(block, source, number, action, *, caption=None, all_sou
     captions[index] = page_caption
     updated = preserve_asset_reviews(block, replace(block, asset_captions=tuple(captions),
                                                    reviewed_fingerprint="", client_reviewed_fingerprint=""))
+    from app.monthly_report_asset_instances import asset_instances, with_asset_instances
+    instances = list(asset_instances(updated))
+    instances[index] = replace(instances[index], source_caption=page_caption)
+    updated = with_asset_instances(updated, instances)
     if action == "review":
         reviews, exclusions = dict(source.client_page_reviews), dict(source.client_page_exclusions)
         reviews[number] = page_fingerprint(source, number)

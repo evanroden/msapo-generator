@@ -52,6 +52,8 @@ def _select_fixture():
     editor_prefix = "report_guided_" + _signature((
         fixture.CONTRACT, fixture.profile().key, fixture.PERIOD.key))
     st.session_state[editor_prefix + "_prepared"] = fixture.ACTOR
+    # This is a non-widget attribution seed; the input owns its native default.
+    st.session_state.pop(editor_prefix + "_prepared_editor", None)
 
 
 def _working_report(saved):
@@ -106,8 +108,13 @@ def _hash_generation_part(value):
     from dataclasses import asdict, is_dataclass
     from hashlib import sha256
     import json
+    from app.monthly_report_model import ResolvedBlock
 
     structured = asdict(value) if is_dataclass(value) else value
+    if isinstance(value, ResolvedBlock) and not value.asset_instances:
+        # Keep the recorded pre-occurrence diagnostic comparable. Real
+        # occurrence metadata still changes this digest and the report guards.
+        structured.pop("asset_instances")
     raw = json.dumps(structured, sort_keys=True, separators=(",", ":"), default=str)
     return sha256(raw.encode("utf-8")).hexdigest()
 
