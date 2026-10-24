@@ -572,12 +572,14 @@ def _record_issue_unlink(key, identity):
     st.session_state[key + "_choice"] = {"identity": identity, "value": st.session_state.get(key)}
 
 
-def _offpage_unlink(draft, item, prefix, options):
+def _offpage_unlink(draft, item, prefix, options, displayed=None):
     """Commit an unlink ticked in the same event that moved its card off-page.
 
     A visible card applies the checkbox itself and keeps it on screen. An
     off-page card is not rendered, so its delivered choice is applied here,
-    only for the exact row and report it was made on, and only once.
+    only for the exact row and report it was made on, and only once. Edits
+    delivered with it may already have changed the row; ``displayed`` is the
+    ``(draft, item)`` before this event's capture, which the choice names.
     """
     import streamlit as st
     missing = tuple(ref for ref in item.references if ref not in options)
@@ -587,8 +589,11 @@ def _offpage_unlink(draft, item, prefix, options):
             and st.session_state.get(key) is True):
         return item
     st.session_state.pop(key + "_choice", None)
-    if receipt.get("identity") != _issue_identity(draft, prefix, item):
-        return item  # The row or report changed after this choice was made.
+    accepted = {_issue_identity(draft, prefix, item)}
+    if displayed is not None and displayed[1] is not None:
+        accepted.add(_issue_identity(displayed[0], prefix, displayed[1]))
+    if receipt.get("identity") not in accepted:
+        return item  # The row or report changed independently of this choice.
     return replace(item, references=tuple(ref for ref in item.references if ref in options))
 
 
@@ -627,6 +632,8 @@ def render_issue_cards(draft, prefix, field, *, defer_actions=False, evidence_pa
     draft = canonical_issues(draft)
     options = {source_reference(source, n): f"{source.filename} · page {n}"
                for source in draft.sources for n in range(1, len(source.page_texts) + 1)}
+    displayed_draft = draft
+    displayed = {item.key: item for item in draft.follow_ups if item.category == "issue"}
     draft = _capture_issue_controls(draft, prefix, options)
     cycle = uuid4().hex
     message = followup_limit_message(draft)
@@ -652,7 +659,8 @@ def render_issue_cards(draft, prefix, field, *, defer_actions=False, evidence_pa
     for original in draft.follow_ups:
         if original.category != "issue" or not original.included or original.key not in visible:
             if original.category == "issue" and original.included:
-                original = _offpage_unlink(draft, original, prefix, options)
+                original = _offpage_unlink(draft, original, prefix, options,
+                                           (displayed_draft, displayed.get(original.key)))
             items.append(original)
             continue
         item = original

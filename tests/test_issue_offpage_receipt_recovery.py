@@ -120,3 +120,26 @@ def test_offpage_unlink_never_applies_to_an_independently_replaced_issue():
     app.run()
     assert not app.exception
     assert app.session_state["draft"].follow_ups[0] == replaced  # its links are untouched
+
+
+def test_offpage_unlink_survives_an_edit_delivered_in_the_same_event():
+    rows = tuple(
+        ReportFollowUp(f"issue-{n}", "issue", f"Damper issue {n}", "2026-10",
+                       references=("removed-synthetic-source:1:digest",) if n == 0 else ())
+        for n in range(30)
+    )
+    draft = ReportDraft(synthetic_profiles()[0], ReportPeriod(2026, 10),
+                        "Synthetic operator", (), (), follow_ups=rows, synthetic=True)
+    app = AppTest.from_string(SCRIPT, default_timeout=30)
+    app.session_state["draft"] = draft
+    app.run()
+    assert not app.exception
+    # One delivery: a description edit, the unlink tick and the page change.
+    next(w for w in app.text_area if w.value == rows[0].text).set_value("Damper issue 0, re-inspected")
+    next(w for w in app.checkbox if w.label == "Remove unavailable source links").check()
+    next(w for w in app.selectbox if w.label == "Issue page").set_value(2)
+    app.run()
+    assert not app.exception
+    current = app.session_state["draft"].follow_ups[0]
+    assert current.text == "Damper issue 0, re-inspected"
+    assert current.references == ()
