@@ -374,3 +374,13 @@ def test_row_identities_share_one_report_scope_computation(monkeypatch):
     changed = replace(draft, follow_ups=draft.follow_ups[:-1])
     issues._issue_identity(changed, "scope_probe", changed.follow_ups[0])
     assert len(scopes) == 2  # a different report state is never served a stale scope
+
+
+def test_an_edited_saved_proposal_does_not_also_stand_for_another_source_row():
+    draft = fixture(proposals=True)
+    first, second = seed_followups(draft)
+    # Only the first row was carried, and its wording was edited to match the second row's.
+    edited = replace(first, text=second.text)
+    carried = new_month_draft(replace(draft, follow_ups=(edited,)), ReportPeriod(2026, 12))
+    assert {item.key for item in carried.follow_ups} == {first.key, second.key}
+    assert len(carried.follow_ups) == 2

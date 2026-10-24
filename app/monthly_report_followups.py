@@ -561,9 +561,11 @@ def seed_followups(draft):
     # A source row whose key is already saved represents itself first. Only
     # the remaining rows may be represented by an equal saved text whose key
     # was repaired, so one saved occurrence never stands for two source rows.
+    saved = {item.key: (item.category, item.text.strip()) for item in result}
     for key, category, text, _ in candidates:
-        if key in keys:
-            represented[(category, text.strip())] -= 1
+        if key in saved:
+            # The saved row's own wording, which an edit may have changed.
+            represented[saved[key]] -= 1
     for key, category, text, status in candidates:
         identity = (category, text.strip())
         if key in keys:
