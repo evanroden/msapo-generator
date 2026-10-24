@@ -37,7 +37,7 @@ function harness(mode='wide') {
     }
     const choose=id=>{select.value=id;select.onchange();measure()};
     measure();
-    return {state,root,scrollport,select,field,pairs,review,document,measure,choose,
+    return {state,root,scrollport,select,field,pairs,review,document,measure,choose,nav,label,controller:()=>controller,
         rerender(){controller.dispose();controller=create();measure()},dispose(){controller.dispose()},
         counts:()=>({scheduled,replacements,nativeEvents})};
 }
@@ -150,6 +150,20 @@ for(const mode of ['wide','compact'])test(`${mode} a short final Review enters w
     h.scrollport.scrollTop=3500;h.measure();
     assert.equal(h.root.dataset.epcReviewOpen,'false');assert.equal(h.select.value,'monthly_empty');
     assert.equal(h.scrollport.scrollTop,3500);assert.equal(h.counts().nativeEvents,0);
+});
+
+test('pinning the selector for Review never changes the measured navigation height',()=>{
+    // Pinned, the label carries the container's padding and border; in flow
+    // the container does. Previews are placed from this height, so a change
+    // on Review would resize every section (WebKit has no scroll anchoring).
+    const rect=(top,height)=>({top,bottom:top+height,height});
+    const h=harness();
+    h.nav.getBoundingClientRect=()=>rect(64,61);
+    h.label.getBoundingClientRect=()=>rect(64,h.root.dataset.epcReviewOpen==='true'?61:52);
+    h.measure();const closed=h.controller().height();
+    h.scrollport.scrollTop=3880;h.measure();
+    assert.equal(h.root.dataset.epcReviewOpen,'true');
+    assert.equal(h.controller().height(),closed);
 });
 
 test('the selector keeps its space in the editor while it is pinned for Review',()=>{

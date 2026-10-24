@@ -6,7 +6,9 @@ globalThis.ENFRAWorkspaceNavigation = {
         let restore = null;
         const box = node => node.getBoundingClientRect();
         const owner = () => state.ownsScroll ? root : scrollport;
-        const height = () => box(select?.closest('.epc-section-navigation') || nav).height;
+        // The container keeps one height whether or not its selector is
+        // pinned for Review, so toggling Review never resizes previews.
+        const height = () => box(nav).height;
         const capture = entry => entry ? {id:entry.id, scroll:owner().scrollTop,
             offset:box(entry.target).top-box(owner()).top} : null;
         const choose = () => {
