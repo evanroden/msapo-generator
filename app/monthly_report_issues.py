@@ -567,6 +567,20 @@ def _issue_control(widget, label, key, value, field, *, identity, cycle, **kwarg
     return value
 
 
+def _offpage_unlink(item, prefix, options):
+    """Commit an unlink ticked in the same event that moved its card off-page.
+
+    A visible card applies the checkbox itself and keeps it on screen. An
+    off-page card is not rendered, so its delivered choice is applied here.
+    """
+    import streamlit as st
+    missing = tuple(ref for ref in item.references if ref not in options)
+    key = prefix + "_issue_" + item.key + "_remove_missing_" + _digest(missing)
+    if missing and st.session_state.get(key) is True:
+        return replace(item, references=tuple(ref for ref in item.references if ref in options))
+    return item
+
+
 def _render_issue_evidence(item, draft, options, p, field, prefix, cycle):
     import streamlit as st
     identity = _issue_identity(draft, prefix, item)
@@ -625,6 +639,8 @@ def render_issue_cards(draft, prefix, field, *, defer_actions=False, evidence_pa
     items, evidence_controls = [], {}
     for original in draft.follow_ups:
         if original.category != "issue" or not original.included or original.key not in visible:
+            if original.category == "issue" and original.included:
+                original = _offpage_unlink(original, prefix, options)
             items.append(original)
             continue
         item = original

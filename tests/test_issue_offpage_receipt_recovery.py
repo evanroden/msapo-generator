@@ -78,3 +78,23 @@ def test_rejected_offpage_field_is_copyable_and_cannot_replay_on_aba(label, valu
     assert not app.exception
     assert app.session_state["draft"].follow_ups[0].text == "Fresh deliberate correction"
     assert len([w for w in app.get("code") if str(value) in w.proto.code_text]) == 1
+
+
+def test_unlink_choice_is_kept_when_the_page_changes_in_the_same_event():
+    rows = tuple(
+        ReportFollowUp(f"issue-{n}", "issue", f"Damper issue {n}", "2026-10",
+                       references=("removed-synthetic-source:1:digest",) if n == 0 else ())
+        for n in range(30)
+    )
+    draft = ReportDraft(synthetic_profiles()[0], ReportPeriod(2026, 10),
+                        "Synthetic operator", (), (), follow_ups=rows, synthetic=True)
+    app = AppTest.from_string(SCRIPT, default_timeout=30)
+    app.session_state["draft"] = draft
+    app.run()
+    assert not app.exception
+    next(w for w in app.checkbox if w.label == "Remove unavailable source links").check()
+    next(w for w in app.selectbox if w.label == "Issue page").set_value(2)
+    app.run()  # both choices arrive in one event; the issue's card is now off-page
+    assert not app.exception
+    assert app.session_state["draft"].follow_ups[0].references == ()
+    assert app.session_state["draft"].follow_ups[1:] == rows[1:]
