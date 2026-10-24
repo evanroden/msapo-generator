@@ -255,8 +255,10 @@ def test_guided_remove_and_include_again_refresh_controls_after_committing_same_
 
     assert [widget.label for widget in value.expander
             if widget.label.startswith("Removed from this report")] == ["Removed from this report (1)"]
+    # A delivered update is this month's review of it (#281).
     revised_sibling = replace(sibling, text="Delivered sibling description during restore.",
-                              update="Delivered sibling update during restore.")
+                              update="Delivered sibling update during restore.",
+                              update_period=after.period.key)
     control(value.text_area, "Issue description", sibling.key).set_value(revised_sibling.text)
     control(value.text_area, "Issue update", sibling.key).set_value(revised_sibling.update)
     control(value.button, "Include again").click().run()

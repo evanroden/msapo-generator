@@ -450,10 +450,17 @@ test('native editing event withholds preview fragments until matching full-rende
     assert.equal(sent.length,1);
     const gate=window.__enfraPreviewNativeEditGates.get(app);
     assert.ok(gate && !gate.pending);
+    const navigate=()=>app.listeners.get('change').forEach(fn=>fn({target:{
+        matches:selector=>selector.includes('select'),
+        closest:selector=>selector==='.epc-section-navigation'?{}:null
+    }}));
+    navigate();
+    assert.equal(gate.pending,false,'display-only section navigation never waits for a business receipt');
     app.listeners.get('change').forEach(fn=>fn({target:{
         matches:selector=>selector.includes('input'),closest:()=>null
     }}));
     assert.equal(gate.pending,true,'the native event queues a whole report rerun');
+    navigate();assert.equal(gate.pending,true,'navigation cannot acknowledge a pending business edit');
     panel.querySelector('.report-preview-scroll').clientWidth=1200;
     observers.resize[0].callback();fire(120);
     assert.equal(sent.length,1,'no fragment may overtake pending business input');
