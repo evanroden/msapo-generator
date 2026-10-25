@@ -38,6 +38,8 @@ function harness(mode='wide') {
     const choose=id=>{select.value=id;select.onchange();measure()};
     measure();
     return {state,root,scrollport,select,field,pairs,review,document,measure,choose,nav,label,controller:()=>controller,
+        land:request=>context.ENFRAWorkspaceNavigation.land(state,request),
+        cancelLanding:()=>context.ENFRAWorkspaceNavigation.cancelLanding(state),
         rerender(){controller.dispose();controller=create();measure()},dispose(){controller.dispose()},
         counts:()=>({scheduled,replacements,nativeEvents})};
 }
@@ -247,4 +249,72 @@ test('sticky navigation belongs to the direct workspace wrapper rather than its 
     assert.ok(rule.includes('position:sticky') && rule.includes('top:var(--epc-nav-top'));
     const inner=css.split('.st-key-monthly_report_navigation {')[1]?.split('}')[0];
     assert.ok(inner && !inner.includes('position:sticky'),'nested stickiness cannot escape the short wrapper');
+});
+
+for(const mode of ['wide','compact','tabletop'])test(`${mode} entering from report setup starts once at the first section`,()=>{
+    // Continue replaces the setup review with the editor, yet the scroll
+    // root keeps the review's offset, here deep in Training.
+    const h=harness(mode),owner=mode==='tabletop'?h.root:h.scrollport;
+    owner.scrollTop=2300;h.measure();assert.equal(h.select.value,'monthly_training');
+    h.land(['entry-1','monthly_cover']);h.measure();
+    if(mode==='tabletop')assert.ok(h.root.scrollTop<=0,'the owned root returns to its start');
+    else assert.equal(h.pairs[0].pair.getBoundingClientRect().top,128);
+    assert.equal(h.select.value,'monthly_cover');
+    assert.equal(h.document.activeElement,h.pairs[0].pair);
+    // Later renders repeat the consumed request or send none. Reading
+    // position, the native field and its selection stay as the user left them.
+    owner.scrollTop=1800;h.document.activeElement=h.field;
+    for(const request of [['entry-1','monthly_cover'],undefined,null,[]]){h.land(request);h.measure();}
+    h.rerender();
+    assert.equal(owner.scrollTop,1800);assert.equal(h.document.activeElement,h.field);
+    assert.equal(h.field.value,'Unblurred human wording');assert.equal(h.field.selectionStart,3);
+    assert.equal(h.counts().nativeEvents,0);
+    // A later deliberate entry is a new request. Its Continue replaced the
+    // page, so the earlier field no longer holds focus.
+    h.document.activeElement=null;h.land(['entry-2','monthly_cover']);h.measure();
+    assert.equal(h.select.value,'monthly_cover');assert.equal(h.document.activeElement,h.pairs[0].pair);
+});
+
+test('an entry request waits for its section to render',()=>{
+    const h=harness();h.scrollport.scrollTop=2300;
+    h.land(['entry-1','monthly_rfi']);h.measure();
+    assert.equal(h.scrollport.scrollTop,2300,'a section not yet rendered is not guessed');
+    assert.equal(h.state.navigationRequest,'monthly_rfi');
+});
+
+test('a reader acting before the landing renders keeps their place, focus and later choices',()=>{
+    const h=harness();h.scrollport.scrollTop=2300;h.document.activeElement=h.field;
+    h.land(['entry-1','monthly_rfi']);  // Its section has not rendered yet.
+    h.cancelLanding();                  // A trusted pointer or key arrives first.
+    h.measure();
+    assert.equal(h.scrollport.scrollTop,2300);assert.equal(h.document.activeElement,h.field);
+    assert.equal(h.state.navigationRequest,null);assert.equal(h.state.landingRequest,null);
+    h.land(['entry-1','monthly_cover']);h.measure();
+    assert.equal(h.scrollport.scrollTop,2300,'the cancelled request is not replayed');
+    // The reader's own selector choice is never cancelled by its own pointer.
+    h.cancelLanding();h.document.activeElement=h.select;h.choose('monthly_training');
+    assert.equal(h.pairs[3].pair.getBoundingClientRect().top,128);
+});
+
+test('a landing that already ran is not undone by later input',()=>{
+    const h=harness();h.scrollport.scrollTop=2300;
+    h.land(['entry-1','monthly_cover']);h.measure();
+    assert.equal(h.pairs[0].pair.getBoundingClientRect().top,128);
+    assert.equal(h.state.landingRequest,null);
+    h.cancelLanding();h.scrollport.scrollTop=900;h.measure();
+    assert.equal(h.scrollport.scrollTop,900);
+});
+
+test('a landing never takes focus or scroll from a control the reader already uses',()=>{
+    // The page can be interactive before the adapter mounts, so a menu may
+    // already be open when the landing first gets to run.
+    const h=harness();h.scrollport.scrollTop=40;h.document.activeElement=h.field;
+    h.land(['entry-1','monthly_cover']);h.measure();
+    assert.equal(h.scrollport.scrollTop,40);assert.equal(h.document.activeElement,h.field);
+    assert.equal(h.state.navigationRequest,null);assert.equal(h.state.landingRequest,null);
+    assert.equal(h.field.value,'Unblurred human wording');assert.equal(h.counts().nativeEvents,0);
+    // With nothing focused, the same entry would have landed.
+    const fresh=harness();fresh.scrollport.scrollTop=2300;fresh.document.body={};fresh.document.activeElement=fresh.document.body;
+    fresh.land(['entry-2','monthly_cover']);fresh.measure();
+    assert.equal(fresh.pairs[0].pair.getBoundingClientRect().top,128);
 });

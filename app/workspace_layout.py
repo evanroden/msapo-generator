@@ -41,16 +41,21 @@ def _adapter(runtime):
 
 
 @contextmanager
-def workspace(workflow: str, identity: str, *, navigation_key: str = ""):
+def workspace(workflow: str, identity: str, *, navigation_key: str = "", landing: str = ""):
     """Own the single ordered editor scroll root; yield its Streamlit container.
 
     ``identity`` is used only to isolate ephemeral view positions and is hashed
     before entering component data. Use the report/draft identity, not an input
     fingerprint: editing must not reset reading position.
+
+    ``landing`` names the section a deliberate entry into this editor starts
+    at. Pass it on that one render only; the browser moves there once.
     """
     workflow = _key(workflow)
     if navigation_key:
         _key(navigation_key)
+    if landing:
+        _key(landing)
     with st.container(key="epc_workspace_" + workflow) as root:
         _adapter(Runtime.instance())(key="epc_display_" + workflow, data={
             "workflow": workflow,
@@ -60,6 +65,7 @@ def workspace(workflow: str, identity: str, *, navigation_key: str = ""):
             # fragment. It lets display-only viewers distinguish a queued
             # native edit from the completed full-app rerun that accepted it.
             "fullRender": uuid4().hex,
+            "landing": [uuid4().hex, landing] if landing else None,
         }, height=1, width="stretch")
         yield root
 

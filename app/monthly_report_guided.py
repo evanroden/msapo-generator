@@ -1224,6 +1224,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     finally:
         read_status.empty()
     if completed_setup == selected:
+        # The editor replaces the setup review but keeps its scroll offset.
+        # Start this deliberate entry at the first section, once.
+        st.session_state[prefix + "_land_on_editor"] = True
         record_report_preferences(browser_token, contract, selected)
         if imported:
             record_report_preparer(browser_token, contract, selected, imported.prepared_by)
@@ -1406,7 +1409,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 st.session_state[draft_key] = draft
                 st.rerun()
     from app.workspace_layout import workspace, workspace_section, workspace_columns
-    with workspace("monthly", prefix, navigation_key="monthly_report_navigation"):
+    landing = "monthly_cover" if st.session_state.pop(prefix + "_land_on_editor", False) else ""
+    with workspace("monthly", prefix, navigation_key="monthly_report_navigation", landing=landing):
         with st.container(key="monthly_report_navigation"):
             st.markdown('<label class="epc-section-navigation">Section'
                         '<select class="epc-section-selector" aria-label="Jump to section" disabled>'

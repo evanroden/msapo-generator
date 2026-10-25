@@ -498,6 +498,26 @@ def exercise(browser_type, name, base):
         proceed.click()
         activity = page.get_by_role("textbox", name="Activity summary", exact=True)
         expect(activity).to_be_visible(timeout=90000)
+        # Continue replaces the review with the editor, but the page keeps
+        # the review's scroll offset (#299). This deliberate entry starts at
+        # the first section with focus there, not wherever that offset lands.
+        landed = 'document.querySelector(".st-key-epc_pair_monthly_cover")'
+        try:
+            page.wait_for_function("""() => {const cover = %s;
+                const top = cover?.getBoundingClientRect().top;
+                return top >= 0 && top <= 240 && cover.contains(document.activeElement);}""" % landed,
+                timeout=15000)
+            landing = None
+        except Exception:
+            landing = page.evaluate("""() => {const cover = %s;
+                return {coverTop: cover && Math.round(cover.getBoundingClientRect().top),
+                        scrollTop: document.querySelector('[data-testid="stMain"]').scrollTop,
+                        focus: document.activeElement?.tagName};}""" % landed)
+        check(name, "Continue starts the editor at its first section with focus there", landing is None, landing)
+        # The Activity steps below start where a reviewer moving on from the
+        # Cover would: at Activity, chosen from the section selector.
+        page.get_by_role("combobox", name="Jump to section", exact=True).select_option("monthly_activity")
+        expect(activity).to_be_in_viewport()
         expect(activity).to_have_value(re.compile(re.escape(SOURCE_TEXT)), timeout=30000)
         check(name, "production Starting report imported source text rather than expectations",
               SOURCE_TEXT in activity.input_value() and EXPECTATION_ONLY not in activity.input_value())
