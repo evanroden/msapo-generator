@@ -240,3 +240,34 @@ def test_mixed_and_leading_decimal_quantities_ground_safely(text, quote, accepte
     else:
         with pytest.raises(ValueError, match="unsupported numbers"):
             ai.normalize_facts(fact(text, quote), page, (1,), PROFILE, PERIOD)
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("Pressure measured five point two five psi.", {"5.25"}),
+    ("Capacity is two point five five million BTU/hr.", {"2550000"}),
+    ("Two point five dozen filters.", {"two point five dozen"}),
+    ("Temperature measured minus five degrees, then negative 3.5 and -10 F.", {"-5", "-3.5", "-10"}),
+    ("Tolerance is plus or minus five percent; 10 minus 2 remain.", {"5", "10", "2"}),
+    ("Rooms 101-105 on 2026-09-15; R-22 and 1.2e-5.", {"101", "105", "2026", "9", "15", "22", "0.000012"}),
+    ("① Pump inspection completed.¹ ② Valve exercised.", set()),
+])
+def test_signs_fractions_and_unicode_markers_read_whole(text, expected):
+    assert ai.numbers(text) == expected
+
+
+@pytest.mark.parametrize("text,quote,accepted", [
+    ("Pressure measured 5.2 psi.", "Pressure measured five point two five psi.", False),
+    ("Pressure measured 5.25 psi.", "Pressure measured five point two five psi.", True),
+    ("Temperature measured 5 degrees.", "Temperature measured minus five degrees.", False),
+    ("Freezer held 10 F.", "Freezer held -10 F.", False),
+    ("Temperature measured -5 degrees.", "Temperature measured minus five degrees.", True),
+    ("Tolerance is plus or minus 5 percent.", "Tolerance is plus or minus five percent.", True),
+    ("Pump inspection completed.", "① Pump inspection completed.¹", True),
+])
+def test_signed_and_multi_digit_fractions_ground_safely(text, quote, accepted):
+    page = replace(SOURCE, page_texts=(quote,))
+    if accepted:
+        assert [f.text for f in ai.normalize_facts(fact(text, quote), page, (1,), PROFILE, PERIOD)] == [text]
+    else:
+        with pytest.raises(ValueError, match="unsupported numbers"):
+            ai.normalize_facts(fact(text, quote), page, (1,), PROFILE, PERIOD)

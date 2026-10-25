@@ -77,6 +77,10 @@ _UNIT_SUFFIXES = {"st", "nd", "rd", "th", "psi", "psig", "psia", "kw", "kwh", "m
                   "in", "ft", "mm", "cm", "km", "gal", "gals", "lb", "lbs", "oz", "sqft", "hr",
                   "hrs", "min", "mins", "sec", "ms", "db", "ppm", "pct", "deg", "v", "w", "va",
                   "kva", "kvar", "kvah", "mva", "vac", "vdc", "amp", "amps"}
+# The digits the reader parses. Circled list numbers and superscript footnote
+# marks pass str.isdigit() but are markers, not quantities.
+_DIGIT = re.compile(r"\d|\.\d")
+_SIGNS = ("minus", "negative")
 
 
 def _canonical_number(raw, scale=None):
@@ -98,11 +102,14 @@ def _quantity_tokens(text):
     # the count before them; joined into one word they modify nothing.
     # ("twenty-first-floor" keeps its ordinal: a hyphen comes before it.)
     text = re.sub(r"(?<!-)\b(" + "|".join((*_UNREAD_MULTIPLIERS, *_ORDINALS)) + r")-(?=[a-z])", r"\1", text)
+    # A hyphen right before a number, after a space or the start, is its sign:
+    # -10 F. Ranges (101-105), dates, R-22 and 1.2e-5 keep the hyphen as a join.
+    text = re.sub(r"(?<![\w.])-(?=\.?\d)", " minus ", text)
     tokens = []
     for match in re.finditer(r"(?:\d+(?:[.,]\d+)*|\.\d+)(?:e[+-]?\d+)?[a-z]*|[a-z]+|[^\s-]", text):
         token = match.group()
         before = text[match.start() - 1] if match.start() else " "
-        if (token[0].isdigit() or token[0] == "." and len(token) > 1) and (before.isalnum() or before == "_"):
+        if _DIGIT.match(token) and (before.isalnum() or before == "_"):
             token = "\0"  # Part of an identifier such as R410A, AHU1 or 2x4.
         tokens.append(token)
     return tokens
@@ -151,7 +158,7 @@ def numbers(text):
     """
     tokens = _quantity_tokens(text)
     def digit(n):
-        return n < len(tokens) and (tokens[n][0].isdigit() or tokens[n][0] == "." and len(tokens[n]) > 1)
+        return n < len(tokens) and bool(_DIGIT.match(tokens[n]))
     def cardinal(n):
         if n >= len(tokens) or tokens[n] not in _SMALL_NUMBERS and tokens[n] not in _TENS:
             return False
@@ -165,10 +172,18 @@ def numbers(text):
         return (n < len(tokens) and tokens[n] in ("a", "an") and tokens[n + 1:n + 2]
                 and tokens[n + 1] in ("hundred", *_SCALES)
                 and not (n and (tokens[n - 1] in _UNREAD_MULTIPLIERS or tokens[n - 1] == "of")))
+    def fraction(n):
+        # Inside "point two five": only digit words since the point.
+        k = n - 1
+        while k >= 0 and decimal_word(k):
+            k -= 1
+        return k < n - 1 and k >= 0 and tokens[k] == "point"
     def joins(n):
         token, previous = tokens[n], tokens[n - 1]
         if previous == "point":
             return decimal_word(n)
+        if fraction(n) and decimal_word(n):
+            return True  # five point two five: every fractional digit.
         if digit(n - 1) and cardinal(n):
             return False  # "5 6" or "5 two": separate quantities.
         # A number word continues "twenty five" or "one hundred (and) five";
@@ -193,6 +208,11 @@ def numbers(text):
         while i < len(tokens) and joins(i):
             i += 1
         span = tokens[start:i]
+        # "minus five" is -5; its bare 5 must not support "5 degrees". Not in
+        # "plus or minus five" (a tolerance) or "10 minus 2" (arithmetic).
+        signed = (start and tokens[start - 1] in _SIGNS and tokens[max(0, start - 3):start - 1] != ["plus", "or"]
+                  and not (start > 1 and (digit(start - 2) or cardinal(start - 2)
+                                          or tokens[start - 2] in ("hundred", *_SCALES))))
         if digit(start):
             raw, exponent, suffix = re.fullmatch(r"(\d+(?:[.,]\d+)*|\.\d+)(e[+-]?\d+)?([a-z]*)", span[0]).groups()
             scale = suffix if suffix in _SCALES else None
@@ -203,6 +223,9 @@ def numbers(text):
                      if not rest and (scale or suffix in ("", *_UNIT_SUFFIXES)) else None)
         else:
             value = _read_words(span)
+        if signed:
+            span = [tokens[start - 1], *span]
+            value = value if value in (None, "0") else "-" + value
         found.add(value if value is not None else " ".join(span))
     return found
 
