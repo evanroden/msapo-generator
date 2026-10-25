@@ -133,3 +133,27 @@ def test_fault_seam_revalidates_namespace_before_any_attempt(monkeypatch, tmp_pa
     assert calls == []
     assert (folder / 'attempts.json').read_text() == '[]'
     assert not (tmp_path / 'monthly_reports').exists()
+
+
+def test_output_check_reads_a_phone_the_pdf_wrapped_after_its_hyphen():
+    """A narrow PDF cell may break 202-555-0199 after a hyphen (seen on CI)."""
+    from io import BytesIO
+    from docx import Document
+    import pymupdf
+    rows = [("Demo North", "Engineer", "Synthetic Person North", "202-555-0199", "")]
+    document = Document()
+    table = document.add_table(rows=2, cols=5)
+    for cell, value in zip(table.rows[0].cells, ("Facility", "Role", "Name", "Phone", "Email")):
+        cell.text = value
+    for cell, value in zip(table.rows[1].cells, rows[0]):
+        cell.text = value
+    word = BytesIO()
+    document.save(word)
+    with pymupdf.open() as pdf:
+        page = pdf.new_page()
+        page.insert_text((72, 72), "Demo North Engineer Synthetic Person North 202-555-")
+        page.insert_text((72, 88), "0199")
+        wrapped = pdf.tobytes()
+    validate_outputs(word.getvalue(), wrapped, rows)
+    with pytest.raises(AssertionError):
+        validate_outputs(word.getvalue(), wrapped, [(*rows[0][:3], "202-555-0198", "")])

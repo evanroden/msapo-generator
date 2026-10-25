@@ -55,11 +55,14 @@ def validate_outputs(word, pdf, rows):
     assert expected in tables, 'Native Word must retain the exact canonical contact table.'
     with pymupdf.open(stream=pdf, filetype='pdf') as document:
         text = ' '.join(' '.join(page.get_text().split()) for page in document)
+        # A narrow cell may wrap 202-555-0199 after a hyphen, depending on the
+        # renderer's fonts; compare visible characters, not its line breaks.
+        visible = ''.join(text.split())
         for row in rows:
             for value in row[2:]:
                 if value:
-                    assert ' '.join(value.split()) in text
-        assert 'OLD SYNTHETIC CONTACT' not in text
+                    assert ''.join(value.split()) in visible, 'PDF lacks ' + value
+        assert 'OLD SYNTHETIC CONTACT' not in text, 'PDF retains the replaced contact'
         pages = len(document)
     with ZipFile(BytesIO(word)) as package:
         xml = package.read('word/document.xml')
