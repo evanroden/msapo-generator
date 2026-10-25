@@ -1,7 +1,7 @@
 """Synthetic late-mount viewer, using the real workspace and preview surface.
 
-Only the browser arrival of the viewer's HTML is gated. Native widgets, preview
-rendering, layout, and callbacks use production code. No report or saved data.
+The viewer HTML or the layout adapter and its CSS can arrive late. Native
+widgets, rendering and callbacks use production code. No report or saved data.
 """
 import json
 import sys
@@ -14,6 +14,7 @@ import fitz
 import streamlit as st
 
 from app import monthly_report_preview_view as preview_view
+from app import workspace_layout
 from app.reference_preview import render_reference
 from app.workspace_layout import workspace, workspace_columns, workspace_section
 
@@ -45,6 +46,35 @@ export default async function(component) {
 preview_view._preview_component = delayed_component
 
 
+@lru_cache(maxsize=2)
+def delayed_adapter(runtime):
+    assets = Path(workspace_layout.__file__).parent
+    source = '\n'.join((assets / name).read_text() for name in
+                       ('workspace_geometry.js', 'monthly_report_source_navigation.js',
+                        'workspace_navigation.js', 'workspace_layout.js'))
+    source = source.replace('export default function(component)',
+                            'function renderWorkspace(component)', 1)
+    source += '''
+export default async function(component) {
+    window.__workspaceMountWaiting = true;
+    await (window.__workspaceMountGate ||= new Promise(resolve => {
+        window.__releaseWorkspaceMount = resolve;
+    }));
+    if (!document.querySelector('#synthetic-workspace-style')) {
+        const style = document.createElement('style');
+        style.id = 'synthetic-workspace-style';
+        style.textContent = ''' + json.dumps((assets / 'workspace_layout.css').read_text()) + ''';
+        document.head.appendChild(style);
+    }
+    const cleanup = renderWorkspace(component);
+    window.__workspaceMountReleased = true;
+    return cleanup;
+}
+'''
+    return st.components.v2.component('synthetic_late_workspace', js=source,
+                                      isolate_styles=False)
+
+
 @st.cache_data
 def synthetic_pdf():
     with fitz.open() as document:
@@ -53,6 +83,8 @@ def synthetic_pdf():
 
 
 st.set_page_config(layout='wide')
+if st.query_params.get('delay_adapter') == '1':
+    workspace_layout._adapter = delayed_adapter
 st.title('Synthetic preview arrival')
 with workspace('monthly', 'synthetic-preview-mount'):
     with workspace_section('monthly_cover', 'Cover'):

@@ -1,7 +1,7 @@
 """Late preview mount must preserve the next native button's pointer target.
 
-Real Streamlit DOM and Chromium/WebKit, with a synthetic PDF and a gate on the
-preview HTML's arrival. No document conversion, genuine report, or remote app.
+Real Streamlit DOM and Chromium/WebKit, with a synthetic PDF and separate gates
+on preview HTML and adapter/CSS arrival. No genuine report or remote app.
 """
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def geometry(page):
     return page.evaluate('''() => {
         const cover = document.querySelector('.st-key-epc_pair_monthly_cover');
         const button = document.querySelector('.st-key-clear_activity button');
-        const reference = cover.querySelector('.epc-workspace-reference');
+        const reference = cover.querySelector('.st-key-epc_reference_monthly_cover');
         return {cover:cover.getBoundingClientRect().toJSON(),
             button:button.getBoundingClientRect().toJSON(),
             reference:reference.getBoundingClientRect().toJSON(),
@@ -37,23 +37,31 @@ def geometry(page):
     }''')
 
 
-def exercise(engine, name):
+def exercise(engine, name, late):
     browser = engine.launch(headless=True)
     page = browser.new_page(viewport={'width': 1440, 'height': 900})
     errors = []
     page.on('pageerror', lambda error: errors.append(str(error)))
-    evidence = {'runs': [], 'browser_errors': errors}
+    evidence = {'late': late, 'runs': [], 'browser_errors': errors}
+    url = URL + ('?delay_adapter=1' if late == 'adapter' else '')
     try:
         for label in ('cold', 'reload'):
             if label == 'cold':
-                page.goto(URL, wait_until='domcontentloaded')
+                page.goto(url, wait_until='domcontentloaded')
             else:
                 page.reload(wait_until='domcontentloaded')
             page.wait_for_function('window.__previewMountWaiting === true')
-            page.wait_for_selector('.st-key-epc_pair_monthly_activity .epc-workspace-editor')
-            page.wait_for_function('document.querySelector(".epc-workspace")?.dataset.epcMode === "wide"')
-            expect(page.locator('.report-preview')).to_have_count(0)
             button = page.get_by_role('button', name='Clear Activity', exact=True)
+            expect(button).to_be_visible()
+            if late == 'adapter':
+                page.wait_for_function('window.__workspaceMountWaiting === true')
+                page.evaluate('window.__releasePreviewMount()')
+                expect(page.locator('.report-preview')).to_have_count(1)
+                expect(page.locator('.epc-workspace')).to_have_count(0)
+            else:
+                page.wait_for_selector('.st-key-epc_pair_monthly_activity .epc-workspace-editor')
+                page.wait_for_function('document.querySelector(".epc-workspace")?.dataset.epcMode === "wide"')
+                expect(page.locator('.report-preview')).to_have_count(0)
             # A reader below Cover, before its viewer has mounted. Set only the
             # initial reading position; never scroll between down and up.
             button.evaluate('''node => {
@@ -73,8 +81,12 @@ def exercise(engine, name):
             y = before['button']['y'] + before['button']['height'] / 2
             page.mouse.move(x, y)
             page.mouse.down()
-            page.evaluate('window.__releasePreviewMount()')
-            expect(page.locator('.report-preview')).to_have_count(1)
+            if late == 'adapter':
+                page.evaluate('window.__releaseWorkspaceMount()')
+                page.wait_for_function('window.__workspaceMountReleased === true')
+            else:
+                page.evaluate('window.__releasePreviewMount()')
+                expect(page.locator('.report-preview')).to_have_count(1)
             frames(page)
             after = geometry(page)
             page.mouse.up()
@@ -88,6 +100,7 @@ def exercise(engine, name):
             assert events == ['pointerdown', 'pointerup', 'click'], run
             # The native callback must arrive, not just a synthetic DOM event.
             expect(page.get_by_text('Activity clears: 1', exact=True)).to_be_visible()
+            page.wait_for_function('document.querySelector(".epc-workspace")?.dataset.epcMode === "wide"')
             image = page.locator('.report-preview img').first
             expect(image).to_have_js_property('complete', True)
             assert image.evaluate('node => node.naturalWidth > 0'), 'Real raster did not load'
@@ -130,10 +143,12 @@ def main():
                 with sync_playwright() as playwright:
                     for engine, name in ((playwright.chromium, 'chromium'),
                                          (playwright.webkit, 'webkit')):
-                        try:
-                            exercise(engine, name)
-                        except Exception as error:
-                            failures.append(name + ': ' + str(error))
+                        for late in ('preview', 'adapter'):
+                            label = name + '-' + late
+                            try:
+                                exercise(engine, label, late)
+                            except Exception as error:
+                                failures.append(label + ': ' + str(error))
             finally:
                 process.terminate()
                 process.wait(timeout=15)
