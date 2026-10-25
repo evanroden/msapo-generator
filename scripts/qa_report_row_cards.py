@@ -150,6 +150,7 @@ def browser_task(browser_type, name):
         requests=page.locator(REQUESTS)
         expect(requests.get_by_text('No requests added.',exact=True)).to_be_visible()
         requests.get_by_role('button',name='Add request',exact=True).click()
+        expect(requests.get_by_role('textbox',name='Requested item',exact=True)).to_be_visible()
         expect(requests.locator('[data-testid="stDataFrame"]')).to_have_count(0)
         requests.get_by_role('textbox',name='Facility',exact=True).fill(REQUEST_SITE)
         requests.get_by_role('textbox',name='Requested item',exact=True).fill(REQUEST)
