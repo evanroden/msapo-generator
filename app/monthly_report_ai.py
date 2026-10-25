@@ -2,6 +2,7 @@
 
 from dataclasses import asdict, replace
 from datetime import date
+from decimal import Decimal
 import hashlib
 import json
 import re
@@ -57,42 +58,83 @@ _SMALL_NUMBERS = {word: value for value, word in enumerate((
     "fourteen fifteen sixteen seventeen eighteen nineteen").split())}
 _TENS = {word: 10 * value for value, word in enumerate(
     "twenty thirty forty fifty sixty seventy eighty ninety".split(), 2)}
+_SCALES = {"thousand": 10 ** 3, "million": 10 ** 6, "billion": 10 ** 9}
+# Words that change a quantity without a reading here. The whole phrase
+# compares as text, so no part of "two dozen" supports a bare 2.
+_UNREAD_MULTIPLIERS = {"dozen", "dozens", "half", "halves", "quarter", "quarters",
+                       "third", "thirds", "gross", "score"}
+
+
+def _canonical_number(raw, scale=None):
+    """One spelling per value: 2,000 and two thousand are both "2000"."""
+    if re.fullmatch(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?", raw):
+        raw = raw.replace(",", "")
+    if not re.fullmatch(r"\d+(?:\.\d+)?", raw):
+        return raw + (" " + scale if scale else "")  # Kept as written, e.g. 1,5.
+    return format((Decimal(raw) * _SCALES.get(scale, 1)).normalize(), "f")
 
 
 def _spelled_numbers(text):
-    """Quantities written as words: "two", "twenty-five", "one hundred and five"."""
-    found, total, current, last = [], 0, None, None
-
-    def flush():
-        nonlocal total, current, last
-        if current is not None or total:
-            found.append(str(total + (current or 0)))
-        total, current, last = 0, None, None
-
+    """Quantities written as words: "twenty-five", "one hundred and five",
+    "two million", "five point two"."""
     # Hyphens and spaces join number words; any other mark or word ends one.
-    for token in re.findall(r"[a-z]+|[^a-z\s-]", text.casefold()):
-        if token in _SMALL_NUMBERS or token in _TENS:
-            value = _SMALL_NUMBERS.get(token, _TENS.get(token))
-            if last in ("small", "tens") and not (last == "tens" and value < 10):
-                flush()
-            current = (current or 0) + value
-            last = "tens" if token in _TENS else "small"
-        elif token == "hundred" and last in ("small", "tens"):
-            current, last = current * 100, "scale"
-        elif token == "thousand" and current is not None:
-            total, current, last = total + current * 1000, None, "scale"
-        elif token == "and" and last == "scale":
+    tokens = re.findall(r"[a-z]+|[^a-z\s-]", text.casefold())
+    def number_word(n):
+        return n < len(tokens) and (tokens[n] in _SMALL_NUMBERS or tokens[n] in _TENS)
+    def decimal_digits(n):
+        j = n
+        while j < len(tokens) and _SMALL_NUMBERS.get(tokens[j], 10) < 10:
+            j += 1
+        return "".join(str(_SMALL_NUMBERS[token]) for token in tokens[n:j]), j
+    found, i = set(), 0
+    while i < len(tokens):
+        if tokens[i] == "point" and (digits := decimal_digits(i + 1))[0]:
+            found.add(_canonical_number("0." + digits[0]))  # "point five" is 0.5, never 5.
+            i = digits[1]
             continue
+        if not number_word(i):
+            i += 1
+            continue
+        start, total, current, last = i, 0, 0, None
+        while i < len(tokens):
+            token = tokens[i]
+            if number_word(i):
+                value = _SMALL_NUMBERS.get(token, _TENS.get(token))
+                if last in ("small", "tens") and not (last == "tens" and value < 10):
+                    break
+                current, last = current + value, "tens" if token in _TENS else "small"
+            elif token == "hundred" and last in ("small", "tens"):
+                current, last = current * 100, "hundred"
+            elif token in _SCALES and last in ("small", "tens", "hundred"):
+                total, current, last = total + current * _SCALES[token], 0, "scale"
+            elif not (token == "and" and last in ("hundred", "scale") and number_word(i + 1)):
+                break
+            i += 1
+        whole = str(total + current)
+        if tokens[i:i + 1] == ["point"]:
+            digits, j = decimal_digits(i + 1)
+            if digits:
+                scale = tokens[j] if j < len(tokens) and tokens[j] in _SCALES else None
+                found.add(_canonical_number(whole + "." + digits, scale))
+                i = j + bool(scale)
+                continue
+        unread = 1 if tokens[i:i + 1] and tokens[i] in ("point", *_UNREAD_MULTIPLIERS) else (
+            3 if tokens[i:i + 2] in (["and", "a"], ["and", "one"])
+            and tokens[i + 2:i + 3] and tokens[i + 2] in _UNREAD_MULTIPLIERS else 0)
+        if unread:
+            found.add(" ".join(tokens[start:i + unread]))
+            i += unread
         else:
-            flush()
-    flush()
-    return set(found)
+            found.add(_canonical_number(whole))
+    return found
 
 
 def numbers(text):
     # A unit may follow a digit directly ("40psi"). A letter before it marks
     # an identifier such as R410A, which compares as text, not quantity.
-    return set(re.findall(r"(?<!\w)\d+(?:[.,]\d+)*", text)) | _spelled_numbers(text)
+    found = {_canonical_number(raw, scale.casefold() or None) for raw, scale in re.findall(
+        r"(?<!\w)(\d+(?:[.,]\d+)*)(?:\s*(thousand|million|billion)\b)?", text, re.IGNORECASE)}
+    return found | _spelled_numbers(text)
 
 
 def fact_numbers(facts):

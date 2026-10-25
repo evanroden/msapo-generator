@@ -74,3 +74,40 @@ def test_a_drafted_paragraph_with_a_changed_quantity_is_flagged_and_cannot_be_re
     same = ai.normalize_draft({"paragraphs": [{"text": "Replaced 2 filters.", "fact_ids": [facts[0].id]}]},
                               "activity_summary", facts, (source,))
     assert not any("Unsupported number" in flag for flag in same.ai_paragraphs[0].flags)
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("Replaced 2,000 filters; 2000 filters; 1,250.50 feet.", {"2000", "1250.5"}),
+    ("Capacity is two million BTU/hr, 2 million BTU/hr or 2.5 million.", {"2000000", "2500000"}),
+    ("Pressure five point two psi and 5.20 psi.", {"5.2"}),
+    ("Valve opened point five turns, or 0.50 turns.", {"0.5"}),
+    ("Two dozen filters; two and a half hours.", {"two dozen", "two and a half"}),
+])
+def test_digits_and_words_share_one_canonical_form(text, expected):
+    assert ai.numbers(text) == expected
+
+
+@pytest.mark.parametrize("text,quote", [
+    ("Capacity is 2 BTU/hr.", "Capacity is two million BTU/hr."),
+    ("Pressure measured 5psi.", "Pressure measured five point two psi."),
+    ("Valve opened 5 turns.", "Valve opened point five turns."),
+    ("Replaced 2 filters.", "Replaced two dozen filters."),
+    ("Worked 2 hours.", "Worked two and a half hours."),
+])
+def test_part_of_a_number_phrase_supports_nothing(text, quote):
+    page = replace(SOURCE, page_texts=(quote,))
+    with pytest.raises(ValueError, match="unsupported numbers"):
+        ai.normalize_facts(fact(text, quote), page, (1,), PROFILE, PERIOD)
+
+
+@pytest.mark.parametrize("text,quote", [
+    ("Replaced two thousand filters.", "Replaced 2,000 filters."),
+    ("Replaced 2,000 filters.", "Replaced two thousand filters."),
+    ("Capacity is 2 million BTU/hr.", "Capacity is two million BTU/hr."),
+    ("Pressure measured 5.2psi.", "Pressure measured five point two psi."),
+    ("Replaced two dozen filters.", "Replaced two dozen filters."),
+])
+def test_equal_quantities_in_different_forms_are_accepted(text, quote):
+    page = replace(SOURCE, page_texts=(quote,))
+    facts = ai.normalize_facts(fact(text, quote), page, (1,), PROFILE, PERIOD)
+    assert [item.text for item in facts] == [text]
