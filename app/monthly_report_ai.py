@@ -98,10 +98,12 @@ def _canonical_number(raw, scale=None):
 def _quantity_tokens(text):
     """Words, digit groups and marks; hyphens only join, they are never tokens."""
     text = re.sub(r"[‐-–−﹣－]", "-", text.casefold())
-    # "half-inch", "quarter-turn" and "first-floor" describe the item, not
-    # the count before them; joined into one word they modify nothing.
-    # ("twenty-first-floor" keeps its ordinal: a hyphen comes before it.)
-    text = re.sub(r"(?<!-)\b(" + "|".join((*_UNREAD_MULTIPLIERS, *_ORDINALS)) + r")-(?=[a-z])", r"\1", text)
+    # "half-inch", "quarter-turn", "first-floor" and "hundred-ton" describe
+    # the item, not the count before them; joined into one word they modify
+    # nothing. ("twenty-first-floor" and "one-hundred-ton" keep their number:
+    # a hyphen comes before it.)
+    adjectives = (*_UNREAD_MULTIPLIERS, *_ORDINALS, "hundred", *_SCALES)
+    text = re.sub(r"(?<!-)\b(" + "|".join(adjectives) + r")-(?=[a-z])", r"\1", text)
     # A hyphen right before a number, after a space or the start, is its sign:
     # -10 F. Ranges (101-105), dates, R-22 and 1.2e-5 keep the hyphen as a join.
     text = re.sub(r"(?<![\w.])-(?=\.?\d)", " minus ", text)
@@ -181,7 +183,8 @@ def numbers(text):
     def joins(n):
         token, previous = tokens[n], tokens[n - 1]
         if previous == "point":
-            return decimal_word(n)
+            # "five point 2" stays one (mixed, unread) quantity.
+            return decimal_word(n) or digit(n)
         if fraction(n) and decimal_word(n):
             return True  # five point two five: every fractional digit.
         if digit(n - 1) and cardinal(n):
@@ -194,7 +197,8 @@ def numbers(text):
                 # "1 million 200 thousand" is one quantity; no group of it
                 # stands alone. It is kept as written.
                 or digit(n) and previous in _SCALES
-                or token == "point" and decimal_word(n + 1) or token in _UNREAD_MULTIPLIERS
+                or token == "point" and (decimal_word(n + 1) or digit(n + 1))
+                or token in _UNREAD_MULTIPLIERS
                 or token in _ORDINALS and previous in _TENS
                 or token == "and" and n + 1 < len(tokens) and (
                     previous in ("hundred", *_SCALES) and cardinal(n + 1)

@@ -294,3 +294,28 @@ def test_part_of_a_scaled_digit_quantity_supports_nothing(text, quote, accepted)
     else:
         with pytest.raises(ValueError, match="unsupported numbers"):
             ai.normalize_facts(fact(text, quote), page, (1,), PROFILE, PERIOD)
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("Replaced two hundred-ton chillers and two thousand-gallon tanks.", {"2"}),
+    ("Installed one-hundred-ton chiller.", {"100"}),
+    ("Pressure measured five point 2 psi, then 5 point 2 psi.", {"five point 2", "5 point 2"}),
+    ("Zone 3 set point 72 F.", {"3", "72"}),
+])
+def test_scale_adjectives_and_mixed_point_digits_read_safely(text, expected):
+    assert ai.numbers(text) == expected
+
+
+@pytest.mark.parametrize("text,quote,accepted", [
+    ("Replaced 200 chillers.", "Replaced two hundred-ton chillers.", False),
+    ("Replaced two hundred-ton chillers.", "Replaced two chillers (hundred-ton).", True),
+    ("Pressure measured 5 psi.", "Pressure measured five point 2 psi.", False),
+    ("Pressure measured 2 psi.", "Pressure measured 5 point 2 psi.", False),
+])
+def test_scale_adjectives_and_mixed_point_digits_ground_safely(text, quote, accepted):
+    page = replace(SOURCE, page_texts=(quote,))
+    if accepted:
+        assert [f.text for f in ai.normalize_facts(fact(text, quote), page, (1,), PROFILE, PERIOD)] == [text]
+    else:
+        with pytest.raises(ValueError, match="unsupported numbers"):
+            ai.normalize_facts(fact(text, quote), page, (1,), PROFILE, PERIOD)
