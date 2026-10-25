@@ -81,10 +81,16 @@ def _queue(key, expected, tokens, active, fields, action="edit", target=None, *,
         retained = [(row, token) for row, token in zip(rows, identities)
                     if any(value is not None and str(value).strip() for value in row)]
         rows, identities = [row for row, _ in retained], [token for _, token in retained]
-    # Consecutive callbacks may arrive before the parent commits. Collapse
-    # only an exact acknowledged result, never an unrelated current table.
+    # Consecutive callbacks may arrive before the parent commits. A field's
+    # blur and Close can also share the same rendered snapshot and deliver
+    # the same complete row. Keep that row's original uncommitted baseline;
+    # otherwise Close falsely conflicts with the still-current parent. Do
+    # not extend this chain to a different result or different row tokens.
     previous = record.get("pending")
-    baseline = (previous["baseline"] if previous and previous["result"] == expected else expected)
+    continues_pending = previous and (previous["result"] == expected or (
+        previous["expected"] == expected and previous["result"] == tuple(rows)
+        and previous["tokens"] == tuple(identities)))
+    baseline = previous["baseline"] if continues_pending else expected
     record["pending"] = {"baseline": baseline, "expected": expected, "result": tuple(rows), "tokens": tuple(identities),
                          "active": active, "draft_token": draft_token, "draft_index": draft_index}
     st.session_state[key] = record
