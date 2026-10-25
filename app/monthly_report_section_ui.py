@@ -165,14 +165,15 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                   cover_design_available=False, source_name="Uploaded Word report", source_view=None, profile=None):
     p = prefix + "_section_" + section.key
     old = plans.get(section.key, {})
-    status = "Ready" if old.get("approved") else "Review"
     # Streamlit includes an expander's label in its identity, even with a key.
     # A changing "Ready" suffix would close it and discard its active widgets.
     box = st.expander(section.title, expanded=first, key=p + "_open", on_change="rerun")
     if not box.open:
         return
     with box:
-        st.caption(status)
+        # Reserve the same position, but do not display stale approval from
+        # the previous render. The current decision may have changed below.
+        status_slot = st.empty()
         guide = section_help(section.key)
         st.write(guide.guidance)
         actions = ["Keep and review", "Edit text or change pictures", "Leave this section out"]
@@ -246,7 +247,8 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                     for slot, image in plan["new_assets"]:
                         st.image(image.data, width="stretch", caption="Your updated " + readable_label(slot).lower() + " is retained")
                 _approve_plan(plan, p, field, old, plans, blocking,
-                              quote_price_risk=_explicit_quote_price_risk(section, inspection))
+                              quote_price_risk=_explicit_quote_price_risk(section, inspection),
+                              status_slot=status_slot)
                 return
             items = list(section.items)
             if section.key == "cover":
@@ -399,10 +401,11 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                     st.caption("Source drawings are retained in this section, "
                                "either as safe original-page images or named replacements.")
         _approve_plan(plan, p, field, old, plans, blocking,
-                      quote_price_risk=_explicit_quote_price_risk(section, inspection))
+                      quote_price_risk=_explicit_quote_price_risk(section, inspection),
+                      status_slot=status_slot)
 
 
-def _approve_plan(plan, p, field, old, plans, blocking, *, quote_price_risk=False):
+def _approve_plan(plan, p, field, old, plans, blocking, *, quote_price_risk=False, status_slot=None):
     for message in blocking:
         st.error(message)
     stamp = plan_signature(plan)
@@ -421,6 +424,10 @@ def _approve_plan(plan, p, field, old, plans, blocking, *, quote_price_risk=Fals
     plan["approved"] = bool(reviewed and not blocking)
     plan["approval_stamp"] = stamp if plan["approved"] else ""
     plans[plan["key"]] = plan
+    if status_slot is not None:
+        # This is the same current decision used by Continue, not last run's
+        # approved flag. Keep the expander title and all native controls stable.
+        status_slot.caption("Ready" if plan["approved"] else "Review")
     if blocking:
         st.caption("Resolve the message above before including this content.")
 

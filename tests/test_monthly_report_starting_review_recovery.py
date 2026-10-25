@@ -98,3 +98,37 @@ def test_dedicated_recovery_suppresses_only_its_own_exclusive_question(
     failures = {"issues": "Source rendering failed"} if dedicated else {}
     assert bool(_starting_review_sections((section,), plans, failures)) is expected
     assert plans == {"issues": {"approved": approved, "questions": questions}}
+
+
+def test_section_status_matches_approval_on_same_choice_without_extra_rerun(monkeypatch, tmp_path):
+    """Review/Ready cannot lag behind this render's actual import decision.
+
+    A real synthetic DOCX has an unresolved proposal drawing. Deliberately
+    leaving that imported section out is permitted, but the old UI displayed
+    the prior Review state until the next rerun. Returning to Keep must show
+    Review immediately while the unresolved artwork still blocks Continue.
+    """
+    path, title = drawing_report(tmp_path, "proposals")
+    original_bytes = path.read_bytes()
+    app = start_app(monkeypatch, tmp_path, path)
+    assert title in {item.label for item in app.expander}
+    assert not app.exception
+    assert "Review" in {caption.value for caption in app.caption}
+    assert continue_button(app).disabled
+
+    action = next(item for item in app.radio if item.label == "What would you like to do?")
+    assert action.value == "Keep and review"
+    action.set_value("Leave this section out").run()
+    assert not app.exception
+    # No compensating app.run() is allowed: this is the first settled action.
+    captions = {item.value for item in app.caption}
+    assert "Ready" in captions and "Review" not in captions
+
+    action = next(item for item in app.radio if item.label == "What would you like to do?")
+    action.set_value("Keep and review").run()
+    assert not app.exception
+    captions = {item.value for item in app.caption}
+    assert "Review" in captions and "Ready" not in captions
+    assert continue_button(app).disabled
+    assert path.read_bytes() == original_bytes
+    assert not library.list_profiles(synthetic_profiles()[0].contract)
