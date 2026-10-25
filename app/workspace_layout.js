@@ -24,6 +24,15 @@ export default function(component) {
     globalThis.ENFRAWorkspaceNavigation?.land(state, data.landing);
     let frame = null, focusFrame = null, disposed = false, pairs = [], lastGeometry = '';
     const subscriptions = [];
+    if (state.landingRequest) {
+        const cancelLanding = event => {
+            if (event.isTrusted) globalThis.ENFRAWorkspaceNavigation?.cancelLanding(state);
+        };
+        for (const type of ['pointerdown', 'keydown', 'wheel', 'touchstart']) {
+            document.addEventListener(type, cancelLanding, {capture:true, passive:true});
+            subscriptions.push(() => document.removeEventListener(type, cancelLanding, {capture:true}));
+        }
+    }
     const controlsOwner = {};
     if (data.workflow === 'monthly' && globalThis.ENFRASourceReviewNavigation)
         subscriptions.push(globalThis.ENFRASourceReviewNavigation.install(app, state));

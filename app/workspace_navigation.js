@@ -8,9 +8,17 @@ globalThis.ENFRAWorkspaceNavigation = {
         const [nonce, section] = request || [];
         if (!nonce || state.landing === nonce) return;
         state.landing = nonce;
+        state.landingRequest = section;
         state.navigationRequest = section;
         state.navigationReturn = null;
         state.reviewNavigation = false;
+    },
+    // A landing waits for its section to render. Once the reader acts
+    // first, it must not scroll or take focus from them (an open menu
+    // would close under their click).
+    cancelLanding(state) {
+        if (state.landingRequest && state.navigationRequest === state.landingRequest) state.navigationRequest = null;
+        state.landingRequest = null;
     },
     create({root, app, scrollport, nav, state, geometry, schedule}) {
         if (!nav) return null;
@@ -86,7 +94,7 @@ globalThis.ENFRAWorkspaceNavigation = {
             const top=Math.max(sample.chromeBottom,sample.scrollport.y,sample.visual?.y||0)+height()+12;
             const request = entries.find(item => item.id === state.navigationRequest);
             if (request) {
-                const entry=request; state.navigationRequest=null;
+                const entry=request; state.navigationRequest=null; state.landingRequest=null;
                 if (!entry.outside && state.navigationReturn?.id===entry.id) {
                     restore=state.navigationReturn; state.navigationReturn=null;
                 } else if (entry.target.isConnected) {

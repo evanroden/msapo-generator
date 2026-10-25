@@ -39,6 +39,7 @@ function harness(mode='wide') {
     measure();
     return {state,root,scrollport,select,field,pairs,review,document,measure,choose,nav,label,controller:()=>controller,
         land:request=>context.ENFRAWorkspaceNavigation.land(state,request),
+        cancelLanding:()=>context.ENFRAWorkspaceNavigation.cancelLanding(state),
         rerender(){controller.dispose();controller=create();measure()},dispose(){controller.dispose()},
         counts:()=>({scheduled,replacements,nativeEvents})};
 }
@@ -278,4 +279,27 @@ test('an entry request waits for its section to render',()=>{
     h.land(['entry-1','monthly_rfi']);h.measure();
     assert.equal(h.scrollport.scrollTop,2300,'a section not yet rendered is not guessed');
     assert.equal(h.state.navigationRequest,'monthly_rfi');
+});
+
+test('a reader acting before the landing renders keeps their place, focus and later choices',()=>{
+    const h=harness();h.scrollport.scrollTop=2300;h.document.activeElement=h.field;
+    h.land(['entry-1','monthly_rfi']);  // Its section has not rendered yet.
+    h.cancelLanding();                  // A trusted pointer or key arrives first.
+    h.measure();
+    assert.equal(h.scrollport.scrollTop,2300);assert.equal(h.document.activeElement,h.field);
+    assert.equal(h.state.navigationRequest,null);assert.equal(h.state.landingRequest,null);
+    h.land(['entry-1','monthly_cover']);h.measure();
+    assert.equal(h.scrollport.scrollTop,2300,'the cancelled request is not replayed');
+    // The reader's own selector choice is never cancelled by its own pointer.
+    h.cancelLanding();h.document.activeElement=h.select;h.choose('monthly_training');
+    assert.equal(h.pairs[3].pair.getBoundingClientRect().top,128);
+});
+
+test('a landing that already ran is not undone by later input',()=>{
+    const h=harness();h.scrollport.scrollTop=2300;
+    h.land(['entry-1','monthly_cover']);h.measure();
+    assert.equal(h.pairs[0].pair.getBoundingClientRect().top,128);
+    assert.equal(h.state.landingRequest,null);
+    h.cancelLanding();h.scrollport.scrollTop=900;h.measure();
+    assert.equal(h.scrollport.scrollTop,900);
 });
