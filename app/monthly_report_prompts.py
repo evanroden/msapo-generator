@@ -75,9 +75,24 @@ COPILOT_TARGETS = {
     6: ("training_summary",), 7: ("activity_summary", "improvements"), 8: ("proposals",),
 }
 _HEADINGS = (
-    "WORK COMPLETED", "VENDOR VISITS", "ISSUES", "QUOTES", "MEETINGS",
-    "TRAINING", "SAFETY", "UPCOMING",
+    ("WORK COMPLETED",),
+    ("VENDOR VISITS", "VENDOR VISITS AND SERVICE REPORTS"),
+    ("ISSUES", "ISSUES AND EQUIPMENT PROBLEMS"),
+    ("QUOTES", "QUOTES AND PROPOSALS"),
+    ("MEETINGS", "MEETINGS AND CLIENT COMMUNICATION"),
+    ("TRAINING",),
+    ("SAFETY", "SAFETY AND IMPROVEMENTS"),
+    ("UPCOMING", "UPCOMING / FOLLOW-UPS"),
 )
+
+
+def _copilot_heading(clean):
+    # Normalize only the heading candidate. Content beginning with a heading
+    # word must still reach the ordinary evidence/unmatched-line path intact.
+    heading = clean.replace("**", "").replace("__", "").strip()
+    heading = re.sub(r"^\d+[.)\s:-]+", "", heading).rstrip(":").strip()
+    heading = " ".join(heading.upper().replace("&", " AND ").split())
+    return next((i for i, titles in enumerate(_HEADINGS, 1) if heading in titles), None)
 
 
 def copilot_prompt(profile, period, vendors=(), tags=()):
@@ -109,8 +124,7 @@ def parse_copilot(text):
         clean = re.sub(r"^[\s#>*•-]+", "", raw).strip()
         if not clean:
             continue
-        heading = re.sub(r"^\d+[.)\s:-]+", "", clean).upper().replace("**", "")
-        found = next((i for i, title in enumerate(_HEADINGS, 1) if heading.startswith(title)), None)
+        found = _copilot_heading(clean)
         if found is not None:
             section = found
             continue

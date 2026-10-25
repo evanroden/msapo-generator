@@ -114,7 +114,7 @@ def test_copilot_originals_and_unmatched_lines_are_retained(tmp_path, monkeypatc
 
     app = monthly(monkeypatch, tmp_path)
     step(app, 2)
-    notes = "Chatty introduction\n1. WORK COMPLETED\n09/03 Inspected a synthetic pump [email from vendor, 09/03]\n4. QUOTES\n09/04 Price $50 [email from vendor, 09/04]"
+    notes = "Chatty introduction\n1. WORK COMPLETED\n09/03 Inspected a synthetic pump [email from vendor, 09/03]\nTraining was delivered [meeting, 09/03]\n09/04 Checked the seal [email from vendor, 09/04]\n4. QUOTES\n09/04 Price $50 [email from vendor, 09/04]"
     next(w for w in app.text_area if w.label == "Paste Copilot's response").set_value(
         notes
     ).run()
@@ -129,7 +129,9 @@ def test_copilot_originals_and_unmatched_lines_are_retained(tmp_path, monkeypatc
         and hasattr(v, "sources")
     )
     source = app.session_state[key].sources[0]
-    assert len(source.facts) == 1
+    assert len(source.facts) == 3
+    assert [fact.kind for fact in source.facts] == ["action", "action", "action"]
+    assert source.facts[1].text == "Training was delivered"
     assert source_bytes(app.session_state[key].profile, source).decode() == notes
     next(w for w in app.text_input if w.label == "Prepared by").set_value(
         "Synthetic Editor"
@@ -138,4 +140,5 @@ def test_copilot_originals_and_unmatched_lines_are_retained(tmp_path, monkeypatc
     saved = library.load_snapshot(
         RRH_CONTRACT, "synthetic-guided", ReportPeriod(2026, 9)
     )
-    assert saved.draft.sources[0].facts
+    assert saved.draft.sources[0].facts == source.facts
+    assert source_bytes(saved.draft.profile, saved.draft.sources[0]).decode() == notes
