@@ -500,6 +500,15 @@ jobs:
           python scripts/qa_preview_first_paint.py
           python scripts/qa_adaptive_workspaces.py
           NATIVE_TEST
+      - name: Upload preview and geometry evidence immediately, including first failures
+        if: always()
+        timeout-minutes: 3
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-first-paint-geometry-${{ github.run_attempt }}
+          path: test-artifacts/adaptive-workspaces/
+          retention-days: 7
+          if-no-files-found: warn
       - name: Native sidebar visibility and pointer/keyboard navigation
         if: ${{ !cancelled() }}
         timeout-minutes: 26
