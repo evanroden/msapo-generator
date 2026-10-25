@@ -21,6 +21,7 @@ export default function(component) {
         state.navigationReturn = null;
         state.sourceReviewReturn = null;
     }
+    globalThis.ENFRAWorkspaceNavigation?.land(state, data.landing);
     let frame = null, focusFrame = null, disposed = false, pairs = [], lastGeometry = '';
     const subscriptions = [];
     const controlsOwner = {};

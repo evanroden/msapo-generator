@@ -1,4 +1,5 @@
 """Keyed boundaries preserve widget values without calling business code."""
+import json
 import subprocess
 from pathlib import Path
 
@@ -38,6 +39,32 @@ st.button('Unrelated rerun')
     assert app.text_area[0].value == 'A current manual correction'
     assert len(app.text_area) == 1
     assert len(app.get('bidi_component')) == 1
+
+
+def _landing(app):
+    return json.loads(app.get('bidi_component')[0].proto.json)['landing']
+
+
+def test_landing_request_is_sent_only_on_the_render_that_asks_for_it():
+    app = AppTest.from_string('''
+import streamlit as st
+from app.workspace_layout import workspace
+with workspace('monthly', 'synthetic-identity', landing=st.session_state.pop('land', '')):
+    st.write('Synthetic editor')
+''')
+    app.session_state['land'] = 'monthly_cover'
+    app.run()
+    assert not app.exception
+    first = _landing(app)
+    assert first[1] == 'monthly_cover' and first[0]
+    app.run()
+    assert _landing(app) is None, 'an ordinary rerun keeps the reader in place'
+    app.session_state['land'] = 'monthly_cover'
+    app.run()
+    assert _landing(app)[0] != first[0], 'each deliberate entry is a new request'
+    app.session_state['land'] = 'x" onclick="oops'
+    app.run()
+    assert app.exception
 
 
 @pytest.mark.parametrize('script', ['tests/workspace_geometry_test.cjs', 'tests/preview_view_lifecycle_test.cjs',

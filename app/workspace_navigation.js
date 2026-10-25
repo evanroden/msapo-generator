@@ -1,5 +1,17 @@
 /* One native section selector. The existing layout adapter owns scheduling. */
 globalThis.ENFRAWorkspaceNavigation = {
+    // Entering the editor from report setup replaces the whole page, yet the
+    // scroll root keeps the setup review's offset. Python sends this request
+    // once for that deliberate entry; edits, previews and reloads never do,
+    // so they keep the reader's position.
+    land(state, request) {
+        const [nonce, section] = request || [];
+        if (!nonce || state.landing === nonce) return;
+        state.landing = nonce;
+        state.navigationRequest = section;
+        state.navigationReturn = null;
+        state.reviewNavigation = false;
+    },
     create({root, app, scrollport, nav, state, geometry, schedule}) {
         if (!nav) return null;
         let select = null, entries = [], signature = '';

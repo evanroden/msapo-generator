@@ -38,6 +38,7 @@ function harness(mode='wide') {
     const choose=id=>{select.value=id;select.onchange();measure()};
     measure();
     return {state,root,scrollport,select,field,pairs,review,document,measure,choose,nav,label,controller:()=>controller,
+        land:request=>context.ENFRAWorkspaceNavigation.land(state,request),
         rerender(){controller.dispose();controller=create();measure()},dispose(){controller.dispose()},
         counts:()=>({scheduled,replacements,nativeEvents})};
 }
@@ -247,4 +248,34 @@ test('sticky navigation belongs to the direct workspace wrapper rather than its 
     assert.ok(rule.includes('position:sticky') && rule.includes('top:var(--epc-nav-top'));
     const inner=css.split('.st-key-monthly_report_navigation {')[1]?.split('}')[0];
     assert.ok(inner && !inner.includes('position:sticky'),'nested stickiness cannot escape the short wrapper');
+});
+
+for(const mode of ['wide','compact','tabletop'])test(`${mode} entering from report setup starts once at the first section`,()=>{
+    // Continue replaces the setup review with the editor, yet the scroll
+    // root keeps the review's offset, here deep in Training.
+    const h=harness(mode),owner=mode==='tabletop'?h.root:h.scrollport;
+    owner.scrollTop=2300;h.measure();assert.equal(h.select.value,'monthly_training');
+    h.land(['entry-1','monthly_cover']);h.measure();
+    if(mode==='tabletop')assert.ok(h.root.scrollTop<=0,'the owned root returns to its start');
+    else assert.equal(h.pairs[0].pair.getBoundingClientRect().top,128);
+    assert.equal(h.select.value,'monthly_cover');
+    assert.equal(h.document.activeElement,h.pairs[0].pair);
+    // Later renders repeat the consumed request or send none. Reading
+    // position, the native field and its selection stay as the user left them.
+    owner.scrollTop=1800;h.document.activeElement=h.field;
+    for(const request of [['entry-1','monthly_cover'],undefined,null,[]]){h.land(request);h.measure();}
+    h.rerender();
+    assert.equal(owner.scrollTop,1800);assert.equal(h.document.activeElement,h.field);
+    assert.equal(h.field.value,'Unblurred human wording');assert.equal(h.field.selectionStart,3);
+    assert.equal(h.counts().nativeEvents,0);
+    // A later deliberate entry is a new request.
+    h.land(['entry-2','monthly_cover']);h.measure();
+    assert.equal(h.select.value,'monthly_cover');assert.equal(h.document.activeElement,h.pairs[0].pair);
+});
+
+test('an entry request waits for its section to render',()=>{
+    const h=harness();h.scrollport.scrollTop=2300;
+    h.land(['entry-1','monthly_rfi']);h.measure();
+    assert.equal(h.scrollport.scrollTop,2300,'a section not yet rendered is not guessed');
+    assert.equal(h.state.navigationRequest,'monthly_rfi');
 });
