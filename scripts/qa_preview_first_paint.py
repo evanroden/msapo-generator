@@ -25,24 +25,27 @@ def frames(page):
     page.evaluate('() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))')
 
 
-def geometry(page):
-    return page.evaluate('''() => {
+def geometry(page, button_key):
+    return page.evaluate('''buttonKey => {
         const cover = document.querySelector('.st-key-epc_pair_monthly_cover');
-        const button = document.querySelector('.st-key-clear_activity button');
+        const button = document.querySelector('.st-key-' + buttonKey + ' button');
         const reference = cover.querySelector('.st-key-epc_reference_monthly_cover');
         return {cover:cover.getBoundingClientRect().toJSON(),
             button:button.getBoundingClientRect().toJSON(),
             reference:reference.getBoundingClientRect().toJSON(),
             scrollTop:document.querySelector('[data-testid="stMain"]').scrollTop};
-    }''')
+    }''', button_key)
 
 
-def exercise(engine, name, late):
+def exercise(engine, name, late, target):
     browser = engine.launch(headless=True)
     page = browser.new_page(viewport={'width': 1440, 'height': 900})
     errors = []
     page.on('pageerror', lambda error: errors.append(str(error)))
-    evidence = {'late': late, 'runs': [], 'browser_errors': errors}
+    evidence = {'late': late, 'target': target, 'runs': [], 'browser_errors': errors}
+    button_key = 'render_outputs' if target == 'outside' else 'clear_activity'
+    button_name = 'Render synthetic outputs' if target == 'outside' else 'Clear Activity'
+    receipt = 'Output renders: 1' if target == 'outside' else 'Activity clears: 1'
     url = URL + ('?delay_adapter=1' if late == 'adapter' else '')
     try:
         for label in ('cold', 'reload'):
@@ -51,7 +54,7 @@ def exercise(engine, name, late):
             else:
                 page.reload(wait_until='domcontentloaded')
             page.wait_for_function('window.__previewMountWaiting === true')
-            button = page.get_by_role('button', name='Clear Activity', exact=True)
+            button = page.get_by_role('button', name=button_name, exact=True)
             expect(button).to_be_visible()
             if late == 'adapter':
                 page.wait_for_function('window.__workspaceMountWaiting === true')
@@ -69,13 +72,13 @@ def exercise(engine, name, late):
                     node.getBoundingClientRect().top - 400;
             }''')
             frames(page)
-            page.evaluate('''() => {
+            page.evaluate('''buttonKey => {
                 window.__previewPointerEvents = [];
-                const button = document.querySelector('.st-key-clear_activity button');
+                const button = document.querySelector('.st-key-' + buttonKey + ' button');
                 for (const type of ['pointerdown', 'pointerup', 'click'])
                     button.addEventListener(type, () => window.__previewPointerEvents.push(type));
-            }''')
-            before = geometry(page)
+            }''', button_key)
+            before = geometry(page, button_key)
             page.screenshot(path=str(OUT / f'{name}-{label}-before.png'))
             x = before['button']['x'] + before['button']['width'] / 2
             y = before['button']['y'] + before['button']['height'] / 2
@@ -88,7 +91,7 @@ def exercise(engine, name, late):
                 page.evaluate('window.__releasePreviewMount()')
                 expect(page.locator('.report-preview')).to_have_count(1)
             frames(page)
-            after = geometry(page)
+            after = geometry(page, button_key)
             page.mouse.up()
             events = page.evaluate('window.__previewPointerEvents')
             run = {'load': label, 'before': before, 'after': after, 'events': events}
@@ -99,7 +102,7 @@ def exercise(engine, name, late):
             assert abs(after['scrollTop'] - before['scrollTop']) <= 3, run
             assert events == ['pointerdown', 'pointerup', 'click'], run
             # The native callback must arrive, not just a synthetic DOM event.
-            expect(page.get_by_text('Activity clears: 1', exact=True)).to_be_visible()
+            expect(page.get_by_text(receipt, exact=True)).to_be_visible()
             page.wait_for_function('document.querySelector(".epc-workspace")?.dataset.epcMode === "wide"')
             image = page.locator('.report-preview img').first
             expect(image).to_have_js_property('complete', True)
@@ -143,10 +146,11 @@ def main():
                 with sync_playwright() as playwright:
                     for engine, name in ((playwright.chromium, 'chromium'),
                                          (playwright.webkit, 'webkit')):
-                        for late in ('preview', 'adapter'):
-                            label = name + '-' + late
+                        for late, target in (('preview', 'inside'), ('adapter', 'inside'),
+                                             ('adapter', 'outside')):
+                            label = name + '-' + late + '-' + target
                             try:
-                                exercise(engine, label, late)
+                                exercise(engine, label, late, target)
                             except Exception as error:
                                 failures.append(label + ': ' + str(error))
             finally:

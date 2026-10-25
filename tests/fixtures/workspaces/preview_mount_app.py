@@ -56,10 +56,12 @@ def delayed_adapter(runtime):
                             'function renderWorkspace(component)', 1)
     source += '''
 export default async function(component) {
-    window.__workspaceMountWaiting = true;
-    await (window.__workspaceMountGate ||= new Promise(resolve => {
-        window.__releaseWorkspaceMount = resolve;
-    }));
+    if (component.data.syntheticDelayAdapter) {
+        window.__workspaceMountWaiting = true;
+        await (window.__workspaceMountGate ||= new Promise(resolve => {
+            window.__releaseWorkspaceMount = resolve;
+        }));
+    }
     if (!document.querySelector('#synthetic-workspace-style')) {
         const style = document.createElement('style');
         style.id = 'synthetic-workspace-style';
@@ -75,6 +77,21 @@ export default async function(component) {
                                       isolate_styles=False)
 
 
+def fixture_adapter(runtime):
+    registered = delayed_adapter(runtime)
+
+    def render(*, data, **kwargs):
+        # Carry the selected ordering per browser session. Do not leave a
+        # process-global variant behind for the next browser's preview case.
+        return registered(data={**data, 'syntheticDelayAdapter':
+                                st.query_params.get('delay_adapter') == '1'}, **kwargs)
+
+    return render
+
+
+workspace_layout._adapter = fixture_adapter
+
+
 @st.cache_data
 def synthetic_pdf():
     with fitz.open() as document:
@@ -83,8 +100,6 @@ def synthetic_pdf():
 
 
 st.set_page_config(layout='wide')
-if st.query_params.get('delay_adapter') == '1':
-    workspace_layout._adapter = delayed_adapter
 st.title('Synthetic preview arrival')
 with workspace('monthly', 'synthetic-preview-mount'):
     with workspace_section('monthly_cover', 'Cover'):
@@ -109,3 +124,9 @@ with workspace('monthly', 'synthetic-preview-mount'):
                 st.text_input(f'Synthetic detail {index}', key=f'detail_{index}')
         with reference:
             st.caption('No document in this section')
+
+# The reported adapter race also moved a native action below the workspace.
+st.button('Render synthetic outputs', key='render_outputs',
+          on_click=lambda: st.session_state.update(
+              rendered=st.session_state.get('rendered', 0) + 1))
+st.write(f'Output renders: {st.session_state.get("rendered", 0)}')
