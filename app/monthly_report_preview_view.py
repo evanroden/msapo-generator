@@ -516,12 +516,16 @@ def _preview_component(runtime):
 def render_view(*, key, generation, title, ticket=None, images=(), status='', stale=False, on_change, view_scope=None, pending=False, on_poll=None, acknowledged_viewport=None):
     view = _preview_component(Runtime.instance())
     applied = acknowledged_viewport or {'visible': False, 'pages': (0,), 'dpi': 96}
-    return view(key=key, data={
-        'generation': generation, 'title': title, 'viewScope': str(view_scope or key), 'ready': ticket is not None and not stale, 'stale': bool(stale),
-        'sizes': ticket.sizes if ticket else (), 'status': status, 'pending': bool(pending),
-        'initialPage': ticket.initial_page if ticket else 0,
-        'acknowledgedViewport': {'visible': bool(applied['visible']), 'pages': list(applied['pages']),
-                                 'dpi': applied['dpi'], 'generation': generation},
-        'pages': [{'index': index, 'image': b64encode(raw).decode('ascii')} for index, raw in images],
-    }, default={'viewport': None, 'poll': None}, on_viewport_change=on_change,
-        on_poll_change=on_poll or (lambda: None), height='content')
+    # The native container arrives before the asynchronous browser component.
+    # Reserve the same viewport-sized space during that gap, including reloads,
+    # so a short section cannot grow underneath a pointer aimed at the next one.
+    with st.container(key='epc_preview_slot_' + key):
+        return view(key=key, data={
+            'generation': generation, 'title': title, 'viewScope': str(view_scope or key), 'ready': ticket is not None and not stale, 'stale': bool(stale),
+            'sizes': ticket.sizes if ticket else (), 'status': status, 'pending': bool(pending),
+            'initialPage': ticket.initial_page if ticket else 0,
+            'acknowledgedViewport': {'visible': bool(applied['visible']), 'pages': list(applied['pages']),
+                                     'dpi': applied['dpi'], 'generation': generation},
+            'pages': [{'index': index, 'image': b64encode(raw).decode('ascii')} for index, raw in images],
+        }, default={'viewport': None, 'poll': None}, on_viewport_change=on_change,
+            on_poll_change=on_poll or (lambda: None), height='content')

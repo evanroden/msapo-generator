@@ -36,7 +36,8 @@ export default function(component) {
     const controlsOwner = {};
     if (data.workflow === 'monthly' && globalThis.ENFRASourceReviewNavigation)
         subscriptions.push(globalThis.ENFRASourceReviewNavigation.install(app, state));
-    root.classList.add('epc-workspace');
+    // Apply the first layout class only inside measure(), after any native
+    // pointer/key gesture already in progress has delivered its click.
     // This stamp changes only on a real top-level Python workspace render.
     // Layout measurement, preview fragments and viewport changes do not change
     // it. The reference viewer uses this as an acknowledgment of native edits.
@@ -262,9 +263,35 @@ export default function(component) {
         state.active = geometry.selectActiveSection(list, state.active, context.editor.y + 32, 24);
         pairs.forEach(({id,pair}) => {pair.dataset.epcActive = String(id === state.active);});
     }
+    let waitingForGesture = false;
+    function finishGesture() {
+        waitingForGesture = false;
+        removeGestureListeners();
+        schedule();
+    }
+    function removeGestureListeners() {
+        document.removeEventListener('pointerup', finishGesture, true);
+        document.removeEventListener('pointercancel', finishGesture, true);
+        document.removeEventListener('keyup', finishGesture, true);
+        window.removeEventListener('blur', finishGesture);
+    }
+    subscriptions.push(removeGestureListeners);
     function measure() {
         frame = null;
         if (disposed || !root.isConnected || document.hidden) return;
+        // A late adapter can resize everything below it, including controls
+        // outside the workspace. Preserve the browser's current native gesture
+        // before this first enhancement; never cancel or synthesize its events.
+        if (!state.mode && document.querySelector(':active')) {
+            if (!waitingForGesture) {
+                waitingForGesture = true;
+                document.addEventListener('pointerup', finishGesture, true);
+                document.addEventListener('pointercancel', finishGesture, true);
+                document.addEventListener('keyup', finishGesture, true);
+                window.addEventListener('blur', finishGesture);
+            }
+            return;
+        }
         // The framework can replace this keyed container's class attribute
         // while retaining its native subtree. Reassert only our owned class
         // before measuring; the current mode must keep its matching CSS.
@@ -322,9 +349,12 @@ export default function(component) {
         const bottom = Math.min(sample.scrollport.y+sample.scrollport.height, (sample.visual?.y||0)+(sample.visual?.height||sample.layout.height));
         css('preview-height',context.mode === 'tabletop' && context.preview ? Math.max(120,context.preview.height-24) : Math.max(180,bottom-top-16));
         pairs.forEach(({reference}) => {
-            const surface = Array.from(reference.querySelectorAll('*')).map(node => node.shadowRoot?.querySelector('.report-preview')).find(Boolean);
-            if (!surface) return;
-            const overhead = Math.max(0,surface.getBoundingClientRect().top-reference.getBoundingClientRect().top);
+            // The native slot can be measured before the component's HTML
+            // mounts. Account for captions/controls now, not a frame after the
+            // new surface has already shifted the following section.
+            const slot = reference.querySelector('[class*="st-key-epc_preview_slot_"]');
+            if (!slot) return;
+            const overhead = Math.max(0,slot.getBoundingClientRect().top-reference.getBoundingClientRect().top);
             const available = context.mode === 'tabletop' && context.preview ? context.preview.height : bottom-top;
             reference.style.setProperty('--epc-preview-height', Math.max(180,available-overhead-16)+'px');
         });
@@ -352,6 +382,7 @@ export default function(component) {
     mutation.observe(root, {childList:true,subtree:true});
     const rootClass = new MutationObserver(() => {
         if (disposed || !root.isConnected || root.classList.contains('epc-workspace')) return;
+        if (!state.mode) {schedule(); return;}
         // Restore before paint, without touching scroll, focus or framework
         // classes. The resulting class record is a no-op, not a rerun loop.
         root.classList.add('epc-workspace');

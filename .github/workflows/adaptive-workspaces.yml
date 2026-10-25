@@ -16,6 +16,8 @@ on:
       - 'tests/preview_view_lifecycle_test.cjs'
       - 'tests/preview_commit_gate_test.cjs'
       - 'scripts/qa_adaptive_workspaces.py'
+      - 'scripts/qa_preview_first_paint.py'
+      - 'tests/test_preview_first_paint_contract.py'
       - 'scripts/qa_sidebar_navigation.py'
       - 'tests/test_sidebar_navigation.py'
       - 'scripts/qa_expense_adaptive.py'
@@ -172,6 +174,8 @@ on:
       - 'tests/preview_view_lifecycle_test.cjs'
       - 'tests/preview_commit_gate_test.cjs'
       - 'scripts/qa_adaptive_workspaces.py'
+      - 'scripts/qa_preview_first_paint.py'
+      - 'tests/test_preview_first_paint_contract.py'
       - 'scripts/qa_sidebar_navigation.py'
       - 'tests/test_sidebar_navigation.py'
       - 'scripts/qa_expense_adaptive.py'
@@ -321,6 +325,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  preview-first-paint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - name: Install locked app and preview mount browser harness
+        timeout-minutes: 20
+        run: |
+          sudo python3 scripts/ci_ubuntu_mirror_priority.py
+          python -m pip install -r requirements-dev.lock
+          python scripts/patch_streamlit_frontend.py
+          python -m pip install playwright==1.58.0
+          python -m playwright install --with-deps chromium webkit
+      - name: Late preview mount preserves the next native pointer target
+        timeout-minutes: 6
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 5 <<'NATIVE_TEST'
+          python scripts/qa_preview_first_paint.py
+          NATIVE_TEST
+      - name: Upload preview first-paint evidence, including first failures
+        if: always()
+        timeout-minutes: 3
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-first-paint-browser-evidence-${{ github.run_attempt }}
+          path: test-artifacts/adaptive-workspaces/preview-first-paint/
+          retention-days: 7
+          if-no-files-found: warn
   synthetic-work-order-rows:
     runs-on: ubuntu-24.04
     # Separate new acceptance, not an extension of any existing job's budget.
