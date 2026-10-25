@@ -82,6 +82,12 @@ if (os.environ.get("EPC_MONTHLY_TRAINING_TASK") == "1"
         render_reference(base, _field)
     st.stop()
 
+if os.environ.get("EPC_MONTHLY_COVER_FIRST_TASK") == "1":
+    from scripts.workspace_cover_first_display import render as render_cover_first
+    with isolated(token):
+        render_cover_first(base, token, _field, _move)
+    st.stop()
+
 if os.environ.get("EPC_MONTHLY_CONTACT_TASK") == "1":
     from scripts.workspace_contact_observations import render as render_contacts
     with isolated(token):

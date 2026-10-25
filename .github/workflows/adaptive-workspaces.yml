@@ -129,6 +129,10 @@ on:
       - 'scripts/qa_source_corrections.py'
       - 'scripts/qa_single_logo_admin.py'
       - 'scripts/qa_about_logo_refresh.py'
+      - 'scripts/qa_cover_first_display.py'
+      - 'scripts/workspace_cover_first_display.py'
+      - 'tests/test_cover_first_display_fixture.py'
+      - 'tests/test_cover_standing_first_preview.py'
       - 'scripts/workspace_logo_refresh_observations.py'
       - 'tests/test_about_logo_refresh_journey.py'
       - 'scripts/qa_source_selection_delivery.py'
@@ -281,6 +285,10 @@ on:
       - 'scripts/qa_source_corrections.py'
       - 'scripts/qa_single_logo_admin.py'
       - 'scripts/qa_about_logo_refresh.py'
+      - 'scripts/qa_cover_first_display.py'
+      - 'scripts/workspace_cover_first_display.py'
+      - 'tests/test_cover_first_display_fixture.py'
+      - 'tests/test_cover_standing_first_preview.py'
       - 'scripts/workspace_logo_refresh_observations.py'
       - 'tests/test_about_logo_refresh_journey.py'
       - 'scripts/qa_source_selection_delivery.py'
@@ -456,6 +464,47 @@ jobs:
         with:
           name: monthly-history-browser-evidence
           path: test-artifacts/monthly-history/
+          retention-days: 7
+          if-no-files-found: warn
+  cover-first-display:
+    runs-on: ubuntu-24.04
+    # Keep the new real-converter suite out of the long synthetic-dom job.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install locked app, converter and browser harness
+        timeout-minutes: 20
+        run: |
+          sudo python3 scripts/ci_ubuntu_mirror_priority.py
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-calc fonts-dejavu-core fonts-crosextra-carlito fonts-crosextra-caladea
+          python -m pip install -r requirements-dev.lock
+          python scripts/patch_streamlit_frontend.py
+          python scripts/patch_streamlit_date_input.py
+          python -m pip install playwright==1.58.0
+          python -m playwright install --with-deps chromium webkit
+      - name: Standing cover first display without a starting report
+        if: ${{ !cancelled() }}
+        timeout-minutes: 20
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 19 <<'NATIVE_TEST'
+          python scripts/qa_cover_first_display.py
+          NATIVE_TEST
+      - name: Upload first-display cover evidence including first failures
+        if: always()
+        timeout-minutes: 3
+        uses: actions/upload-artifact@v4
+        with:
+          name: cover-first-display-evidence-${{ github.run_attempt }}
+          path: test-artifacts/cover-first-display/
           retention-days: 7
           if-no-files-found: warn
   synthetic-dom:
