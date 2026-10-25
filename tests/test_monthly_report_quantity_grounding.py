@@ -34,7 +34,7 @@ def fact(text, quote):
     ("Chiller R410A and AHU1 are unchanged.", set()),
     ("Chiller CH-2 was inspected.", {"2"}),
     ("Someone inspected the pump; it was done.", set()),
-    ("A hundred tenants; one hundred thousand thousand; a thousand.", {"100000"}),
+    ("One hundred thousand thousand tenants.", {"100000"}),
 ])
 def test_numbers_read_spelled_quantities_and_digits_attached_to_units(text, expected):
     assert ai.numbers(text) == expected
@@ -133,3 +133,28 @@ def test_a_fact_and_its_quote_are_read_separately_so_their_boundary_makes_no_num
     block = ai.normalize_draft({"paragraphs": [{"text": "The filter count was 25.", "fact_ids": [facts[0].id]}]},
                                "activity_summary", facts, (source,))
     assert any("Unsupported number" in flag for flag in block.ai_paragraphs[0].flags)
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("Replaced two half-inch valves.", {"2"}),
+    ("Made two quarter-turn adjustments.", {"2"}),
+    ("Worked two and a half hours.", {"two and a half"}),
+    ("Capacity is point five million BTU/hr.", {"500000"}),
+    ("A hundred filters and an hundred valves; a thousand feet.", {"100", "1000"}),
+])
+def test_unit_adjectives_and_leading_decimals_keep_their_meaning(text, expected):
+    assert ai.numbers(text) == expected
+
+
+@pytest.mark.parametrize("text,quote,accepted", [
+    ("Replaced two half-inch valves.", "Replaced two valves (half-inch).", True),
+    ("Capacity is 500000 BTU/hr.", "Capacity is point five million BTU/hr.", True),
+    ("Capacity is 0.5 BTU/hr.", "Capacity is point five million BTU/hr.", False),
+])
+def test_unit_adjectives_and_scaled_leading_decimals_ground_correctly(text, quote, accepted):
+    page = replace(SOURCE, page_texts=(quote,))
+    if accepted:
+        assert [f.text for f in ai.normalize_facts(fact(text, quote), page, (1,), PROFILE, PERIOD)] == [text]
+    else:
+        with pytest.raises(ValueError, match="unsupported numbers"):
+            ai.normalize_facts(fact(text, quote), page, (1,), PROFILE, PERIOD)

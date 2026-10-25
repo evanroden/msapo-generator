@@ -80,22 +80,31 @@ def _spelled_numbers(text):
     # Hyphens (any Unicode form) and spaces join number words; any other
     # mark or word ends one.
     text = re.sub(r"[\u2010-\u2013\u2212\ufe63\uff0d]", "-", text.casefold())
+    # "half-inch" and "quarter-turn" describe a unit, not the count before
+    # them; joined into one word they never act as a multiplier.
+    text = re.sub(r"\b(" + "|".join(_UNREAD_MULTIPLIERS) + r")-(?=[a-z])", r"\1", text)
+    text = re.sub(r"\ban? (hundred|thousand|million|billion)\b", r"one \1", text)  # "a hundred" is 100.
     tokens = re.findall(r"[a-z]+|[^a-z\s-]", text)
     def number_word(n):
         if n >= len(tokens) or not (tokens[n] in _SMALL_NUMBERS or tokens[n] in _TENS):
             return False
         # "No one" and "one another" name people, not a quantity.
         return not (tokens[n] == "one" and (n and tokens[n - 1] == "no" or tokens[n + 1:n + 2] == ["another"]))
-    def decimal_digits(n):
+    def decimal(whole, n):
+        """The decimal after "point" at n, with any scale, and where it ends."""
         j = n
         while j < len(tokens) and _SMALL_NUMBERS.get(tokens[j], 10) < 10:
             j += 1
-        return "".join(str(_SMALL_NUMBERS[token]) for token in tokens[n:j]), j
+        if j == n:
+            return None, n
+        digits = "".join(str(_SMALL_NUMBERS[token]) for token in tokens[n:j])
+        scale = tokens[j] if j < len(tokens) and tokens[j] in _SCALES else None
+        return _canonical_number(whole + "." + digits, scale), j + bool(scale)
     found, i = set(), 0
     while i < len(tokens):
-        if tokens[i] == "point" and (digits := decimal_digits(i + 1))[0]:
-            found.add(_canonical_number("0." + digits[0]))  # "point five" is 0.5, never 5.
-            i = digits[1]
+        if tokens[i] == "point" and (value := decimal("0", i + 1))[0]:
+            found.add(value[0])  # "point five" is 0.5, never 5.
+            i = value[1]
             continue
         if not number_word(i):
             i += 1
@@ -116,13 +125,10 @@ def _spelled_numbers(text):
                 break
             i += 1
         whole = str(total + current)
-        if tokens[i:i + 1] == ["point"]:
-            digits, j = decimal_digits(i + 1)
-            if digits:
-                scale = tokens[j] if j < len(tokens) and tokens[j] in _SCALES else None
-                found.add(_canonical_number(whole + "." + digits, scale))
-                i = j + bool(scale)
-                continue
+        if tokens[i:i + 1] == ["point"] and (value := decimal(whole, i + 1))[0]:
+            found.add(value[0])
+            i = value[1]
+            continue
         unread = 1 if tokens[i:i + 1] and tokens[i] in ("point", *_UNREAD_MULTIPLIERS) else (
             3 if tokens[i:i + 2] in (["and", "a"], ["and", "one"])
             and tokens[i + 2:i + 3] and tokens[i + 2] in _UNREAD_MULTIPLIERS else 0)
