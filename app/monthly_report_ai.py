@@ -191,6 +191,9 @@ def numbers(text):
         return (cardinal(n) and (previous in _TENS and _SMALL_NUMBERS.get(token, 10) < 10
                                  or previous in ("hundred", "and", *_SCALES))
                 or token in ("hundred", *_SCALES)
+                # "1 million 200 thousand" is one quantity; no group of it
+                # stands alone. It is kept as written.
+                or digit(n) and previous in _SCALES
                 or token == "point" and decimal_word(n + 1) or token in _UNREAD_MULTIPLIERS
                 or token in _ORDINALS and previous in _TENS
                 or token == "and" and n + 1 < len(tokens) and (

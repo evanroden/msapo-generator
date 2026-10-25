@@ -271,3 +271,26 @@ def test_signed_and_multi_digit_fractions_ground_safely(text, quote, accepted):
     else:
         with pytest.raises(ValueError, match="unsupported numbers"):
             ai.normalize_facts(fact(text, quote), page, (1,), PROFILE, PERIOD)
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("Capacity is 1 million 200 thousand BTU/hr.", {"1 million 200 thousand"}),
+    ("Capacity is one million 200 thousand BTU/hr.", {"one million 200 thousand"}),
+    ("Capacity is 1 million BTU/hr, 200 thousand spare.", {"1000000", "200000"}),
+])
+def test_digits_continuing_a_scaled_quantity_stay_in_it(text, expected):
+    assert ai.numbers(text) == expected
+
+
+@pytest.mark.parametrize("text,quote,accepted", [
+    ("Capacity is 1000000 BTU/hr.", "Capacity is 1 million 200 thousand BTU/hr.", False),
+    ("Capacity is 200000 BTU/hr.", "Capacity is one million 200 thousand BTU/hr.", False),
+    ("Capacity is 1 million 200 thousand BTU/hr.", "Capacity is 1 million 200 thousand BTU/hr.", True),
+])
+def test_part_of_a_scaled_digit_quantity_supports_nothing(text, quote, accepted):
+    page = replace(SOURCE, page_texts=(quote,))
+    if accepted:
+        assert [f.text for f in ai.normalize_facts(fact(text, quote), page, (1,), PROFILE, PERIOD)] == [text]
+    else:
+        with pytest.raises(ValueError, match="unsupported numbers"):
+            ai.normalize_facts(fact(text, quote), page, (1,), PROFILE, PERIOD)
