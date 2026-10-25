@@ -10,8 +10,19 @@ from app import monthly_report_active_work as active
 from app.monthly_report_checks import preflight
 from app.monthly_report_docx import assemble_docx
 from app.monthly_report_model import ReportTable, ResolvedBlock
+from app.monthly_report_row_cards_ui import CARD_TABLES
 from app.monthly_report_table_entry_ui import EMPTY_TABLES
-from test_monthly_report_rfi_ui import SCRIPT, edit_grid
+from test_monthly_report_rfi_ui import SCRIPT, field, labels, press
+
+
+# Requests open named row fields; Capital and end-of-life keep their grids.
+GRID_TABLES = tuple(key for key in EMPTY_TABLES if key not in CARD_TABLES)
+
+
+def edit_grid(app, key, *, edited=None, added=None, removed=None):
+    app.session_state[key] = {"edited_rows": edited or {}, "added_rows": added or [],
+                              "deleted_rows": removed or []}
+    return app.run()
 
 
 def workspace(key):
@@ -37,10 +48,37 @@ def test_open_request_removes_the_empty_sentence_and_none_cell_placeholders():
     open_entry(app, 'rfi_matrix')
     assert not app.exception and app.session_state['draft'] == before
     assert not any(item.value in {'No requests added.', 'No information requests added.'} for item in app.caption)
-    assert set(app.session_state[grid(app, 'rfi_matrix') + '_data'][0].values()) == {''}
+    assert {field(app, label).value for label in labels(app)} == {''}
 
 
-@pytest.mark.parametrize('key', tuple(EMPTY_TABLES))
+def test_blank_and_removed_requests_do_not_enter_durable_data_or_actual_word_output(monkeypatch, tmp_path):
+    monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path))
+    app = workspace('rfi_matrix')
+    open_entry(app, 'rfi_matrix')
+    field(app, 'Requested item').set_value('   ').run()
+    assert not app.exception and not current(app, 'rfi_matrix').rows
+    field(app, 'Requested item').set_value('Synthetic item to remove.').run()
+    assert current(app, 'rfi_matrix').rows[0][1] == 'Synthetic item to remove.'
+    press(app, 'Remove request')
+    assert not current(app, 'rfi_matrix').rows
+    open_entry(app, 'rfi_matrix')
+    press(app, 'Close editing')  # A cancelled blank request is not a row.
+    assert not current(app, 'rfi_matrix').rows
+    draft = app.session_state['draft']
+    kept = active.save('e' * 32, draft, expected_revision=0, base_snapshot_revision=0)
+    loaded = active.load('e' * 32, draft.profile.contract, draft.profile.key, draft.period)
+    assert loaded.draft == draft and loaded.revision == kept.revision
+    output_draft = replace(draft, sections=tuple(replace(section, included=any(spec.key == 'rfi_matrix' for spec in section.blocks))
+                                                for section in draft.sections))
+    assert all(check.code == 'empty' and not check.blocking for check in preflight(output_draft))
+    document = Document(BytesIO(assemble_docx(output_draft, acknowledged_fingerprint=output_draft.fingerprint)))
+    table_text = '\n'.join(cell.text for table in document.tables for row in table.rows for cell in row.cells)
+    assert 'Synthetic item to remove.' not in table_text
+    assert 'None' not in table_text
+    assert EMPTY_TABLES['rfi_matrix'][0] not in table_text
+
+
+@pytest.mark.parametrize('key', GRID_TABLES)
 def test_fresh_entry_opens_blank_native_cells_without_stale_empty_copy_or_data(key):
     app = workspace(key)
     original = app.session_state['draft']
@@ -58,7 +96,7 @@ def test_fresh_entry_opens_blank_native_cells_without_stale_empty_copy_or_data(k
     assert app.session_state['draft'] == original
 
 
-@pytest.mark.parametrize('key', tuple(EMPTY_TABLES))
+@pytest.mark.parametrize('key', GRID_TABLES)
 def test_blank_and_removed_rows_do_not_enter_durable_data_or_actual_word_output(monkeypatch, tmp_path, key):
     monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path))
     app = workspace(key)

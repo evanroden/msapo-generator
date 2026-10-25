@@ -10,7 +10,7 @@ def row_state(draft):
     specs = {spec.key: spec for section in draft.sections for spec in section.blocks}
     result = {}
     for block in draft.blocks:
-        if block.key not in {'proposals', 'service_calls'}:
+        if block.key not in {'proposals', 'service_calls', 'rfi_matrix'}:
             continue
         tables = ([{'columns': [c.title for c in specs[block.key].columns],
                     'rows': block.rows, 'reference': ''}] if block.rows else [])
@@ -19,7 +19,7 @@ def row_state(draft):
         result[block.key] = {'tables': tables, 'references': block.references}
     return {'rows': result, 'fingerprint': draft.fingerprint,
             'unrelated': replace(draft, blocks=tuple(block for block in draft.blocks
-                if block.key not in {'proposals', 'service_calls'})).fingerprint}
+                if block.key not in {'proposals', 'service_calls', 'rfi_matrix'})).fingerprint}
 
 
 def emit_row_snapshot(base, token):

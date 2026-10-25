@@ -1,4 +1,4 @@
-"""Opening a native request slot is distinct from adding report content."""
+"""Add request opens one request's named fields; an open blank request is not content."""
 from dataclasses import replace
 
 import pytest
@@ -44,53 +44,73 @@ def install(app, incoming):
     return app.run()
 
 
-def add_request(app):
-    return next(button for button in app.button if button.label == "Add request").click().run()
+def press(app, label, index=0):
+    [button for button in app.button if button.label == label][index].click().run()
+    assert not app.exception
+    return app
 
 
-def grid_keys(app):
-    return sorted(key for key, value in app.session_state.filtered_state.items()
-                  if key.startswith("rfi_test_edit_rfi_matrix_") and isinstance(value, dict)
-                  and "edited_rows" in value)
+def add_request(app, index=0):
+    return press(app, "Add request", index)
 
 
-def edit_grid(app, key, *, edited=None, added=None, removed=None):
-    app.session_state[key] = {"edited_rows": edited or {}, "added_rows": added or [],
-                              "deleted_rows": removed or []}
-    return app.run()
+def field(app, label):
+    return next(item for item in (*app.text_area, *app.text_input) if item.label == label)
 
 
-def test_empty_report_opens_only_an_empty_native_editor_without_changing_the_draft():
+def type_into(app, label, value):
+    field(app, label).set_value(value).run()
+    assert not app.exception
+    return app
+
+
+def labels(app):
+    return [item.label for item in (*app.text_input, *app.text_area)]
+
+
+def empty_claim(app):
+    return any(item.value == "No requests added." for item in app.caption)
+
+
+def test_empty_report_opens_named_request_fields_without_changing_the_draft():
     app = workspace()
     before = app.session_state["draft"]
     assert not app.exception and not app.dataframe
-    assert any(item.value == "No requests added." for item in app.caption)
+    assert empty_claim(app)
     add_request(app)
-    assert not app.exception and len(app.dataframe) == 1
+    assert not app.dataframe, "Add request opens named fields, not an empty grid"
+    assert {"Facility", "Requested item", "Status"} <= set(labels(app))
+    assert field(app, "Requested item").type == "text_area", "the request itself is multiline"
+    assert field(app, "Status").type == "text_input"
+    assert all(field(app, label).value == "" for label in ("Facility", "Requested item", "Status"))
     assert app.session_state["draft"] == before
-    key = grid_keys(app)[0]
-    assert app.session_state[key + "_data"] == [{"Facility": "", "Requested item": "", "Status": ""}]
-    assert not any(item.value == "No requests added." for item in app.caption)
+    assert not empty_claim(app)
     app.run()
-    assert grid_keys(app) == [key] and app.session_state["draft"] == before
+    assert app.session_state["draft"] == before and "Requested item" in labels(app)
+    press(app, "Close editing")
+    assert app.session_state["draft"] == before, "a cancelled blank request is never a row"
+    assert empty_claim(app) and not labels(app)
 
 
-def test_entered_request_and_native_row_removal_keep_unknown_status_and_other_work():
+def test_entered_request_and_row_removal_keep_unknown_status_and_other_work():
     app = workspace()
     original = app.session_state["draft"]
     add_request(app)
-    key = grid_keys(app)[0]
-    edit_grid(app, key, edited={0: {"Facility": "Demo North", "Requested item": "Confirm control sequence."}})
-    assert not app.exception
+    type_into(app, "Facility", "Demo North")
+    type_into(app, "Requested item", "Confirm control sequence.")
     assert block(app).rows == (("Demo North", "Confirm control sequence.", ""),)
-    assert not any(item.value == "No requests added." for item in app.caption)
-    assert grid_keys(app) == [key]
+    assert not empty_claim(app)
     assert app.session_state["draft"].blocks[1] == original.blocks[1]
-    edit_grid(app, key, removed=[0])
-    assert not app.exception and not block(app).rows
+    press(app, "Close editing")
+    summaries = [item.value for item in app.markdown]
+    assert "Confirm control sequence." in summaries, "the summary shows the request, not a number"
+    assert any(item.value == "Status: Not recorded" for item in app.caption)
+    press(app, "Remove request")
+    assert not block(app).rows
     assert app.session_state["draft"].blocks[1] == original.blocks[1]
-    assert not any(item.value == "No requests added." for item in app.caption)
-    assert app.dataframe  # The open blank native entry slot remains reachable.
+    assert empty_claim(app)
+    add_request(app)
+    assert "Requested item" in labels(app), "a new request stays one action away"
 
 
 def test_imported_continuation_schemas_rows_and_references_remain_native_and_editable():
@@ -100,12 +120,15 @@ def test_imported_continuation_schemas_rows_and_references_remain_native_and_edi
     incoming = ResolvedBlock("rfi_matrix", "Last month", extra_tables=(first, second),
                              references=("synthetic-native-rfi",))
     app = install(workspace(), incoming)
-    assert not app.exception and len(app.dataframe) == 2
+    assert not app.exception and not app.dataframe
     assert block(app) == incoming
-    keys = grid_keys(app)
-    for key in keys:
-        assert tuple(app.session_state[key + "_data"][0]) == columns
-    edit_grid(app, keys[0], edited={0: {"Requested details": "Clarify the current sequence."}})
+    assert any(item.value == "Confirm drawing revision" for item in app.markdown)
+    press(app, "Edit request", 0)
+    assert sorted(labels(app)) == sorted(columns), "every source column is a named field"
+    assert field(app, "Requested details").type == "text_area"
+    for metadata in ("Request #", "Recorded status", "Reference link"):
+        assert field(app, metadata).type == "text_input"
+    type_into(app, "Requested details", "Clarify the current sequence.")
     changed = block(app)
     assert changed.extra_tables[0].columns == columns
     assert changed.extra_tables[0].reference == first.reference
@@ -113,16 +136,17 @@ def test_imported_continuation_schemas_rows_and_references_remain_native_and_edi
     assert changed.extra_tables[1] == second and changed.references == incoming.references
     assert changed.source == "This month"
     assert not changed.rows
-    assert grid_keys(app) == keys
 
 
-def test_blank_imported_frame_is_retained_when_a_request_slot_is_opened():
+def test_blank_imported_frame_is_retained_when_a_request_is_opened():
     frame = ReportTable(("Site", "Question", "Recorded answer"), (("", "", ""),), "empty-native-frame")
     incoming = ResolvedBlock("rfi_matrix", "Last month", extra_tables=(frame,), references=("kept-source",))
     app = install(workspace(), incoming)
     assert not app.exception and not app.dataframe and block(app) == incoming
+    assert not any(item.label == "Edit request" for item in app.button), "a blank source row is not a request"
     add_request(app)
-    assert not app.exception and len(app.dataframe) == 1
+    assert {"Site", "Question", "Recorded answer"} <= set(labels(app))
+    assert field(app, "Question").type == "text_area"
     assert block(app) == incoming
 
 
@@ -131,10 +155,10 @@ def test_imported_request_notes_do_not_receive_a_false_empty_claim():
                              references=("retained-source",))
     app = install(workspace(), incoming)
     assert not app.exception and not app.dataframe
-    assert not any(item.value == "No requests added." for item in app.caption)
+    assert not empty_claim(app)
     assert next(item for item in app.text_area if item.label == "Notes included in this section").value == incoming.text
     add_request(app)
-    assert not app.exception and len(app.dataframe) == 1 and block(app) == incoming
+    assert not app.exception and "Requested item" in labels(app) and block(app) == incoming
 
 
 def test_explicit_request_entry_in_an_omitted_imported_frame_includes_only_the_entered_content():
@@ -143,9 +167,9 @@ def test_explicit_request_entry_in_an_omitted_imported_frame_includes_only_the_e
     app = install(workspace(), incoming)
     add_request(app)
     assert block(app) == incoming
-    edit_grid(app, grid_keys(app)[0], edited={0: {"Question": "   "}})
+    type_into(app, "Question", "   ")
     assert block(app) == incoming
-    edit_grid(app, grid_keys(app)[0], edited={0: {"Question": "Confirm the equipment list."}})
+    type_into(app, "Question", "Confirm the equipment list.")
     assert not app.exception and block(app).source == "This month"
     assert block(app).extra_tables[0].rows == (("", "Confirm the equipment list.", ""),)
     assert block(app).extra_tables[0].reference == frame.reference
@@ -153,33 +177,37 @@ def test_explicit_request_entry_in_an_omitted_imported_frame_includes_only_the_e
 
 
 @pytest.mark.parametrize("generation_key", ("rfi_test_rich_text_epoch", "_monthly_qa_generation"))
-def test_replaced_report_ignores_old_open_actions_and_native_grid_values(generation_key):
+def test_replaced_report_ignores_old_open_requests_and_native_field_values(generation_key):
     app = workspace()
     add_request(app)
-    old_key = grid_keys(app)[0]
-    edit_grid(app, old_key, edited={0: {"Requested item": "Earlier report only."}})
+    old = field(app, "Requested item")
+    old.set_value("Earlier report only.").run()
     app.session_state[generation_key] = "new-report-incarnation"
     incoming = ResolvedBlock("rfi_matrix", "This month")
     install(app, incoming)
-    assert not app.exception and not app.dataframe and block(app) == incoming
+    assert not app.exception and block(app) == incoming
+    assert not labels(app), "an open request from the earlier report does not reopen"
     # A late value under the previous native identity cannot populate this
-    # replacement report, even if the old browser still sends its row delta.
-    edit_grid(app, old_key, edited={0: {"Requested item": "Late old widget value."}})
-    assert not app.exception and not app.dataframe and block(app) == incoming
+    # replacement report, even if the old browser still sends it.
+    app.session_state[old.key] = "Late old widget value."
+    app.run()
+    assert not app.exception and block(app) == incoming
     add_request(app)
     assert not app.exception and block(app) == incoming
-    assert len(grid_keys(app)) == 1 and grid_keys(app)[0] != old_key
+    assert field(app, "Requested item").key != old.key and field(app, "Requested item").value == ""
 
 
-def test_source_replacement_with_the_same_report_has_fresh_native_grid_identity():
+def test_source_replacement_with_the_same_report_has_fresh_native_identity():
     app = workspace()
     original = ResolvedBlock("rfi_matrix", "Last month", rows=(("Demo North", "Old-source request", "Pending"),),
                              references=("source-a",))
     install(app, original)
-    old_key = grid_keys(app)[0]
+    press(app, "Edit request")
+    old = field(app, "Requested item")
     incoming = replace(original, rows=(("Demo North", "Replacement-source request", ""),), references=("source-b",))
     install(app, incoming)
     assert not app.exception and block(app) == incoming
-    assert len(grid_keys(app)) == 1 and grid_keys(app)[0] != old_key
-    edit_grid(app, old_key, edited={0: {"Requested item": "Late old-source request"}})
+    assert not labels(app)
+    app.session_state[old.key] = "Late old-source request"
+    app.run()
     assert not app.exception and block(app) == incoming
