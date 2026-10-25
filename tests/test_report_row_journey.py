@@ -6,15 +6,16 @@ from docx import Document
 import pymupdf
 import pytest
 
-from scripts.qa_report_row_cards import assert_outputs, STATUS, NOTE, TASK, ASSET
+from scripts.qa_report_row_cards import assert_outputs, STATUS, NOTE, TASK, ASSET, REQUEST, REQUEST_SITE
 from scripts.workspace_row_observations import row_state
 
 
-def outputs(*, status=STATUS, asset=ASSET, note=NOTE):
+def outputs(*, status=STATUS, asset=ASSET, note=NOTE, request=REQUEST, request_status=''):
     doc=Document()
     for columns, row in [
         (('Project Number','Status','Technical Notes'),('Q-TEST-731',status,note)),
         (('WO#','Task','Asset'),('WO-TEST-1005',TASK,asset)),
+        (('Facility','Requested item','Status'),(REQUEST_SITE,request,request_status)),
     ]:
         table=doc.add_table(rows=2,cols=len(columns))
         for i,value in enumerate(columns):table.cell(0,i).text=value
@@ -28,7 +29,7 @@ def outputs(*, status=STATUS, asset=ASSET, note=NOTE):
         font=Path('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf')
         if not font.is_file():pytest.skip('PDF text fixture needs DejaVu Sans')
         page.insert_font(fontname='qa',fontfile=str(font))
-        page.insert_textbox((40,40,550,500),'\n'.join((status,note,TASK,asset)),fontname='qa',fontsize=10)
+        page.insert_textbox((40,40,550,500),'\n'.join((status,note,TASK,asset,request)),fontname='qa',fontsize=10)
         raw=pdf.tobytes()
     return word.getvalue(),raw
 
@@ -38,7 +39,8 @@ def test_native_output_assertion_checks_cells_and_pdf():
     assert result['docx']['bytes']>0 and result['pdf']['pages']==1
 
 
-@pytest.mark.parametrize('change',[{'status':'Pending'},{'asset':'AHU-WRONG'},{'note':''}])
+@pytest.mark.parametrize('change',[{'status':'Pending'},{'asset':'AHU-WRONG'},{'note':''},
+                                    {'request':'Synthetic request: a different drawing.'},{'request_status':'Answered'}])
 def test_changed_field_cannot_pass_the_actual_output_assertion(change):
     with pytest.raises(AssertionError):assert_outputs(*outputs(**change))
 
