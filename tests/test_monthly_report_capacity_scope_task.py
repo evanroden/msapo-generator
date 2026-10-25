@@ -228,8 +228,6 @@ def test_ordered_first_fill_refreshes_the_single_report_table_after_commit(profi
 def test_saved_capacity_summary_is_visible_for_selected_sites_only(profile, monkeypatch):
     """The visible inventory must not imply an automatic manual/report update."""
     from app.monthly_report_model import Facility
-    from test_monthly_report_capacity_ui import app_for
-
     monkeypatch.setattr(ui.st, "file_uploader", lambda *args, **kwargs: None)
     state = saved(profile)
     before = draft(profile)
@@ -242,7 +240,7 @@ def test_saved_capacity_summary_is_visible_for_selected_sites_only(profile, monk
     line = lines[0]
     assert "2 saved rows for these sites" in line
     assert f"version {state.revision}" in line
-    assert state.updated_at.split("T", 1)[0] in line
+    assert ui.literal(state.updated_at.split("T", 1)[0]) in line
     assert "capacity" in line and "source:" in line
     assert app.session_state["test_draft"] == before
     assert capacity.load_capacity(profile.contract) == state
