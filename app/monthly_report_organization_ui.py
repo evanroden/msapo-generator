@@ -286,8 +286,15 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
                 close_slot.empty()
                 st.button("Edit contacts", key=prefix + "_organization_open_" + key,
                           on_click=_change_part, args=(prefix, active_key, key))
-    for key, title in ORGANIZATION_PARTS:
-        if key not in WORKFLOW_KEYS:
+    parts = [(key, title) for key, title in ORGANIZATION_PARTS if key not in WORKFLOW_KEYS]
+    # A switch deferred by a pending contact edit completes inside the contact
+    # part. Render that part first so a part shown above it (the team chart)
+    # opens in the same action. Fixed slots keep the page order unchanged.
+    slots = {key: st.container() for key, _ in parts}
+    if isinstance(st.session_state.get(prefix + "_deferred_contact_switch"), dict):
+        parts.sort(key=lambda part: part[0] != "contact_matrix")
+    for key, title in parts:
+        with slots[key]:
             render_part(key, title)
     with st.expander("ENFRA outage procedures", expanded=False):
         st.caption("Saved procedures are included when selected. Changes here affect this report.")

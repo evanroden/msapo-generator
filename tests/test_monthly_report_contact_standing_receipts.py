@@ -261,3 +261,30 @@ def test_parent_done_consumes_unblurred_native_phone_before_save_or_reload(monke
     assert latest.sites[0].contacts[0].phone == 'delivered-with-done'
     assert not any(ref.startswith('directory-pending-correction:') for ref in report(app).references)
     assert directory.load_directory(profile.contract, original.revision) == original
+
+
+CHART_SCRIPT = SCRIPT.replace("{'contact_matrix':CONTACT_SPEC}",
+    "{'org_chart':next(s for sec in default_sections() for s in sec.blocks if s.key=='org_chart'),"
+    "'contact_matrix':CONTACT_SPEC}").replace(
+    "from app.monthly_report_model import ReportPeriod,",
+    "from app.monthly_report_model import default_sections, ReportPeriod,")
+
+
+def test_edit_chart_after_an_unblurred_contact_field_opens_the_chart_in_one_action(monkeypatch, tmp_path):
+    """The team chart renders before contacts; the deferred switch must still open it."""
+    from app.monthly_report_model import ResolvedBlock
+    _, profile, original, before = workspace(monkeypatch, tmp_path)
+    app = AppTest.from_string(CHART_SCRIPT)
+    app.session_state['blocks'] = {'org_chart': ResolvedBlock('org_chart', 'This month'), 'contact_matrix': before}
+    app.run()
+    press(app, 'Edit contacts')
+    press(app, 'Edit contact')
+    field(app, 'Phone').set_value('delivered-with-chart')  # No preliminary .run() / blur.
+    press(app, 'Edit chart')
+    assert not app.warning
+    assert any(b.key == 'standing_receipt_organization_close_org_chart' for b in app.button), \
+        'one Edit chart action opens the chart editor'
+    assert not any(b.label == 'Edit chart' for b in app.button)
+    assert not app.text_input, 'the contact editor closed after its field was kept'
+    assert report(app).rows[0][3] == 'delivered-with-chart'
+    assert directory.load_directory(profile.contract).sites[0].contacts[0].phone == 'delivered-with-chart'
