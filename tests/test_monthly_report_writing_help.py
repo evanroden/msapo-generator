@@ -198,3 +198,16 @@ def test_pending_native_manual_submission_wins_over_old_replace_action(monkeypat
     assert not fresh.disabled
     fresh.click().run()
     assert not app.exception and app.session_state['current_block'].text == '- ' + facts[0].text
+
+
+@pytest.mark.parametrize('wording', ['Inspected 1 synthetic pump.', 'Inspected one synthetic pump.'])
+def test_a_page_label_does_not_support_a_number_in_the_suggestion(monkeypatch, tmp_path, wording):
+    """The evidence caption says "Page 1:", but that page number supports nothing."""
+    app, source, facts = component(monkeypatch, tmp_path)
+    checked_suggestion(app, source, facts)
+    next(item for item in app.text_area if item.label == 'Suggested paragraph 1').set_value(wording).run()
+    assert not app.exception
+    assert any(item.value.startswith('Unsupported number') for item in app.warning)
+    assert next(item for item in app.button if item.label == 'Use checked wording in this report').disabled
+    next(item for item in app.text_area if item.label == 'Suggested paragraph 1').set_value(facts[0].text).run()
+    assert not any(item.value.startswith('Unsupported number') for item in app.warning)

@@ -95,6 +95,14 @@ def numbers(text):
     return set(re.findall(r"(?<!\w)\d+(?:[.,]\d+)*", text)) | _spelled_numbers(text)
 
 
+def fact_numbers(facts):
+    """Numbers a paragraph may state: those in its cited facts and their quotes.
+
+    Never page labels or other display text around the evidence.
+    """
+    return numbers(" ".join(f.text + " " + f.quote for f in facts))
+
+
 def vendor_names(draft):
     """Only explicit vendor columns establish preferred spelling."""
     names = []
@@ -478,7 +486,7 @@ def normalize_draft(value, key, facts, sources):
                 "A draft included prices or invalid text. Your narrative was preserved."
             )
         flags = list(dict.fromkeys(flag for f in cited for flag in f.flags))
-        if numbers(text) - numbers(" ".join(f.text + " " + f.quote for f in cited)):
+        if numbers(text) - fact_numbers(cited):
             flags.append("Unsupported number: edit this paragraph against its evidence")
         if item.get("uncertain"):
             flags.append("Model marked this paragraph uncertain")
@@ -567,9 +575,7 @@ def refresh_evidence(block, sources):
                 )
             )
         )
-        if numbers(paragraph.text) - numbers(
-            " ".join(f.text + " " + f.quote for _, f in cited)
-        ):
+        if numbers(paragraph.text) - fact_numbers(f for _, f in cited):
             flags += ("Unsupported number: edit this paragraph against its evidence",)
         refs = tuple(dict.fromkeys(source_reference(s, f.page) for s, f in cited))
         paragraphs.append(replace(paragraph, references=refs, flags=flags))
