@@ -119,7 +119,11 @@ def test_direct_capacity_table_precedes_its_one_source_task(profile, monkeypatch
     source, = [w for w in app.get("file_uploader") if w.label == "Thermal capacity file"]
     assert _path(app._tree, grids[0]) < _path(app._tree, source)
     scope = next(x for x in app.caption if x.value == "Capacity · reused for these sites")
+    inventory = next(x for x in app.caption
+                     if x.value.startswith("Reusable capacity ·"))
+    assert "2 saved rows for these sites" in inventory.value
     assert _path(app._tree, scope) < _path(app._tree, grids[0])
+    assert _path(app._tree, inventory) < _path(app._tree, grids[0])
 
 
 def test_same_event_report_override_and_shared_correction_keep_both_scopes(profile, monkeypatch):
@@ -218,6 +222,10 @@ def test_ordered_first_fill_refreshes_the_single_report_table_after_commit(profi
     assert block == capacity.capacity_block(profile)
     report_grid, = [w for w in app.dataframe if w.key.startswith("test_edit_thermal_capacity_")]
     assert report_grid.value.iloc[0]["Required capacity"] == "1200"
+    assert any("2 saved rows for these sites" in c.value and
+               "version 1" in c.value for c in app.caption), (
+        "The production ordered section must show the acknowledged first-fill "
+        "capacity on its first settled run, without an extra rerun.")
     picker, = [w for w in app.get("file_uploader") if w.label == "Thermal capacity file"]
     assert _path(app._tree, report_grid) < _path(app._tree, picker)
     app.run()
@@ -296,3 +304,35 @@ def test_first_fill_inventory_updates_on_first_settled_render(profile, monkeypat
     assert app.session_state["test_block"] == capacity.capacity_block(profile, state)
     app.run()
     assert capacity.load_capacity(profile.contract) == state
+
+
+def test_saved_capacity_subsets_with_same_source_reference_do_not_leak_other_file(profile):
+    """A table SHA/ID is not unique to one retained site-specific subset."""
+    from app.monthly_report_model import Facility
+
+    original = saved(profile)
+    table, = original.tables
+    north = tuple(row for row, site in zip(table.rows, table.site_keys) if site == "north")
+    south = tuple(row for row, site in zip(table.rows, table.site_keys) if site == "south")
+    # Retained subsets can have the same table ID/byte hash but different
+    # filenames. Both references therefore match the same combined key.
+    north_table = replace(table, rows=north, site_keys=("north",) * len(north),
+                          source_filename="north-only.csv")
+    south_table = replace(table, rows=south, site_keys=("south",) * len(south),
+                          source_filename="south-only.csv")
+    assert (north_table.id, north_table.source_sha256) == (
+        south_table.id, south_table.source_sha256)
+    shared = replace(original, tables=(north_table, south_table))
+    north_summary = ui._saved_capacity_caption(profile, shared)
+    assert "2 saved rows" in north_summary
+    assert ui.literal("north-only.csv") in north_summary
+    assert "south-only" not in north_summary
+
+    south_profile = replace(profile, key="south", title="South Hospital",
+                            facilities=(Facility("south", "South Hospital", ("SH",)),))
+    south_summary = ui._saved_capacity_caption(south_profile, shared)
+    assert "2 saved rows" in south_summary
+    assert ui.literal("south-only.csv") in south_summary
+    assert "north-only" not in south_summary
+    # The regression is read-only; persisted history is untouched.
+    assert capacity.load_capacity(profile.contract) == original

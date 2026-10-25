@@ -127,25 +127,46 @@ def _saved_capacity_caption(profile, state):
     if selected is None:
         return "Reusable capacity · none saved for these sites"
     count = sum(len(table.rows) for table in selected.extra_tables)
-    selected_refs = set(selected.references)
+    # A source reference identifies original table bytes, NOT a later saved
+    # per-site subset. Two independently saved subsets may carry that same
+    # reference with different filenames. Resolve the actual saved site rows
+    # before exposing any source filename in this report's inventory.
+    known = capacity.contract_facilities(profile)
+    wanted = {facility.key for facility in profile.facilities}
+    for facility in profile.facilities:
+        for alias in (facility.title, *facility.aliases):
+            matched = capacity.match_site(alias, known)
+            if matched:
+                wanted.add(matched)
     sources = tuple(dict.fromkeys(
         table.source_filename for table in state.tables
-        if (f"capacity:{state.revision}:{table.source_sha256}:{table.page}:{table.id}"
-            in selected_refs) and table.source_filename
+        if table.source_filename and any(site in wanted for site in table.site_keys)
     ))
-    date = literal(state.updated_at.split("T", 1)[0])
+    date = literal(str(state.updated_at).split("T", 1)[0])
     summary = (f"Reusable capacity · {count} saved row{'s' if count != 1 else ''} "
                f"for these sites · version {state.revision} · updated {date}")
     if sources:
-        shown = ", ".join(literal(name) for name in sources[:2])
+        shown = ", ".join(literal(name[:80] + "…" if len(name) > 80 else name)
+                          for name in sources[:2])
         summary += f" · source{'s' if len(sources) != 1 else ''}: {shown}"
         if len(sources) > 2:
             summary += f" (+{len(sources) - 2} more)"
     return summary
 
 
-def render_capacity_scope(profile, block, state=None):
-    """Distinguish this report's table from the contract's saved site inventory."""
+_LOAD_SHARED_CAPACITY = object()
+
+
+def render_capacity_scope(profile, block, state=_LOAD_SHARED_CAPACITY):
+    """Distinguish report values from the latest persisted site inventory.
+
+    The production ordered-section flow renders the report grid before its
+    shared source task and calls this scope renderer separately. An omitted
+    state argument therefore means read the just-settled shared revision,
+    not 'none saved'. The embedded flow passes its already-loaded state.
+    """
+    if state is _LOAD_SHARED_CAPACITY:
+        state = capacity.load_capacity(profile.contract)
     if _has_values(block):
         reused = capacity.can_refresh_capacity(profile, block)
         st.caption("Capacity · reused for these sites" if reused else "Capacity · this report only")
