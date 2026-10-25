@@ -63,14 +63,23 @@ _SCALES = {"thousand": 10 ** 3, "million": 10 ** 6, "billion": 10 ** 9}
 # compares as text, so no part of "two dozen" supports a bare 2.
 _UNREAD_MULTIPLIERS = {"dozen", "dozens", "half", "halves", "quarter", "quarters",
                        "third", "thirds", "gross", "score"}
+# Letters attached to digits that name a unit or an ordinal, so the digits are
+# the value. Any other attached letters (500k, 5A, 2B) keep the whole token
+# as written: it supports only the same text, never its bare digits.
+_UNIT_SUFFIXES = {"st", "nd", "rd", "th", "psi", "psig", "psia", "kw", "kwh", "mw", "mwh", "kv",
+                  "hz", "hp", "gpm", "cfm", "fpm", "rpm", "btu", "btuh", "mbh", "ton", "tons",
+                  "in", "ft", "mm", "cm", "km", "gal", "gals", "lb", "lbs", "oz", "sqft", "hr",
+                  "hrs", "min", "mins", "sec", "ms", "db", "ppm", "pct", "deg"}
 
 
 def _canonical_number(raw, scale=None):
-    """One spelling per value: 2,000 and two thousand are both "2000"."""
-    if re.fullmatch(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?", raw):
+    """One spelling per value: 2,000, 2e3 and two thousand are all "2000"."""
+    if re.fullmatch(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?(?:e[+-]?\d+)?", raw, re.IGNORECASE):
         raw = raw.replace(",", "")
-    if not re.fullmatch(r"\d+(?:\.\d+)?", raw):
-        return raw + (" " + scale if scale else "")  # Kept as written, e.g. 1,5.
+    match = re.fullmatch(r"\d+(?:\.\d+)?(?:e([+-]?\d+))?", raw, re.IGNORECASE)
+    if not match or match[1] and abs(int(match[1])) > 30:
+        # Kept as written (1,5 or an unbounded exponent): equal text only.
+        return (raw + (" " + scale if scale else "")).casefold()
     return format((Decimal(raw) * _SCALES.get(scale, 1)).normalize(), "f")
 
 
@@ -83,8 +92,13 @@ def _spelled_numbers(text):
     # "half-inch" and "quarter-turn" describe a unit, not the count before
     # them; joined into one word they never act as a multiplier.
     text = re.sub(r"\b(" + "|".join(_UNREAD_MULTIPLIERS) + r")-(?=[a-z])", r"\1", text)
-    text = re.sub(r"\ban? (hundred|thousand|million|billion)\b", r"one \1", text)  # "a hundred" is 100.
     tokens = re.findall(r"[a-z]+|[^a-z\s-]", text)
+    for n, token in enumerate(tokens):
+        # "a hundred" is 100, but "half a million" and "a quarter of a
+        # million" are not a million: their fraction is read nowhere here.
+        if (token in ("a", "an") and tokens[n + 1:n + 2] and tokens[n + 1] in ("hundred", *_SCALES)
+                and not (n and (tokens[n - 1] in _UNREAD_MULTIPLIERS or tokens[n - 1] == "of"))):
+            tokens[n] = "one"
     def number_word(n):
         if n >= len(tokens) or not (tokens[n] in _SMALL_NUMBERS or tokens[n] in _TENS):
             return False
@@ -141,10 +155,19 @@ def _spelled_numbers(text):
 
 
 def numbers(text):
-    # A unit may follow a digit directly ("40psi"). A letter before it marks
-    # an identifier such as R410A, which compares as text, not quantity.
-    found = {_canonical_number(raw, scale.casefold() or None) for raw, scale in re.findall(
-        r"(?<!\w)(\d+(?:[.,]\d+)*)(?:\s*(thousand|million|billion)\b)?", text, re.IGNORECASE)}
+    # A letter before digits marks an identifier such as R410A, which
+    # compares as text, not quantity. A unit may follow directly ("40psi").
+    found = set()
+    for raw, exponent, suffix, scale in re.findall(
+            r"(?<!\w)(\d+(?:[.,]\d+)*)([eE][+-]?\d+)?([A-Za-z]*)(?:\s*\b(thousand|million|billion)\b)?",
+            text, re.IGNORECASE):
+        suffix, scale = suffix.casefold(), scale.casefold() or None
+        if suffix in _SCALES:
+            suffix, scale = "", suffix
+        if suffix and suffix not in _UNIT_SUFFIXES:
+            found.add((raw + exponent + suffix).casefold())
+        else:
+            found.add(_canonical_number(raw + exponent, scale))
     return found | _spelled_numbers(text)
 
 

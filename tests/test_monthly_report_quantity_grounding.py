@@ -78,7 +78,7 @@ def test_a_drafted_paragraph_with_a_changed_quantity_is_flagged_and_cannot_be_re
 
 @pytest.mark.parametrize("text,expected", [
     ("Replaced 2,000 filters; 2000 filters; 1,250.50 feet.", {"2000", "1250.5"}),
-    ("Capacity is two million BTU/hr, 2 million BTU/hr or 2.5 million.", {"2000000", "2500000"}),
+    ("Capacity is two million BTU/hr, 2 Million BTU/hr, 2million or 2.5 million.", {"2000000", "2500000"}),
     ("Pressure five point two psi and 5.20 psi.", {"5.2"}),
     ("Valve opened point five turns, or 0.50 turns.", {"0.5"}),
     ("Two dozen filters; two and a half hours.", {"two dozen", "two and a half"}),
@@ -152,6 +152,34 @@ def test_unit_adjectives_and_leading_decimals_keep_their_meaning(text, expected)
     ("Capacity is 0.5 BTU/hr.", "Capacity is point five million BTU/hr.", False),
 ])
 def test_unit_adjectives_and_scaled_leading_decimals_ground_correctly(text, quote, accepted):
+    page = replace(SOURCE, page_texts=(quote,))
+    if accepted:
+        assert [f.text for f in ai.normalize_facts(fact(text, quote), page, (1,), PROFILE, PERIOD)] == [text]
+    else:
+        with pytest.raises(ValueError, match="unsupported numbers"):
+            ai.normalize_facts(fact(text, quote), page, (1,), PROFILE, PERIOD)
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("Capacity is 1.2e6 BTU/hr; 3E-2 m.", {"1200000", "0.03"}),
+    ("Capacity is half a million BTU/hr or a quarter of a million.", set()),
+    ("Rated 500k BTU; panel 2B; room 5A.", {"500k", "2b", "5a"}),
+    ("Measured 40psi, 3.5kW, 120gpm and 2nd floor.", {"40", "3.5", "120", "2"}),
+    ("Value 1e999999 stays text.", {"1e999999"}),
+])
+def test_a_quantity_never_leaks_a_partial_value(text, expected):
+    assert ai.numbers(text) == expected
+
+
+@pytest.mark.parametrize("text,quote,accepted", [
+    ("Capacity is 1.2 BTU/hr.", "Capacity is 1.2e6 BTU/hr.", False),
+    ("Capacity is 1,200,000 BTU/hr.", "Capacity is 1.2e6 BTU/hr.", True),
+    ("Capacity is 1000000 BTU/hr.", "Capacity is half a million BTU/hr.", False),
+    ("Rated 500 BTU.", "Rated 500k BTU.", False),
+    ("Inspected room 5.", "Inspected room 5A.", False),
+    ("Inspected room 5A.", "Inspected room 5A.", True),
+])
+def test_scientific_suffixed_and_fractional_scale_quantities_ground_safely(text, quote, accepted):
     page = replace(SOURCE, page_texts=(quote,))
     if accepted:
         assert [f.text for f in ai.normalize_facts(fact(text, quote), page, (1,), PROFILE, PERIOD)] == [text]
