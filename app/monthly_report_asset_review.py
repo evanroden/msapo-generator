@@ -101,15 +101,19 @@ def current_source_page_review_matches(block, index, source, number):
     Callers retain independent source identity, scope and output-byte checks.
     """
     from app.monthly_report_content_policy import page_allowed
+    from app.monthly_report_asset_instances import valid_instances
     if not 0 <= index < len(block.asset_hashes) or not 1 <= number <= len(source.page_texts):
         return False
     asset = block.asset_hashes[index]
-    if block.asset_hashes.count(asset) != 1:
+    individual = valid_instances(block)
+    if not individual and block.asset_hashes.count(asset) != 1:
         return False
     mappings = [references for ref, references in block.asset_provenance if ref == asset]
     if len(mappings) != 1:
         return False
-    references = mappings[0]
+    # Equal bytes do not identify an occurrence. Only the validated positional
+    # record may narrow its provenance; legacy hash maps remain unambiguous-only.
+    references = block.asset_instances[index].references if individual else mappings[0]
     plain = [ref for ref in references if not ref.startswith(_SOURCE_CONTEXT)]
     if len(plain) != 1 or plain[0] not in block.references:
         return False
