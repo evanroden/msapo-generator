@@ -318,3 +318,70 @@ test('a landing never takes focus or scroll from a control the reader already us
     fresh.land(['entry-2','monthly_cover']);fresh.measure();
     assert.equal(fresh.pairs[0].pair.getBoundingClientRect().top,128);
 });
+
+function entryHarness({stale=false, disabled=false}={}) {
+    const document={activeElement:null}, state={};
+    let focused=0, scrolled=0;
+    const context={document,CSS:{escape:value=>value}};
+    vm.runInNewContext(fs.readFileSync('app/workspace_navigation.js','utf8'),context);
+    const navigation=context.ENFRAWorkspaceNavigation;
+    const field={disabled,focus(options){assert.equal(options.preventScroll,true);document.activeElement=field;focused++;},
+        scrollIntoView(options){assert.equal(options.block,'nearest');scrolled++;}};
+    const holder={querySelector:selector=>selector==='textarea, input'?field:null};
+    const root={markers:[],querySelectorAll:selector=>selector==='[data-enfra-entry-focus]'?root.markers:[],
+        querySelector:selector=>selector==='.st-key-row_request_field'?holder:null};
+    const marker=nonce=>({dataset:{enfraEntryFocus:nonce,enfraEntryField:'row_request_field',enfraEntryOrigin:'row_add'},
+        closest:selector=>stale&&selector==='[data-stale="true"]'?{}:null});
+    const keyed=key=>({classList:['stElementContainer','st-key-'+key]});
+    const input=(key,isTrusted=true)=>navigation.noteInput(state,{isTrusted,target:{closest:()=>keyed(key)}});
+    return {state,root,field,document,marker,input,focus:()=>navigation.focusEntries(state,root),
+        counts:()=>({focused,scrolled})};
+}
+
+test('one native Add moves focus into its new row field exactly once',()=>{
+    const h=entryHarness();
+    h.input('row_add');
+    h.root.markers=[h.marker('first')];
+    h.focus();
+    assert.equal(h.document.activeElement,h.field);
+    assert.deepEqual(h.counts(),{focused:1,scrolled:1});
+    h.document.activeElement=null;h.input('row_add');h.focus();
+    assert.deepEqual(h.counts(),{focused:1,scrolled:1},'a consumed request never focuses again');
+});
+
+test('input elsewhere after Add keeps the reader where they are',()=>{
+    const h=entryHarness();
+    h.input('row_add');h.input('another_section_field');
+    h.root.markers=[h.marker('first')];
+    h.focus();
+    assert.equal(h.document.activeElement,null);
+    h.input('row_add');h.focus();
+    assert.deepEqual(h.counts(),{focused:0,scrolled:0},'the request is spent; no late focus');
+});
+
+test('scripted input never authorizes focus',()=>{
+    const h=entryHarness();
+    h.input('row_add',false);
+    h.root.markers=[h.marker('first')];
+    h.focus();
+    assert.deepEqual(h.counts(),{focused:0,scrolled:0});
+});
+
+test('a stale marker or an unavailable field is consumed without focus',()=>{
+    for (const options of [{stale:true},{disabled:true}]) {
+        const h=entryHarness(options);
+        h.input('row_add');
+        h.root.markers=[h.marker('first')];
+        h.focus();h.focus();
+        assert.deepEqual(h.counts(),{focused:0,scrolled:0});
+    }
+});
+
+test('the adapter consumes entry focus from its existing measurement and records native input',()=>{
+    const layout=fs.readFileSync('app/workspace_layout.js','utf8');
+    const measure=layout.split('function measure() {')[1].split('\n    function schedule()')[0];
+    assert.match(measure,/ENFRAWorkspaceNavigation\?\.focusEntries\(state, root\)/);
+    for (const type of ['pointerdown','keydown'])
+        assert.ok(layout.includes(`'${type}'`),type+' input is recorded');
+    assert.doesNotMatch(layout,/setInterval|setTimeout/,'no polling or timers');
+});
