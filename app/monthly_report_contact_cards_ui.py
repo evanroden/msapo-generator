@@ -77,6 +77,7 @@ def parent_visibility(key, *, opening):
     if opening:
         if record.pop('parent_hidden', False):
             record['field_scope'] = uuid4().hex
+            record['epoch'] = uuid4().hex  # Retire controls from the hidden editor.
         st.session_state[key] = record
         return
     if record.get('active') is not None and record.get('fields') and record.get('tables'):
@@ -85,6 +86,7 @@ def parent_visibility(key, *, opening):
             _queue(key, record.get('epoch'), record['tables'], record['active'], record['fields'], 'edit')
             record = dict(st.session_state.get(key, record))
     record['parent_hidden'] = True
+    record['epoch'] = uuid4().hex  # Old controls cannot act after the parent closes.
     st.session_state[key] = record
 
 
@@ -92,7 +94,10 @@ def edit_contact_tables(tables, key, field, label, *, vendor=False, prepare=None
     """Return exact tables and a removal's edit-only intermediate receipt."""
     tables = tuple(tables)
     record = dict(st.session_state.get(key, {}))
+    prior_tables = record.get('tables')
+    prior_active = record.get('active')
     pending = record.get('pending')
+    consumed_action = bool(pending and tables in (pending['expected'], pending['result']))
     intermediate = None
     if pending:
         if tables == pending['expected']:
@@ -145,7 +150,13 @@ def edit_contact_tables(tables, key, field, label, *, vendor=False, prepare=None
                 active = None
         tables = prepared
         record['active'] = active
-    record.update(tables=tables, epoch=uuid4().hex)
+    # A passive Streamlit rerun has not invalidated a visible Edit action.
+    # Rotate only after a delivered action or a real canonical/row transition;
+    # a stale callback from another editor/report still fails its epoch guard.
+    if (not record.get('epoch') or consumed_action
+            or prior_tables != tables or prior_active != active):
+        record['epoch'] = uuid4().hex
+    record['tables'] = tables
     epoch = record['epoch']
     if can_edit is not None and not can_edit():
         record['active'] = None

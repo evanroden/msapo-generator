@@ -219,7 +219,19 @@ def browser_task(browser_type, name):
         assert state['working'] == before_reload['working'] and state['directory'] == before_reload['directory']
         state, final_output = outputs('after-edits',state)
         record['outputs'] = {'before':before_output,'after_no_edit':after_no_edit,'final':final_output}
-        assert page.evaluate('document.documentElement.scrollWidth<=document.documentElement.clientWidth+2')
+        record['narrow_geometry'] = page.evaluate("""() => {
+            const root = document.documentElement;
+            const viewport = root.clientWidth, actual = root.scrollWidth;
+            const offenders = actual > viewport + 2
+              ? [...document.querySelectorAll('body *')].map(node => {
+                  const rect = node.getBoundingClientRect();
+                  return {tag:node.tagName, role:node.getAttribute('role'),
+                    cls:String(node.className || '').slice(0,100),
+                    right:Math.round(rect.right), width:Math.round(rect.width)};
+                }).filter(item => item.right > viewport + 2).slice(0,12) : [];
+            return {viewport,actual,offenders};
+        }""")
+        assert record['narrow_geometry']['actual'] <= record['narrow_geometry']['viewport'] + 2, record['narrow_geometry']
         qa.capture(page,name,'compact-contacts-narrow')
         record['result'] = 'passed'
         qa.check(name,'Compact contact native lifecycle, standing normalization/recovery and real outputs',True)

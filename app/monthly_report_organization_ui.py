@@ -233,8 +233,8 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
             from app.monthly_report_guided import _include_left_out
             if key == "contact_matrix":
                 changed = _include_left_out(spec, block, prefix)
-                changed = edit_contacts(current_draft, spec, changed, prefix, assets, field, show_preview=show_preview,
-                                        standing_source=canonical_before.source)
+                changed = edit_contacts(current_draft, spec, changed, prefix, assets, field,
+                                        show_preview=show_preview, directory_baseline=canonical_before)
                 return _edit_notes(changed, prefix, field, canonical_before=canonical_before)
             if key == "org_chart":
                 if block.org_nodes:
