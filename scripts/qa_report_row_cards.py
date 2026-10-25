@@ -1,4 +1,4 @@
-"""One native proposal/onsite editing journey per engine; synthetic data only."""
+"""One native proposal/onsite/request editing journey per engine; synthetic data only."""
 from hashlib import sha256
 from io import BytesIO
 import json
@@ -16,8 +16,11 @@ STATUS = 'On hold — awaiting owner decision'
 NOTE = 'Synthetic decision: inspect the existing valve; no price included.'
 TASK = 'Synthetic onsite task: inspect AHU-TEST-04 and retain follow-up.'
 ASSET = 'AHU-TEST-0042'
+REQUEST = 'Synthetic request: confirm the control sequence drawing for the north air handler.'
+REQUEST_SITE = 'Synthetic North'
 PROPOSALS = '.st-key-epc_pair_monthly_proposals'
 ONSITE = '.st-key-epc_pair_monthly_maintenance'
+REQUESTS = '.st-key-epc_pair_monthly_rfi'
 
 
 ROW_OBSERVER = r'''(() => {
@@ -36,7 +39,7 @@ ROW_OBSERVER = r'''(() => {
   };
   for(const type of ['pointerdown','pointerup','click'])document.addEventListener(type,event=>{
     const button=event.target?.closest?.('button');
-    const pair=button?.closest('.st-key-epc_pair_monthly_proposals,.st-key-epc_pair_monthly_maintenance');
+    const pair=button?.closest('.st-key-epc_pair_monthly_proposals,.st-key-epc_pair_monthly_maintenance,.st-key-epc_pair_monthly_rfi');
     if(!pair)return;
     events.push({type,time:performance.now(),label:button.textContent.trim(),
       point:{x:event.clientX,y:event.clientY},...describe(button),
@@ -72,14 +75,18 @@ def assert_outputs(word, pdf):
                    for row in table.findall('w:tr', ns)] for table in root.findall('.//w:tbl', ns)]
         proposal = next(table for table in tables if any('Q-TEST-731' in row for row in table))
         onsite = next(table for table in tables if any('WO-TEST-1005' in row for row in table))
+        request = next((table for table in tables if any(REQUEST in row for row in table)), None)
+        assert request is not None, 'Word lacks the entered request'
+        assert [row for row in request if REQUEST in row] == [[REQUEST_SITE, REQUEST, '']]
+        assert not any(row and not any(cell.strip() for cell in row) for row in request[1:])
         assert any('Q-TEST-731' in row and STATUS in row and NOTE in row for row in proposal)
         assert any('WO-TEST-1005' in row and TASK in row and ASSET in row for row in onsite)
         assert 'Status' in proposal[0] and 'Asset' in onsite[0]
         full='\n'.join(root.xpath('.//w:t/text()', namespaces=ns))
-        assert full.count(NOTE)==1 and full.count(TASK)==1
+        assert full.count(NOTE)==1 and full.count(TASK)==1 and full.count(REQUEST)==1
     with pymupdf.open(stream=pdf, filetype='pdf') as doc:
         text=' '.join(' '.join(page.get_text().split()) for page in doc)
-        assert all(' '.join(value.split()) in text for value in (STATUS, NOTE, TASK, ASSET))
+        assert all(' '.join(value.split()) in text for value in (STATUS, NOTE, TASK, ASSET, REQUEST))
         pages=len(doc)
     return {'docx': {'bytes':len(word),'sha256':sha256(word).hexdigest()},
             'pdf': {'bytes':len(pdf),'sha256':sha256(pdf).hexdigest(),'pages':pages},
@@ -138,6 +145,24 @@ def browser_task(browser_type, name):
         expect(proposal.get_by_role('textbox',name='Technical Notes',exact=True)).to_have_value(NOTE)
         proposal.get_by_role('button',name='Close editing',exact=True).click()
         capture('desktop-proposal-reentry')
+        # Add request opens named fields, not an empty grid. Both typed fields
+        # arrive with the one Close action, without a separate blur.
+        requests=page.locator(REQUESTS)
+        expect(requests.get_by_text('No requests added.',exact=True)).to_be_visible()
+        requests.get_by_role('button',name='Add request',exact=True).click()
+        expect(requests.locator('[data-testid="stDataFrame"]')).to_have_count(0)
+        requests.get_by_role('textbox',name='Facility',exact=True).fill(REQUEST_SITE)
+        requests.get_by_role('textbox',name='Requested item',exact=True).fill(REQUEST)
+        requests.get_by_role('button',name='Close editing',exact=True).click()
+        request_state=capture('request-delivered-with-close',field='Requested item',value=REQUEST)
+        assert request_state['working']['rows']['rfi_matrix']['tables'][0]['rows']==[[REQUEST_SITE,REQUEST,'']]
+        expect(requests.get_by_text(REQUEST,exact=True)).to_be_visible()
+        expect(requests.get_by_text('No requests added.',exact=True)).to_have_count(0)
+        # A request opened and cancelled while blank is never a row.
+        requests.get_by_role('button',name='Add request',exact=True).click()
+        expect(requests.get_by_role('textbox',name='Requested item',exact=True)).to_have_value('')
+        requests.get_by_role('button',name='Close editing',exact=True).click()
+        assert capture('blank-request-cancelled')['working']['rows']==request_state['working']['rows']
         page.set_viewport_size({'width':545,'height':757})
         onsite=page.locator(ONSITE)
         onsite.get_by_role('button',name='Edit onsite call',exact=True).click()
@@ -150,6 +175,11 @@ def browser_task(browser_type, name):
         page.reload(wait_until='domcontentloaded')
         assert capture('reload-exact-rows')==state
         onsite=page.locator(ONSITE)
+        requests=page.locator(REQUESTS)
+        requests.get_by_role('button',name='Edit request',exact=True).click()
+        expect(requests.get_by_role('textbox',name='Requested item',exact=True)).to_have_value(REQUEST)
+        requests.get_by_role('button',name='Close editing',exact=True).click()
+        capture('request-reload-reentry')
         onsite.get_by_role('button',name='Edit onsite call',exact=True).click()
         expect(onsite.get_by_role('textbox',name='Asset',exact=True)).to_have_value(ASSET)
         expect(onsite.get_by_role('textbox',name='Task',exact=True)).to_have_value(TASK)
@@ -175,7 +205,7 @@ def browser_task(browser_type, name):
         record['outputs']=assert_outputs(word,pdf)
         record['generation']=live.EVIDENCE
         assert not errors and not external
-        record['result']='passed';qa.check(name,'Native row status/identifiers/edit-close/reload and actual output',True)
+        record['result']='passed';qa.check(name,'Native row status/identifiers/requests/edit-close/reload and actual output',True)
     except Exception as exc:
         record['result']='failed';record['failure']={'type':type(exc).__name__,'message':str(exc)[:2000]}
         try:page.screenshot(path=str(out/'first-failure.png'))

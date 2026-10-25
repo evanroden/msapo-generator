@@ -1,4 +1,4 @@
-"""Native row editors for proposal decisions and ENFRA onsite work.
+"""Native row editors for proposal decisions, ENFRA onsite work and requests.
 
 Rows retain their original schema and source references. A callback captures
 the delivered fields and exactly one table-bound action before rendering;
@@ -16,7 +16,17 @@ from app.monthly_report_editor import _cell_text, _signature
 
 
 CARD_TABLES = {"proposals": ("proposal", "Add proposal"),
-               "service_calls": ("onsite call", "Add onsite call")}
+               "service_calls": ("onsite call", "Add onsite call"),
+               "rfi_matrix": ("request", "Add request")}
+_REQUEST_WORDS = {"request", "requested", "requests", "question", "questions", "answer",
+                  "response", "details", "information"}
+_REQUEST_METADATA = {"#", "number", "no", "id", "by", "date", "status", "link", "reference", "ref"}
+
+
+def _request_prose(title):
+    """A request's own wording, never metadata such as Requested by or Request #."""
+    words = set(re.findall(r"[a-z]+|#", title.casefold()))
+    return bool(words & _REQUEST_WORDS) and not words & _REQUEST_METADATA
 
 
 def _values(fields):
@@ -108,9 +118,10 @@ def _field_default(value, kind):
     return value
 
 
-def _summary(columns, row, noun, index):
+def _summary(columns, row, noun, index, prose=None):
     values = tuple((column, row[n] if n < len(row) else "") for n, column in enumerate(columns))
-    main = next((value for column, value in values if value and any(
+    main = next((value for column, value in values if value and prose and prose(column)), "")
+    main = main or next((value for column, value in values if value and any(
         word in column.casefold() for word in ("description", "scope", "title", "task", "recommendation"))), "")
     st.write(main or f"{noun.capitalize()} {index + 1}")
     identifiers = [(column, value) for column, value in values if value and (any(
@@ -190,7 +201,7 @@ def _onsite_projection(columns, rows):
     return (_ONSITE_COLUMNS if title_frame else columns), context, canonical
 
 
-def _edit_table(columns, rows, types, key, noun, add_label, field, *, onsite=False):
+def _edit_table(columns, rows, types, key, noun, add_label, field, *, onsite=False, prose=None):
     record = dict(st.session_state.get(key, {}))
     pending = record.get("pending")
     incoming = tuple(tuple(row) for row in rows)
@@ -276,10 +287,10 @@ def _edit_table(columns, rows, types, key, noun, add_label, field, *, onsite=Fal
                 # first identifier or a long title is entered. Keep this
                 # active heading the same height until explicit closure.
                 st.write("Edit " + noun)
-                _render_fields(columns, fields, args, field, queue)
+                _render_fields(columns, fields, args, field, queue, prose=prose)
                 st.button("Close editing", key=key + "_close_" + token, on_click=queue, args=(*args, "close"))
             else:
-                _summary(columns, row, noun, visible_index if onsite else index)
+                _summary(columns, row, noun, visible_index if onsite else index, prose)
                 st.button("Edit " + noun, key=key + "_open_" + token,
                           on_click=queue, args=(*args, "open", token))
             if token != draft_token:
@@ -293,7 +304,7 @@ def _edit_table(columns, rows, types, key, noun, add_label, field, *, onsite=Fal
     return rows
 
 
-def _render_fields(columns, fields, args, field, queue=_queue):
+def _render_fields(columns, fields, args, field, queue=_queue, *, prose=None):
     for index, (title, (key, original, kind, default)) in enumerate(zip(columns, fields), 1):
         # These labels do not replace the stored or exported source headings.
         label = title if title.strip() else f"Column {index}"
@@ -302,24 +313,31 @@ def _render_fields(columns, fields, args, field, queue=_queue):
             st.date_input(label, format="YYYY-MM-DD", **options)
         elif kind in {"number", "currency"} and (isinstance(default, float) or default is None):
             st.number_input(label, **options)
-        elif kind == "multiline" or any(word in title.casefold() for word in ("description", "scope", "notes", "recommendation")):
+        elif (kind == "multiline" or prose and prose(title)
+              or any(word in title.casefold() for word in ("description", "scope", "notes", "recommendation"))):
             st.text_area(label, height=100, **options)
         else:
             st.text_input(label, **options)
 
 
-def edit_row_cards(spec, block, prefix, field):
+def edit_row_cards(spec, block, prefix, field, *, empty=None, notice=None):
+    """Return the edited block.
+
+    ``empty`` is the empty-state sentence ``notice`` shows while the block has
+    no rows and no request is open; an open blank editor is not content.
+    """
     from app.monthly_report_content_policy import ambiguous_price_columns
     from app.monthly_report_guided import _rich_text_scope
     from app.monthly_report_table_review_ui import review_table_headings
     noun, add_label = CARD_TABLES[spec.key]
+    prose = _request_prose if spec.key == "rfi_matrix" else None
     context = (spec.key, _rich_text_scope(prefix), block.references,
                tuple(table.reference for table in block.extra_tables), spec.columns)
     key = prefix + "_row_cards_" + _signature(context)
     if spec.key == "service_calls":
         # Retire pre-projection callbacks that could have opened a header as a call.
         key += "_onsite_context_v1"
-    tables = []
+    tables, table_keys = [], []
     for index, table in enumerate(block.extra_tables):
         if len(block.extra_tables) > 1:
             st.write(f"Table {index + 1}")
@@ -333,13 +351,20 @@ def edit_row_cards(spec, block, prefix, field):
             tables.append(review_table_headings(table, key + "_headings_" + str(index), field))
             continue
         edited = _edit_table(table.columns, table.rows, (), table_key, noun, add_label, field,
-                             onsite=spec.key == "service_calls")
+                             onsite=spec.key == "service_calls", prose=prose)
+        table_keys.append(table_key)
         tables.append(replace(table, rows=edited) if edited != table.rows else table)
     rows = block.rows
     if rows or not block.extra_tables:
         columns = tuple(column.title for column in spec.columns) or ("Facility", "Item", "Status")
         rows = _edit_table(columns, rows, tuple(column.type for column in spec.columns), key + "_rows", noun, add_label, field,
-                           onsite=spec.key == "service_calls")
+                           onsite=spec.key == "service_calls", prose=prose)
+        table_keys.append(key + "_rows")
+    if empty and notice is not None:
+        written = any(value is not None and str(value).strip()
+                      for row in (*rows, *(r for table in tables for r in table.rows)) for value in row)
+        if not written and not any(st.session_state.get(name, {}).get("active") for name in table_keys):
+            notice.caption(empty)
     if rows == block.rows and tuple(tables) == block.extra_tables:
         return block
     return replace(block, source="This month", rows=rows, extra_tables=tuple(tables),
