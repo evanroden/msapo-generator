@@ -14,16 +14,36 @@ def _open_manager(manager_key, selection_key, source_id):
         st.session_state[selection_key] = source_id
 
 
+def _pending_source_selection(prefix):
+    """A single unsettled file task, independent of the number of old sources."""
+    evidence = prefix + "_evidence"
+    return bool(st.session_state.get(evidence + "_pending_acceptance")
+                or st.session_state.get(evidence + "_accepted_failure")
+                or any(value for key, value in st.session_state.items()
+                       if key.startswith(evidence + "_structured_")
+                       and key.endswith(("_job", "_pending"))))
+
+
+def _source_status_caption(states, pending):
+    """Show one global pending task without manufacturing N file corrections."""
+    count = len(states)
+    if pending:
+        if not count:
+            return "Finish current file selection"
+        return f"{count} source {'file' if count == 1 else 'files'} · Finish current file selection"
+    if not count:
+        return ""
+    attention = sum(item.needs_correction for item in states)
+    return (f"{count} source {'file' if count == 1 else 'files'}" +
+            (f" · {attention} need details" if attention else ""))
+
+
 def _statuses(draft, blocks, prefix):
     evidence = prefix + "_evidence"
-    pending = bool(st.session_state.get(evidence + "_pending_acceptance")
-                   or st.session_state.get(evidence + "_accepted_failure")
-                   or any(value for key, value in st.session_state.items()
-                          if key.startswith(evidence + "_structured_")
-                          and key.endswith(("_job", "_pending"))))
     return source_manager_status(replace(draft, blocks=tuple(blocks.values())),
         st.session_state.get(evidence, ()),
-        unavailable=st.session_state.get(prefix + "_unavailable_sources", ()), pending=pending)
+        unavailable=st.session_state.get(prefix + "_unavailable_sources", ()),
+        pending=_pending_source_selection(prefix))
 
 
 def open_source_review(prefix, source_id, target, page=None):
@@ -52,13 +72,13 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
     manager_key = field(prefix + "_batch_files_open", False)
     selection_key = prefix + "_evidence_selected"
     active_key = prefix + "_source_active_selected"
+    pending = _pending_source_selection(prefix)
     states = _statuses(draft, blocks, prefix)
-    attention = tuple(item for item in states if item.needs_correction)
     opened = bool(st.session_state[manager_key])
     with st.container(key=prefix + "_source_file_status"):
-        if states:
-            st.caption(f"{len(states)} source {'file' if len(states) == 1 else 'files'}" +
-                       (f" · {len(attention)} need details" if attention else ""))
+        status_line = _source_status_caption(states, pending)
+        if status_line:
+            st.caption(status_line)
     st.button("Done with source files" if opened else "Manage source files",
               key=prefix + "_source_manager_" + str(opened),
               on_click=_open_manager if not opened else _close_manager,
@@ -156,7 +176,7 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
             draft = replace(draft, sources=tuple(corrected.get(source.id, source) for source in draft.sources))
             selected_status = next((item for item in _statuses(draft, blocks, prefix)
                                     if item.source_id == selected), None)
-            if selected_status:
+            if selected_status and not _pending_source_selection(prefix):
                 if selected_status.needs_correction:
                     st.caption(selected_status.reason)
                 elif selected_status.summary:

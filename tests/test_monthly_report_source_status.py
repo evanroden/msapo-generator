@@ -208,7 +208,11 @@ def test_native_text_and_spreadsheets_do_not_gain_image_resolution(included):
 
 def test_pending_batch_and_duplicate_source_inventory_stay_open(included):
     draft, content, _ = included
-    assert not entry(draft, content, pending=True).resolved
+    pending = entry(draft, content, pending=True)
+    assert not pending.resolved  # Existing preflight safety is unchanged.
+    assert not pending.needs_correction, "A global batch must not invent a correction for this file."
+    assert "current file selection" in pending.reason
+    assert entry(draft, content).resolved
     values = source_manager_status(draft, (content, content))
     assert len(values) == 1 and not values[0].resolved
 
