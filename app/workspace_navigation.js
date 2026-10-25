@@ -92,7 +92,17 @@ globalThis.ENFRAWorkspaceNavigation = {
         const update = (context, sample) => {
             if (!select) return;
             const top=Math.max(sample.chromeBottom,sample.scrollport.y,sample.visual?.y||0)+height()+12;
-            const request = entries.find(item => item.id === state.navigationRequest);
+            let request = entries.find(item => item.id === state.navigationRequest);
+            if (request && state.landingRequest === request.id) {
+                // The page may become interactive before this adapter mounts.
+                // A reader already in a control (an open menu, a field) keeps
+                // it; the landing never takes their focus or scroll.
+                const focused = document.activeElement;
+                if (focused && focused !== document.body && focused !== document.documentElement) {
+                    state.navigationRequest = null; request = null;
+                }
+                state.landingRequest = null;
+            }
             if (request) {
                 const entry=request; state.navigationRequest=null; state.landingRequest=null;
                 if (!entry.outside && state.navigationReturn?.id===entry.id) {

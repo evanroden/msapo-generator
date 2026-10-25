@@ -269,8 +269,9 @@ for(const mode of ['wide','compact','tabletop'])test(`${mode} entering from repo
     assert.equal(owner.scrollTop,1800);assert.equal(h.document.activeElement,h.field);
     assert.equal(h.field.value,'Unblurred human wording');assert.equal(h.field.selectionStart,3);
     assert.equal(h.counts().nativeEvents,0);
-    // A later deliberate entry is a new request.
-    h.land(['entry-2','monthly_cover']);h.measure();
+    // A later deliberate entry is a new request. Its Continue replaced the
+    // page, so the earlier field no longer holds focus.
+    h.document.activeElement=null;h.land(['entry-2','monthly_cover']);h.measure();
     assert.equal(h.select.value,'monthly_cover');assert.equal(h.document.activeElement,h.pairs[0].pair);
 });
 
@@ -302,4 +303,18 @@ test('a landing that already ran is not undone by later input',()=>{
     assert.equal(h.state.landingRequest,null);
     h.cancelLanding();h.scrollport.scrollTop=900;h.measure();
     assert.equal(h.scrollport.scrollTop,900);
+});
+
+test('a landing never takes focus or scroll from a control the reader already uses',()=>{
+    // The page can be interactive before the adapter mounts, so a menu may
+    // already be open when the landing first gets to run.
+    const h=harness();h.scrollport.scrollTop=40;h.document.activeElement=h.field;
+    h.land(['entry-1','monthly_cover']);h.measure();
+    assert.equal(h.scrollport.scrollTop,40);assert.equal(h.document.activeElement,h.field);
+    assert.equal(h.state.navigationRequest,null);assert.equal(h.state.landingRequest,null);
+    assert.equal(h.field.value,'Unblurred human wording');assert.equal(h.counts().nativeEvents,0);
+    // With nothing focused, the same entry would have landed.
+    const fresh=harness();fresh.scrollport.scrollTop=2300;fresh.document.body={};fresh.document.activeElement=fresh.document.body;
+    fresh.land(['entry-2','monthly_cover']);fresh.measure();
+    assert.equal(fresh.pairs[0].pair.getBoundingClientRect().top,128);
 });
