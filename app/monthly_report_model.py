@@ -303,6 +303,17 @@ class ReportFollowUp:
     references: tuple[str, ...] = ()
     included: bool = True
     reviewed_fingerprint: str = ""
+    # The report month whose review last stated a carried issue's update or
+    # status. Empty when unknown, or for an item without a carried claim.
+    update_period: str = ""
+
+
+def followup_record(item: ReportFollowUp) -> dict:
+    """Follow-up fields; an empty month stamp leaves earlier digests unchanged."""
+    record = asdict(item)
+    if not record["update_period"]:
+        record.pop("update_period")
+    return record
 
 
 @dataclass(frozen=True)
@@ -349,6 +360,11 @@ def _digest(value: object) -> str:
                 source.pop("pdf_text_blocks", None)
             if not source.get("scope_review"):
                 source.pop("scope_review", None)
+        for item in record["follow_ups"]:
+            if not item.get("update_period"):
+                item.pop("update_period", None)
+    if isinstance(value, ReportFollowUp):
+        record = followup_record(value)
     return hashlib.sha256(json.dumps(record, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 

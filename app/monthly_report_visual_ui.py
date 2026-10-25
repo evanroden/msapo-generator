@@ -436,7 +436,7 @@ def _recover_contact_correction(draft, block, prefix):
     return block, True
 
 
-def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=True):
+def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=True, directory_baseline=None):
     if not draft.prepared_by.strip():
         st.info("Enter your name above to view or edit saved contacts.")
         return block
@@ -447,6 +447,19 @@ def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=Tru
     if pending:
         return recovered
     block = recovered
+    standing_before = block
+    if (directory_baseline is not None
+            and directory_baseline.key == block.key == "contact_matrix"
+            and directory_baseline.source == "Library" and block.source == "This month"
+            and directory_baseline.text != block.text
+            and directory_baseline.references == block.references
+            and directory_baseline.rows == block.rows
+            and directory_baseline.extra_tables == block.extra_tables
+            and directory_baseline.asset_hashes == block.asset_hashes):
+        # Only a concurrently delivered notes edit changed this verified
+        # standing block's source label. Never promote an unrelated report-only
+        # contact or a changed/missing directory binding.
+        standing_before = replace(block, source="Library")
     tables = list(block.extra_tables)
     # Output headings do not make an image-capable block an editable table.
     # Preserve its explicit image replacement/conversion path until rows exist;
@@ -544,7 +557,7 @@ def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=Tru
             proposed = _contact_table_block(block, current, has_primary)
             if (sum(len(table.rows) for table in current) > sum(len(table.rows) for table in tables)
                     and block.key == "contact_matrix" and has_primary
-                    and (block.source == "Library" or f"directory-add-intent:{draft.profile.key}" in block.references)
+                    and (standing_before.source == "Library" or f"directory-add-intent:{draft.profile.key}" in block.references)
                     and any(ref.startswith("directory:") for ref in block.references)
                     and any(ref.startswith("directory-site:") for ref in block.references)):
                 marker = f"directory-add-intent:{draft.profile.key}"
@@ -555,7 +568,7 @@ def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=Tru
             correction = (_contact_table_block(block, corrected, has_primary)
                           if corrected is not None else proposed)
             correction = replace(correction, source="This month")
-            readiness = _contact_add_ready(draft, block, correction, p)
+            readiness = _contact_add_ready(draft, standing_before, correction, p)
             if readiness is False:
                 block = proposed
                 return current
@@ -563,7 +576,7 @@ def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=Tru
                 block = _pending_contact_correction(draft, block, correction, p)
                 block, _ = _recover_contact_correction(draft, block, p)
                 return _contact_block_tables(block, spec, has_primary)
-            shared, failed = _keep_contact_correction(draft, block, correction, p)
+            shared, failed = _keep_contact_correction(draft, standing_before, correction, p)
             if failed:
                 # Removal is cancelled, not silently replayed after recovery.
                 block = shared if shared is not None else correction

@@ -1,0 +1,239 @@
+"""Rejected off-page native issue callbacks stay copyable, never replayed.
+
+Unlike a pending edit, the first delivery can arrive after the canonical row
+has changed and the editor navigated to another page.
+"""
+from dataclasses import replace
+
+import pytest
+from streamlit.testing.v1 import AppTest
+
+from app.monthly_report_model import (
+    ReportDraft, ReportFollowUp, ReportPeriod, synthetic_profiles,
+)
+
+SCRIPT = '''
+import streamlit as st
+from app.monthly_report_followups import render_followups
+def field(key, value):
+    st.session_state.setdefault(key, value)
+    return key
+st.session_state["draft"] = render_followups(st.session_state["draft"],
+                                             "offpage", field, category="issue")
+'''
+
+
+def workspace():
+    rows = tuple(
+        ReportFollowUp(f"issue-{n}", "issue", f"Damper issue {n}", "2026-10",
+                       evidence_note=f"Evidence note {n}")
+        for n in range(30)
+    )
+    draft = ReportDraft(synthetic_profiles()[0], ReportPeriod(2026, 10),
+                        "Synthetic operator", (), (), follow_ups=rows,
+                        synthetic=True)
+    app = AppTest.from_string(SCRIPT, default_timeout=30)
+    app.session_state["draft"] = draft
+    app.run()
+    assert not app.exception
+    assert next(w for w in app.selectbox if w.label == "Issue page").value == 1
+    return app
+
+
+@pytest.mark.parametrize(("label", "value", "field"), [
+    ("Issue description", "Delayed description from old row", "text"),
+    ("Issue status", "resolved", "status"),
+    ("Issue update", "Delayed update from old row", "update"),
+    ("Evidence or explanation for the status", "Delayed evidence from old row", "evidence_note"),
+])
+def test_rejected_offpage_field_is_copyable_and_cannot_replay_on_aba(label, value, field):
+    app = workspace()
+    before = app.session_state["draft"]
+    old = before.follow_ups[0]
+    native = next(w for w in
+                  (*app.text_area, *app.selectbox)
+                  if w.label == label)
+    native.set_value(value)
+    changed = replace(old, text="Canonical correction by another editor")
+    current = replace(before, follow_ups=(changed, *before.follow_ups[1:]))
+    app.session_state["draft"] = current
+    next(w for w in app.selectbox if w.label == "Issue page").set_value(2).run()
+    assert not app.exception
+    assert app.session_state["draft"].follow_ups == current.follow_ups
+    copies = [w.proto.code_text for w in app.get("code") if str(value) in w.proto.code_text]
+    assert len(copies) == 1
+    assert not [k for k in app.session_state.filtered_state
+                if k.startswith("offpage_issue_issue-0_") and k.endswith("_change")]
+
+    # Restoration of the exact previous row is not consent to apply its callback.
+    app.session_state["draft"] = before
+    next(w for w in app.selectbox if w.label == "Issue page").set_value(1).run()
+    assert not app.exception
+    assert app.session_state["draft"].follow_ups[0] == old
+    assert len([w for w in app.get("code") if str(value) in w.proto.code_text]) == 1
+
+    # A fresh, deliberate edit still applies without erasing old recovery.
+    next(w for w in app.text_area if w.label == "Issue description").set_value(
+        "Fresh deliberate correction").run()
+    assert not app.exception
+    assert app.session_state["draft"].follow_ups[0].text == "Fresh deliberate correction"
+    assert len([w for w in app.get("code") if str(value) in w.proto.code_text]) == 1
+
+
+def test_unlink_choice_is_kept_when_the_page_changes_in_the_same_event():
+    rows = tuple(
+        ReportFollowUp(f"issue-{n}", "issue", f"Damper issue {n}", "2026-10",
+                       references=("removed-synthetic-source:1:digest",) if n == 0 else ())
+        for n in range(30)
+    )
+    draft = ReportDraft(synthetic_profiles()[0], ReportPeriod(2026, 10),
+                        "Synthetic operator", (), (), follow_ups=rows, synthetic=True)
+    app = AppTest.from_string(SCRIPT, default_timeout=30)
+    app.session_state["draft"] = draft
+    app.run()
+    assert not app.exception
+    next(w for w in app.checkbox if w.label == "Remove unavailable source links").check()
+    next(w for w in app.selectbox if w.label == "Issue page").set_value(2)
+    app.run()  # both choices arrive in one event; the issue's card is now off-page
+    assert not app.exception
+    assert app.session_state["draft"].follow_ups[0].references == ()
+    assert app.session_state["draft"].follow_ups[1:] == rows[1:]
+
+
+def test_offpage_unlink_never_applies_to_an_independently_replaced_issue():
+    rows = tuple(
+        ReportFollowUp(f"issue-{n}", "issue", f"Damper issue {n}", "2026-10",
+                       references=("removed-synthetic-source:1:digest",) if n == 0 else ())
+        for n in range(30)
+    )
+    draft = ReportDraft(synthetic_profiles()[0], ReportPeriod(2026, 10),
+                        "Synthetic operator", (), (), follow_ups=rows, synthetic=True)
+    app = AppTest.from_string(SCRIPT, default_timeout=30)
+    app.session_state["draft"] = draft
+    app.run()
+    assert not app.exception
+    next(w for w in app.checkbox if w.label == "Remove unavailable source links").check()
+    next(w for w in app.selectbox if w.label == "Issue page").set_value(2)
+    # The canonical issue is replaced independently before this delivery commits.
+    replaced = replace(rows[0], text="Independently saved damper wording")
+    app.session_state["draft"] = replace(draft, follow_ups=(replaced, *rows[1:]))
+    app.run()
+    assert not app.exception
+    assert app.session_state["draft"].follow_ups[0] == replaced  # its links are untouched
+
+
+def test_offpage_unlink_survives_an_edit_delivered_in_the_same_event():
+    rows = tuple(
+        ReportFollowUp(f"issue-{n}", "issue", f"Damper issue {n}", "2026-10",
+                       references=("removed-synthetic-source:1:digest",) if n == 0 else ())
+        for n in range(30)
+    )
+    draft = ReportDraft(synthetic_profiles()[0], ReportPeriod(2026, 10),
+                        "Synthetic operator", (), (), follow_ups=rows, synthetic=True)
+    app = AppTest.from_string(SCRIPT, default_timeout=30)
+    app.session_state["draft"] = draft
+    app.run()
+    assert not app.exception
+    # One delivery: a description edit, the unlink tick and the page change.
+    next(w for w in app.text_area if w.value == rows[0].text).set_value("Damper issue 0, re-inspected")
+    next(w for w in app.checkbox if w.label == "Remove unavailable source links").check()
+    next(w for w in app.selectbox if w.label == "Issue page").set_value(2)
+    app.run()
+    assert not app.exception
+    current = app.session_state["draft"].follow_ups[0]
+    assert current.text == "Damper issue 0, re-inspected"
+    assert current.references == ()
+
+
+INTERRUPTIBLE = '''
+import inspect
+import streamlit as st
+from app import monthly_report_followups as followups
+from app import monthly_report_issues as issues
+def field(key, value):
+    st.session_state.setdefault(key, value)
+    return key
+kwargs = {"category": "issue"}
+if "defer_commit" in inspect.signature(followups.render_followups).parameters:
+    kwargs["defer_commit"] = True
+result = followups.render_followups(st.session_state["draft"], "offpage", field, **kwargs)
+if st.session_state.pop("interrupt_once", False):
+    st.stop()
+st.session_state["draft"] = result
+issues.acknowledge_issue_controls(result, "offpage")
+'''
+
+
+def test_offpage_unlink_survives_an_interruption_before_the_report_is_assigned():
+    rows = tuple(
+        ReportFollowUp(f"issue-{n}", "issue", f"Damper issue {n}", "2026-10",
+                       references=("removed-synthetic-source:1:digest",) if n == 0 else ())
+        for n in range(30)
+    )
+    draft = ReportDraft(synthetic_profiles()[0], ReportPeriod(2026, 10),
+                        "Synthetic operator", (), (), follow_ups=rows, synthetic=True)
+    app = AppTest.from_string(INTERRUPTIBLE, default_timeout=30)
+    app.session_state["draft"] = draft
+    app.run()
+    assert not app.exception
+    next(w for w in app.checkbox if w.label == "Remove unavailable source links").check()
+    next(w for w in app.selectbox if w.label == "Issue page").set_value(2)
+    app.session_state["interrupt_once"] = True
+    app.run()  # stopped before the authoritative draft is assigned
+    assert not app.exception and app.session_state["draft"] == draft
+    app.run()
+    assert not app.exception
+    assert app.session_state["draft"].follow_ups[0].references == ()
+    app.run()  # acknowledged: nothing left to apply again
+    assert app.session_state["draft"].follow_ups[0].references == ()
+    assert not [key for key in app.session_state.filtered_state
+                if "_remove_missing_" in key and key.endswith("_choice")]
+
+
+def unlink_workspace():
+    rows = tuple(
+        ReportFollowUp(f"issue-{n}", "issue", f"Damper issue {n}", "2026-10",
+                       references=("removed-synthetic-source:1:digest",) if n == 0 else ())
+        for n in range(30)
+    )
+    draft = ReportDraft(synthetic_profiles()[0], ReportPeriod(2026, 10),
+                        "Synthetic operator", (), (), follow_ups=rows, synthetic=True)
+    app = AppTest.from_string(INTERRUPTIBLE, default_timeout=30)
+    app.session_state["draft"] = draft
+    app.run()
+    assert not app.exception
+    return app, draft
+
+
+def unlink_receipts(app):
+    return [key for key in app.session_state.filtered_state
+            if "_remove_missing_" in key and key.endswith("_choice")]
+
+
+def test_unlink_delivered_after_its_issue_left_the_report_never_applies_when_it_returns():
+    app, draft = unlink_workspace()
+    tick = next(w for w in app.checkbox if w.label == "Remove unavailable source links")
+    # Another editor's report without that issue arrives with the tick.
+    app.session_state["draft"] = replace(draft, follow_ups=draft.follow_ups[1:])
+    tick.check().run()
+    assert not app.exception
+    assert not unlink_receipts(app)
+    # The identical issue returns, on a page where its card is not rendered.
+    app.session_state["draft"] = draft
+    next(w for w in app.selectbox if w.label == "Issue page").set_value(2).run()
+    assert not app.exception
+    assert app.session_state["draft"].follow_ups[0].references == draft.follow_ups[0].references
+
+
+def test_a_saved_visible_unlink_cannot_reapply_after_its_links_return():
+    app, draft = unlink_workspace()
+    next(w for w in app.checkbox if w.label == "Remove unavailable source links").check().run()
+    assert not app.exception
+    assert app.session_state["draft"].follow_ups[0].references == ()
+    assert not unlink_receipts(app)
+    # Restoring the earlier report brings the links back; leaving the page
+    # must not silently remove them again.
+    app.session_state["draft"] = draft
+    next(w for w in app.selectbox if w.label == "Issue page").set_value(2).run()
+    assert not app.exception
+    assert app.session_state["draft"].follow_ups[0].references == draft.follow_ups[0].references

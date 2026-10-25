@@ -13,6 +13,30 @@ def setup(monkeypatch):
     return state, tables, (('name', 'Same'), ('phone', 'old'))
 
 
+def test_passive_contact_rerun_preserves_action_epoch_but_new_rows_invalidate_it(monkeypatch):
+    from contextlib import nullcontext
+
+    state, tables, fields = setup(monkeypatch)
+    cards.st.container = lambda **kwargs: nullcontext()
+    cards.st.write = lambda *args, **kwargs: None
+    cards.st.button = lambda *args, **kwargs: None
+
+    def render(rows):
+        cards.edit_contact_tables(rows, 'card', lambda key, default: key,
+                                  lambda columns, row, index: 'Contact summary')
+
+    render(tables)
+    visible_epoch = state['card']['epoch']
+    render(tables)  # An unrelated, passive Streamlit rerun.
+    assert state['card']['epoch'] == visible_epoch
+
+    newer = (replace(tables[0], rows=(('Different Person', 'new-phone'), *tables[0].rows[1:])),)
+    render(newer)
+    assert state['card']['epoch'] != visible_epoch
+    cards._queue('card', visible_epoch, tables, (0, 0), fields, 'remove', (0, 1))
+    assert state['card'].get('pending') is None  # Stale occurrence cannot act.
+
+
 def test_other_row_removal_keeps_separate_edit_only_receipt_and_duplicate_occurrences(monkeypatch):
     state, tables, fields = setup(monkeypatch)
     cards._queue('card', 'render-1', tables, (0, 0), fields, 'remove', (0, 1))

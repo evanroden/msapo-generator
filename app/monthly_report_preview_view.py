@@ -118,7 +118,7 @@ export default function(component) {
             const nativeChange = event => {
                 const target = event.target;
                 if (!target?.matches?.('input,textarea,select') ||
-                        target.closest?.('.report-preview')) return;
+                        target.closest?.('.report-preview') || target.closest?.('.epc-section-navigation')) return;
                 if (target.type === 'file' && !uploadStarts(target)) return;
                 awaitNativeEdit();
             };
