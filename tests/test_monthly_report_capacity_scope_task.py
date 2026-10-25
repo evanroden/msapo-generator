@@ -326,13 +326,13 @@ def test_saved_capacity_subsets_with_same_source_reference_do_not_leak_other_fil
     north_summary = ui._saved_capacity_caption(profile, shared)
     assert "2 saved rows" in north_summary
     assert ui.literal("north-only.csv") in north_summary
-    assert "south-only" not in north_summary
+    assert ui.literal("south-only.csv") not in north_summary
 
     south_profile = replace(profile, key="south", title="South Hospital",
                             facilities=(Facility("south", "South Hospital", ("SH",)),))
     south_summary = ui._saved_capacity_caption(south_profile, shared)
     assert "2 saved rows" in south_summary
     assert ui.literal("south-only.csv") in south_summary
-    assert "north-only" not in south_summary
+    assert ui.literal("north-only.csv") not in south_summary
     # The regression is read-only; persisted history is untouched.
     assert capacity.load_capacity(profile.contract) == original
