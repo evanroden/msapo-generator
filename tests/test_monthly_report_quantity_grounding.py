@@ -34,7 +34,7 @@ def fact(text, quote):
     ("Chiller R410A and AHU1 are unchanged.", set()),
     ("Chiller CH-2 was inspected.", {"2"}),
     ("Someone inspected the pump; it was done.", set()),
-    ("One hundred thousand thousand tenants.", {"100000"}),
+    ("One hundred thousand thousand tenants.", {"one hundred thousand thousand"}),  # Unreadable: as written.
 ])
 def test_numbers_read_spelled_quantities_and_digits_attached_to_units(text, expected):
     assert ai.numbers(text) == expected
@@ -207,6 +207,33 @@ def test_ordinals_and_electrical_units_read_without_leaking(text, expected):
     ("Rated 240V.", "Rated 120 V.", False),
 ])
 def test_ordinals_and_electrical_units_ground_correctly(text, quote, accepted):
+    page = replace(SOURCE, page_texts=(quote,))
+    if accepted:
+        assert [f.text for f in ai.normalize_facts(fact(text, quote), page, (1,), PROFILE, PERIOD)] == [text]
+    else:
+        with pytest.raises(ValueError, match="unsupported numbers"):
+            ai.normalize_facts(fact(text, quote), page, (1,), PROFILE, PERIOD)
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("Capacity is .5 million BTU/hr or .25 kW.", {"500000", "0.25"}),
+    ("Pressure measured 5 point two psi.", {"5 point two"}),
+    ("Delay was one second, then 1 second, then two seconds.", {"1", "2"}),
+    ("Pumps 5 6 and 7 ran; two and three were idle.", {"5", "6", "7", "2", "3"}),
+    ("Pumps two three and four; twenty twenty.", {"2", "3", "4", "20"}),
+])
+def test_one_written_quantity_yields_exactly_one_token(text, expected):
+    assert ai.numbers(text) == expected
+
+
+@pytest.mark.parametrize("text,quote,accepted", [
+    ("Capacity is 5000000 BTU/hr.", "Capacity is .5 million BTU/hr.", False),
+    ("Capacity is 500000 BTU/hr.", "Capacity is .5 million BTU/hr.", True),
+    ("Pressure measured 0.2 psi.", "Pressure measured 5 point two psi.", False),
+    ("Pressure measured 5 psi.", "Pressure measured 5 point two psi.", False),
+    ("Delay was one second.", "Delay was 1 second.", True),
+])
+def test_mixed_and_leading_decimal_quantities_ground_safely(text, quote, accepted):
     page = replace(SOURCE, page_texts=(quote,))
     if accepted:
         assert [f.text for f in ai.normalize_facts(fact(text, quote), page, (1,), PROFILE, PERIOD)] == [text]

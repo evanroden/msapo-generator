@@ -80,113 +80,131 @@ _UNIT_SUFFIXES = {"st", "nd", "rd", "th", "psi", "psig", "psia", "kw", "kwh", "m
 
 
 def _canonical_number(raw, scale=None):
-    """One spelling per value: 2,000, 2e3 and two thousand are all "2000"."""
+    """One spelling per value: 2,000, 2e3, .5e4 and two thousand all read alike."""
     if re.fullmatch(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?(?:e[+-]?\d+)?", raw, re.IGNORECASE):
         raw = raw.replace(",", "")
+    if raw.startswith("."):
+        raw = "0" + raw
     match = re.fullmatch(r"\d+(?:\.\d+)?(?:e([+-]?\d+))?", raw, re.IGNORECASE)
     if not match or match[1] and abs(int(match[1])) > 30:
-        # Kept as written (1,5 or an unbounded exponent): equal text only.
-        return (raw + (" " + scale if scale else "")).casefold()
+        return None  # Not a plain value (1,5 or an unbounded exponent).
     return format((Decimal(raw) * _SCALES.get(scale, 1)).normalize(), "f")
 
 
-def _spelled_numbers(text):
-    """Quantities written as words: "twenty-five", "one hundred and five",
-    "two million", "five point two"."""
-    # Hyphens (any Unicode form) and spaces join number words; any other
-    # mark or word ends one.
-    text = re.sub(r"[\u2010-\u2013\u2212\ufe63\uff0d]", "-", text.casefold())
+def _quantity_tokens(text):
+    """Words, digit groups and marks; hyphens only join, they are never tokens."""
+    text = re.sub(r"[‐-–−﹣－]", "-", text.casefold())
     # "half-inch", "quarter-turn" and "first-floor" describe the item, not
     # the count before them; joined into one word they modify nothing.
     # ("twenty-first-floor" keeps its ordinal: a hyphen comes before it.)
     text = re.sub(r"(?<!-)\b(" + "|".join((*_UNREAD_MULTIPLIERS, *_ORDINALS)) + r")-(?=[a-z])", r"\1", text)
-    tokens = re.findall(r"[a-z]+|[^a-z\s-]", text)
-    for n, token in enumerate(tokens):
-        # "a hundred" is 100, but "half a million" and "a quarter of a
-        # million" are not a million: their fraction is read nowhere here.
-        if (token in ("a", "an") and tokens[n + 1:n + 2] and tokens[n + 1] in ("hundred", *_SCALES)
-                and not (n and (tokens[n - 1] in _UNREAD_MULTIPLIERS or tokens[n - 1] == "of"))):
-            tokens[n] = "one"
-    def number_word(n):
-        if n >= len(tokens) or not (tokens[n] in _SMALL_NUMBERS or tokens[n] in _TENS):
-            return False
-        # "No one" and "one another" name people, not a quantity.
-        return not (tokens[n] == "one" and (n and tokens[n - 1] == "no" or tokens[n + 1:n + 2] == ["another"]))
-    def decimal(whole, n):
-        """The decimal after "point" at n, with any scale, and where it ends."""
-        j = n
-        while j < len(tokens) and _SMALL_NUMBERS.get(tokens[j], 10) < 10:
-            j += 1
-        if j == n:
-            return None, n
-        digits = "".join(str(_SMALL_NUMBERS[token]) for token in tokens[n:j])
-        scale = tokens[j] if j < len(tokens) and tokens[j] in _SCALES else None
-        return _canonical_number(whole + "." + digits, scale), j + bool(scale)
-    found, i = set(), 0
-    while i < len(tokens):
-        if tokens[i] == "point" and (value := decimal("0", i + 1))[0]:
-            found.add(value[0])  # "point five" is 0.5, never 5.
-            i = value[1]
-            continue
-        if not number_word(i):
-            i += 1
-            continue
-        start, total, current, last = i, 0, 0, None
-        while i < len(tokens):
-            token = tokens[i]
-            if number_word(i):
-                value = _SMALL_NUMBERS.get(token, _TENS.get(token))
-                if last in ("small", "tens") and not (last == "tens" and value < 10):
-                    break
-                current, last = current + value, "tens" if token in _TENS else "small"
-            elif token == "hundred" and last in ("small", "tens"):
-                current, last = current * 100, "hundred"
-            elif token in _SCALES and last in ("small", "tens", "hundred"):
-                total, current, last = total + current * _SCALES[token], 0, "scale"
-            elif not (token == "and" and last in ("hundred", "scale") and number_word(i + 1)):
-                break
-            i += 1
-        whole = str(total + current)
-        if tokens[i:i + 1] and tokens[i] in _ORDINALS:
-            ordinal = _ORDINAL_UNITS.get(tokens[i])
-            if last == "tens" and ordinal and tokens[i] != "second":
-                found.add(_canonical_number(str(total + current + ordinal)))  # twenty-first: 21
-            else:
-                # "twenty-second" is the 22nd or a 20-second span; other
-                # ordinals after a count are read nowhere here.
-                found.add(" ".join(tokens[start:i + 1]))
-            i += 1
-            continue
-        if tokens[i:i + 1] == ["point"] and (value := decimal(whole, i + 1))[0]:
-            found.add(value[0])
-            i = value[1]
-            continue
-        unread = 1 if tokens[i:i + 1] and tokens[i] in ("point", *_UNREAD_MULTIPLIERS) else (
-            3 if tokens[i:i + 2] in (["and", "a"], ["and", "one"])
-            and tokens[i + 2:i + 3] and tokens[i + 2] in _UNREAD_MULTIPLIERS else 0)
-        if unread:
-            found.add(" ".join(tokens[start:i + unread]))
-            i += unread
+    tokens = []
+    for match in re.finditer(r"(?:\d+(?:[.,]\d+)*|\.\d+)(?:e[+-]?\d+)?[a-z]*|[a-z]+|[^\s-]", text):
+        token = match.group()
+        before = text[match.start() - 1] if match.start() else " "
+        if (token[0].isdigit() or token[0] == "." and len(token) > 1) and (before.isalnum() or before == "_"):
+            token = "\0"  # Part of an identifier such as R410A, AHU1 or 2x4.
+        tokens.append(token)
+    return tokens
+
+
+def _read_words(span):
+    """The value of a number phrase read completely, or None."""
+    words = ["one" if word in ("a", "an") and n == 0 else word for n, word in enumerate(span)]
+    total, current, last, n = 0, 0, None, 0
+    while n < len(words) and words[n] != "point":
+        word = words[n]
+        if word in _SMALL_NUMBERS or word in _TENS:
+            value = _SMALL_NUMBERS.get(word, _TENS.get(word))
+            if last in ("small", "tens") and not (last == "tens" and value < 10):
+                return None
+            current, last = current + value, "tens" if word in _TENS else "small"
+        elif word == "hundred" and last in ("small", "tens"):
+            current, last = current * 100, "hundred"
+        elif word in _SCALES and last in ("small", "tens", "hundred"):
+            total, current, last = total + current * _SCALES[word], 0, "scale"
+        elif word == "and" and last in ("hundred", "scale") and n + 1 < len(words):
+            pass
+        elif word in _ORDINAL_UNITS and word != "second" and last == "tens" and n == len(words) - 1:
+            current, last = current + _ORDINAL_UNITS[word], "ordinal"  # twenty-first: 21
         else:
-            found.add(_canonical_number(whole))
-    return found
+            return None  # second, a multiplier or an unreadable word: as written.
+        n += 1
+    whole = str(total + current) if last else "0"
+    if n == len(words):
+        return _canonical_number(whole)
+    digits = words[n + 1:]
+    scale = digits.pop() if digits and digits[-1] in _SCALES else None
+    if not digits or any(_SMALL_NUMBERS.get(digit, 10) > 9 for digit in digits) or last not in (None, "small", "tens", "hundred", "scale"):
+        return None
+    return _canonical_number(whole + "." + "".join(str(_SMALL_NUMBERS[d]) for d in digits), scale)
 
 
 def numbers(text):
-    # A letter before digits marks an identifier such as R410A, which
-    # compares as text, not quantity. A unit may follow directly ("40psi").
-    found = set()
-    for raw, exponent, suffix, scale in re.findall(
-            r"(?<!\w)(\d+(?:[.,]\d+)*)([eE][+-]?\d+)?([A-Za-z]*)(?:\s*\b(thousand|million|billion)\b)?",
-            text, re.IGNORECASE):
-        suffix, scale = suffix.casefold(), scale.casefold() or None
-        if suffix in _SCALES:
-            suffix, scale = "", suffix
-        if suffix and suffix not in _UNIT_SUFFIXES:
-            found.add((raw + exponent + suffix).casefold())
+    """One token for every quantity written in text.
+
+    A quantity read completely becomes its value, so "2,000", "two thousand"
+    and "2e3" are all "2000". Anything else about it, such as a multiplier,
+    an ambiguous ordinal, a mixed "5 point two" or an unknown suffix (500k,
+    5A), keeps the whole quantity as written. It then supports only the same
+    text and never a value read from part of it.
+    """
+    tokens = _quantity_tokens(text)
+    def digit(n):
+        return n < len(tokens) and (tokens[n][0].isdigit() or tokens[n][0] == "." and len(tokens[n]) > 1)
+    def cardinal(n):
+        if n >= len(tokens) or tokens[n] not in _SMALL_NUMBERS and tokens[n] not in _TENS:
+            return False
+        # "No one" and "one another" name people, not a quantity.
+        return not (tokens[n] == "one" and (n and tokens[n - 1] == "no" or tokens[n + 1:n + 2] == ["another"]))
+    def decimal_word(n):
+        return n < len(tokens) and _SMALL_NUMBERS.get(tokens[n], 10) < 10
+    def indefinite(n):
+        # "a hundred" is 100, but "half a million" and "a quarter of a
+        # million" are not a million: their fraction is read nowhere here.
+        return (n < len(tokens) and tokens[n] in ("a", "an") and tokens[n + 1:n + 2]
+                and tokens[n + 1] in ("hundred", *_SCALES)
+                and not (n and (tokens[n - 1] in _UNREAD_MULTIPLIERS or tokens[n - 1] == "of")))
+    def joins(n):
+        token, previous = tokens[n], tokens[n - 1]
+        if previous == "point":
+            return decimal_word(n)
+        if digit(n - 1) and cardinal(n):
+            return False  # "5 6" or "5 two": separate quantities.
+        # A number word continues "twenty five" or "one hundred (and) five";
+        # "two three" are two quantities.
+        return (cardinal(n) and (previous in _TENS and _SMALL_NUMBERS.get(token, 10) < 10
+                                 or previous in ("hundred", "and", *_SCALES))
+                or token in ("hundred", *_SCALES)
+                or token == "point" and decimal_word(n + 1) or token in _UNREAD_MULTIPLIERS
+                or token in _ORDINALS and previous in _TENS
+                or token == "and" and n + 1 < len(tokens) and (
+                    previous in ("hundred", *_SCALES) and cardinal(n + 1)
+                    or tokens[n + 1] in ("a", "one") and tokens[n + 2:n + 3]
+                    and tokens[n + 2] in _UNREAD_MULTIPLIERS)
+                or token in ("a", "one") and previous == "and" and tokens[n + 1:n + 2]
+                and tokens[n + 1] in _UNREAD_MULTIPLIERS)
+    found, i = set(), 0
+    while i < len(tokens):
+        if not (digit(i) or cardinal(i) or indefinite(i) or tokens[i] == "point" and decimal_word(i + 1)):
+            i += 1
+            continue
+        start, i = i, i + 1
+        while i < len(tokens) and joins(i):
+            i += 1
+        span = tokens[start:i]
+        if digit(start):
+            raw, exponent, suffix = re.fullmatch(r"(\d+(?:[.,]\d+)*|\.\d+)(e[+-]?\d+)?([a-z]*)", span[0]).groups()
+            scale = suffix if suffix in _SCALES else None
+            rest = span[1:]
+            if not scale and rest[:1] and rest[0] in _SCALES:
+                scale, rest = rest[0], rest[1:]
+            value = (_canonical_number(raw + (exponent or ""), scale)
+                     if not rest and (scale or suffix in ("", *_UNIT_SUFFIXES)) else None)
         else:
-            found.add(_canonical_number(raw + exponent, scale))
-    return found | _spelled_numbers(text)
+            value = _read_words(span)
+        found.add(value if value is not None else " ".join(span))
+    return found
 
 
 def fact_numbers(facts):
