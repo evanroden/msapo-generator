@@ -223,3 +223,78 @@ def test_ordered_first_fill_refreshes_the_single_report_table_after_commit(profi
     app.run()
     assert app.session_state["test_draft"].blocks == current.blocks
     assert capacity.load_capacity(profile.contract).revision == 1
+
+
+def test_saved_capacity_summary_is_visible_for_selected_sites_only(profile, monkeypatch):
+    """The visible inventory must not imply an automatic manual/report update."""
+    from app.monthly_report_model import Facility
+    from test_monthly_report_capacity_ui import app_for
+
+    monkeypatch.setattr(ui.st, "file_uploader", lambda *args, **kwargs: None)
+    state = saved(profile)
+    before = draft(profile)
+    app = AppTest.from_string(APP)
+    app.session_state["test_draft"] = before
+    app.run()
+    assert not app.exception
+    lines = [c.value for c in app.caption if c.value.startswith("Reusable capacity ·")]
+    assert len(lines) == 1
+    line = lines[0]
+    assert "2 saved rows for these sites" in line
+    assert f"version {state.revision}" in line
+    assert state.updated_at.split("T", 1)[0] in line
+    assert "capacity" in line and "source:" in line
+    assert app.session_state["test_draft"] == before
+    assert capacity.load_capacity(profile.contract) == state
+
+    # A different site's saved rows are not evidence for this report. Do not
+    # disclose a foreign site's source filename or count as reusable here.
+    unknown = replace(profile, key="elsewhere", title="Elsewhere",
+                      facilities=(Facility("elsewhere", "Elsewhere"),))
+    app.session_state["test_draft"] = draft(unknown)
+    app.run()
+    assert not app.exception
+    lines = [c.value for c in app.caption if c.value.startswith("Reusable capacity ·")]
+    assert lines == ["Reusable capacity · none saved for these sites"]
+    assert capacity.load_capacity(profile.contract) == state
+
+
+def test_capacity_summary_empty_and_manual_scope_remain_truthful(profile, monkeypatch):
+    monkeypatch.setattr(ui.st, "file_uploader", lambda *args, **kwargs: None)
+    app = AppTest.from_string(APP)
+    starting = draft(profile)
+    app.session_state["test_draft"] = starting
+    app.run()
+    assert not app.exception
+    assert any(c.value == "Reusable capacity · none saved for this contract" for c in app.caption)
+    assert app.session_state["test_draft"] == starting
+    assert capacity.load_capacity(profile.contract) is None
+
+    state = saved(profile)
+    manual = ResolvedBlock("thermal_capacity", "This month",
+        text="Independent report note", rows=(("NH", "Steam", "NR", "tons"),))
+    unchanged = draft(profile, manual)
+    app.session_state["test_draft"] = unchanged
+    app.run()
+    assert not app.exception
+    assert any(c.value == "Capacity · this report only" for c in app.caption)
+    assert any("2 saved rows for these sites" in c.value for c in app.caption)
+    assert app.session_state["test_draft"] == unchanged
+    assert capacity.load_capacity(profile.contract) == state
+
+
+def test_first_fill_inventory_updates_on_first_settled_render(profile, monkeypatch):
+    from test_monthly_report_capacity_ui import app_for
+
+    # This first AppTest run actually imports and commits the synthetic CSV.
+    # No extra rerun, Save, or shared overwrite is permitted to see its status.
+    app = app_for(monkeypatch, profile)
+    assert not app.exception
+    state = capacity.load_capacity(profile.contract)
+    assert state.revision == 1
+    assert len([c for c in app.caption if "2 saved rows for these sites" in c.value]) == 1
+    assert any(f"version {state.revision}" in c.value and
+               c.value.startswith("Reusable capacity ·") for c in app.caption)
+    assert app.session_state["test_block"] == capacity.capacity_block(profile, state)
+    app.run()
+    assert capacity.load_capacity(profile.contract) == state
