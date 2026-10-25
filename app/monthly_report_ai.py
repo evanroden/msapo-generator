@@ -2,6 +2,7 @@
 
 from dataclasses import asdict, replace
 from datetime import date
+from decimal import Decimal
 import hashlib
 import json
 import re
@@ -52,8 +53,197 @@ def clean_text(text):
     ).strip()
 
 
+_SMALL_NUMBERS = {word: value for value, word in enumerate((
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen "
+    "fourteen fifteen sixteen seventeen eighteen nineteen").split())}
+_TENS = {word: 10 * value for value, word in enumerate(
+    "twenty thirty forty fifty sixty seventy eighty ninety".split(), 2)}
+_SCALES = {"thousand": 10 ** 3, "million": 10 ** 6, "billion": 10 ** 9}
+# Words that change a quantity without a reading here. The whole phrase
+# compares as text, so no part of "two dozen" supports a bare 2.
+_UNREAD_MULTIPLIERS = {"dozen", "dozens", "half", "halves", "quarter", "quarters",
+                       "third", "thirds", "gross", "score"}
+_ORDINAL_UNITS = {word: value for value, word in enumerate(
+    "first second third fourth fifth sixth seventh eighth ninth".split(), 1)}
+_ORDINALS = {*_ORDINAL_UNITS, *(word + "th" for word in (
+    "ten eleven twelf thirteen fourteen fifteen sixteen seventeen eighteen nineteen "
+    "hundred thousand million").split()), "twentieth", "thirtieth", "fortieth", "fiftieth",
+    "sixtieth", "seventieth", "eightieth", "ninetieth"}
+# Letters attached to digits that name a unit or an ordinal, so the digits are
+# the value. Any other attached letters (500k, 5A, 2B) keep the whole token
+# as written: it supports only the same text, never its bare digits.
+_UNIT_SUFFIXES = {"st", "nd", "rd", "th", "psi", "psig", "psia", "kw", "kwh", "mw", "mwh", "kv",
+                  "hz", "hp", "gpm", "cfm", "fpm", "rpm", "btu", "btuh", "mbh", "ton", "tons",
+                  "in", "ft", "mm", "cm", "km", "gal", "gals", "lb", "lbs", "oz", "sqft", "hr",
+                  "hrs", "min", "mins", "sec", "ms", "db", "ppm", "pct", "deg", "v", "w", "va",
+                  "kva", "kvar", "kvah", "mva", "vac", "vdc", "amp", "amps"}
+# The digits the reader parses. Circled list numbers and superscript footnote
+# marks pass str.isdigit() but are markers, not quantities.
+_DIGIT = re.compile(r"\d|\.\d")
+_SIGNS = ("minus", "negative")
+
+
+def _canonical_number(raw, scale=None):
+    """One spelling per value: 2,000, 2e3, .5e4 and two thousand all read alike."""
+    if re.fullmatch(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?(?:e[+-]?\d+)?", raw, re.IGNORECASE):
+        raw = raw.replace(",", "")
+    if raw.startswith("."):
+        raw = "0" + raw
+    match = re.fullmatch(r"\d+(?:\.\d+)?(?:e([+-]?\d+))?", raw, re.IGNORECASE)
+    if not match or match[1] and abs(int(match[1])) > 30:
+        return None  # Not a plain value (1,5 or an unbounded exponent).
+    return format((Decimal(raw) * _SCALES.get(scale, 1)).normalize(), "f")
+
+
+def _quantity_tokens(text):
+    """Words, digit groups and marks; hyphens only join, they are never tokens."""
+    text = re.sub(r"[‐-–−﹣－]", "-", text.casefold())
+    # "half-inch", "quarter-turn", "first-floor" and "hundred-ton" describe
+    # the item, not the count before them; joined into one word they modify
+    # nothing. ("twenty-first-floor" and "one-hundred-ton" keep their number:
+    # a hyphen comes before it.)
+    adjectives = (*_UNREAD_MULTIPLIERS, *_ORDINALS, "hundred", *_SCALES)
+    text = re.sub(r"(?<!-)\b(" + "|".join(adjectives) + r")-(?=[a-z])", r"\1", text)
+    # A hyphen right before a number, after a space or the start, is its sign:
+    # -10 F. Ranges (101-105), dates, R-22 and 1.2e-5 keep the hyphen as a join.
+    text = re.sub(r"(?<![\w.])-(?=\.?\d)", " minus ", text)
+    tokens = []
+    for match in re.finditer(r"(?:\d+(?:[.,]\d+)*|\.\d+)(?:e[+-]?\d+)?[a-z]*|[a-z]+|[^\s-]", text):
+        token = match.group()
+        before = text[match.start() - 1] if match.start() else " "
+        if _DIGIT.match(token) and (before.isalnum() or before == "_"):
+            token = "\0"  # Part of an identifier such as R410A, AHU1 or 2x4.
+        tokens.append(token)
+    return tokens
+
+
+def _read_words(span):
+    """The value of a number phrase read completely, or None."""
+    words = ["one" if word in ("a", "an") and n == 0 else word for n, word in enumerate(span)]
+    total, current, last, n = 0, 0, None, 0
+    while n < len(words) and words[n] != "point":
+        word = words[n]
+        if word in _SMALL_NUMBERS or word in _TENS:
+            value = _SMALL_NUMBERS.get(word, _TENS.get(word))
+            if last in ("small", "tens") and not (last == "tens" and value < 10):
+                return None
+            current, last = current + value, "tens" if word in _TENS else "small"
+        elif word == "hundred" and last in ("small", "tens"):
+            current, last = current * 100, "hundred"
+        elif word in _SCALES and last in ("small", "tens", "hundred"):
+            total, current, last = total + current * _SCALES[word], 0, "scale"
+        elif word == "and" and last in ("hundred", "scale") and n + 1 < len(words):
+            pass
+        elif word in _ORDINAL_UNITS and word != "second" and last == "tens" and n == len(words) - 1:
+            current, last = current + _ORDINAL_UNITS[word], "ordinal"  # twenty-first: 21
+        else:
+            return None  # second, a multiplier or an unreadable word: as written.
+        n += 1
+    whole = str(total + current) if last else "0"
+    if n == len(words):
+        return _canonical_number(whole)
+    digits = words[n + 1:]
+    scale = digits.pop() if digits and digits[-1] in _SCALES else None
+    if not digits or any(_SMALL_NUMBERS.get(digit, 10) > 9 for digit in digits) or last not in (None, "small", "tens", "hundred", "scale"):
+        return None
+    return _canonical_number(whole + "." + "".join(str(_SMALL_NUMBERS[d]) for d in digits), scale)
+
+
 def numbers(text):
-    return set(re.findall(r"(?<!\w)\d+(?:[.,]\d+)*(?!\w)", text))
+    """One token for every quantity written in text.
+
+    A quantity read completely becomes its value, so "2,000", "two thousand"
+    and "2e3" are all "2000". Anything else about it, such as a multiplier,
+    an ambiguous ordinal, a mixed "5 point two" or an unknown suffix (500k,
+    5A), keeps the whole quantity as written. It then supports only the same
+    text and never a value read from part of it.
+    """
+    tokens = _quantity_tokens(text)
+    def digit(n):
+        return n < len(tokens) and bool(_DIGIT.match(tokens[n]))
+    def cardinal(n):
+        if n >= len(tokens) or tokens[n] not in _SMALL_NUMBERS and tokens[n] not in _TENS:
+            return False
+        # "No one" and "one another" name people, not a quantity.
+        return not (tokens[n] == "one" and (n and tokens[n - 1] == "no" or tokens[n + 1:n + 2] == ["another"]))
+    def decimal_word(n):
+        return n < len(tokens) and _SMALL_NUMBERS.get(tokens[n], 10) < 10
+    def indefinite(n):
+        # "a hundred" is 100, but "half a million" and "a quarter of a
+        # million" are not a million: their fraction is read nowhere here.
+        return (n < len(tokens) and tokens[n] in ("a", "an") and tokens[n + 1:n + 2]
+                and tokens[n + 1] in ("hundred", *_SCALES)
+                and not (n and (tokens[n - 1] in _UNREAD_MULTIPLIERS or tokens[n - 1] == "of")))
+    def fraction(n):
+        # Inside "point two five": only digit words since the point.
+        k = n - 1
+        while k >= 0 and decimal_word(k):
+            k -= 1
+        return k < n - 1 and k >= 0 and tokens[k] == "point"
+    def joins(n):
+        token, previous = tokens[n], tokens[n - 1]
+        if previous == "point":
+            # "five point 2" stays one (mixed, unread) quantity.
+            return decimal_word(n) or digit(n)
+        if fraction(n) and decimal_word(n):
+            return True  # five point two five: every fractional digit.
+        if digit(n - 1) and cardinal(n):
+            return False  # "5 6" or "5 two": separate quantities.
+        # A number word continues "twenty five" or "one hundred (and) five";
+        # "two three" are two quantities.
+        return (cardinal(n) and (previous in _TENS and _SMALL_NUMBERS.get(token, 10) < 10
+                                 or previous in ("hundred", "and", *_SCALES))
+                or token in ("hundred", *_SCALES)
+                # "1 million 200 thousand" is one quantity; no group of it
+                # stands alone. It is kept as written.
+                or digit(n) and previous in _SCALES
+                or token == "point" and (decimal_word(n + 1) or digit(n + 1))
+                or token in _UNREAD_MULTIPLIERS
+                or token in _ORDINALS and previous in _TENS
+                or token == "and" and n + 1 < len(tokens) and (
+                    previous in ("hundred", *_SCALES) and cardinal(n + 1)
+                    or tokens[n + 1] in ("a", "one") and tokens[n + 2:n + 3]
+                    and tokens[n + 2] in _UNREAD_MULTIPLIERS)
+                or token in ("a", "one") and previous == "and" and tokens[n + 1:n + 2]
+                and tokens[n + 1] in _UNREAD_MULTIPLIERS)
+    found, i = set(), 0
+    while i < len(tokens):
+        if not (digit(i) or cardinal(i) or indefinite(i) or tokens[i] == "point" and decimal_word(i + 1)):
+            i += 1
+            continue
+        start, i = i, i + 1
+        while i < len(tokens) and joins(i):
+            i += 1
+        span = tokens[start:i]
+        # "minus five" is -5; its bare 5 must not support "5 degrees". Not in
+        # "plus or minus five" (a tolerance) or "10 minus 2" (arithmetic).
+        signed = (start and tokens[start - 1] in _SIGNS and tokens[max(0, start - 3):start - 1] != ["plus", "or"]
+                  and not (start > 1 and (digit(start - 2) or cardinal(start - 2)
+                                          or tokens[start - 2] in ("hundred", *_SCALES))))
+        if digit(start):
+            raw, exponent, suffix = re.fullmatch(r"(\d+(?:[.,]\d+)*|\.\d+)(e[+-]?\d+)?([a-z]*)", span[0]).groups()
+            scale = suffix if suffix in _SCALES else None
+            rest = span[1:]
+            if not scale and rest[:1] and rest[0] in _SCALES:
+                scale, rest = rest[0], rest[1:]
+            value = (_canonical_number(raw + (exponent or ""), scale)
+                     if not rest and (scale or suffix in ("", *_UNIT_SUFFIXES)) else None)
+        else:
+            value = _read_words(span)
+        if signed:
+            span = [tokens[start - 1], *span]
+            value = value if value in (None, "0") else "-" + value
+        found.add(value if value is not None else " ".join(span))
+    return found
+
+
+def fact_numbers(facts):
+    """Numbers a paragraph may state: those in its cited facts and their quotes.
+
+    Never page labels or other display text around the evidence.
+    """
+    # Each field separately: joining "...twenty" to "Five..." would read 25.
+    return set().union(*(numbers(field) for f in facts for field in (f.text, f.quote)))
 
 
 def vendor_names(draft):
@@ -445,7 +635,7 @@ def normalize_draft(value, key, facts, sources):
                 "A draft included prices or invalid text. Your narrative was preserved."
             )
         flags = list(dict.fromkeys(flag for f in cited for flag in f.flags))
-        if numbers(text) - numbers(" ".join(f.text + " " + f.quote for f in cited)):
+        if numbers(text) - fact_numbers(cited):
             flags.append("Unsupported number: edit this paragraph against its evidence")
         if item.get("uncertain"):
             flags.append("Model marked this paragraph uncertain")
@@ -534,9 +724,7 @@ def refresh_evidence(block, sources):
                 )
             )
         )
-        if numbers(paragraph.text) - numbers(
-            " ".join(f.text + " " + f.quote for _, f in cited)
-        ):
+        if numbers(paragraph.text) - fact_numbers(f for _, f in cited):
             flags += ("Unsupported number: edit this paragraph against its evidence",)
         refs = tuple(dict.fromkeys(source_reference(s, f.page) for s, f in cited))
         paragraphs.append(replace(paragraph, references=refs, flags=flags))

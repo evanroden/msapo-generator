@@ -635,7 +635,7 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                 flags = tuple(
                     f for f in paragraph.flags if "Unsupported number" not in f
                 )
-                if ai.numbers(text) - ai.numbers(evidence):
+                if ai.numbers(text) - ai.fact_numbers(facts[i] for i in paragraph.fact_ids if i in facts):
                     flags += ("Unsupported number: correct against the evidence",)
                 for flag in flags:
                     st.warning(flag)
