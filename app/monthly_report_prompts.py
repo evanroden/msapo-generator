@@ -86,13 +86,36 @@ _HEADINGS = (
 )
 
 
+def _heading_text(clean):
+    heading = clean.replace("**", "").replace("__", "").strip()
+    heading = re.sub(r"^\d+[.)\s:-]+", "", heading).rstrip(":").strip()
+    return " ".join(heading.upper().replace("&", " AND ").split())
+
+
+def _template_heading_patterns():
+    # Copilot can repeat the descriptions we supply. Accept only those exact
+    # forms (first line or joined wrapped lines), never arbitrary title prefixes.
+    patterns = []
+    for match in re.finditer(r"(?m)^([1-8])\. ([^\n]*(?:\n {3}[^\n]*)*)", COPILOT_TEMPLATE):
+        lines = match[2].splitlines()
+        for count in range(1, len(lines) + 1):
+            literal = re.escape(_heading_text(" ".join(lines[:count])))
+            literal = literal.replace(re.escape("{END_DATE}"), r"\d{4}-\d{2}-\d{2}")
+            patterns.append((int(match[1]), re.compile(literal)))
+    return tuple(patterns)
+
+
+_TEMPLATE_HEADINGS = _template_heading_patterns()
+
+
 def _copilot_heading(clean):
     # Normalize only the heading candidate. Content beginning with a heading
     # word must still reach the ordinary evidence/unmatched-line path intact.
-    heading = clean.replace("**", "").replace("__", "").strip()
-    heading = re.sub(r"^\d+[.)\s:-]+", "", heading).rstrip(":").strip()
-    heading = " ".join(heading.upper().replace("&", " AND ").split())
-    return next((i for i, titles in enumerate(_HEADINGS, 1) if heading in titles), None)
+    heading = _heading_text(clean)
+    found = next((i for i, titles in enumerate(_HEADINGS, 1) if heading in titles), None)
+    if found is not None:
+        return found
+    return next((i for i, pattern in _TEMPLATE_HEADINGS if pattern.fullmatch(heading)), None)
 
 
 def copilot_prompt(profile, period, vendors=(), tags=()):

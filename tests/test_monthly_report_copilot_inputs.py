@@ -84,6 +84,38 @@ def test_cited_exact_heading_is_content_and_absent_section_stays_unmatched():
     assert [(line.section, line.text) for line in lines] == [(1, "Training")]
 
 
+@pytest.mark.parametrize("section,kind", [
+    (1, "action"), (2, "finding"), (3, "issue"), (4, "proposal"),
+    (5, "finding"), (6, "training"), (7, "improvement"), (8, "follow_up"),
+])
+@pytest.mark.parametrize("join_wrapped_description", [False, True])
+def test_prompt_supplied_descriptive_headings_keep_their_section(section, kind, join_wrapped_description):
+    prompt_lines = copilot_prompt(PROFILE, PERIOD).splitlines()
+    start = next(i for i, line in enumerate(prompt_lines) if line.startswith(f"{section}. "))
+    heading = prompt_lines[start]
+    if join_wrapped_description:
+        for line in prompt_lines[start + 1:]:
+            if not line.startswith("   "):
+                break
+            heading += " " + line.strip()
+    source, unmatched, excluded = copilot_source(
+        "1. WORK COMPLETED\n" + heading + "\n09/03 Checked pump [email, 09/03]",
+        PROFILE, PERIOD,
+    )
+    assert not unmatched and excluded == 0
+    assert [fact.kind for fact in source.facts] == [kind]
+
+
+@pytest.mark.parametrize("text", [
+    "Training - training given or received yesterday",
+    "Upcoming / follow-ups - scheduled work was cancelled",
+])
+def test_arbitrary_descriptions_are_still_content(text):
+    lines, unmatched = parse_copilot("1. WORK COMPLETED\n" + text + " [email, 09/03]")
+    assert not unmatched
+    assert [(line.section, line.text) for line in lines] == [(1, text)]
+
+
 def vendor_draft(columns, rows, extra_tables=()):
     spec = BlockSpec("subcontractor_matrix", "table", columns=tuple(
         ColumnSpec(f"column-{i}", title) for i, title in enumerate(columns)
