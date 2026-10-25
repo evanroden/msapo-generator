@@ -120,7 +120,13 @@ def vendor_names(draft):
             indices = [
                 i
                 for i, c in enumerate(columns)
-                if re.search(r"\b(?:vendor|company|contractor)\b", c, re.I)
+                # A contact/status column can contain "Vendor" too. Only a
+                # complete name heading establishes spelling for either prompt;
+                # keep unknown and combined fields in the report, not context.
+                if re.fullmatch(
+                    r"(?:vendor|company|contractor|sub[- ]?contractor|supplier)(?: name)?",
+                    " ".join(c.split()).rstrip(":").strip(), re.I,
+                )
             ]
             names += [
                 r[i].strip()
