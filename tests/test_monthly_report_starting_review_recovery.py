@@ -100,13 +100,12 @@ def test_dedicated_recovery_suppresses_only_its_own_exclusive_question(
     assert plans == {"issues": {"approved": approved, "questions": questions}}
 
 
-def test_section_status_matches_approval_on_same_choice_without_extra_rerun(monkeypatch, tmp_path):
-    """Review/Ready cannot lag behind this render's actual import decision.
+def test_section_status_matches_current_approval_on_first_choice(monkeypatch, tmp_path):
+    """First settled Leave out shows Ready without an extra rerun.
 
-    A real synthetic DOCX has an unresolved proposal drawing. Deliberately
-    leaving that imported section out is permitted, but the old UI displayed
-    the prior Review state until the next rerun. Returning to Keep must show
-    Review immediately while the unresolved artwork still blocks Continue.
+    This synthetic Word file has an unpreserved proposal drawing. The first
+    explicit omission may make the *import plan* Ready; the old caption still
+    showed its prior Review state in that same action. No artwork is approved.
     """
     path, title = drawing_report(tmp_path, "proposals")
     original_bytes = path.read_bytes()
@@ -120,15 +119,38 @@ def test_section_status_matches_approval_on_same_choice_without_extra_rerun(monk
     assert action.value == "Keep and review"
     action.set_value("Leave this section out").run()
     assert not app.exception
-    # No compensating app.run() is allowed: this is the first settled action.
+    # Do not add a rescue run: the current choice must be displayed now.
     captions = {item.value for item in app.caption}
     assert "Ready" in captions and "Review" not in captions
-
-    action = next(item for item in app.radio if item.label == "What would you like to do?")
-    action.set_value("Keep and review").run()
-    assert not app.exception
-    captions = {item.value for item in app.caption}
-    assert "Review" in captions and "Ready" not in captions
-    assert continue_button(app).disabled
     assert path.read_bytes() == original_bytes
     assert not library.list_profiles(synthetic_profiles()[0].contract)
+
+
+def test_section_status_fails_closed_when_current_plan_has_blockers(monkeypatch):
+    """An earlier Ready must not mask a newly blocked plan in this render."""
+    from types import SimpleNamespace
+    from app import monthly_report_section_ui as ui
+
+    visible = []
+    errors = []
+    # This is the exact approval/render helper used by the expanded card.
+    # Its output slot is independent of surrounding optional summary text.
+    status_slot = SimpleNamespace(caption=lambda value: visible.append(value))
+    monkeypatch.setattr(ui, "st", SimpleNamespace(
+        error=lambda value: errors.append(value),
+        caption=lambda value: None,
+    ))
+    plans = {}
+    ready = {"key": "proposals", "action": "Keep and review"}
+    ui._approve_plan(ready, "synthetic", lambda key, value: key,
+                     {}, plans, (), status_slot=status_slot)
+    assert ready["approved"] and plans["proposals"] is ready
+    assert visible == ["Ready"] and not errors
+
+    blocked = {"key": "proposals", "action": "Keep and review"}
+    ui._approve_plan(blocked, "synthetic", lambda key, value: key,
+                     ready, plans, ("Synthetic artwork still needs preservation.",),
+                     status_slot=status_slot)
+    assert not blocked["approved"] and plans["proposals"] is blocked
+    assert visible == ["Ready", "Review"]
+    assert errors == ["Synthetic artwork still needs preservation."]
