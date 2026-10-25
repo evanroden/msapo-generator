@@ -63,13 +63,20 @@ _SCALES = {"thousand": 10 ** 3, "million": 10 ** 6, "billion": 10 ** 9}
 # compares as text, so no part of "two dozen" supports a bare 2.
 _UNREAD_MULTIPLIERS = {"dozen", "dozens", "half", "halves", "quarter", "quarters",
                        "third", "thirds", "gross", "score"}
+_ORDINAL_UNITS = {word: value for value, word in enumerate(
+    "first second third fourth fifth sixth seventh eighth ninth".split(), 1)}
+_ORDINALS = {*_ORDINAL_UNITS, *(word + "th" for word in (
+    "ten eleven twelf thirteen fourteen fifteen sixteen seventeen eighteen nineteen "
+    "hundred thousand million").split()), "twentieth", "thirtieth", "fortieth", "fiftieth",
+    "sixtieth", "seventieth", "eightieth", "ninetieth"}
 # Letters attached to digits that name a unit or an ordinal, so the digits are
 # the value. Any other attached letters (500k, 5A, 2B) keep the whole token
 # as written: it supports only the same text, never its bare digits.
 _UNIT_SUFFIXES = {"st", "nd", "rd", "th", "psi", "psig", "psia", "kw", "kwh", "mw", "mwh", "kv",
                   "hz", "hp", "gpm", "cfm", "fpm", "rpm", "btu", "btuh", "mbh", "ton", "tons",
                   "in", "ft", "mm", "cm", "km", "gal", "gals", "lb", "lbs", "oz", "sqft", "hr",
-                  "hrs", "min", "mins", "sec", "ms", "db", "ppm", "pct", "deg"}
+                  "hrs", "min", "mins", "sec", "ms", "db", "ppm", "pct", "deg", "v", "w", "va",
+                  "kva", "kvar", "kvah", "mva", "vac", "vdc", "amp", "amps"}
 
 
 def _canonical_number(raw, scale=None):
@@ -89,9 +96,10 @@ def _spelled_numbers(text):
     # Hyphens (any Unicode form) and spaces join number words; any other
     # mark or word ends one.
     text = re.sub(r"[\u2010-\u2013\u2212\ufe63\uff0d]", "-", text.casefold())
-    # "half-inch" and "quarter-turn" describe a unit, not the count before
-    # them; joined into one word they never act as a multiplier.
-    text = re.sub(r"\b(" + "|".join(_UNREAD_MULTIPLIERS) + r")-(?=[a-z])", r"\1", text)
+    # "half-inch", "quarter-turn" and "first-floor" describe the item, not
+    # the count before them; joined into one word they modify nothing.
+    # ("twenty-first-floor" keeps its ordinal: a hyphen comes before it.)
+    text = re.sub(r"(?<!-)\b(" + "|".join((*_UNREAD_MULTIPLIERS, *_ORDINALS)) + r")-(?=[a-z])", r"\1", text)
     tokens = re.findall(r"[a-z]+|[^a-z\s-]", text)
     for n, token in enumerate(tokens):
         # "a hundred" is 100, but "half a million" and "a quarter of a
@@ -139,6 +147,16 @@ def _spelled_numbers(text):
                 break
             i += 1
         whole = str(total + current)
+        if tokens[i:i + 1] and tokens[i] in _ORDINALS:
+            ordinal = _ORDINAL_UNITS.get(tokens[i])
+            if last == "tens" and ordinal and tokens[i] != "second":
+                found.add(_canonical_number(str(total + current + ordinal)))  # twenty-first: 21
+            else:
+                # "twenty-second" is the 22nd or a 20-second span; other
+                # ordinals after a count are read nowhere here.
+                found.add(" ".join(tokens[start:i + 1]))
+            i += 1
+            continue
         if tokens[i:i + 1] == ["point"] and (value := decimal(whole, i + 1))[0]:
             found.add(value[0])
             i = value[1]

@@ -186,3 +186,30 @@ def test_scientific_suffixed_and_fractional_scale_quantities_ground_safely(text,
     else:
         with pytest.raises(ValueError, match="unsupported numbers"):
             ai.normalize_facts(fact(text, quote), page, (1,), PROFILE, PERIOD)
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("Inspected the twenty-first and forty-fourth floors.", {"21", "44"}),
+    ("Inspected the twenty-second floor.", {"twenty second"}),  # 22nd, or a 20-second span.
+    ("Two first-floor pumps.", {"2"}),
+    ("Voltage measured 120V, 500W, 250kVA and 15kVAR at 480VAC.", {"120", "500", "250", "15", "480"}),
+    ("Breaker in room 5A.", {"5a"}),
+])
+def test_ordinals_and_electrical_units_read_without_leaking(text, expected):
+    assert ai.numbers(text) == expected
+
+
+@pytest.mark.parametrize("text,quote,accepted", [
+    ("Inspected floor 20.", "Inspected the twenty-second floor.", False),
+    ("Inspected the 21st floor.", "Inspected the twenty-first floor.", True),
+    ("Voltage measured 120V.", "Voltage measured 120 V.", True),
+    ("Rated 250kVA.", "Rated 250 kVA.", True),
+    ("Rated 240V.", "Rated 120 V.", False),
+])
+def test_ordinals_and_electrical_units_ground_correctly(text, quote, accepted):
+    page = replace(SOURCE, page_texts=(quote,))
+    if accepted:
+        assert [f.text for f in ai.normalize_facts(fact(text, quote), page, (1,), PROFILE, PERIOD)] == [text]
+    else:
+        with pytest.raises(ValueError, match="unsupported numbers"):
+            ai.normalize_facts(fact(text, quote), page, (1,), PROFILE, PERIOD)
