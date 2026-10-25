@@ -312,9 +312,12 @@ export default function(component) {
         const bottom = Math.min(sample.scrollport.y+sample.scrollport.height, (sample.visual?.y||0)+(sample.visual?.height||sample.layout.height));
         css('preview-height',context.mode === 'tabletop' && context.preview ? Math.max(120,context.preview.height-24) : Math.max(180,bottom-top-16));
         pairs.forEach(({reference}) => {
-            const surface = Array.from(reference.querySelectorAll('*')).map(node => node.shadowRoot?.querySelector('.report-preview')).find(Boolean);
-            if (!surface) return;
-            const overhead = Math.max(0,surface.getBoundingClientRect().top-reference.getBoundingClientRect().top);
+            // The native slot can be measured before the component's HTML
+            // mounts. Account for captions/controls now, not a frame after the
+            // new surface has already shifted the following section.
+            const slot = reference.querySelector('[class*="st-key-epc_preview_slot_"]');
+            if (!slot) return;
+            const overhead = Math.max(0,slot.getBoundingClientRect().top-reference.getBoundingClientRect().top);
             const available = context.mode === 'tabletop' && context.preview ? context.preview.height : bottom-top;
             reference.style.setProperty('--epc-preview-height', Math.max(180,available-overhead-16)+'px');
         });

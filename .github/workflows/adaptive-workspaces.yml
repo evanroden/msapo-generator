@@ -16,6 +16,7 @@ on:
       - 'tests/preview_view_lifecycle_test.cjs'
       - 'tests/preview_commit_gate_test.cjs'
       - 'scripts/qa_adaptive_workspaces.py'
+      - 'scripts/qa_preview_first_paint.py'
       - 'scripts/qa_sidebar_navigation.py'
       - 'tests/test_sidebar_navigation.py'
       - 'scripts/qa_expense_adaptive.py'
@@ -496,6 +497,7 @@ jobs:
           node --test tests/workspace_geometry_test.cjs
           node --test tests/preview_view_lifecycle_test.cjs
           node --test tests/preview_commit_gate_test.cjs
+          python scripts/qa_preview_first_paint.py
           python scripts/qa_adaptive_workspaces.py
           NATIVE_TEST
       - name: Native sidebar visibility and pointer/keyboard navigation
