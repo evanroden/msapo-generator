@@ -111,3 +111,25 @@ def test_equal_quantities_in_different_forms_are_accepted(text, quote):
     page = replace(SOURCE, page_texts=(quote,))
     facts = ai.normalize_facts(fact(text, quote), page, (1,), PROFILE, PERIOD)
     assert [item.text for item in facts] == [text]
+
+
+@pytest.mark.parametrize("dash", ["‐", "‑", "‒", "–", "−", "﹣", "－"])
+def test_a_unicode_hyphen_joins_number_words_like_an_ascii_one(dash):
+    assert ai.numbers(f"Replaced twenty{dash}five filters.") == {"25"}
+
+
+@pytest.mark.parametrize("text", ["No one was injured.", "No-one was injured.", "They helped one another."])
+def test_one_as_a_pronoun_is_not_a_quantity(text):
+    assert ai.numbers(text) == set()
+    assert ai.numbers("Replaced one pump.") == {"1"}
+
+
+def test_a_fact_and_its_quote_are_read_separately_so_their_boundary_makes_no_number():
+    quote = "Five pumps inspected; the filter count was twenty"
+    page = replace(SOURCE, page_texts=(quote + ".",))
+    facts = ai.normalize_facts(fact("The filter count was twenty", quote), page, (1,), PROFILE, PERIOD)
+    assert ai.fact_numbers(facts) == {"20", "5"}
+    source = replace(page, facts=facts)
+    block = ai.normalize_draft({"paragraphs": [{"text": "The filter count was 25.", "fact_ids": [facts[0].id]}]},
+                               "activity_summary", facts, (source,))
+    assert any("Unsupported number" in flag for flag in block.ai_paragraphs[0].flags)

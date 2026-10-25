@@ -77,10 +77,15 @@ def _canonical_number(raw, scale=None):
 def _spelled_numbers(text):
     """Quantities written as words: "twenty-five", "one hundred and five",
     "two million", "five point two"."""
-    # Hyphens and spaces join number words; any other mark or word ends one.
-    tokens = re.findall(r"[a-z]+|[^a-z\s-]", text.casefold())
+    # Hyphens (any Unicode form) and spaces join number words; any other
+    # mark or word ends one.
+    text = re.sub(r"[\u2010-\u2013\u2212\ufe63\uff0d]", "-", text.casefold())
+    tokens = re.findall(r"[a-z]+|[^a-z\s-]", text)
     def number_word(n):
-        return n < len(tokens) and (tokens[n] in _SMALL_NUMBERS or tokens[n] in _TENS)
+        if n >= len(tokens) or not (tokens[n] in _SMALL_NUMBERS or tokens[n] in _TENS):
+            return False
+        # "No one" and "one another" name people, not a quantity.
+        return not (tokens[n] == "one" and (n and tokens[n - 1] == "no" or tokens[n + 1:n + 2] == ["another"]))
     def decimal_digits(n):
         j = n
         while j < len(tokens) and _SMALL_NUMBERS.get(tokens[j], 10) < 10:
@@ -142,7 +147,8 @@ def fact_numbers(facts):
 
     Never page labels or other display text around the evidence.
     """
-    return numbers(" ".join(f.text + " " + f.quote for f in facts))
+    # Each field separately: joining "...twenty" to "Five..." would read 25.
+    return set().union(*(numbers(field) for f in facts for field in (f.text, f.quote)))
 
 
 def vendor_names(draft):
