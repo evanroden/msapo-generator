@@ -248,8 +248,14 @@ def test_org_and_contacts_are_editable_and_survive_navigation(monkeypatch, tmp_p
         b for b in app.button if b.label == "Add contact" and "contact_matrix" in b.key
     ).click().run()
     emails = [w for w in app.text_input if w.label == "Email"]
-    emails[1].set_value("retained@example.invalid").run()
+    assert len(emails) == 1
+    emails[0].set_value("retained@example.invalid").run()
+    # Only the active row mounts fields; open the original row to remove it.
+    next(b for b in app.button if b.label == "Edit contact").click().run()
+    assert next(w for w in app.text_input if w.label == "Email").value == "operations@example.invalid"
     next(b for b in app.button if b.label == "Remove contact").click().run()
+    assert not any(w.label == "Email" for w in app.text_input)
+    next(b for b in app.button if b.label == "Edit contact").click().run()
     assert (
         next(w for w in app.text_input if w.label == "Email").value
         == "retained@example.invalid"
@@ -262,6 +268,8 @@ def test_org_and_contacts_are_editable_and_survive_navigation(monkeypatch, tmp_p
         w.value for w in app.text_input if w.label == "Name" and "_org_person_" in w.key
     ] == ["Synthetic Lead", "Synthetic Technician"]
     next(b for b in app.button if b.label == "Edit contacts").click().run()
+    if not any(w.label == "Email" for w in app.text_input):
+        next(b for b in app.button if b.label == "Edit contact").click().run()
     assert (
         next(w for w in app.text_input if w.label == "Email").value
         == "retained@example.invalid"

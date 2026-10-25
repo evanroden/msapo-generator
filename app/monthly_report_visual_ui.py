@@ -260,12 +260,206 @@ def _contact_widget_prefix(prefix, block_key):
     return prefix + "_contacts_" + block_key + "_" + _rich_text_scope(prefix)
 
 
-def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=True):
+def _contact_table_block(block, tables, has_primary):
+    return replace(block, rows=tables[0].rows if has_primary else (),
+                   extra_tables=tuple(tables[1:] if has_primary else tables))
+
+
+def _contact_block_tables(block, spec, has_primary):
+    return ((ReportTable(tuple(column.title for column in spec.columns), block.rows),)
+            if has_primary else ()) + tuple(block.extra_tables)
+
+
+def _contact_pending_marker(draft):
+    return "directory-pending-correction:" + draft.profile.key
+
+
+def _readback_contact_correction(draft, before, after):
+    """Recognize an already committed full correction without another write."""
+    from collections import Counter
+    from app import monthly_report_directory as directory
+    import re
+    intent = f"directory-add-intent:{draft.profile.key}"
+    refs = tuple(ref for ref in before.references if ref != intent)
+    versions = [re.fullmatch(r"directory:([^:]+):([1-9][0-9]*)", ref) for ref in refs]
+    versions = [value for value in versions if value]
+    bindings = dict(ref.removeprefix("directory-site:").split(":", 1)
+                    for ref in refs if ref.startswith("directory-site:") and ref.count(":") == 2)
+    if len(versions) != 1 or len(bindings) != len(draft.profile.facilities) or before.extra_tables or after.extra_tables:
+        return None
+    historical = directory.load_directory(draft.profile.contract, int(versions[0][2]))
+    latest = directory.load_directory(draft.profile.contract)
+    if historical is None or latest is None or latest.archived:
+        return None
+    original, missing = directory.contact_block(historical, draft.profile.facilities, bindings)
+    current, current_missing = directory.contact_block(latest, draft.profile.facilities, bindings)
+    # Full historical identity and complete row multiset, not names, prove the
+    # intended correction. Directory grouping may relocate appended contacts.
+    if (missing or current_missing or original.references != refs
+            or (before.rows[:len(original.rows)] != original.rows if intent in before.references else before.rows != original.rows)
+            or Counter(current.rows) != Counter(after.rows)):
+        return None
+    return replace(after, source="Library", rows=current.rows, references=current.references,
+                   reviewed_fingerprint="", client_reviewed_fingerprint="")
+
+
+def _contact_add_ready(draft, before, after, prefix):
+    """Incomplete explicit additions remain editable, not failed shared writes."""
+    from app import monthly_report_directory as directory
+    import re
+    intent = f"directory-add-intent:{draft.profile.key}"
+    if intent not in before.references and intent not in after.references:
+        return True
+    refs = tuple(ref for ref in before.references if ref != intent)
+    key = prefix + "_add_baseline"
+    receipt = st.session_state.get(key)
+    if before.source == "Library" and intent not in before.references:
+        receipt = (refs, len(before.rows))
+        st.session_state[key] = receipt
+    if receipt is None or receipt[0] != refs:
+        # A reloaded unfinished Add has no UI receipt. Read only its immutable
+        # historical baseline; unavailable storage defers promotion, not input.
+        version = next((match for ref in refs if (match := re.fullmatch(r"directory:([^:]+):([1-9][0-9]*)", ref))), None)
+        bindings = dict(ref.removeprefix("directory-site:").split(":", 1)
+                        for ref in refs if ref.startswith("directory-site:") and ref.count(":") == 2)
+        try:
+            saved = directory.load_directory(draft.profile.contract, int(version[2])) if version else None
+            original, missing = directory.contact_block(saved, draft.profile.facilities, bindings) if saved else (None, True)
+            if original is None or missing or original.references != refs:
+                return False
+            receipt = (refs, len(original.rows))
+            st.session_state[key] = receipt
+        except (ValueError, OSError):
+            return None
+    titles = {facility.title for facility in draft.profile.facilities}
+    return all(len(row) == 5 and row[0] in titles and row[1].strip() and row[2].strip()
+               for row in after.rows[receipt[1]:])
+
+
+def _keep_contact_correction(draft, before, after, prefix):
+    from app import monthly_report_directory as directory
+    intent = f"directory-add-intent:{draft.profile.key}"
+    if (before.key != "contact_matrix" or before.rows == after.rows or before.extra_tables
+            or after.extra_tables or len(after.rows) < len(before.rows)
+            or before.source != "Library" and intent not in before.references and intent not in after.references):
+        return None, False
+    try:
+        shared = directory.automatically_keep_directory_contact_edits(
+            draft.profile, before, after, draft.prepared_by)
+        return shared, False
+    except (ValueError, OSError):
+        try:
+            shared = _readback_contact_correction(draft, before, after)
+        except (ValueError, OSError):
+            shared = None
+        if shared is not None:
+            st.info("The contact correction is verified in the shared directory. The removal was not applied; review the contact before removing it.")
+            return shared, True
+        return _pending_contact_correction(draft, before, after, prefix), True
+
+
+def _pending_contact_correction(draft, before, after, prefix):
+    marker = _contact_pending_marker(draft)
+    pending = replace(after, references=tuple(dict.fromkeys((*after.references, marker))),
+                      reviewed_fingerprint="", client_reviewed_fingerprint="")
+    st.session_state[prefix + "_standing_recovery"] = {"before": before, "after": after}
+    st.warning("The shared contact correction is pending. Your fields are retained and the contact was not removed. Retry or explicitly keep this correction report-only.")
+    return pending
+
+
+def _queue_contact_recovery(prefix, expected, action):
+    st.session_state[prefix + "_standing_action"] = (expected, action)
+
+
+def _recover_contact_correction(draft, block, prefix):
+    """Pending intent survives report reload; retry is always an explicit action."""
+    from app import monthly_report_directory as directory
+    marker = _contact_pending_marker(draft)
+    action = st.session_state.pop(prefix + "_standing_action", None)
+    if action is not None and action[0] != block:
+        st.warning("Contacts changed after this recovery choice was shown. Review the current correction before choosing again.")
+        action = None
+    if marker not in block.references:
+        return block, False
+    after = replace(block, references=tuple(ref for ref in block.references if ref != marker))
+    key = prefix + "_standing_recovery"
+    receipt = st.session_state.get(key)
+    if receipt is None or receipt['after'].rows != after.rows or receipt['after'].references != after.references:
+        # Restore the exact immutable baseline from its retained directory version.
+        import re
+        version = next((re.fullmatch(r"directory:([^:]+):([1-9][0-9]*)", ref)
+                        for ref in after.references if re.fullmatch(r"directory:([^:]+):([1-9][0-9]*)", ref)), None)
+        bindings = dict(ref.removeprefix("directory-site:").split(":", 1)
+                        for ref in after.references if ref.startswith("directory-site:") and ref.count(":") == 2)
+        try:
+            saved = directory.load_directory(draft.profile.contract, int(version[2])) if version else None
+            original, missing = directory.contact_block(saved, draft.profile.facilities, bindings) if saved else (None, True)
+            if original is not None and not missing:
+                before = replace(after, source="Library", rows=original.rows)
+                receipt = {"before": before, "after": after}
+                st.session_state[key] = receipt
+        except (ValueError, OSError):
+            receipt = None
+    if receipt is not None:
+        try:
+            shared = _readback_contact_correction(draft, receipt['before'], after)
+        except (ValueError, OSError):
+            shared = None
+        if shared is not None:
+            st.session_state.pop(key, None)
+            return shared, False
+    st.warning("This shared contact correction is still pending; no automatic retry or removal has been performed.")
+    st.button("Retry shared contact correction", key=prefix + "_retry_standing", disabled=receipt is None,
+              on_click=_queue_contact_recovery, args=(prefix, block, "retry"))
+    st.button("Keep correction in this report only", key=prefix + "_report_only_standing",
+              on_click=_queue_contact_recovery, args=(prefix, block, "report_only"))
+    if action is not None and action[1] == "retry" and receipt is not None:
+        readiness = _contact_add_ready(draft, receipt['before'], after, prefix)
+        if readiness is False:
+            st.session_state.pop(key, None)
+            st.info("Finish the new contact's site, role and name before it can be kept for future reports. Your Add intent is retained.")
+            return after, False
+        if readiness is None:
+            st.warning("The saved contact baseline is still unavailable. No shared write was attempted; your correction remains pending.")
+            return block, True
+        shared, failed = _keep_contact_correction(draft, receipt['before'], after, prefix)
+        if shared is not None and (not failed or shared.source == "Library"):
+            st.session_state.pop(key, None)
+            return shared, False
+        if shared is not None:
+            return shared, True
+        st.warning("The correction could not be applied to the current directory. It remains pending for comparison.")
+    if action is not None and action[1] == "report_only":
+        st.session_state.pop(key, None)
+        intent = f"directory-add-intent:{draft.profile.key}"
+        return replace(after, references=tuple(ref for ref in after.references if ref != intent)), False
+    return block, True
+
+
+def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=True, directory_baseline=None):
     if not draft.prepared_by.strip():
         st.info("Enter your name above to view or edit saved contacts.")
         return block
     block = preserve_asset_reviews(block, block)
     p = _contact_widget_prefix(prefix, block.key)
+    st.session_state.pop(p + "_compact_editor_key", None)
+    recovered, pending = _recover_contact_correction(draft, block, p)
+    if pending:
+        return recovered
+    block = recovered
+    standing_before = block
+    if (directory_baseline is not None
+            and directory_baseline.key == block.key == "contact_matrix"
+            and directory_baseline.source == "Library" and block.source == "This month"
+            and directory_baseline.text != block.text
+            and directory_baseline.references == block.references
+            and directory_baseline.rows == block.rows
+            and directory_baseline.extra_tables == block.extra_tables
+            and directory_baseline.asset_hashes == block.asset_hashes):
+        # Only a concurrently delivered notes edit changed this verified
+        # standing block's source label. Never promote an unrelated report-only
+        # contact or a changed/missing directory binding.
+        standing_before = replace(block, source="Library")
     tables = list(block.extra_tables)
     # Output headings do not make an image-capable block an editable table.
     # Preserve its explicit image replacement/conversion path until rows exist;
@@ -342,8 +536,10 @@ def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=Tru
                 references=(),
                 text="",
                 rows=(),
-                extra_tables=(ReportTable(columns, (tuple("" for c in columns),)),),
+                extra_tables=(ReportTable(columns, ()),),
             )
+            card_key = p + "_compact_" + _signature((tuple(table.columns for table in new.extra_tables), new.references))
+            st.session_state[card_key] = {"tables": new.extra_tables, "active": (0, 0)}
             _install(draft, prefix, new, clear=p + "_table_")
         return block
     left, right = st.columns([1, 1]) if show_preview else (st.container(), None)
@@ -354,58 +550,66 @@ def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=Tru
             if block.key == "subcontractor_matrix"
             else "Verified site-contact corrections are kept for future reports; unmatched entries stay in this report. Removing a contact here leaves the shared directory intact."
         )
-        for n, table in enumerate(tables):
-            if len(tables) > 1:
-                st.write("Contact table " + str(n + 1))
-            rows, removed = _contact_rows(
-                table.columns, table.rows, p + f"_table_{n}", field,
-                vendor=(block.key == "subcontractor_matrix"),
-            )
-            changed = replace(table, rows=rows)
-            updated.append(changed)
-            add = st.button("Add vendor contact" if block.key == "subcontractor_matrix" else "Add contact",
-                            key=p + f"_add_{n}")
-            if add or removed is not None:
-                updated[-1] = replace(
-                    changed,
-                    rows=(*changed.rows, tuple("" for _ in table.columns))
-                    if add
-                    else tuple(r for i, r in enumerate(changed.rows) if i != removed),
-                )
-                updated.extend(tables[n + 1 :])
-                new = replace(
-                    block,
-                    source="This month",
-                    rows=updated[0].rows if has_primary else (),
-                    extra_tables=tuple(updated[1:] if has_primary else updated),
-                    reviewed_fingerprint="",
-                    client_reviewed_fingerprint="",
-                )
-                # Add contact is an explicit directory-intent action only
-                # when the current table is linked to a saved site directory.
-                # Ordinary manually appended report-only rows have no marker.
-                if (add and block.key == "contact_matrix" and has_primary
-                        and (block.source == "Library" or
-                             f"directory-add-intent:{draft.profile.key}" in block.references)
-                        and any(ref.startswith("directory:") for ref in block.references)
-                        and any(ref.startswith("directory-site:") for ref in block.references)):
-                    marker = f"directory-add-intent:{draft.profile.key}"
-                    new = replace(new, references=tuple(dict.fromkeys((*block.references, marker))))
-                _install(draft, prefix, new, clear=p + "_table_")
+        from app.monthly_report_contact_cards_ui import edit_contact_tables
+
+        def prepare(current, corrected):
+            nonlocal block
+            proposed = _contact_table_block(block, current, has_primary)
+            if (sum(len(table.rows) for table in current) > sum(len(table.rows) for table in tables)
+                    and block.key == "contact_matrix" and has_primary
+                    and (standing_before.source == "Library" or f"directory-add-intent:{draft.profile.key}" in block.references)
+                    and any(ref.startswith("directory:") for ref in block.references)
+                    and any(ref.startswith("directory-site:") for ref in block.references)):
+                marker = f"directory-add-intent:{draft.profile.key}"
+                proposed = replace(proposed, references=tuple(dict.fromkeys((*proposed.references, marker))))
+            if proposed == block:
+                return current
+            proposed = replace(proposed, source="This month", reviewed_fingerprint="", client_reviewed_fingerprint="")
+            correction = (_contact_table_block(block, corrected, has_primary)
+                          if corrected is not None else proposed)
+            correction = replace(correction, source="This month")
+            readiness = _contact_add_ready(draft, standing_before, correction, p)
+            if readiness is False:
+                block = proposed
+                return current
+            if readiness is None:
+                block = _pending_contact_correction(draft, block, correction, p)
+                block, _ = _recover_contact_correction(draft, block, p)
+                return _contact_block_tables(block, spec, has_primary)
+            shared, failed = _keep_contact_correction(draft, standing_before, correction, p)
+            if failed:
+                # Removal is cancelled, not silently replayed after recovery.
+                block = shared if shared is not None else correction
+                if _contact_pending_marker(draft) in block.references:
+                    block, _ = _recover_contact_correction(draft, block, p)
+                return _contact_block_tables(block, spec, has_primary)
+            if shared is not None:
+                if corrected is None:
+                    block = shared
+                    return _contact_block_tables(block, spec, has_primary)
+                # A saved correction does not authorize deleting shared contacts.
+                block = replace(proposed, references=shared.references)
+                return current
+            block = proposed
+            return current
+
+        editor_key = p + "_compact_" + _signature((tuple(table.columns for table in tables), tuple(ref for ref in block.references if not ref.startswith(("directory:", "directory-add-intent:")))))
+        st.session_state[p + "_compact_editor_key"] = editor_key
+        updated, _ = edit_contact_tables(
+            tables, editor_key,
+            field, _contact_label, vendor=block.key == "subcontractor_matrix", prepare=prepare,
+            can_edit=lambda: _contact_pending_marker(draft) not in block.references)
     if show_preview:
+        from app.monthly_report_row_cards_ui import _comparison_rows
         with right:
             st.write("Contacts in this report")
             for table in updated:
                 st.dataframe(
-                    [dict(zip(table.columns, row)) for row in table.rows],
+                    _comparison_rows(table.columns, table.rows),
                     hide_index=True,
                     width="stretch",
                 )
-    changed = replace(
-        block,
-        rows=updated[0].rows if has_primary else (),
-        extra_tables=tuple(updated[1:] if has_primary else updated),
-    )
+    changed = _contact_table_block(block, updated, has_primary)
     if changed == block:
         return block
     return preserve_asset_reviews(block, replace(changed, source="This month", reviewed_fingerprint="", client_reviewed_fingerprint=""))

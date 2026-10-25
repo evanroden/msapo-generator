@@ -169,6 +169,27 @@ def _edit_notes(block, prefix, field, *, canonical_before):
     return block
 
 
+def _change_part(prefix, active_key, selected):
+    """Preserve a contact's input receipt when the parent editor is hidden."""
+    current = st.session_state.get(active_key)
+    if current != selected and (current == "contact_matrix" or selected == "contact_matrix"):
+        from app.monthly_report_visual_ui import _contact_widget_prefix
+        from app.monthly_report_contact_cards_ui import parent_visibility
+        root = _contact_widget_prefix(prefix, "contact_matrix")
+        editor_key = st.session_state.get(root + "_compact_editor_key")
+        if isinstance(editor_key, str) and editor_key.startswith(root + "_compact_"):
+            parent_visibility(editor_key, opening=selected == "contact_matrix")
+            if current == "contact_matrix" and selected != "contact_matrix":
+                record = st.session_state.get(editor_key, {})
+                if isinstance(record, dict) and record.get('pending'):
+                    # Keep the parent mounted for one normal render/save path.
+                    # The delivered fields must become canonical before Done hides it.
+                    st.session_state[prefix + "_deferred_contact_switch"] = {
+                        "selected": selected, "editor_key": editor_key}
+                    return
+    st.session_state[active_key] = selected
+
+
 def render_organization(draft, blocks, specs, prefix, assets, field, edit_content, *, show_preview=True):
     """Return updated blocks; only an explicit Edit opens a part's editor.
 
@@ -203,50 +224,77 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
                 "after_hours_workflow": "Edit after-hours outage procedure",
             }[key]
             st.button(action, key=prefix + "_organization_open_" + key,
-                      on_click=st.session_state.__setitem__, args=(active_key, key))
+                      on_click=_change_part, args=(prefix, active_key, key))
             return
-        st.button("Done", key=prefix + "_organization_close_" + key,
-                  on_click=st.session_state.__setitem__, args=(active_key, ""))
-        # These editors bypass the shared content editor, so they offer its
-        # explicit Include for a left-out part here (once per part).
-        from app.monthly_report_guided import _include_left_out
-        if key == "contact_matrix":
-            changed = _include_left_out(spec, block, prefix)
-            changed = edit_contacts(current_draft, spec, changed, prefix, assets, field, show_preview=show_preview)
-            changed = _edit_notes(changed, prefix, field, canonical_before=canonical_before)
-            if changed != canonical_before:
-                from app import monthly_report_directory as directory
-                try:
-                    shared = directory.automatically_keep_directory_contact_edits(
-                        draft.profile, canonical_before, changed, draft.prepared_by)
-                    if shared is not None:
-                        changed = shared
-                        st.caption("Updated site contacts are kept for future reports. Earlier completed reports are unchanged.")
-                except (ValueError, OSError):
-                    st.warning("The shared contact record could not be updated. "
-                               "Your current report edits remain available; review the latest site contacts.")
-        elif key == "org_chart":
-            if block.org_nodes:
+        def render_editor():
+            st.button("Done", key=prefix + "_organization_close_" + key,
+                      on_click=_change_part, args=(prefix, active_key, ""))
+            # The specialized editors retain the explicit Include of a left-out part.
+            from app.monthly_report_guided import _include_left_out
+            if key == "contact_matrix":
                 changed = _include_left_out(spec, block, prefix)
-                changed = edit_org_chart(current_draft, changed, prefix, assets, field, show_preview=show_preview)
-                changed = _edit_notes(changed, prefix, field, canonical_before=canonical_before)
-            else:
+                changed = edit_contacts(current_draft, spec, changed, prefix, assets, field,
+                                        show_preview=show_preview, directory_baseline=canonical_before)
+                return _edit_notes(changed, prefix, field, canonical_before=canonical_before)
+            if key == "org_chart":
+                if block.org_nodes:
+                    changed = _include_left_out(spec, block, prefix)
+                    changed = edit_org_chart(current_draft, changed, prefix, assets, field, show_preview=show_preview)
+                    return _edit_notes(changed, prefix, field, canonical_before=canonical_before)
                 changed = edit_content(spec, block)
                 with st.expander("Build an editable team chart (optional)"):
                     changed = edit_org_chart(
                         replace(current_draft, blocks=tuple(changed if b.key == key else b for b in current_draft.blocks)),
                         changed, prefix, assets, field, show_preview=show_preview,
                     )
+                return changed
+            return edit_content(spec, block)
+
+        switch_key = prefix + "_deferred_contact_switch"
+        settling = key == "contact_matrix" and isinstance(st.session_state.get(switch_key), dict)
+        if settling:
+            close_slot = st.empty()
+            with close_slot.container():
+                changed = render_editor()
         else:
-            changed = edit_content(spec, block)
-        # Some older editors mark their source just by being opened. Opening
-        # and closing an unchanged part must not invalidate its saved review;
-        # an explicit Include of a left-out part is a real change.
+            changed = render_editor()
+        # Opening and closing an unchanged part must not invalidate its saved
+        # review; an explicit Include of a left-out part is a real change.
         from app.monthly_report_guided import included_left_out
         updated[key] = (changed if included_left_out(prefix, key)
                         or replace(changed, source=block.source) != block else block)
-    for key, title in ORGANIZATION_PARTS:
-        if key not in WORKFLOW_KEYS:
+        if settling:
+            request = st.session_state[switch_key]
+            from app.monthly_report_visual_ui import _contact_widget_prefix
+            root = _contact_widget_prefix(prefix, "contact_matrix")
+            current_key = st.session_state.get(root + "_compact_editor_key")
+            receipts = (st.session_state.get(request['editor_key']),
+                        st.session_state.get(current_key) if isinstance(current_key, str) else None)
+            unresolved = any(isinstance(receipt, dict) and receipt.get('pending')
+                             for receipt in receipts)
+            unresolved = unresolved or any(ref.startswith('directory-pending-correction:')
+                                           for ref in changed.references)
+            st.session_state.pop(switch_key, None)
+            if unresolved:
+                # Leave the recovery editor visible; it must not become an
+                # invisible receipt whose user has already clicked Done.
+                st.warning("The contact change needs review before this editor can close.")
+            else:
+                # The normal render path above has now consumed the delivered
+                # edit and returned the canonical block to the workflow saver.
+                st.session_state[active_key] = request['selected']
+                close_slot.empty()
+                st.button("Edit contacts", key=prefix + "_organization_open_" + key,
+                          on_click=_change_part, args=(prefix, active_key, key))
+    parts = [(key, title) for key, title in ORGANIZATION_PARTS if key not in WORKFLOW_KEYS]
+    # A switch deferred by a pending contact edit completes inside the contact
+    # part. Render that part first so a part shown above it (the team chart)
+    # opens in the same action. Fixed slots keep the page order unchanged.
+    slots = {key: st.container() for key, _ in parts}
+    if isinstance(st.session_state.get(prefix + "_deferred_contact_switch"), dict):
+        parts.sort(key=lambda part: part[0] != "contact_matrix")
+    for key, title in parts:
+        with slots[key]:
             render_part(key, title)
     with st.expander("ENFRA outage procedures", expanded=False):
         st.caption("Saved procedures are included when selected. Changes here affect this report.")
