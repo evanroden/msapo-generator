@@ -255,6 +255,65 @@ def test_consecutive_row_edits_before_parent_commit_keep_the_whole_delivered_row
     assert app.session_state['block'].rows[0][4:6] == ('Approved', 'Proceed with scope only')
 
 
+@pytest.mark.parametrize('extra', [False, True])
+@pytest.mark.parametrize('key,noun,prose', [
+    ('rfi_matrix', 'request', 'Requested item'),
+    ('proposals', 'proposal', 'Work Description'),
+    ('service_calls', 'onsite call', 'Task Code-Description'),
+])
+def test_new_row_blur_and_close_before_parent_commit_keep_the_original_baseline(key, noun, prose, extra):
+    app = workspace(key, (), extra=extra)
+    original = app.session_state['block']
+    button(app, 'Add ' + noun).click().run()
+    # A native field can render its acknowledged value before the parent
+    # report has committed it. The next blur and Close arrive together.
+    app.session_state['commit'] = False
+    identifier = app.text_input[0]
+    identifier.set_value('SYNTHETIC-001').run()
+    assert app.session_state['block'] == original
+    identity = field(app, prose, 'text_area').proto.id
+    field(app, prose, 'text_area').set_value('Synthetic complete request or work scope.')
+    button(app, 'Close editing').click().run()
+    assert not app.exception and not app.warning and not app.dataframe
+    assert not app.text_input and not app.text_area
+    result = app.session_state['result']
+    rows = result.extra_tables[0].rows if extra else result.rows
+    assert len(rows) == 1 and rows[0][0] == 'SYNTHETIC-001'
+    assert 'Synthetic complete request or work scope.' in rows[0]
+    assert app.session_state['block'] == original
+    app.session_state['commit'] = True
+    app.run()
+    assert app.session_state['block'] == result
+    button(app, 'Edit ' + noun).click().run()
+    assert field(app, prose, 'text_area').proto.id == identity
+    assert field(app, prose, 'text_area').value == 'Synthetic complete request or work scope.'
+    assert result.references == original.references
+    if extra:
+        assert result.extra_tables[0].reference == original.extra_tables[0].reference
+        assert result.extra_tables[0].columns == original.extra_tables[0].columns
+
+
+@pytest.mark.parametrize('extra', [False, True])
+def test_new_request_blur_and_close_still_conflict_with_an_unrelated_current_table(extra):
+    app = workspace('rfi_matrix', (), extra=extra)
+    original = app.session_state['block']
+    button(app, 'Add request').click().run()
+    app.session_state['commit'] = False
+    field(app, 'Facility').set_value('Synthetic North').run()
+    unrelated = (('Other site', 'An independently entered request.', 'Unknown'),)
+    changed = (replace(original, extra_tables=(replace(original.extra_tables[0], rows=unrelated),))
+               if extra else replace(original, rows=unrelated))
+    app.session_state['block'] = changed
+    app.session_state['commit'] = True
+    field(app, 'Requested item', 'text_area').set_value('The pending request remains recoverable.')
+    button(app, 'Close editing').click().run()
+    assert not app.exception and app.session_state['block'] == changed
+    assert any('Both versions are kept' in item.value for item in app.warning)
+    assert app.dataframe[1].value.iloc[0]['Requested item'] == 'The pending request remains recoverable.'
+    button(app, 'Keep current table').click().run()
+    assert app.session_state['block'] == changed
+
+
 def test_changed_canonical_table_keeps_both_versions_until_explicit_version_bound_choice():
     app = workspace()
     button(app, 'Edit proposal').click().run()
