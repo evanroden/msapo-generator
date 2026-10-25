@@ -117,11 +117,17 @@ st.session_state["approved"]=plans["proposals"]["approved"]
 
 def test_no_redundant_cover_panel_and_cover_preview_stays_with_import():
     import inspect
+    from pathlib import Path
     source = inspect.getsource(guided.render_guided_workflow)
     assert "render_cover(" not in source
     assert "monthly_cover_preview_sticky" in source
     assert "render_pending_cover_selection" in source
-    assert "position:sticky" in source
+    assert source.count('class="epc-section-selector"') == 1
+    assert 'navigation_key="monthly_report_navigation"' in source
+    css = Path(guided.__file__).with_name("workspace_layout.css").read_text()
+    selector = '.epc-workspace > [data-testid="stLayoutWrapper"]:has(> .st-key-monthly_report_navigation)'
+    rule = css.split(selector + " {")[1].split("}")[0]
+    assert "position:sticky" in rule and "top:var(--epc-nav-top" in rule
     setup = inspect.getsource(section_ui.render_section_setup)
     assert 'st.button("Analyze report"' not in setup
     assert "st.file_uploader(\"Starting report\"" in setup
