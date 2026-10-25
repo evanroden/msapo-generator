@@ -255,10 +255,14 @@ def test_optional_text_and_spreadsheets_are_quiet_without_approving_them(include
     assert not status.resolved and not status.needs_correction
     assert status.reason == "" and status.summary == "Not included"
     assert status.source_id == content.source.id
-    # A real incomplete addition or missing original must still be actionable,
-    # even when the file itself has no image-page review to complete.
-    assert entry(draft, content, pending=True).needs_correction
-    assert entry(draft, content, unavailable=(content.source,)).needs_correction
+    # A pending batch is one global blocking task, not a file-specific
+    # correction. A genuinely missing original still needs its own recovery.
+    pending = entry(draft, content, pending=True)
+    assert not pending.resolved and not pending.needs_correction
+    assert "current file selection" in pending.reason
+    missing = entry(draft, content, unavailable=(content.source,))
+    assert not missing.resolved and missing.needs_correction
+    assert "original source file" in missing.reason
 
 
 def test_specific_page_and_scope_problems_stay_actionable(included):
