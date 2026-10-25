@@ -28,8 +28,13 @@ export default async function(component) {
     await (window.__previewMountGate ||= new Promise(resolve => {
         window.__releasePreviewMount = resolve;
     }));
-    if (!component.parentElement.querySelector('.report-preview'))
-        component.parentElement.innerHTML = ''' + json.dumps(preview_view.HTML) + ''';
+    if (!component.parentElement.querySelector('.report-preview')) {
+        // Keep the framework's stylesheet in this shadow root. Replacing the
+        // whole root would test an unstyled viewer, not a delayed real one.
+        const content = document.createElement('div');
+        content.innerHTML = ''' + json.dumps(preview_view.HTML) + ''';
+        component.parentElement.appendChild(content);
+    }
     return renderPreview(component);
 }
 '''
