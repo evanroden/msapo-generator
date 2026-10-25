@@ -436,7 +436,7 @@ def _recover_contact_correction(draft, block, prefix):
     return block, True
 
 
-def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=True):
+def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=True, standing_source=None):
     if not draft.prepared_by.strip():
         st.info("Enter your name above to view or edit saved contacts.")
         return block
@@ -541,10 +541,15 @@ def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=Tru
 
         def prepare(current, corrected):
             nonlocal block
+            # A note delivered in the same event relabels the part "This month"
+            # before these rows are seen. The rows' standing scope is still the
+            # part's source before that event, so judge shared writes by it.
+            scoped = (block if standing_source in (None, block.source)
+                      else replace(block, source=standing_source))
             proposed = _contact_table_block(block, current, has_primary)
             if (sum(len(table.rows) for table in current) > sum(len(table.rows) for table in tables)
                     and block.key == "contact_matrix" and has_primary
-                    and (block.source == "Library" or f"directory-add-intent:{draft.profile.key}" in block.references)
+                    and (scoped.source == "Library" or f"directory-add-intent:{draft.profile.key}" in block.references)
                     and any(ref.startswith("directory:") for ref in block.references)
                     and any(ref.startswith("directory-site:") for ref in block.references)):
                 marker = f"directory-add-intent:{draft.profile.key}"
@@ -555,15 +560,15 @@ def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=Tru
             correction = (_contact_table_block(block, corrected, has_primary)
                           if corrected is not None else proposed)
             correction = replace(correction, source="This month")
-            readiness = _contact_add_ready(draft, block, correction, p)
+            readiness = _contact_add_ready(draft, scoped, correction, p)
             if readiness is False:
                 block = proposed
                 return current
             if readiness is None:
-                block = _pending_contact_correction(draft, block, correction, p)
+                block = _pending_contact_correction(draft, scoped, correction, p)
                 block, _ = _recover_contact_correction(draft, block, p)
                 return _contact_block_tables(block, spec, has_primary)
-            shared, failed = _keep_contact_correction(draft, block, correction, p)
+            shared, failed = _keep_contact_correction(draft, scoped, correction, p)
             if failed:
                 # Removal is cancelled, not silently replayed after recovery.
                 block = shared if shared is not None else correction
