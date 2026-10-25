@@ -104,6 +104,11 @@ def exercise(engine, name, late, target):
             # The native callback must arrive, not just a synthetic DOM event.
             expect(page.get_by_text(receipt, exact=True)).to_be_visible()
             page.wait_for_function('document.querySelector(".epc-workspace")?.dataset.epcMode === "wide"')
+            # The outside action leaves Cover offscreen. After recording the
+            # entire native click, expose it again for the real raster check;
+            # production deliberately does not render invisible preview pages.
+            if target == 'outside':
+                page.locator('.st-key-epc_pair_monthly_cover').scroll_into_view_if_needed()
             image = page.locator('.report-preview img').first
             expect(image).to_have_js_property('complete', True)
             assert image.evaluate('node => node.naturalWidth > 0'), 'Real raster did not load'
