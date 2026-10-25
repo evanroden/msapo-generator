@@ -52,8 +52,47 @@ def clean_text(text):
     ).strip()
 
 
+_SMALL_NUMBERS = {word: value for value, word in enumerate((
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen "
+    "fourteen fifteen sixteen seventeen eighteen nineteen").split())}
+_TENS = {word: 10 * value for value, word in enumerate(
+    "twenty thirty forty fifty sixty seventy eighty ninety".split(), 2)}
+
+
+def _spelled_numbers(text):
+    """Quantities written as words: "two", "twenty-five", "one hundred and five"."""
+    found, total, current, last = [], 0, None, None
+
+    def flush():
+        nonlocal total, current, last
+        if current is not None or total:
+            found.append(str(total + (current or 0)))
+        total, current, last = 0, None, None
+
+    # Hyphens and spaces join number words; any other mark or word ends one.
+    for token in re.findall(r"[a-z]+|[^a-z\s-]", text.casefold()):
+        if token in _SMALL_NUMBERS or token in _TENS:
+            value = _SMALL_NUMBERS.get(token, _TENS.get(token))
+            if last in ("small", "tens") and not (last == "tens" and value < 10):
+                flush()
+            current = (current or 0) + value
+            last = "tens" if token in _TENS else "small"
+        elif token == "hundred" and last in ("small", "tens"):
+            current, last = current * 100, "scale"
+        elif token == "thousand" and current is not None:
+            total, current, last = total + current * 1000, None, "scale"
+        elif token == "and" and last == "scale":
+            continue
+        else:
+            flush()
+    flush()
+    return set(found)
+
+
 def numbers(text):
-    return set(re.findall(r"(?<!\w)\d+(?:[.,]\d+)*(?!\w)", text))
+    # A unit may follow a digit directly ("40psi"). A letter before it marks
+    # an identifier such as R410A, which compares as text, not quantity.
+    return set(re.findall(r"(?<!\w)\d+(?:[.,]\d+)*", text)) | _spelled_numbers(text)
 
 
 def vendor_names(draft):
