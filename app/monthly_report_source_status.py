@@ -129,7 +129,11 @@ def source_manager_status(draft, contents, *, unavailable=(), pending=False):
                                        bool(reason) and needs_correction, summary)
 
         if pending:
-            return result("Finish adding the current file selection to the report.")
+            # One unsettled batch is a report-wide task, not a separate
+            # missing-details defect in every retained source. Keep resolution
+            # blocked until the pending operation actually completes.
+            return result("Finish adding the current file selection to the report.",
+                          needs_correction=False)
         if source.id in missing or content is None:
             return result("Restore the original source file.")
         if len(available[source.id]) != 1 or len(current[source.id]) != 1:

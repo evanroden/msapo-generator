@@ -277,3 +277,20 @@ def test_specific_problem_opens_its_file_beside_optional_references(monkeypatch,
     assert select(app,'File to review').value==utility.id
     assert next(w for w in app.date_input if w.label=='Source date').value==date(2026,8,1)
     assert current_draft(app)==before
+
+
+def test_unfinished_file_selection_is_one_task_not_n_fake_detail_errors():
+    """Pending is global; existing actual corrections reappear after settlement."""
+    from types import SimpleNamespace
+    from app.monthly_report_source_manager_ui import _source_status_caption
+
+    ready = SimpleNamespace(needs_correction=False)
+    wrong_date = SimpleNamespace(needs_correction=True)
+    states = (ready, wrong_date)
+    assert _source_status_caption(states, pending=True) == (
+        "2 source files · Finish current file selection")
+    assert _source_status_caption((), pending=True) == "Finish current file selection"
+    assert "need details" not in _source_status_caption(states, pending=True)
+    assert _source_status_caption(states, pending=False) == "2 source files · 1 need details"
+    assert _source_status_caption((ready, ready), pending=False) == "2 source files"
+    assert _source_status_caption((), pending=False) == ""
