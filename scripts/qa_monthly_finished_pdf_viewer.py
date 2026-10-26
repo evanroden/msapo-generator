@@ -32,12 +32,10 @@ def image_ready(page):
     image.wait_for(state="visible", timeout=30000)
     page.wait_for_function(
         """() => {
-          const all = document.querySelectorAll('.report-preview img');
-          const images = [...all];
-          for (const node of document.querySelectorAll('*')) {
-            if (node.shadowRoot) images.push(...node.shadowRoot.querySelectorAll('.report-preview img'));
-          }
-          return images.some(img => img.complete && img.naturalWidth > 0);
+          const deep = root => [...root.querySelectorAll('.report-preview img'),
+            ...[...root.querySelectorAll('*')].filter(node => node.shadowRoot)
+              .flatMap(node => deep(node.shadowRoot))];
+          return deep(document).some(img => img.complete && img.naturalWidth > 0);
         }""", timeout=45000)
     value = image.get_attribute("src")
     assert value and value.startswith("data:image/jpeg;base64,"), value
@@ -73,6 +71,19 @@ def check_engine(engine, name):
         page.screenshot(path=str(OUT / f"{name}-pdf-a.png"))
         details["events"].append("actual expander rasterized exact current synthetic PDF A")
 
+        # A different browser must NOT inherit the PDF while the first viewer
+        # is still live and its disposable raster ticket remains active.
+        other = browser.new_context(viewport={"width": 1300, "height": 900})
+        other.route("**/*", route)
+        try:
+            other_page = other.new_page()
+            other_page.goto(URL, wait_until="domcontentloaded")
+            expect(other_page.get_by_text("QA current PDF: absent", exact=True)).to_be_visible()
+            expect(other_page.get_by_text("View PDF here (this session)", exact=True)).to_have_count(0)
+            details["events"].append("separate browser session cannot access live finished PDF")
+        finally:
+            other.close()
+
         page.get_by_role("button", name="Replace with no PDF").click()
         expect(page.get_by_text("QA current PDF: none", exact=True)).to_be_visible()
         expect(page.get_by_text("QA owner entries: 0", exact=True)).to_be_visible()
@@ -95,16 +106,6 @@ def check_engine(engine, name):
         expect(page.locator(".report-preview img")).to_have_count(0)
         details["events"].append("reset discarded the only disposable owner")
 
-        other = browser.new_context(viewport={"width": 1300, "height": 900})
-        other.route("**/*", route)
-        try:
-            other_page = other.new_page()
-            other_page.goto(URL, wait_until="domcontentloaded")
-            expect(other_page.get_by_text("QA current PDF: absent", exact=True)).to_be_visible()
-            expect(other_page.get_by_text("View PDF here (this session)", exact=True)).to_have_count(0)
-            details["events"].append("separate browser session cannot access finished PDF")
-        finally:
-            other.close()
         assert not details["errors"] and not details["external_attempts"], details
         details["result"] = "passed"
     except Exception as exc:
