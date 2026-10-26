@@ -44,7 +44,41 @@ CLIENT = r"""(() => {
           component:n.querySelector('.stBidiComponent') ? 'v2' : '',
           slot:!!n.querySelector('[class*="st-key-epc_preview_slot_"]')}))};
   };
-  let events=[], samples=[], previous='';
+  let events=[], samples=[], previous='', writes=[], layout=[], lastLayout='';
+  const light = cause => {
+    if (!held || layout.length >= 150) return;
+    const main=document.querySelector('[data-testid="stMain"]'), target=button();
+    const value={scroll:main?.scrollTop, height:main?.scrollHeight, button:target?rect(target):null};
+    const signature=JSON.stringify(value);
+    if(signature!==lastLayout) {layout.push({cause,at:performance.now(),...value});lastLayout=signature;}
+  };
+  const noteWrite = (node, method, args) => {
+    if (!held || writes.length>=40) return;
+    writes.push({at:performance.now(),node:describe(node),method,args,stack:new Error().stack});
+    light('before '+method);
+  };
+  const scrollTop=Object.getOwnPropertyDescriptor(Element.prototype,'scrollTop');
+  if(scrollTop?.set) Object.defineProperty(Element.prototype,'scrollTop',{
+    ...scrollTop,set(value) {noteWrite(this,'scrollTop',[value]);return scrollTop.set.call(this,value);}
+  });
+  for(const method of ['scrollTo','scrollBy','scrollIntoView']) {
+    const original=Element.prototype[method];
+    if(original) Element.prototype[method]=function(...args) {
+      noteWrite(this,method,args);return original.apply(this,args);
+    };
+  }
+  const originalFocus=HTMLElement.prototype.focus;
+  HTMLElement.prototype.focus=function(...args) {
+    noteWrite(this,'focus',args);return originalFocus.apply(this,args);
+  };
+  document.addEventListener('DOMContentLoaded',()=>{
+    let observed=null;const resize=new ResizeObserver(()=>light('resize'));
+    new MutationObserver(()=>{
+      const block=document.querySelector('[data-testid="stMainBlockContainer"]');
+      if(block && block!==observed){resize.observe(block);observed=block;}
+      light('mutation');
+    }).observe(document.body,{subtree:true,childList:true,attributes:true,attributeFilter:['style','class']});
+  },{once:true});
   function sample() {
     frame=null;
     if (!held || samples.length>=90) return;
@@ -56,16 +90,17 @@ CLIENT = r"""(() => {
   for(const type of ['pointerdown','pointerup','click','focusin','scroll']) {
     document.addEventListener(type,event=>{
       if(type==='pointerdown' && (event.target===button() || button()?.contains(event.target))){
-        held=true;sample();
+        held=true;light('pointerdown');sample();
       }
       if(!held)return;
+      light(type);
       events.push({type,trusted:event.isTrusted,target:describe(event.target),
         action:describe(event.target?.closest?.('button')),
         x:event.clientX,y:event.clientY,...snapshot()});
       if(type==='click') {held=false;if(frame!==null)cancelAnimationFrame(frame);}
     },{capture:true,passive:true});
   }
-  window.__firstPaintEvidence=()=>({events,samples});
+  window.__firstPaintEvidence=()=>({events,samples,writes,layout});
 })();"""
 
 
@@ -114,7 +149,8 @@ def exercise(playwright, base):
             up=next((e for e in events if e['type']=='pointerup'),None)
             click=next((e for e in events if e['type']=='click'),None)
             record={'case':index,'down':down,'up':up,'click':click,'samples':evidence['samples'],
-                    'wire': [e for e in wire.events if e['sequence']>boundary]}
+                    'wire': [e for e in wire.events if e['sequence']>boundary],
+                    'scroll_writes':evidence['writes'],'layout_changes':evidence['layout']}
             report['cases'].append(record)
             if not down or not up or not click or not down['action'] or down['action']!=up['action'] or down['action']!=click['action']:
                 raise AssertionError('Native press target changed: case '+str(index))
