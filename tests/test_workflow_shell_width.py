@@ -136,3 +136,13 @@ def test_static_shell_survives_locked_frontend_date_publication(tmp_path):
     frontend.patch_bundle(tmp_path,installed_version='1.61.1')
     date.patch_bundle(tmp_path,installed_version='1.61.1')
     assert index.read_text()==first
+
+
+def test_full_state_sidebar_matrix_cannot_pass_with_missing_setup_or_conflict():
+    import pytest
+    from scripts.qa_workflow_shell_width import CASES,validate_state_coverage
+    states=[{'state':state,'sidebar_open':opened} for state in CASES for opened in (False,True)]
+    validate_state_coverage(states)
+    for missing in ('monthly-setup','monthly-conflict'):
+        with pytest.raises(AssertionError):
+            validate_state_coverage([row for row in states if not (row['state']==missing and row['sidebar_open'])])

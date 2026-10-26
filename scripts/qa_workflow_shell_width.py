@@ -7,6 +7,7 @@ not claimed. The component gate delays unchanged display code and CSS only.
 from pathlib import Path
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -72,7 +73,9 @@ else:
             editor,reference=workspace_columns("shell")
             with editor: st.text_input("Synthetic update")
             with reference: st.write("Synthetic reference")
-    if workflow=='monthly': st.button("Show synthetic conflict",on_click=phase_to,args=('conflict',))
+    if workflow=='monthly':
+        st.button("Show synthetic conflict",on_click=phase_to,args=('conflict',))
+        st.button("Return to synthetic setup",on_click=phase_to,args=('setup',))
 '''
 OBSERVER = r'''(() => {
  const state={samples:[],overflow:false,epoch:'cold'};window.__shellEvidence=state;
@@ -119,6 +122,11 @@ def validate_samples(samples, expected):
             assert abs(sample[key]-expected[key])<=1, sample
 
 
+def validate_state_coverage(states):
+    actual={(state['state'],state['sidebar_open']) for state in states}
+    assert {(state,opened) for state in CASES for opened in (False,True)}<=actual,actual
+
+
 def local_url(url, port=PORT, websocket=False):
     if not websocket and url.startswith('blob:'):
         inner=urlparse(url[5:])
@@ -148,7 +156,8 @@ def run_case(browser,width,output):
         expect(page.get_by_test_id('stApp')).to_have_attribute('data-test-script-state','notRunning',timeout=45000)
         page.evaluate('() => new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
         value=page.locator('.block-container').evaluate(PROBE)
-        record['states'].append({'label':label,'sidebar_open':opened,'geometry':value})
+        record['states'].append({'label':label,'sidebar_open':opened,'geometry':value,
+            'state':page.get_by_text(re.compile(r'^State: ')).inner_text().removeprefix('State: ')})
         assert value['maxWidth']=='1680px' and not value['overflow'] and value['openerOverlap']==0,value
         assert value['box']['width']<=min(1681,value['main']['width']+1),value
         assert value['paddingTop']==('60px' if width<=1780 else '20px'),value
@@ -203,6 +212,21 @@ def run_case(browser,width,output):
         page.get_by_test_id('stSidebarCollapseButton').get_by_role('button').click()
         expect(page.get_by_test_id('stSidebar')).to_have_attribute('aria-expanded','false')
         page.wait_for_timeout(400);snapshot('sidebar-closed-again')
+        # Complete the early-return states with a real open/close journey too.
+        for action,state in [('Show synthetic conflict','monthly-conflict'),
+                             ('Resolve synthetic conflict','monthly-ready'),
+                             ('Return to synthetic setup','monthly-setup')]:
+            page.get_by_role('button',name=action,exact=True).click()
+            expect(page.get_by_text('State: '+state,exact=True)).to_be_visible()
+            snapshot(state+'-repeat')
+            page.get_by_test_id('stExpandSidebarButton').click()
+            expect(page.get_by_test_id('stSidebar')).to_have_attribute('aria-expanded','true')
+            page.wait_for_timeout(400);snapshot(state+'-sidebar-open',True)
+            page.get_by_test_id('stSidebar').hover()
+            page.get_by_test_id('stSidebarCollapseButton').get_by_role('button').click()
+            expect(page.get_by_test_id('stSidebar')).to_have_attribute('aria-expanded','false')
+            page.wait_for_timeout(400);snapshot(state+'-sidebar-closed')
+        validate_state_coverage(record['states'])
         assert not errors and not rejected,(errors,rejected)
         record['result']='pass'
     except Exception as e:
