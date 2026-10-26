@@ -23,7 +23,7 @@ FIXTURE = ROOT / "tests/fixtures/workspaces/work_order_rows_app.py"
 
 @pytest.mark.parametrize("change,dirty", [
     ("evidence", False), ("tracked", True), ("staged", True),
-    ("untracked-source", True), ("other-evidence", True),
+    ("untracked-source", True), ("other-evidence", True), ("tracked-evidence", True),
 ])
 def test_checkout_provenance_excludes_only_this_drivers_generated_evidence(tmp_path, monkeypatch, change, dirty):
     def git(*args):
@@ -31,11 +31,13 @@ def test_checkout_provenance_excludes_only_this_drivers_generated_evidence(tmp_p
     git("init", "-q")
     source = tmp_path / "source.py"
     source.write_text("original\n")
-    git("add", "source.py")
-    git("-c", "user.name=Synthetic Test", "-c", "user.email=test@example.invalid",
-        "commit", "-qm", "Synthetic baseline")
     evidence = tmp_path / "test-artifacts" / "work-order-rows"
     evidence.mkdir(parents=True)
+    baseline = evidence / "tracked-baseline.txt"
+    baseline.write_text("original\n")
+    git("add", ".")
+    git("-c", "user.name=Synthetic Test", "-c", "user.email=test@example.invalid",
+        "commit", "-qm", "Synthetic baseline")
     (evidence / "streamlit.log").write_text("Synthetic evidence\n")
     monkeypatch.setattr(qa, "ROOT", tmp_path)
     monkeypatch.setattr(qa, "OUT", evidence)
@@ -47,6 +49,8 @@ def test_checkout_provenance_excludes_only_this_drivers_generated_evidence(tmp_p
         (tmp_path / "new_source.py").write_text("new\n")
     elif change == "other-evidence":
         (evidence.parent / "unrelated.txt").write_text("unowned evidence\n")
+    elif change == "tracked-evidence":
+        baseline.write_text("changed\n")
     assert qa.source_checkout_dirty() is dirty
 
 

@@ -243,6 +243,8 @@ def toggle_table_visibility(page, *, visible):
 
 def source_checkout_dirty():
     """Do not mistake this driver's generated evidence for changed source."""
+    if subprocess.check_output(["git", "diff", "--name-only", "HEAD", "--"], cwd=ROOT, text=True).strip():
+        return True  # Even tracked files inside the evidence directory count.
     command = ["git", "status", "--porcelain", "--untracked-files=all", "--", "."]
     try:
         evidence = OUT.relative_to(ROOT)
