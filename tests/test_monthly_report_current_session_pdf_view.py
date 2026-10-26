@@ -108,3 +108,50 @@ def test_scopes_are_isolated_and_cleanup_targets_only_the_active_view(monkeypatc
 def test_no_anonymous_preview_scope(prefix, scope):
     with pytest.raises(ValueError):
         output_ui._final_pdf_scope(prefix, scope)
+
+
+@pytest.mark.parametrize("replacement_pdf", (None, b"%PDF-new"))
+def test_replacement_retires_old_fragments_before_new_package_becomes_current(
+    monkeypatch, rendered, replacement_pdf
+):
+    previous = package(pdf=b"%PDF-previous")
+    rendered.state["monthly_package"] = previous
+    discarded = []
+
+    def discard(owner):
+        # The previous byte-backed fragment must be retired before any new
+        # report package, including a failed PDF retry, becomes authoritative.
+        assert rendered.state["monthly_package"] is previous
+        discarded.append(owner)
+
+    monkeypatch.setattr(reference_preview, "discard_reference_scope", discard)
+    replacement = package(pdf=replacement_pdf)
+    output_ui.replace_current_session_pdf_package("monthly", "session-A", replacement)
+
+    assert discarded == [output_ui._final_pdf_scope("monthly", "session-A")]
+    assert rendered.state["monthly_package"] is replacement
+    output_ui.render_current_session_pdf_preview(
+        replacement, SimpleNamespace(fingerprint="draft-1"),
+        "monthly", session_scope="session-A",
+    )
+    assert bool(rendered.previews) == bool(replacement_pdf)
+
+
+def test_same_package_rerender_does_not_dispose_current_preview(monkeypatch, rendered):
+    current = package()
+    rendered.state["monthly_package"] = current
+    discarded = []
+    monkeypatch.setattr(reference_preview, "discard_reference_scope", discarded.append)
+    output_ui.replace_current_session_pdf_package("monthly", "session-A", current)
+    assert discarded == []
+    assert rendered.state["monthly_package"] is current
+
+
+def test_guided_generation_and_retry_use_atomic_ticket_retirement():
+    from pathlib import Path
+
+    guided = (Path(__file__).resolve().parents[1] / "app/monthly_report_guided.py").read_text()
+    assert guided.count(
+        "replace_current_session_pdf_package(prefix, _rich_text_scope(prefix), package)"
+    ) == 2
+    assert 'st.session_state[prefix + "_package"] = package' not in guided
