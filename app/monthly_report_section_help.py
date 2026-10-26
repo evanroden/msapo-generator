@@ -39,7 +39,7 @@ _EDITOR_GUIDANCE = {
     "organization": "",
     "activity": "",
     "scorecards": "Add utility results. Leave unknown capacity blank or NR; note pending results only when confirmed.",
-    "mbcx": "MBCx means monitoring-based commissioning. Add verified findings or the current status.",
+    "mbcx": "Add monitoring results or a brief status update. MBCx means monitoring-based commissioning; use verified findings.",
     "maintenance": "ENFRA onsite technician calls only. Put vendor work in [Monthly Activity Summary](#report-section-activity).",
     "subcontractors": "",
     "water": "Check out-of-range water readings and follow-up work.",
