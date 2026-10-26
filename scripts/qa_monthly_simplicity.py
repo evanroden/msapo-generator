@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
@@ -34,10 +35,16 @@ PANEL = 'div[class*="st-key-"][class*="_source_manager_panel"]'
 
 
 def allowed_url(url):
-    """Only this disposable loopback HTTP server, without credentials."""
+    """This exact server and its canonical native WebKit blob module URLs only."""
     try:
+        if url.startswith("blob:"):
+            inner = urlparse(url[5:])
+            if inner.query or inner.fragment or not allowed_url(url[5:]):
+                return False
+            identity = inner.path.lstrip("/")
+            return str(uuid.UUID(identity)) == identity
         parsed = urlparse(url)
-        return (parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost", "::1"}
+        return (parsed.scheme == "http" and parsed.hostname == "127.0.0.1"
                 and parsed.port == PORT and parsed.username is None and parsed.password is None)
     except ValueError:
         return False
@@ -136,6 +143,11 @@ def fill_training(page, number):
     expect(option).to_have_count(1)
     option.click()
     expect(participants.locator('[data-tag]')).to_have_text([PERSON])
+    # A native multiselect keeps its menu open after choosing a participant.
+    # Complete that keyboard interaction before addressing sibling form fields;
+    # do not bypass the menu's accessibility scope with hidden DOM selectors.
+    combo.press("Escape")
+    expect(combo).to_have_attribute("aria-expanded", "false")
     expect(page.get_by_role("textbox", name="Hours (optional)", exact=True)).to_have_value("")
 
 
@@ -264,6 +276,12 @@ def exercise(engine, name, record):
         record["inferred_saved_activations"] = {"fresh_intake": 1, "three_training_additions": 2}
     except Exception:
         try:
+            record["native_text_inputs"] = page.locator('[data-testid="stTextInput"] input').evaluate_all("""inputs => inputs.map(input => ({
+                type: input.type, ariaLabel: input.getAttribute('aria-label'),
+                labels: Array.from(input.labels || [], label => label.textContent),
+                hiddenByAncestor: Boolean(input.closest('[aria-hidden="true"],[inert]')),
+                connected: input.isConnected
+            }))""")
             page.screenshot(path=str(OUT / f"{name}-first-failure.png"), full_page=False)
             record["native_window_errors"] = page.evaluate("() => window.__enfraFreshNativeErrors || null")
         except Exception as evidence_error:

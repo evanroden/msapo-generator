@@ -80,3 +80,27 @@ def test_missing_or_nonzero_native_errors_cannot_be_hidden(change):
     from scripts.qa_monthly_simplicity import require_native_errors_clean
     with pytest.raises(AssertionError):
         require_native_errors_clean({**clean_errors(), **change})
+
+
+def test_native_participant_menu_is_completed_before_addressing_hours():
+    import inspect
+    from scripts.qa_monthly_simplicity import fill_training
+    source = inspect.getsource(fill_training)
+    assert source.index('combo.press("Escape")') < source.index('name="Hours (optional)"')
+    assert source.index('to_have_attribute("aria-expanded", "false")') < source.index('name="Hours (optional)"')
+    assert 'include_hidden' not in source
+
+
+def test_only_same_origin_canonical_uuid_blob_modules_are_allowed():
+    from scripts.qa_monthly_simplicity import PORT, allowed_url
+    identity = 'c9bcb2d8-daea-4d24-acb4-bbb63d94d57a'
+    base = f'blob:http://127.0.0.1:{PORT}/{identity}'
+    assert allowed_url(base)
+    for rejected in (
+        base + '?x=1', base + '#fragment', base.replace(str(PORT), str(PORT + 1)),
+        base.replace('127.0.0.1', 'example.com'), base.replace(identity, 'arbitrary'),
+        base.replace('http:', 'ws:'), base.replace('http:', 'https:'),
+        base.replace('127.0.0.1', 'user:password@127.0.0.1'),
+        'data:text/javascript,export default 1', 'file:///tmp/preview.js',
+    ):
+        assert not allowed_url(rejected), rejected
