@@ -28,9 +28,12 @@ def suggested_period(today: date) -> ReportPeriod:
 
 def month_selector(field, prefix: str, default: ReportPeriod, *, label: str = "Reporting") -> ReportPeriod:
     import streamlit as st
+    from app.monthly_report_native_loading import reserve_period_selector
     left, right = st.columns(2)
     months, years = list(range(1, 13)), list(range(2000, default.year + 6))
     month_key, year_key = field(prefix + "_month_number", default.month), field(prefix + "_year", default.year)
+    reserve_period_selector(month_key, label + " month")
+    reserve_period_selector(year_key, label + " year")
     month = left.selectbox(label + " month", months, format_func=lambda n: calendar.month_name[n],
                            index=native_index(months, month_key), key=month_key)
     year = right.selectbox(label + " year", years, index=native_index(years, year_key), key=year_key)
