@@ -155,3 +155,41 @@ def test_guided_generation_and_retry_use_atomic_ticket_retirement():
         "replace_current_session_pdf_package(prefix, _rich_text_scope(prefix), package)"
     ) == 2
     assert 'st.session_state[prefix + "_package"] = package' not in guided
+
+
+def test_import_rotates_epoch_after_retiring_old_pdf_owner(monkeypatch, rendered):
+    """Importing the same report must not target the NEW scope for cleanup."""
+    from app import monthly_report_guided as guided
+
+    rendered.state["monthly_rich_text_epoch"] = "prior-report-incarnation"
+    prior_scope = guided._rich_text_scope("monthly")
+    discarded = []
+
+    def retire(owner):
+        # An old fragment remains valid if the epoch has already rotated.
+        assert rendered.state["monthly_rich_text_epoch"] == "prior-report-incarnation"
+        assert guided._rich_text_scope("monthly") == prior_scope
+        discarded.append(owner)
+
+    monkeypatch.setattr(reference_preview, "discard_reference_scope", retire)
+    guided._rotate_rich_text_epoch("monthly")
+    assert discarded == [output_ui._final_pdf_scope("monthly", prior_scope)]
+    assert rendered.state["monthly_rich_text_epoch"] != "prior-report-incarnation"
+    assert guided._rich_text_scope("monthly") != prior_scope
+
+
+def test_first_editor_epoch_has_no_previous_pdf_owner(monkeypatch, rendered):
+    from app import monthly_report_guided as guided
+
+    discarded = []
+    monkeypatch.setattr(reference_preview, "discard_reference_scope", discarded.append)
+    guided._rotate_rich_text_epoch("monthly")
+    assert rendered.state["monthly_rich_text_epoch"]
+    assert discarded == []
+
+
+def test_guided_import_calls_guarded_scope_rotation():
+    from pathlib import Path
+
+    guided = (Path(__file__).resolve().parents[1] / "app/monthly_report_guided.py").read_text()
+    assert guided.count("_rotate_rich_text_epoch(prefix)") == 2
