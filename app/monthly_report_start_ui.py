@@ -11,6 +11,7 @@ from app.monthly_report_editor import _key, _signature
 from app.monthly_report_model import Facility, ReportProfile
 from app.monthly_report_ui_text import literal
 from app.monthly_report_section_ui import _site_options
+from app.monthly_report_setup import native_index
 from app.monthly_report_start import membership_key, matching_profiles, report_key, design_seed, save_design_start, recommended_designs
 
 
@@ -182,11 +183,12 @@ def select_sites(contract, profiles, remembered, field, completed=None, *, rende
             if completed:
                 st.session_state[key] = bool(seed and f.key in membership_key(seed.facilities))
             detail = "Include this site in the report." + (" Also known as: " + "; ".join(f.aliases) if f.aliases else "")
-            if st.checkbox(literal(f.title), key=key, help=literal(detail), width="stretch"):
+            if st.checkbox(literal(f.title), key=key, value=bool(st.session_state[key]), help=literal(detail), width="stretch"):
                 selected.append(f)
     selection_notice = st.empty()
     with st.expander("More report details"):
-        custom = st.text_input("Site name", key=field(prefix + "_new_site", ""), help="Use a semicolon between names when adding several actual sites.")
+        custom_key = field(prefix + "_new_site", "")
+        custom = st.text_input("Site name", value=st.session_state[custom_key], key=custom_key, help="Use a semicolon between names when adding several actual sites.")
         for name in custom.split(";"):
             if name.strip():
                 try:
@@ -207,21 +209,26 @@ def select_sites(contract, profiles, remembered, field, completed=None, *, rende
             return None, None
         amended = []
         for f in facilities:
-            aliases = st.text_input("Other names for " + literal(f.title), key=field(prefix + "_aliases_" + f.key, "; ".join(f.aliases)))
+            alias_key = field(prefix + "_aliases_" + f.key, "; ".join(f.aliases))
+            aliases = st.text_input("Other names for " + literal(f.title), value=st.session_state[alias_key], key=alias_key)
             amended.append(replace(f, aliases=tuple(v.strip() for v in aliases.split(";") if v.strip())))
         facilities = tuple(amended)
         matches = matching_profiles(profiles, facilities)
         existing = next((p for p in matches if p.key == remembered), matches[0] if matches else None)
         if len(matches) > 1:
-            selected_key = st.radio("Saved designs for these same sites", [p.key for p in matches], format_func=lambda key: literal(next(p.title for p in matches if p.key == key)), key=prefix + "_matches_" + _signature(membership_key(facilities)))
+            match_keys, match_key = [p.key for p in matches], prefix + "_matches_" + _signature(membership_key(facilities))
+            selected_key = st.radio("Saved designs for these same sites", match_keys, format_func=lambda key: literal(next(p.title for p in matches if p.key == key)),
+                                    index=native_index(match_keys, match_key), key=match_key)
             existing = next(p for p in matches if p.key == selected_key)
         identity = _signature(membership_key(facilities))
         title = (existing.title if existing else facilities[0].title) if len(facilities) == 1 else " / ".join(f.title for f in facilities)
         scope = "individual"
         if len(facilities) > 1:
-            label = st.text_input("Name for this group (optional)", key=field(prefix + "_group_" + identity, existing.title if existing else ""), placeholder="For example: Western Region")
+            group_key = field(prefix + "_group_" + identity, existing.title if existing else "")
+            label = st.text_input("Name for this group (optional)", value=st.session_state[group_key], key=group_key, placeholder="For example: Western Region")
             title = label.strip() or title
-            regional = st.checkbox("This is a regional report", key=field(prefix + "_region_" + identity, bool(existing and existing.scope_type == "regional")))
+            region_key = field(prefix + "_region_" + identity, bool(existing and existing.scope_type == "regional"))
+            regional = st.checkbox("This is a regional report", value=bool(st.session_state[region_key]), key=region_key)
             scope = "regional" if regional else "multi_site"
         try:
             candidate = replace(existing, title=title, facilities=facilities, scope_type=scope) if existing else ReportProfile(contract, report_key(facilities), title, facilities, scope)

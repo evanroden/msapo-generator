@@ -29,11 +29,24 @@ def suggested_period(today: date) -> ReportPeriod:
 def month_selector(field, prefix: str, default: ReportPeriod, *, label: str = "Reporting") -> ReportPeriod:
     import streamlit as st
     left, right = st.columns(2)
-    month = left.selectbox(label + " month", list(range(1, 13)), format_func=lambda n: calendar.month_name[n],
-                           key=field(prefix + "_month_number", default.month))
-    year = right.selectbox(label + " year", list(range(2000, default.year + 6)),
-                          key=field(prefix + "_year", default.year))
+    months, years = list(range(1, 13)), list(range(2000, default.year + 6))
+    month_key, year_key = field(prefix + "_month_number", default.month), field(prefix + "_year", default.year)
+    month = left.selectbox(label + " month", months, format_func=lambda n: calendar.month_name[n],
+                           index=native_index(months, month_key), key=month_key)
+    year = right.selectbox(label + " year", years, index=native_index(years, year_key), key=year_key)
     return ReportPeriod(year, month)
+
+
+def native_index(options, key):
+    """Declare the kept choice as the browser's own default, not option 0.
+
+    After a reload the browser can re-register a select from its declared
+    default before it reports the restored choice. Option 0 then replaced
+    the report period (January 2000) on the next ordinary click.
+    """
+    import streamlit as st
+    value = st.session_state.get(key)
+    return options.index(value) if value in options else 0
 
 
 def report_period_findings(inspection, period):
