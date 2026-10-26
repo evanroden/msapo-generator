@@ -56,6 +56,10 @@ def workspace(workflow: str, identity: str, *, navigation_key: str = "", landing
         _key(navigation_key)
     if landing:
         _key(landing)
+    # Native HTML styles arrive with the editor, before either asynchronous
+    # display module. A preview may mount while the layout adapter still waits;
+    # its native slot and the section selector already need their final space.
+    st.html('<style>' + (_ASSETS / 'workspace_initial.css').read_text() + '</style>')
     with st.container(key="epc_workspace_" + workflow) as root:
         _adapter(Runtime.instance())(key="epc_display_" + workflow, data={
             "workflow": workflow,
