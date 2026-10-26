@@ -241,13 +241,26 @@ def toggle_table_visibility(page, *, visible):
     expect(checkbox).to_be_checked(checked=visible)
 
 
+def source_checkout_dirty():
+    """Do not mistake this driver's generated evidence for changed source."""
+    command = ["git", "status", "--porcelain", "--untracked-files=all", "--", "."]
+    try:
+        evidence = OUT.relative_to(ROOT)
+    except ValueError:
+        pass  # Evidence outside the checkout cannot affect its status.
+    else:
+        if evidence.parts:
+            command.append(":(top,exclude,literal)" + evidence.as_posix())
+    return bool(subprocess.check_output(command, cwd=ROOT, text=True).strip())
+
+
 def exercise(browser, name, *, delayed_ack=False):
     from playwright.sync_api import expect
     out = OUT / name
     out.mkdir(parents=True, exist_ok=True)
     record = {"synthetic_only": True, "steps": [], "errors": [], "external": [], "wire": [],
               "browser": name, "tested_checkout": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
-              "working_tree_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).strip())}
+              "source_checkout_dirty": source_checkout_dirty()}
     context = browser.new_context(viewport={"width": 1200, "height": 900}, accept_downloads=True)
     context.add_cookies([{"name": "epc_device_id", "value": secrets.token_hex(16), "url": URL}])
     if delayed_ack:
