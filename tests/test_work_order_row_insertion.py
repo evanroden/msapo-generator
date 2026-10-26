@@ -174,6 +174,26 @@ def test_ordinary_cell_edits_keep_editor_seed_and_do_not_need_row_actions():
     assert current(app).rows[2][3] == '92'
 
 
+@pytest.mark.parametrize('row,label,position', [(0, ABOVE, 0), (4, BELOW, 5)])
+@pytest.mark.parametrize('newer_edit', [False, True])
+def test_visible_row_action_survives_ordinary_edit_acknowledgement(row, label, position, newer_edit):
+    app = launch(COMPACT)
+    visible = app.dataframe[0].proto
+    wire(app, edited={2: {'Mar': '91'}})
+    wire(app)  # The parent acknowledges the edit while the same row menu is open.
+    assert current(app).rows[2][3] == '91'
+    assert app.dataframe[0].proto.id == visible.id
+    wire(app, row, label, proto=visible,
+         **({'edited': {2: {'Mar': '92'}}} if newer_edit else {}))
+    expected = list(COMPACT.rows)
+    expected[2] = ('', '7', '8', '92' if newer_edit else '91', '10', '11', '12')
+    expected.insert(position, BLANK)
+    assert current(app).rows == tuple(expected)
+    wire(app)
+    wire(app, row, label, proto=visible, edited={2: {'Mar': 'retired'}})
+    assert current(app).rows == tuple(expected)  # Consumed actions still retire.
+
+
 def test_no_action_column_on_other_imported_tables():
     app = launch(COMPACT, key='utility_analysis')
     assert not app.dataframe[0].proto.button_click_widgets

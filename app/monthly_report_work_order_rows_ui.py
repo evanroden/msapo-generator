@@ -82,7 +82,9 @@ def edit_imported_work_order_table(table, key, scope, prefix):
             else:
                 state['table'] = table
                 state['pending'] = None
-                state['action_epoch'] = uuid4().hex
+                # An ordinary cell acknowledgement keeps the same native
+                # grid and row occurrences. Its already visible menu is still
+                # current; only a consumed action or structural rebase retires it.
         elif table != state['table']:
             # A replaced table (including observed A -> B -> A) is a new
             # incarnation, not permission to apply old edits or row indexes.
