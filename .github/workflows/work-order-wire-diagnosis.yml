@@ -1,8 +1,8 @@
-name: Work-order native wire diagnosis
+name: Work-order delayed acknowledgement baseline
 
 on:
   push:
-    branches: [repair/work-order-wire-diagnosis-20261026]
+    branches: [repair/work-order-ack-baseline-20261026]
 
 permissions:
   contents: read

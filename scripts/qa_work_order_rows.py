@@ -214,7 +214,7 @@ def toggle_table_visibility(page, *, visible):
     expect(checkbox).to_be_checked(checked=visible)
 
 
-def exercise(browser, name):
+def exercise(browser, name, *, delayed_ack=False):
     from playwright.sync_api import expect
     out = OUT / name
     out.mkdir(parents=True, exist_ok=True)
@@ -222,6 +222,8 @@ def exercise(browser, name):
               "browser": name, "tested_checkout": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()}
     context = browser.new_context(viewport={"width": 1200, "height": 900}, accept_downloads=True)
     context.add_cookies([{"name": "epc_device_id", "value": secrets.token_hex(16), "url": URL}])
+    if delayed_ack:
+        context.add_cookies([{"name": "synthetic_acknowledge_edit", "value": "1", "url": URL}])
     context.add_init_script("(" + OBSERVE + ")()")
     def route(request):
         parsed = urlparse(request.request.url)
@@ -264,6 +266,26 @@ def exercise(browser, name):
         socket.on("framesent", lambda payload: wire("sent", payload))
         socket.on("framereceived", lambda payload: wire("received", payload))
     page.on("websocket", observe_socket)
+    gate = {"armed": False, "finished": False, "buffer": [], "received": 0}
+    if delayed_ack:
+        def route_socket(socket):
+            from streamlit.proto.ForwardMsg_pb2 import ForwardMsg
+            remote = socket.connect_to_server()
+            gate["socket"] = socket
+            def received(payload):
+                if not gate["armed"]:
+                    socket.send(payload)
+                    return
+                # Delay unchanged server bytes only. Native browser inputs go
+                # straight to the production callback without modification.
+                gate["buffer"].append(payload)
+                gate["received"] += 1
+                if isinstance(payload, bytes):
+                    message = ForwardMsg(); message.ParseFromString(payload)
+                    if message.HasField("script_finished") and message.script_finished == 0:
+                        gate["finished"] = True
+            remote.on_message(received)
+        page.route_web_socket("**/_stcore/stream", route_socket)
     try:
         page.goto(URL, wait_until="domcontentloaded")
         baseline = settled(page, expected_rows("initial"), record, "compact unchanged")
@@ -277,7 +299,21 @@ def exercise(browser, name):
         field = page.locator(".gdg-input")
         expect(field).to_have_value("Received")
         field.fill(EDIT)  # No Enter/Tab: the next native menu click must deliver this edit.
-        menu(page, 0).get_by_role("menuitem", name="Insert blank above", exact=True).click()
+        gate["armed"] = delayed_ack
+        options = menu(page, 0)
+        if delayed_ack:
+            deadline = time.monotonic() + 25
+            while not gate["finished"] and time.monotonic() < deadline:
+                page.wait_for_timeout(10)  # Pump the controlled response gate.
+            assert gate["finished"], "Server edit acknowledgement did not reach the response gate"
+            record["delayed_ack"] = {"server_finished_before_action": True,
+                                      "buffered_messages": gate["received"]}
+        options.get_by_role("menuitem", name="Insert blank above", exact=True).click()
+        if delayed_ack:
+            gate["armed"] = False
+            for payload in gate["buffer"]:
+                gate["socket"].send(payload)
+            gate["buffer"].clear()
         settled(page, expected_rows("above"), record, "pending edit and above", baseline)
 
         # A real rapid repeated pointer attempt is not fabricated wire replay.
@@ -372,12 +408,13 @@ def main():
                 failures = []
                 with sync_playwright() as playwright:
                     for name, engine in (("chromium", playwright.chromium), ("webkit", playwright.webkit)):
-                        for case in range(3):
+                        for delayed_ack in (False, True):
+                            case = "delayed-ack" if delayed_ack else "ordinary"
                             browser = engine.launch(headless=True)
                             try:
-                                exercise(browser, f"{name}-{case + 1}")
+                                exercise(browser, f"{name}-{case}", delayed_ack=delayed_ack)
                             except Exception as error:
-                                failures.append(f"{name}-{case + 1}: {error}")
+                                failures.append(f"{name}-{case}: {error}")
                             finally:
                                 browser.close()
                 if failures:
