@@ -1413,10 +1413,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     landing = landing_section if st.session_state.pop(prefix + "_land_on_editor", False) else ""
     with workspace("monthly", prefix, navigation_key="monthly_report_navigation", landing=landing):
         with st.container(key="monthly_report_navigation"):
-            st.markdown('<div class="epc-section-navigation"><label for="monthly-section-choice">Section</label>'
+            st.markdown('<span class="epc-section-navigation"><label for="monthly-section-choice">Section</label>'
                         '<select id="monthly-section-choice" class="epc-section-selector" aria-label="Jump to section" disabled>'
                         '<option>Loading sections…</option></select>'
-                        '<button type="button" class="epc-review-shortcut" disabled>Review</button></div>', unsafe_allow_html=True)
+                        '<button type="button" class="epc-review-shortcut" disabled>Review</button></span>', unsafe_allow_html=True)
         with workspace_section("monthly_cover", "Cover"):
             editor_column, preview_column = workspace_columns("monthly_cover")
             with editor_column:

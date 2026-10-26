@@ -103,10 +103,10 @@ st.set_page_config(layout='wide')
 st.title('Synthetic preview arrival')
 with workspace('monthly', 'synthetic-preview-mount', navigation_key='monthly_report_navigation'):
     with st.container(key='monthly_report_navigation'):
-        st.markdown('<div class="epc-section-navigation"><label for="monthly-section-choice">Section</label>'
+        st.markdown('<span class="epc-section-navigation"><label for="monthly-section-choice">Section</label>'
                     '<select id="monthly-section-choice" class="epc-section-selector" aria-label="Jump to section" disabled>'
                     '<option>Loading sections…</option></select>'
-                    '<button type="button" class="epc-review-shortcut" disabled>Review</button></div>', unsafe_allow_html=True)
+                    '<button type="button" class="epc-review-shortcut" disabled>Review</button></span>', unsafe_allow_html=True)
     with workspace_section('monthly_cover', 'Cover'):
         st.subheader('Cover')
         editor, reference = workspace_columns('monthly_cover')

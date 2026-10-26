@@ -11,6 +11,8 @@ def test_section_selector_replaces_jump_run_and_keeps_one_ordered_page(monkeypat
     assert markup.count('class="epc-review-shortcut"') == 1
     assert '<button type="button" class="epc-review-shortcut" disabled>Review</button>' in markup
     assert '<label for="monthly-section-choice">Section</label>' in markup
+    assert '<span class="epc-section-navigation">' in markup
+    assert '<div class="epc-section-navigation">' not in markup
     assert '**Jump to:**' not in markup
     assert 'data-epc-pair="monthly_activity"' in markup
     assert 'data-epc-pair="monthly_training"' in markup

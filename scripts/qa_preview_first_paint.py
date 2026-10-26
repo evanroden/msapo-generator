@@ -88,6 +88,7 @@ def exercise(engine, name, late, target, press=True):
             }''', button_key)
             before = geometry(page, button_key)
             assert before['review']['height'] >= 44, before
+            assert before['navigation']['height'] >= before['review']['height'], before
             assert before['selector']['right'] <= before['review']['left'], before
             page.screenshot(path=str(OUT / f'{name}-{label}-before.png'))
             x = before['button']['x'] + before['button']['width'] / 2
