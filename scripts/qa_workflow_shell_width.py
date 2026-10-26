@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
@@ -81,11 +82,14 @@ OBSERVER = r'''(() => {
   const group=document.querySelector('.st-key-workflow_mode [role="radiogroup"]');
   if(n&&group&&group.getBoundingClientRect().width>0){
    const r=n.getBoundingClientRect(),g=group.getBoundingClientRect(),style=getComputedStyle(n);
-   const value={epoch:state.epoch,x:r.x,width:r.width,tabX:g.x,tabWidth:g.width,maxWidth:style.maxWidth,
+   const opener=document.querySelector('[data-testid="stExpandSidebarButton"]'),o=opener?.getBoundingClientRect();
+   const openerOverlap=opener&&getComputedStyle(opener).visibility==='visible'?
+    Math.max(0,Math.min(o.right,g.right)-Math.max(o.left,g.left))*Math.max(0,Math.min(o.bottom,g.bottom)-Math.max(o.top,g.top)):0;
+   const value={epoch:state.epoch,x:r.x,width:r.width,tabX:g.x,tabWidth:g.width,maxWidth:style.maxWidth,openerOverlap,
     sidebar:document.querySelector('[data-testid="stSidebar"]')?.getAttribute('aria-expanded'),
     adapter:!!document.querySelector('.epc-workspace'),time:performance.now()};
    const prev=state.samples.at(-1);
-   if(!prev||['epoch','x','width','tabX','tabWidth','maxWidth','sidebar','adapter'].some(k=>prev[k]!==value[k])){
+   if(!prev||['epoch','x','width','tabX','tabWidth','maxWidth','openerOverlap','sidebar','adapter'].some(k=>prev[k]!==value[k])){
     if(state.samples.length>=1024)state.overflow=true;else state.samples.push(value);
    }
   }
@@ -110,12 +114,17 @@ def validate_samples(samples, expected):
     for sample in samples:
         # Before Markdown CSS commits, an uncapped narrow frame is valid only
         # when its actual shell AND tabs already match the settled geometry.
-        assert sample['width']<=1681, sample
+        assert sample['width']<=1681 and sample['openerOverlap']==0, sample
         for key in ('x','width','tabX','tabWidth'):
             assert abs(sample[key]-expected[key])<=1, sample
 
 
 def local_url(url, port=PORT, websocket=False):
+    if not websocket and url.startswith('blob:'):
+        inner=urlparse(url[5:])
+        if inner.query or inner.fragment or not local_url(url[5:],port):return False
+        try:return str(uuid.UUID(inner.path.lstrip('/')))==inner.path.lstrip('/')
+        except ValueError:return False
     u=urlparse(url)
     return u.scheme==('ws' if websocket else 'http') and u.hostname=='127.0.0.1' and u.port==port and not u.username and not u.password
 
@@ -180,7 +189,16 @@ def run_case(browser,width,output):
         page.get_by_test_id('stExpandSidebarButton').click()
         expect(page.get_by_test_id('stSidebar')).to_have_attribute('aria-expanded','true')
         page.wait_for_timeout(400);snapshot('sidebar-open',True)
-        for label,state in [('Expense reimbursement','expense'),('Purchase order','po'),('Monthly report','monthly-ready')]:switch(label,state,True)
+        for label,state in [('Expense reimbursement','expense'),('Purchase order','po'),('Monthly report','monthly-ready')]:
+            if width<576:
+                # Native mobile sidebar overlays workflow controls; close it before navigation.
+                page.get_by_test_id('stSidebarCollapseButton').get_by_role('button').click()
+                expect(page.get_by_test_id('stSidebar')).to_have_attribute('aria-expanded','false')
+                page.wait_for_timeout(400);switch(label,state)
+                page.get_by_test_id('stExpandSidebarButton').click()
+                expect(page.get_by_test_id('stSidebar')).to_have_attribute('aria-expanded','true')
+                page.wait_for_timeout(400);snapshot(state+'-sidebar-open',True)
+            else:switch(label,state,True)
         page.get_by_test_id('stSidebar').hover()
         page.get_by_test_id('stSidebarCollapseButton').get_by_role('button').click()
         expect(page.get_by_test_id('stSidebar')).to_have_attribute('aria-expanded','false')
@@ -219,6 +237,10 @@ def main():
                 except OSError:pass
                 if time.monotonic()>deadline or process.poll() is not None:raise RuntimeError('Synthetic shell server not ready')
                 time.sleep(.1)
+            with urlopen(URL,timeout=5) as response:initial_html=response.read().decode('utf-8')
+            critical=(ROOT/'app/workflow_shell.css').read_text()
+            assert critical in initial_html and initial_html.count('id="process-control-workflow-shell"')==1
+            assert initial_html.index(critical)<initial_html.index('<script')
             with sync_playwright() as pw:
                 for name in ('chromium','webkit'):
                     browser=getattr(pw,name).launch(headless=True)

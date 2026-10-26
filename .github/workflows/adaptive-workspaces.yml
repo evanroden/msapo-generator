@@ -19,6 +19,8 @@ on:
       - 'scripts/qa_preview_first_paint.py'
       - 'tests/test_preview_first_paint_contract.py'
       - 'scripts/qa_sidebar_navigation.py'
+      - 'app/workflow_shell.css'
+      - 'scripts/patch_streamlit_metadata.py'
       - 'scripts/qa_workflow_shell_width.py'
       - 'tests/test_workflow_shell_width.py'
       - 'tests/test_sidebar_navigation.py'
@@ -181,6 +183,8 @@ on:
       - 'scripts/qa_preview_first_paint.py'
       - 'tests/test_preview_first_paint_contract.py'
       - 'scripts/qa_sidebar_navigation.py'
+      - 'app/workflow_shell.css'
+      - 'scripts/patch_streamlit_metadata.py'
       - 'scripts/qa_workflow_shell_width.py'
       - 'tests/test_workflow_shell_width.py'
       - 'tests/test_sidebar_navigation.py'
@@ -874,6 +878,7 @@ jobs:
         run: |
           sudo python3 scripts/ci_ubuntu_mirror_priority.py
           python -m pip install -r requirements-dev.lock
+          python scripts/patch_streamlit_metadata.py
           python scripts/patch_streamlit_frontend.py
           python -m pip install playwright==1.58.0
           python -m playwright install --with-deps chromium webkit
