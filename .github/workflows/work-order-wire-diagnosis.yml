@@ -1,8 +1,8 @@
-name: Work-order delayed acknowledgement baseline
+name: Work-order delayed acknowledgement after
 
 on:
   push:
-    branches: [repair/work-order-ack-baseline-20261026]
+    branches: [repair/work-order-ack-after-20261026]
 
 permissions:
   contents: read
