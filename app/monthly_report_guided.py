@@ -1538,6 +1538,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         forget = st.checkbox("Discard my unfinished changes for this report", key=prefix + "_discard_work_confirm")
         if st.button("Start this report over", key=prefix + "_discard_work", disabled=not forget):
             try:
+                from app.monthly_report_output_ui import discard_current_session_pdf_preview
+                discard_current_session_pdf_preview(prefix, _rich_text_scope(prefix))
                 if recovery_available:
                     active_work.discard(browser_token, contract, selected, period,
                         expected_revision=st.session_state.get(prefix + "_active_sequence", 0),
@@ -1556,6 +1558,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     output_retries = take_retries(prefix)
     package = st.session_state.get(prefix + "_package")
     if package and package.fingerprint != draft.fingerprint:
+        from app.monthly_report_output_ui import discard_current_session_pdf_preview
+        discard_current_session_pdf_preview(prefix, _rich_text_scope(prefix))
         st.session_state.pop(prefix + "_package", None)
         package = None
     st.divider()
@@ -1616,6 +1620,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             else:
                 st.warning("Automatic recovery is unavailable in this browser. Save a report version before leaving.")
         if package and package.fingerprint != draft.fingerprint:
+            from app.monthly_report_output_ui import discard_current_session_pdf_preview
+            discard_current_session_pdf_preview(prefix, _rich_text_scope(prefix))
             st.session_state.pop(prefix + "_package", None)
             package = None
         from app.monthly_report_model import included_sections
@@ -1768,6 +1774,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             if package.pdf:
                 st.download_button("Download PDF", package.pdf, file_name=package.pdf_name,
                                    mime="application/pdf", key=prefix + "_pdf", on_click="ignore")
+                from app.monthly_report_output_ui import render_current_session_pdf_preview
+                render_current_session_pdf_preview(package, draft, prefix,
+                                                   session_scope=_rich_text_scope(prefix))
             if package.pdf_error:
                 st.warning(package.pdf_error)
 
