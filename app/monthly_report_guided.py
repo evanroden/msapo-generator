@@ -1184,7 +1184,11 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             # Keep the prior identity line while the native site choices are
             # being read. st.empty() clears it immediately on every rerun,
             # shifting checkbox rows during a second pointer press.
-            identity_slot = st.container(key="monthly_report_identity_sites")
+            # Keep its outer extent too: a combined caption can wrap, then
+            # shrink while the next site's pointer is down. A native fixed
+            # viewport reserves a compact area and scrolls longer identities
+            # without clipping their text or moving the chooser below it.
+            identity_slot = st.container(key="monthly_report_identity_sites", height=72, border=False)
     if not contract:
         return
     profiles = library.list_profiles(contract)

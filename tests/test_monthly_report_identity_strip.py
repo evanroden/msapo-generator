@@ -62,6 +62,12 @@ def test_identity_strip_keeps_one_native_container_from_zero_sites_through_resel
         nodes = [node for node in app.main if node.type == 'flex_container'
                  and node.proto.id.endswith('-monthly_report_identity_sites')]
         assert len(nodes) == 1
+        # A stable DOM identity alone does not stop a two-line combined caption
+        # shrinking above the next site press. The native scroll viewport must
+        # retain its extent through zero, single, combined and single again.
+        assert nodes[0].proto.height_config.pixel_height == 72
+        assert nodes[0].proto.allow_empty  # Reserve it before streamed text arrives.
+        assert not nodes[0].proto.flex_container.border
         return nodes[0].proto.id
 
     initial = identity()
@@ -75,6 +81,8 @@ def test_identity_strip_keeps_one_native_container_from_zero_sites_through_resel
     assert identity() == initial
     assert any(first.label in item.value and second.label in item.value for item in app.caption)
     app.checkbox(keys[1]).uncheck().run()
+    assert identity() == initial
+    assert any(item.value == 'Site: ' + first.label for item in app.caption)
     app.checkbox(keys[0]).uncheck().run()
     assert identity() == initial
     assert any(item.value == 'Select report sites.' for item in app.caption)
