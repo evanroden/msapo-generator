@@ -200,11 +200,14 @@ export default function(component) {
             schedule();
         };
     }
+    function findNav() {
+        return data.navigationKey ? document.querySelector('.st-key-' + CSS.escape(data.navigationKey)) : null;
+    }
     function discover() {
         // The keyed navigation may arrive after this component in the native
         // stream. Rebind through the existing child/resize measurement path,
         // including replacement of its container on a later full render.
-        const currentNav = data.navigationKey ? document.querySelector('.st-key-' + CSS.escape(data.navigationKey)) : null;
+        const currentNav = findNav();
         if (currentNav !== nav) {
             if (nav) resize.unobserve(nav);
             navigation?.dispose(); navigation = null;
@@ -298,7 +301,8 @@ export default function(component) {
             return;
         }
         // What the reader is looking at before this measurement's own writes.
-        const anchor = globalThis.ENFRAWorkspaceNavigation?.readingAnchor({state, scrollport, app, nav});
+        // The selector is resolved here too: discovery binds it only below.
+        const anchor = globalThis.ENFRAWorkspaceNavigation?.readingAnchor({state, scrollport, app, nav: findNav()});
         // The framework can replace this keyed container's class attribute
         // while retaining its native subtree. Reassert only our owned class
         // before measuring; the current mode must keep its matching CSS.

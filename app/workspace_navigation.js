@@ -64,8 +64,11 @@ globalThis.ENFRAWorkspaceNavigation = {
         const port = scrollport.getBoundingClientRect();
         const top = Math.max(port.top, nav ? nav.getBoundingClientRect().bottom : port.top);
         const usable = node => {
+            // Never the selector, a preview, or this adapter's own controls
+            // (a mode change can hide or move them).
             if (!node || !scrollport.contains(node) || nav?.contains(node) ||
-                node.closest?.('[class*="st-key-epc_preview_slot_"]')) return false;
+                node.closest?.('[class*="st-key-epc_preview_slot_"]') ||
+                node.closest?.('.epc-preview-controls')) return false;
             const box = node.getBoundingClientRect();
             return box.height < port.height && box.bottom > top && box.top < port.bottom;
         };
@@ -76,7 +79,10 @@ globalThis.ENFRAWorkspaceNavigation = {
     },
     keepAnchor(anchor, scrollport) {
         if (!anchor?.node.isConnected) return;
-        const shift = anchor.node.getBoundingClientRect().top - anchor.top;
+        const box = anchor.node.getBoundingClientRect();
+        // An anchor the new layout hides lost its box; it did not move.
+        if (!box.width && !box.height) return;
+        const shift = box.top - anchor.top;
         if (Math.abs(shift) >= 1) scrollport.scrollTop += shift;
     },
     create({root, app, scrollport, nav, state, geometry, schedule}) {

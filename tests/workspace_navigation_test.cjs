@@ -409,9 +409,9 @@ test('tabbing away from Add or scrolling before the row arrives keeps the reader
 
 function anchorHarness({hover, ownsScroll=false}={}) {
     const rect=(top,height)=>({top,bottom:top+height,height,left:80,right:1354});
-    const node=(name,top,height,{inNav=false,inSlot=false}={})=>({name,isConnected:true,top,height,
-        getBoundingClientRect(){return rect(this.top,this.height)},
-        closest:selector=>inSlot&&selector==='[class*="st-key-epc_preview_slot_"]'?{}:null,inNav});
+    const node=(name,top,height,{inNav=false,inSlot=false,control=false}={})=>({name,isConnected:true,top,height,
+        getBoundingClientRect(){return {...rect(this.top,this.height),width:this.height?173:0}},
+        closest:selector=>inSlot&&selector==='[class*="st-key-epc_preview_slot_"]'||control&&selector==='.epc-preview-controls'?{}:null,inNav});
     const nav={getBoundingClientRect:()=>rect(60,52),contains:target=>Boolean(target?.inNav)};
     const reading=node('reading line',360,40);
     const scrollport={scrollTop:1000,getBoundingClientRect:()=>rect(0,900),contains:target=>Boolean(target)};
@@ -438,7 +438,8 @@ test('the element under a resting pointer stays put across the adapter layout',(
 test('without a usable hovered element the reading line below the selector is kept',()=>{
     const probe=anchorHarness();
     for (const hover of [null, probe.node('selector option',70,20,{inNav:true}),
-        probe.node('preview page',300,200,{inSlot:true}), probe.node('page container',-400,5000)]) {
+        probe.node('preview page',300,200,{inSlot:true}), probe.node('page container',-400,5000),
+        probe.node('View preview',400,36,{control:true})]) {
         const h=anchorHarness({hover});
         const anchor=h.capture();
         assert.equal(anchor.node,h.reading,String(hover?.name));
@@ -454,12 +455,19 @@ test('a layout that moves nothing, or a scroll the workspace owns, is left alone
     assert.equal(h.scrollport.scrollTop,1000);
     anchor.node.isConnected=false;anchor.node.top=900;h.keep(anchor);
     assert.equal(h.scrollport.scrollTop,1000);
+    // A control the new mode hides keeps its node but loses its box. That
+    // is not a shift of the content above it.
+    const hidden=anchorHarness();const gone=hidden.capture();
+    gone.node.top=0;gone.node.height=0;hidden.keep(gone);
+    assert.equal(hidden.scrollport.scrollTop,1000);
     assert.equal(anchorHarness({ownsScroll:true}).capture(),null);
 });
 
 test('the adapter anchors only around its own layout writes, in page scroll',()=>{
     const layout=fs.readFileSync('app/workspace_layout.js','utf8');
     const measure=layout.split('function measure() {')[1].split('\n    function schedule()')[0];
+    assert.match(measure,/readingAnchor\(\{state, scrollport, app, nav: findNav\(\)\}\)/,
+        'the selector is known, and excluded, before discovery first binds it');
     const capture=measure.indexOf('readingAnchor(');
     assert.ok(capture>0 && capture<measure.indexOf("root.classList.add('epc-workspace')"),
         'the anchor is taken before the first layout write');
