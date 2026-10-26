@@ -34,7 +34,7 @@ export default function(component) {
         }
     }
     const noteInput = event => globalThis.ENFRAWorkspaceNavigation?.noteInput(state, event);
-    for (const type of ['pointerdown', 'keydown']) {
+    for (const type of ['pointerdown', 'keydown', 'wheel']) {
         document.addEventListener(type, noteInput, {capture:true, passive:true});
         subscriptions.push(() => document.removeEventListener(type, noteInput, {capture:true}));
     }

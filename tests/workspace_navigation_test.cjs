@@ -333,7 +333,7 @@ function entryHarness({stale=false, disabled=false}={}) {
     const marker=nonce=>({dataset:{enfraEntryFocus:nonce,enfraEntryField:'row_request_field',enfraEntryOrigin:'row_add'},
         closest:selector=>stale&&selector==='[data-stale="true"]'?{}:null});
     const keyed=key=>({classList:['stElementContainer','st-key-'+key]});
-    const input=(key,isTrusted=true)=>navigation.noteInput(state,{isTrusted,target:{closest:()=>keyed(key)}});
+    const input=(key,isTrusted=true,type='pointerdown',code)=>navigation.noteInput(state,{isTrusted,type,key:code,target:{closest:()=>keyed(key)}});
     return {state,root,field,document,marker,input,focus:()=>navigation.focusEntries(state,root),
         counts:()=>({focused,scrolled})};
 }
@@ -381,7 +381,28 @@ test('the adapter consumes entry focus from its existing measurement and records
     const layout=fs.readFileSync('app/workspace_layout.js','utf8');
     const measure=layout.split('function measure() {')[1].split('\n    function schedule()')[0];
     assert.match(measure,/ENFRAWorkspaceNavigation\?\.focusEntries\(state, root\)/);
-    for (const type of ['pointerdown','keydown'])
-        assert.ok(layout.includes(`'${type}'`),type+' input is recorded');
+    assert.match(layout,/for \(const type of \['pointerdown', 'keydown', 'wheel'\]\) \{\s*document\.addEventListener\(type, noteInput/,
+        'presses, keys and wheel scrolling are all recorded');
     assert.doesNotMatch(layout,/setInterval|setTimeout/,'no polling or timers');
+});
+
+test('Enter or Space on Add authorizes focus like a press',()=>{
+    for (const code of ['Enter',' ']) {
+        const h=entryHarness();
+        h.input('row_add',true,'keydown',code);
+        h.root.markers=[h.marker('first')];
+        h.focus();
+        assert.deepEqual(h.counts(),{focused:1,scrolled:1},JSON.stringify(code));
+    }
+});
+
+test('tabbing away from Add or scrolling before the row arrives keeps the reader where they went',()=>{
+    for (const [type,code] of [['keydown','Tab'],['keydown','ArrowDown'],['wheel',undefined]]) {
+        const h=entryHarness();
+        h.input('row_add');
+        h.input('row_add',true,type,code);
+        h.root.markers=[h.marker('first')];
+        h.focus();
+        assert.deepEqual(h.counts(),{focused:0,scrolled:0},type+' '+code);
+    }
 });

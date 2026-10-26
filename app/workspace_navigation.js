@@ -20,12 +20,16 @@ globalThis.ENFRAWorkspaceNavigation = {
         if (state.landingRequest && state.navigationRequest === state.landingRequest) state.navigationRequest = null;
         state.landingRequest = null;
     },
-    // The reader's latest pointer or key input, kept as the nearest keyed
+    // The control the reader last activated, kept as the nearest keyed
     // native element's class at that moment; the element itself may be
-    // re-rendered before a request arrives.
+    // re-rendered before a request arrives. Only a press, or Enter/Space on
+    // a control, activates. Tab, any other key or wheel scrolling means the
+    // reader has moved on, even while that control still has focus.
     noteInput(state, event) {
         if (!event.isTrusted) return;
-        const keyed = event.target?.closest?.('[class*="st-key-"]');
+        const activation = event.type === 'pointerdown' ||
+            event.type === 'keydown' && (event.key === 'Enter' || event.key === ' ');
+        const keyed = activation ? event.target?.closest?.('[class*="st-key-"]') : null;
         state.lastInputKey = keyed ? Array.from(keyed.classList).find(name => name.startsWith('st-key-')) || null : null;
     },
     // A native Add action may move focus into its new row once. Python
