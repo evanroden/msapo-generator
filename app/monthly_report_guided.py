@@ -1704,7 +1704,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 st.error(str(exc))
                 st.caption("Your edits and saved versions are unchanged. Retry generation when the service is ready.")
                 return
-            st.session_state[prefix + "_package"] = package
+            from app.monthly_report_output_ui import replace_current_session_pdf_package
+            replace_current_session_pdf_package(prefix, _rich_text_scope(prefix), package)
             from app.monthly_report_output_ui import record_shared_save
             record_shared_save(prefix, package)
             try:
@@ -1758,7 +1759,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     try:
                         with st.spinner("Retrying PDF conversion…"):
                             package = retry_report_pdf(draft, package)
-                        st.session_state[prefix + "_package"] = package
+                        from app.monthly_report_output_ui import replace_current_session_pdf_package
+                        replace_current_session_pdf_package(prefix, _rich_text_scope(prefix), package)
                         st.rerun()
                     except ValueError as exc:
                         st.error(str(exc))
