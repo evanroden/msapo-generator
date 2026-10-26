@@ -77,6 +77,19 @@ def discard_current_session_pdf_preview(prefix: str, session_scope: str) -> None
     discard_reference_scope(_final_pdf_scope(prefix, session_scope))
 
 
+
+def replace_current_session_pdf_package(prefix: str, session_scope: str, package) -> None:
+    """Retire the previous PDF before a newly generated/retried package takes over.
+
+    A retained preview fragment otherwise remains authorized by its old ticket
+    even if new generation for the *same draft* returned no usable PDF.
+    """
+    previous = st.session_state.get(prefix + "_package")
+    if previous is not package:
+        discard_current_session_pdf_preview(prefix, session_scope)
+    st.session_state[prefix + "_package"] = package
+
+
 def render_current_session_pdf_preview(package, draft, prefix: str, *, session_scope: str) -> None:
     """Inspect the exact current package, never a saved draft or another session.
 
