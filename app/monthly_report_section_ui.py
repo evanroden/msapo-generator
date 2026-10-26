@@ -190,6 +190,8 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 "new_assets": [(slot, image) for slot, image in old.get("new_assets", [])
                                if slot not in {"brand_logo", "client_logo"}],
                 "image_notes": dict(old.get("image_notes", {})), "automatic": old.get("automatic", False),
+                "period_review_items": tuple(old.get("period_review_items", ())),
+                "period_review_label": period.label,
                 "source_sha256": old.get("source_sha256", ""),
                 "source_site_relation": old.get("source_site_relation", ""),
                 "automatic_logo_skips": {role:list(ids) for role,ids in old.get("automatic_logo_skips", {}).items()},
@@ -269,8 +271,21 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 if not target:
                     blocking.append("Choose a section above, or leave this additional content out of the draft.")
             texts = [i for i in items if i.kind == "text"]
+            if old.get("period_review_items"):
+                # Period review may not bring explicitly old prose back merely
+                # because it shares a section with unfinished, undated work.
+                retained_ids = old.get("combined_text_ids") or old.get("selected", ())
+                texts = [i for i in texts if i.id in retained_ids]
             if texts:
-                combined = old.get("texts", {}).get(texts[0].id, "\n\n".join(i.text for i in texts))
+                prior_texts = old.get("texts", {})
+                if old.get("combined_text_ids"):
+                    # An existing section edit is already an aggregate. Never
+                    # append the original paragraphs again on its next rerun.
+                    combined = prior_texts.get(texts[0].id, "\n\n".join(i.text for i in texts))
+                else:
+                    # Automatic plans store one value per paragraph, not one
+                    # combined section under the first paragraph's identity.
+                    combined = "\n\n".join(prior_texts.get(i.id, i.text) for i in texts)
                 text = st.text_area(guide.text_label, key=field(p + "_text", combined), height=200) if action == actions[1] else combined
                 if action != actions[1]:
                     st.text(text[:14000])
@@ -430,6 +445,12 @@ def _approve_plan(plan, p, field, old, plans, blocking, *, quote_price_risk=Fals
             "I reviewed this vendor quotation and excluded all pricing",
             key=field(p + "_price_quote_review_" + stamp,
                       old.get("approval_stamp") == stamp))
+    if plan.get("period_review_items") and not plan.get("omit"):
+        period_reviewed = st.checkbox(
+            "This work belongs in " + plan.get("period_review_label", "this month"),
+            key=field(p + "_undated_period_review_" + stamp,
+                      old.get("approval_stamp") == stamp))
+        reviewed = reviewed and period_reviewed
     plan["approved"] = bool(reviewed and not blocking)
     plan["approval_stamp"] = stamp if plan["approved"] else ""
     plans[plan["key"]] = plan
@@ -770,6 +791,14 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     profiles = library.list_profiles(contract)
     known_sites = {f.key: f for f in (*_site_options(contract), *(f for profile in profiles for f in profile.facilities), *candidate.facilities)}
     analysis = analyze_starting_report(inspection, candidate, period, known_sites.values(), known_profiles=profiles)
+    from app.monthly_report_source_sites_ui import correct_detected_sites
+    confirmed_source = correct_detected_sites(
+        inspection, candidate, period, analysis.source_sites, tuple(known_sites.values()),
+        p, field, source_view=source_view)
+    if confirmed_source is not None:
+        analysis = analyze_starting_report(
+            inspection, candidate, period, known_sites.values(),
+            confirmed_sites=confirmed_source, known_profiles=profiles)
     if analysis.site_relation == "unknown":
         st.info("The starting report does not clearly name its sites. Confirm them once so another site's contacts and work are not copied into this report.")
         from app.monthly_report_start_import import source_sites
@@ -794,6 +823,9 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             return True
         analysis = analyze_starting_report(inspection, candidate, period, known_sites.values(),
                                           confirmed_sites=tuple({f.key: f for f in confirmed_sites}.values()))
+    from app.monthly_report_source_sites_ui import source_review_epoch
+    p += "_source_scope_" + source_review_epoch(
+        inspection, candidate, period, analysis.source_sites, analysis.site_relation, source_view)
     source_names = "; ".join(site.title for site in analysis.source_sites)
     st.caption("Starting report: " + source_names + (f" · {analysis.source_period[0]}-{analysis.source_period[1]:02d}" if analysis.source_period else " · source month not stated"))
     if analysis.site_relation == "other":

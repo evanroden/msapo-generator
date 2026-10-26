@@ -1,0 +1,96 @@
+"""A stale cover is not evidence that undated draft edits are historical."""
+from test_monthly_report_start_import import report_file, PERIOD
+import pytest
+from app.monthly_report_model import synthetic_profiles
+from app.monthly_report_start_import import analyze_starting_report, automatic_section_plans, build_starting_import
+from app.monthly_report_import import inspect_docx
+
+
+def test_stale_cover_preserves_undated_unfinished_prose_for_period_review(tmp_path):
+    path = report_file(tmp_path, month="July 2026", activity=("Inspected the newly installed air handler.",), photo=True, table=True)
+    inspection = inspect_docx(path)
+    analysis = analyze_starting_report(inspection, synthetic_profiles()[0], PERIOD)
+    plans = automatic_section_plans(inspection, analysis)
+    item = next(i for i in inspection.items if "newly installed" in i.text)
+    assert item.id in analysis.uncertain_items
+    assert item.id not in analysis.older_items
+    plan = next(p for p in plans.values() if item.id in p["selected"])
+    assert not plan["approved"]
+    assert any("month" in q.lower() for q in plan["questions"])
+    assert plan["texts"][item.id] == item.text
+    with pytest.raises(ValueError, match="remaining starting-report questions"):
+        build_starting_import(path, inspection, plans.values())
+    plan["approved"] = True  # Explicit section review, never inferred from cover.
+    plan["questions"] = ()
+    mapped, _ = build_starting_import(path, inspection, plans.values())
+    assert "newly installed air handler" in next(b.text for b in mapped.blocks if b.key == "activity_summary")
+
+
+def test_period_review_requires_explicit_confirmation_bound_to_text_and_month():
+    from streamlit.testing.v1 import AppTest
+    app = AppTest.from_string("""
+import streamlit as st
+from app.monthly_report_section_ui import _approve_plan
+text = st.text_input("Work", value="Inspected air handler")
+month = st.text_input("Month", value="September 2026")
+old = st.session_state.get("plans", {}).get("activity", {})
+plan = {"key": "activity", "period_review_items": ("one",), "period_review_label": month,
+        "texts": {"one": text}, "new_assets": [], "preserved_assets": []}
+plans = {}
+def field(key, default):
+    if key not in st.session_state:
+        st.session_state[key] = default
+    return key
+_approve_plan(plan, "test", field, old, plans, [])
+st.session_state["plans"] = plans
+""").run()
+    assert not app.session_state["plans"]["activity"]["approved"]
+    app.checkbox[0].check().run()
+    assert app.session_state["plans"]["activity"]["approved"]
+    app.text_input[0].set_value("Different work").run()
+    assert not app.session_state["plans"]["activity"]["approved"]
+    app.checkbox[0].check().run()
+    app.text_input[1].set_value("October 2026").run()
+    assert not app.session_state["plans"]["activity"]["approved"]
+
+
+def test_upload_period_review_then_durable_reopen_keeps_unfinished_prose(monkeypatch, tmp_path):
+    from test_monthly_report_start_import import start_app, save_start
+    from app import monthly_report_library as library
+    path = report_file(tmp_path, month="July 2026", activity=("Inspected the newly installed air handler.", "Repaired the second pump."))
+    app = start_app(monkeypatch, tmp_path, path)
+    proceed = lambda: next(b for b in app.button if b.label == "Continue to this month’s updates")
+    assert proceed().disabled
+    confirm = next(c for c in app.checkbox if c.label == "This work belongs in September 2026")
+    confirm.check().run()
+    assert not app.exception
+    assert not proceed().disabled
+    draft = save_start(app)
+    assert "newly installed air handler" in next(b.text for b in draft.blocks if b.key == "activity_summary")
+    assert "Repaired the second pump." in next(b.text for b in draft.blocks if b.key == "activity_summary")
+    snapshot = library.save_snapshot(draft, expected_revision=0, entered_editor="Synthetic Editor")
+    reopened = library.load_snapshot(draft.profile.contract, draft.profile.key, draft.period)
+    assert reopened.draft == snapshot.draft
+
+
+def test_period_review_preserves_all_retained_paragraphs_and_edits_not_explicit_old_work(monkeypatch, tmp_path):
+    from test_monthly_report_start_import import start_app, save_start
+    from app import monthly_report_library as library
+    paragraphs = ("July 2026: Old completed pump repair.", "Inspected the air handler.", "Repaired the second pump.")
+    path = report_file(tmp_path, month="July 2026", activity=paragraphs)
+    app = start_app(monkeypatch, tmp_path, path)
+    radio = next(r for r in app.radio if r.label == "What would you like to do?")
+    radio.set_value("Edit text or change pictures").run()
+    editor = next(t for t in app.text_area if "Inspected the air handler." in t.value)
+    expected = "Inspected the air handler.\n\nRepaired the second pump."
+    assert editor.value == expected
+    edited = expected + "\n\nReviewed and corrected."
+    editor.set_value(edited).run()
+    next(c for c in app.checkbox if c.label == "This work belongs in September 2026").check().run()
+    assert next(t for t in app.text_area if "Inspected the air handler." in t.value).value == edited
+    draft = save_start(app)
+    assert next(b.text for b in draft.blocks if b.key == "activity_summary") == edited
+    library.save_snapshot(draft, expected_revision=0, entered_editor="Synthetic Editor")
+    reopened = library.load_snapshot(draft.profile.contract, draft.profile.key, draft.period)
+    assert next(b.text for b in reopened.draft.blocks if b.key == "activity_summary") == edited
+    assert library.imported_original(draft.profile.contract, draft.profile.key).read_bytes() == path.read_bytes()
