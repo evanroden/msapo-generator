@@ -612,7 +612,7 @@ def problems(item, draft):
     ):
         messages.append("Choose a valid item type and current status.")
     if not item.text.strip() and (item.category != "issue" or item.included):
-        messages.append("Keep a description of the carried item.")
+        messages.append("Enter a description for this item.")
     if item.status in ("updated", "resolved") and not (
         item.evidence_note.strip() or item.references
     ):
