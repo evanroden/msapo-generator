@@ -42,10 +42,10 @@ def render(live_storage_root):
             st.success("Report template saved. Other agents can download the unchanged original here.")
         generation = st.session_state.get(_PREFIX + "generation", 0)
         upload_key = _PREFIX + "file_" + str(generation)
-        st.file_uploader("Word report template", type=["docx"],
-                         max_upload_size=MAX_TEMPLATE_MIB, key=upload_key)
+        upload = st.file_uploader("Word report template", type=["docx"],
+                                  max_upload_size=MAX_TEMPLATE_MIB, key=upload_key)
         st.button("Save shared report template", key=_PREFIX + "save",
-                  on_click=_queue_upload, args=(upload_key,))
+                  on_click=_queue_upload, args=(upload_key,), disabled=upload is None)
         shelf = SharedReportTemplates(Path(live_storage_root))
         try:
             saved = shelf.list()

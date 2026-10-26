@@ -76,6 +76,7 @@ render({str(tmp_path)!r})
     monkeypatch.setattr(SharedReportTemplates, "download", observed)
     app = AppTest.from_string(script).run()
     assert not app.exception and not calls
+    assert app.button(key="_shared_template_save").disabled
     assert "Synthetic report.docx" in app.selectbox[0].options[0]
     assert app.get("file_uploader")[0].proto.max_upload_size_mb == 512
     key = "_shared_template_prepare_" + receipt.bundle_id + "_" + receipt.archive_sha256[:16]
