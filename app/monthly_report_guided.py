@@ -1181,14 +1181,6 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         contract = choose_contract(last_contract, field)
         if contract:
             period = month_selector(field, "report", suggested_period(operator_today(browser_timezone)))
-            # Keep the prior identity line while the native site choices are
-            # being read. st.empty() clears it immediately on every rerun,
-            # shifting checkbox rows during a second pointer press.
-            # Keep its outer extent too: a combined caption can wrap, then
-            # shrink while the next site's pointer is down. A native fixed
-            # viewport reserves a compact area and scrolls longer identities
-            # without clipping their text or moving the chooser below it.
-            identity_slot = st.container(key="monthly_report_identity_sites", height=72, border=False)
     if not contract:
         return
     profiles = library.list_profiles(contract)
@@ -1203,6 +1195,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         candidate, existing = select_sites(contract, profiles, remembered, field, completed_setup,
             render_details_action=lambda candidate, existing: _render_report_details_action(
                 candidate, existing, period, browser_token))
+    # Caption wrapping must not change the space above the next site press.
+    # Keep one native keyed container after the chooser, before either early
+    # return, with all identity text in normal document flow (no nested scroll).
+    identity_slot = st.container(key="monthly_report_identity_sites")
     identity_slot.caption(identity_summary(existing or candidate) if candidate else "Select report sites.")
     if not candidate:
         return
