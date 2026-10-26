@@ -100,6 +100,8 @@ on:
       - 'tests/test_qa_browser_diagnostics.py'
       - 'tests/test_qa_widget_delivery.py'
       - 'scripts/qa_monthly_site_pointer.py'
+      - 'scripts/qa_monthly_site_geometry.py'
+      - 'tests/test_monthly_site_geometry_harness.py'
       - 'tests/test_monthly_first_site_evidence.py'
       - 'scripts/qa_workflow_route_observations.py'
       - 'tests/test_workflow_route_observations.py'
@@ -258,6 +260,8 @@ on:
       - 'tests/test_qa_browser_diagnostics.py'
       - 'tests/test_qa_widget_delivery.py'
       - 'scripts/qa_monthly_site_pointer.py'
+      - 'scripts/qa_monthly_site_geometry.py'
+      - 'tests/test_monthly_site_geometry_harness.py'
       - 'tests/test_monthly_first_site_evidence.py'
       - 'scripts/qa_workflow_route_observations.py'
       - 'tests/test_workflow_route_observations.py'
@@ -814,5 +818,39 @@ jobs:
         with:
           name: training-date-synthetic-browser-evidence
           path: test-artifacts/monthly-training-date/
+          retention-days: 7
+          if-no-files-found: warn
+
+  monthly-site-geometry:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - name: Install locked app and site-geometry browser harness
+        timeout-minutes: 20
+        run: |
+          sudo python3 scripts/ci_ubuntu_mirror_priority.py
+          python -m pip install -r requirements-dev.lock
+          python scripts/patch_streamlit_frontend.py
+          python -m pip install playwright==1.58.0
+          python -m playwright install --with-deps chromium webkit
+      - name: Synthetic site-caption held-press geometry and keyboard reading
+        timeout-minutes: 11
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 10 <<'NATIVE_TEST'
+          python scripts/qa_monthly_site_geometry.py
+          NATIVE_TEST
+      - name: Retain site-caption first failures and traces immediately
+        if: always()
+        timeout-minutes: 3
+        uses: actions/upload-artifact@v4
+        with:
+          name: monthly-site-geometry-${{ github.run_attempt }}
+          path: test-artifacts/monthly-site-geometry/
           retention-days: 7
           if-no-files-found: warn
