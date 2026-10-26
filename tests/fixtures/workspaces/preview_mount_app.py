@@ -101,7 +101,11 @@ def synthetic_pdf():
 
 st.set_page_config(layout='wide')
 st.title('Synthetic preview arrival')
-with workspace('monthly', 'synthetic-preview-mount'):
+with workspace('monthly', 'synthetic-preview-mount', navigation_key='monthly_report_navigation'):
+    with st.container(key='monthly_report_navigation'):
+        st.markdown('<label class="epc-section-navigation">Section'
+                    '<select class="epc-section-selector" aria-label="Jump to section" disabled>'
+                    '<option>Loading sections…</option></select></label>', unsafe_allow_html=True)
     with workspace_section('monthly_cover', 'Cover'):
         st.subheader('Cover')
         editor, reference = workspace_columns('monthly_cover')
