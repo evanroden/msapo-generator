@@ -33,6 +33,9 @@ def geometry(page, button_key):
         return {cover:cover.getBoundingClientRect().toJSON(),
             button:button.getBoundingClientRect().toJSON(),
             reference:reference.getBoundingClientRect().toJSON(),
+            navigation:document.querySelector('.st-key-monthly_report_navigation').getBoundingClientRect().toJSON(),
+            slot:reference.querySelector('[class*="st-key-epc_preview_slot_"]').getBoundingClientRect().toJSON(),
+            mode:document.querySelector('.st-key-epc_workspace_monthly').dataset.epcMode || null,
             scrollTop:document.querySelector('[data-testid="stMain"]').scrollTop};
     }''', button_key)
 
@@ -46,7 +49,7 @@ def exercise(engine, name, late, target, press=True):
     button_key = 'render_outputs' if target == 'outside' else 'clear_activity'
     button_name = 'Render synthetic outputs' if target == 'outside' else 'Clear Activity'
     receipt = 'Output renders: 1' if target == 'outside' else 'Activity clears: 1'
-    url = URL + ('?delay_adapter=1' if late == 'adapter' else '')
+    url = URL + ('?delay_adapter=1' if late in ('adapter', 'pre-adapter-preview') else '')
     try:
         for label in ('cold', 'reload'):
             if label == 'cold':
@@ -56,10 +59,13 @@ def exercise(engine, name, late, target, press=True):
             page.wait_for_function('window.__previewMountWaiting === true')
             button = page.get_by_role('button', name=button_name, exact=True)
             expect(button).to_be_visible()
-            if late == 'adapter':
+            if late in ('adapter', 'pre-adapter-preview'):
                 page.wait_for_function('window.__workspaceMountWaiting === true')
-                page.evaluate('window.__releasePreviewMount()')
-                expect(page.locator('.report-preview')).to_have_count(1)
+                if late == 'adapter':
+                    page.evaluate('window.__releasePreviewMount()')
+                    expect(page.locator('.report-preview')).to_have_count(1)
+                else:
+                    expect(page.locator('.report-preview')).to_have_count(0)
                 expect(page.locator('.epc-workspace')).to_have_count(0)
             else:
                 page.wait_for_selector('.st-key-epc_pair_monthly_activity .epc-workspace-editor')
@@ -108,7 +114,15 @@ def exercise(engine, name, late, target, press=True):
             if press:
                 assert abs(after['cover']['height'] - before['cover']['height']) <= 3, run
                 assert abs(after['scrollTop'] - before['scrollTop']) <= 3, run
+                assert abs(after['navigation']['height'] - before['navigation']['height']) <= 3, run
+            if late == 'pre-adapter-preview':
+                assert before['mode'] is None and after['mode'] is None, run
+                assert abs(after['slot']['height'] - before['slot']['height']) <= 3, run
             assert events == ['pointerdown', 'pointerup', 'click'], run
+            if late == 'pre-adapter-preview':
+                # Only after the recorded native press may the separately
+                # delayed adapter arrive. It cannot mask this first-paint gap.
+                page.evaluate('window.__releaseWorkspaceMount()')
             # The native callback must arrive, not just a synthetic DOM event.
             expect(page.get_by_text(receipt, exact=True)).to_be_visible()
             page.wait_for_function('document.querySelector(".epc-workspace")?.dataset.epcMode === "wide"')
@@ -160,7 +174,9 @@ def main():
                     for engine, name in ((playwright.chromium, 'chromium'),
                                          (playwright.webkit, 'webkit')):
                         for late, target, press in (('preview', 'inside', True), ('adapter', 'inside', True),
-                                                    ('adapter', 'outside', True), ('adapter', 'outside', False)):
+                                                    ('adapter', 'outside', True), ('adapter', 'outside', False),
+                                                    ('pre-adapter-preview', 'inside', True),
+                                                    ('pre-adapter-preview', 'outside', True)):
                             label = name + '-' + late + '-' + target + ('' if press else '-hover')
                             try:
                                 exercise(engine, label, late, target, press)
