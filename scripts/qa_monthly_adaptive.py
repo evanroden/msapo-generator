@@ -477,6 +477,12 @@ def exercise(browser_type, name):
         expect(page.get_by_text("QA durable Activity SHA256: " + digest, exact=True)).to_be_visible(timeout=60000)
         # Genuine controls make a long editing section without synthetic padding,
         # alternate editors, forced preview height or eager rendering all sections.
+        # First-file intake is now open on entry. Exercise a genuine native
+        # dismissal before the existing reopen assertion; do not skip the
+        # source-manager action or alter the geometry task that follows it.
+        done = page.locator(ACTIVITY).get_by_role("button", name="Done with source files", exact=True)
+        expect(done).to_be_visible()
+        done.click()
         manager = page.locator(ACTIVITY).get_by_role("button", name="Manage source files", exact=True)
         manager.click()
         expect(page.locator(ACTIVITY).get_by_text("Read source files, check their pages, or match spreadsheet columns.", exact=True)).to_be_visible()

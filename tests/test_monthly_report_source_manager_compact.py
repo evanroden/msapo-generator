@@ -327,3 +327,23 @@ def test_replaced_unresolved_source_does_not_close_current_file(monkeypatch, tmp
     assert any('_source_manager_panel{display:block' in item.value for item in app.markdown)
     app.run()
     assert any('_source_manager_panel{display:block' in item.value for item in app.markdown)
+
+
+def test_explicit_native_reopen_wins_over_simultaneous_resolution(monkeypatch, tmp_path):
+    app = resolved_app(monkeypatch, tmp_path)
+    source = current_draft(app).sources[0]
+    status_key = next(key for key in app.session_state.filtered_state
+                      if key.endswith('_source_manager_resolution'))
+    # A stale rendered summary can receive an explicit open at the same time
+    # its source becomes resolved. The user's action must win over auto-close.
+    app.session_state[status_key] = {source.id: False}
+    button(app, 'Manage source files').click().run()
+    assert not app.exception
+    assert any('_source_manager_panel{display:block' in item.value for item in app.markdown)
+    app.run()
+    assert any('_source_manager_panel{display:block' in item.value for item in app.markdown)
+    assert not any(key.endswith('_open_request') for key in app.session_state.filtered_state)
+    # The one-shot precedence must not disable normal later quiet completion.
+    app.session_state[status_key] = {source.id: False}
+    app.run()
+    assert any('_source_manager_panel{display:none' in item.value for item in app.markdown)

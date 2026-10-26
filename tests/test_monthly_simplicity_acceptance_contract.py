@@ -104,3 +104,13 @@ def test_only_same_origin_canonical_uuid_blob_modules_are_allowed():
         'data:text/javascript,export default 1', 'file:///tmp/preview.js',
     ):
         assert not allowed_url(rejected), rejected
+
+
+def test_existing_adaptive_task_still_dismisses_and_reopens_native_source_tools():
+    source = (ROOT / 'scripts/qa_monthly_adaptive.py').read_text()
+    done = source.index('name="Done with source files", exact=True)')
+    close = source.index('done.click()', done)
+    reopen = source.index('manager.click()', close)
+    visible = source.index('Read source files, check their pages, or match spreadsheet columns.', reopen)
+    assert done < close < reopen < visible
+    assert 'native source-manager button opens the broad file tools' in source[visible:]
