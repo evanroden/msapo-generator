@@ -334,17 +334,19 @@ CUSTOM_CSS = """
     [data-testid="stSidebar"][aria-expanded="false"] * {
         visibility: hidden;
     }
-    /* Below this width, the centered 1000px form can meet the native opener.
+    /* Below this width, the shared 1680px shell can meet the native opener.
        Reserve the native header's height only there, without moving the form
        when its sidebar opens or changing wide/sidebarless workflow spacing. */
-    @media (max-width: 1100px) {
+    @media (max-width: 1780px) {
         .stApp:has([data-testid="stSidebar"]) .block-container {
             padding-top: 3.75rem !important;
         }
     }
 
     .block-container {
-        max-width: 1000px !important;
+        /* One shell from first paint, including setup and draft conflicts.
+           Workspace adapters must not resize the surrounding workflow tabs. */
+        max-width: 1680px !important;
         padding-top: 1.25rem !important;
         padding-right: max(1rem, env(safe-area-inset-right)) !important;
         padding-bottom: max(3rem, env(safe-area-inset-bottom)) !important;
