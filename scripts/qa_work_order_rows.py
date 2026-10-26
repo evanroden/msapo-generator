@@ -218,7 +218,7 @@ def exercise(browser, name):
     from playwright.sync_api import expect
     out = OUT / name
     out.mkdir(parents=True, exist_ok=True)
-    record = {"synthetic_only": True, "steps": [], "errors": [], "external": [],
+    record = {"synthetic_only": True, "steps": [], "errors": [], "external": [], "wire": [],
               "browser": name, "tested_checkout": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()}
     context = browser.new_context(viewport={"width": 1200, "height": 900}, accept_downloads=True)
     context.add_cookies([{"name": "epc_device_id", "value": secrets.token_hex(16), "url": URL}])
@@ -234,6 +234,36 @@ def exercise(browser, name):
     page = context.new_page()
     page.set_default_timeout(15000)
     page.on("pageerror", lambda error: record["errors"].append(str(error)))
+    def wire(direction, payload):
+        """Observe the native protocol; never modify or resend a frame."""
+        from streamlit.proto.BackMsg_pb2 import BackMsg
+        from streamlit.proto.ForwardMsg_pb2 import ForwardMsg
+        if not isinstance(payload, bytes):
+            return
+        message = BackMsg() if direction == "sent" else ForwardMsg()
+        message.ParseFromString(payload)
+        event = {"direction": direction, "at": time.monotonic()}
+        if direction == "sent" and message.HasField("rerun_script"):
+            event["widgets"] = [{"id": widget.id,
+                "value_type": widget.WhichOneof("value"),
+                "value": widget.string_trigger_value.data if widget.HasField("string_trigger_value")
+                         else widget.string_value if widget.HasField("string_value") else None}
+                for widget in message.rerun_script.widget_states.widgets]
+        elif direction == "received" and message.HasField("delta"):
+            delta = message.delta
+            if not delta.HasField("new_element") or not delta.new_element.HasField("dataframe"):
+                return
+            grid = delta.new_element.dataframe
+            event.update(grid_id=grid.id, action_ids=dict(grid.button_click_widgets))
+        elif direction == "received" and message.HasField("script_finished"):
+            event["script_finished"] = message.script_finished
+        else:
+            return
+        record["wire"].append(event)
+    def observe_socket(socket):
+        socket.on("framesent", lambda payload: wire("sent", payload))
+        socket.on("framereceived", lambda payload: wire("received", payload))
+    page.on("websocket", observe_socket)
     try:
         page.goto(URL, wait_until="domcontentloaded")
         baseline = settled(page, expected_rows("initial"), record, "compact unchanged")
@@ -342,13 +372,14 @@ def main():
                 failures = []
                 with sync_playwright() as playwright:
                     for name, engine in (("chromium", playwright.chromium), ("webkit", playwright.webkit)):
-                        browser = engine.launch(headless=True)
-                        try:
-                            exercise(browser, name)
-                        except Exception as error:
-                            failures.append(f"{name}: {error}")
-                        finally:
-                            browser.close()
+                        for case in range(3):
+                            browser = engine.launch(headless=True)
+                            try:
+                                exercise(browser, f"{name}-{case + 1}")
+                            except Exception as error:
+                                failures.append(f"{name}-{case + 1}: {error}")
+                            finally:
+                                browser.close()
                 if failures:
                     raise AssertionError("; ".join(failures))
             finally:
