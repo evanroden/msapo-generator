@@ -125,16 +125,43 @@ def assert_outputs(word, pdf, rows):
 
 OBSERVE = r"""() => {
   window.rowNativeEvents=[];
-  for(const type of ['pointerdown','click','dblclick','input','keydown']) {
+  const ids=new WeakMap();let next=0;
+  const describe=n=>{
+    if(!n)return null;
+    if(!ids.has(n))ids.set(n,++next);
+    const r=n.getBoundingClientRect?.();
+    return {id:ids.get(n),tag:n.tagName,role:n.getAttribute?.('role'),
+      label:n.getAttribute?.('aria-label'),testid:n.getAttribute?.('data-testid'),
+      text:n.closest?.('[role="menuitem"]')?.textContent?.slice(0,90),
+      x:r?.x,y:r?.y,width:r?.width,height:r?.height,connected:n.isConnected};
+  };
+  const snapshot=()=>({menu:describe(document.querySelector('[data-testid="stDataFrameButtonActionMenu"]')),
+    grid:describe(document.querySelector('[data-testid="data-grid-canvas"]')),
+    input:describe(document.querySelector('.gdg-input')),
+    app:document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')});
+  const record=value=>{
+    window.rowNativeEvents.push({...value,at:performance.now(),wall_ms:performance.timeOrigin+performance.now()});
+    if(window.rowNativeEvents.length>500)window.rowNativeEvents.shift();
+  };
+  // This fixture contains only invented data. Observe the whole pointer/focus
+  // sequence so a menu closing before pointerup cannot hide the event's target.
+  // Node identities and lifecycle snapshots are diagnostic only: no input,
+  // widget state, event dispatch, synchronization wait or retry is introduced.
+  for(const type of ['pointerdown','pointerup','mousedown','mouseup','click','dblclick','input','keydown','focusin','focusout']) {
     document.addEventListener(type,event=>{
       const n=event.target;
-      if(!n.closest?.('[data-testid="stDataFrame"],[data-testid="stDataFrameButtonActionMenu"],.gdg-growing-entry'))return;
-      window.rowNativeEvents.push({type,trusted:event.isTrusted,key:event.key||null,
+      record({type,trusted:event.isTrusted,key:event.key||null,
         label:n.getAttribute?.('aria-label')||null,testid:n.getAttribute?.('data-testid')||null,
-        at:performance.now()});
-      if(window.rowNativeEvents.length>120)window.rowNativeEvents.shift();
+        target:describe(n),item:describe(n.closest?.('[role="menuitem"]')),
+        clientX:event.clientX,clientY:event.clientY,...snapshot()});
     },true);
   }
+  let previous='';
+  new MutationObserver(()=>{
+    const current=snapshot(),value=JSON.stringify(current);
+    if(value!==previous){previous=value;record({type:'dom-state',...current});}
+  }).observe(document,{subtree:true,childList:true,attributes:true,
+    attributeFilter:['data-test-script-state']});
 }"""
 
 
@@ -219,7 +246,8 @@ def exercise(browser, name, *, delayed_ack=False):
     out = OUT / name
     out.mkdir(parents=True, exist_ok=True)
     record = {"synthetic_only": True, "steps": [], "errors": [], "external": [], "wire": [],
-              "browser": name, "tested_checkout": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()}
+              "browser": name, "tested_checkout": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
+              "working_tree_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).strip())}
     context = browser.new_context(viewport={"width": 1200, "height": 900}, accept_downloads=True)
     context.add_cookies([{"name": "epc_device_id", "value": secrets.token_hex(16), "url": URL}])
     if delayed_ack:
