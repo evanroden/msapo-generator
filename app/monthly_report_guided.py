@@ -19,7 +19,7 @@ from app.monthly_report_editor import _grid, _signature, _typed_table
 from app.monthly_report_model import (ReportDraft, ResolvedBlock, STOCK_TEXTS,
                                      layout_blocks, profile_sections, picture_replacement_references)
 from app.monthly_report_setup import MONTHLY_BLOCKS, merge_blocks, month_selector, new_month_draft, suggested_period
-from app.monthly_report_section_help import section_help, editor_section_guidance
+from app.monthly_report_section_help import section_help, editor_section_guidance, editor_section_heading_help
 
 # UI location is separate from next-month clearing: issues and renewal plans carry forward.
 MONTHLY_EDIT_KEYS = MONTHLY_BLOCKS | {"equipment_issues", "utility_analysis", "capital_renewal", "end_of_life", "proposals", "rfi_matrix", "mbcx_status"}
@@ -1454,7 +1454,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             title = editor_section_title(section)
             with workspace_section("monthly_" + section.key, title):
                 st.divider()
-                st.subheader(title, anchor="report-section-" + section.key)
+                st.subheader(title, anchor="report-section-" + section.key,
+                             help=editor_section_heading_help(section.key))
                 guidance = editor_section_guidance(section.key)
                 if guidance:
                     st.caption(guidance)

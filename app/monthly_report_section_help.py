@@ -39,7 +39,7 @@ _EDITOR_GUIDANCE = {
     "organization": "",
     "activity": "",
     "scorecards": "Add utility results. Leave unknown capacity blank or NR; note pending results only when confirmed.",
-    "mbcx": "Add monitoring results or a brief status update. MBCx means monitoring-based commissioning; use verified findings.",
+    "mbcx": "Add monitoring results or a brief status update.",
     "maintenance": "ENFRA onsite technician calls only. Put vendor work in [Monthly Activity Summary](#report-section-activity).",
     "subcontractors": "",
     "water": "Check out-of-range water readings and follow-up work.",
@@ -49,6 +49,16 @@ _EDITOR_GUIDANCE = {
     "training": "Record completed hospital/client staff training; hours only when known.",
     "rfi": "RFI means request for information. Mark complete only when confirmed.",
 }
+
+
+_EDITOR_HEADING_HELP = {
+    "mbcx": "MBCx means monitoring-based commissioning. Include only verified findings.",
+}
+
+
+def editor_section_heading_help(key):
+    """Explain an unfamiliar acronym at its existing heading, without extra captions."""
+    return _EDITOR_HEADING_HELP.get(key)
 
 
 def editor_section_guidance(key):
