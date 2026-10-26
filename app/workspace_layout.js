@@ -33,6 +33,11 @@ export default function(component) {
             subscriptions.push(() => document.removeEventListener(type, cancelLanding, {capture:true}));
         }
     }
+    const noteInput = event => globalThis.ENFRAWorkspaceNavigation?.noteInput(state, event);
+    for (const type of ['pointerdown', 'keydown', 'wheel']) {
+        document.addEventListener(type, noteInput, {capture:true, passive:true});
+        subscriptions.push(() => document.removeEventListener(type, noteInput, {capture:true}));
+    }
     const controlsOwner = {};
     if (data.workflow === 'monthly' && globalThis.ENFRASourceReviewNavigation)
         subscriptions.push(globalThis.ENFRASourceReviewNavigation.install(app, state));
@@ -367,6 +372,7 @@ export default function(component) {
         state.ownsScroll = ownsScroll;
         navigation?.update(context,sample);
         updateActive(context);
+        globalThis.ENFRAWorkspaceNavigation?.focusEntries(state, root);
         const signature = JSON.stringify([context.mode,context.editor,context.preview,top]);
         if (signature !== lastGeometry) {
             lastGeometry = signature;

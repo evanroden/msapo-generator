@@ -20,6 +20,37 @@ globalThis.ENFRAWorkspaceNavigation = {
         if (state.landingRequest && state.navigationRequest === state.landingRequest) state.navigationRequest = null;
         state.landingRequest = null;
     },
+    // The control the reader last activated, kept as the nearest keyed
+    // native element's class at that moment; the element itself may be
+    // re-rendered before a request arrives. Only a press, or Enter/Space on
+    // a control, activates. Tab, any other key or wheel scrolling means the
+    // reader has moved on, even while that control still has focus.
+    noteInput(state, event) {
+        if (!event.isTrusted) return;
+        const activation = event.type === 'pointerdown' ||
+            event.type === 'keydown' && (event.key === 'Enter' || event.key === ' ');
+        const keyed = activation ? event.target?.closest?.('[class*="st-key-"]') : null;
+        state.lastInputKey = keyed ? Array.from(keyed.classList).find(name => name.startsWith('st-key-')) || null : null;
+    },
+    // A native Add action may move focus into its new row once. Python
+    // renders a hidden marker after that row's fields, so the field exists
+    // when the marker does, and the adapter's existing DOM observer consumes
+    // it. Focus moves only if the reader's latest input was that same Add
+    // control; anything they did since keeps their place.
+    focusEntries(state, root) {
+        const consumed = state.entryFocus || (state.entryFocus = new Set());
+        for (const marker of root.querySelectorAll('[data-enfra-entry-focus]')) {
+            const {enfraEntryFocus: nonce, enfraEntryField: field, enfraEntryOrigin: origin} = marker.dataset;
+            if (!nonce || consumed.has(nonce)) continue;
+            consumed.add(nonce);
+            if (marker.closest('[data-stale="true"]') || state.lastInputKey !== 'st-key-' + origin) continue;
+            const target = root.querySelector('.st-key-' + CSS.escape(field))?.querySelector('textarea, input');
+            if (!target || target.disabled) continue;
+            state.lastInputKey = null;
+            target.focus({preventScroll: true});
+            target.scrollIntoView({block: 'nearest', inline: 'nearest'});
+        }
+    },
     create({root, app, scrollport, nav, state, geometry, schedule}) {
         if (!nav) return null;
         let select = null, entries = [], signature = '';

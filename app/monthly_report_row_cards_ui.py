@@ -65,6 +65,7 @@ def _queue(key, expected, tokens, active, fields, action="edit", target=None, *,
         draft_token = draft_token or uuid4().hex
         draft_index = len(rows)
         active = draft_token
+        record["entry_focus"] = draft_token
     elif action == "close":
         if active == draft_token:
             draft_token = None
@@ -149,6 +150,23 @@ def _comparison_rows(columns, rows):
     return [dict(zip(labels, row)) for row in rows]
 
 
+def _key_class(key):
+    return "st-key-" + re.sub(r"[^a-zA-Z0-9_-]", "-", key.strip())
+
+
+def _request_entry_focus(card_key, origin_key, field_key):
+    """Ask the workspace adapter, once, to put focus in this new row's field.
+
+    This marker follows the row's fields, so the field exists when the
+    marker does. The browser focuses it only if the reader's latest input
+    was this Add control (tests/workspace_navigation_test.cjs).
+    """
+    origin, target = _key_class(origin_key)[7:], _key_class(field_key)[7:]
+    st.html('<span hidden data-enfra-entry-focus="' + uuid4().hex + '" data-enfra-entry-field="' + target
+            + '" data-enfra-entry-origin="' + origin + '"></span><style>.' + _key_class(card_key)
+            + ' > [data-testid="stElementContainer"]:has([data-enfra-entry-focus]){display:none;}</style>')
+
+
 def _finish_row(key):
     """Retire this row's replaced elements when its native render is complete.
 
@@ -165,7 +183,7 @@ def _finish_row(key):
     """
     if st.__version__ != "1.61.1":
         return
-    selector = ".st-key-" + re.sub(r"[^a-zA-Z0-9_-]", "-", key.strip())
+    selector = "." + _key_class(key)
     child = ' > [data-testid="stElementContainer"]'
     marker = '[data-enfra-row-finished]'
     current = child + '[data-stale="false"] ' + marker
@@ -209,6 +227,10 @@ def _onsite_projection(columns, rows):
 
 def _edit_table(columns, rows, types, key, noun, add_label, field, *, onsite=False, prose=None):
     record = dict(st.session_state.get(key, {}))
+    # A focus request belongs only to the render that follows its Add.
+    entry_focus = record.pop("entry_focus", None)
+    if entry_focus:
+        st.session_state[key] = dict(record)
     pending = record.get("pending")
     incoming = tuple(tuple(row) for row in rows)
     rows = incoming
@@ -287,13 +309,14 @@ def _edit_table(columns, rows, types, key, noun, add_label, field, *, onsite=Fal
         if token != active and not any(value is not None and str(value).strip() for value in row):
             continue
         card_key = key + "_card_" + token
+        widget_keys = ()
         with st.container(key=card_key, border=True):
             if token == active:
                 # Live summaries would grow/move the native fields as the
                 # first identifier or a long title is entered. Keep this
                 # active heading the same height until explicit closure.
                 st.write("Edit " + noun)
-                _render_fields(columns, fields, args, field, queue, prose=prose)
+                widget_keys = _render_fields(columns, fields, args, field, queue, prose=prose)
                 st.button("Close editing", key=key + "_close_" + token, on_click=queue, args=(*args, "close"))
             else:
                 _summary(columns, row, noun, visible_index if onsite else index, prose)
@@ -304,6 +327,11 @@ def _edit_table(columns, rows, types, key, noun, add_label, field, *, onsite=Fal
                           help="Removes only this row from this report; source files and saved versions remain.",
                           on_click=queue, args=(*args, "remove", token))
             _finish_row(card_key)
+            if token == active == draft_token == entry_focus and widget_keys:
+                # A request's text, not its facility or number, is what a
+                # new request is for; other tables start at their first field.
+                first = next((n for n, title in enumerate(columns) if prose and prose(title)), 0)
+                _request_entry_focus(card_key, key + "_add", widget_keys[first])
         visible_index += 1
     st.button(add_label, key=key + "_add", on_click=queue, args=(*args, "add"),
               disabled=bool(active and active == draft_token))
@@ -311,10 +339,13 @@ def _edit_table(columns, rows, types, key, noun, add_label, field, *, onsite=Fal
 
 
 def _render_fields(columns, fields, args, field, queue=_queue, *, prose=None):
+    """Render one row's native fields; return their widget keys in order."""
+    keys = []
     for index, (title, (key, original, kind, default)) in enumerate(zip(columns, fields), 1):
         # These labels do not replace the stored or exported source headings.
         label = title if title.strip() else f"Column {index}"
         options = dict(key=field(key, default), value=default, on_change=queue, args=args)
+        keys.append(options["key"])
         if kind == "date" and (isinstance(default, date) or default is None):
             st.date_input(label, format="YYYY-MM-DD", **options)
         elif kind in {"number", "currency"} and (isinstance(default, float) or default is None):
@@ -324,6 +355,7 @@ def _render_fields(columns, fields, args, field, queue=_queue, *, prose=None):
             st.text_area(label, height=100, **options)
         else:
             st.text_input(label, **options)
+    return keys
 
 
 def edit_row_cards(spec, block, prefix, field, *, empty=None, notice=None):

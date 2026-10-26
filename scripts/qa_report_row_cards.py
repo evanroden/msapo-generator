@@ -151,6 +151,8 @@ def browser_task(browser_type, name):
         expect(requests.get_by_text('No requests added.',exact=True)).to_be_visible()
         requests.get_by_role('button',name='Add request',exact=True).click()
         expect(requests.get_by_role('textbox',name='Requested item',exact=True)).to_be_visible()
+        # One native Add puts the reader in the request's own text (#301).
+        expect(requests.get_by_role('textbox',name='Requested item',exact=True)).to_be_focused()
         expect(requests.locator('[data-testid="stDataFrame"]')).to_have_count(0)
         requests.get_by_role('textbox',name='Facility',exact=True).fill(REQUEST_SITE)
         requests.get_by_role('textbox',name='Requested item',exact=True).fill(REQUEST)
@@ -162,6 +164,7 @@ def browser_task(browser_type, name):
         # A request opened and cancelled while blank is never a row.
         requests.get_by_role('button',name='Add request',exact=True).click()
         expect(requests.get_by_role('textbox',name='Requested item',exact=True)).to_have_value('')
+        expect(requests.get_by_role('textbox',name='Requested item',exact=True)).to_be_focused()
         requests.get_by_role('button',name='Close editing',exact=True).click()
         assert capture('blank-request-cancelled')['working']['rows']==request_state['working']['rows']
         page.set_viewport_size({'width':545,'height':757})
