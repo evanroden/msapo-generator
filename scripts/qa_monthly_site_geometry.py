@@ -173,13 +173,102 @@ def held_press(page, gate, record):
     expect(second).not_to_be_checked(timeout=45000)
     expect(identity).to_have_text('Select report sites.', timeout=45000)
     record['wire_after_press'] = gate.sent[sent_before:]
+    record['after_release_checked'] = second.is_checked()
+    validate_held_press(record)
+
+
+def validate_held_press(record):
+    """Require native press delivery, fixed target and exactly one false request.
+
+    Streamlit's React Aria Checkbox calls its state adapter directly. A DOM
+    change event is not its delivery contract; trusted down/up/click plus exact
+    browser state and decoded outgoing value are the independent receipts.
+    """
     for key in ('x', 'y', 'width', 'height'):
         assert abs(record['before']['label'][key] - record['during_press']['label'][key]) <= 1, record
     assert record['release_hit_owned'], record
-    for kind in ('pointerdown', 'pointerup', 'change'):
+    for kind in ('pointerdown', 'pointerup', 'click'):
         matching = [e for e in record['events'] if e['type'] == kind and e['label'] == SECOND]
         assert len(matching) == 1 and matching[0]['trusted'], record
+    assert record['after_release_checked'] is False, record
     assert sum(row.get(SECOND) is False for row in record['wire_after_press']) == 1, record
+
+
+TEXT_METRICS = r"""n=>{
+  const main=document.querySelector('[data-testid="stMain"]');
+  const mainRect=main.getBoundingClientRect();
+  const rects=[],clipping=[],invisible=[],nestedScroll=[];const seen=new Set();let rangeText='';
+  const walker=document.createTreeWalker(n,NodeFilter.SHOW_TEXT);
+  while(walker.nextNode()){
+    const text=walker.currentNode;rangeText+=text.textContent;
+    const range=document.createRange();range.selectNodeContents(text);
+    const textRects=[...range.getClientRects()].filter(r=>r.width&&r.height);
+    if(text.textContent.trim()&&!textRects.length)
+      invisible.push({reason:'non-whitespace text has no nonempty range rectangles'});
+    for(const r of textRects){
+      const box=r.toJSON();rects.push(box);
+      for(let a=text.parentElement;a&&a!==main;a=a.parentElement){
+        const style=getComputedStyle(a),bounds=a.getBoundingClientRect();
+        const left=bounds.left+a.clientLeft,top=bounds.top+a.clientTop;
+        const right=left+a.clientWidth,bottom=top+a.clientHeight;
+        if(!seen.has(a)){
+          seen.add(a);
+          if((['auto','scroll'].includes(style.overflowY)&&a.scrollHeight>a.clientHeight+1)||
+             (['auto','scroll'].includes(style.overflowX)&&a.scrollWidth>a.clientWidth+1))
+            nestedScroll.push({tag:a.tagName,cls:a.className,top:a.scrollTop,left:a.scrollLeft});
+        }
+        const clipsX=style.overflowX!=='visible';
+        const clipsY=style.overflowY!=='visible';
+        if((clipsX&&(r.left<left-1||r.right>right+1))||
+           (clipsY&&(r.top<top-1||r.bottom>bottom+1))){
+          clipping.push({tag:a.tagName,cls:a.className,overflowX:style.overflowX,
+            overflowY:style.overflowY,box:bounds.toJSON(),text:box});
+        }
+        if(style.display==='none'||style.visibility!=='visible'||Number(style.opacity)===0)
+          invisible.push({tag:a.tagName,display:style.display,visibility:style.visibility,opacity:style.opacity});
+      }
+    }
+  }
+  const caption=n.querySelector('[data-testid="stCaptionContainer"]');
+  return {height:n.clientHeight,scrollHeight:n.scrollHeight,
+    overflow:getComputedStyle(n).overflowY,text:n.textContent,range_text:rangeText,
+    text_rects:rects,clipping,invisible,nested_scroll:nestedScroll,
+    visible_line_indices:rects.flatMap((r,i)=>{
+      const x=(r.left+r.right)/2;
+      const inside=r.top>=mainRect.top&&r.bottom<=Math.min(mainRect.bottom,innerHeight);
+      const owned=[r.top+1,(r.top+r.bottom)/2,r.bottom-1].every(y=>n.contains(document.elementFromPoint(x,y)));
+      return inside&&owned?[i]:[];
+    }),
+    glyph_bounds:rects.length?{top:Math.min(...rects.map(r=>r.top)),
+      bottom:Math.max(...rects.map(r=>r.bottom)),left:Math.min(...rects.map(r=>r.left)),
+      right:Math.max(...rects.map(r=>r.right))}:null,
+    caption_margin_bottom:caption?getComputedStyle(caption).marginBottom:null,
+    identity:n.getBoundingClientRect().toJSON(),main:mainRect.toJSON(),mainScroll:main.scrollTop};
+}"""
+
+
+def validate_text_metrics(value):
+    """Check actual text geometry, not margin-sensitive scrollHeight equality."""
+    assert value['text'] == value['range_text'] == 'Site: ' + LONG_SITE, value
+    assert value['text_rects'] and value['glyph_bounds'], value
+    assert not value['clipping'] and not value['invisible'] and not value['nested_scroll'], value
+    assert value['glyph_bounds']['left'] >= value['main']['left'] - 1, value
+    assert value['glyph_bounds']['right'] <= value['main']['right'] + 1, value
+
+
+
+def validate_reading_coverage(start, path):
+    """Every unchanged glyph line must be fully visible during keyboard reading."""
+    validate_text_metrics(start)
+    count = len(start['text_rects'])
+    covered = set(start['visible_line_indices'])
+    for item in path:
+        validate_text_metrics(item)
+        assert len(item['text_rects']) == count, item
+        covered.update(item['visible_line_indices'])
+    assert covered == set(range(count)), {'covered': sorted(covered), 'line_count': count}
+    assert path and path[-1]['mainScroll'] > start['mainScroll'], path
+    return sorted(covered)
 
 
 def keyboard_long_identity(page, gate, record):
@@ -196,15 +285,9 @@ def keyboard_long_identity(page, gate, record):
     assert abs(record['font_after'] / record['font_before'] - 2) < .01, record
     identity.scroll_into_view_if_needed()
     def metrics():
-        return identity.evaluate("""n=>({height:n.clientHeight,scrollHeight:n.scrollHeight,
-          overflow:getComputedStyle(n).overflowY,text:n.textContent,
-          identity:n.getBoundingClientRect().toJSON(),
-          main:document.querySelector('[data-testid="stMain"]').getBoundingClientRect().toJSON(),
-          mainScroll:document.querySelector('[data-testid="stMain"]').scrollTop})""")
+        return identity.evaluate(TEXT_METRICS)
     record['before'] = metrics()
-    assert record['before']['scrollHeight'] <= record['before']['height'] + 1, record
-    assert record['before']['overflow'] not in ('hidden', 'clip'), record
-    assert record['before']['text'] == 'Site: ' + LONG_SITE, record
+    validate_text_metrics(record['before'])
     # Start at a genuine preceding native control, never focus the caption or
     # inject tabindex. PageDown must reveal all of the full-height identity in
     # ordinary document flow, rather than relying on a tiny nested scrollbox.
@@ -220,18 +303,18 @@ def keyboard_long_identity(page, gate, record):
     assert focus_path[-1] == {'tag': 'INPUT', 'label': SECOND}, record
     record['keyboard_start'] = metrics()
     path = []
+    covered = set(record['keyboard_start']['visible_line_indices'])
     for _ in range(40):
         page.keyboard.press('PageDown')
         page.wait_for_timeout(50)  # Let native smooth scroll settle; no action retry.
         current = metrics()
         path.append(current)
-        if current['identity']['bottom'] <= current['main']['bottom']:
+        validate_text_metrics(current)
+        covered.update(current['visible_line_indices'])
+        if covered == set(range(len(record['keyboard_start']['text_rects']))):
             break
     record['document_scroll_path'] = path
-    assert path[-1]['identity']['bottom'] <= path[-1]['main']['bottom'], record
-    assert path[-1]['mainScroll'] > record['keyboard_start']['mainScroll'], record
-    assert all(item['scrollHeight'] <= item['height'] + 1 for item in path), record
-    assert all(item['text'] == 'Site: ' + LONG_SITE for item in path), record
+    record['covered_line_indices'] = validate_reading_coverage(record['keyboard_start'], path)
 
 
 def visit(browser, engine, scenario, output):
