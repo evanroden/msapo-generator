@@ -193,3 +193,46 @@ def test_guided_import_calls_guarded_scope_rotation():
 
     guided = (Path(__file__).resolve().parents[1] / "app/monthly_report_guided.py").read_text()
     assert guided.count("_rotate_rich_text_epoch(prefix)") == 2
+
+
+def test_recovery_whole_copy_replacement_disposes_old_pdf_scope(monkeypatch, rendered):
+    """Use-newer path must retire old fragments BEFORE it removes the epoch."""
+    from app import monthly_report_active_conflict_ui as conflict
+    from app import monthly_report_guided as guided
+
+    previous = package(pdf=b"%PDF-previous")
+    rendered.state["monthly_package"] = previous
+    rendered.state["monthly_rich_text_epoch"] = "previous-incarnation"
+    old_scope = guided._rich_text_scope("monthly")
+    retired = []
+
+    def discard(scope):
+        assert rendered.state["monthly_package"] is previous
+        assert rendered.state["monthly_rich_text_epoch"] == "previous-incarnation"
+        assert guided._rich_text_scope("monthly") == old_scope
+        retired.append(scope)
+
+    monkeypatch.setattr(reference_preview, "discard_reference_scope", discard)
+    newer = SimpleNamespace(draft=SimpleNamespace(fingerprint="newer-draft"), assets=(),
+                            base_snapshot_revision=4, revision=7,
+                            generation="newer-generation", updated_at="now")
+    conflict._use_newer("monthly", newer)
+
+    assert retired == [output_ui._final_pdf_scope("monthly", old_scope)]
+    assert "monthly_package" not in rendered.state
+    assert rendered.state["monthly_draft"] is newer.draft
+    assert rendered.state["monthly_rich_text_epoch"] != "previous-incarnation"
+    assert guided._rich_text_scope("monthly") != old_scope
+
+
+def test_newer_copy_first_session_needs_no_old_pdf_retirement(monkeypatch, rendered):
+    from app import monthly_report_active_conflict_ui as conflict
+
+    disposed = []
+    monkeypatch.setattr(reference_preview, "discard_reference_scope", disposed.append)
+    newer = SimpleNamespace(draft=SimpleNamespace(fingerprint="newer-draft"), assets=(),
+                            base_snapshot_revision=1, revision=2,
+                            generation="test-generation", updated_at="now")
+    conflict._use_newer("monthly", newer)
+    assert not disposed
+    assert rendered.state["monthly_draft"] is newer.draft
