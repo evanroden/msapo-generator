@@ -51,6 +51,34 @@ globalThis.ENFRAWorkspaceNavigation = {
             target.scrollIntoView({block: 'nearest', inline: 'nearest'});
         }
     },
+    // This adapter's own layout writes can resize content above the reader:
+    // the first wide layout reserves preview space beside every section.
+    // WebKit keeps the scroll offset, and Chromium's anchoring can miss it,
+    // so a control moves out from under a resting pointer and a click lands
+    // elsewhere. Remember what the reader is looking at before those writes:
+    // the element under the pointer, else the one at the reading line below
+    // the selector. Framework reruns, previews and navigation are not
+    // compensated; the anchor is taken after them and kept before navigation.
+    readingAnchor({state, scrollport, app, nav}) {
+        if (state.ownsScroll) return null;
+        const port = scrollport.getBoundingClientRect();
+        const top = Math.max(port.top, nav ? nav.getBoundingClientRect().bottom : port.top);
+        const usable = node => {
+            if (!node || !scrollport.contains(node) || nav?.contains(node) ||
+                node.closest?.('[class*="st-key-epc_preview_slot_"]')) return false;
+            const box = node.getBoundingClientRect();
+            return box.height < port.height && box.bottom > top && box.top < port.bottom;
+        };
+        const hovered = Array.from(document.querySelectorAll(':hover')).pop();
+        const box = app.getBoundingClientRect();
+        const node = usable(hovered) ? hovered : document.elementFromPoint(box.left + 24, top + (port.bottom - top) / 3);
+        return usable(node) ? {node, top: node.getBoundingClientRect().top} : null;
+    },
+    keepAnchor(anchor, scrollport) {
+        if (!anchor?.node.isConnected) return;
+        const shift = anchor.node.getBoundingClientRect().top - anchor.top;
+        if (Math.abs(shift) >= 1) scrollport.scrollTop += shift;
+    },
     create({root, app, scrollport, nav, state, geometry, schedule}) {
         if (!nav) return null;
         let select = null, entries = [], signature = '';

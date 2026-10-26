@@ -196,7 +196,7 @@ test('a streamed navigation container binds through existing discovery and later
         nav.querySelector=()=>nav.select;return nav;
     };
     const document={activeElement:field,hidden:false,documentElement:{clientWidth:1180},body:element(),
-        createElement:element,addEventListener(){},removeEventListener(){},
+        createElement:element,addEventListener(){},removeEventListener(){},querySelectorAll:()=>[],elementFromPoint:()=>null,
         querySelector:selector=>selector.includes('epc_workspace_')?root:selector.includes('monthly_report_navigation')?mounted:null};
     const observers=[],frames=new Map();let sequence=0;
     class Observer {
@@ -405,4 +405,67 @@ test('tabbing away from Add or scrolling before the row arrives keeps the reader
         h.focus();
         assert.deepEqual(h.counts(),{focused:0,scrolled:0},type+' '+code);
     }
+});
+
+function anchorHarness({hover, ownsScroll=false}={}) {
+    const rect=(top,height)=>({top,bottom:top+height,height,left:80,right:1354});
+    const node=(name,top,height,{inNav=false,inSlot=false}={})=>({name,isConnected:true,top,height,
+        getBoundingClientRect(){return rect(this.top,this.height)},
+        closest:selector=>inSlot&&selector==='[class*="st-key-epc_preview_slot_"]'?{}:null,inNav});
+    const nav={getBoundingClientRect:()=>rect(60,52),contains:target=>Boolean(target?.inNav)};
+    const reading=node('reading line',360,40);
+    const scrollport={scrollTop:1000,getBoundingClientRect:()=>rect(0,900),contains:target=>Boolean(target)};
+    const app={getBoundingClientRect:()=>rect(0,4000)};
+    const document={querySelectorAll:selector=>selector===':hover'?(hover?[app,hover]:[]):[],
+        elementFromPoint:(x,y)=>(x===104&&Math.round(y)===375?reading:null)};
+    const context={document,CSS:{escape:value=>value}};
+    vm.runInNewContext(fs.readFileSync('app/workspace_navigation.js','utf8'),context);
+    const navigation=context.ENFRAWorkspaceNavigation, state={ownsScroll};
+    return {node,reading,scrollport,
+        capture:()=>navigation.readingAnchor({state,scrollport,app,nav}),
+        keep:anchor=>navigation.keepAnchor(anchor,scrollport)};
+}
+
+test('the element under a resting pointer stays put across the adapter layout',()=>{
+    const pointed=anchorHarness().node('render outputs',659,40);
+    const h=anchorHarness({hover:pointed});
+    const anchor=h.capture();
+    assert.equal(anchor.node,pointed);
+    pointed.top=785;h.keep(anchor);
+    assert.equal(h.scrollport.scrollTop,1126,'scroll follows the 126px the layout added above');
+});
+
+test('without a usable hovered element the reading line below the selector is kept',()=>{
+    const probe=anchorHarness();
+    for (const hover of [null, probe.node('selector option',70,20,{inNav:true}),
+        probe.node('preview page',300,200,{inSlot:true}), probe.node('page container',-400,5000)]) {
+        const h=anchorHarness({hover});
+        const anchor=h.capture();
+        assert.equal(anchor.node,h.reading,String(hover?.name));
+        h.reading.top=400;h.keep(anchor);
+        assert.equal(h.scrollport.scrollTop,1040);
+    }
+});
+
+test('a layout that moves nothing, or a scroll the workspace owns, is left alone',()=>{
+    const h=anchorHarness();
+    const anchor=h.capture();
+    h.reading.top=360.4;h.keep(anchor);
+    assert.equal(h.scrollport.scrollTop,1000);
+    anchor.node.isConnected=false;anchor.node.top=900;h.keep(anchor);
+    assert.equal(h.scrollport.scrollTop,1000);
+    assert.equal(anchorHarness({ownsScroll:true}).capture(),null);
+});
+
+test('the adapter anchors only around its own layout writes, in page scroll',()=>{
+    const layout=fs.readFileSync('app/workspace_layout.js','utf8');
+    const measure=layout.split('function measure() {')[1].split('\n    function schedule()')[0];
+    const capture=measure.indexOf('readingAnchor(');
+    assert.ok(capture>0 && capture<measure.indexOf("root.classList.add('epc-workspace')"),
+        'the anchor is taken before the first layout write');
+    const keep=measure.indexOf('keepAnchor(');
+    assert.ok(keep>measure.indexOf("root.dataset.epcMode = context.mode") && keep<measure.indexOf('navigation?.update('),
+        'it is kept after the layout writes and before navigation positions anything');
+    assert.match(measure,/if \(previous !== context\.mode && !ownsScroll && !ownedScrollBefore\)\s*\S*keepAnchor\(/,
+        'only a layout change in page scroll is compensated');
 });

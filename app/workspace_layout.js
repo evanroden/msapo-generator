@@ -297,6 +297,8 @@ export default function(component) {
             }
             return;
         }
+        // What the reader is looking at before this measurement's own writes.
+        const anchor = globalThis.ENFRAWorkspaceNavigation?.readingAnchor({state, scrollport, app, nav});
         // The framework can replace this keyed container's class attribute
         // while retaining its native subtree. Reassert only our owned class
         // before measuring; the current mode must keep its matching CSS.
@@ -368,6 +370,13 @@ export default function(component) {
             if (ownsScroll) root.scrollTop += activeBefore.pair.getBoundingClientRect().top - context.editor.y;
             else if (ownedScrollBefore) scrollport.scrollTop = state.outerScroll || 0;
         }
+        // When the layout itself changes (the first wide layout after a load,
+        // or a resize into another mode) in page scroll, keep that element
+        // where it was, so a control does not move out from under the
+        // pointer. Ordinary measurements, such as the selector pinning for
+        // Review, are navigation's own and are left alone.
+        if (previous !== context.mode && !ownsScroll && !ownedScrollBefore)
+            globalThis.ENFRAWorkspaceNavigation?.keepAnchor(anchor, scrollport);
         state.mode = context.mode;
         state.ownsScroll = ownsScroll;
         navigation?.update(context,sample);
