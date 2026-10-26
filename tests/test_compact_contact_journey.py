@@ -157,3 +157,112 @@ def test_output_check_reads_a_phone_the_pdf_wrapped_after_its_hyphen():
     validate_outputs(word.getvalue(), wrapped, rows)
     with pytest.raises(AssertionError):
         validate_outputs(word.getvalue(), wrapped, [(*rows[0][:3], "202-555-0198", "")])
+
+
+class FakeContactSocket:
+    def __init__(self, url='ws://127.0.0.1:8520/_stcore/stream'):
+        self.url = url
+        self.sent = []
+        self.closed = None
+        self.server = None
+
+    def connect_to_server(self):
+        self.server = FakeContactSocket()
+        return self.server
+
+    def on_message(self, callback):
+        self.receive = callback
+
+    def send(self, raw):
+        self.sent.append(raw)
+
+    def close(self, **kwargs):
+        self.closed = kwargs
+
+
+@pytest.mark.parametrize('url', ['ws://example.com:8520/', 'ws://127.0.0.1:8521/',
+                                 'wss://127.0.0.1:8520/', 'ws://user@127.0.0.1:8520/'])
+def test_contact_gate_rejects_nonfixture_destinations(url):
+    from scripts.qa_compact_contact_journey import ContactDeliveryGate
+    rejected = []
+    socket = FakeContactSocket(url)
+    ContactDeliveryGate(rejected).route(socket)
+    assert rejected == [url] and socket.server is None
+    assert socket.closed['code'] == 1008
+
+
+def test_contact_gate_preserves_frames_and_outgoing_messages():
+    from streamlit.proto.ForwardMsg_pb2 import ForwardMsg
+    from scripts.qa_compact_contact_journey import ContactDeliveryGate
+    gate, socket = ContactDeliveryGate([]), FakeContactSocket()
+    gate.route(socket)
+    socket.server.receive(b'initial')
+    assert socket.sent == [b'initial']
+    gate.hold()
+    fragment = ForwardMsg(script_finished=ForwardMsg.FINISHED_FRAGMENT_RUN_SUCCESSFULLY).SerializeToString()
+    socket.server.receive(fragment)
+    assert not gate.finished
+    finished = ForwardMsg(script_finished=ForwardMsg.FINISHED_SUCCESSFULLY).SerializeToString()
+    for raw in (b'first', finished, b'last'):
+        socket.server.receive(raw)
+    socket.receive(b'native-widget-message')
+    assert socket.server.sent == [b'native-widget-message']
+    assert gate.finished and socket.sent == [b'initial']
+    assert gate.release() == 4
+    assert socket.sent == [b'initial', fragment, b'first', finished, b'last']
+    assert gate.frames == [] and not gate.holding
+
+
+def test_contact_gate_buffer_is_bounded():
+    from scripts.qa_compact_contact_journey import ContactDeliveryGate
+    gate, socket = ContactDeliveryGate([]), FakeContactSocket()
+    gate.route(socket)
+    gate.hold()
+    gate.buffered_bytes = 32 * 1024 * 1024
+    with pytest.raises(AssertionError):
+        socket.server.receive(b'x')
+
+
+def held_press_evidence():
+    import copy
+    before = {'node':7,'connected':True,'visible':True,'disabled':False,
+              'rect':{'x':10,'y':20,'width':100,'height':30}}
+    return {'before':before,'after':copy.deepcopy(before),'release_hit_owned':True,
+            'events':[{'type':kind,'trusted':True,'node':7,'label':'Edit contact'}
+                      for kind in ('pointerdown','pointerup','click')]}
+
+
+def test_contact_held_press_accepts_only_stable_native_delivery():
+    from scripts.qa_compact_contact_journey import validate_held_contact_press
+    validate_held_contact_press(held_press_evidence())
+
+
+@pytest.mark.parametrize('mutation', ['remount','move','disabled','disconnected','hidden',
+                                     'wrong-hit','untrusted','missing-up','missing-click'])
+def test_contact_held_press_rejects_lost_or_moved_activation(mutation):
+    from scripts.qa_compact_contact_journey import validate_held_contact_press
+    value = held_press_evidence()
+    if mutation == 'remount': value['after']['node'] = 8
+    elif mutation == 'move': value['after']['rect']['y'] += 3
+    elif mutation == 'disabled': value['after']['disabled'] = True
+    elif mutation == 'disconnected': value['after']['connected'] = False
+    elif mutation == 'hidden': value['after']['visible'] = False
+    elif mutation == 'wrong-hit': value['release_hit_owned'] = False
+    elif mutation == 'untrusted': value['events'][-1]['trusted'] = False
+    elif mutation == 'missing-up': value['events'].pop(1)
+    else: value['events'].pop()
+    with pytest.raises(AssertionError):
+        validate_held_contact_press(value)
+
+
+def test_contact_runner_retains_ordinary_and_additional_held_case(monkeypatch):
+    from scripts import qa_compact_contact_journey as qa
+    calls = []
+    def task(browser, name, *, held_recovery):
+        calls.append((name, held_recovery))
+        if not held_recovery:
+            raise AssertionError('preserved first failure')
+    monkeypatch.setattr(qa, 'browser_task', task)
+    with pytest.raises(AssertionError, match='preserved first failure'):
+        qa.browser_cases(None, 'webkit')
+    assert calls == [('webkit', False), ('webkit-held-recovery', True)]

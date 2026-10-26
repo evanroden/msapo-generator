@@ -288,3 +288,34 @@ def test_edit_chart_after_an_unblurred_contact_field_opens_the_chart_in_one_acti
     assert not app.text_input, 'the contact editor closed after its field was kept'
     assert report(app).rows[0][3] == 'delivered-with-chart'
     assert directory.load_directory(profile.contract).sites[0].contacts[0].phone == 'delivered-with-chart'
+
+
+@pytest.mark.parametrize('choice', ['Retry shared contact correction', 'Keep correction in this report only'])
+def test_resolved_recovery_does_not_move_next_native_edit_on_passive_rerun(monkeypatch,tmp_path,choice):
+    app, profile, original, before = workspace(monkeypatch,tmp_path)
+    press(app,'Edit contact')
+    field(app,'Phone').set_value('stable correction')
+    with patch.object(directory,'automatically_keep_directory_contact_edits',side_effect=OSError('synthetic failure')):
+        press(app,'Remove contact')
+    with patch.object(directory,'automatically_keep_directory_contact_edits',wraps=directory.automatically_keep_directory_contact_edits) as write:
+        press(app,choice)
+        assert not any('still pending' in warning.value for warning in app.warning)
+        assert not any(button.label in ('Retry shared contact correction','Keep correction in this report only') for button in app.button)
+        button=next(button for button in app.button if button.label=='Edit contact')
+        identity=button.proto.id
+        def path(node,parents=()):
+            if getattr(node,'type','')=='button' and node.proto.id==identity:return parents
+            for index,child in getattr(node,'children',{}).items():
+                found=path(child,(*parents,index))
+                if found is not None:return found
+        previous_path=path(app._tree)
+        previous_report=report(app)
+        previous_directory=directory.load_directory(profile.contract)
+        app.run()
+        assert not app.exception
+        assert path(app._tree)==previous_path
+        assert report(app)==previous_report
+        assert directory.load_directory(profile.contract)==previous_directory
+        assert write.call_count==(1 if choice.startswith('Retry') else 0)
+    press(app,'Edit contact')
+    assert field(app,'Phone').value=='stable correction'

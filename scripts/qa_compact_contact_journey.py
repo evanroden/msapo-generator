@@ -1,7 +1,7 @@
 """Hosted Chromium/WebKit compact-contact lifecycle, invented isolated data only.
 
 No JS state mutation, force clicks, rescue clicks or live fixtures. First failed
-activation stops its engine and retains native events/screenshot/trace evidence.
+activation stops its case and retains native events/screenshot/trace evidence.
 """
 from hashlib import sha256
 from io import BytesIO
@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import secrets
 import sys
+import time
 from urllib.parse import urlparse
 from zipfile import ZipFile
 
@@ -19,16 +20,115 @@ CONTACTS = '.st-key-epc_pair_monthly_organization'
 VENDORS = '.st-key-epc_pair_monthly_subcontractors'
 SELECTOR = '[data-enfra-contact-receipt]'
 OBSERVER = r'''(() => {
- const ids=new WeakMap();let next=0;const events=[];
+ const ids=new WeakMap();let next=0,sequence=0;const events=[];
  const describe=n=>{if(!ids.has(n))ids.set(n,++next);const r=n.getBoundingClientRect();
  return {node:ids.get(n),connected:n.isConnected,focused:document.activeElement===n,
  visible:!!n.getClientRects().length,disabled:n.disabled,caret:[n.selectionStart??null,n.selectionEnd??null],
  rect:{x:r.x,y:r.y,width:r.width,height:r.height}};};
  for(const type of ['pointerdown','pointerup','click','dblclick'])document.addEventListener(type,e=>{
- const b=e.target?.closest?.('button');if(b)events.push({type,trusted:e.isTrusted,label:b.textContent.trim(),...describe(b)});
+ const b=e.target?.closest?.('button');if(b)events.push({sequence:++sequence,type,trusted:e.isTrusted,label:b.textContent.trim(),...describe(b)});
  if(events.length>256)events.shift();},true);
  window.ENFRAContactObservation={describe,events};
 })();'''
+
+
+class ContactDeliveryGate:
+    """Hold only incoming native frames; never alter widget messages or order."""
+    def __init__(self, rejected):
+        self.rejected = rejected
+        self.holding = False
+        self.finished = False
+        self.frames = []
+        self.buffered_bytes = 0
+
+    def route(self, socket):
+        from google.protobuf.message import DecodeError
+        from streamlit.proto.ForwardMsg_pb2 import ForwardMsg
+        url = urlparse(socket.url)
+        if (url.scheme != 'ws' or url.hostname != '127.0.0.1' or url.port != 8520
+                or url.username or url.password):
+            self.rejected.append(socket.url)
+            socket.close(code=1008, reason='Synthetic exact loopback only')
+            return
+        server = socket.connect_to_server()
+        def received(raw):
+            if self.holding:
+                message = ForwardMsg()
+                try:
+                    message.ParseFromString(raw)
+                    if (message.WhichOneof('type') == 'script_finished'
+                            and message.script_finished == ForwardMsg.FINISHED_SUCCESSFULLY):
+                        self.finished = True
+                except (DecodeError, TypeError):
+                    pass
+                self.buffered_bytes += len(raw)
+                assert len(self.frames) < 4096 and self.buffered_bytes <= 32 * 1024 * 1024
+                self.frames.append((socket, raw))
+            else:
+                socket.send(raw)
+        server.on_message(received)
+        socket.on_message(server.send)
+
+    def hold(self):
+        assert not self.frames
+        self.finished = False
+        self.buffered_bytes = 0
+        self.holding = True
+
+    def release(self):
+        self.holding = False
+        frames, self.frames = self.frames, []
+        for socket, raw in frames:
+            socket.send(raw)
+        return len(frames)
+
+
+def validate_held_contact_press(value):
+    before, after = value['before'], value['after']
+    assert before['node'] == after['node'] and after['connected'] and after['visible'], value
+    assert not after['disabled'] and value['release_hit_owned'], value
+    assert all(abs(before['rect'][key] - after['rect'][key]) <= 1
+               for key in ('x', 'y', 'width', 'height')), value
+    for kind in ('pointerdown', 'pointerup', 'click'):
+        assert any(event['type'] == kind and event['trusted'] and event['node'] == before['node']
+                   and event['label'] == 'Edit contact' for event in value['events']), value
+
+
+def edit_contact_during_recovery_rerun(page, contacts, gate, previous, record):
+    """Native held press across the next rerun, not an idle-wait workaround."""
+    from playwright.sync_api import expect
+    gate.hold()
+    page.get_by_role('button',name='Fail next synthetic shared save after commit',exact=True).click()
+    deadline = time.monotonic() + 45
+    while not gate.finished and time.monotonic() < deadline:
+        page.wait_for_timeout(25)  # Pump buffered delivery; no repeated action.
+    assert gate.finished and gate.frames, 'Passive rerun did not reach the delivery gate'
+    button = contacts.get_by_role('button',name='Edit contact',exact=True).first
+    button.scroll_into_view_if_needed()
+    expect(button).to_be_visible()
+    evidence = record['held_after_recovery'] = {}
+    evidence['before'] = button.evaluate('n=>window.ENFRAContactObservation.describe(n)')
+    start = page.evaluate('window.ENFRAContactObservation.events.at(-1)?.sequence ?? 0')
+    rect = evidence['before']['rect']
+    x, y = rect['x'] + rect['width'] / 2, rect['y'] + rect['height'] / 2
+    page.mouse.move(x, y)
+    page.mouse.down()
+    try:
+        evidence['buffered_frames'] = gate.release()
+        passive = receipt(page, after=previous['sequence'])
+        assert passive['working'] == previous['working'] and passive['directory'] == previous['directory']
+        assert passive['attempts'] == previous['attempts']
+        page.evaluate('() => new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
+        evidence['after'] = button.evaluate('n=>window.ENFRAContactObservation.describe(n)')
+        evidence['release_hit_owned'] = button.evaluate('(n,p)=>n.contains(document.elementFromPoint(p.x,p.y))', {'x':x,'y':y})
+    finally:
+        page.mouse.up()
+    expect(contacts.get_by_role('textbox',name='Phone',exact=True)).to_have_count(1)
+    opened = receipt(page, after=passive['sequence'])
+    assert opened['working'] == passive['working'] and opened['directory'] == passive['directory']
+    assert opened['attempts'] == passive['attempts']
+    evidence['events'] = page.evaluate('(start)=>window.ENFRAContactObservation.events.filter(e=>e.sequence>start)',start)
+    validate_held_contact_press(evidence)
 
 
 def receipt(page, *, after=0, expected_contact=None, expected_write=None):
@@ -71,7 +171,7 @@ def validate_outputs(word, pdf, rows):
             'scope':'Actual native Word table and PDF text; not genuine-report, physical device or Microsoft Word acceptance.'}
 
 
-def browser_task(browser_type, name):
+def browser_task(browser_type, name, *, held_recovery=False):
     from playwright.sync_api import expect
     from scripts import qa_monthly_adaptive as qa
     browser = browser_type.launch(headless=True)
@@ -82,6 +182,9 @@ def browser_task(browser_type, name):
     out = qa.OUT / name
     out.mkdir(parents=True, exist_ok=True)
     errors, external = [], []
+    gate = ContactDeliveryGate(external)
+    if held_recovery:
+        context.route_web_socket('**/*', gate.route)
     def route(request):
         url = urlparse(request.request.url)
         if url.scheme in {'data','blob'} or (url.hostname == '127.0.0.1' and url.port == 8520):
@@ -93,7 +196,7 @@ def browser_task(browser_type, name):
     page = context.new_page()
     page.set_default_timeout(20000)
     page.on('pageerror', lambda error: errors.append(str(error)))
-    record = {'synthetic_only':True, 'steps':[], 'errors':errors, 'external':external}
+    record = {'synthetic_only':True, 'held_recovery':held_recovery, 'steps':[], 'errors':errors, 'external':external}
     def capture(stage, previous=None, expected_contact=None, expected_write=None):
         state = receipt(page, after=previous['sequence'] if previous else 0, expected_contact=expected_contact, expected_write=expected_write)
         assert state['saved_unchanged'] and state['original_unchanged']
@@ -171,8 +274,11 @@ def browser_task(browser_type, name):
             controls = page.get_by_test_id('stExpander').filter(has=page.locator('summary').get_by_text('Synthetic fault controls',exact=True))
             if not controls.evaluate("n => (n.matches('details') ? n : n.querySelector('details')).open"):
                 controls.locator('summary').click()
-            page.get_by_role('button',name=f'Fail next synthetic shared save {fault} commit',exact=True).click()
-            contacts.get_by_role('button',name='Edit contact',exact=True).first.click()
+            if held_recovery and fault == 'after':
+                edit_contact_during_recovery_rerun(page, contacts, gate, state, record)
+            else:
+                page.get_by_role('button',name=f'Fail next synthetic shared save {fault} commit',exact=True).click()
+                contacts.get_by_role('button',name='Edit contact',exact=True).first.click()
             contacts.get_by_role('textbox',name='Phone',exact=True).fill(phone)
             prior = state
             contacts.get_by_role('button',name='Remove contact',exact=True).click()
@@ -253,6 +359,18 @@ def browser_task(browser_type, name):
         browser.close()
 
 
+def browser_cases(browser_type, name):
+    """Keep the ordinary journey and add a separate controlled-delivery case."""
+    failures = []
+    for held in (False, True):
+        case = name + ('-held-recovery' if held else '')
+        try:
+            browser_task(browser_type, case, held_recovery=held)
+        except Exception as exc:
+            failures.append(f'{case}: {type(exc).__name__}: {str(exc)[:1000]}')
+    assert not failures, '\n'.join(failures)
+
+
 def main():
     from playwright.sync_api import Browser, BrowserContext
     from scripts import qa_monthly_adaptive as qa
@@ -260,7 +378,7 @@ def main():
     os.environ['EPC_MONTHLY_CONTACT_TASK'] = '1'
     qa.OUT = ROOT / 'test-artifacts/compact-contact-journey'
     qa.REPORT = {'synthetic_only':True,'browsers':{},'checks':[],'physical_device':False}
-    qa.exercise = browser_task
+    qa.exercise = browser_cases
     with observe(qa.OUT/'diagnostics',Browser,BrowserContext):
         qa.main()
 
