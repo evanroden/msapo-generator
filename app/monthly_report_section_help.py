@@ -31,6 +31,33 @@ SECTION_HELP = {
 }
 
 
+
+# The importer keeps the full guidance above. In the routine editor, show
+# just the context needed to make an informed choice without repeating field
+# labels. Blank hints mean the nearby native editor is self-explanatory.
+_EDITOR_GUIDANCE = {
+    "organization": "",
+    "activity": "",
+    "scorecards": "Add utility results. Leave unknown capacity blank or NR; note pending results only when confirmed.",
+    "mbcx": "MBCx means monitoring-based commissioning. Add verified findings or the current status.",
+    "maintenance": "ENFRA onsite technician calls only. Put vendor work in [Monthly Activity Summary](#report-section-activity).",
+    "subcontractors": "",
+    "water": "Check out-of-range water readings and follow-up work.",
+    "issues": "Update issues and status. Removing an item leaves it out of this report only.",
+    "capital": "Update replacement priorities; leave unknown dates blank.",
+    "proposals": "Exclude prices and commercial or legal-only pages.",
+    "training": "Record completed hospital/client staff training; hours only when known.",
+    "rfi": "RFI means request for information. Mark complete only when confirmed.",
+}
+
+
+def editor_section_guidance(key):
+    """Compact, nonblocking hints for the ordinary Monthly editor."""
+    if key in _EDITOR_GUIDANCE:
+        return _EDITOR_GUIDANCE[key]
+    return section_help(key).guidance
+
+
 def section_help(key):
     return SECTION_HELP.get(key, SECTION_HELP["other"])
 
