@@ -87,6 +87,9 @@ export default function(component) {
         target.addEventListener(type, listener, {passive:true});
         subscriptions.push(() => target.removeEventListener(type, listener));
     }
+    function findNav() {
+        return data.navigationKey ? document.querySelector('.st-key-' + CSS.escape(data.navigationKey)) : null;
+    }
     function addControls(pair, reference, title, row, editor) {
         // Keep the action under its own heading/errors, immediately before
         // the working row. Prepending it to the pair made it read as the prior
@@ -199,9 +202,6 @@ export default function(component) {
             } else open.focus({preventScroll:true});
             schedule();
         };
-    }
-    function findNav() {
-        return data.navigationKey ? document.querySelector('.st-key-' + CSS.escape(data.navigationKey)) : null;
     }
     function discover() {
         // The keyed navigation may arrive after this component in the native
