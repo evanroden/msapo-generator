@@ -114,3 +114,32 @@ def test_bad_identity_fails_before_launching_external_browser(tmp_path):
         fetcher.fetch_archive(kind="originals", expected_sha="0" * 64,
                               expected_size=1000, requested_prefix="notanid",
                               destination=tmp_path / "file.zip")
+
+
+def test_template_caption_named_option_and_docx_download(tmp_path):
+    data = b"invented template download bytes"
+    digest = sha256(data).hexdigest()
+    assert fetcher._read_caption(
+        f"Word template · {len(data):,} DOCX bytes · SHA-256: {digest}"
+    ) == (len(data), digest)
+    option = "Report template · " + "a" * 12 + " · Synthetic template.docx"
+    assert fetcher._prefixes([option], "templates") == ("a" * 12,)
+    assert fetcher._prefixes([option], "originals") == ()
+    assert fetcher.audit._option_pattern(fetcher.audit.SHELVES["templates"], "a" * 12).fullmatch(option)
+    source, target = tmp_path / "download", tmp_path / "template.docx"
+    source.write_bytes(data)
+    fetcher._write_verified(source, target, digest=digest, size=len(data),
+                            max_size=len(data), extension=".docx")
+    assert target.read_bytes() == data
+    with pytest.raises(ValueError, match=".docx"):
+        fetcher.fetch_archive(kind="templates", expected_sha=digest,
+                              expected_size=len(data), destination=tmp_path / "wrong.zip")
+
+
+def test_template_limit_admits_above_200_mib_but_rejects_above_512():
+    audit = fetcher.audit
+    audit._valid_inputs("templates", "a" * 12, "b" * 64,
+                        300 * 1024 * 1024, "c" * 40, "before")
+    with pytest.raises(ValueError, match="bounded limit"):
+        audit._valid_inputs("templates", "a" * 12, "b" * 64,
+                            512 * 1024 * 1024 + 1, "c" * 40, "before")
