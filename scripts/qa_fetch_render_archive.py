@@ -19,12 +19,13 @@ import re
 from scripts import qa_render_archive_redeploy_readonly as audit
 
 _CAPTION = re.compile(
-    r"^(?:Six originals|\d+ evidence artifacts) · ([\d,]+) ZIP bytes · "
+    r"^(?:Six originals|\d+ evidence artifacts|Word template) · ([\d,]+) (?:ZIP|DOCX) bytes · "
     r"SHA-256: ([0-9a-f]{64})$")
 _CHUNK = 256 * 1024
 _EMPTY = {
     "originals": "No external-agent source archive is stored on Render yet.",
     "synthetic": "No synthetic evidence ZIP is stored on Render yet.",
+    "templates": "No shared report template is stored yet.",
 }
 
 
@@ -35,7 +36,8 @@ def _read_caption(text: str):
 
 def _prefixes(options, kind: str):
     prefix = audit.SHELVES[kind]["option"]
-    pattern = re.compile("^" + re.escape(prefix) + r"([0-9a-f]{12})$")
+    suffix = r" · .+" if audit.SHELVES[kind].get("filename_in_option") else ""
+    pattern = re.compile("^" + re.escape(prefix) + r"([0-9a-f]{12})" + suffix + "$")
     return tuple(dict.fromkeys(
         match[1] for value in options
         if isinstance(value, str) and (match := pattern.fullmatch(value.strip()))
@@ -58,10 +60,10 @@ def _served_commit(page):
 
 
 def _write_verified(download: Path, destination: Path, *, digest: str, size: int,
-                    max_size: int) -> None:
+                    max_size: int, extension: str = ".zip") -> None:
     """No overwrite or completed-path claim until the entire archive verifies."""
-    if destination.suffix.casefold() != ".zip":
-        raise ValueError("Choose a .zip output path.")
+    if extension not in (".zip", ".docx") or destination.suffix.casefold() != extension:
+        raise ValueError("Choose a " + extension + " output path.")
     destination.parent.mkdir(parents=True, exist_ok=True)
     flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
     fd = os.open(destination, flags, 0o600)
@@ -105,13 +107,13 @@ def _select_expected(page, *, kind: str, expected_sha: str, expected_size: int,
     for index, prefix in enumerate(prefixes):
         if index:
             select.click()
-        page.get_by_role("option", name=settings["option"] + prefix, exact=True).click()
+        page.get_by_role("option", name=audit._option_pattern(settings, prefix)).click()
         page.wait_for_function(
             """() => document.querySelector('[data-testid="stApp"]')
               ?.getAttribute('data-test-script-state') === 'notRunning'""",
             timeout=45000,
         )
-        captions = page.get_by_text(re.compile(r"ZIP bytes · SHA-256: [0-9a-f]{64}$")).all_text_contents()
+        captions = page.get_by_text(re.compile(r"(?:ZIP|DOCX) bytes · SHA-256: [0-9a-f]{64}$")).all_text_contents()
         if (expected_size, expected_sha) in filter(None, map(_read_caption, captions)):
             return prefix
     raise FileNotFoundError("No stored Render archive matches the independently expected size and checksum.")
@@ -129,6 +131,9 @@ def fetch_archive(*, kind: str, expected_sha: str, expected_size: int,
         audit.ID.fullmatch(requested_prefix) or audit.ID_PREFIX.fullmatch(requested_prefix)
     ):
         raise ValueError("Use a 12-hex archive prefix or full 32-hex ID.")
+    extension = audit.SHELVES[kind].get("extension", ".zip")
+    if destination.suffix.casefold() != extension:
+        raise ValueError("Choose a " + extension + " output path.")
     if destination.exists() or destination.is_symlink():
         raise FileExistsError("The output already exists and must not be overwritten.")
     from playwright.sync_api import sync_playwright, expect
@@ -182,7 +187,7 @@ def fetch_archive(*, kind: str, expected_sha: str, expected_size: int,
                 raise AssertionError("Unexpected network request or browser script error.")
             _write_verified(
                 Path(source), destination, digest=expected_sha,
-                size=expected_size, max_size=settings["max_size"]
+                size=expected_size, max_size=settings["max_size"], extension=extension
             )
         finally:
             browser.close()

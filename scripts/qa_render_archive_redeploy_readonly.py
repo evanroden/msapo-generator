@@ -45,7 +45,23 @@ SHELVES = {
         'key_prefix': '_shared_fixture_evidence_bundle_download_',
         'max_size': 24 * 1024 * 1024,
     },
+    'templates': {
+        'expander': 'Shared report templates for agents',
+        'selection': 'Stored report template',
+        'option': 'Report template · ',
+        'prepare': 'Prepare verified template download',
+        'download': 'Download unchanged report template',
+        'key_prefix': '_shared_template_download_',
+        'max_size': 512 * 1024 * 1024,
+        'extension': '.docx',
+        'filename_in_option': True,
+    },
 }
+
+
+def _option_pattern(settings, prefix):
+    suffix = r' · .+' if settings.get('filename_in_option') else ''
+    return re.compile('^' + re.escape(settings['option'] + prefix) + suffix + '$')
 
 
 def _valid_inputs(archive_kind: str, bundle_prefix: str, original_sha: str, expected_size: int,
@@ -175,7 +191,7 @@ def verify_one(archive_kind: str, bundle_prefix: str, expected_sha: str, expecte
             box = page.get_by_role('combobox', name=settings['selection'], exact=True)
             expect(box).to_be_visible(timeout=45000)
             box.click()
-            option = page.get_by_role('option', name=settings['option'] + bundle_prefix[:12], exact=True)
+            option = page.get_by_role('option', name=_option_pattern(settings, bundle_prefix[:12]))
             expect(option).to_have_count(1, timeout=20000)
             option.click()
             # Unlike a prior failed synthetic source-key regression, a label
