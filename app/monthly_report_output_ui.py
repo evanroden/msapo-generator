@@ -56,3 +56,46 @@ def take_retries(prefix):
 
 def matches_retry(request, package, scope, revision):
     return request == (package_identity(package), scope, revision)
+
+
+# The finished bytes exist only in the current browser session. Shared report
+# history persists a draft, not an immutable PDF, so this viewer must never
+# imply that a saved revision can be reopened or silently regenerated.
+MAX_INLINE_FINAL_PDF_BYTES = 25 * 1024 * 1024
+
+
+def _final_pdf_scope(prefix: str, session_scope: str) -> str:
+    """Bind disposable page tickets to the active browser/report incarnation."""
+    if not isinstance(prefix, str) or not prefix or not isinstance(session_scope, str) or not session_scope:
+        raise ValueError("The finished PDF preview needs a current report session.")
+    return "monthly-finished-pdf:" + sha256((prefix + "\x00" + session_scope).encode()).hexdigest()
+
+
+def discard_current_session_pdf_preview(prefix: str, session_scope: str) -> None:
+    """Retire only this generated PDF's disposable cache on a draft reset."""
+    from app.reference_preview import discard_reference_scope
+    discard_reference_scope(_final_pdf_scope(prefix, session_scope))
+
+
+def render_current_session_pdf_preview(package, draft, prefix: str, *, session_scope: str) -> None:
+    """Inspect the exact current package, never a saved draft or another session.
+
+    The common bounded source viewer rasterizes only visible pages behind a
+    private, expiring ticket. It creates no PDF endpoint, save or regeneration.
+    """
+    if (package is None or st.session_state.get(prefix + "_package") is not package
+            or package.fingerprint != draft.fingerprint or not package.pdf):
+        return
+    with st.expander("View PDF here (this session)", expanded=False,
+                     key=prefix + "_finished_pdf_view"):
+        st.caption("Only this generated PDF is available here. Shared version history stores "
+                   "the report draft, not finished PDF files. This view does not certify Word layout.")
+        if (type(package.pdf) is not bytes or not package.pdf.startswith(b"%PDF-")
+                or len(package.pdf) > MAX_INLINE_FINAL_PDF_BYTES):
+            st.info("In-site PDF preview unavailable. Download PDF remains available.")
+            return
+        from app.reference_preview import render_reference
+        render_reference(key="finished_report_pdf",
+                         owner_scope=_final_pdf_scope(prefix, session_scope),
+                         title="Finished report PDF", raw=package.pdf,
+                         filename=package.pdf_name or "report.pdf")
