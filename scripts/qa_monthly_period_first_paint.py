@@ -5,6 +5,7 @@ pointerdown and pointerup at the same coordinates. Production widget code and
 callbacks run unchanged. No retries, rescue scrolling or genuine report data.
 """
 import json
+from hashlib import sha256
 import os
 from pathlib import Path
 import re
@@ -81,14 +82,22 @@ def exercise(engine, name, width, scale, long_label):
             x=before['button']['x']+before['button']['w']/2
             y=before['button']['y']+before['button']['h']/2
             page.mouse.move(x,y);page.mouse.down()
-            for pending in held:pending.continue_()
+            modules=[]
+            for pending in held:
+                response=pending.fetch()
+                assert response.status==200
+                modules.append(sha256(response.body()).hexdigest())
+                # WebKit otherwise reuses the immutable module on reload and
+                # never reaches this delivery gate. Preserve its exact bytes;
+                # only this synthetic response's HTTP cache policy changes.
+                pending.fulfill(response=response,headers={**response.headers,'cache-control':'no-store'})
             expect(page.locator('.st-key-report_month_number [data-testid="stSelectbox"]')).to_have_count(1)
             expect(page.locator('.st-key-report_year [data-testid="stSelectbox"]')).to_have_count(1)
             frames(page)
             after=geometry(page)
             page.mouse.up()
             events=page.evaluate('window.__periodPress')
-            run={'load':load,'before':before,'after':after,'events':events}
+            run={'load':load,'before':before,'after':after,'events':events,'module_sha256':modules}
             result['runs'].append(run)
             page.screenshot(path=str(OUT/(label+'-'+load+'.png')))
             assert abs(after['button']['y']-before['button']['y'])<=3,run
