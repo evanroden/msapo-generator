@@ -1645,6 +1645,9 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     unchanged_positions = {item.position for item in inspection.items
                            if item.part == "word/document.xml" and item.id in unchanged_items}
     page_plan = NativePages(body, original, section_by_pos, headings, unchanged_positions, fresh=master, source_header_scope=source_header_scope)
+    from app.monthly_report_native_empty_activity import empty_activity_panels
+    empty_panels = empty_activity_panels(draft, original, section_by_pos, unchanged_positions, headings)
+    cleared_activity_paragraphs = set()
     work_order_labels = _work_order_table_labels(original, items, section_by_pos)
     from app.monthly_report_native_text import (narrative_prototype, write_narrative,
                                                  header_contains_label)
@@ -1796,6 +1799,8 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                     text_prototypes[slot].append((element, prototype))
                     section_text[sec].append(deepcopy(prototype))
                 _set_text(element, "")
+                if sec == "activity":
+                    cleared_activity_paragraphs.add(element)
                 if label:
                     region = page_plan.owner.get(element)
                     properties = page_plan.regions[region].properties if region is not None else document.sections[-1]._sectPr
@@ -2277,6 +2282,8 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             if brand and brand.source != "Omit" and brand.asset_hashes and asset_loader:
                 approved.add(hashlib.sha256(asset_loader(brand.asset_hashes[0])).hexdigest())
             _remove_unapproved_header_images(part, approved, approved_header_nodes)
+    for panel in empty_panels:
+        panel.remove_if_empty(body, page_plan, cleared_activity_paragraphs)
     page_plan.finish(document=document)
     from app.monthly_report_divider_numerals import fit_proposals_numeral
     fit_proposals_numeral(document, section_key=section_key)
