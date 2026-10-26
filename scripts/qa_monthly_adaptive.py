@@ -372,6 +372,38 @@ def exercise_section_navigation(page, browser, field):
     mode(page, "wide")
 
 
+def exercise_direct_review(page, browser, field, layout):
+    """Real pointer and keyboard activation of the same-row shortcut."""
+    selector = page.get_by_role("combobox", name="Jump to section", exact=True)
+    review = page.get_by_role("button", name="Review", exact=True)
+    for action in ("pointer", "keyboard"):
+        selector.select_option("monthly_activity")
+        expect(review).to_be_enabled()
+        expect(review).to_be_in_viewport(ratio=1)
+        boxes = page.evaluate("""() => {
+            const rect = selector => document.querySelector(selector).getBoundingClientRect().toJSON();
+            return {select:rect('.epc-section-selector'),review:rect('.epc-review-shortcut'),
+                    viewport:document.documentElement.clientWidth};
+        }""")
+        check(browser, layout + " Review has an uncropped separate touch target", 
+              boxes["review"]["height"] >= 44 and boxes["select"]["right"] <= boxes["review"]["left"]
+              and boxes["review"]["right"] <= boxes["viewport"] + 2, boxes)
+        value = field.input_value()
+        if action == "pointer":
+            review.click()
+        else:
+            selector.focus()
+            selector.press("Tab")
+            expect(review).to_be_focused()
+            review.press("Enter")
+        expect(page.locator("#report-review")).to_be_in_viewport()
+        check(browser, layout + " " + action + " Review focuses its heading", page.evaluate(
+            "document.querySelector('#report-review').contains(document.activeElement)"))
+        selector.select_option("monthly_activity")
+        expect(field).to_have_value(value)
+    capture(page, browser, layout + "-direct-review-return")
+
+
 def exercise_natural_review_navigation(page, browser, field, layout):
     """Observe ordinary page scrolling across Review, without choosing its option."""
     selector = page.get_by_role("combobox", name="Jump to section", exact=True)
@@ -619,6 +651,7 @@ def exercise(browser_type, name):
         expect(page.get_by_text("QA durable Activity SHA256: " + hashlib.sha256(committed.encode()).hexdigest(), exact=True)).to_be_visible(timeout=60000)
         current_image(page, ACTIVITY)
         exercise_section_navigation(page, name, field)
+        exercise_direct_review(page, name, field, "wide")
         exercise_natural_review_navigation(page, name, field, "wide")
 
         scroll_pair(page, EMPTY)
@@ -631,6 +664,7 @@ def exercise(browser_type, name):
         expect(page.get_by_role("combobox", name="Jump to section", exact=True)).to_be_in_viewport()
         check(name, "compact still has one current Activity editor", field.count() == 1 and field.input_value() == committed)
         check(name, "compact contains whole-page horizontal overflow", page.evaluate("document.documentElement.scrollWidth<=document.documentElement.clientWidth+2"))
+        exercise_direct_review(page, name, field, "compact")
         navigation_runs = page.evaluate(CLIENT_SNAPSHOT)['server']['full_runs']
         for action in ("pointer", "keyboard"):
             field.click()

@@ -1225,7 +1225,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         read_status.empty()
     if completed_setup == selected:
         # The editor replaces the setup review but keeps its scroll offset.
-        # Start this deliberate entry at the first section, once.
+        # Start this deliberate entry at monthly work, once.
         st.session_state[prefix + "_land_on_editor"] = True
         record_report_preferences(browser_token, contract, selected)
         if imported:
@@ -1409,12 +1409,14 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 st.session_state[draft_key] = draft
                 st.rerun()
     from app.workspace_layout import workspace, workspace_section, workspace_columns
-    landing = "monthly_cover" if st.session_state.pop(prefix + "_land_on_editor", False) else ""
+    landing_section = "monthly_activity" if any(section.key == "activity" for section in draft.sections) else "monthly_cover"
+    landing = landing_section if st.session_state.pop(prefix + "_land_on_editor", False) else ""
     with workspace("monthly", prefix, navigation_key="monthly_report_navigation", landing=landing):
         with st.container(key="monthly_report_navigation"):
-            st.markdown('<label class="epc-section-navigation">Section'
-                        '<select class="epc-section-selector" aria-label="Jump to section" disabled>'
-                        '<option>Loading sections…</option></select></label>', unsafe_allow_html=True)
+            st.markdown('<div class="epc-section-navigation"><label for="monthly-section-choice">Section</label>'
+                        '<select id="monthly-section-choice" class="epc-section-selector" aria-label="Jump to section" disabled>'
+                        '<option>Loading sections…</option></select>'
+                        '<button type="button" class="epc-review-shortcut" disabled>Review</button></div>', unsafe_allow_html=True)
         with workspace_section("monthly_cover", "Cover"):
             editor_column, preview_column = workspace_columns("monthly_cover")
             with editor_column:
