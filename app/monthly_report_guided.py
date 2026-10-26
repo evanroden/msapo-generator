@@ -16,7 +16,7 @@ from app.monthly_report_busy_ui import recover_render_busy
 from app.monthly_report_checks import preflight
 from app.monthly_report_docx import estimate_bytes, generate_report, normalize_report_image
 from app.monthly_report_editor import _grid, _signature, _typed_table
-from app.monthly_report_model import (ReportDraft, ResolvedBlock, STOCK_TEXTS,
+from app.monthly_report_model import (ReportDraft, ResolvedBlock,
                                      layout_blocks, profile_sections, picture_replacement_references)
 from app.monthly_report_setup import MONTHLY_BLOCKS, merge_blocks, month_selector, new_month_draft, suggested_period
 from app.monthly_report_section_help import section_help
@@ -400,9 +400,10 @@ def _initial_draft(state, period, prepared):
         saved = state.block(spec.key)
         if saved:
             blocks.append(saved)
-        elif spec.stock_text_keys:
-            blocks.append(ResolvedBlock(spec.key, "Stock text", text=STOCK_TEXTS[spec.stock_text_keys[0]]))
         else:
+            # A missing input is not evidence of a transition, outage, or lack
+            # of activity. Stock paragraphs remain explicit editor choices;
+            # never inject them as facts into a new client-facing report.
             blocks.append(ResolvedBlock(spec.key, "This month" if spec.required else "Omit"))
     return ReportDraft(state.profile, period, prepared, profile_sections(state.profile), tuple(blocks))
 
