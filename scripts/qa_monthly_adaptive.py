@@ -372,6 +372,26 @@ def exercise_section_navigation(page, browser, field):
     mode(page, "wide")
 
 
+def navigation_receipt(page, label):
+    """Read-only geometry/state evidence; never correct or retry navigation."""
+    value = page.evaluate("""() => {
+        const rect = selector => document.querySelector(selector)?.getBoundingClientRect().toJSON();
+        const root = document.querySelector('.epc-workspace');
+        const active = document.activeElement;
+        return {nav:rect('.st-key-monthly_report_navigation'),row:rect('.epc-section-navigation'),
+            activity:rect('.st-key-epc_pair_monthly_activity'),organization:rect('.st-key-epc_pair_monthly_organization'),
+            review:rect('#report-review'),header:rect('[data-testid="stHeader"]'),
+            root:rect('.epc-workspace'),dataset:{...root?.dataset},
+            navSpace:getComputedStyle(root).getPropertyValue('--epc-nav-space'),
+            navMinHeight:getComputedStyle(document.querySelector('.st-key-monthly_report_navigation')).minHeight,
+            selector:document.querySelector('.epc-section-selector')?.value,
+            focus:{tag:active?.tagName,id:active?.id,text:active?.textContent?.slice(0,100)},
+            mainScroll:document.querySelector('[data-testid="stMain"]')?.scrollTop,rootScroll:root?.scrollTop};
+    }""")
+    print('NAVIGATION RECEIPT ' + label + ' ' + json.dumps(value), flush=True)
+    return value
+
+
 def exercise_direct_review(page, browser, field, layout):
     """Real pointer and keyboard activation of the same-row shortcut."""
     selector = page.get_by_role("combobox", name="Jump to section", exact=True)
@@ -401,6 +421,9 @@ def exercise_direct_review(page, browser, field, layout):
             "document.querySelector('#report-review').contains(document.activeElement)"))
         selector.select_option("monthly_activity")
         expect(field).to_have_value(value)
+        page.wait_for_function("document.querySelector('.st-key-epc_pair_monthly_activity').contains(document.activeElement)")
+        expect(selector).to_have_value("monthly_activity")
+        navigation_receipt(page, browser + " " + layout + " " + action + " direct return")
     capture(page, browser, layout + "-direct-review-return")
 
 
@@ -425,6 +448,7 @@ def exercise_natural_review_navigation(page, browser, field, layout):
     capture(page, browser, "selector-natural-review-" + layout)
     # Return Activity to the selector's own reading line, as the tabletop
     # check does; a fixed inset ignores the selector's measured height.
+    navigation_receipt(page, browser + " " + layout + " before natural reverse")
     reading_line = page.evaluate("""() => {
       const header=document.querySelector('[data-testid="stHeader"]');
       const nav=document.querySelector('.epc-section-navigation');
@@ -433,6 +457,7 @@ def exercise_natural_review_navigation(page, browser, field, layout):
     scroll_pair(page, ACTIVITY, inset=max(0, reading_line - 4))
     page.wait_for_function("document.querySelector('.epc-workspace')?.dataset.epcReviewOpen==='false'")
     expect(selector).to_be_in_viewport()
+    navigation_receipt(page, browser + " " + layout + " after natural reverse")
     expect(selector).to_have_value("monthly_activity")
     after_runtime = page.evaluate(CLIENT_SNAPSHOT)["server"]
     check(browser, layout + " natural Review and reverse scroll retain navigation and native input",
