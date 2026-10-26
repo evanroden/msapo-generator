@@ -203,7 +203,8 @@ def test_capacity_requires_unique_canonical_source_ownership(proof_inputs, chang
         draft = _replace_block(draft, replace(block, extra_tables=(table, *block.extra_tables[1:])))
     elif change == "duplicate_table":
         draft = _replace_block(draft, replace(block, extra_tables=(block.extra_tables[0],) * 2))
-    elif change == "reordered_tables":+        draft = _replace_block(draft, replace(block, extra_tables=tuple(reversed(block.extra_tables))))
+    elif change == "reordered_tables":
+        draft = _replace_block(draft, replace(block, extra_tables=tuple(reversed(block.extra_tables))))
     elif change == "competing_owner":
         other = _block(draft, "training_summary")
         draft = _replace_block(draft, replace(other, extra_tables=other.extra_tables + block.extra_tables[:1]))
