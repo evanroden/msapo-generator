@@ -87,6 +87,9 @@ export default function(component) {
         target.addEventListener(type, listener, {passive:true});
         subscriptions.push(() => target.removeEventListener(type, listener));
     }
+    function findNav() {
+        return data.navigationKey ? document.querySelector('.st-key-' + CSS.escape(data.navigationKey)) : null;
+    }
     function addControls(pair, reference, title, row, editor) {
         // Keep the action under its own heading/errors, immediately before
         // the working row. Prepending it to the pair made it read as the prior
@@ -204,7 +207,7 @@ export default function(component) {
         // The keyed navigation may arrive after this component in the native
         // stream. Rebind through the existing child/resize measurement path,
         // including replacement of its container on a later full render.
-        const currentNav = data.navigationKey ? document.querySelector('.st-key-' + CSS.escape(data.navigationKey)) : null;
+        const currentNav = findNav();
         if (currentNav !== nav) {
             if (nav) resize.unobserve(nav);
             navigation?.dispose(); navigation = null;
@@ -297,6 +300,9 @@ export default function(component) {
             }
             return;
         }
+        // What the reader is looking at before this measurement's own writes.
+        // The selector is resolved here too: discovery binds it only below.
+        const anchor = globalThis.ENFRAWorkspaceNavigation?.readingAnchor({state, scrollport, app, nav: findNav()});
         // The framework can replace this keyed container's class attribute
         // while retaining its native subtree. Reassert only our owned class
         // before measuring; the current mode must keep its matching CSS.
@@ -368,6 +374,13 @@ export default function(component) {
             if (ownsScroll) root.scrollTop += activeBefore.pair.getBoundingClientRect().top - context.editor.y;
             else if (ownedScrollBefore) scrollport.scrollTop = state.outerScroll || 0;
         }
+        // When the layout itself changes (the first wide layout after a load,
+        // or a resize into another mode) in page scroll, keep that element
+        // where it was, so a control does not move out from under the
+        // pointer. Ordinary measurements, such as the selector pinning for
+        // Review, are navigation's own and are left alone.
+        if (previous !== context.mode && !ownsScroll && !ownedScrollBefore)
+            globalThis.ENFRAWorkspaceNavigation?.keepAnchor(anchor, scrollport);
         state.mode = context.mode;
         state.ownsScroll = ownsScroll;
         navigation?.update(context,sample);

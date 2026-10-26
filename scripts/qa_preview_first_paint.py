@@ -37,7 +37,7 @@ def geometry(page, button_key):
     }''', button_key)
 
 
-def exercise(engine, name, late, target):
+def exercise(engine, name, late, target, press=True):
     browser = engine.launch(headless=True)
     page = browser.new_page(viewport={'width': 1440, 'height': 900})
     errors = []
@@ -83,23 +83,31 @@ def exercise(engine, name, late, target):
             x = before['button']['x'] + before['button']['width'] / 2
             y = before['button']['y'] + before['button']['height'] / 2
             page.mouse.move(x, y)
-            page.mouse.down()
+            if press:
+                page.mouse.down()
             if late == 'adapter':
                 page.evaluate('window.__releaseWorkspaceMount()')
                 page.wait_for_function('window.__workspaceMountReleased === true')
             else:
                 page.evaluate('window.__releasePreviewMount()')
                 expect(page.locator('.report-preview')).to_have_count(1)
+            if not press:
+                # No gesture holds the first layout back here. The reader's
+                # pointer rests on the action while the wide layout lands.
+                page.wait_for_function('document.querySelector(".epc-workspace")?.dataset.epcMode === "wide"')
             frames(page)
             after = geometry(page, button_key)
+            if not press:
+                page.mouse.down()
             page.mouse.up()
             events = page.evaluate('window.__previewPointerEvents')
-            run = {'load': label, 'before': before, 'after': after, 'events': events}
+            run = {'load': label, 'press': press, 'before': before, 'after': after, 'events': events}
             evidence['runs'].append(run)
             page.screenshot(path=str(OUT / f'{name}-{label}-after.png'))
-            assert abs(after['cover']['height'] - before['cover']['height']) <= 3, run
             assert abs(after['button']['y'] - before['button']['y']) <= 3, run
-            assert abs(after['scrollTop'] - before['scrollTop']) <= 3, run
+            if press:
+                assert abs(after['cover']['height'] - before['cover']['height']) <= 3, run
+                assert abs(after['scrollTop'] - before['scrollTop']) <= 3, run
             assert events == ['pointerdown', 'pointerup', 'click'], run
             # The native callback must arrive, not just a synthetic DOM event.
             expect(page.get_by_text(receipt, exact=True)).to_be_visible()
@@ -151,11 +159,11 @@ def main():
                 with sync_playwright() as playwright:
                     for engine, name in ((playwright.chromium, 'chromium'),
                                          (playwright.webkit, 'webkit')):
-                        for late, target in (('preview', 'inside'), ('adapter', 'inside'),
-                                             ('adapter', 'outside')):
-                            label = name + '-' + late + '-' + target
+                        for late, target, press in (('preview', 'inside', True), ('adapter', 'inside', True),
+                                                    ('adapter', 'outside', True), ('adapter', 'outside', False)):
+                            label = name + '-' + late + '-' + target + ('' if press else '-hover')
                             try:
-                                exercise(engine, label, late, target)
+                                exercise(engine, label, late, target, press)
                             except Exception as error:
                                 failures.append(label + ': ' + str(error))
             finally:
