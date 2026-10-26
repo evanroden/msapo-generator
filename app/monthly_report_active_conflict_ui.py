@@ -70,6 +70,13 @@ def _retire_replaced_save(prefix, token, draft, request):
 def _use_newer(prefix, newer):
     # A deliberate whole-copy choice replaces this report's widgets together.
     # Keeping old widget deltas would immediately overwrite the chosen copy.
+    # Retire the CURRENT finished-PDF owner before removing the old report's
+    # epoch. The new browser copy may have the same site/month but new bytes;
+    # otherwise an old preview fragment remains authorized after replacement.
+    if st.session_state.get(prefix + "_rich_text_epoch"):
+        from app.monthly_report_guided import _rich_text_scope
+        from app.monthly_report_output_ui import discard_current_session_pdf_preview
+        discard_current_session_pdf_preview(prefix, _rich_text_scope(prefix))
     for key in list(st.session_state):
         if key.startswith(prefix):
             del st.session_state[key]
