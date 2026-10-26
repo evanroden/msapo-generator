@@ -42,9 +42,10 @@ def test_frame_gate_rejects_wrong_width_and_a_late_width_change():
     import pytest
     from scripts.qa_workflow_shell_width import validate_samples
     good={'maxWidth':'1680px','width':1440,'x':0,'tabX':16,'tabWidth':1408}
-    validate_samples([good,dict(good)],good)
-    for samples in ([],[{'maxWidth':'1000px','width':1000}],
-                    [good,{**good,'width':1000}], [good,{**good,'x':20}],
+    validate_samples([good,dict(good),{**good,'maxWidth':'none'}],good)
+    for samples in ([],[{**good,'maxWidth':'1000px','width':1000}],
+                    [good,{**good,'width':1000}], [good,{**good,'maxWidth':'none','width':1000}],
+                    [good,{**good,'maxWidth':'none','width':1920}], [good,{**good,'x':20}],
                     [good,{**good,'tabX':30}], [good,{**good,'tabWidth':1380}]):
         with pytest.raises(AssertionError):validate_samples(samples,good)
 

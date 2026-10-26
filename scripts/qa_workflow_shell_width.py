@@ -108,7 +108,9 @@ PROBE = r'''n => {
 def validate_samples(samples, expected):
     assert samples, 'No visible native workflow frame was captured'
     for sample in samples:
-        assert sample['maxWidth']=='1680px', sample
+        # Before Markdown CSS commits, an uncapped narrow frame is valid only
+        # when its actual shell AND tabs already match the settled geometry.
+        assert sample['width']<=1681, sample
         for key in ('x','width','tabX','tabWidth'):
             assert abs(sample[key]-expected[key])<=1, sample
 
@@ -137,13 +139,13 @@ def run_case(browser,width,output):
         expect(page.get_by_test_id('stApp')).to_have_attribute('data-test-script-state','notRunning',timeout=45000)
         page.evaluate('() => new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
         value=page.locator('.block-container').evaluate(PROBE)
+        record['states'].append({'label':label,'sidebar_open':opened,'geometry':value})
         assert value['maxWidth']=='1680px' and not value['overflow'] and value['openerOverlap']==0,value
         assert value['box']['width']<=min(1681,value['main']['width']+1),value
         assert value['paddingTop']==('60px' if width<=1780 else '20px'),value
         expected.setdefault(opened,value)
         for key in ('x','width'):
             assert abs(expected[opened]['box'][key]-value['box'][key])<=1,value
-        record['states'].append({'label':label,'sidebar_open':opened,'geometry':value})
         return value
     def switch(label,state,opened=False):
         page.evaluate('(s)=>window.__shellEpoch(s)',state)
@@ -172,9 +174,9 @@ def run_case(browser,width,output):
         expect(page.get_by_text('State: monthly-ready',exact=True)).to_be_visible();snapshot('resolved-ready')
         # Capture every visible frame before native sidebar animation intentionally changes width.
         evidence=page.evaluate('window.__shellEvidence');assert not evidence['overflow']
+        record['first_visible_and_switch_frames']=evidence
         validate_samples(evidence['samples'],{'x':initial['box']['x'],'width':initial['box']['width'],
             'tabX':initial['tabs']['x'],'tabWidth':initial['tabs']['width']})
-        record['first_visible_and_switch_frames']=evidence
         page.get_by_test_id('stExpandSidebarButton').click()
         expect(page.get_by_test_id('stSidebar')).to_have_attribute('aria-expanded','true')
         page.wait_for_timeout(400);snapshot('sidebar-open',True)
@@ -186,10 +188,17 @@ def run_case(browser,width,output):
         assert not errors and not rejected,(errors,rejected)
         record['result']='pass'
     except Exception as e:
-        record.update(result='fail',error=str(e));page.screenshot(path=str(output/'failure.png'));raise
+        record.update(result='fail',error=str(e))
+        try:page.screenshot(path=str(output/'failure.png'))
+        except Exception as capture_error:record['screenshot_error']=str(capture_error)
+        raise
     finally:
         record.update(errors=errors,rejected=rejected)
-        context.tracing.stop(path=str(output/'trace.zip'));context.close()
+        try:record['all_visible_frames']=page.evaluate('window.__shellEvidence')
+        except Exception as capture_error:record['frame_capture_error']=str(capture_error)
+        try:context.tracing.stop(path=str(output/'trace.zip'))
+        except Exception as capture_error:record['trace_error']=str(capture_error)
+        context.close()
         (output/'results.json').write_text(json.dumps(record,indent=2))
     return record
 
@@ -216,7 +225,13 @@ def main():
                     try:
                         for width in WIDTHS:
                             output=OUT/f'{name}-{width}';output.mkdir(exist_ok=True)
-                            results.append(run_case(browser,width,output))
+                            try:
+                                results.append(run_case(browser,width,output))
+                            except Exception as error:
+                                # Preserve every failing case and continue the finite matrix;
+                                # the final aggregate gate still fails on any case failure.
+                                results.append({'browser':name,'width':width,'result':'fail','error':str(error)})
+                                print(f'{name}-{width}: FAIL {error}',flush=True)
                     finally:browser.close()
         finally:
             process.terminate();process.wait(timeout=15);(OUT/'results.json').write_text(json.dumps(results,indent=2))
