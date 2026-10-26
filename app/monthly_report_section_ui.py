@@ -274,7 +274,11 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
             if old.get("period_review_items"):
                 # Period review may not bring explicitly old prose back merely
                 # because it shares a section with unfinished, undated work.
-                retained_ids = old.get("combined_text_ids") or old.get("selected", ())
+                # A pending period item may be unselected because its price
+                # needs editing. Keep it visible; contains_price still blocks
+                # approval until the user removes that price explicitly.
+                retained_ids = old.get("combined_text_ids") or (
+                    *old.get("selected", ()), *old.get("period_review_items", ()))
                 texts = [i for i in texts if i.id in retained_ids]
             if texts:
                 prior_texts = old.get("texts", {})

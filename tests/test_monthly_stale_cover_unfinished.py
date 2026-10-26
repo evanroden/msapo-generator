@@ -94,3 +94,23 @@ def test_period_review_preserves_all_retained_paragraphs_and_edits_not_explicit_
     reopened = library.load_snapshot(draft.profile.contract, draft.profile.key, draft.period)
     assert next(b.text for b in reopened.draft.blocks if b.key == "activity_summary") == edited
     assert library.imported_original(draft.profile.contract, draft.profile.key).read_bytes() == path.read_bytes()
+
+
+@pytest.mark.parametrize("plain", ((), ("Inspected the second pump.",)))
+def test_stale_cover_priced_work_remains_editable_until_price_removed(monkeypatch, tmp_path, plain):
+    from test_monthly_report_start_import import start_app, save_start
+    paragraphs = ("July 2026: Explicitly old work.", "Repaired the air handler for $500.", *plain)
+    path = report_file(tmp_path, month="July 2026", activity=paragraphs)
+    app = start_app(monkeypatch, tmp_path, path)
+    next(r for r in app.radio if r.label == "What would you like to do?").set_value("Edit text or change pictures").run()
+    editor = next(t for t in app.text_area if t.label == "Work completed this month")
+    expected = "\n\n".join(paragraphs[1:])
+    assert editor.value == expected
+    next(c for c in app.checkbox if c.label == "This work belongs in September 2026").check().run()
+    assert next(b for b in app.button if b.label == "Continue to this month’s updates").disabled
+    clean = expected.replace(" for $500", "")
+    editor = next(t for t in app.text_area if t.label == "Work completed this month")
+    editor.set_value(clean).run()
+    next(c for c in app.checkbox if c.label == "This work belongs in September 2026").check().run()
+    draft = save_start(app)
+    assert next(b.text for b in draft.blocks if b.key == "activity_summary") == clean

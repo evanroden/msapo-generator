@@ -85,10 +85,19 @@ def exercise(engine,name,source,base,scenario,replacement=None):
             text.fill(EDITED);text.press('Tab')
             expect(proceed).to_be_disabled()
             confirmation=activity.get_by_role('checkbox',name='This work belongs in September 2026',exact=True)
-            confirmation.check();expect(proceed).to_be_enabled()
+            def confirm_month():
+                # Streamlit's real input is clipped to 1px; its associated
+                # visible label is the ordinary pointer target, not an overlay.
+                expect(confirmation).not_to_be_checked()
+                label=confirmation.locator('xpath=ancestor::label')
+                expect(label).to_have_count(1)
+                label.click()
+                expect(confirmation).to_be_checked()
+            confirm_month();expect(proceed).to_be_enabled()
+            record['month_action']='one-visible-associated-label-click'
             text.fill(EDITED+' Changed.');text.press('Tab')
             expect(confirmation).not_to_be_checked();expect(proceed).to_be_disabled()
-            text.fill(EDITED);text.press('Tab');confirmation.check()
+            text.fill(EDITED);text.press('Tab');confirm_month()
             expect(proceed).to_be_enabled()
             expected=EDITED
         else:
