@@ -17,6 +17,26 @@ def reserve_text_area(key, height):
             '{height:' + str(height) + 'px;}</style>')
 
 
+def reserve_period_selector(key, label):
+    """Match the plain month/year label while the native select module loads.
+
+    The pinned select's placeholder is only its 2.5rem input height. Its visible
+    label adds at least 1.5rem plus .25rem spacing, and can wrap on a narrow display.
+    Size only the existing aria-hidden skeleton; leave the live widget in flow.
+    """
+    if st.__version__ != "1.61.1":
+        return
+    skeleton = _selector(key) + ' > [data-testid="stSkeleton"]'
+    caption = json.dumps(label, ensure_ascii=False)
+    for char, escaped in (("<", r"\3c "), (">", r"\3e "), ("&", r"\26 ")):
+        caption = caption.replace(char, escaped)
+    st.html('<style>' + skeleton + '{height:auto;}'
+            + skeleton + '::before{content:' + caption + ';display:block;visibility:hidden;'
+            'font-size:.875rem;line-height:1.6;min-height:1.5rem;margin-bottom:.25rem;'
+            'white-space:normal;word-break:break-word;overflow-wrap:break-word;}'
+            + skeleton + '::after{content:"";display:block;height:2.5rem;}</style>')
+
+
 def reserve_empty_uploader(key, label):
     if st.__version__ != "1.61.1" or st.session_state.get(key):
         return

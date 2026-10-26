@@ -96,3 +96,51 @@ def test_another_streamlit_version_requires_a_fresh_geometry_review(monkeypatch)
     monkeypatch.setattr(loading.st, "__version__", "future-unreviewed")
     app = AppTest.from_string(APP).run()
     assert not app.exception and not app.get("html")
+
+
+def test_period_reservation_keeps_widget_identity_defaults_and_native_submission(monkeypatch):
+    reserve = loading.reserve_period_selector
+    monkeypatch.setattr(loading, "reserve_period_selector", lambda *args: None)
+    app = AppTest.from_string('''
+import streamlit as st
+from app.monthly_report_setup import month_selector
+from app.monthly_report_model import ReportPeriod
+def field(key, default):
+    st.session_state.setdefault(key, default)
+    return key
+period = month_selector(field, 'report', ReportPeriod(2026, 9))
+if st.button('Record'):
+    st.session_state['received_period'] = period.key
+''').run()
+    assert not app.exception and not app.get('html')
+    ids = [widget.proto.id for widget in app.selectbox]
+    monkeypatch.setattr(loading, "reserve_period_selector", reserve)
+    app.selectbox('report_month_number').set_value(3)
+    app.selectbox('report_year').set_value(2025)
+    app.button[0].click().run()
+    assert not app.exception
+    assert app.session_state['received_period'] == '2025-03'
+    assert [widget.proto.id for widget in app.selectbox] == ids
+    assert [widget.value for widget in app.selectbox] == [3, 2025]
+    assert [widget.options[widget.proto.default] for widget in app.selectbox] == ['March', '2025']
+    assert len(app.get('html')) == len(app.selectbox) == 2
+    app.run()
+    assert [widget.proto.id for widget in app.selectbox] == ids
+    assert [widget.value for widget in app.selectbox] == [3, 2025]
+
+
+def test_period_placeholder_is_scoped_escaped_and_version_bound(monkeypatch):
+    source = '''
+from app.monthly_report_native_loading import reserve_period_selector
+reserve_period_selector(' test</style> key ', '</style><script>synthetic</script>')
+'''
+    app = AppTest.from_string(source).run()
+    assert not app.exception
+    css = app.get('html')[0].proto.body
+    assert '.st-key-test--style--key > [data-testid="stSkeleton"]' in css
+    assert len(re.findall(r'</style>', css)) == 1
+    assert '<script>' not in css
+    assert r'\3c /style\3e ' in css
+    monkeypatch.setattr(loading.st, '__version__', 'future-unreviewed')
+    app.run()
+    assert not app.exception and not app.get('html')

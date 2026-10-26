@@ -1,0 +1,60 @@
+name: Monthly period first paint
+
+on:
+  pull_request:
+    paths:
+      - 'app/monthly_report_native_loading.py'
+      - 'app/monthly_report_setup.py'
+      - 'scripts/qa_monthly_period_first_paint.py'
+      - 'tests/fixtures/workspaces/period_mount_app.py'
+      - 'tests/test_monthly_report_native_loading.py'
+      - 'requirements*.lock'
+      - '.github/workflows/monthly-period-first-paint.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'app/monthly_report_native_loading.py'
+      - 'app/monthly_report_setup.py'
+      - 'scripts/qa_monthly_period_first_paint.py'
+      - 'tests/fixtures/workspaces/period_mount_app.py'
+      - 'tests/test_monthly_report_native_loading.py'
+      - 'requirements*.lock'
+      - '.github/workflows/monthly-period-first-paint.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  monthly-period-first-paint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - name: Install locked app and native browser harness
+        timeout-minutes: 20
+        run: |
+          sudo python3 scripts/ci_ubuntu_mirror_priority.py
+          python -m pip install -r requirements-dev.lock playwright==1.58.0
+          python scripts/patch_streamlit_frontend.py
+          python scripts/patch_streamlit_date_input.py
+          python -m playwright install --with-deps chromium webkit
+      - name: Native period arrival during cold and reloaded presses
+        timeout-minutes: 6
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 5 <<'NATIVE_TEST'
+          python scripts/qa_monthly_period_first_paint.py
+          NATIVE_TEST
+      - name: Retain geometry and first failures
+        if: always()
+        timeout-minutes: 3
+        uses: actions/upload-artifact@v4
+        with:
+          name: monthly-period-first-paint-${{ github.run_attempt }}
+          path: test-artifacts/monthly-period-first-paint/
+          retention-days: 7
+          if-no-files-found: error
