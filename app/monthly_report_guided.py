@@ -1237,6 +1237,12 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     # editors on the first edit, even when their widget keys and text agree.
     recovery_notice = st.empty()
     if draft_key not in st.session_state or resume:
+        # Retire the PREVIOUS editor's finished-PDF owner before rotating the
+        # rich-text epoch. After rotation _rich_text_scope() names a different
+        # owner, leaving a retained old fragment able to serve stale pages.
+        if st.session_state.get(prefix + "_rich_text_epoch"):
+            from app.monthly_report_output_ui import discard_current_session_pdf_preview
+            discard_current_session_pdf_preview(prefix, _rich_text_scope(prefix))
         # A replacement import/restart must not inherit unacknowledged text
         # callbacks even when the same sites, month and widget key are reused.
         st.session_state[prefix + "_rich_text_epoch"] = uuid4().hex
