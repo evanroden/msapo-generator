@@ -107,7 +107,8 @@ def _match(block, context, *, ignored=()):
     if not selected or selected != nonblank[-len(selected):]:
         return None
     return SuppliedTableFlow(tuple(context), "\n".join(
-        line for index, line in enumerate(lines) if index not in consumed).strip(), tuple(rewrites))
+        line for index, line in enumerate(lines) if index not in consumed and index not in ignored
+        ).strip(), tuple(rewrites))
 
 
 def _native_note_suffix(block, source_tables, last_flow_table, original, supplied_notes, source_ref):
