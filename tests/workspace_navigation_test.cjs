@@ -237,7 +237,7 @@ test('the adapter reuses existing measurement and cleanup with no display submis
     assert.ok(adapter.includes('navigation?.dispose()'));
     const source=fs.readFileSync('app/workspace_navigation.js','utf8');
     assert.ok(!/new (MutationObserver|ResizeObserver)|requestAnimationFrame|setStateValue|setTriggerValue|dispatchEvent|location\.|history\./.test(source));
-    const css=fs.readFileSync('app/workspace_layout.css','utf8');
+    const css=fs.readFileSync('app/workspace_initial.css','utf8');
     assert.ok(css.includes('width:min(32rem,100%)'));assert.ok(css.includes('min-width:0'));
 });
 
