@@ -1641,7 +1641,8 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     from app.monthly_report_native_table_flow import supplied_native_table_flows, rewrite_flow_paragraph
     table_flows = {} if master else supplied_native_table_flows(
         draft, original, items, section_by_pos, native_tables, context_table_refs,
-        styles=document.styles.element, supplied_notes=supplied_notes, source_ref=source_ref)
+        styles=document.styles.element, supplied_notes=supplied_notes, source_ref=source_ref,
+        source_document=document)
     flow_rewrites = {position: text for flow in table_flows.values() for position, text in flow.rewrites}
     table_context.update({key: (flow.items, flow.remaining_text) for key, flow in table_flows.items()})
     unchanged_items.update(item.id for context, _ in table_context.values() for item in context

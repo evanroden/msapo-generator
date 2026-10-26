@@ -4,6 +4,7 @@ from dataclasses import replace
 from io import BytesIO
 
 from docx import Document
+from docx.enum.style import WD_STYLE_TYPE
 from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import qn
 from docx.opc.constants import RELATIONSHIP_TYPE
@@ -265,3 +266,44 @@ def test_ambiguous_native_note_text_does_not_authorize_single_suffix(tmp_path, m
     assert {"footnote:1", "footnote:2"} <= kwargs["supplied_notes"].keys()
     assert "proposals" not in result
     _assert_authored_run(raw, block.text)
+
+@pytest.mark.parametrize("hazard", ["note_run", "inherited_note_style", "reference_run"])
+def test_hidden_source_note_cannot_suppress_visible_author_qualification(
+        tmp_path, monkeypatch, hazard):
+    """No source-visible note means the authored trailing caveat stays in body."""
+    def conceal(document):
+        if hazard == "reference_run":
+            later = next(table for table in document.tables if NEW_MARKER in _text(table._tbl))
+            reference = next(later._tbl.iter(qn("w:footnoteReference")))
+            reference_run = next(reference.iterancestors(qn("w:r")))
+            reference_run.get_or_add_rPr().append(OxmlElement("w:vanish"))
+            return
+        part = document.part.part_related_by(RELATIONSHIP_TYPE.FOOTNOTES)
+        root = parse_xml(part.blob)
+        note = next(node for node in root
+                    if node.tag == qn("w:footnote") and node.get(qn("w:id")) == "1")
+        paragraph = note[0]
+        if hazard == "note_run":
+            run = next(node for node in paragraph.findall(qn("w:r"))
+                       if NATIVE_NOTE in _text(node))
+            properties = OxmlElement("w:rPr")
+            properties.append(OxmlElement("w:vanish"))
+            run.insert(0, properties)
+        else:
+            style = document.styles.add_style(
+                "Synthetic Hidden Footnote Paragraph", WD_STYLE_TYPE.PARAGRAPH)
+            style.font.hidden = True
+            properties = OxmlElement("w:pPr")
+            selector = OxmlElement("w:pStyle")
+            selector.set(qn("w:val"), style.style_id)
+            properties.append(selector)
+            paragraph.insert(0, properties)
+        part._blob = etree.tostring(root)
+
+    flow = flow_case(tmp_path, monkeypatch, mutate_source=conceal)
+    block = _block(flow[1], "proposals")
+    raw, (_, kwargs, result) = _recorded_render(flow, monkeypatch)
+    assert "footnote:1" in kwargs["supplied_notes"]
+    assert "proposals" not in result
+    assert _text(Document(BytesIO(raw)).element.body).count(NATIVE_NOTE) == 1
+    assert NATIVE_NOTE in block.text

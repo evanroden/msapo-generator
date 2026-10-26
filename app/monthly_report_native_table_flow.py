@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
+from lxml import etree
 
 from app.monthly_report_import import _text
 from app.monthly_report_native_table_context import _plain
@@ -111,7 +112,34 @@ def _match(block, context, *, ignored=()):
         ).strip(), tuple(rewrites))
 
 
-def _native_note_suffix(block, source_tables, last_flow_table, original, supplied_notes, source_ref):
+def _visible_native_note(document, kind, note_id, item, reference):
+    """Require readable source note text and reference before omitting current prose."""
+    from app.monthly_report_native_notes import plain_visible
+
+    if document is None or kind not in ("footnote", "endnote"):
+        return False
+    styles = document.styles.element
+    paragraph = next(reference.iterancestors(qn("w:p")), None)
+    if paragraph is None or not plain_visible(paragraph, styles):
+        return False
+    parts = [rel.target_part for rel in document.part.rels.values()
+             if not rel.is_external and rel.reltype.endswith("/" + kind + "s")]
+    if len(parts) != 1:
+        return False
+    try:
+        root = etree.fromstring(parts[0].blob)
+    except (etree.XMLSyntaxError, AttributeError, TypeError, ValueError):
+        return False
+    notes = [node for node in root if node.tag == qn("w:" + kind)
+             and node.get(qn("w:id")) == note_id]
+    if len(notes) != 1 or len(notes[0]) != 1:
+        return False
+    note_paragraph = notes[0][0]
+    return (plain_visible(note_paragraph, styles)
+            and _text(note_paragraph).strip() == item.text.strip())
+
+
+def _native_note_suffix(block, source_tables, last_flow_table, original, supplied_notes, source_ref, source_document):
     lines = block.text.splitlines()
     nonblank = [index for index, line in enumerate(lines) if line.strip()]
     if not nonblank:
@@ -124,17 +152,18 @@ def _native_note_suffix(block, source_tables, last_flow_table, original, supplie
         if matches != [nonblank[-1]]:
             continue
         kind, note_id = identity.split(":", 1)
-        anchors = [table for table in source_tables
+        anchors = [(table, node) for table in source_tables
                    for node in original[table.position - 1].iter(qn("w:" + kind + "Reference"))
                    if node.get(qn("w:id")) == note_id]
-        if len(anchors) == 1 and anchors[0].position > last_flow_table.position:
+        if (len(anchors) == 1 and anchors[0][0].position > last_flow_table.position
+                and _visible_native_note(source_document, kind, note_id, item, anchors[0][1])):
             ignored.extend(matches)
     # One authored line must identify one proved native note attachment.
     return tuple(ignored) if len(ignored) == 1 else ()
 
 
 def supplied_native_table_flows(draft, original, items, section_by_pos, native_tables,
-                               preserved_refs, *, styles, supplied_notes, source_ref):
+                               preserved_refs, *, styles, supplied_notes, source_ref, source_document=None):
     """Authorize only complete known flows beside exact, uniquely owned tables."""
     destinations = {spec.key: section.key for section in draft.sections if section.included
                     for spec in section.blocks}
@@ -229,7 +258,7 @@ def supplied_native_table_flows(draft, original, items, section_by_pos, native_t
                         break
                 if valid and pattern == ["text", "text", "table", "text", "table"]:
                     ignored = _native_note_suffix(proposals, tables, pending[1], original,
-                                                  supplied_notes, source_ref)
+                                                  supplied_notes, source_ref, source_document)
                     flow = _match(proposals, context, ignored=ignored)
                     if flow is not None:
                         result[proposals.key] = flow
