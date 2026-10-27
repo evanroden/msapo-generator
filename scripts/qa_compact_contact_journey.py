@@ -199,12 +199,14 @@ def browser_task(browser_type, name, *, held_recovery=False):
     record = {'synthetic_only':True, 'held_recovery':held_recovery, 'steps':[], 'errors':errors, 'external':external}
     def capture(stage, previous=None, expected_contact=None, expected_write=None):
         state = receipt(page, after=previous['sequence'] if previous else 0, expected_contact=expected_contact, expected_write=expected_write)
+        record['failed_capture'] = {'stage': stage, 'receipt': state}
         assert state['saved_unchanged'] and state['original_unchanged']
         assert state['working']['vendors'] == baseline['working']['vendors']
         assert state['working']['unrelated'] == baseline['working']['unrelated']
         assert (state['scope'],state['generation'],state['saved_revision']) == (baseline['scope'],baseline['generation'],baseline['saved_revision'])
         assert not errors and not external
         record['steps'].append({'stage':stage,'receipt':state})
+        record.pop('failed_capture', None)
         return state
     def outputs(stage, state):
         page.get_by_role('button',name='Render synthetic native contact outputs',exact=True).click()

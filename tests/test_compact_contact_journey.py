@@ -46,6 +46,9 @@ def test_guided_contact_fixture_receipts_and_real_native_outputs(monkeypatch,tmp
     assert not app.exception
     baseline = receipt(app)
     assert baseline['working'] == baseline['durable']
+    unrelated_payload = baseline['working']['unrelated_payload']
+    assert unrelated_payload['synthetic'] is True
+    assert not {'contact_matrix', 'subcontractor_matrix'} & {b['key'] for b in unrelated_payload['blocks']}
     assert baseline['working']['contacts']['source'] == 'Library'
     assert len(baseline['working']['vendors']['extra_tables'][0]['rows']) == 3
     app.run()
@@ -59,6 +62,7 @@ def test_guided_contact_fixture_receipts_and_real_native_outputs(monkeypatch,tmp
     assert state['working'] == state['durable']
     assert state['directory']['sites'][0]['contacts'][-1]['phone'] == '202-555-0174'
     assert state['working']['vendors'] == baseline['working']['vendors']
+    assert state['working']['unrelated_payload'] == unrelated_payload
     assert state['saved_unchanged'] and state['original_unchanged']
     next(b for b in app.button if b.label=='Close editing').click().run()
     next(b for b in app.button if b.label=='Fail next synthetic shared save before commit').click().run()
@@ -266,3 +270,15 @@ def test_contact_runner_retains_ordinary_and_additional_held_case(monkeypatch):
     with pytest.raises(AssertionError, match='preserved first failure'):
         qa.browser_cases(None, 'webkit')
     assert calls == [('webkit', False), ('webkit-held-recovery', True)]
+
+
+def test_failed_capture_retains_synthetic_payload_before_strict_assertions():
+    script = (ROOT/'scripts/qa_compact_contact_journey.py').read_text()
+    capture = script.split('    def capture(', 1)[1].split('    def outputs(', 1)[0]
+    saved = "record['failed_capture'] = {'stage': stage, 'receipt': state}"
+    check = "assert state['working']['unrelated'] == baseline['working']['unrelated']"
+    assert capture.index(saved) < capture.index(check)
+    assert capture.index(check) < capture.index("record.pop('failed_capture', None)")
+    fixture = (ROOT/'scripts/workspace_contact_observations.py').read_text()
+    snapshot = fixture.split('def snapshot(', 1)[1].split('def render(', 1)[0]
+    assert snapshot.index('_folder(base, token)') < snapshot.index("'unrelated_payload': asdict(unrelated)")
