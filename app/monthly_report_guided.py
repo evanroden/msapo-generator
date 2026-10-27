@@ -48,6 +48,14 @@ def _rich_text_scope(prefix):
     return _signature((prefix, epoch, st.session_state.get("_monthly_qa_generation", "")))
 
 
+def _rotate_rich_text_epoch(prefix):
+    """Retire the OLD PDF owner before an import/restart changes its scope."""
+    if st.session_state.get(prefix + "_rich_text_epoch"):
+        from app.monthly_report_output_ui import discard_current_session_pdf_preview
+        discard_current_session_pdf_preview(prefix, _rich_text_scope(prefix))
+    st.session_state[prefix + "_rich_text_epoch"] = uuid4().hex
+
+
 def _edited_rich_text(block, text):
     from app.monthly_report_source_scope import text_edit_references
     return replace(block, source="This month", text=text,
@@ -1237,9 +1245,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     # editors on the first edit, even when their widget keys and text agree.
     recovery_notice = st.empty()
     if draft_key not in st.session_state or resume:
-        # A replacement import/restart must not inherit unacknowledged text
-        # callbacks even when the same sites, month and widget key are reused.
-        st.session_state[prefix + "_rich_text_epoch"] = uuid4().hex
+        # Retire the old viewer before the imported draft rotates the epoch.
+        _rotate_rich_text_epoch(prefix)
         st.session_state.pop(prefix + "_pending_browser_save", None)
         active = None
         active_generation = ""
@@ -1541,6 +1548,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         forget = st.checkbox("Discard my unfinished changes for this report", key=prefix + "_discard_work_confirm")
         if st.button("Start this report over", key=prefix + "_discard_work", disabled=not forget):
             try:
+                from app.monthly_report_output_ui import discard_current_session_pdf_preview
+                discard_current_session_pdf_preview(prefix, _rich_text_scope(prefix))
                 if recovery_available:
                     active_work.discard(browser_token, contract, selected, period,
                         expected_revision=st.session_state.get(prefix + "_active_sequence", 0),
@@ -1559,6 +1568,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     output_retries = take_retries(prefix)
     package = st.session_state.get(prefix + "_package")
     if package and package.fingerprint != draft.fingerprint:
+        from app.monthly_report_output_ui import discard_current_session_pdf_preview
+        discard_current_session_pdf_preview(prefix, _rich_text_scope(prefix))
         st.session_state.pop(prefix + "_package", None)
         package = None
     st.divider()
@@ -1619,6 +1630,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             else:
                 st.warning("Automatic recovery is unavailable in this browser. Save a report version before leaving.")
         if package and package.fingerprint != draft.fingerprint:
+            from app.monthly_report_output_ui import discard_current_session_pdf_preview
+            discard_current_session_pdf_preview(prefix, _rich_text_scope(prefix))
             st.session_state.pop(prefix + "_package", None)
             package = None
         from app.monthly_report_model import included_sections
@@ -1701,7 +1714,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 st.error(str(exc))
                 st.caption("Your edits and saved versions are unchanged. Retry generation when the service is ready.")
                 return
-            st.session_state[prefix + "_package"] = package
+            from app.monthly_report_output_ui import replace_current_session_pdf_package
+            replace_current_session_pdf_package(prefix, _rich_text_scope(prefix), package)
             from app.monthly_report_output_ui import record_shared_save
             record_shared_save(prefix, package)
             try:
@@ -1755,7 +1769,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     try:
                         with st.spinner("Retrying PDF conversion…"):
                             package = retry_report_pdf(draft, package)
-                        st.session_state[prefix + "_package"] = package
+                        from app.monthly_report_output_ui import replace_current_session_pdf_package
+                        replace_current_session_pdf_package(prefix, _rich_text_scope(prefix), package)
                         st.rerun()
                     except ValueError as exc:
                         st.error(str(exc))
@@ -1771,6 +1786,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             if package.pdf:
                 st.download_button("Download PDF", package.pdf, file_name=package.pdf_name,
                                    mime="application/pdf", key=prefix + "_pdf", on_click="ignore")
+                from app.monthly_report_output_ui import render_current_session_pdf_preview
+                render_current_session_pdf_preview(package, draft, prefix,
+                                                   session_scope=_rich_text_scope(prefix))
             if package.pdf_error:
                 st.warning(package.pdf_error)
 
