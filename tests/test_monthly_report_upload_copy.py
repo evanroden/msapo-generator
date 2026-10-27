@@ -49,6 +49,7 @@ def test_empty_photo_workspace_has_one_visible_label_and_no_reassurance(monkeypa
     app = AppTest.from_string(PHOTO_APP, default_timeout=20).run()
     assert not app.exception
     assert sum(w.label == "Add photos" for w in app.expander) == 1
-    assert next(w for w in app.expander if w.label == "Add photos").proto.expanded is False
+    # Empty intake is directly available; the single label and quiet copy stay.
+    assert next(w for w in app.expander if w.label == "Add photos").proto.expanded is True
     assert any(w.label == "Progress photos" for w in app.get("file_uploader"))
     assert not any("Add photos when you have them" in w.value for w in app.info)

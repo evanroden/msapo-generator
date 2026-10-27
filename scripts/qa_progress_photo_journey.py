@@ -484,6 +484,14 @@ def browser_task(engine, name, base):
         page.set_viewport_size({"width": 390, "height": 844})
         page.wait_for_function("() => document.querySelector('.epc-workspace')?.dataset.epcMode==='compact'")
         require_photo_disclosure(3, True, "narrow-pending-caption-open")
+        # Exercise the disclosure itself with native keyboard activation;
+        # the panel helper must not rescue or hide an incorrect open state.
+        summary = photo_disclosure(3).locator("summary").first
+        summary.focus()
+        summary.press("Enter")
+        require_photo_disclosure(3, False, "narrow-keyboard-enter-collapse")
+        summary.press("Space")
+        require_photo_disclosure(3, True, "narrow-keyboard-space-reopen")
         panel(2)  # Establish the one normal action before editing another caption.
         start = len(delivery)
         panel(3).get_by_role("textbox", name="Caption", exact=True).fill(THIRD)

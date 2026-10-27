@@ -23,13 +23,30 @@ def photo_caption_identity(draft, block, *, scope):
     return sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
-def photo_disclosure_identity(block, index, *, scope):
-    """A display choice follows its photo, independent of caption/order edits."""
+def _photo_occurrence_key(block, index):
+    """Derive legacy identity without rewriting a snapshot during display."""
     from app.monthly_report_asset_instances import valid_instances
     from app.monthly_report_asset_review import asset_context
+    if valid_instances(block):
+        return block.asset_instances[index].key
     asset = block.asset_hashes[index]
-    occurrence = (block.asset_instances[index].key if valid_instances(block) else
-                  (asset, block.asset_hashes[:index].count(asset)))
+    value = (block.key, asset, block.asset_hashes[:index].count(asset), asset_context(block, index))
+    return "legacy:photo:" + sha256(json.dumps(value, ensure_ascii=False).encode()).hexdigest()
+
+
+def _reindex_photo_instances(block, indexes):
+    """Pin legacy keys only when an explicit move/removal changes occurrences."""
+    from app.monthly_report_asset_instances import asset_instances
+    instances = tuple(replace(item, key=_photo_occurrence_key(block, n))
+                      for n, item in enumerate(asset_instances(block)))
+    return tuple(instances[n] for n in indexes)
+
+
+def photo_disclosure_identity(block, index, *, scope):
+    """A display choice follows its photo, independent of caption/order edits."""
+    from app.monthly_report_asset_review import asset_context
+    asset = block.asset_hashes[index]
+    occurrence = _photo_occurrence_key(block, index)
     value = (scope, block.key, occurrence, asset, asset_context(block, index))
     return sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
@@ -75,10 +92,10 @@ def move_photo(draft, block, request, captions, photos_per_page, *, scope, cycle
         asset_hashes=tuple(block.asset_hashes[n] for n in indexes),
         asset_captions=tuple(captions[n] for n in indexes), photos_per_page=photos_per_page,
     )
-    if not block.asset_instances:
+    if not block.asset_instances and len(set(block.asset_hashes)) == len(block.asset_hashes):
         return preserve_asset_reviews(block, updated)
-    from app.monthly_report_asset_instances import reindex_asset_instances, with_asset_instances
-    return preserve_asset_reviews(block, with_asset_instances(updated, reindex_asset_instances(block, indexes)))
+    from app.monthly_report_asset_instances import with_asset_instances
+    return preserve_asset_reviews(block, with_asset_instances(updated, _reindex_photo_instances(block, indexes)))
 
 
 def remove_photo(draft, block, request, captions, photos_per_page, *, scope, cycle):
@@ -100,7 +117,7 @@ def remove_photo(draft, block, request, captions, photos_per_page, *, scope, cyc
         block, source='Omit' if block.source == 'Omit' else 'This month',
         asset_hashes=tuple(block.asset_hashes[n] for n in indexes),
         asset_captions=tuple(captions[n] for n in indexes), photos_per_page=photos_per_page)
-    if not block.asset_instances:
+    if not block.asset_instances and len(set(block.asset_hashes)) == len(block.asset_hashes):
         return preserve_asset_reviews(block, updated)
-    from app.monthly_report_asset_instances import reindex_asset_instances, with_asset_instances
-    return preserve_asset_reviews(block, with_asset_instances(updated, reindex_asset_instances(block, indexes)))
+    from app.monthly_report_asset_instances import with_asset_instances
+    return preserve_asset_reviews(block, with_asset_instances(updated, _reindex_photo_instances(block, indexes)))
