@@ -177,6 +177,10 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
         status_slot = st.empty()
         guide = section_help(section.key)
         st.write(guide.guidance)
+        from app.monthly_report_import_content_types import content_type_summary
+        source_types = content_type_summary(section.items)
+        if source_types:
+            st.caption(source_types)
         actions = ["Keep and review", "Edit text or change pictures", "Leave this section out"]
         labels = dict(zip(actions, (guide.keep, guide.edit, "Start this section blank")))
         if section.key == "cover":
@@ -382,6 +386,8 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                         caption += "; No cover photograph is selected, so it is not included"
                     st.image(image.data, width="stretch", caption=caption)
             if any(i.kind == "unsupported" for i in section.items):
+                from app.monthly_report_import_content_types import unsupported_content_guidance
+                st.caption(unsupported_content_guidance(section.items))
                 # Do not silently exclude a difficult SmartArt/VML/OLE frame
                 # after removing the old generic "continue without" radio.
                 # It must be rendered into the original section or have an
