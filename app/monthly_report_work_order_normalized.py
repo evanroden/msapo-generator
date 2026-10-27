@@ -108,9 +108,9 @@ class WorkOrderRow:
         return self.origin.key
 
     @property
-    def unmapped(self):
-        return tuple((index, heading, self.origin.cells[index])
-                     for index, heading in enumerate(self.origin.columns))
+    def original_values(self):
+        # Every source cell, even mapped columns, is retained without coercion.
+        return tuple(zip(self.origin.columns, self.origin.cells))
 
 
 @dataclass(frozen=True)
@@ -255,7 +255,7 @@ def normalize_table(content: SourceContent, table_number: int,
         *("Ambiguous " + field + " column" for field in mapping.ambiguous),
         *("Map " + field + " before including records" for field in REQUIRED
           if getattr(mapping, field) is None),
-        *("Aggregate counts are not individual work-order records",) if kind == "aggregate" else (),
+        *(("Aggregate counts are not individual work-order records",) if kind == "aggregate" else ()),
     )))
     records = []
     if kind == "records":
@@ -323,8 +323,20 @@ def reimport_review(previous: WorkOrderReview, current: WorkOrderReview) -> Work
     """Idempotent exact-source reimport; another source needs deliberate review."""
     if (previous.source_sha256 != current.source_sha256 or
             previous.table_number != current.table_number or
+            previous.source_fingerprint != current.source_fingerprint or
             previous.original_columns != current.original_columns or
             previous.original_rows != current.original_rows):
         raise ValueError("The work-order source changed. Compare its rows before replacing your reviewed edits.")
     # Preserve explicit corrections/exclusions and their current target period.
     return previous
+
+
+def unmapped_cells(review: WorkOrderReview, row_key: str):
+    """Return every unassigned source value by physical column, even repeats."""
+    positions = {getattr(review.mapping, name) for name in FIELDS}
+    match = next((row for row in review.rows if row.key == row_key), None)
+    if match is None:
+        raise ValueError("Choose a source row from this review.")
+    return tuple((index, column, match.origin.cells[index])
+                 for index, column in enumerate(review.original_columns)
+                 if index not in positions)
