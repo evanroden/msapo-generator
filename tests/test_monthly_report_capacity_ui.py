@@ -121,7 +121,9 @@ def test_saved_contract_capacity_uses_secondary_edit_control_and_preserves_versi
 
     app.run()
     assert not app.exception
-    assert next(item for item in app.expander if item.label == "Capacity source and reusable data").proto.expanded is False
+    assert next(item for item in app.expander if item.label == "Capacity source and reusable data").proto.expanded is True
+    assert len([item for item in app.get("file_uploader") if item.label == "Thermal capacity file"]) == 1
+    assert any("Edit this report’s capacity values in the table above" in item.value for item in app.caption)
     assert any(item.value == "Capacity · reused for these sites" for item in app.caption)
     assert "Previously saved report versions stay unchanged" in app.toggle("test_capacity_change").proto.help
     assert next(item for item in app.toggle
@@ -145,6 +147,8 @@ def test_first_time_capacity_upload_stays_primary_and_requires_no_optional_maint
     assert not app.exception
     assert capacity.load_capacity(profile.contract) is None
     assert next(item for item in app.expander if item.label == "Capacity source and reusable data").proto.expanded is True
+    assert any("upload a thermal capacity file below" in item.value for item in app.caption)
+    assert len([item for item in app.get("file_uploader") if item.label == "Thermal capacity file"]) == 0  # patched uploader returns None
     assert any("Clear site matches fill missing reusable capacity automatically" in item.value
                for item in app.get("caption"))
     # No empty upload should alter the report or create a shared site table.
