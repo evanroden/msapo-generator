@@ -132,7 +132,7 @@ def render_page_gallery(draft, options, selected, p, widget_key, identity, field
                     image = sources.page_image(
                         draft.profile, sources.SourceContent(source), number,
                         preview=True)
-                except (ValueError, OSError, IndexError) as exc:
+                except (ValueError, OSError, IndexError):
                     st.warning(
                         "Preview unavailable for " + label +
                         ". Check the original in Manage source files. "
@@ -142,3 +142,4 @@ def render_page_gallery(draft, options, selected, p, widget_key, identity, field
                     image.data, width="stretch",
                     caption=label + " · Preview only; use fullscreen to examine small details.",
                 )
+                st.caption(label + " · Preview only; original and issue links are unchanged.")
