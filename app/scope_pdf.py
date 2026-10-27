@@ -37,7 +37,7 @@ from __future__ import annotations
 import re
 from typing import Iterable
 
-import fitz
+import pymupdf as fitz
 
 
 _PAGE_WIDTH = 612.0  # US Letter, points

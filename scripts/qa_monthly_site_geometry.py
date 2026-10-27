@@ -243,7 +243,7 @@ TEXT_METRICS = r"""n=>{
       bottom:Math.max(...rects.map(r=>r.bottom)),left:Math.min(...rects.map(r=>r.left)),
       right:Math.max(...rects.map(r=>r.right))}:null,
     caption_margin_bottom:caption?getComputedStyle(caption).marginBottom:null,
-    identity:n.getBoundingClientRect().toJSON(),main:mainRect.toJSON(),mainScroll:main.scrollTop};
+    identity:n.getBoundingClientRect().toJSON(),main:mainRect.toJSON(),mainScroll:main.scrollTop,mainScrollMax:main.scrollHeight-main.clientHeight};
 }"""
 
 
@@ -269,6 +269,28 @@ def validate_reading_coverage(start, path):
     assert covered == set(range(count)), {'covered': sorted(covered), 'line_count': count}
     assert path and path[-1]['mainScroll'] > start['mainScroll'], path
     return sorted(covered)
+
+
+def wait_for_native_scroll_stability(read_frame, initial, samples, *, clock=time.monotonic):
+    """Observe real animation; never issue another key while it is in flight."""
+    started = changed = clock()
+    previous = initial['mainScroll']
+    moved = False
+    while True:
+        value = read_frame()
+        now = clock()
+        value['sampled_after_ms'] = round((now - started) * 1000, 3)
+        samples.append(value)
+        position = value['mainScroll']
+        if abs(position - previous) > .01:
+            moved = True
+            changed = now
+        previous = position
+        at_bottom = abs(position - value['mainScrollMax']) <= 1
+        if now - started >= 3:
+            raise AssertionError('Native PageDown did not settle within 3 seconds')
+        if (moved or at_bottom) and now - changed >= .12:
+            return value
 
 
 def keyboard_long_identity(page, gate, record):
@@ -305,9 +327,15 @@ def keyboard_long_identity(page, gate, record):
     path = []
     covered = set(record['keyboard_start']['visible_line_indices'])
     for _ in range(40):
+        initial = metrics()
+        frames = []
+        record.setdefault('native_scroll_frames', []).append(frames)
         page.keyboard.press('PageDown')
-        page.wait_for_timeout(50)  # Let native smooth scroll settle; no action retry.
-        current = metrics()
+        def animation_frame():
+            return identity.evaluate("(n) => new Promise(resolve => requestAnimationFrame(() => resolve((" + TEXT_METRICS + ")(n))))")
+        current = wait_for_native_scroll_stability(animation_frame, initial, frames)
+        # Only settled positions count toward reading coverage. In-flight frames
+        # remain diagnostic evidence, not a substitute for a readable stop.
         path.append(current)
         validate_text_metrics(current)
         covered.update(current['visible_line_indices'])
