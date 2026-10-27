@@ -28,7 +28,7 @@ def reference_pdf(raw: bytes, filename: str) -> bytes:
     # Reuse the approved receipt image/frame bounds, without invoking a reader.
     # At most ten frames are normalized once for this disposable source copy.
     from app.expense_report import receipt_attachment_pages
-    import fitz
+    import pymupdf as fitz
     from app.monthly_report_render_jobs import work_slot
     with work_slot(preview=True):
         pages = receipt_attachment_pages(raw, filename)

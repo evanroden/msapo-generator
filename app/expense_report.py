@@ -1200,7 +1200,7 @@ def receipt_attachment_pages(
     """
     suffix = Path(filename).suffix.casefold()
     if suffix == ".pdf":
-        import fitz
+        import pymupdf as fitz
 
         pages: list[bytes] = []
         try:
