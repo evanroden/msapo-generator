@@ -356,3 +356,64 @@ def unmapped_cells(review: WorkOrderReview, row_key: str):
     return tuple((index, column, match.origin.cells[index])
                  for index, column in enumerate(review.original_columns)
                  if index not in positions)
+
+
+def review_record(review: WorkOrderReview):
+    """Portable review receipt; storage ownership remains with the caller."""
+    return {"schema": 1, "review": asdict(review), "sha256": review.revision}
+
+
+def restore_review(record):
+    """Restore a reviewed snapshot only when its exact source-row data survives."""
+    if not isinstance(record, dict) or record.get("schema") != 1:
+        raise ValueError("Unknown normalized work-order review schema.")
+    try:
+        value = record["review"]
+        mapping = ColumnMapping(**{
+            **{field: value["mapping"][field] for field in FIELDS},
+            "ambiguous": tuple(value["mapping"]["ambiguous"]),
+        })
+        rows = []
+        for source_row in value["rows"]:
+            origin = source_row["origin"]
+            restored_origin = SourceRow(
+                origin["source_id"], origin["source_sha256"],
+                origin["source_fingerprint"], origin["filename"],
+                origin["table_number"], origin["row_number"],
+                tuple(origin["columns"]), tuple(origin["cells"]))
+            rows.append(WorkOrderRow(
+                restored_origin, **{key: source_row[key] for key in FIELDS},
+                issues=tuple(source_row["issues"]),
+                corrections=tuple(tuple(pair) for pair in source_row["corrections"]),
+                excluded=source_row["excluded"]))
+        review = WorkOrderReview(
+            value["source_id"], value["source_sha256"],
+            value["source_fingerprint"], value["source_reference"],
+            value["table_number"], value["kind"], mapping,
+            tuple((site, tuple(names)) for site, names in value["allowed_sites"]),
+            value["period_key"], tuple(rows),
+            tuple(value["original_columns"]),
+            tuple(tuple(row) for row in value["original_rows"]),
+            tuple(value["questions"]),
+        )
+    except (KeyError, TypeError, IndexError, ValueError) as exc:
+        raise ValueError("The saved work-order review has invalid fields.") from exc
+    if (len(review.original_rows) > 20_000 or len(review.original_columns) > 256
+            or len(review.rows) > len(review.original_rows)
+            or len(review.original_rows) * len(review.original_columns) > 200_000
+            or review.revision != record.get("sha256")):
+        raise ValueError("The saved work-order review failed its integrity check.")
+    for row in review.rows:
+        if (row.origin.source_id != review.source_id
+                or row.origin.source_sha256 != review.source_sha256
+                or row.origin.source_fingerprint != review.source_fingerprint
+                or row.origin.table_number != review.table_number
+                or row.origin.columns != review.original_columns
+                or not 1 <= row.origin.row_number <= len(review.original_rows)
+                or row.origin.cells != review.original_rows[row.origin.row_number - 1]
+                    + ("",) * (len(review.original_columns)
+                               - len(review.original_rows[row.origin.row_number - 1]))):
+            raise ValueError("The saved work-order review lost its original row identity.")
+    if len({row.key for row in review.rows}) != len(review.rows):
+        raise ValueError("The saved work-order review repeats a source row.")
+    return review
