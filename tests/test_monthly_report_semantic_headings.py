@@ -124,3 +124,53 @@ def test_custom_style_outline_is_respected_as_existing_navigation():
         document, original, positions, owners, {"training"}) == ()
     assert outline(heading) is None
     assert outline(plain) is None
+
+
+def test_generated_native_word_has_navigable_section_paragraphs(tmp_path):
+    """Exercise the actual derivative native builder, not just its XML helper."""
+    from app.monthly_report_model import (
+        BlockSpec, Facility, ReportDraft, ReportPeriod, ReportProfile,
+        ResolvedBlock, SectionSpec,
+    )
+    from app.monthly_report_native_layout import build_native_docx
+
+    source = Document()
+    source.add_paragraph("Old Site")
+    source.add_paragraph("August 2026")
+    source.add_paragraph("Prepared by: Prior Editor")
+    activity = source.add_paragraph("MONTHLY ACTIVITY SUMMARY")
+    activity.runs[0].bold = True
+    source.add_paragraph("Prior monthly activity")
+    training = source.add_paragraph("TRAINING SUMMARY")
+    training.runs[0].bold = True
+    source.add_paragraph("Prior training activity")
+    path = tmp_path / "synthetic-native-headings.docx"
+    source.save(path)
+    original = path.read_bytes()
+
+    sections = (
+        SectionSpec("activity", "2", "Monthly Activity Summary",
+                    (BlockSpec("activity_summary", "rich_text"),)),
+        SectionSpec("training", "11", "Training Summary",
+                    (BlockSpec("training_summary", "rich_text"),)),
+    )
+    profile = ReportProfile("Synthetic contract", "site", "Synthetic Site",
+                            (Facility("site", "Synthetic Site"),))
+    current = ReportDraft(
+        profile, ReportPeriod(2026, 10), "Current Editor", sections,
+        (ResolvedBlock("activity_summary", "This month", text="Current synthetic activity"),
+         ResolvedBlock("training_summary", "This month", text="Current synthetic training")),
+    )
+    generated = Document(BytesIO(build_native_docx(current, path)))
+    titles = {
+        p.text.strip().upper(): p
+        for p in generated.paragraphs
+        if p.text.strip().upper() in ("MONTHLY ACTIVITY SUMMARY", "TRAINING SUMMARY")
+    }
+    assert set(titles) == {"MONTHLY ACTIVITY SUMMARY", "TRAINING SUMMARY"}
+    assert all(outline(p) == "0" for p in titles.values())
+    assert all(p.style.style_id == "Normal" and p.runs[0].bold
+               for p in titles.values())
+    assert path.read_bytes() == original
+    assert "Prior monthly activity" not in "\\n".join(p.text for p in generated.paragraphs)
+    assert "Current synthetic activity" in "\\n".join(p.text for p in generated.paragraphs)
