@@ -2282,6 +2282,13 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     fit_proposals_numeral(document, section_key=section_key)
     from app.monthly_report_native_design import name_report_in_contents_notice
     name_report_in_contents_notice(body)
+    from app.monthly_report_semantic_headings import mark_native_section_headings
+    # Navigation metadata belongs to the derivative only; source geometry,
+    # visible style, header/artwork and report contents remain unchanged.
+    navigable = {section.key for section in draft.sections if section.included}
+    if section_key is not None:
+        navigable.intersection_update((section_key,))
+    mark_native_section_headings(document, original, headings, section_by_pos, navigable)
     if source_region_observer is not None:
         source_region_observer(body, page_plan)
     result = BytesIO()
