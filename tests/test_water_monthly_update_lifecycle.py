@@ -119,3 +119,55 @@ def test_water_profile_order_still_rejects_missing_pages_duplicates_and_unknowns
         profile = replace(water_draft().profile, section_block_order=(('water', order),))
         with pytest.raises(library.LibraryError, match='block order'):
             library.save_profile(profile, expected_revision=0, actor='Synthetic Editor', confirmed=True)
+
+
+def test_new_word_profile_places_missing_water_update_before_mapped_vendor_pages(tmp_path):
+    from io import BytesIO
+    from docx import Document
+    from PIL import Image
+    from app.monthly_report_import import inspect_docx
+    from app.monthly_report_model import profile_sections
+    from app.monthly_report_setup import design_profile, suggested_mappings
+    source = Document()
+    source.add_heading('Water Treatment Reports', 1)
+    raw = BytesIO()
+    Image.new('RGB', (100, 150), 'navy').save(raw, 'PNG')
+    source.add_picture(BytesIO(raw.getvalue()))
+    path = tmp_path / 'synthetic-water-import.docx'
+    source.save(path)
+    inspection = inspect_docx(path)
+    mappings = suggested_mappings(inspection)
+    assert any(mapping.slot == 'water_reports' for mapping in mappings)
+    profile = design_profile(synthetic_profiles()[0], inspection, mappings)
+    assert dict(profile.section_block_order)['water'] == ('water_monthly_update', 'water_reports')
+    water = next(section for section in profile_sections(profile) if section.key == 'water')
+    assert [block.key for block in water.blocks] == ['water_monthly_update', 'water_reports']
+    # Exercise the actual import-to-native-export route, not a hand-built schema.
+    from docx.oxml.ns import qn
+    from app.monthly_report_import import map_items, imported_draft, _text
+    from app.monthly_report_native_layout import build_native_docx
+    mapped = map_items(path, inspection, mappings)
+    draft = imported_draft(profile, ReportPeriod(2026, 9), 'Synthetic Editor', mapped)
+    update = 'Current synthetic update entered after Word import.'
+    draft = replace(draft, blocks=(*draft.blocks, ResolvedBlock('water_monthly_update', 'This month', text=update)))
+    assets = dict(mapped.assets)
+    original = path.read_bytes()
+    rendered = Document(BytesIO(build_native_docx(draft, path, asset_loader=assets.__getitem__)))
+    children = list(rendered.element.body)
+    summary_position = next(i for i, child in enumerate(children) if _text(child) == update)
+    picture_positions = [i for i, child in enumerate(children) if list(child.iter(qn('a:blip')))]
+    assert picture_positions and summary_position < min(picture_positions)
+    assert path.read_bytes() == original
+
+
+def test_import_keeps_explicitly_mapped_water_update_after_pages():
+    from app.monthly_report_import import DocxInspection, ImportItem, ImportMapping
+    from app.monthly_report_setup import design_profile
+    items = (
+        ImportItem('vendor', 'image', 'word/document.xml', 1, 1, 'water', 'water_reports'),
+        ImportItem('update', 'text', 'word/document.xml', 2, 1, 'water', 'water_monthly_update', text='Explicit trailing update.'),
+    )
+    inspection = DocxInspection('a' * 64, items, (), (), 1)
+    mappings = tuple(ImportMapping(item.id, item.suggested_slot) for item in items)
+    profile = design_profile(synthetic_profiles()[0], inspection, mappings)
+    assert dict(profile.section_block_order)['water'] == ('water_reports', 'water_monthly_update')

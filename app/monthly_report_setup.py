@@ -160,6 +160,11 @@ def design_profile(profile, inspection, mappings, overrides=()):
         if s.key not in order:
             order.append(s.key)
         block_order.setdefault(s.key, [])
+        if (s.key == "water" and "water_reports" in block_order[s.key]
+                and "water_monthly_update" not in block_order[s.key]):
+            # A missing optional slot is a new default, not a user-selected
+            # trailing update. Preserve order when both slots were mapped.
+            block_order[s.key].insert(block_order[s.key].index("water_reports"), "water_monthly_update")
         block_order[s.key].extend(b.key for b in s.blocks if b.key not in block_order[s.key])
     return replace(profile, section_order=tuple(order), excluded_sections=tuple(s.key for s in skeleton if s.key not in included),
                    section_titles=tuple(found.items()), section_block_order=tuple((k, tuple(v)) for k, v in block_order.items()),
