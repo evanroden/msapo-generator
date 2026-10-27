@@ -996,7 +996,12 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
     # Water, Scorecards and MBCx already have section-level instructions. Keep one
     # labeled uploader without a duplicate title, while retaining the complete
     # canonical page-review flow and its safety checks.
-    with st.popover("Add files", key=local_key + "_add_files", help="Upload a file or reuse a file already saved in this draft."):
+    if destination == "mbcx_report":
+        st.caption("Upload a PDF to include its complete report. Supporting files and existing page choices remain available.")
+        upload_area = st.container()
+    else:
+        upload_area = st.popover("Add files", key=local_key + "_add_files", help="Upload a file or reuse a file already saved in this draft.")
+    with upload_area:
         upload = st.file_uploader(upload_label, type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
                                  accept_multiple_files=True, max_upload_size=128, key=local_key + "_upload")
         picked = tuple((u.name, u.getvalue()) for u in (upload or ()))
@@ -1060,6 +1065,18 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
         st.caption(choices[selected].source.filename)
     else:
         selected = st.selectbox("File to review", list(choices), format_func=lambda v: choices[v].source.filename, key=selected_key)
+    if destination == "mbcx_report" and choices[selected].source.suffix == ".pdf":
+        from app.monthly_report_mbcx_pdf import render_whole_pdf
+        batch = render_whole_pdf(profile, choices[selected], blocks, assets,
+                                 local_key, prefix, field, period=period)
+        if batch is not None:
+            revised, additions = batch
+            contents = tuple(revised if c.source.id == selected else c for c in contents)
+            st.session_state[key] = contents
+            forms = st.session_state.get("_monthly_source_detail_forms")
+            if isinstance(forms, dict) and selected in forms:
+                forms[selected] = revised.source
+            return tuple(c.source for c in contents), additions, {}
     revised = _render_section_page_review(
         profile, choices[selected], local_key, field, blocks,
         period=period,
