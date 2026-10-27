@@ -5,8 +5,11 @@ from uuid import uuid4
 import streamlit as st
 
 from app.monthly_report_shared_templates import (
-    MAX_TEMPLATE_BYTES, MAX_TEMPLATE_MIB, SharedReportTemplates,
+    MAX_TEMPLATE_BYTES, SharedReportTemplates,
 )
+
+from app.monthly_report_import import MAX_DOCX_BYTES
+from app.monthly_report_upload_limits import byte_limit_label, uploader_limit_mib
 
 _PREFIX = "_shared_template_"
 _PENDING = "_shared_fixture_pending"
@@ -24,7 +27,7 @@ def save_pending(live_storage_root, upload_key):
     if upload is None:
         raise ValueError("Choose a Word report template.")
     if upload.size > MAX_TEMPLATE_BYTES:
-        raise ValueError(f"The report template exceeds the {MAX_TEMPLATE_MIB} MiB upload limit.")
+        raise ValueError(f"The report template exceeds the {byte_limit_label(MAX_TEMPLATE_BYTES)} upload limit.")
     receipt = SharedReportTemplates(Path(live_storage_root)).upload(upload.getvalue(), upload.name)
     st.session_state[_PREFIX + "selection"] = receipt.bundle_id
     st.session_state[_PREFIX + "saved"] = True
@@ -37,13 +40,13 @@ def save_pending(live_storage_root, upload_key):
 
 def render(live_storage_root):
     with st.expander("Shared report templates for agents"):
-        st.caption(f"Store original Word templates up to {MAX_TEMPLATE_MIB} MiB for other agents to download. Templates stay unchanged and do not update the company master or any report.")
+        st.caption(f"Store unchanged Word templates up to {byte_limit_label(MAX_TEMPLATE_BYTES)} for agents. This is storage, not report import (up to {byte_limit_label(MAX_DOCX_BYTES)}, with separate parsing limits). Saving does not update the company master or any report.")
         if st.session_state.pop(_PREFIX + "saved", False):
             st.success("Report template saved. Other agents can download the unchanged original here.")
         generation = st.session_state.get(_PREFIX + "generation", 0)
         upload_key = _PREFIX + "file_" + str(generation)
         upload = st.file_uploader("Word report template", type=["docx"],
-                                  max_upload_size=MAX_TEMPLATE_MIB, key=upload_key)
+                                  max_upload_size=uploader_limit_mib(MAX_TEMPLATE_BYTES), key=upload_key)
         st.button("Save shared report template", key=_PREFIX + "save",
                   on_click=_queue_upload, args=(upload_key,), disabled=upload is None)
         shelf = SharedReportTemplates(Path(live_storage_root))
