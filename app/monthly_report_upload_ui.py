@@ -996,7 +996,10 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
     # Water, Scorecards and MBCx already have section-level instructions. Keep one
     # labeled uploader without a duplicate title, while retaining the complete
     # canonical page-review flow and its safety checks.
-    with st.popover("Add files", key=local_key + "_add_files", help="Upload a file or reuse a file already saved in this draft."):
+    upload_area = (st.container() if destination == "water_reports" else
+                   st.popover("Add files", key=local_key + "_add_files",
+                              help="Upload a file or reuse a file already saved in this draft."))
+    with upload_area:
         upload = st.file_uploader(upload_label, type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
                                  accept_multiple_files=True, max_upload_size=128, key=local_key + "_upload")
         picked = tuple((u.name, u.getvalue()) for u in (upload or ()))
