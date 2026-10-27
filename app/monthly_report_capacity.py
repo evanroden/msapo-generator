@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 import re
 
-import fitz
+import pymupdf as fitz
 
 from app import monthly_report_directory as directory, monthly_report_library as library
 from app.monthly_report_model import Facility, ReportDraft, ReportProfile, ReportSource, ReportTable, ResolvedBlock

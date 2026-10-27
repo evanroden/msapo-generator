@@ -103,10 +103,14 @@ def snapshot(base, token):
     working = _working_report(saved)
     journal = load(token, fixture.CONTRACT, fixture.profile().key, fixture.PERIOD)
     def state(draft):
+        unrelated = replace(draft, blocks=tuple(b for b in draft.blocks
+            if b.key not in {'contact_matrix','subcontractor_matrix'}))
         return {'contacts': asdict(next(b for b in draft.blocks if b.key == 'contact_matrix')),
                 'vendors': asdict(next(b for b in draft.blocks if b.key == 'subcontractor_matrix')),
-                'unrelated': replace(draft, blocks=tuple(b for b in draft.blocks
-                    if b.key not in {'contact_matrix','subcontractor_matrix'})).fingerprint}
+                'unrelated': unrelated.fingerprint,
+                # Only reached after _folder/namespace validate the marked synthetic fixture.
+                # Keep actual field evidence when a strict unrelated-content check fails.
+                'unrelated_payload': asdict(unrelated)}
     standing = directory.load_directory(fixture.CONTRACT)
     setup_record = json.loads((folder / 'setup.json').read_text())
     return {'scope': identity, 'generation': generation, 'saved_revision': saved.revision,

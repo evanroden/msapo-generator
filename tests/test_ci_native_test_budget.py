@@ -51,6 +51,10 @@ def parse_jobs(text):
 def validate_workflow(text):
     jobs = parse_jobs(text)
     original = json.loads((ROOT / 'tests/fixtures/native_workflow_steps.json').read_text())
+    # The contact journey moves intact to its own mandatory bounded job.
+    contact = [step for step in original['synthetic-dom'] if 'qa_compact_contact_journey.py' in step.get('commands', '')]
+    assert len(contact) == 1
+    original['synthetic-dom'] = [step for step in original['synthetic-dom'] if step not in contact]
     ceilings = {'literal-labels':10, 'synthetic-history':15, 'synthetic-progress-photos':15, 'synthetic-dom':25, 'training-date':15}
     for name, ceiling in ceilings.items():
         chunks = jobs[name]
@@ -116,3 +120,28 @@ def test_term_resistant_descendant_is_killed_when_shell_exits(tmp_path):
     else:
         os.kill(pid, 9)
         pytest.fail('TERM-resistant descendant survived aggregate deadline')
+
+
+def test_contact_job_is_mandatory_bounded_and_preserves_the_full_journey():
+    text = (ROOT / '.github/workflows/adaptive-workspaces.yml').read_text()
+    jobs = parse_jobs(text)
+    contact = ''.join(jobs['synthetic-contact'])
+    dom = ''.join(jobs['synthetic-dom'])
+    assert '    timeout-minutes: 45\n' in jobs['synthetic-contact'][0]
+    assert '    if:' not in jobs['synthetic-contact'][0]
+    assert 'continue-on-error' not in contact
+    assert contact.count('python scripts/qa_compact_contact_journey.py') == 1
+    assert 'qa_compact_contact_journey.py' not in dom
+    setup = next(s for s in jobs['synthetic-contact'] if 'name: Install locked app' in s)
+    assert setup == next(s for s in jobs['synthetic-dom'] if 'name: Install locked app' in s)
+    assert "python -m playwright install --with-deps chromium webkit" in setup
+    assert contact.count("python scripts/ci_native_test_budget.py --minutes 15 <<'NATIVE_TEST'") == 2
+    assert contact.count('        timeout-minutes: 16\n') == 2
+    run = next(s for s in jobs['synthetic-contact'] if 'qa_compact_contact_journey.py' in s)
+    assert 'if: ${{ !cancelled() }}' in run
+    assert run.split("<<'NATIVE_TEST'\n", 1)[1].strip() == 'python scripts/qa_compact_contact_journey.py\n          NATIVE_TEST'
+    upload = next(s for s in jobs['synthetic-contact'] if 'upload-artifact' in s)
+    assert 'if: always()' in upload
+    assert 'timeout-minutes: 3' in upload
+    assert 'path: test-artifacts/compact-contact-journey/' in upload
+    assert 'retention-days: 7' in upload
