@@ -650,7 +650,11 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 content_slot = ""
                             compact_text = re.sub(r"[^a-z]", "", text.casefold())
                             if section == "activity":
-                                if compact_text in ("workorderstatus", "pmstatus"):
+                                if (compact_text in ("workorderstatus", "pmstatus")
+                                        or re.fullmatch(
+                                            r"\s*(?:work\s*order|pm)\s*status\s*[-–—:]?\s*"
+                                            r"(?:location|site)\s*#?\s*(?:\d+|[a-z])\s*[:.]?\s*",
+                                            text, re.I)):
                                     content_slot = "work_orders"
                                 elif compact_text == "activitysummary":
                                     content_slot = "activity_summary"
