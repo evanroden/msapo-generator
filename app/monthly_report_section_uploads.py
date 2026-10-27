@@ -1,6 +1,6 @@
 """Section-local evidence routing without copying or reclassifying saved sources."""
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import re
 
 from app import monthly_report_sources as sources
@@ -87,6 +87,76 @@ def pending_pages(contents, destination, blocks):
             if number in sources.image_numbers(content) and (content.source.id, number) not in owners:
                 result.append((content.source.id, number))
     return tuple(result)
+
+
+
+MAX_PREPARED_IMAGE_BYTES = 60 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class WholePdfPreflight:
+    """Read-only capacity for including every *remaining* page of one PDF."""
+
+    new_pages: int
+    already_included: int
+    available_pages: int
+    remaining_bytes: int | None = None
+    new_image_bytes: int | None = None
+    measured_all: bool = False
+
+    @property
+    def pages_fit(self):
+        return self.new_pages <= self.available_pages
+
+    @property
+    def images_fit(self):
+        if self.new_image_bytes is None:
+            return None
+        return (self.measured_all and self.new_image_bytes <= self.remaining_bytes)
+
+
+def preflight_whole_pdf(profile, content, destination, blocks, assets=None, *,
+                        measure_bytes=False):
+    """Check a complete PDF before page-by-page approval.
+
+    Does not approve images, change source selection, or insert report assets.
+    Counting always checks all PDF pages rather than just auto-suggested pages.
+    Exact prepared-image size is optional because print rasterization can be
+    expensive; stop counting as soon as an over-budget outcome is proven.
+    """
+    if destination not in SECTION_UPLOADS or content.source.suffix != ".pdf":
+        raise ValueError("Select a PDF and its report section to check whole-document capacity.")
+    owners = included_pages(blocks)
+    source_id = content.source.id
+    if any(identity == source_id and destination not in slots
+           for (identity, _), slots in owners.items()):
+        raise ValueError("This PDF already has pages in another section. Review it there; no pages were added.")
+    images = sources.image_numbers(content)
+    incoming = tuple(n for n in images if (source_id, n) not in owners)
+    existing = sum(len(block.asset_hashes) for key, block in blocks.items()
+                   if key in sources.PAGE_DESTINATIONS)
+    capacity = WholePdfPreflight(
+        new_pages=len(incoming),
+        already_included=len(images) - len(incoming),
+        available_pages=max(0, sources.MAX_EMBED_PAGES - existing),
+    )
+    if not measure_bytes or not capacity.pages_fit:
+        return capacity
+    from app import monthly_report_library as library
+    assets = {} if assets is None else assets
+    used = sum(len(assets[ref] if ref in assets else library.read_asset(
+        profile.contract, profile.key, ref))
+        for key, block in blocks.items() if key in sources.PAGE_DESTINATIONS
+        for ref in block.asset_hashes)
+    remaining = max(0, MAX_PREPARED_IMAGE_BYTES - used)
+    total, measured = 0, 0
+    for page in incoming:
+        total += len(sources.page_image(profile, content, page).data)
+        measured += 1
+        if total > remaining:
+            break
+    return replace(capacity, remaining_bytes=remaining, new_image_bytes=total,
+                   measured_all=measured == len(incoming))
 
 
 def prepare_section_pages(profile, contents, destination, blocks, assets=None, *,
