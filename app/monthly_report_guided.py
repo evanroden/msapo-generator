@@ -1053,11 +1053,27 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
             st.markdown("**" + readable_label(spec.key) + "**")
         if spec.key == "thermal_capacity":
             from app.monthly_report_capacity_ui import render_capacity, render_capacity_scope
+            from app.monthly_report_capacity_inclusion import capacity_inclusion, inclusion_control
+            inclusion_prefix = prefix + "_" + _signature((draft.profile.contract,
+                draft.profile.key, draft.period.key, _rich_text_scope(prefix)))
+            included = inclusion_control(block, inclusion_prefix, field)
+            if not included and block.source == "Omit":
+                st.caption("Thermal capacity is left out; its values are kept.")
+                blocks[spec.key] = block
+                continue
+            if included:
+                block = capacity_inclusion(block, True)
             capacity_scope = st.container(key=prefix + "_capacity_scope")
             # Capture the delivered report-table edit before any source action
             # can refresh an unedited shared copy. Manual overrides stay local.
             with st.container(key=prefix + "_capacity_report_table"):
                 block = _edit_content(spec, block, state, prefix, assets, field, draft)
+            # Capture a table edit delivered with Exclude before retiring its
+            # controls; exclusion must not discard the last entered value.
+            if not included:
+                blocks[spec.key] = capacity_inclusion(block, False)
+                st.session_state[prefix + "_period_editor_refresh"] = True
+                continue
             before = block
             draft, block = render_capacity(draft, block, prefix, field, show_scope=False)
             if block != before:
