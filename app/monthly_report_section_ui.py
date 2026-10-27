@@ -290,7 +290,15 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                     # Automatic plans store one value per paragraph, not one
                     # combined section under the first paragraph's identity.
                     combined = "\n\n".join(prior_texts.get(i.id, i.text) for i in texts)
-                text = st.text_area(guide.text_label, key=field(p + "_text", combined), height=200) if action == actions[1] else combined
+                text = combined
+                if action == actions[1]:
+                    text_key = field(p + "_text", combined)
+                    # A native remount needs the exact delivered value in its
+                    # protobuf default too, including an intentional clear.
+                    # Seeding Python session state alone can render blank.
+                    text = st.text_area(guide.text_label,
+                                        value=st.session_state.get(text_key, combined),
+                                        key=text_key, height=200)
                 if action != actions[1]:
                     st.text(text[:14000])
                     if len(text) > 14000:

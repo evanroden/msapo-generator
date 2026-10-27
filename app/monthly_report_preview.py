@@ -10,7 +10,7 @@ from pathlib import Path
 import tempfile
 from uuid import uuid4
 
-import fitz
+import pymupdf as fitz
 from docx import Document
 from docx.oxml.ns import qn
 from PIL import Image

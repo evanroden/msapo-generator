@@ -143,3 +143,66 @@ def test_confirmed_period_review_remains_reachable_and_edit_requires_reconfirmat
     draft = save_start(app)
     assert next(b.text for b in draft.blocks if b.key == "activity_summary") == changed
     assert not app.exception
+
+
+def test_import_text_native_default_matches_retained_edits_and_explicit_clear(monkeypatch, tmp_path):
+    from test_monthly_report_start_import import start_app
+    paragraphs = ("Inspected the air handler.", "Repaired the second pump.")
+    app = start_app(monkeypatch, tmp_path, report_file(tmp_path, month="July 2026", activity=paragraphs))
+    next(r for r in app.radio if r.label == "What would you like to do?").set_value("Edit text or change pictures").run()
+    area = lambda: next(t for t in app.text_area if t.label == "Work completed this month")
+    identity = area().proto.id
+    assert area().proto.default == "\n\n".join(paragraphs)
+    for wording in ("Synthetic revised work.", "", "Restored explicit work."):
+        area().set_value(wording).run()
+        assert area().value == wording
+        assert area().proto.default == wording, "Session state alone does not hydrate a native remount."
+        assert area().proto.id == identity
+        key = next(k for k in app.session_state.filtered_state if k.endswith("_section_activity_open"))
+        app.session_state[key] = False
+        app.run()
+        app.session_state[key] = True
+        app.run()
+        assert area().value == wording
+        assert area().proto.default == wording
+        assert area().proto.id == identity
+
+
+def test_native_import_default_does_not_reuse_another_source_or_target_month(monkeypatch, tmp_path):
+    from io import BytesIO
+    from streamlit.testing.v1 import AppTest
+    from app import monthly_report_section_ui as ui
+    monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path / 'store'))
+    uploads = []
+    for name, wording in (('one', 'First unfinished inspection.'), ('two', 'Second unfinished repair.')):
+        folder = tmp_path / name
+        folder.mkdir()
+        path = report_file(folder, month='July 2026', activity=(wording,))
+        upload = BytesIO(path.read_bytes())
+        upload.name, upload.size = path.name, len(upload.getvalue())
+        uploads.append(upload)
+    current = [uploads[0]]
+    real = ui.st.file_uploader
+    monkeypatch.setattr(ui.st, 'file_uploader', lambda label, *a, **k: current[0] if label == 'Starting report' else real(label, *a, **k))
+    app = AppTest.from_string('''
+import streamlit as st
+from app.monthly_report_section_ui import render_section_setup
+from app.monthly_report_model import synthetic_profiles, ReportPeriod
+from app.monthly_report_ui import _field
+month=st.selectbox("Target month", [9,10])
+p=synthetic_profiles()[0]
+render_section_setup(p.contract,ReportPeriod(2026,month),"Synthetic Editor",_field,identity=p)
+''', default_timeout=30).run()
+    def edit():
+        next(r for r in app.radio if r.label == 'What would you like to do?').set_value('Edit text or change pictures').run()
+        return next(t for t in app.text_area if t.label == 'Work completed this month')
+    edit().set_value('First-month private correction.').run()
+    next(c for c in app.checkbox if c.label == 'This work belongs in September 2026').check().run()
+    app.selectbox[0].set_value(10).run()
+    assert edit().proto.default == 'First unfinished inspection.'
+    assert not next(c for c in app.checkbox if c.label == 'This work belongs in October 2026').value
+    current[0] = uploads[1]
+    app.run()
+    assert edit().proto.default == 'Second unfinished repair.'
+    assert not next(c for c in app.checkbox if c.label == 'This work belongs in October 2026').value
+    assert not app.exception

@@ -80,7 +80,7 @@ def _renderer_fingerprint(binary, font_config, font_path):
 
 def rasterize_metafile(raw, suffix):
     """Prepare a full lossless raster for the existing pricing/image review gate."""
-    import fitz
+    import pymupdf as fitz
     from app import monthly_report_library as library
     from app.monthly_report_import import ImportError
     from app.monthly_report_word_pages import _RENDER_LOCK, _render

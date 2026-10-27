@@ -83,6 +83,7 @@ def exercise(engine,name,source,base,scenario,replacement=None):
             text=activity.get_by_role('textbox',name='Work completed this month',exact=True)
             expect(text).to_have_value(FIRST+'\n\n'+SECOND)
             text.fill(EDITED);text.press('Tab')
+            receipt(page, {'saved': False, 'staged_texts': [EDITED]})
             expect(proceed).to_be_disabled()
             confirmation=activity.get_by_role('checkbox',name='This work belongs in September 2026',exact=True)
             def confirm_month():
@@ -102,8 +103,11 @@ def exercise(engine,name,source,base,scenario,replacement=None):
             open_details(activity)
             expect(text).to_have_value(EDITED)
             text.fill(EDITED+' Changed.');text.press('Tab')
+            receipt(page, {'saved': False, 'staged_texts': [EDITED+' Changed.']})
             expect(confirmation).not_to_be_checked();expect(proceed).to_be_disabled()
-            text.fill(EDITED);text.press('Tab');confirm_month()
+            text.fill(EDITED);text.press('Tab')
+            receipt(page, {'saved': False, 'staged_texts': [EDITED]})
+            confirm_month()
             expect(proceed).to_be_enabled()
             expected=EDITED
         else:
