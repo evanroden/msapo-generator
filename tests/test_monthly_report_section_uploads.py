@@ -300,7 +300,7 @@ def test_whole_pdf_fit_is_shown_before_page_approval(monkeypatch, tmp_path):
     assert not app.session_state["test_blocks"]
     button(app, "Check whole-PDF image size").click().run()
     assert not app.exception
-    assert any("All 2 new pages fit the current image budget" in s.message
+    assert any("All 2 new pages fit the current image budget" in s.value
                for s in app.success)
     assert not app.session_state["test_blocks"]
     assert button(app, "Add reviewed pages").disabled
