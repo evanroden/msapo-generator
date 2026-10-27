@@ -178,7 +178,8 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
         guide = section_help(section.key)
         st.write(guide.guidance)
         from app.monthly_report_import_content_types import content_type_summary
-        source_types = content_type_summary(section.items)
+        # Cover preview filters out tables/text; do not imply they are editable there.
+        source_types = content_type_summary(section.items) if section.key != "cover" else ""
         if source_types:
             st.caption(source_types)
         actions = ["Keep and review", "Edit text or change pictures", "Leave this section out"]
