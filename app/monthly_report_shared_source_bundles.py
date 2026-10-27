@@ -150,6 +150,7 @@ class SharedSourceBundles:
         # but each type has its OWN physical bucket, validator, and quota.
         # The existing owner-original bucket and receipts remain unchanged.
         self._bucket = _BUCKET
+        self._extension = ".zip"
         self._validate_archive = validate_reference_archive
         self._file_count_bounds = (6, 6)
 
@@ -184,7 +185,7 @@ class SharedSourceBundles:
                     or not self._file_count_bounds[0] <= len(files) <= self._file_count_bounds[1]
                     or storage._json_bytes(asdict(receipt)) != raw):
                 raise storage.VaultIntegrityError("Reference receipt does not match its entry.")
-            blob = receipt.archive_sha256 + ".zip"
+            blob = receipt.archive_sha256 + self._extension
             txn = storage._read_file(fd, storage._TRANSACTION, 4096)
             # Read only compact transaction metadata; do not allocate an
             # archive-sized dummy buffer while listing stored receipts.
@@ -231,7 +232,7 @@ class SharedSourceBundles:
     def _download(self, bucket, receipt: SourceBundle) -> bytes:
         fd = os.open(receipt.bundle_id, storage._DIRECTORY_FLAGS, dir_fd=bucket)
         try:
-            original = storage._read_file(fd, receipt.archive_sha256 + ".zip", self._max_archive)
+            original = storage._read_file(fd, receipt.archive_sha256 + self._extension, self._max_archive)
         finally:
             os.close(fd)
         if len(original) != receipt.archive_size or sha256(original).hexdigest() != receipt.archive_sha256:
@@ -249,6 +250,10 @@ class SharedSourceBundles:
 
     def upload(self, original: bytes) -> SourceBundle:
         sources = self._validate_archive(original, max_bytes=self._max_archive)
+        return self._store(original, sources)
+
+    def _store(self, original: bytes, sources: tuple[SourceFile, ...]) -> SourceBundle:
+        """Persist already-validated bytes using the common immutable transaction."""
         digest = sha256(original).hexdigest()
         with self._directory(create=True) as bucket:
             with storage._admission_lock(bucket):
@@ -268,7 +273,7 @@ class SharedSourceBundles:
                         "Shared reference archive shelf is full; existing originals were retained.")
                 storage.FixtureVault._install(
                     bucket, receipt.bundle_id,
-                    {digest + ".zip": original, "receipt.json": record},
+                    {digest + self._extension: original, "receipt.json": record},
                     lambda: None, kind="reference-bundle")
                 return receipt
 
