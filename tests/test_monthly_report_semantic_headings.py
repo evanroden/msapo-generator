@@ -5,6 +5,7 @@ from io import BytesIO
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
+from lxml import etree
 
 from app.monthly_report_semantic_headings import mark_native_section_headings
 
@@ -57,7 +58,7 @@ def test_native_section_headings_gain_outline_without_changing_visible_formattin
             before, (cover, contents, divider, water, notes, issue)):
         assert paragraph.text == text
         assert paragraph.style.style_id == style
-        assert paragraph._p.find(qn("w:r")).xml == run.xml
+        assert etree.tostring(paragraph._p.find(qn("w:r")), method="c14n", exclusive=True) == etree.tostring(run, method="c14n", exclusive=True)
 
     snapshot = BytesIO()
     document.save(snapshot)
