@@ -162,7 +162,8 @@ def _explicit_quote_price_risk(section, inspection):
 
 
 def _section_card(section, path, inspection, period, prefix, field, plans, first, *, cover_photo_ids=(),
-                  cover_design_available=False, source_name="Uploaded Word report", source_view=None, profile=None):
+                  cover_design_available=False, source_name="Uploaded Word report", source_view=None, profile=None,
+                  independent_template=False, native_art_size_limited=False):
     p = prefix + "_section_" + section.key
     old = plans.get(section.key, {})
     # Streamlit includes an expander's label in its identity, even with a key.
@@ -179,7 +180,8 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
         actions = ["Keep and review", "Edit text or change pictures", "Leave this section out"]
         labels = dict(zip(actions, (guide.keep, guide.edit, "Start this section blank")))
         if section.key == "cover":
-            labels[actions[2]] = ("Use this report’s cover design" if cover_design_available
+            labels[actions[2]] = ("Use selected ENFRA template" if independent_template else
+                                 "Use this report’s cover design" if cover_design_available
                                   else "Leave imported cover artwork out")
         action = st.radio("What would you like to do?", actions, format_func=labels.get, key=field(p + "_action", old.get("action", actions[0])), horizontal=True)
         plan = {"key": section.key, "action": action, "target": section.key,
@@ -209,7 +211,9 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
             kept_native = {item.original_id for item in context.inventory.occurrences}
             plan["native_art_review"] = context.receipt
         blocking = []
-        cover_recovery = ("Choose ‘Use this report’s cover design’ above to keep its current artwork."
+        cover_recovery = ("Choose ‘Use selected ENFRA template’ above to leave the uploaded cover out."
+                          if independent_template else
+                          "Choose ‘Use this report’s cover design’ above to keep its current artwork."
                           if cover_design_available else
                           "Open an existing report if you want to use its saved cover design.")
         if plan["omit"]:
@@ -225,6 +229,8 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                     )
                 else:
                     st.caption(
+                        "Uses the selected ENFRA whole-report template. Uploaded cover artwork and footer stay only in the retained original."
+                        if independent_template else
                         "Keeps this report’s current cover design, logos, photograph and footer. "
                         "No cover artwork or address from this upload is added; the unchanged "
                         "original is retained."
@@ -390,7 +396,10 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                         st.caption(f"{count} unread cover drawing{'s' if count != 1 else ''} · {source_name}")
                     blocking.append(
                         "A Word diagram in " + section.title + " could not be preserved. " +
-                        ("A new cover photograph changes only the photograph; it cannot replace "
+                        ("The file exceeds the native-artwork processing limit. Use an available ENFRA template "
+                         "or keep the original and upload a smaller test copy; replacing the upload starts a new review."
+                         if section.key == "cover" and native_art_size_limited else
+                         "A new cover photograph changes only the photograph; it cannot replace "
                          "this unread drawing. Repair that artwork in the original Word file and "
                          "upload it again. " + cover_recovery
                          if section.key == "cover" else
@@ -696,13 +705,25 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
         return False
     _, path, inspection = staged
     automatic_view = source_view is None
+    native_art_size_limited = False
     if source_view is None:
         from app.monthly_report_source_view_runtime import derive_import_view
         try:
             source_view = derive_import_view(path, inspection)
         except (ValueError, OSError) as exc:
             # Original audit and existing blocking questions remain truthful.
-            st.warning("Automatic native artwork interpretation is blocked: " + str(exc))
+            from app.monthly_report_compatibility_view import MAX_VIEW_SOURCE_BYTES
+            if path.stat().st_size > MAX_VIEW_SOURCE_BYTES and "source byte budget" in str(exc):
+                native_art_size_limited = True
+                st.warning(
+                    f"This file is within the 128 MiB upload limit, but automatic native-artwork "
+                    f"interpretation is limited to {MAX_VIEW_SOURCE_BYTES // (1024 * 1024)} MiB. "
+                    "This is a processing limit, not evidence that the artwork is damaged. "
+                    "Your original and current review are unchanged. Use an available independent "
+                    "template below, or keep the original and upload a smaller test copy. "
+                    "Replacing the upload starts a new review.")
+            else:
+                st.warning("Automatic native artwork interpretation is blocked: " + str(exc))
     if source_view is not None and not automatic_view:
         from app.monthly_report_operational_source import verify_inspection
         try:
@@ -879,6 +900,49 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     # a repeated radio under every large photo/logo. The automatic suggestion
     # is already in the plan; clicking a replacement changes only this unsaved
     # draft and leaves the retained original/approved logos untouched.
+    # A whole-template choice is explicit and remains staged until the normal
+    # atomic Continue save. It never approves the uploaded cover artwork.
+    template_choice_key = p + "_independent_template"
+    template_choice = st.session_state.get(template_choice_key, {})
+    template_scope = (inspection.sha256, candidate.contract, candidate.key, period.key)
+    if template_choice and template_choice.get("scope") != template_scope:
+        # A namespace key alone is not proof of the full source identity.
+        # Retire only this stale opt-in, never another section's review.
+        st.session_state.pop(template_choice_key, None)
+        template_choice = {}
+    fallback_template, fallback_error = "", ""
+    cover_review = next((section for section in sections if section.key == "cover"), None)
+    if state is None and source_view is None and cover_review is not None:
+        from app.monthly_report_start_import import unresolved_cover_artwork
+        from app.monthly_report_template_fallback import verified_master_template
+        if (any(item.kind == "unsupported" for item in cover_review.items)
+                or unresolved_cover_artwork(cover_review.items)):
+            try:
+                available_template = verified_master_template(candidate, template_choice.get("template", ""))
+                if template_choice:
+                    fallback_template = available_template
+            except (ValueError, OSError) as exc:
+                available_template, fallback_error = "", str(exc)
+                st.error(fallback_error)
+            if available_template:
+                st.caption("Use the ENFRA template for the whole report, not just its cover. "
+                           "The uploaded report’s original formatting will not be reproduced. "
+                           "Your body review, edits and original file stay; imported cover artwork is left out. "
+                           "Nothing is saved until Continue.")
+                if not fallback_template:
+                    if st.button("Use ENFRA template and keep this review", key=p + "_choose_template"):
+                        from copy import deepcopy
+                        st.session_state[template_choice_key] = {
+                            "template": available_template, "scope": template_scope, "cover_plan": deepcopy(plans["cover"])}
+                        plans["cover"] = dict(plans["cover"], action="Leave this section out", omit=True,
+                                               approved=True, questions=[])
+                        st.session_state[p + "_section_cover_action"] = "Leave this section out"
+                        st.rerun()
+                elif st.button("Keep uploaded report design instead", key=p + "_cancel_template"):
+                    plans["cover"] = template_choice["cover_plan"]
+                    st.session_state[p + "_section_cover_action"] = plans["cover"].get("action", "Keep and review")
+                    st.session_state.pop(template_choice_key, None)
+                    st.rerun()
     cover_photo_ids = ()
     cover_section = next((section for section in sections if section.key == "cover"), None)
     if cover_section and analysis.site_relation == "same":
@@ -960,7 +1024,9 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                 st.caption(section.title + ": " + message)
             _section_card(section, path, inspection, period, p, field, plans, index == 0,
                           cover_photo_ids=cover_photo_ids if section.key == "cover" else (),
-                          cover_design_available=state is not None,
+                          cover_design_available=state is not None or bool(fallback_template),
+                          independent_template=bool(fallback_template),
+                          native_art_size_limited=native_art_size_limited,
                           source_name=upload.name if upload is not None else "Saved original Word report",
                           source_view=source_view, profile=candidate)
     with st.expander("Review what will be carried across (optional)", key=p + "_check_import", on_change="rerun") as details:
@@ -975,9 +1041,13 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                     st.caption(section.title + " · " + status)
     remaining = [s.title for s in sections if not plans.get(s.key, {}).get("approved")]
     todo = [*missing, *(["Review these sections: " + "; ".join(remaining) + "."] if remaining else [])]
+    if fallback_error:
+        todo.append("The selected ENFRA template could not be verified; your review is unchanged.")
+    if fallback_template and not plans.get("cover", {}).get("omit"):
+        todo.append("Leave this upload’s cover contribution out to use the independent ENFRA template.")
     if native_art_pending:
         todo.append("Review the native page artwork above before continuing.")
-    if state is None and cover_section and plans["cover"].get("approved"):
+    if state is None and not fallback_template and cover_section and plans["cover"].get("approved"):
         from app.monthly_report_start_import import unresolved_cover_artwork
         from app.monthly_report_native_art_review import native_cover_furniture_ids
         furniture_ids = native_cover_furniture_ids(inspection.items) if source_view is not None else ()
@@ -994,8 +1064,14 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             message = ("The cover artwork in " + (upload.name if upload is not None else "the saved original") +
                        " is unread or has no confirmed role. Repair it in the original Word file and upload it again, "
                        "or open an existing report with a saved cover design. This upload would also supply a new report’s page design.")
+            if native_art_size_limited:
+                message = ("This upload exceeds the native-artwork processing limit, so its page design cannot yet be used. "
+                           "Choose an available ENFRA template above, or keep the original and upload a smaller test copy. "
+                           "Replacing the upload starts a new review; the original is not damaged by this error.")
             st.error(message)
-            todo.append("Repair the source cover artwork before using it as a new report design.")
+            todo.append("Choose an independent template or a smaller test copy to continue."
+                        if native_art_size_limited else
+                        "Repair the source cover artwork before using it as a new report design.")
     prepared_import = None
     def _prepare_merge():
         nonlocal prepared_import
@@ -1020,8 +1096,14 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
         mapped, mappings = prepared_import
         profile = candidate if state else design_profile(candidate, inspection, mappings, mapped.overrides)
         profile = replace(profile, excluded_sections=())
+        if fallback_template:
+            from app.monthly_report_template_fallback import fallback_profile
+            profile = fallback_profile(profile, fallback_template)
         draft = imported_draft(profile, period, actor, mapped)
         draft = replace(draft, sections=tuple(replace(s, included=True) for s in draft.sections))
+        if fallback_template:
+            from app.monthly_report_template_fallback import validate_fallback_sections
+            validate_fallback_sections(draft)
         replay_existing = state and (source_view is None or library.source_view_replay_recorded(
             contract, profile.key, period, inspection.sha256))
         previous, verified = library.starting_contribution(
@@ -1167,6 +1249,8 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                           "inferred_source": asdict(analysis),
                           "items": [asdict(i) for i in inspection.items],
                           "section_plans": [{k: v for k, v in plan.items() if k not in ("new_assets", "preserved_assets")} for plan in plans.values()]}
+                if fallback_template:
+                    review["independent_template_choice"] = {"template": fallback_template, "scope": "whole-report", "source_cover": "left-out"}
                 if native_art_review is not None:
                     review["native_art_review"] = native_art_review
                 # Normalize dataclass table values for the JSON audit record.
