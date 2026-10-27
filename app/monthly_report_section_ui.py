@@ -192,6 +192,9 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 "image_notes": dict(old.get("image_notes", {})), "automatic": old.get("automatic", False),
                 "source_sha256": old.get("source_sha256", ""),
                 "source_site_relation": old.get("source_site_relation", ""),
+                "content_role_required": list(old.get("content_role_required", ())),
+                "content_role_reviews": dict(old.get("content_role_reviews", {})),
+                "content_role_aggregate": dict(old.get("content_role_aggregate", {})),
                 "automatic_logo_skips": {role:list(ids) for role,ids in old.get("automatic_logo_skips", {}).items()},
                 "automatic_divider_skips": {role:list(ids) for role,ids in old.get("automatic_divider_skips", {}).items()},
                 "cover_photo_omitted": old.get("cover_photo_omitted", False),
@@ -268,7 +271,10 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 plan["target"] = target
                 if not target:
                     blocking.append("Choose a section above, or leave this additional content out of the draft.")
-            texts = [i for i in items if i.kind == "text"]
+            from app.monthly_report_source_content_roles import render_role_texts
+            role_texts = render_role_texts(
+                items, inspection, p, field, old, plan, blocking, editing=action == actions[1])
+            texts = [] if role_texts else [i for i in items if i.kind == "text"]
             if texts:
                 combined = old.get("texts", {}).get(texts[0].id, "\n\n".join(i.text for i in texts))
                 text = st.text_area(guide.text_label, key=field(p + "_text", combined), height=200) if action == actions[1] else combined
