@@ -229,3 +229,78 @@ def test_scorecard_utility_upload_uses_one_labeled_control_without_extra_heading
     # Reusing the local source review still requires explicit price-safe page
     # acceptance; a labeled uploader is not an automatic approval.
     assert button(app, "Add reviewed pages").disabled
+
+
+def test_whole_pdf_preflight_counts_other_section_pages_before_review(monkeypatch, tmp_path):
+    from app.monthly_report_section_uploads import preflight_whole_pdf
+    profile, content = reviewed_content(monkeypatch, tmp_path, pages=3)
+    existing = ResolvedBlock("vendor_reports", "This month",
+                             asset_hashes=("existing.png",) * 148)
+    blocks = {"vendor_reports": existing}
+    unchanged = content.source
+    budget = preflight_whole_pdf(profile, content, "water_reports", blocks)
+    assert budget.new_pages == 3
+    assert budget.already_included == 0
+    assert budget.available_pages == 2
+    assert budget.pages_fit is False
+    assert budget.images_fit is None
+    assert content.source == unchanged and blocks == {"vendor_reports": existing}
+    # A reduced PDF that fits the remaining slots can be attempted, with no
+    # silent page drop and no mutation by this read-only check.
+    profile, smaller = reviewed_content(monkeypatch, tmp_path, pages=2)
+    retry = preflight_whole_pdf(profile, smaller, "water_reports", blocks)
+    assert retry.new_pages == 2 and retry.available_pages == 2 and retry.pages_fit
+    assert smaller.source.selected_pages == (1, 2)
+
+
+def test_whole_pdf_preflight_measures_normalized_bytes_without_approving(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from app.monthly_report_section_uploads import preflight_whole_pdf
+    profile, content = reviewed_content(monkeypatch, tmp_path, pages=2)
+    original = content.source
+    class SizedBytes:
+        def __init__(self, length):
+            self.length = length
+        def __len__(self):
+            return self.length
+    prepared = []
+    def image(_profile, _content, number):
+        prepared.append(number)
+        return SimpleNamespace(data=SizedBytes((1 if number == 1 else 2) * 1024 * 1024))
+    monkeypatch.setattr(sources, "page_image", image)
+    block = ResolvedBlock("vendor_reports", "This month", asset_hashes=("existing.png",))
+    report = {"vendor_reports": block}
+    large = preflight_whole_pdf(profile, content, "water_reports", report,
+                                 {"existing.png": SizedBytes(58 * 1024 * 1024)}, measure_bytes=True)
+    assert large.new_pages == 2 and large.available_pages == sources.MAX_EMBED_PAGES - 1
+    assert large.remaining_bytes == 2 * 1024 * 1024
+    assert large.new_image_bytes == 3 * 1024 * 1024
+    assert large.measured_all and large.images_fit is False
+    assert prepared == [1, 2]
+    prepared.clear()
+    enough = preflight_whole_pdf(profile, content, "water_reports", report,
+                                  {"existing.png": SizedBytes(55 * 1024 * 1024)}, measure_bytes=True)
+    assert enough.images_fit is True and enough.measured_all
+    assert prepared == [1, 2]
+    assert content.source == original and report == {"vendor_reports": block}
+
+
+def test_whole_pdf_preflight_rejects_cross_section_ownership(monkeypatch, tmp_path):
+    from app.monthly_report_section_uploads import preflight_whole_pdf
+    profile, content = reviewed_content(monkeypatch, tmp_path, pages=1)
+    block, = sources.prepare_pages(profile, (content,), ((content.source.id, "vendor_reports"),))
+    with pytest.raises(ValueError, match="another section"):
+        preflight_whole_pdf(profile, content, "mbcx_report", {"vendor_reports": block})
+
+
+def test_whole_pdf_fit_is_shown_before_page_approval(monkeypatch, tmp_path):
+    app = section_app(monkeypatch, tmp_path, pdf_bytes(2))
+    assert not app.exception
+    assert any("Whole PDF: 2 new pages" in c.value for c in app.caption)
+    assert not app.session_state["test_blocks"]
+    button(app, "Check whole-PDF image size").click().run()
+    assert not app.exception
+    assert any("All 2 new pages fit the current image budget" in s.message
+               for s in app.success)
+    assert not app.session_state["test_blocks"]
+    assert button(app, "Add reviewed pages").disabled
