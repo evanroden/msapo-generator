@@ -202,9 +202,9 @@ def test_existing_real_csv_ingestion_feeds_adapter_without_extra_parser(tmp_path
     from app import monthly_report_sources as sources
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
     original = (
-        b"WO Number,Facility,Date,Status,Type,Trade,Hours,Notes\\n"
-        b"WO-A1,North,2026-09-04,Closed,Preventive,HVAC,0,\\n"
-        b"WO-A2,South,2026-09-05,Open,Corrective,Plumbing,,Review pending\\n"
+        b"WO Number,Facility,Date,Status,Type,Trade,Hours,Notes\n"
+        b"WO-A1,North,2026-09-04,Closed,Preventive,HVAC,0,\n"
+        b"WO-A2,South,2026-09-05,Open,Corrective,Plumbing,,Review pending\n"
     )
     parsed, _ = sources.ingest(PROFILE, "synthetic-orders.csv", original)
     assert sources.source_bytes(PROFILE, parsed.source) == original
