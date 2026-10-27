@@ -249,7 +249,8 @@ def normalize_table(content: SourceContent, table_number: int,
         raise ValueError("Choose an existing source table.")
     source, table = content.source, content.tables[table_number - 1]
     columns = tuple(str(v) for v in table.columns)
-    if not columns or len(columns) > 256 or len(table.rows) > 20_000:
+    if (not columns or len(columns) > 256 or len(table.rows) > 20_000
+            or len(columns) * len(table.rows) > 200_000):
         raise ValueError("Source table exceeds the normalized review budget.")
     rows = tuple(tuple(str(v) if v is not None else "" for v in row)
                  for row in table.rows)
