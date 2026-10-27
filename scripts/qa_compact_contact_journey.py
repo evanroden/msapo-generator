@@ -20,7 +20,7 @@ CONTACTS = '.st-key-epc_pair_monthly_organization'
 VENDORS = '.st-key-epc_pair_monthly_subcontractors'
 SELECTOR = '[data-enfra-contact-receipt]'
 OBSERVER = r'''(() => {
- const ids=new WeakMap();let next=0,sequence=0;const events=[];
+ const ids=new WeakMap();let next=0,sequence=0;const events=[],phoneEvents=[];
  const describe=n=>{if(!ids.has(n))ids.set(n,++next);const r=n.getBoundingClientRect();
  return {node:ids.get(n),connected:n.isConnected,focused:document.activeElement===n,
  visible:!!n.getClientRects().length,disabled:n.disabled,caret:[n.selectionStart??null,n.selectionEnd??null],
@@ -28,8 +28,24 @@ OBSERVER = r'''(() => {
  for(const type of ['pointerdown','pointerup','click','dblclick'])document.addEventListener(type,e=>{
  const b=e.target?.closest?.('button');if(b)events.push({sequence:++sequence,type,trusted:e.isTrusted,label:b.textContent.trim(),...describe(b)});
  if(events.length>256)events.shift();},true);
- window.ENFRAContactObservation={describe,events};
+ for(const type of ['focusin','beforeinput','input'])document.addEventListener(type,e=>{
+ const n=e.target;if(n?.matches?.('.st-key-epc_pair_monthly_organization input[aria-label="Phone"]'))
+ phoneEvents.push({sequence:++sequence,type,trusted:e.isTrusted,value:n.value,...describe(n)});
+ if(phoneEvents.length>64)phoneEvents.shift();},true);
+ window.ENFRAContactObservation={describe,events,phoneEvents};
 })();'''
+
+
+def validate_native_phone_entry(events, previous, expected):
+    """The first native focus must already contain the saved phone, not hydrate later."""
+    focus = next(event for event in events if event['type'] == 'focusin')
+    before = next(event for event in events if event['type'] == 'beforeinput')
+    entered = next(event for event in events if event['type'] == 'input')
+    assert all(event['trusted'] and event['connected'] for event in (focus, before, entered))
+    assert focus['node'] == before['node'] == entered['node']
+    assert focus['value'] == previous, 'Phone mounted empty or stale before native input.'
+    assert before['value'] == previous
+    assert entered['value'] == expected, 'Native replacement was overwritten or concatenated.'
 
 
 class ContactDeliveryGate:
@@ -302,6 +318,7 @@ def browser_task(browser_type, name, *, held_recovery=False):
             assert state['working']['contacts']['source'] == 'Library'
         # Deliver a native contact edit and parent Done in the same browser
         # action. The canonical report/directory must update before any re-entry.
+        phone_start = page.evaluate('window.ENFRAContactObservation.phoneEvents.at(-1)?.sequence || 0')
         contacts.get_by_role('button', name='Edit contact', exact=True).first.click()
         contacts.get_by_role('textbox', name='Phone', exact=True).fill('202-555-0199')
         prior = state
@@ -311,6 +328,8 @@ def browser_task(browser_type, name, *, held_recovery=False):
             'revision': prior['directory']['revision'] + 1,
             'phone': '202-555-0199',
         })
+        record['immediate_phone_entry'] = page.evaluate('(start)=>window.ENFRAContactObservation.phoneEvents.filter(e=>e.sequence>start)', phone_start)
+        validate_native_phone_entry(record['immediate_phone_entry'], '202-555-0176', '202-555-0199')
         assert contacts.get_by_role('textbox', name='Phone', exact=True).count() == 0
         assert state['directory']['sites'][0]['contacts'][0]['phone'] == '202-555-0199'
         native_events = page.evaluate('window.ENFRAContactObservation.events')
@@ -354,6 +373,7 @@ def browser_task(browser_type, name, *, held_recovery=False):
     finally:
         try:
             record['native_events'] = page.evaluate('window.ENFRAContactObservation.events')
+            record['phone_events'] = page.evaluate('window.ENFRAContactObservation.phoneEvents')
         except Exception as observer_error:
             record['observer_error'] = str(observer_error)[:500]
         (out/'task.json').write_text(json.dumps(record,indent=2))

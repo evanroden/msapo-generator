@@ -282,3 +282,24 @@ def test_failed_capture_retains_synthetic_payload_before_strict_assertions():
     fixture = (ROOT/'scripts/workspace_contact_observations.py').read_text()
     snapshot = fixture.split('def snapshot(', 1)[1].split('def render(', 1)[0]
     assert snapshot.index('_folder(base, token)') < snapshot.index("'unrelated_payload': asdict(unrelated)")
+
+
+def test_native_phone_entry_accepts_ready_first_focus_and_exact_replacement():
+    from scripts.qa_compact_contact_journey import validate_native_phone_entry
+    events = [dict(type=kind, node=7, trusted=True, connected=True, value=value)
+              for kind, value in [('focusin', 'old'), ('beforeinput', 'old'), ('input', 'new')]]
+    validate_native_phone_entry(events, 'old', 'new')
+
+
+@pytest.mark.parametrize('failure', ['empty-focus', 'concatenation', 'remount', 'untrusted', 'disconnected'])
+def test_native_phone_entry_rejects_hydration_or_delivery_corruption(failure):
+    from scripts.qa_compact_contact_journey import validate_native_phone_entry
+    events = [dict(type=kind, node=7, trusted=True, connected=True, value=value)
+              for kind, value in [('focusin', 'old'), ('beforeinput', 'old'), ('input', 'new')]]
+    if failure == 'empty-focus': events[0]['value'] = ''
+    elif failure == 'concatenation': events[-1]['value'] = 'oldnew'
+    elif failure == 'remount': events[-1]['node'] = 8
+    elif failure == 'untrusted': events[-1]['trusted'] = False
+    else: events[-1]['connected'] = False
+    with pytest.raises(AssertionError):
+        validate_native_phone_entry(events, 'old', 'new')
