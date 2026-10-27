@@ -15,7 +15,7 @@ from app.monthly_report_asset_review import asset_fingerprint, normalize_asset_r
 
 
 MONTHLY_BLOCKS = frozenset({"work_orders", "activity_summary", "improvements", "mbcx_report", "service_calls",
-                          "vendor_reports", "water_reports", "training_summary", "accounts_receivable", "accounts_receivable_notes"})
+                          "vendor_reports", "water_monthly_update", "water_reports", "training_summary", "accounts_receivable", "accounts_receivable_notes"})
 PAGE_BLOCKS = frozenset({"vendor_reports", "water_reports", "mbcx_report"})
 PERIOD_REVIEW_BLOCKS = frozenset({"utility_analysis", "mbcx_status", "equipment_issues", "equipment_issues_evidence"})
 DECISIONS = ("Needs review", "Keep in report", "Save for reference", "Exclude from this draft")

@@ -1,0 +1,94 @@
+"""Synthetic Water text is monthly work, never silently reused as current."""
+from dataclasses import replace
+
+from app import monthly_report_library as library
+from app.monthly_report_guided import _monthly_specs, _standing_specs
+from app.monthly_report_model import default_sections, synthetic_draft, synthetic_profiles, ReportPeriod, ResolvedBlock
+from app.monthly_report_setup import new_month_draft
+
+
+def water_draft():
+    draft = synthetic_draft(synthetic_profiles()[0], ReportPeriod(2026, 9))
+    water = next(s for s in default_sections() if s.key == 'water')
+    return replace(draft, sections=(water,), blocks=(
+        ResolvedBlock('water_monthly_update', 'This month', text='Synthetic September water update.'),
+        ResolvedBlock('water_reports', 'This month'),
+    ))
+
+
+def test_water_update_routes_to_monthly_not_standing_editor():
+    water = water_draft().sections[0]
+    assert [b.key for b in _monthly_specs(water)] == ['water_monthly_update', 'water_reports']
+    assert not _standing_specs(water)
+
+
+def test_same_month_resume_preserves_update_but_deliberate_new_month_starts_empty():
+    draft = water_draft()
+    before = draft.fingerprint
+    assert new_month_draft(draft, draft.period) == draft
+    following = new_month_draft(draft, ReportPeriod(2026, 10))
+    update = next(b for b in following.blocks if b.key == 'water_monthly_update')
+    assert not update.text and not update.references and not update.ai_paragraphs
+    assert update.source == 'This month'
+    assert draft.fingerprint == before
+    assert draft.blocks[0].text == 'Synthetic September water update.'
+
+
+def test_snapshot_reopen_and_next_month_preserve_original_history(monkeypatch, tmp_path):
+    monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path))
+    draft = water_draft()
+    library.save_profile(draft.profile, expected_revision=0, actor='Synthetic Editor', confirmed=True)
+    library.save_snapshot(draft, expected_revision=0, entered_editor='Synthetic Editor')
+    reopened = library.load_snapshot(draft.profile.contract, draft.profile.key, draft.period)
+    assert reopened.draft == draft
+    following = new_month_draft(reopened.draft, ReportPeriod(2026, 10))
+    library.save_snapshot(following, expected_revision=0, entered_editor='Synthetic Editor')
+    assert library.load_snapshot(draft.profile.contract, draft.profile.key, draft.period).draft == draft
+    assert library.load_snapshot_version(draft.profile.contract, draft.profile.key, draft.period, 1).draft == draft
+    assert library.load_snapshot(draft.profile.contract, draft.profile.key, following.period).draft == following
+
+
+def test_legacy_water_section_places_new_monthly_update_before_existing_pages():
+    from app.monthly_report_guided import complete_guided_sections
+    draft = water_draft()
+    legacy_water = replace(draft.sections[0], blocks=draft.sections[0].blocks[1:])
+    legacy = replace(draft, sections=(legacy_water,), blocks=draft.blocks[1:])
+    completed = complete_guided_sections(legacy)
+    water = next(s for s in completed.sections if s.key == 'water')
+    assert [b.key for b in water.blocks] == ['water_monthly_update', 'water_reports']
+    assert legacy.sections[0] == legacy_water
+    assert legacy.blocks == draft.blocks[1:]
+
+
+def test_missing_water_update_insertion_preserves_custom_blocks_and_is_idempotent():
+    from app.monthly_report_guided import complete_guided_sections
+    from app.monthly_report_model import BlockSpec
+    draft = water_draft()
+    custom = (BlockSpec('water_custom_intro', 'rich_text'), draft.sections[0].blocks[1],
+              BlockSpec('water_custom_tail', 'rich_text'))
+    draft = replace(draft, sections=(replace(draft.sections[0], blocks=custom),))
+    completed = complete_guided_sections(draft)
+    water = next(s for s in completed.sections if s.key == 'water')
+    assert [b.key for b in water.blocks] == ['water_custom_intro', 'water_monthly_update', 'water_reports', 'water_custom_tail']
+    assert complete_guided_sections(completed) == completed
+    assert draft.sections[0].blocks == custom
+
+
+def test_existing_custom_water_update_order_is_not_rewritten():
+    from app.monthly_report_guided import complete_guided_sections
+    draft = water_draft()
+    custom = tuple(reversed(draft.sections[0].blocks))
+    draft = replace(draft, sections=(replace(draft.sections[0], blocks=custom),))
+    water = next(s for s in complete_guided_sections(draft).sections if s.key == 'water')
+    assert [b.key for b in water.blocks] == [b.key for b in custom]
+
+
+def test_left_out_legacy_water_content_is_not_republished_when_slot_is_added():
+    from app.monthly_report_guided import complete_guided_sections
+    draft = water_draft()
+    legacy = replace(draft, sections=(replace(draft.sections[0], included=False, blocks=draft.sections[0].blocks[1:]),))
+    completed = complete_guided_sections(legacy)
+    assert next(b for b in completed.blocks if b.key == 'water_monthly_update').source == 'Omit'
+    assert next(b for b in completed.blocks if b.key == 'water_monthly_update').text == draft.blocks[0].text
+    assert all(not b.required for s in completed.sections if s.key == 'water' for b in s.blocks)
+    assert legacy.blocks[0].source == 'This month'

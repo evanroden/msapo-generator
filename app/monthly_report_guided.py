@@ -521,8 +521,17 @@ def complete_guided_sections(draft):
         section = existing.get(key, standard[key])
         present = {block.key for block in section.blocks}
         additions = tuple(block for block in standard[key].blocks if block.key not in present)
+        existing_blocks = section.blocks
+        if key == "water" and "water_reports" in present:
+            update = next((block for block in additions if block.key == "water_monthly_update"), None)
+            if update is not None:
+                # Upgrade an older page-only schema without rearranging any
+                # preexisting custom blocks or a deliberately placed update.
+                before_pages = next(i for i, block in enumerate(existing_blocks) if block.key == "water_reports")
+                existing_blocks = (*existing_blocks[:before_pages], update, *existing_blocks[before_pages:])
+                additions = tuple(block for block in additions if block is not update)
         sections.append(replace(section, included=True,
-                                blocks=tuple(replace(block, required=False) for block in (*section.blocks, *additions))))
+                                blocks=tuple(replace(block, required=False) for block in (*existing_blocks, *additions))))
     return replace(draft, sections=tuple(sections))
 
 

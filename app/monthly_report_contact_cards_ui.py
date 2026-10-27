@@ -207,7 +207,16 @@ def _fields(table, fields, field, args, vendor):
         label = ('Agreement status (MSA)' if vendor and heading.strip().casefold() == 'msa'
                  else heading if heading.strip() else f'Detail {ci + 1}')
         # Original blank/duplicate headings remain untouched in the table schema.
-        st.text_input(label, key=field(key, original), max_chars=500,
+        # Supply the saved text in the native element's first-mount default,
+        # not an empty element followed by a session-state hydration effect.
+        # Keep field registration, but let Streamlit seed a genuinely new key
+        # from that default; never remove or replace an existing delivered edit.
+        existing_keys = set(st.session_state)
+        native_key = field(key, original)
+        initial = st.session_state.get(native_key, original)
+        if native_key not in existing_keys:
+            st.session_state.pop(native_key, None)
+        st.text_input(label, value=initial, key=native_key, max_chars=500,
                       on_change=_queue, args=(*args, 'edit'))
     st.button('Close editing', key=args[0] + '_close', on_click=_queue, args=(*args, 'close'))
     st.button('Remove contact', key=args[0] + '_remove', on_click=_queue,
