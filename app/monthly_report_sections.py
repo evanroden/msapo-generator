@@ -85,7 +85,7 @@ def default_slot(section):
 
 
 def table_without_prices(item):
-    rows = item.rows
+    rows = item.rows[item.table_header_row:]
     if not rows:
         return None, ()
     headings = logical_table_columns(rows[0])

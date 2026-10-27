@@ -1260,6 +1260,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             continue
         selected = [item for item in inspection.items if item.kind == "text"
                     and (item.section == destinations[block.key] or item.note == "Native divider artwork")
+                    and (item.note != "Native table title" or item.id in unchanged_items)
                     and source_ref(item) in block.references]
         expected = "\n\n".join(item.text.strip() for item in selected)
         if selected and block.text.strip() == expected.strip():
