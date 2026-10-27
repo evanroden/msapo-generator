@@ -11,7 +11,7 @@ SECTION_UPLOADS = {
     "improvements": ("Activity service reports and photos", "Activity service report files"),
     "water_reports": ("Water-treatment reports", "Water-treatment files"),
     "mbcx_report": ("System performance reports", "MBCx report files"),
-    "utility_analysis": ("Utility results and charts", "Utility result files"),
+    "utility_analysis": ("Monthly Scorecards", "Scorecard files"),
 }
 CLASSIFICATION_DESTINATIONS = {
     "Vendor service": "improvements", "Water treatment": "water_reports",

@@ -219,13 +219,16 @@ else:
 def test_scorecard_utility_upload_uses_one_labeled_control_without_extra_heading(
         monkeypatch, tmp_path):
     app = section_app(monkeypatch, tmp_path, pdf_bytes(1),
-                      label="Utility result files")
+                      label="Scorecard files")
     next(w for w in app.radio if w.label == "Section").set_value(
         "utility_analysis").run()
     assert not app.exception
     assert not any("Utility results and charts" in node.value
                    for node in app.markdown)
+    assert not any(w.label == "Page to review" for w in app.selectbox)
+    assert not button(app, "Include all 1 PDF pages").disabled
+    assert not app.session_state["test_blocks"]
+    next(w for w in app.toggle if w.label == "Review individual pages").set_value(True).run()
     assert any(w.label == "Page to review" for w in app.selectbox)
-    # Reusing the local source review still requires explicit price-safe page
-    # acceptance; a labeled uploader is not an automatic approval.
+    # The fallback still requires explicit price-safe page acceptance.
     assert button(app, "Add reviewed pages").disabled

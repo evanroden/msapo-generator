@@ -996,7 +996,7 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
     # Water, Scorecards and MBCx already have section-level instructions. Keep one
     # labeled uploader without a duplicate title, while retaining the complete
     # canonical page-review flow and its safety checks.
-    if destination == "mbcx_report":
+    if destination in {"mbcx_report", "utility_analysis"}:
         st.caption("Upload a PDF to include its complete report. Supporting files and existing page choices remain available.")
         upload_area = st.container()
     else:
@@ -1065,10 +1065,10 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
         st.caption(choices[selected].source.filename)
     else:
         selected = st.selectbox("File to review", list(choices), format_func=lambda v: choices[v].source.filename, key=selected_key)
-    if destination == "mbcx_report" and choices[selected].source.suffix == ".pdf":
+    if destination in {"mbcx_report", "utility_analysis"} and choices[selected].source.suffix == ".pdf":
         from app.monthly_report_mbcx_pdf import render_whole_pdf
         batch = render_whole_pdf(profile, choices[selected], blocks, assets,
-                                 local_key, prefix, field, period=period)
+                                 local_key, prefix, field, period=period, destination=destination)
         if batch is not None:
             revised, additions = batch
             contents = tuple(revised if c.source.id == selected else c for c in contents)
