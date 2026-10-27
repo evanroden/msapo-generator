@@ -129,6 +129,35 @@ def source_for(profile):
     raise ValueError("The original ENFRA page design is unavailable. Restore its saved reference report in Report design settings.")
 
 
+
+def installed_master_download():
+    """Read the manifest-selected original, never the newest file by directory order.
+
+    Resolve through the same per-hash integrity check as report rendering. The
+    revision/hash snapshot is returned with the bytes so a concurrent master
+    replacement cannot relabel an earlier downloaded version.
+    """
+    from types import SimpleNamespace
+
+    current = master_state()
+    revision = current.get("revision", 0)
+    digest = current.get("default", "")
+    if not digest:
+        return None
+    profile = SimpleNamespace(contract="", template=MASTER_PREFIX + digest)
+    source = source_for(profile)
+    # Recheck after reading: a concurrent disk change cannot pass as verified.
+    data = source.read_bytes()
+    source_hash = hashlib.sha256(data).hexdigest()
+    metadata = _metadata(profile, digest)
+    expected = metadata.get("source_sha256", digest)
+    if source_hash != expected:
+        raise ValueError("The installed master failed its integrity check.")
+    return {"revision": revision, "hash": digest, "source_hash": expected,
+            "size": len(data), "bytes": data}
+
+
+
 def fingerprint(profile):
     return _digest(profile)
 
