@@ -4,6 +4,7 @@ import streamlit as st
 
 from app.monthly_report_content_policy import page_status
 from app.monthly_report_import import read_import_image
+from app.monthly_report_import_content_types import picture_review_caption
 from app.monthly_report_sections import small_artwork
 
 
@@ -88,7 +89,7 @@ def review_cover_gallery(images, path, prefix, old, plan):
                 st.caption(f"Picture {index}")
                 try:
                     preview = read_import_image(path, item, preview=True)
-                    st.image(preview.data, width="stretch")
+                    st.image(preview.data, width="stretch", caption=picture_review_caption(item))
                     visible.add(item.id)
                 except (ValueError, OSError):
                     st.caption("This picture could not be displayed and will be left out.")
@@ -154,7 +155,7 @@ def review_pictures(images, section, path, prefix, scope, field, old, plan, bloc
             selected = "" if section == "cover" else "org_chart" if section == "organization" else "keep"
         choices[item.id] = selected if selected in options else ""
     st.write("Pictures found in your report")
-    st.caption("Look at each picture, then choose what to do directly underneath it. “Leave out” keeps it in the saved original only.")
+    st.caption("Pictures are not editable Word text. Choose what to keep below; use the section’s change-pictures action to replace an image. Leaving it out keeps the original.")
     if section == "cover":
         st.caption("Choose one cover photo. Choosing another replaces your earlier choice." if not allow_branding else
                    "Choose one cover photo and the logos you want. Choosing another picture for the same role replaces your earlier choice.")
@@ -174,7 +175,8 @@ def review_pictures(images, section, path, prefix, scope, field, old, plan, bloc
             st.caption(f"Picture {index}")
             try:
                 preview = read_import_image(path, item, preview=True)
-                st.image(preview.data, width=min(preview.width, 650))
+                st.image(preview.data, width=min(preview.width, 650),
+                         caption=picture_review_caption(item))
             except (ValueError, OSError):
                 st.warning("This picture could not be displayed. Check it in the original report before including it.")
                 if choices[item.id]:
