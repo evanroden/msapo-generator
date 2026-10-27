@@ -177,12 +177,19 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
         status_slot = st.empty()
         guide = section_help(section.key)
         st.write(guide.guidance)
+        from app.monthly_report_content_kind import section_content_description
+        content_description = section_content_description(section.items)
+        if content_description:
+            st.caption(content_description)
         actions = ["Keep and review", "Edit text or change pictures", "Leave this section out"]
         labels = dict(zip(actions, (guide.keep, guide.edit, "Start this section blank")))
         if section.key == "cover":
             labels[actions[2]] = ("Use selected ENFRA template" if independent_template else
                                  "Use this report’s cover design" if cover_design_available
                                   else "Leave imported cover artwork out")
+        if section.key != "other" and any(item.kind == "image" for item in section.items):
+            st.caption("Picture text and cells are not directly editable. Choose “" +
+                       labels[actions[1]] + "” to reach replacement uploads.")
         action = st.radio("What would you like to do?", actions, format_func=labels.get, key=field(p + "_action", old.get("action", actions[0])), horizontal=True)
         plan = {"key": section.key, "action": action, "target": section.key,
                 "omit": action == actions[2], "selected": [], "texts": {},
