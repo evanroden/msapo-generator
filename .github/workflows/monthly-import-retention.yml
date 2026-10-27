@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'app/monthly_report_section_ui.py'
+      - 'scripts/qa_import_receipts.py'
       - 'app/monthly_report_start_import.py'
       - 'app/monthly_report_source_sites_ui.py'
       - 'scripts/qa_import_retention.py'
@@ -16,6 +17,7 @@ on:
     branches: [main]
     paths:
       - 'app/monthly_report_section_ui.py'
+      - 'scripts/qa_import_receipts.py'
       - 'app/monthly_report_start_import.py'
       - 'app/monthly_report_source_sites_ui.py'
       - 'scripts/qa_import_retention.py'

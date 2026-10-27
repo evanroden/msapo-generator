@@ -481,7 +481,12 @@ def render_pending_cover_selection(draft, assets, contract, period, state):
     if not staged:
         return draft, assets
     _, path, inspection = staged
-    plans = st.session_state.get(prefix + "_" + inspection.sha256[:16] + "_section_plans", {})
+    active = st.session_state.get(prefix + "_active_section_review")
+    # Only this render's exact source/view/membership scope may contribute a
+    # pending photo. Never guess a legacy key or reuse a superseded review.
+    if not active or active[0] != inspection.sha256:
+        return draft, assets
+    plans = st.session_state.get(active[1] + "_section_plans", {})
     plan = plans.get("cover", {})
     if plan.get("omit"):
         return draft, assets
@@ -527,7 +532,8 @@ def _starting_review_sections(sections, plans, diagram_failures):
         plan = plans.get(section.key, {})
         questions = plan.get("questions", ())
         if (plan.get("approved") and not questions
-                and not (section.key == "cover" and plan.get("omit"))):
+                and not (section.key == "cover" and plan.get("omit"))
+                and not plan.get("period_review_items")):
             continue
         if (section.key in diagram_failures and questions
                 and all(q.startswith("A Word diagram or image") for q in questions)):
@@ -621,6 +627,8 @@ def _source_view_admission(function):
         state, identity = values.get('state'), values.get('identity')
         prefix = ("report_setup_" + _signature((values['contract'], state.profile.key if state else identity.key if identity else "new", values['period'].key))
                   if 'contract' in values and 'period' in values else None)
+        if prefix:
+            st.session_state.pop(prefix + '_active_section_review', None)
         staged = st.session_state.get(prefix + '_stage') if prefix else None
         from app.monthly_report_source_view_runtime import import_candidate
         needs_view = staged is not None and import_candidate(staged[2])
@@ -881,6 +889,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     intent = "Automatic starting report"
     sections = section_reviews(inspection, source_view=source_view)
     plans = st.session_state.setdefault(p + "_section_plans", {})
+    st.session_state[prefix + "_active_section_review"] = (inspection.sha256, p)
     # Preserve native diagrams at their evidenced Word/ENFRA section before
     # asking the operator about anything. Ordinary image parts already follow
     # suggested_slot; this path is only for complex native Word drawings.
@@ -1054,10 +1063,16 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     # same unresolved object.
     questions = _starting_review_sections(sections, plans, diagram_failures)
     if questions:
-        st.subheader("A few details need a check")
+        pending_review = any(not plans[s.key].get("approved") or plans[s.key].get("questions")
+                             for s in questions)
+        st.subheader("A few details need a check" if pending_review else "Imported content is ready")
         for index, section in enumerate(questions):
-            for message in seed[section.key]["questions"]:
-                st.caption(section.title + ": " + message)
+            # Keep month-confirmed content reachable for corrections. Reuse its
+            # stable, collapsible card rather than removing its widgets (and
+            # losing the only edit path) after acknowledgment.
+            if not plans[section.key].get("approved") or plans[section.key].get("questions"):
+                for message in seed[section.key]["questions"]:
+                    st.caption(section.title + ": " + message)
             _section_card(section, path, inspection, period, p, field, plans, index == 0,
                           cover_photo_ids=cover_photo_ids if section.key == "cover" else (),
                           cover_design_available=state is not None or bool(fallback_template),

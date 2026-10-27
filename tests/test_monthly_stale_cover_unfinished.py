@@ -114,3 +114,32 @@ def test_stale_cover_priced_work_remains_editable_until_price_removed(monkeypatc
     next(c for c in app.checkbox if c.label == "This work belongs in September 2026").check().run()
     draft = save_start(app)
     assert next(b.text for b in draft.blocks if b.key == "activity_summary") == clean
+
+
+def test_confirmed_period_review_remains_reachable_and_edit_requires_reconfirmation(monkeypatch, tmp_path):
+    from test_monthly_report_start_import import start_app, save_start
+    path = report_file(tmp_path, month="July 2026", activity=("Inspected the air handler.", "Repaired the second pump."))
+    app = start_app(monkeypatch, tmp_path, path)
+    next(r for r in app.radio if r.label == "What would you like to do?").set_value("Edit text or change pictures").run()
+    confirm = lambda: next(c for c in app.checkbox if c.label == "This work belongs in September 2026")
+    proceed = lambda: next(b for b in app.button if b.label == "Continue to this month’s updates")
+    confirm().check().run()
+    app.run()  # Approval must not remove the only route back to this text.
+    assert not proceed().disabled
+    # AppTest delivers expander state; hosted browsers click its real summary.
+    card_key = next(k for k in app.session_state.filtered_state if k.endswith("_section_activity_open"))
+    app.session_state[card_key] = False
+    app.run()
+    assert not any(t.label == "Work completed this month" for t in app.text_area)
+    assert not proceed().disabled
+    app.session_state[card_key] = True
+    app.run()
+    editor = next(t for t in app.text_area if t.label == "Work completed this month")
+    changed = editor.value + "\n\nCorrected after review."
+    editor.set_value(changed).run()
+    assert not confirm().value
+    assert proceed().disabled
+    confirm().check().run()
+    draft = save_start(app)
+    assert next(b.text for b in draft.blocks if b.key == "activity_summary") == changed
+    assert not app.exception

@@ -48,10 +48,22 @@ def scenario(tmp_path, *, odd_label=False):
     period = ReportPeriod(2026, 9)
     analysis = analyze_starting_report(inspection, profile, period, confirmed_sites=profile.facilities)
     plans = automatic_section_plans(inspection, analysis)
+    # An old cover alone cannot certify undated prose as historical. This
+    # renderer fixture deliberately reviews it out, retaining only table data;
+    # source-bound table-label preservation is the behavior under test below.
+    with pytest.raises(ValueError, match="remaining starting-report questions"):
+        build_starting_import(source, inspection, plans.values())
+    text_ids = {item.id for item in inspection.items if item.kind == "text"}
+    for plan in plans.values():
+        if plan.get("period_review_items"):
+            plan["selected"] = [identity for identity in plan["selected"] if identity not in text_ids]
+            plan["texts"] = {}
+            plan["questions"] = ()
+            plan["approved"] = True
     mapped, _ = build_starting_import(source, inspection, plans.values())
     draft = imported_draft(profile, period, 'Synthetic Editor', mapped)
     block = next(b for b in draft.blocks if b.key == 'work_orders')
-    assert not block.text  # The prior-month automatic plan excludes old monthly prose.
+    assert not block.text  # The explicit review excludes old monthly prose.
     # Match the existing grid's no-edit normalization of empty imported rows.
     block = replace(block, extra_tables=tuple(replace(t, rows=tuple(
         row for row in t.rows if any(cell.strip() for cell in row))) for t in block.extra_tables))

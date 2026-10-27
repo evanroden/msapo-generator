@@ -231,7 +231,7 @@ def test_upload_setup_reviews_sections_and_preserves_partial_work(monkeypatch, t
     from app.monthly_report_sections import section_reviews
     inspection = inspect_docx(path)
     stage_key = next(k for k in app.session_state.filtered_state if k.startswith("report_setup_") and k.endswith("_stage"))
-    prefix = stage_key.removesuffix("_stage") + "_" + inspection.sha256[:16]
+    prefix = app.session_state[stage_key.removesuffix("_stage") + "_active_section_review"][1]
     for section in section_reviews(inspection):
         if app.session_state[prefix + "_section_plans"][section.key]["approved"]:
             continue

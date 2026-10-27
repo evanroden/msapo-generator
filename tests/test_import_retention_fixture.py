@@ -69,3 +69,29 @@ def test_native_receipt_cannot_pass_with_setup_failure_missing_or_running_cases(
         partial={k:v for k,v in cases.items() if k!=key}
         assert not all_cases_passed({'cases':partial,'failures':[]})
         assert not all_cases_passed({'cases':{**cases,key:{'result':'running'}},'failures':[]})
+
+
+def test_atomic_receipt_gate_rejects_duplicate_running_and_stale_dom():
+    import json
+    from scripts.qa_import_receipts import READY_RECEIPT_JS
+    script = r'''
+const assert = require('node:assert/strict');
+const check = eval('(' + process.argv[1] + ')');
+let state = 'notRunning', values = [];
+global.document = {
+ querySelector: () => ({getAttribute: () => state}),
+ querySelectorAll: () => values.map(value => ({getAttribute: () => value}))
+};
+const arg = {selector:'[data-test]', attribute:'data-test', expected:{saved:true,'output.kept':true}};
+const good = JSON.stringify({saved:true,output:{kept:true},source_sha256:'unchanged'});
+values = [good]; assert.equal(check(arg).source_sha256, 'unchanged');
+values = [good, good]; assert.equal(check(arg), false);
+values = [good, JSON.stringify({saved:false})]; assert.equal(check(arg), false);
+values = []; assert.equal(check(arg), false);
+values = [JSON.stringify({saved:false})]; assert.equal(check(arg), false);
+values = [good]; state = 'running'; assert.equal(check(arg), false);
+state = 'notRunning'; values = ['invalid json']; assert.equal(check(arg), false);
+values = [JSON.stringify({saved:true,output:{kept:false}})]; assert.equal(check(arg), false);
+'''
+    result=subprocess.run(['node','-e',script,READY_RECEIPT_JS],capture_output=True,text=True,timeout=10)
+    assert result.returncode==0,result.stdout+result.stderr

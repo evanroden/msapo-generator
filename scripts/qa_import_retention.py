@@ -19,6 +19,7 @@ from urllib.request import urlopen
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from scripts.qa_about_logo_refresh import controller_environment
+from scripts.qa_import_receipts import wait_receipt
 from scripts.workspace_import_retention import make_source, EDITED, FIRST, SECOND, OLD
 from scripts.workspace_history_observations import namespace
 from app.monthly_report_compatibility_view import MAX_VIEW_SOURCE_BYTES
@@ -36,9 +37,8 @@ def all_cases_passed(report):
             and all(case.get('result')=='passed' for case in report['cases'].values()))
 
 
-def receipt(page):
-    page.wait_for_function("document.querySelector('[data-testid=\"stApp\"]')?.getAttribute('data-test-script-state') === 'notRunning'")
-    return json.loads(page.locator('[data-import-retention]').last.get_attribute('data-import-retention'))
+def receipt(page, expected=None):
+    return wait_receipt(page, 'data-import-retention', expected)
 
 
 def exercise(engine,name,source,base,scenario,replacement=None):
@@ -95,6 +95,12 @@ def exercise(engine,name,source,base,scenario,replacement=None):
                 expect(confirmation).to_be_checked()
             confirm_month();expect(proceed).to_be_enabled()
             record['month_action']='one-visible-associated-label-click'
+            # Close and reopen the actual review control after confirmation.
+            # Ready content must remain correctable, not disappear on rerun.
+            activity.locator('summary').click()
+            expect(text).not_to_be_visible()
+            open_details(activity)
+            expect(text).to_have_value(EDITED)
             text.fill(EDITED+' Changed.');text.press('Tab')
             expect(confirmation).not_to_be_checked();expect(proceed).to_be_disabled()
             text.fill(EDITED);text.press('Tab');confirm_month()
@@ -115,7 +121,7 @@ def exercise(engine,name,source,base,scenario,replacement=None):
             page.get_by_role('button',name='Confirm source sites',exact=True).click()
             expect(warning).to_have_count(0)
             upload.locator('input[type=file]').set_input_files(str(replacement))
-            expect(page.locator('[data-import-retention]')).to_have_attribute('data-import-retention',re.compile(sha256(replacement.read_bytes()).hexdigest()),timeout=120000)
+            receipt(page, {'staged_sha256': sha256(replacement.read_bytes()).hexdigest()})
             expect(warning).to_be_visible(timeout=120000)
             assert not receipt(page)['confirmed_source']
             choose_north()
@@ -127,7 +133,7 @@ def exercise(engine,name,source,base,scenario,replacement=None):
         page.screenshot(path=str(out/'before-save.png'),full_page=True)
         proceed.click()
         expect(page.get_by_text('Synthetic import saved',exact=True)).to_be_visible(timeout=120000)
-        saved=receipt(page)
+        saved=receipt(page, {'saved': True})
         assert saved['sites']==['north']
         assert any(expected in t for t in saved['saved_texts'])
         assert any(SECOND in t for t in saved['saved_texts'])
@@ -135,7 +141,7 @@ def exercise(engine,name,source,base,scenario,replacement=None):
         assert saved['source_sha256']==sha256(source.read_bytes()).hexdigest()
         assert saved['source_bytes']==source.stat().st_size
         page.reload();expect(page.get_by_text('Synthetic import saved',exact=True)).to_be_visible(timeout=120000)
-        reloaded=receipt(page)
+        reloaded=receipt(page, {'saved': True})
         assert reloaded['saved_texts']==saved['saved_texts']
         assert reloaded['source_sha256']==saved['source_sha256']
         assert not (base/'monthly_reports').exists()
