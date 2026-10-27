@@ -6,7 +6,7 @@ missing, changed or incomplete paragraph evidence requires source review.
 from dataclasses import dataclass
 from hashlib import sha256
 import re
-import fitz
+import pymupdf as fitz
 
 _LABEL = re.compile(r'(?im)^[ \t]*(actions?|findings?|recommendations?|follow[- ]?ups?)\s*[:=]')
 _FIELD = re.compile(r"^[ \t]*[A-Za-z][^:\r\n=]{0,60}\s*[:=]")

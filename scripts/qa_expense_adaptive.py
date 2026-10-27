@@ -15,7 +15,7 @@ import traceback
 import urllib.request
 from urllib.parse import urlparse
 
-import fitz
+import pymupdf as fitz
 from dotenv import dotenv_values
 from openpyxl import load_workbook
 from playwright.sync_api import sync_playwright, expect
