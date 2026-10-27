@@ -102,17 +102,20 @@ def _prepared_report(tmp_path, monkeypatch):
     return draft, loader, original, content
 
 
-def _matches(page, color):
+def _frame(page):
     pix = page.get_pixmap(matrix=fitz.Matrix(0.85, 0.85), alpha=False)
-    frame = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
-    difference = np.abs(frame[:, :, :3].astype(np.int16) -
-                        np.asarray(color, dtype=np.int16))
+    return np.frombuffer(pix.samples, dtype=np.uint8).reshape(
+        pix.height, pix.width, pix.n)[:, :, :3].astype(np.int16)
+
+
+def _matches(frame, color):
+    difference = np.abs(frame - np.asarray(color, dtype=np.int16))
     ys, xs = np.nonzero(np.all(difference <= 28, axis=2))
     return (xs, ys)
 
 
-def _box(page, color):
-    xs, ys = _matches(page, color)
+def _box(frame, color):
+    xs, ys = _matches(frame, color)
     assert len(xs) >= 30, f"Sentinel {color} was cropped or disappeared"
     return (int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max()))
 
@@ -122,8 +125,6 @@ def test_mixed_source_page_raster_keeps_rotated_dimensions_and_all_four_edges(tm
     with fitz.open(stream=original, filetype="pdf") as source:
         for number, page in enumerate(source, 1):
             prepared = sources.page_image(draft.profile, content, number)
-            with fitz.open() as irrelevant:
-                assert irrelevant.page_count == 0
             from PIL import Image
             with Image.open(BytesIO(prepared.data)) as image:
                 actual = image.width / image.height
@@ -131,7 +132,7 @@ def test_mixed_source_page_raster_keeps_rotated_dimensions_and_all_four_edges(tm
             assert abs(actual / expected - 1) <= 0.015, (number, actual, expected)
     # A second load returns verified cached derivatives without changing sources.
     assert sources.source_bytes(draft.profile, content.source) == original
-    assert all(loader(reference) for reference in draft.block("mbcx_report").asset_hashes)
+    assert all(loader(reference) for reference in next(b for b in draft.blocks if b.key == "mbcx_report").asset_hashes)
 
 
 @requires_libreoffice
@@ -150,17 +151,17 @@ def test_real_word_pdf_preserves_every_mbcx_corner_and_next_section(tmp_path, mo
             assert abs(actual / expected - 1) <= 0.015, (actual, expected)
 
     with fitz.open(stream=package.pdf, filetype="pdf") as document:
+        frames = [_frame(page) for page in document]
         page_for_source = []
         for color in CENTERS:
-            matching = [n for n, page in enumerate(document)
-                        if len(_matches(page, color)[0]) >= 30]
+            matching = [n for n, frame in enumerate(frames)
+                        if len(_matches(frame, color)[0]) >= 30]
             assert len(matching) == 1, (color, matching)
             page_for_source.append(matching[0])
         assert page_for_source == list(range(page_for_source[0],
                                              page_for_source[0] + len(PAGES)))
         for index, output_page in enumerate(page_for_source):
-            pdf_page = document[output_page]
-            boxes = [_box(pdf_page, color) for color in CORNERS]
+            boxes = [_box(frames[output_page], color) for color in CORNERS]
             centers = [((left + right) / 2, (top + bottom) / 2)
                        for left, top, right, bottom in boxes]
             midpoint_x = sum(x for x, _ in centers) / 4
@@ -192,4 +193,4 @@ def test_oversized_source_refuses_raster_without_truncating_or_changing_original
         sources.page_image(profile, content, 1)
     assert sources.source_bytes(profile, content.source) == original
     prepared_path = sources._path(profile, content.source.sha256, content.source.suffix).parent / "prepared" / content.source.sha256
-    assert not list(prepared_path.glob("1-print.*")) if prepared_path.exists() else True
+    assert not prepared_path.exists() or not any(prepared_path.glob("1-print.*"))
