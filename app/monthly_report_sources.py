@@ -19,7 +19,7 @@ import re
 from zipfile import BadZipFile
 import zlib
 
-import fitz
+import pymupdf as fitz
 from openpyxl import load_workbook
 
 from app import monthly_report_library as library, ocr
