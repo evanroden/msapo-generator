@@ -95,3 +95,63 @@ values = [JSON.stringify({saved:true,output:{kept:false}})]; assert.equal(check(
 '''
     result=subprocess.run(['node','-e',script,READY_RECEIPT_JS],capture_output=True,text=True,timeout=10)
     assert result.returncode==0,result.stdout+result.stderr
+
+
+def test_confirmation_settlement_rejects_transient_and_persistent_duplicate_cards():
+    from scripts.qa_import_retention import SETTLED_CONFIRMATION_JS
+    script = r'''
+const assert = require('node:assert/strict');
+const check = eval('(' + process.argv[1] + ')');
+let state = 'notRunning', nodes = [];
+const node = (checked, stale=false, title='Monthly Activity Summary') => ({
+ checked,
+ getAttribute: () => 'This work belongs in September 2026',
+ closest: selector => selector === '[data-stale="true"]' ? (stale ? {} : null) :
+   {querySelector: () => ({textContent: title})}
+});
+global.document = {
+ querySelector: () => ({getAttribute: () => state}),
+ querySelectorAll: () => nodes
+};
+const arg = {label:'This work belongs in September 2026'};
+nodes=[node(false)]; assert.equal(check(arg),false);
+nodes=[node(true)]; state='running'; assert.equal(check(arg),false);
+state='notRunning'; nodes=[node(true,true)]; assert.equal(check(arg),false);
+// The actual trace briefly retained one current and one stale keyed card.
+nodes=[node(true),node(true,true)]; assert.equal(check(arg),false);
+nodes=[node(true)]; assert.equal(check(arg),true);
+// A genuine persistent duplicate never becomes acceptable, even if both agree.
+nodes=[node(true),node(true)];
+for(let frame=0;frame<100;frame++) assert.equal(check(arg),false);
+const pollFrames = frames => {
+ for (const frame of frames) { nodes=frame; if(check(arg)) return true; }
+ throw new Error('confirmation never became unique and current');
+};
+assert.equal(pollFrames([[node(false)], [node(true),node(true,true)], [node(true)]]),true);
+assert.throws(() => pollFrames(Array.from({length:100}, () => [node(true),node(true)])),
+ /never became unique/);
+nodes=[]; assert.equal(check(arg),false);
+nodes=[node(true,false,'Training')]; assert.equal(check(arg),false);
+nodes=[node(true,false,'Activity Summary')]; assert.equal(check(arg),true);
+'''
+    result=subprocess.run(['node','-e',script,SETTLED_CONFIRMATION_JS],capture_output=True,text=True,timeout=10)
+    assert result.returncode==0,result.stdout+result.stderr
+
+
+def test_confirmation_wait_preserves_strict_native_assertion_and_five_second_budget():
+    from scripts.qa_import_retention import wait_for_settled_confirmation, SETTLED_CONFIRMATION_JS
+    class Handle:
+        disposed = False
+        def dispose(self): self.disposed = True
+    handle = Handle()
+    class Page:
+        def wait_for_function(self, expression, *, arg, timeout):
+            assert expression == SETTLED_CONFIRMATION_JS
+            assert arg == {'label': 'This work belongs in September 2026'}
+            assert timeout == 5000
+            return handle
+    remaining = wait_for_settled_confirmation(Page(), 'This work belongs in September 2026')
+    assert 0 < remaining <= 5000
+    assert handle.disposed
+    source=Path('scripts/qa_import_retention.py').read_text()
+    assert "label.click()\n                remaining = wait_for_settled_confirmation(page, 'This work belongs in September 2026')\n                expect(confirmation).to_be_checked(timeout=remaining)" in source

@@ -41,6 +41,29 @@ def receipt(page, expected=None):
     return wait_receipt(page, 'data-import-retention', expected)
 
 
+SETTLED_CONFIRMATION_JS = r"""({label}) => {
+  const app = document.querySelector('[data-testid="stApp"]');
+  if (app?.getAttribute('data-test-script-state') !== 'notRunning') return false;
+  const matches = Array.from(document.querySelectorAll('input[type="checkbox"]')).filter(node => {
+    const title = node.closest('[data-testid="stExpander"]')?.querySelector('summary')?.textContent || '';
+    return node.getAttribute('aria-label') === label &&
+      (title.includes('Monthly Activity') || title.includes('Activity Summary'));
+  });
+  // Count stale copies too: neither first() nor filtering them out can hide a
+  // genuine duplicate card. A rerender must retire its old copy within budget.
+  return matches.length === 1 && matches[0].checked &&
+    !matches[0].closest('[data-stale="true"]');
+}"""
+
+
+def wait_for_settled_confirmation(page, label):
+    """Observe one checked, current card after the native rerender, without acting."""
+    deadline = time.monotonic() + 5
+    handle = page.wait_for_function(SETTLED_CONFIRMATION_JS, arg={'label': label}, timeout=5000)
+    handle.dispose()
+    return max(1, int((deadline - time.monotonic()) * 1000))
+
+
 def exercise(engine,name,source,base,scenario,replacement=None):
     from playwright.sync_api import expect
     out=OUT/name/scenario;out.mkdir(parents=True,exist_ok=True)
@@ -93,7 +116,8 @@ def exercise(engine,name,source,base,scenario,replacement=None):
                 label=confirmation.locator('xpath=ancestor::label')
                 expect(label).to_have_count(1)
                 label.click()
-                expect(confirmation).to_be_checked()
+                remaining = wait_for_settled_confirmation(page, 'This work belongs in September 2026')
+                expect(confirmation).to_be_checked(timeout=remaining)
             confirm_month();expect(proceed).to_be_enabled()
             record['month_action']='one-visible-associated-label-click'
             # Close and reopen the actual review control after confirmation.
