@@ -9,7 +9,7 @@ from app.monthly_report_model import Facility, ReportPeriod, ReportProfile, Repo
 from app.monthly_report_sources import SourceContent, SourceTable
 from app.monthly_report_work_order_normalized import (
     ColumnMapping, correct_row, exclude_row, normalize_table,
-    reimport_review, suggest_mapping, unmapped_cells, REVIEW_COLUMNS,
+    reimport_review, review_record, restore_review, suggest_mapping, unmapped_cells, REVIEW_COLUMNS,
 )
 
 PROFILE = ReportProfile(
@@ -218,3 +218,36 @@ def test_existing_real_csv_ingestion_feeds_adapter_without_extra_parser(tmp_path
     assert review.source_reference == (
         parsed.source.id + ":1:" + parsed.source.fingerprint)
     assert sources.source_bytes(PROFILE, parsed.source) == original
+
+
+def test_corrected_review_serializes_and_restores_with_exact_source_identity():
+    data = content("synthetic-storage.csv",
+        ("Work Order", "Site", "Date", "Status", "Extra"),
+        (("WO-A", "North", "2026-09-08", "Pending", "0"),
+         ("WO-B", "South", "2026-09-09", "Closed", "")))
+    original = normalize_table(data, 1, PROFILE, PERIOD)
+    corrected = correct_row(original, original.rows[0].key, {"status": "Completed"},
+                            expected_revision=original.revision)
+    saved = json.loads(json.dumps(review_record(corrected)))
+    loaded = restore_review(saved)
+    assert loaded == corrected
+    assert loaded.revision == corrected.revision
+    assert loaded.rows[0].corrections == (("status", "Completed"),)
+    assert loaded.rows[0].origin.cells[-1] == "0"
+    assert loaded.rows[1].origin.cells[-1] == ""
+    assert loaded.counts()["included"] == 2
+    saved["review"]["rows"][0]["origin"]["cells"][0] = "CHANGED-WO"
+    with pytest.raises(ValueError, match="integrity"):
+        restore_review(saved)
+
+
+def test_saved_source_row_cannot_be_swapped_between_revisions():
+    data = content("synthetic-scope.csv",
+        ("Work Order", "Site", "Date", "Status"),
+        (("WO-A", "North", "2026-09-09", "Open"),))
+    original = normalize_table(data, 1, PROFILE, PERIOD)
+    stored = review_record(original)
+    forged = json.loads(json.dumps(stored))
+    forged["review"]["rows"][0]["origin"]["row_number"] = 17
+    with pytest.raises(ValueError, match="integrity|identity"):
+        restore_review(forged)
