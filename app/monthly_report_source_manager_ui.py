@@ -10,6 +10,7 @@ from app.monthly_report_model import used_source_ids
 
 def _open_manager(manager_key, selection_key, source_id):
     st.session_state[manager_key] = True
+    st.session_state[manager_key + "_open_request"] = True
     if source_id:
         st.session_state[selection_key] = source_id
 
@@ -69,11 +70,25 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
         _remember_delivered_source_edit,
     )
     st.session_state[prefix + "_source_native_changes"] = {}
-    manager_key = field(prefix + "_batch_files_open", False)
     selection_key = prefix + "_evidence_selected"
     active_key = prefix + "_source_active_selected"
     pending = _pending_source_selection(prefix)
     states = _statuses(draft, blocks, prefix)
+    # First-file intake is immediately available. Seed only once so an explicit
+    # Done remains respected, including on empty reports and interrupted work.
+    manager_key = field(prefix + "_batch_files_open", not states)
+    status_key = prefix + "_source_manager_resolution"
+    previous = st.session_state.get(status_key)
+    open_requested = st.session_state.pop(manager_key + "_open_request", False)
+    resolution = {item.source_id: item.resolved for item in states}
+    # Acceptance can be consumed by the Activity editor before this renderer.
+    # Compare the prior render so completion does not require an extra Done.
+    # An explicit native open (including a warning link) takes precedence,
+    # even when resolution changed in the same render. The request is consumed
+    # once so later independent acceptance can still close the workspace.
+    if (not open_requested and isinstance(previous, dict) and previous.keys() == resolution.keys()
+            and not all(previous.values()) and resolution and all(resolution.values())):
+        st.session_state[manager_key] = False
     opened = bool(st.session_state[manager_key])
     with st.container(key=prefix + "_source_file_status"):
         status_line = _source_status_caption(states, pending)
@@ -254,6 +269,8 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
     if st.session_state.pop(manager_key + "_close_request", False):
         st.session_state[manager_key] = False
         st.session_state[prefix + "_period_editor_refresh"] = True
+    st.session_state[status_key] = {item.source_id: item.resolved
+                                    for item in _statuses(draft, blocks, prefix)}
     return draft, blocks
 
 

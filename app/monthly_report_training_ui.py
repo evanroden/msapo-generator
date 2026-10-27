@@ -206,6 +206,9 @@ def _render_monthly_sessions(events, matrix, period, key, scope):
                     outcome = (row, "Training session updated.")
                 if outcome:
                     state = _new_session_editor(scope)
+                    # A new token clears submitted values and prevents replay,
+                    # while another addition needs no repeated disclosure click.
+                    state["continue_adding"] = index is None
     st.session_state[state_key] = state
     rows = events.rows if events else ()
     revision = _sessions_revision(events)
@@ -215,9 +218,9 @@ def _render_monthly_sessions(events, matrix, period, key, scope):
     fields = {name: editor_key + "_" + name for name in ("title", "when", "mode", "participants", "hours")}
     st.subheader("Training completed this month")
     label = "Edit training session" if editing else "Add completed training"
-    # A successful operation creates a fresh closed disclosure and blank form.
+    # A successful addition creates a fresh open disclosure and blank form.
     # Invalid input keeps the same native fields and their delivered values.
-    with st.expander(label, expanded=bool(editing or errors), key=editor_key + "_disclosure"):
+    with st.expander(label, expanded=bool(editing or errors or state.get("continue_adding")), key=editor_key + "_disclosure"):
         with st.form(editor_key + "_form", clear_on_submit=False):
             st.text_input("Training topic", value=seed[0], key=fields["title"])
             if errors.get("title"):
