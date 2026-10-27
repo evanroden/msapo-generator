@@ -23,6 +23,17 @@ def photo_caption_identity(draft, block, *, scope):
     return sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
+def photo_disclosure_identity(block, index, *, scope):
+    """A display choice follows its photo, independent of caption/order edits."""
+    from app.monthly_report_asset_instances import valid_instances
+    from app.monthly_report_asset_review import asset_context
+    asset = block.asset_hashes[index]
+    occurrence = (block.asset_instances[index].key if valid_instances(block) else
+                  (asset, block.asset_hashes[:index].count(asset)))
+    value = (scope, block.key, occurrence, asset, asset_context(block, index))
+    return sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
 def photo_order_identity(draft, block, *, scope, cycle):
     """A rendered action belongs to one report incarnation and photo revision."""
     block = refresh_asset_source_context(block, draft.sources)
