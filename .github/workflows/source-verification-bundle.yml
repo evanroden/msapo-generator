@@ -1,4 +1,5 @@
 name: Source verification bundle
+# Read-only verification refresh for issue 472; not a product/release branch.
 
 on:
   workflow_dispatch:
