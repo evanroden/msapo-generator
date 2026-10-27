@@ -470,6 +470,9 @@ def profile_sections(profile: ReportProfile) -> tuple[SectionSpec, ...]:
             continue
         blocks = {b.key: overrides.get(b.key, b) for b in section.blocks}
         order = block_orders.get(section.key, tuple(blocks))
+        if section.key == "water" and order == ("water_reports",):
+            # Resolve the exact pre-update schema without rewriting saved history.
+            order = ("water_monthly_update", *order)
         if section.key == "mbcx" and "mbcx_report" in order and "mbcx_status" not in order:
             # Older designs stored their explanation and report pages together.
             # Keep their chosen order while making the separate update editable.

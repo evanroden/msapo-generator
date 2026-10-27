@@ -92,3 +92,30 @@ def test_left_out_legacy_water_content_is_not_republished_when_slot_is_added():
     assert next(b for b in completed.blocks if b.key == 'water_monthly_update').text == draft.blocks[0].text
     assert all(not b.required for s in completed.sections if s.key == 'water' for b in s.blocks)
     assert legacy.blocks[0].source == 'This month'
+
+
+def test_saved_legacy_water_profile_order_resolves_update_and_allows_rename(monkeypatch, tmp_path):
+    from app.monthly_report_model import profile_sections
+    monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path))
+    profile = replace(water_draft().profile, section_block_order=(('water', ('water_reports',)),))
+    before = profile.section_block_order
+    water = next(s for s in profile_sections(profile) if s.key == 'water')
+    assert [b.key for b in water.blocks] == ['water_monthly_update', 'water_reports']
+    library.save_profile(profile, expected_revision=0, actor='Synthetic Editor', confirmed=True)
+    renamed = replace(profile, title='Synthetic renamed Water report', facilities=(
+        replace(profile.facilities[0], aliases=('Synthetic site alias',)), *profile.facilities[1:]))
+    library.save_profile(renamed, expected_revision=1, actor='Synthetic Editor', confirmed=True)
+    assert library.load_profile(profile.contract, profile.key).profile == renamed
+    assert profile.section_block_order == before
+    restored = library.restore_profile(profile.contract, profile.key, 1, expected_revision=2,
+                                       actor='Synthetic Editor', confirmed=True)
+    assert restored.profile == profile
+
+
+def test_water_profile_order_still_rejects_missing_pages_duplicates_and_unknowns(monkeypatch, tmp_path):
+    import pytest
+    monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path))
+    for order in [(), ('water_monthly_update',), ('water_reports', 'water_reports'), ('water_reports', 'unknown')]:
+        profile = replace(water_draft().profile, section_block_order=(('water', order),))
+        with pytest.raises(library.LibraryError, match='block order'):
+            library.save_profile(profile, expected_revision=0, actor='Synthetic Editor', confirmed=True)

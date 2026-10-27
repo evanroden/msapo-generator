@@ -1876,6 +1876,29 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     from app.monthly_report_native_narrative_visibility import narrative_visibility_writer
     visible_narrative = narrative_visibility_writer(document)
     specs = {b.key: (s.key, b) for s in draft.sections for b in s.blocks}
+    water_update_anchor = None
+    water_order = next(([b.key for b in s.blocks] for s in draft.sections if s.key == "water"), [])
+    water_update = blocks.get("water_monthly_update")
+    if (water_update is not None and water_update.source != "Omit" and water_update.text
+            and water_update.key not in unchanged and (not section_key or section_key == "water")
+            and "water_monthly_update" in water_order and "water_reports" in water_order
+            and water_order.index("water_monthly_update") < water_order.index("water_reports")):
+        reports = blocks.get("water_reports")
+        report_refs = (set(reports.references) | {t.reference for t in reports.extra_tables}
+                       if reports is not None else set())
+        vendor_anchor = next((element for position, element in enumerate(original, 1)
+                              if section_by_pos.get(position) == "water" and position not in headings
+                              and element.getparent() is body and any(
+                                  item.kind in ("text", "table", "image") and
+                                  (item.suggested_slot == "water_reports" or source_ref(item) in report_refs)
+                                  for item in items[position])), None)
+        old_anchors = text_prototypes.get("water_monthly_update", ())
+        if vendor_anchor is not None and (not old_anchors or
+                original.index(vendor_anchor) < original.index(old_anchors[0][0])):
+            # Reserve the summary's position before vendor frames are replaced
+            # or retained at their source anchors, even if draft blocks arrive
+            # in a different order. Never move existing custom schema order.
+            water_update_anchor = text_anchor("water", before=vendor_anchor, role="water_monthly_update")
     render_blocks = list(draft.blocks)
     if draft.follow_ups:
         from app.monthly_report_followups import report_text
@@ -1935,7 +1958,9 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             anchors = text_prototypes.get(block.key)
             context_anchor = context_anchors.get(block.key)
             role_anchor = narrative_role_anchors.get((sec, block.key))
-            if context_anchor is not None and (not anchors or
+            if block.key == "water_monthly_update" and water_update_anchor is not None:
+                anchors = [water_update_anchor]
+            elif context_anchor is not None and (not anchors or
                     original.index(context_anchor) < original.index(anchors[0][0])):
                 # A newly added note still leads its section when the source's
                 # only prior prose is now retained beside its exact table.
