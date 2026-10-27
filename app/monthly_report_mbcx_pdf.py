@@ -104,6 +104,9 @@ def render_whole_pdf(profile, content, blocks, assets, prefix, editor_prefix, fi
             st.error(str(exc))
             st.caption("Your report is unchanged. The PDF remains available to retry or review page by page.")
         else:
+            from app.monthly_report_upload_ui import _acknowledge_managed_page_edit
+            _acknowledge_managed_page_edit(source, content.source, editor_prefix)
+            st.session_state[prefix + "_" + source.id + "_source_details_baseline"] = content.source.fingerprint
             st.session_state[editor_prefix + "_period_editor_refresh"] = True
             return content, additions
     return content, {}

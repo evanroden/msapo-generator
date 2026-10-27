@@ -201,6 +201,22 @@ def test_individual_review_remains_available(monkeypatch, tmp_path):
     assert not any(w.label.startswith("Include all ") for w in app.button)
 
 
+def test_batch_acknowledges_only_its_own_page_decisions_to_source_form(monkeypatch, tmp_path):
+    app = app_for(monkeypatch, tmp_path)
+    source = app.session_state["sources"][0]
+    app.session_state["_monthly_source_details_managed"] = True
+    app.session_state["_monthly_source_detail_forms"] = {source.id: source}
+    baseline = "synthetic_evidence_" + source.id + "_source_details_baseline"
+    app.session_state[baseline] = source.fingerprint
+    next(w for w in app.button if w.label == "Include all 3 PDF pages").click().run()
+    assert not app.exception
+    revised = app.session_state["sources"][0]
+    assert len(app.session_state["blocks"]["mbcx_report"].asset_hashes) == 3
+    assert app.session_state[baseline] == revised.fingerprint
+    assert app.session_state["_monthly_source_detail_forms"][source.id] == revised
+    assert revised.service_date == source.service_date and revised.facility == source.facility
+
+
 def test_old_whole_document_click_cannot_approve_a_changed_report(monkeypatch, tmp_path):
     app = app_for(monkeypatch, tmp_path)
     button = next(w for w in app.button if w.label == "Include all 3 PDF pages")
