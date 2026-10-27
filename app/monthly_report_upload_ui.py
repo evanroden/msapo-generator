@@ -1063,6 +1063,38 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
         st.caption(choices[selected].source.filename)
     else:
         selected = st.selectbox("File to review", list(choices), format_func=lambda v: choices[v].source.filename, key=selected_key)
+    if choices[selected].source.suffix == ".pdf":
+        from app.monthly_report_section_uploads import preflight_whole_pdf
+        try:
+            budget = preflight_whole_pdf(profile, choices[selected], destination, blocks)
+        except (ValueError, OSError) as exc:
+            st.warning(str(exc))
+        else:
+            st.caption(f"Whole PDF: {budget.new_pages} new pages · "
+                       f"{budget.available_pages} report page slots available"
+                       + (f" · {budget.already_included} already included" if budget.already_included else ""))
+            if not budget.pages_fit:
+                st.warning(f"The whole PDF cannot fit: {budget.new_pages} new pages need "
+                           f"{budget.available_pages} available slots. Include fewer pages "
+                           "or remove existing report pages before reviewing this file.")
+            elif budget.new_pages and st.button("Check whole-PDF image size", key=local_key + "_pdf_preflight_" + selected,
+                                                help="Optional: measure print-size pages against the remaining 60 MiB image budget before reviewing them."):
+                try:
+                    measured = preflight_whole_pdf(
+                        profile, choices[selected], destination, blocks, assets, measure_bytes=True)
+                except (ValueError, OSError) as exc:
+                    st.warning("Whole-PDF size check could not finish: " + str(exc))
+                else:
+                    needed = measured.new_image_bytes / (1024 * 1024)
+                    available = measured.remaining_bytes / (1024 * 1024)
+                    if measured.images_fit:
+                        st.success(f"All {measured.new_pages} new pages fit the current image budget "
+                                   f"({needed:.1f} of {available:.1f} MiB available). "
+                                   "Page-content review is still required.")
+                    else:
+                        st.warning(f"The whole PDF cannot fit the image budget: its checked pages "
+                                   f"need at least {needed:.1f} MiB, with {available:.1f} MiB available. "
+                                   "Reduce selected pages or remove existing evidence before reviewing.")
     revised = _render_section_page_review(
         profile, choices[selected], local_key, field, blocks,
         period=period,
