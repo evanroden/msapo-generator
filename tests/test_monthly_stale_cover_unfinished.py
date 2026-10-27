@@ -126,14 +126,12 @@ def test_confirmed_period_review_remains_reachable_and_edit_requires_reconfirmat
     confirm().check().run()
     app.run()  # Approval must not remove the only route back to this text.
     assert not proceed().disabled
-    # AppTest delivers expander state; hosted browsers click its real summary.
-    card_key = next(k for k in app.session_state.filtered_state if k.endswith("_section_activity_open"))
-    app.session_state[card_key] = False
+    # Client-only collapse keeps this editor mounted; AppTest cannot click
+    # that summary. Hosted acceptance retains the immediate close/reopen/edit.
+    card = next(e for e in app.expander if e.label == "Monthly Activity Summary")
+    assert not card.proto.id
     app.run()
-    assert not any(t.label == "Work completed this month" for t in app.text_area)
     assert not proceed().disabled
-    app.session_state[card_key] = True
-    app.run()
     editor = next(t for t in app.text_area if t.label == "Work completed this month")
     changed = editor.value + "\n\nCorrected after review."
     editor.set_value(changed).run()
@@ -158,10 +156,10 @@ def test_import_text_native_default_matches_retained_edits_and_explicit_clear(mo
         assert area().value == wording
         assert area().proto.default == wording, "Session state alone does not hydrate a native remount."
         assert area().proto.id == identity
-        key = next(k for k in app.session_state.filtered_state if k.endswith("_section_activity_open"))
-        app.session_state[key] = False
+        # No server toggle may unmount this text-only review. Native browser
+        # acceptance exercises the actual rapid client collapse/reopen.
+        assert not next(e for e in app.expander if e.label == "Monthly Activity Summary").proto.id
         app.run()
-        app.session_state[key] = True
         app.run()
         assert area().value == wording
         assert area().proto.default == wording
@@ -206,3 +204,49 @@ render_section_setup(p.contract,ReportPeriod(2026,month),"Synthetic Editor",_fie
     assert edit().proto.default == 'Second unfinished repair.'
     assert not next(c for c in app.checkbox if c.label == 'This work belongs in October 2026').value
     assert not app.exception
+
+
+@pytest.mark.parametrize('media', ('none', 'photo', 'table'))
+def test_only_text_period_review_keeps_native_controls_mounted_without_toggle_rerun(monkeypatch, tmp_path, media):
+    from test_monthly_report_start_import import start_app
+    path = report_file(tmp_path, month='July 2026', activity=('Unfinished inspection.',),
+                       photo=media == 'photo', table=media == 'table')
+    app = start_app(monkeypatch, tmp_path, path)
+    card = next(e for e in app.expander if e.label == 'Monthly Activity Summary')
+    if media == 'none':
+        assert not card.proto.id, 'Text-only review toggle must not race a server-side body removal.'
+    else:
+        assert card.proto.id, 'Media/table reviews must retain their lazy stateful boundary.'
+        next(r for r in app.radio if r.label == 'What would you like to do?').set_value('Edit text or change pictures').run()
+        key = next(k for k in app.session_state.filtered_state if k.endswith('_section_activity_open'))
+        app.session_state[key] = False
+        app.run()
+        assert not any(t.label == 'Work completed this month' for t in app.text_area)
+
+
+def test_text_source_with_added_photo_retains_lazy_media_review(monkeypatch, tmp_path):
+    from io import BytesIO
+    from PIL import Image
+    from app import monthly_report_section_ui as ui
+    from test_monthly_report_start_import import start_app
+    path = report_file(tmp_path, month='July 2026', activity=('Unfinished inspection.',))
+    app = start_app(monkeypatch, tmp_path, path)
+    next(r for r in app.radio if r.label == 'What would you like to do?').set_value('Edit text or change pictures').run()
+    assert not next(e for e in app.expander if e.label == 'Monthly Activity Summary').proto.id
+    next(t for t in app.text_area if t.label == 'Work completed this month').set_value('Edited before adding a picture.').run()
+    photo = BytesIO()
+    Image.new('RGB', (400, 300), 'navy').save(photo, format='PNG')
+    photo.name = 'synthetic-replacement.png'
+    original_uploader = ui.st.file_uploader
+    monkeypatch.setattr(ui.st, 'file_uploader', lambda label, *a, **k:
+                        photo if label == 'New improvement photo' else original_uploader(label, *a, **k))
+    app.run()
+    app.run()  # The retained media plan, not merely original item kinds, owns eligibility.
+    assert not app.exception
+    text = next(t for t in app.text_area if t.label == 'Work completed this month')
+    assert text.value == text.proto.default == 'Edited before adding a picture.'
+    assert next(e for e in app.expander if e.label == 'Monthly Activity Summary').proto.id
+    key = next(k for k in app.session_state.filtered_state if k.endswith('_section_activity_open'))
+    app.session_state[key] = False
+    app.run()
+    assert not any(t.label == 'Work completed this month' for t in app.text_area)

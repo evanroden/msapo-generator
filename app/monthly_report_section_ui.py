@@ -168,8 +168,18 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
     old = plans.get(section.key, {})
     # Streamlit includes an expander's label in its identity, even with a key.
     # A changing "Ready" suffix would close it and discard its active widgets.
-    box = st.expander(section.title, expanded=first, key=p + "_open", on_change="rerun")
-    if not box.open:
+    text_only_period_review = (bool(old.get("period_review_items"))
+                               and not old.get("new_assets")
+                               and not old.get("preserved_assets")
+                               and not old.get("word_page_records")
+                               and not old.get("native_art_review")
+                               and all(item.kind == "text" for item in section.items))
+    # A quick close/reopen must not let an older toggle rerun remove an
+    # active text editor. Keep this lightweight review mounted client-side.
+    # Media, tables and native artwork retain their deliberate lazy boundary.
+    box = st.expander(section.title, expanded=first, key=p + "_open",
+                      on_change="ignore" if text_only_period_review else "rerun")
+    if not text_only_period_review and not box.open:
         return
     with box:
         # Reserve the same position, but do not display stale approval from
