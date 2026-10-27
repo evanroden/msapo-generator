@@ -196,3 +196,25 @@ def test_table_bounds_and_row_number_are_checked_before_processing():
     over = replace(data, tables=(replace(data.tables[0], rows=data.tables[0].rows * 20001),))
     with pytest.raises(ValueError, match="budget"):
         normalize_table(over, 1, PROFILE, PERIOD)
+
+
+def test_existing_real_csv_ingestion_feeds_adapter_without_extra_parser(tmp_path, monkeypatch):
+    from app import monthly_report_sources as sources
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    original = (
+        b"WO Number,Facility,Date,Status,Type,Trade,Hours,Notes\\n"
+        b"WO-A1,North,2026-09-04,Closed,Preventive,HVAC,0,\\n"
+        b"WO-A2,South,2026-09-05,Open,Corrective,Plumbing,,Review pending\\n"
+    )
+    parsed, _ = sources.ingest(PROFILE, "synthetic-orders.csv", original)
+    assert sources.source_bytes(PROFILE, parsed.source) == original
+    review = normalize_table(parsed, 1, PROFILE, PERIOD)
+    assert review.kind == "records"
+    assert review.counts()["included"] == 2
+    assert [(row.site, row.status, row.work_type) for row in review.rows] == [
+        ("north", "Completed", "PM"), ("south", "Open", "Non-PM")]
+    assert unmapped_cells(review, review.rows[0].key)[0][-1] == "0"
+    assert unmapped_cells(review, review.rows[1].key)[0][-1] == ""
+    assert review.source_reference == (
+        parsed.source.id + ":1:" + parsed.source.fingerprint)
+    assert sources.source_bytes(PROFILE, parsed.source) == original
