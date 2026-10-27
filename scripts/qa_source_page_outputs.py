@@ -19,7 +19,7 @@ from tempfile import TemporaryDirectory
 from zipfile import ZipFile
 
 from docx import Document
-import fitz
+import pymupdf as fitz
 from pytest import MonkeyPatch
 
 from app import monthly_report_library as library, monthly_report_sources as sources, pdf_converter, web_ui

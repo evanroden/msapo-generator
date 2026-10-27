@@ -288,3 +288,123 @@ def test_edit_chart_after_an_unblurred_contact_field_opens_the_chart_in_one_acti
     assert not app.text_input, 'the contact editor closed after its field was kept'
     assert report(app).rows[0][3] == 'delivered-with-chart'
     assert directory.load_directory(profile.contract).sites[0].contacts[0].phone == 'delivered-with-chart'
+
+
+@pytest.mark.parametrize('choice', ['Retry shared contact correction', 'Keep correction in this report only'])
+def test_resolved_recovery_does_not_move_next_native_edit_on_passive_rerun(monkeypatch,tmp_path,choice):
+    app, profile, original, before = workspace(monkeypatch,tmp_path)
+    press(app,'Edit contact')
+    field(app,'Phone').set_value('stable correction')
+    with patch.object(directory,'automatically_keep_directory_contact_edits',side_effect=OSError('synthetic failure')):
+        press(app,'Remove contact')
+    with patch.object(directory,'automatically_keep_directory_contact_edits',wraps=directory.automatically_keep_directory_contact_edits) as write:
+        press(app,choice)
+        assert not any('still pending' in warning.value for warning in app.warning)
+        assert not any(button.label in ('Retry shared contact correction','Keep correction in this report only') for button in app.button)
+        button=next(button for button in app.button if button.label=='Edit contact')
+        identity=button.proto.id
+        def path(node,parents=()):
+            if getattr(node,'type','')=='button' and node.proto.id==identity:return parents
+            for index,child in getattr(node,'children',{}).items():
+                found=path(child,(*parents,index))
+                if found is not None:return found
+        previous_path=path(app._tree)
+        previous_report=report(app)
+        previous_directory=directory.load_directory(profile.contract)
+        app.run()
+        assert not app.exception
+        assert path(app._tree)==previous_path
+        assert report(app)==previous_report
+        assert directory.load_directory(profile.contract)==previous_directory
+        assert write.call_count==(1 if choice.startswith('Retry') else 0)
+    press(app,'Edit contact')
+    assert field(app,'Phone').value=='stable correction'
+
+
+def test_contact_native_default_is_present_on_first_mount_without_state_hydration(monkeypatch, tmp_path):
+    from streamlit.elements.lib import policies
+    app, profile, original, before = workspace(monkeypatch, tmp_path)
+    monkeypatch.setattr(policies, '_shown_default_value_warning', False)
+    with patch.object(policies._LOGGER, 'warning') as warning:
+        press(app, 'Edit contact')
+    assert not warning.called
+    phone = field(app, 'Phone')
+    identity = phone.proto.id
+    assert phone.proto.default == 'old'
+    assert phone.proto.set_value is False
+    assert phone.value == 'old'
+    assert phone.key in app.session_state['report_widget_keys']
+    app.run()
+    assert field(app, 'Phone').proto.id == identity
+    assert field(app, 'Phone').value == 'old'
+    field(app, 'Phone').set_value('new-native-phone').run()
+    assert field(app, 'Phone').proto.id == identity
+    assert field(app, 'Phone').proto.default == 'new-native-phone'
+    assert report(app).rows[0][3] == 'new-native-phone'
+    field(app, 'Phone').set_value('').run()
+    assert field(app, 'Phone').proto.id == identity
+    assert field(app, 'Phone').proto.default == ''
+    assert field(app, 'Phone').value == ''
+    assert report(app).rows[0][3] == ''
+    app.run()
+    assert field(app, 'Phone').value == ''
+    press(app, 'Done')
+    press(app, 'Edit contacts')
+    assert field(app, 'Phone').proto.default == ''
+    assert field(app, 'Phone').value == ''
+
+
+def test_after_commit_recovery_reentry_starts_with_saved_native_phone(monkeypatch, tmp_path):
+    app, profile, original, before = workspace(monkeypatch, tmp_path)
+    press(app, 'Edit contact')
+    field(app, 'Phone').set_value('after-commit-native')
+    real = directory.automatically_keep_directory_contact_edits
+    def after_commit(*args, **kwargs):
+        real(*args, **kwargs)
+        raise OSError('synthetic acknowledgement failure')
+    with patch.object(directory, 'automatically_keep_directory_contact_edits', side_effect=after_commit):
+        press(app, 'Remove contact')
+    press(app, 'Edit contact')
+    phone = field(app, 'Phone')
+    assert phone.proto.default == 'after-commit-native'
+    assert phone.proto.set_value is False
+    identity = phone.proto.id
+    field(app, 'Phone').set_value('immediate-replacement')
+    press(app, 'Done')
+    assert not app.text_input
+    assert report(app).rows[0][3] == 'immediate-replacement'
+    assert directory.load_directory(profile.contract).sites[0].contacts[0].phone == 'immediate-replacement'
+
+
+def test_native_contact_default_keeps_existing_transformed_registration_key(monkeypatch):
+    from types import SimpleNamespace
+    from app import monthly_report_contact_cards_ui as cards
+    state = {'actual-key': 'delivered dirty edit'}
+    rendered = []
+    fake = SimpleNamespace(session_state=state,
+        text_input=lambda label, **kwargs: rendered.append((dict(state), kwargs)),
+        button=lambda *args, **kwargs: None)
+    monkeypatch.setattr(cards, 'st', fake)
+    cards._fields(SimpleNamespace(columns=('Phone',)), (('logical-key', 'old'),),
+                  lambda key, original: 'actual-key', ('record', 'epoch', (), None, ()), False)
+    assert state == {'actual-key': 'delivered dirty edit'}
+    assert rendered[0][1]['key'] == 'actual-key'
+    assert rendered[0][1]['value'] == 'delivered dirty edit'
+
+
+def test_native_contact_default_retires_only_a_fresh_registration_seed(monkeypatch):
+    from types import SimpleNamespace
+    from app import monthly_report_contact_cards_ui as cards
+    state = {'unrelated-key': 'retain'}
+    rendered = []
+    def register(key, original):
+        state.setdefault('actual-key', original)
+        return 'actual-key'
+    fake = SimpleNamespace(session_state=state,
+        text_input=lambda label, **kwargs: rendered.append((dict(state), kwargs)),
+        button=lambda *args, **kwargs: None)
+    monkeypatch.setattr(cards, 'st', fake)
+    cards._fields(SimpleNamespace(columns=('Phone',)), (('logical-key', 'saved-phone'),),
+                  register, ('record', 'epoch', (), None, ()), False)
+    assert rendered[0][0] == {'unrelated-key': 'retain'}
+    assert rendered[0][1]['value'] == 'saved-phone'

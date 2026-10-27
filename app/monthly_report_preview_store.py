@@ -14,7 +14,7 @@ from threading import RLock
 from time import monotonic
 from uuid import uuid4
 
-import fitz
+import pymupdf as fitz
 
 
 MAX_DISK_BYTES = 64 * 1024 * 1024
