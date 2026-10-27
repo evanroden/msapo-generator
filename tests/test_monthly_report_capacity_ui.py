@@ -148,7 +148,6 @@ def test_first_time_capacity_upload_stays_primary_and_requires_no_optional_maint
     assert capacity.load_capacity(profile.contract) is None
     assert next(item for item in app.expander if item.label == "Capacity source and reusable data").proto.expanded is True
     assert any("upload a thermal capacity file below" in item.value for item in app.caption)
-    assert len([item for item in app.get("file_uploader") if item.label == "Thermal capacity file"]) == 0  # patched uploader returns None
     assert any("Clear site matches fill missing reusable capacity automatically" in item.value
                for item in app.get("caption"))
     # No empty upload should alter the report or create a shared site table.
@@ -157,3 +156,27 @@ def test_first_time_capacity_upload_stays_primary_and_requires_no_optional_maint
     assert not app.exception
     assert app.session_state["test_block"].fingerprint == original
     assert capacity.load_capacity(profile.contract) is None
+
+
+def test_saved_thermal_capacity_file_is_directly_reachable_on_first_and_reentry(profile):
+    """An existing value must not conceal the supported upload route."""
+    from test_monthly_report_capacity import saved as save_values
+    state = save_values(profile)
+    current = draft(profile, capacity.capacity_block(profile, state))
+    app = AppTest.from_string(APP)
+    app.session_state["test_draft"] = current
+    app.run()
+    assert not app.exception
+    panel = next(e for e in app.expander if e.label == "Capacity source and reusable data")
+    assert panel.proto.expanded is True
+    uploads = [u for u in app.get("file_uploader") if u.label == "Thermal capacity file"]
+    assert len(uploads) == 1
+    assert any("Existing reusable-site values change only after an explicit correction" in c.value
+               for c in app.caption)
+    first_id = uploads[0].id
+    app.run()
+    assert not app.exception
+    uploads = [u for u in app.get("file_uploader") if u.label == "Thermal capacity file"]
+    assert len(uploads) == 1 and uploads[0].id == first_id
+    assert app.session_state["test_draft"] == current
+    assert capacity.load_capacity(profile.contract) == state
