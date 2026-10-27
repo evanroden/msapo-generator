@@ -2,6 +2,8 @@
 from copy import deepcopy
 from io import BytesIO
 
+import pytest
+
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
@@ -126,7 +128,8 @@ def test_custom_style_outline_is_respected_as_existing_navigation():
     assert outline(plain) is None
 
 
-def test_generated_native_word_has_navigable_section_paragraphs(tmp_path):
+@pytest.mark.parametrize('body_outline', [None, 'direct', 'inherited'])
+def test_generated_native_word_has_navigable_section_paragraphs(tmp_path, body_outline):
     """Exercise the actual derivative native builder, not just its XML helper."""
     from app.monthly_report_model import (
         BlockSpec, Facility, ReportDraft, ReportPeriod, ReportProfile,
@@ -143,6 +146,16 @@ def test_generated_native_word_has_navigable_section_paragraphs(tmp_path):
     source.add_paragraph("Prior monthly activity")
     training = source.add_paragraph("TRAINING SUMMARY")
     training.runs[0].bold = True
+    if body_outline is not None:
+        for heading in (activity, training):
+            if body_outline == 'inherited':
+                from docx.enum.style import WD_STYLE_TYPE
+                style_name = 'Synthetic Body ' + str(len(source.styles))
+                heading.style = source.styles.add_style(style_name, WD_STYLE_TYPE.PARAGRAPH)
+                properties = heading.style.element.get_or_add_pPr()
+            else:
+                properties = heading._p.get_or_add_pPr()
+            _set_outline(properties, '9')
     source.add_paragraph("Prior training activity")
     path = tmp_path / "synthetic-native-headings.docx"
     source.save(path)
@@ -169,8 +182,66 @@ def test_generated_native_word_has_navigable_section_paragraphs(tmp_path):
     }
     assert set(titles) == {"MONTHLY ACTIVITY SUMMARY", "TRAINING SUMMARY"}
     assert all(outline(p) == "0" for p in titles.values())
-    assert all(p.style.style_id == "Normal" and p.runs[0].bold
+    assert all((p.style.style_id.startswith('SyntheticBody') if body_outline == 'inherited'
+                else p.style.style_id == "Normal") and p.runs[0].bold
+               for p in titles.values())
+    assert all(len(p._p.get_or_add_pPr().findall(qn('w:outlineLvl'))) == 1
                for p in titles.values())
     assert path.read_bytes() == original
     assert "Prior monthly activity" not in "\\n".join(p.text for p in generated.paragraphs)
     assert "Current synthetic activity" in "\\n".join(p.text for p in generated.paragraphs)
+
+
+def _set_outline(properties, value):
+    level = OxmlElement('w:outlineLvl')
+    if value is not None:
+        level.set(qn('w:val'), value)
+    properties.append(level)
+    return level
+
+
+@pytest.mark.parametrize('value', ['9', '10', '-1', 'not-a-level', '', None])
+@pytest.mark.parametrize('inherited', [False, True])
+def test_body_text_and_invalid_levels_do_not_suppress_section_navigation(value, inherited):
+    from docx.enum.style import WD_STYLE_TYPE
+    document = Document()
+    custom = document.styles.add_style('Synthetic Body Outline', WD_STYLE_TYPE.PARAGRAPH)
+    heading = document.add_paragraph('TRAINING SUMMARY', style=custom)
+    target = custom.element.get_or_add_pPr() if inherited else heading._p.get_or_add_pPr()
+    _set_outline(target, value)
+    original, positions, owners = selection(document, (heading, 'training'))
+    style_before = custom.element.xml
+    assert mark_native_section_headings(document, original, positions, owners, {'training'}) == ('training',)
+    assert outline(heading) == '0'
+    assert len(heading._p.get_or_add_pPr().findall(qn('w:outlineLvl'))) == 1
+    assert custom.element.xml == style_before
+    assert mark_native_section_headings(document, original, positions, owners, {'training'}) == ()
+
+
+@pytest.mark.parametrize('value', [str(level) for level in range(9)])
+@pytest.mark.parametrize('inherited', [False, True])
+def test_valid_outline_levels_are_preserved(value, inherited):
+    from docx.enum.style import WD_STYLE_TYPE
+    document = Document()
+    custom = document.styles.add_style('Synthetic Valid Outline', WD_STYLE_TYPE.PARAGRAPH)
+    heading = document.add_paragraph('TRAINING SUMMARY', style=custom)
+    target = custom.element.get_or_add_pPr() if inherited else heading._p.get_or_add_pPr()
+    _set_outline(target, value)
+    original, positions, owners = selection(document, (heading, 'training'))
+    before = document.element.body.xml
+    assert mark_native_section_headings(document, original, positions, owners, {'training'}) == ()
+    assert document.element.body.xml == before
+
+
+def test_body_text_override_beats_named_heading_style_and_inherited_heading_level():
+    from docx.enum.style import WD_STYLE_TYPE
+    for direct in (False, True):
+        document = Document()
+        custom = document.styles.add_style('Synthetic Override', WD_STYLE_TYPE.PARAGRAPH)
+        custom.base_style = document.styles['Heading 1']
+        heading = document.add_paragraph('TRAINING SUMMARY', style='Heading 1' if direct else custom)
+        _set_outline(heading._p.get_or_add_pPr() if direct else custom.element.get_or_add_pPr(), '9')
+        original, positions, owners = selection(document, (heading, 'training'))
+        assert mark_native_section_headings(document, original, positions, owners, {'training'}) == ('training',)
+        assert outline(heading) == '0'
+        assert len(heading._p.get_or_add_pPr().findall(qn('w:outlineLvl'))) == 1

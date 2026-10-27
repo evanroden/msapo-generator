@@ -31,31 +31,42 @@ def _plain_heading_text(paragraph):
     return "".join(runs).strip()
 
 
+def _is_heading_level(level):
+    """OOXML 0-8 are headings; 9 is body text, not navigation metadata."""
+    try:
+        return 0 <= int(level.get(qn("w:val"), "")) <= 8
+    except (TypeError, ValueError):
+        return False
+
+
 def _has_semantic_level(paragraph, styles):
     """Respect an existing direct level or heading style, even when inherited."""
     properties = paragraph.find(qn("w:pPr"))
     if properties is None:
         return False
-    if properties.find(qn("w:outlineLvl")) is not None:
-        return True
+    level = properties.find(qn("w:outlineLvl"))
+    if level is not None:
+        return _is_heading_level(level)
     style = properties.find(qn("w:pStyle"))
     if style is None:
         return False
     style_id = style.get(qn("w:val"), "")
-    if re.fullmatch(r"Heading\s*[1-9]", style_id, re.IGNORECASE):
-        return True
+    named_heading = False
     seen = set()
     while style_id and style_id not in seen:
         seen.add(style_id)
+        named_heading |= bool(re.fullmatch(r"Heading\s*[1-9]", style_id, re.IGNORECASE))
         defined = styles.get(style_id)
         if defined is None:
             break
         props = defined.find(qn("w:pPr"))
-        if props is not None and props.find(qn("w:outlineLvl")) is not None:
-            return True
+        level = props.find(qn("w:outlineLvl")) if props is not None else None
+        if level is not None:
+            # The nearest explicit level overrides any semantic parent style.
+            return _is_heading_level(level)
         parent = defined.find(qn("w:basedOn"))
         style_id = parent.get(qn("w:val"), "") if parent is not None else ""
-    return False
+    return named_heading
 
 
 def mark_native_section_headings(document, original, positions, section_by_pos, included):
@@ -97,9 +108,11 @@ def mark_native_section_headings(document, original, positions, section_by_pos, 
         # heading. Only the last surviving *plain* paragraph is marked.
         target = paragraphs[-1]
         properties = target.get_or_add_pPr()
-        outline = OxmlElement("w:outlineLvl")
+        outline = properties.find(qn("w:outlineLvl"))
+        if outline is None:
+            outline = OxmlElement("w:outlineLvl")
+            properties.insert_element_before(
+                outline, "w:divId", "w:cnfStyle", "w:rPr", "w:sectPr", "w:pPrChange")
         outline.set(qn("w:val"), "0")
-        properties.insert_element_before(
-            outline, "w:divId", "w:cnfStyle", "w:rPr", "w:sectPr", "w:pPrChange")
         marked.append(key)
     return tuple(marked)
