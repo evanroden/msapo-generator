@@ -218,6 +218,21 @@ def _issues(row, sites, period_key):
     return tuple(dict.fromkeys(questions))
 
 
+def _mark_duplicates(rows):
+    """Duplicate site/WO records stay visible but cannot be counted as facts."""
+    groups = {}
+    for number, row in enumerate(rows):
+        if row.work_order:
+            groups.setdefault((row.site, row.work_order.casefold()), []).append(number)
+    collisions = {index for positions in groups.values() if len(positions) > 1
+                  for index in positions}
+    return tuple(replace(row, issues=tuple(v for v in row.issues
+                             if v != "duplicate work-order identity")
+                             + (("duplicate work-order identity",)
+                                if number in collisions else ()))
+                 for number, row in enumerate(rows))
+
+
 def _aggregate(columns, rows):
     headings = tuple(_name(v) for v in columns)
     return (any(value in MONTHS or re.fullmatch(r"20\d\d(?:0?[1-9]|1[0-2])", value)
@@ -277,7 +292,7 @@ def normalize_table(content: SourceContent, table_number: int,
     return WorkOrderReview(
         source.id, source.sha256, source.fingerprint,
         source_reference(source, table_number), table_number, kind, mapping,
-        sites, period.key, tuple(records), columns, rows, questions,
+        sites, period.key, _mark_duplicates(records), columns, rows, questions,
     )
 
 
@@ -304,7 +319,7 @@ def correct_row(review: WorkOrderReview, key: str, changes: dict[str, str], *,
     revised = replace(revised, issues=_issues(revised, review.allowed_sites, review.period_key))
     updated = list(review.rows)
     updated[index] = revised
-    return replace(review, rows=tuple(updated))
+    return replace(review, rows=_mark_duplicates(updated))
 
 
 def exclude_row(review: WorkOrderReview, key: str, *, expected_revision: str,
