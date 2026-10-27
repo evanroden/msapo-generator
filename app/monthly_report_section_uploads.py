@@ -128,7 +128,7 @@ def preflight_whole_pdf(profile, content, destination, blocks, assets=None, *,
         raise ValueError("Select a PDF and its report section to check whole-document capacity.")
     owners = included_pages(blocks)
     source_id = content.source.id
-    if any(identity == source_id and destination not in slots
+    if any(identity == source_id and any(slot != destination for slot in slots)
            for (identity, _), slots in owners.items()):
         raise ValueError("This PDF already has pages in another section. Review it there; no pages were added.")
     images = sources.image_numbers(content)
