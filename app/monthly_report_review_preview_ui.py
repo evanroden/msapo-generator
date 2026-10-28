@@ -21,7 +21,19 @@ from app.monthly_report_source_view_runtime import preview_fingerprint
 def _discard_preview(owner, current):
     """Release one ticket without touching saved originals or other visitors."""
     if isinstance(current, dict) and isinstance(current.get("ticket"), PreviewTicket):
-        STORE.discard(owner, current["ticket"])
+        try:
+            STORE.discard(owner, current["ticket"])
+        except (ValueError, OSError):
+            # The isolated-QA namespace may be retired during another reset.
+            # A missed cache discard can only expire; no draft is affected.
+            pass
+
+
+def _available(owner, ticket):
+    try:
+        return STORE.available(owner, ticket)
+    except (ValueError, OSError):
+        return False
 
 
 def render_review_preview(draft, assets, prefix):
@@ -51,7 +63,7 @@ def render_review_preview(draft, assets, prefix):
         st.session_state.pop(state_key, None)
         current = None
     elif current and (not isinstance(current.get("ticket"), PreviewTicket)
-                      or not STORE.available(owner, current["ticket"])):
+                      or not _available(owner, current["ticket"])):
         st.session_state.pop(state_key, None)
         current = None
         st.caption("The temporary draft preview expired. Recreate it to see the current report.")
@@ -93,7 +105,7 @@ def render_review_preview(draft, assets, prefix):
     if not current:
         return
     ticket = current["ticket"]
-    if not STORE.available(owner, ticket):
+    if not _available(owner, ticket):
         st.session_state.pop(state_key, None)
         st.warning("The temporary preview is no longer available. Recreate it to see the current report.")
         return
