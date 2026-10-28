@@ -143,9 +143,10 @@ def _publish(contract, block, assets, *, origin_profile, origin_fingerprint,
         return state
 
 
-def source_pages_allowed(block, sources):
-    """Picture approval never substitutes for current source-page consent."""
+def source_pages_allowed(block, sources, profile):
+    """Picture approval never substitutes for current source-page or site consent."""
     from app.monthly_report_content_policy import page_allowed
+    from app.monthly_report_source_scope import visual_source_scope_valid
     source_index = {source.id: source for source in sources}
     references = {ref for index in range(len(block.asset_hashes)) for ref in asset_context(block, index)}
     for reference in references:
@@ -159,7 +160,8 @@ def source_pages_allowed(block, sources):
             return False
         source, page = source_index.get(parts[0]), int(parts[1])
         if (source is None or page not in source.selected_pages
-                or not 1 <= page <= len(source.page_texts) or not page_allowed(source, page)):
+                or not 1 <= page <= len(source.page_texts) or not page_allowed(source, page)
+                or not visual_source_scope_valid(source, profile, artwork_keys=(block.key,))):
             return False
     return True
 
@@ -176,8 +178,8 @@ def save_standard(draft, block, assets, *, expected_revision, expected_fingerpri
     checked = refresh_asset_source_context(block, draft.sources)
     if not _eligible(checked):
         raise library.LibraryError("Include and review every procedure picture before saving a contract default.")
-    if not source_pages_allowed(checked, draft.sources):
-        raise library.LibraryError("Select and review every procedure source page before saving a contract default.")
+    if not source_pages_allowed(checked, draft.sources, draft.profile):
+        raise library.LibraryError("Select and review every procedure source page and its selected-site scope before saving a contract default.")
     prepared = {ref: (assets[ref] if ref in assets else library.read_asset(
         draft.profile.contract, draft.profile.key, ref)) for ref in checked.asset_hashes}
     return _publish(draft.profile.contract, checked, prepared,
@@ -197,8 +199,11 @@ def adopt_legacy(draft, key, *, expected_revision, expected_legacy_fingerprint, 
     item = legacy_candidate(draft.profile.contract, key)
     if item is None or item.block.fingerprint != expected_legacy_fingerprint:
         raise library.RevisionConflict("The legacy procedure changed or belongs to another contract. Review it again.")
-    assets = {ref: read_asset(ref) for ref in item.block.asset_hashes}
-    return _publish(draft.profile.contract, item.block, assets,
+    checked = refresh_asset_source_context(item.block, draft.sources)
+    if not _eligible(checked) or not source_pages_allowed(checked, draft.sources, draft.profile):
+        raise library.LibraryError("Review the legacy procedure source pages and their selected-site scope before adoption.")
+    assets = {ref: read_asset(ref) for ref in checked.asset_hashes}
+    return _publish(draft.profile.contract, checked, assets,
                     origin_profile=item.origin_profile, origin_fingerprint=item.origin_fingerprint,
                     expected_revision=expected_revision, actor=draft.prepared_by, confirmed=confirmed)
 

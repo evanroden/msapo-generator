@@ -73,7 +73,7 @@ def render_contract_procedure(draft, block, assets, prefix):
               key=root + "_save_" + identity,
               disabled=draft.synthetic or not workflows._eligible(
                   workflows.refresh_asset_source_context(block, draft.sources))
-                  or not workflows.source_pages_allowed(block, draft.sources),
+                  or not workflows.source_pages_allowed(block, draft.sources, draft.profile),
               help="Publish these reviewed procedure pictures only for this contract. Existing reports stay pinned.",
               on_click=_queue, args=(request_key, dict(receipt, action="save")))
     if not item and not draft.synthetic:
