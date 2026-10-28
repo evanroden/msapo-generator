@@ -147,6 +147,10 @@ def _comparison_rows(columns, rows):
     # These display-only labels never replace the exported original schema.
     labels = tuple(f"{index + 1}. {column}" if columns.count(column) > 1 else column
                    for index, column in enumerate(columns))
+    if len(set(labels)) != len(labels):
+        # An original heading may already equal a duplicate's display label.
+        # Prefix every heading only then: positions make all labels unique.
+        labels = tuple(f"{index + 1}. {column}" for index, column in enumerate(columns))
     return [dict(zip(labels, row)) for row in rows]
 
 
