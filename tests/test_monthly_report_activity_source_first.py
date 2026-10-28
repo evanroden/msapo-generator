@@ -26,6 +26,15 @@ def test_labels_are_source_grounded_and_never_infer_a_contact_or_completed_job()
     assert table_task_label(replace(ordinary, rows=()), "work_orders").endswith("0 source rows")
 
 
+def test_pm_labels_require_an_explicit_schema_token_not_a_substring():
+    for heading in ("Equipment", "RPM", "Department", "Equipment description"):
+        table = ReportTable((heading, "Count"), (("Synthetic", "1"),))
+        assert table_task_label(table, "work_orders") == "Work-order source table · 1 source row"
+    for heading in ("PM", "PM count", "PM/non-PM", "Preventive maintenance count"):
+        table = ReportTable(("Facility", heading), (("Demo", "1"),))
+        assert table_task_label(table, "work_orders") == "Preventive maintenance summary · 1 source row"
+
+
 def test_activity_has_a_direct_shared_uploader_with_distinct_work_and_vendor_tasks(monkeypatch, tmp_path):
     from test_monthly_report_upload_ui import app_with_library, current_draft
     app, _ = app_with_library(monkeypatch, tmp_path)
@@ -60,7 +69,7 @@ def test_imported_tables_display_schema_based_titles_without_table_number_contro
     assert not app.exception
     visible = [x.value for x in app.text]
     assert "Work-order records · source 1 of 2 · 1 source row" in visible
-    assert "Work-order source table · source 2 of 2 · 2 source rows" in visible
+    assert "Preventive maintenance summary · source 2 of 2 · 2 source rows" in visible
     assert not any(x in {"Table 1", "Table 2"} for x in visible)
     assert app.session_state["block"] == original
     keys = [key for key, value in app.session_state.filtered_state.items()
@@ -103,10 +112,13 @@ _section_card(ImportSection("activity", "Monthly Activity Summary", (item,)),
 """
     app = AppTest.from_string(script, default_timeout=30).run()
     assert not app.exception
-    next(widget for widget in app.radio
-         if "Edit text or change pictures" in widget.options).set_value(
-             "Edit text or change pictures").run()
+    action = next(widget for widget in app.radio
+                  if widget.label == "What would you like to do?")
+    assert action.options == ["Review work and photos", "Update work, counts or photos",
+                              "Start this section blank"]
+    action.set_value("Edit text or change pictures").run()
     assert not app.exception
+    assert app.session_state["plans"]["activity"]["action"] == "Edit text or change pictures"
     assert any("Work-order records · 2 source rows" == text.value for text in app.text)
     reviewed = app.session_state["plans"]["activity"]["tables"]["table"]
     assert reviewed.columns == ("WO #", "Finish Date", "Status")
