@@ -212,7 +212,7 @@ render_section_setup(p.contract, ReportPeriod(2026,9), "Synthetic Editor", _fiel
             site.check().run()
     inspection = inspect_docx(path)
     stage_key = next(k for k in app.session_state.filtered_state if k.endswith("_stage"))
-    prefix = stage_key.removesuffix("_stage") + "_" + inspection.sha256[:16]
+    prefix = app.session_state[stage_key.removesuffix("_stage") + "_active_section_review"][1]
     app.run()
     assert not app.exception
     plan = app.session_state[prefix + "_section_plans"]["organization"]

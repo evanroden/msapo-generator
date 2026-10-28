@@ -28,6 +28,51 @@ def test_fixture_requires_marked_isolated_storage(monkeypatch,tmp_path):
     assert not (tmp_path / 'monthly_reports').exists()
 
 
+@pytest.mark.parametrize('check', ['initial-schema', 'concurrent-directory-refresh'])
+def test_contact_fixture_uses_canonical_directory_schema(monkeypatch, tmp_path, check):
+    from dataclasses import asdict, replace
+    from app import monthly_report_directory as directory
+    from app import monthly_report_library as library
+    from app import monthly_report_qa_fixture as fixture
+    from app import monthly_report_testing as testing
+    from scripts.workspace_contact_observations import setup
+
+    monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path))
+    monkeypatch.setenv('EPC_MONTHLY_DOM_FIXTURE', '1')
+    monkeypatch.setenv('EPC_MONTHLY_CONTACT_TASK', '1')
+    (tmp_path / 'monthly-dom-synthetic-only.marker').write_text('synthetic-monthly-dom-v1')
+    with testing.isolated(TOKEN):
+        testing.data_dir(tmp_path)
+        setup(tmp_path, TOKEN)
+        saved = library.load_snapshot(fixture.CONTRACT, fixture.profile().key, fixture.PERIOD)
+        draft = saved.draft
+        contact = next(b for b in draft.blocks if b.key == 'contact_matrix')
+        spec = next(b for s in draft.sections for b in s.blocks if b.key == 'contact_matrix')
+        if check == 'initial-schema':
+            assert spec == directory.CONTACT_SPEC
+        previous = directory.load_directory(fixture.CONTRACT)
+        north = previous.sites[0]
+        changed = replace(north.contacts[0], phone='202-555-0176')
+        sites = (replace(north, contacts=(changed, *north.contacts[1:])), *previous.sites[1:])
+        directory.save_directory(fixture.CONTRACT, sites, expected_revision=previous.revision,
+                                 actor=fixture.ACTOR, confirmed=True)
+        # Reproduce a committed shared write arriving before the old working
+        # copy has received its acknowledgment, without any browser timing.
+        refreshed = directory.refresh_directory_contacts(draft)
+        current = next(b for b in refreshed.blocks if b.key == 'contact_matrix')
+        assert current.rows != contact.rows
+        assert current.rows[0][3] == '202-555-0176'
+        def unrelated(value):
+            return replace(value, blocks=tuple(b for b in value.blocks
+                           if b.key not in {'contact_matrix', 'subcontractor_matrix'}))
+        assert asdict(unrelated(refreshed)) == asdict(unrelated(draft))
+        assert unrelated(refreshed).fingerprint == unrelated(draft).fingerprint
+        assert next(b for b in refreshed.blocks if b.key == 'subcontractor_matrix') == next(
+            b for b in draft.blocks if b.key == 'subcontractor_matrix')
+        assert library.load_snapshot(fixture.CONTRACT, fixture.profile().key, fixture.PERIOD) == saved
+    assert not (tmp_path / 'monthly_reports').exists()
+
+
 def test_guided_contact_fixture_receipts_and_real_native_outputs(monkeypatch,tmp_path,app_test_process):
     if not app_test_process:
         return
