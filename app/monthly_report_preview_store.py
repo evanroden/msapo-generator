@@ -6,6 +6,7 @@ This cache never reads, evicts or migrates the durable report library.
 from __future__ import annotations
 
 from collections import OrderedDict
+from contextlib import ExitStack
 from dataclasses import dataclass
 import math
 from pathlib import Path
@@ -142,11 +143,16 @@ class PreviewStore:
             if entry is None:
                 return None
             result = []
-            with fitz.open(entry.path) as document:
+            # Open only for a raster miss. Ownership, expiry and the backing
+            # file were checked above, even when every requested page is warm.
+            with ExitStack() as resources:
+                document = None
                 for index in indexes:
                     cache_key = (ticket.key, index, dpi)
                     raw = self._rasters.pop(cache_key, None)
                     if raw is None:
+                        if document is None:
+                            document = resources.enter_context(fitz.open(entry.path))
                         page = document[index]
                         scale = min(dpi / 72, math.sqrt(MAX_PAGE_PIXELS / (page.rect.width * page.rect.height)))
                         pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), colorspace=fitz.csRGB, alpha=False)
