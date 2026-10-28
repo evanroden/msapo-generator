@@ -4,7 +4,6 @@ All bytes are synthetic and held in a temporary report profile. The test
 checks the *actual read(n) request*, not only whether the final hash rejects
 a changed file after an unlimited allocation has already happened.
 """
-from dataclasses import replace
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
