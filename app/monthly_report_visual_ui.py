@@ -670,6 +670,8 @@ def edit_photos(draft, block, prefix, assets, field, *, show_preview=True):
     # Keyed native disclosures retain deliberate user collapse across passive
     # reruns. Their initial defaults expose pending work without a new action.
     with st.expander("Add photos", expanded=not block.asset_hashes, key=p + "_intake_" + scope):
+        from app.monthly_report_native_loading import reserve_empty_uploader
+        reserve_empty_uploader(p + "_files", "Progress photos", label_visibility="collapsed")
         uploads = st.file_uploader(
             "Progress photos", label_visibility="collapsed",
             type=["jpg", "jpeg", "png", "heic", "heif", "webp"],
