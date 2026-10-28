@@ -93,21 +93,21 @@ def mentioned_periods(text):
     periods = set()
     for month in range(1, 13):
         name = calendar.month_name[month]
-        variants = rf"{name}|{name[:3]}\\.?"
+        variants = rf"{name}|{name[:3]}\.?"
         if month == 9:
-            variants += r"|Sept\\.?"
+            variants += r"|Sept\.?"
         for match in re.finditer(
-                rf"\\b(?:{variants})\\s+(?:\\d{{1,2}},?\\s+)?(20\\d{{2}})\\b",
+                rf"\b(?:{variants})\s+(?:\d{{1,2}},?\s+)?(20\d{{2}})\b",
                 text, re.IGNORECASE):
             periods.add((int(match[1]), month))
     for match in re.finditer(r"\b(20\d{2})[-/](0?[1-9]|1[0-2])(?:[-/]\d{1,2})?\b", text):
         periods.add((int(match[1]), int(match[2])))
     for match in re.finditer(r"\b(0?[1-9]|1[0-2])/\d{1,2}/(20\d{2})\b", text):
         periods.add((int(match[2]), int(match[1])))
-    # A self-contained MM/YYYY label can date a cover or planned body item,
-    # but a path component, work-order suffix, longer date or decimal cannot.
+    # Self-contained MM/YYYY dates are valid on covers and in body facts.
+    # A Windows path, work-order suffix, longer date or decimal is not a date.
     for match in re.finditer(
-            r"(?<![\\w/\\\\.\\-])(0?[1-9]|1[0-2])/(20\\d{2})(?![\\w/\\\\.\\-])",
+            r"(?<![\w/\\.\-])(0?[1-9]|1[0-2])/(20\d{2})(?![\w/\\.\-])",
             text):
         periods.add((int(match[2]), int(match[1])))
     return periods
