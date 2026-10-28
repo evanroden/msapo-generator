@@ -479,10 +479,14 @@ def normalize_facts(value, source, pages, profile, period, vendors=()):
         # The evidence quote is retained in fact history and later serialized
         # into model drafting prompts. Price-free suggested wording is not
         # sufficient when the supporting verbatim quote still has an amount.
-        if contains_price(text) or contains_price(quote) or numbers(text) - numbers(quote):
+        if contains_price(quote):
             raise ValueError(
-                "A suggested fact or its evidence quote included pricing or unsupported numbers. "
-                "Choose a price-free source excerpt; no facts were accepted."
+                "A fact's evidence quote contains pricing. Choose a price-free excerpt; "
+                "no facts were accepted."
+            )
+        if contains_price(text) or numbers(text) - numbers(quote):
+            raise ValueError(
+                "A suggested fact included pricing or unsupported numbers. No facts were accepted."
             )
         flags = []
         when = str(item.get("date") or "")
