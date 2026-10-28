@@ -67,17 +67,24 @@ def render_import(state: library.LibraryState, field, browser_timezone: str = ""
         )
         if st.button("Read DOCX for mapping", key=prefix + "_read", disabled=upload is None):
             try:
-                old = st.session_state.pop(stage_key, None)
-                if old:
-                    old[0].cleanup()
+                # A replacement owns no review state until its own staging and
+                # inspection succeed. Failed reads keep the prior source usable.
+                with st.spinner("Reading document structure and content…"):
+                    staged = _stage(upload)
+            except (ValueError, OSError) as exc:
+                preserved = "Your previous source review is unchanged. " if st.session_state.get(stage_key) else ""
+                st.error(preserved + str(exc))
+            else:
+                old = st.session_state.get(stage_key)
+                st.session_state[stage_key] = staged
                 st.session_state[prefix + "_mappings"] = {}
                 st.session_state.pop(prefix + "_saved", None)
                 st.session_state.pop(prefix + "_preview", None)
-                with st.spinner("Reading document structure and content…"):
-                    staged = _stage(upload)
-                st.session_state[stage_key] = staged
-            except (ValueError, OSError) as exc:
-                st.error(str(exc))
+                if old:
+                    try:
+                        old[0].cleanup()
+                    except OSError:
+                        st.warning("The replacement is ready for review, but the previous temporary review could not be cleared.")
         staged = st.session_state.get(stage_key)
         if staged is None:
             return
