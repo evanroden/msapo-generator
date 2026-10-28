@@ -12,11 +12,11 @@ from app.monthly_report_model import (
 )
 from app.monthly_report_service_call_mapping import (
     confirm_financial_exclusion, confirm_word_layout,
-    correct_service_call, exclude_service_call, reimport_service_calls,
+    correct_service_call, exclude_service_call, exclude_unmatched_call, reimport_service_calls,
     restore_service_call_review, review_service_calls, reviewed_service_call_block,
     service_call_review_record, suggest_call_mapping,
 )
-from app.monthly_report_service_call_word import review_word_maintenance
+from app.monthly_report_service_call_word import review_word_maintenance, reviewed_word_maintenance_block
 
 PROFILES = synthetic_profiles()
 PROFILE = PROFILES[1]  # two different synthetic facilities, one contract
@@ -282,3 +282,57 @@ def test_service_calls_render_in_existing_word_schema_with_source_receipts(stora
     assert "2026-09-15" in text and "B-31" in text
     assert len(parsed.tables) == 1
     assert sources.source_bytes(profile, tagged_source) == sources.source_bytes(profile, data.source)
+
+
+
+def test_unlinked_source_continuation_is_excluded_only_after_explicit_review(storage):
+    content = read_csv("continued.csv", (
+        b"WO #,Finish Date,Area,Task,Tag,Site,Status\n"
+        b"00041,2026-09-15,Plant,Check pump,P-41,Demo North,Completed\n"
+        b",,,Additional handwritten note,,,\n"
+    ))
+    review = review_service_calls(content, PROFILE, PERIOD)
+    assert review.counts()["reviewed_candidates"] == 1
+    assert review.counts()["unmatched"] == 1
+    assert review.unmatched[0].number == 3
+    assert not review.ready_for_inclusion
+    with pytest.raises(ValueError, match="Review unresolved"):
+        reviewed_service_call_block(review)
+    excluded = exclude_unmatched_call(
+        review, 3, expected_revision=review.revision)
+    assert excluded.counts()["unmatched"] == 0
+    assert excluded.unmatched[0].cells[3] == "Additional handwritten note"
+    assert excluded.ready_for_inclusion
+    assert reviewed_service_call_block(excluded).rows[0][0] == "00041"
+    with pytest.raises(ValueError, match="changed"):
+        exclude_unmatched_call(excluded, 3, expected_revision=review.revision)
+    restored = restore_service_call_review(
+        json.loads(json.dumps(service_call_review_record(excluded))))
+    assert restored == excluded
+    assert reimport_service_calls(restored, review) == restored
+
+
+def test_native_word_multi_table_collisions_require_combined_review(storage):
+    content, raw = read_word(storage, word_fixture(two_tables=True))
+    report = review_word_maintenance(PROFILE, content, PERIOD)
+    assert report.cross_table_duplicates == (("north", "0009"),)
+    with pytest.raises(ValueError, match="Duplicate work orders"):
+        reviewed_word_maintenance_block(report)
+    assert sources.source_bytes(PROFILE, content.source) == raw
+
+
+def test_native_word_reviewed_table_builds_one_source_attributed_section_block(storage):
+    content, original = read_word(storage, word_fixture())
+    report = review_word_maintenance(PROFILE, content, PERIOD)
+    table, = report.tables
+    review = exclude_service_call(table.review, table.review.rows[1].key,
+        expected_revision=table.review.revision)
+    reviewed = confirm_word_layout(review, expected_revision=review.revision)
+    accepted = replace(report, tables=(replace(table, review=reviewed),))
+    block = reviewed_word_maintenance_block(accepted)
+    assert block.rows == (
+        ("0009", "2026-09-05", "Demonstration North Facility — Boiler Room",
+         "Replace seal", "PUMP-09"),)
+    assert block.references == (reviewed.source_reference,)
+    assert reviewed_word_maintenance_block(accepted, existing=block) == block
+    assert sources.source_bytes(PROFILE, content.source) == original
