@@ -560,21 +560,44 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
     st.caption(f"{len(contents)} sources. {sum(len(c.source.selected_pages) for c in contents)} selected pages/items. "
                f"{sum(len(set(c.source.needs_vision) & set(c.source.selected_pages)) for c in contents)} selected pages need OCR/vision; no paid extraction runs automatically.")
     blocks, specs = {}, {}
+    # The ordinary destination is inferred from the source classification,
+    # and was previously hidden in an expander far above the Add action.
+    # Keep the same native selection keys, but display the *actual* selections
+    # beside the commit; a route is changed only by explicit user choice.
     destinations = []
-    with st.expander("Add reviewed pages to report sections"):
-        defaults = {"Vendor service": "improvements", "Water treatment": "water_reports", "MBCx": "mbcx_report", "Utility results": "utility_analysis", "Improvement / training photo": "improvements"}
-        for item in contents:
-            if not sources.image_numbers(item):
-                continue
-            labels = {"Do not embed": "Keep as reference only", "vendor_reports": "Maintenance — vendor service pages",
-                      "water_reports": "Water treatment — chemical/service pages", "mbcx_report": "MBCx — commissioning report pages",
-                      "utility_analysis": "Monthly scorecards — utility results and charts",
-                      "improvements": "Monthly activity — reviewed service pages and photos"}
-            slot = st.selectbox("Report section for " + item.source.filename, ["Do not embed", *sources.PAGE_DESTINATIONS], format_func=labels.get,
-                                key=field(key + "_destination_" + item.source.id + "_" + item.source.classification,
-                                          defaults.get(item.source.classification, "Do not embed")))
-            if slot != "Do not embed" and not (item.source.id in section_page_owners and slot == "water_reports"):
-                destinations.append((item.source.id, slot))
+    defaults = {"Vendor service": "improvements", "Water treatment": "water_reports",
+                "MBCx": "mbcx_report", "Utility results": "utility_analysis",
+                "Improvement / training photo": "improvements"}
+    labels = {"Do not embed": "Keep as reference only",
+              "vendor_reports": "Maintenance — ENFRA onsite work only",
+              "water_reports": "Water treatment — chemical/service pages",
+              "mbcx_report": "MBCx — commissioning report pages",
+              "utility_analysis": "Monthly scorecards — utility results and charts",
+              "improvements": "Monthly activity — vendor service reports and photos"}
+    route_controls = []
+    for item in contents:
+        if not sources.image_numbers(item):
+            continue
+        control = field(key + "_destination_" + item.source.id + "_" + item.source.classification,
+                        defaults.get(item.source.classification, "Do not embed"))
+        options = ("Do not embed", *sources.PAGE_DESTINATIONS)
+        if st.session_state[control] not in options:
+            st.session_state[control] = defaults.get(item.source.classification, "Do not embed")
+        route_controls.append((item.source.filename, item.source.id, control))
+    if route_controls:
+        with st.container(key=key + "_destination_review"):
+            st.text("Destination for reviewed pages")
+            for filename, identity, control in route_controls:
+                selected_slot = st.session_state[control]
+                st.text(filename + " → " + labels.get(selected_slot, selected_slot))
+            with st.expander("Change destination (optional)"):
+                for filename, identity, control in route_controls:
+                    slot = st.selectbox("Report section for " + filename,
+                                        ("Do not embed", *sources.PAGE_DESTINATIONS),
+                                        format_func=labels.get, key=control)
+                    if (slot != "Do not embed"
+                            and not (identity in section_page_owners and slot == "water_reports")):
+                        destinations.append((identity, slot))
     cmms_contents = [c for c in contents if (selected_source_id is None or c.source.id == selected_source_id)
                      and c.tables and c.source.classification == "CMMS export"
                      and any(i in c.source.selected_pages for i in range(1, len(c.tables)+1))]
