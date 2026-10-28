@@ -11,6 +11,7 @@ from io import BytesIO
 import json
 from urllib.parse import urlsplit
 from zipfile import BadZipFile, ZipFile
+import zlib
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 import streamlit as st
@@ -134,7 +135,7 @@ def inspect_bundle(raw):
                     _image(data, logo.asset)
                     assets[logo.asset] = data
             return logos, assets
-    except (BadZipFile, UnicodeError, json.JSONDecodeError, KeyError, RuntimeError) as exc:
+    except (BadZipFile, zlib.error, UnicodeError, json.JSONDecodeError, KeyError, RuntimeError) as exc:
         raise ValueError("The logo collection is not a readable, complete ZIP.") from exc
 
 
