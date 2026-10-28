@@ -231,6 +231,7 @@ def block_from_dict(value: dict) -> ResolvedBlock:
     try:
         from app.monthly_report_asset_review import normalize_asset_reviews
         from app.monthly_report_model import AssetInstance
+        from app.monthly_report_cover_recovery import occurrence_from_dict
         instance_values = value.get("asset_instances", ())
         if (not isinstance(instance_values, (tuple, list)) or any(
                 not isinstance(item, dict) or not isinstance(item.get("key"), str) or not item["key"]
@@ -242,6 +243,7 @@ def block_from_dict(value: dict) -> ResolvedBlock:
             raise ValueError("Invalid saved picture occurrence.")
         block = ResolvedBlock(
             key=value["key"], source=value["source"], text=value.get("text", ""),
+            cover_original=occurrence_from_dict(value),
             rows=tuple(tuple(str(cell) for cell in row) for row in value.get("rows", ())),
             asset_hashes=tuple(value.get("asset_hashes", ())), references=tuple(value.get("references", ())),
             ai_written=value.get("ai_written", False), reviewed_fingerprint=value.get("reviewed_fingerprint", ""),
@@ -276,6 +278,7 @@ def spec_from_dict(value: dict) -> BlockSpec:
 
 def draft_from_dict(value: dict) -> ReportDraft:
     try:
+        from app.monthly_report_cover_recovery import request_from_dict
         sections = tuple(SectionSpec(
             key=s["key"], number=s["number"], title=s["title"],
             blocks=tuple(BlockSpec(
@@ -287,6 +290,7 @@ def draft_from_dict(value: dict) -> ReportDraft:
         ) for s in value["sections"])
         return ReportDraft(
             profile=profile_from_dict(value["profile"]), period=ReportPeriod(**value["period"]),
+            cover_recovery_request=request_from_dict(value.get("cover_recovery_request")),
             prepared_by=value["prepared_by"], sections=sections,
             blocks=tuple(block_from_dict(b) for b in value["blocks"]),
             address_line=value.get("address_line", ""), synthetic=value.get("synthetic", False),
@@ -1180,6 +1184,9 @@ def restore_profile(contract: str, key: str, revision: int, *, expected_revision
 def save_snapshot(draft: ReportDraft, *, expected_revision: int, open_issues: tuple[str, ...] = (),
                   pending_proposals: tuple[str, ...] = (), assets: tuple[tuple[str, bytes], ...] = (),
                   entered_editor: str = "") -> SavedReport:
+    from app.monthly_report_cover_recovery import validate_cover_occurrence
+    for block in draft.blocks:
+        validate_cover_occurrence(draft.profile, block)
     path = _profile_path(draft.profile.contract, draft.profile.key, snapshots=True)
     # One-off assets are saved for this report's snapshot only, without adding
     # a current library slot. Future templates cannot accidentally inherit them.
@@ -1198,6 +1205,8 @@ def save_snapshot(draft: ReportDraft, *, expected_revision: int, open_issues: tu
         target = path / (draft.period.key + ".json")
         previous = _read(target) if target.exists() else {"revision": 0}
         _expected(previous, expected_revision)
+        from app.monthly_report_cover_recovery import stamp_saved_request
+        draft = stamp_saved_request(draft, expected_revision, expected_revision + 1)
         saved = SavedReport(draft, _now(), expected_revision + 1, open_issues, pending_proposals, entered_editor)
         raw = _json({"schema": 1, **asdict(saved)})
         _atomic_write(path / "history" / f"{draft.period.key}-{saved.revision:08d}.json", raw)

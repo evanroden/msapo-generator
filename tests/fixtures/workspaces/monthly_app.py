@@ -163,6 +163,10 @@ st.title("Synthetic actual Monthly workspace QA")
 with isolated(token):
     render(token, "America/New_York", _field, _move, base)
     emit_snapshot()
+    if os.environ.get("EPC_MONTHLY_COVER_SERVICE_TASK") == "1":
+        from scripts.workspace_cover_service_observations import contention_controls, emit
+        contention_controls(base, token)
+        emit(base, token)
     emit_text_snapshot(base, token)
     if os.environ.get("EPC_MONTHLY_TRAINING_TASK") == "1":
         emit_training_snapshot(base, token)

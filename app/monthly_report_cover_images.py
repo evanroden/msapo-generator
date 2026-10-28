@@ -166,12 +166,36 @@ def cover_codec_header(raw):
     return None
 
 
+
+def cover_photo_suffix(raw, suffix):
+    """Correct a known photo's extension without decoding or guessing its role.
+
+    A signature only selects the installed decoder. All existing encoded,
+    pixel, frame, format and memory checks still validate the image itself.
+    ISO-BMFF sniffing is limited to a small, complete leading ftyp box; generic
+    mif1/AVIF/video brands are not evidence of a supported HEIF photograph.
+    """
+    if raw.startswith(b"\xff\xd8"):
+        return ".jpg"
+    if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if len(raw) >= 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return ".webp"
+    if len(raw) >= 16 and raw[4:8] == b"ftyp":
+        size = int.from_bytes(raw[:4], "big")
+        if 16 <= size <= min(len(raw), 4096) and size % 4 == 0:
+            brands = [raw[8:12]] + [raw[i:i+4] for i in range(16, size, 4)]
+            if any(brand in (b"heic", b"heix", b"hevc", b"hevx") for brand in brands):
+                return ".heic"
+    return suffix
+
+
 def normalize_cover_photo(raw, suffix):
     """Share report assembly admission; busy/error never replaces old artwork."""
     from app.monthly_report_render_jobs import work_slot, RenderBusy
     from app.monthly_report_docx import normalize_report_image
     try:
         with work_slot(wait_seconds=0):
-            return normalize_report_image(raw, suffix, cover_photo=True)
+            return normalize_report_image(raw, cover_photo_suffix(raw, suffix), cover_photo=True)
     except RenderBusy as exc:
         raise ValueError("Another report or photograph is being prepared. Try again shortly; your current artwork is unchanged.") from exc

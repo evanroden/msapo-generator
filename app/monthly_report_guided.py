@@ -1484,7 +1484,11 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                         blocks, prefix, assets,
                         lambda ref: assets[ref] if ref in assets else library.read_asset(contract, selected, ref),
                         scope=_rich_text_scope(prefix),
+                        report=replace(draft, blocks=tuple(blocks.values())),
+                        revision=st.session_state[prefix + "_revision"],
                     )
+                    draft = replace(draft, cover_recovery_request=st.session_state.pop(
+                        prefix + "_cover_recovery_request_update", draft.cover_recovery_request))
                 with st.expander("About this report"):
                     from app.monthly_report_designs_ui import render_design_status, render_apply_master_design
                     render_design_status(draft)
@@ -1568,6 +1572,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 st.caption("Your draft remains on this page. Check its recovery status before leaving, then retry saving.")
             else:
                 st.session_state[prefix + "_revision"] = saved.revision
+                st.session_state[draft_key] = saved.draft
                 if recovery_available:
                     try:
                         st.session_state[prefix + "_active_generation"] = active_work.discard(
@@ -1768,6 +1773,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                                               open_issues=snapshot.open_issues if snapshot else prior.open_issues if prior else (),
                                               pending_proposals=snapshot.pending_proposals if snapshot else prior.pending_proposals if prior else ())
                 st.session_state[prefix + "_revision"] = saved.revision
+                st.session_state[draft_key] = saved.draft
                 if recovery_available:
                     try:
                         st.session_state[prefix + "_active_generation"] = active_work.discard(
@@ -1802,6 +1808,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                             open_issues=snapshot.open_issues if snapshot else prior.open_issues if prior else (),
                             pending_proposals=snapshot.pending_proposals if snapshot else prior.pending_proposals if prior else ())
                         st.session_state[prefix + "_revision"] = saved.revision
+                        st.session_state[draft_key] = saved.draft
                         record_shared_save(prefix, package, saved=saved)
                     except (ValueError, OSError) as exc:
                         record_shared_save(prefix, package, error=str(exc))

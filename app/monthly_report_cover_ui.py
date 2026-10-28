@@ -33,13 +33,13 @@ def replace_cover_picture(block, data, suffix, assets):
     if block.source != "Omit" and block.asset_hashes == (reference,):
         return block
     return preserve_asset_reviews(block, replace(
-        block, source="Replace once", asset_hashes=(reference,),
+        block, source="Replace once", asset_hashes=(reference,), cover_original=None,
         asset_captions=(), references=picture_replacement_references(block), reviewed_fingerprint="",
         client_reviewed_fingerprint="", asset_provenance=((reference, ()),), client_asset_reviews=(),
     ))
 
 
-def render_cover_photograph(blocks, prefix, assets, asset_loader, *, scope):
+def render_cover_photograph(blocks, prefix, assets, asset_loader, *, scope, report=None, revision=0):
     """The ordinary report's optional photo, without design/logo administration.
 
     Action identities include the editor incarnation, selected photo and action
@@ -71,13 +71,21 @@ def render_cover_photograph(blocks, prefix, assets, asset_loader, *, scope):
             key=prefix + "_cover_photograph_upload_" + identity,
             help=_picture_help(cover_photo=True),
         )
+        raw = None
         if upload:
             try:
                 raw = read_picture_upload(upload, cover_photo=True)
             except (ValueError, OSError) as exc:
                 st.error(_picture_error(exc))
                 raw = None
-        if upload and raw is not None:
+        if report is not None:
+            working = replace(report, blocks=tuple(result.values()))
+            prepared = _render_recovery_controls(
+                working, revision, prefix, assets,
+                raw if upload else None, identity, cycle_key, cycle)
+            result = {item.key: item for item in prepared.blocks}
+            st.session_state[prefix + "_cover_recovery_request_update"] = prepared.cover_recovery_request
+        elif upload and raw is not None:
             suffix = Path(upload.name).suffix
             source = _signature((identity, sha256(raw).hexdigest(), suffix))
             use = st.button("Use this photograph", key=prefix + "_cover_photograph_use_" + source)
@@ -218,3 +226,74 @@ def render_cover(draft, blocks, prefix, assets, field, asset_loader):
             if text.strip():
                 st.caption("Footer: " + text)
     return result
+
+
+def _render_recovery_controls(report, revision, prefix, assets, raw, identity, cycle_key, cycle):
+    """Prepare selected bytes automatically; keep the familiar explicit Use."""
+    from app.monthly_report_cover_recovery import (
+        begin_cover_recovery, attempt_cover_recovery, apply_cover_recovery)
+    raw_digest = sha256(raw).hexdigest() if raw is not None else None
+    source = _signature((identity, raw_digest)) if raw is not None else None
+    source_key = prefix + '_cover_recovery_upload'
+    seen_key = prefix + '_cover_recovery_seen'
+    failed_key = prefix + '_cover_recovery_failed_admission'
+    had_upload_key = prefix + '_cover_recovery_had_upload'
+    had_upload = st.session_state.get(had_upload_key, False)
+    st.session_state[had_upload_key] = raw is not None
+    if raw is None and had_upload:
+        # Removing the selected file cancels its pending/ready intent, never
+        # its retained original or already-applied chosen artwork.
+        if report.cover_recovery_request and report.cover_recovery_request.status != 'applied':
+            report = replace(report, cover_recovery_request=None)
+        st.session_state.pop(source_key, None)
+        st.session_state.pop(failed_key, None)
+    already_applied = (report.cover_recovery_request is not None
+        and report.cover_recovery_request.status == 'applied' and raw is not None
+        and report.cover_recovery_request.sha256 == raw_digest)
+    missing_request = (report.cover_recovery_request is None
+        or report.cover_recovery_request.sha256 != raw_digest)
+    failed_admission = st.session_state.get(failed_key) == (source, revision)
+    if (source is not None and not already_applied and not failed_admission
+            and (source != st.session_state.get(source_key) or missing_request)):
+        st.session_state[source_key] = source
+        try:
+            report = begin_cover_recovery(report, raw, revision=revision)
+            st.session_state[seen_key] = (report.cover_recovery_request.occurrence_id, report.cover_recovery_request.bound_revision)
+            with st.spinner('Preparing photograph…'):
+                report = attempt_cover_recovery(report, revision=revision, assets=assets, event='upload')
+        except (ValueError, OSError):
+            st.session_state[failed_key] = (source, revision)
+            # Resource/storage failure is not an instruction to repair a Word
+            # file and does not block the report's existing cover or next step.
+            st.caption('Report unchanged. You can continue the report or choose another photograph.')
+    request = report.cover_recovery_request
+    if request and request.status == 'pending' and st.session_state.get(seen_key) != (request.occurrence_id, request.bound_revision):
+        st.session_state[seen_key] = (request.occurrence_id, request.bound_revision)
+        try:
+            report = attempt_cover_recovery(report, revision=revision, assets=assets, event='resume')
+        except (ValueError, OSError):
+            pass  # Existing artwork and the persisted pending original remain.
+        request = report.cover_recovery_request
+    if request and request.status == 'ready':
+        try:
+            preview = assets.get(request.derivative)
+            if preview is None:
+                preview = library.read_asset(report.profile.contract, report.profile.key, request.derivative)
+            st.image(preview, width='stretch')
+        except (ValueError, OSError):
+            st.caption('Report unchanged. Choose another photograph when convenient.')
+            return report
+        use = st.button('Use this photograph', key=prefix + '_cover_photograph_use_' + _signature((identity, revision, request.occurrence_id, request.bound_revision, request.baseline)))
+        if use and st.session_state.get(cycle_key) == cycle:
+            try:
+                report = apply_cover_recovery(report, revision=revision, assets=assets)
+            except (ValueError, OSError):
+                st.caption('Report unchanged. You can continue the report.')
+            else:
+                if report.cover_recovery_request.status == 'applied':
+                    st.session_state[cycle_key] = {'scope': cycle['scope'], 'token': uuid4().hex}
+                    st.session_state[prefix + '_period_editor_refresh'] = True
+                    st.success('Cover photograph changed for this report.')
+    elif request and request.status in ('pending', 'unrecoverable', 'stale'):
+        st.caption('Report unchanged. You can continue the report or choose another photograph.')
+    return report

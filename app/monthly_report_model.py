@@ -183,6 +183,16 @@ class AssetInstance:
 
 
 @dataclass(frozen=True)
+class CoverOriginalOccurrence:
+    occurrence_id: str
+    scope: str
+    sha256: str
+    byte_count: int
+    derivative: str
+    policy: str
+
+
+@dataclass(frozen=True)
 class ResolvedBlock:
     key: str
     source: str
@@ -205,6 +215,7 @@ class ResolvedBlock:
     client_asset_reviews: tuple[str, ...] = ()
     asset_provenance: tuple[tuple[str, tuple[str, ...]], ...] = ()
     asset_instances: tuple[AssetInstance, ...] = ()
+    cover_original: CoverOriginalOccurrence | None = None
 
     @property
     def fingerprint(self) -> str:
@@ -216,6 +227,8 @@ class ResolvedBlock:
         # map changes the content represented by the original fields.
         value.pop("client_asset_reviews")
         value.pop("asset_provenance")
+        if self.cover_original is None:
+            value.pop("cover_original")
         # A new occurrence is a structural edit even when bytes/caption match a
         # removed image. Bind native callbacks to its incarnation while keeping
         # unchanged pre-occurrence historical fingerprints exactly compatible.
@@ -320,6 +333,22 @@ def followup_record(item: ReportFollowUp) -> dict:
 
 
 @dataclass(frozen=True)
+class CoverRecoveryRequest:
+    occurrence_id: str
+    report_identity: str
+    scope: str
+    sha256: str
+    byte_count: int
+    baseline: str
+    bound_revision: int
+    status: str = "pending"
+    events: tuple[str, ...] = ()
+    derivative: str = ""
+    policy: str = ""
+    reason: str = ""
+
+
+@dataclass(frozen=True)
 class ReportDraft:
     profile: ReportProfile
     period: ReportPeriod
@@ -330,6 +359,7 @@ class ReportDraft:
     synthetic: bool = False
     sources: tuple[ReportSource, ...] = ()
     follow_ups: tuple[ReportFollowUp, ...] = ()
+    cover_recovery_request: CoverRecoveryRequest | None = None
 
     @property
     def fingerprint(self) -> str:
@@ -359,7 +389,12 @@ def _digest(value: object) -> str:
             if not record.get(field):
                 record.pop(field, None)
     if isinstance(value, ReportDraft):
+        # Pending preparation is private workflow metadata, not report content
+        # or an approval. Cover content changes remain bound by block hashes.
+        record.pop("cover_recovery_request", None)
         for block in record["blocks"]:
+            if block.get("cover_original") is None:
+                block.pop("cover_original", None)
             if not block.get("asset_instances"):
                 block.pop("asset_instances", None)
         for source in record["sources"]:

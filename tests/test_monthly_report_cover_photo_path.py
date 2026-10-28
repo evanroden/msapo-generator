@@ -37,6 +37,9 @@ def input_photo(monkeypatch):
     # mounted, supplying only its bytes at this one seam. All action/edit/save
     # widgets below are the ordinary run_web controls, not backend injection.
     incoming = {}
+    from app import monthly_report_render_jobs as jobs
+    # Unit fixture admission, not a claim of actual 512 MiB container coverage.
+    monkeypatch.setattr(jobs, "memory_headroom", lambda: 400*1024*1024)
     from app import monthly_report_cover_ui as ui
     real_upload = ui.st.file_uploader
     def upload(label, *args, **kwargs):
@@ -52,6 +55,36 @@ def standing(draft):
              library._profile_path(draft.profile.contract, draft.profile.key, snapshots=True))
     return {str(path): (path.read_bytes(), path.stat().st_mtime_ns)
             for root in paths for path in root.rglob("*") if path.is_file()}
+
+
+def assert_private_preparation_only(before, current, persisted):
+    import hashlib, json
+    after = standing(current)
+    assert all(after.get(path) == record for path, record in persisted.items()), "Existing bytes/mtimes changed"
+    request = current.cover_recovery_request
+    assert request is not None
+    root = library._profile_path(before.profile.contract, before.profile.key)
+    allowed = {
+        str(root / 'cover-originals' / '.write-lock'),
+        str(root / 'cover-originals' / (request.sha256 + '.original')),
+        str(root / 'cover-recovery' / '.write-lock'),
+        str(root / 'cover-recovery' / (request.sha256 + '.json')),
+        str(root / 'cover-recovery' / (request.sha256 + '.image')),
+    }
+    assert set(after) - set(persisted) <= allowed, "Unexpected profile/history write"
+    original = after[str(root / 'cover-originals' / (request.sha256 + '.original'))][0]
+    assert len(original) == request.byte_count and hashlib.sha256(original).hexdigest() == request.sha256
+    for path in allowed:
+        if path.endswith('.write-lock') and path in after:
+            assert after[path][0] == b''
+    cache_path = str(root / 'cover-recovery' / (request.sha256 + '.json'))
+    if cache_path in after:
+        cache = json.loads(after[cache_path][0])
+        assert cache['source'] == request.sha256 and cache['attempts'] <= 2
+        image_path = str(root / 'cover-recovery' / (request.sha256 + '.image'))
+        if image_path in after:
+            assert len(after[image_path][0]) <= 4*1024*1024
+            assert hashlib.sha256(after[image_path][0]).hexdigest() == cache['derivative']
 
 
 def loaded_cover(monkeypatch, tmp_path, *, omitted=False):
@@ -100,8 +133,8 @@ def test_use_new_photo_is_explicit_and_preserves_same_submission_and_other_art(m
     before, persisted = current(app), standing(current(app))
     incoming["New photograph for this report"] = picture("purple")
     app.run()
-    assert current(app) == before, "Choosing a file is not using it"
-    assert standing(before) == persisted
+    assert replace(current(app), cover_recovery_request=None) == before, "Choosing a file is not using it"
+    assert_private_preparation_only(before, current(app), persisted)
     next(item for item in app.text_area if item.label == "Activity summary").set_value("Delivered alongside photograph.")
     button(app, "Use this photograph").click().run()
     assert not app.exception
@@ -117,7 +150,7 @@ def test_use_new_photo_is_explicit_and_preserves_same_submission_and_other_art(m
                if block.key not in ("cover_photo", "activity_summary"))
     assert after.profile == before.profile and after.address_line == before.address_line
     assert after.sources == before.sources
-    assert standing(before) == persisted
+    assert_private_preparation_only(before, current(app), persisted)
     assert all(library.read_asset(before.profile.contract, before.profile.key, ref) == raw
                for ref, raw in assets.items())
 
@@ -131,18 +164,19 @@ def test_same_photo_keeps_reviews_and_no_photo_retains_originals_without_native_
     old_omit = button(app, "No cover photograph")
     button(app, "Use this photograph").click().run()
     assert not app.exception
-    assert photo(current(app)) == photo(before)
+    applied = photo(current(app))
+    assert replace(applied, cover_original=None) == photo(before)
     app.run()
     assert button(app, "No cover photograph").key != old_omit.key
     old_omit.click().run()
-    assert photo(current(app)) == photo(before), "Old native actions cannot rebind after an identical replacement"
+    assert photo(current(app)) == applied, "Old native actions cannot rebind after an identical replacement"
     button(app, "No cover photograph").click().run()
     assert not app.exception
     panel = next(item for item in app.expander if item.label == "Change cover photograph")
     assert any(item.value == "No cover photograph in this report (optional)." for item in panel.caption)
     omitted = current(app)
-    assert photo(omitted) == replace(photo(before), source="Omit")
-    assert standing(before) == persisted
+    assert photo(omitted) == replace(applied, source="Omit")
+    assert_private_preparation_only(before, current(app), persisted)
     assert all(library.read_asset(before.profile.contract, before.profile.key, ref) == raw
                for ref, raw in assets.items())
     output = replace(omitted, prepared_by="Synthetic Editor")
@@ -192,15 +226,19 @@ def test_unreadable_replacement_does_not_discard_current_photo(monkeypatch, tmp_
     incoming = input_photo(monkeypatch)
     app, saved, assets = loaded_cover(monkeypatch, tmp_path)
     before, persisted = current(app), standing(current(app))
+    old_errors = [item.value for item in app.error]
+    old_warnings = [item.value for item in app.warning]
     raw = BytesIO(b"not an image")
     raw.name, raw.size = "broken.png", len(raw.getvalue())
     incoming["New photograph for this report"] = raw
     app.run()
-    button(app, "Use this photograph").click().run()
+    assert not any(item.label == "Use this photograph" for item in app.button)
     assert not app.exception
-    assert any("could not be read" in item.value for item in app.error)
-    assert current(app) == before
-    assert standing(before) == persisted
+    assert [item.value for item in app.error] == old_errors
+    assert [item.value for item in app.warning] == old_warnings
+    assert any("Report unchanged" in item.value for item in app.caption)
+    assert replace(current(app), cover_recovery_request=None) == before
+    assert_private_preparation_only(before, current(app), persisted)
 
 
 def test_explicit_shared_save_reopens_report_photo_without_changing_standing_slot(monkeypatch, tmp_path):
