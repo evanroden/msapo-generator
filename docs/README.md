@@ -6,6 +6,8 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 # Documentation index
 
+[Annual Training requirements](MONTHLY_TRAINING_YEARS.md) — explicit matrix year, legacy unknown-year preservation, deliberate annual transition, and unchanged separation from completed monthly sessions.
+
 [Native forward-message compatibility](native-forward-message-compatibility.md) — bounded native cache-advertisement repair, existing frontend generation retention, and independent browser acceptance requirements.
 
 [Isolated source-render diagnostic](ISOLATED_SOURCE_RENDER_DIAGNOSTIC.md) — explicit, browser-isolated full-resolution passive DOCX inspection on the deployed renderer, with immutable source/input/output receipts; not report approval or completed-report acceptance.
