@@ -65,6 +65,7 @@ class UnmatchedRow:
     number: int
     cells: tuple[str, ...]
     reason: str
+    excluded: bool = False
 
 
 @dataclass(frozen=True)
@@ -113,7 +114,7 @@ class ServiceCallReview:
 
     @property
     def ready_for_inclusion(self):
-        return (bool(self.rows) and not self.unmatched and not self.notes
+        return (bool(self.rows) and all(item.excluded for item in self.unmatched) and not self.notes
                 and all(not r.issues or r.excluded for r in self.rows)
                 and any(not r.excluded for r in self.rows)
                 and (not self.financial_columns or self.financial_exclusion_confirmed)
@@ -125,7 +126,7 @@ class ServiceCallReview:
                 "ready": sum(not r.issues and not r.excluded for r in self.rows),
                 "unresolved": sum(bool(r.issues) and not r.excluded for r in self.rows),
                 "excluded": sum(r.excluded for r in self.rows),
-                "unmatched": len(self.unmatched)}
+                "unmatched": sum(not item.excluded for item in self.unmatched)}
 
     def unmapped(self, row):
         used = {getattr(self.mapping, key) for key in FIELDS}
@@ -341,6 +342,20 @@ def exclude_service_call(review: ServiceCallReview, key, *, expected_revision, e
     return replace(review, rows=tuple(rows))
 
 
+def exclude_unmatched_call(review: ServiceCallReview, row_number: int, *,
+                           expected_revision):
+    """Explicit report-only exclusion of an unlinked/partial CMMS source row."""
+    if review.revision != expected_revision:
+        raise ValueError("Maintenance review changed; inspect the current rows.")
+    matches = [n for n, row in enumerate(review.unmatched)
+               if row.number == row_number and not row.excluded]
+    if len(matches) != 1:
+        raise ValueError("The unmatched source row is missing or already excluded.")
+    unresolved = list(review.unmatched)
+    unresolved[matches[0]] = replace(unresolved[matches[0]], excluded=True)
+    return replace(review, unmatched=tuple(unresolved))
+
+
 def confirm_financial_exclusion(review: ServiceCallReview, *, expected_revision):
     """A reviewed omission of price columns, not approval to output prices."""
     if review.revision != expected_revision:
@@ -428,7 +443,8 @@ def restore_service_call_review(value):
                 (key, title, tuple(aliases)) for key, title, aliases in data["facilities"]),
             tuple(data["original_columns"]),
             tuple(tuple(row) for row in data["original_rows"]), mapping, tuple(rows),
-            tuple(UnmatchedRow(item["number"], tuple(item["cells"]), item["reason"])
+            tuple(UnmatchedRow(item["number"], tuple(item["cells"]), item["reason"],
+                               item.get("excluded", False))
                   for item in data["unmatched"]), tuple(data["notes"]),
             tuple(data["financial_columns"]), data["financial_exclusion_confirmed"],
             data["native_layout_confirmed"])
