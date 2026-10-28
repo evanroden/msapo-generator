@@ -117,7 +117,7 @@
       "promotion": "review_and_adopt",
       "next_month": "reuse_standing",
       "source": "Contract-approved, versioned diagram (not a global ENFRA default)",
-      "notes": "Absence is a real empty/omitted state, not permission to seed another contract's artwork.",
+      "notes": "An unapproved/absent diagram is a real empty or omitted state; never copy a different contract's artwork as a cross-contract fallback, even when a global legacy standard exists.",
       "code": [
         "app/monthly_report_workflow_standards.py",
         "app/monthly_report_library.py"
