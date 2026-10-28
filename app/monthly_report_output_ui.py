@@ -87,6 +87,19 @@ def replace_current_session_pdf_package(prefix: str, session_scope: str, package
     even if new generation for the *same draft* returned no usable PDF.
     """
     previous = st.session_state.get(prefix + "_package")
+    if (previous is not None and previous is not package
+            and getattr(previous, "generated_contents", False) and getattr(package, "generated_contents", False)
+            and previous.fingerprint == package.fingerprint and package.pdf
+            and previous.docx != package.docx):
+        from app.monthly_report_contents_pagination import only_generated_cache_changed
+        status = st.session_state.get(prefix + "_package_save")
+        if (status and status["identity"] == package_identity(previous)
+                and only_generated_cache_changed(previous.docx, package.docx)):
+            # PDF retry fills only verified Word page-number caches. Preserve
+            # the existing save receipt/error for the otherwise identical work.
+            st.session_state[prefix + "_package_save"] = {
+                **status, "identity": package_identity(package),
+            }
     if previous is not package:
         discard_current_session_pdf_preview(prefix, session_scope)
     st.session_state[prefix + "_package"] = package
