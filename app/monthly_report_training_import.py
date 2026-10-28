@@ -347,6 +347,22 @@ def review_training_table(source: TrainingTableSource, profile: ReportProfile,
         row = replace(row, issues=_event_issues(row, period) if kind == "events"
                       else _matrix_issues(row, source_year, profile))
         candidates.append(row)
+    # One source row may appear again after a repeated heading or copying.
+    # Conflicting real training rows stay visible, not silently deduplicated.
+    groups = {}
+    for index, row in enumerate(candidates):
+        if kind == "events" and row.values[0] and row.values[1]:
+            identity = (row.values[0].casefold(), row.values[1], row.values[3].casefold())
+        elif kind == "requirements" and row.values[0] and row.values[1]:
+            identity = (row.values[0].casefold(), row.values[1].casefold())
+        else:
+            continue
+        groups.setdefault(identity, []).append(index)
+    duplicate_indices = {index for indices in groups.values() if len(indices) > 1
+                         for index in indices}
+    candidates = [replace(row, issues=(*row.issues, "Duplicate Training source row needs review."))
+                  if index in duplicate_indices else row
+                  for index, row in enumerate(candidates)]
     normalized_cols = EVENT_COLUMNS if kind == "events" else (
         "Team member", "Site", *columns[2:])
     if kind == "events":
@@ -453,6 +469,13 @@ def accepted_training_block(review: TrainingImportReview, block: ResolvedBlock,
     if not review.ready_for_import:
         raise ValueError("Review unknown Training rows, dates, sites and source layout first.")
     selected = [row for row in review.rows if not row.excluded]
+    # An existing native/plain mapped source table is visible report content.
+    # Do not add a second copy of its rows or erase authored changes silently.
+    if any(table.reference in (review.source.reference,
+                               "docx:" + review.source.source_sha256 + ":" + review.source.word_item_id)
+           for table in block.extra_tables):
+        raise ValueError("This Training source table is already in the report. "
+                         "Review its replacement before importing normalized rows.")
     if review.kind == "events":
         table = next((t for t in block.extra_tables if t.reference == EVENT_REF), None)
         for item in selected:
@@ -463,7 +486,7 @@ def accepted_training_block(review: TrainingImportReview, block: ResolvedBlock,
                    and old != (name, iso, mode, people, hours) for old in existing):
                 raise ValueError("A manually edited Training session conflicts with the imported row.")
             table = add_event(table, title=name, when=date.fromisoformat(iso),
-                              mode=mode, participants=people.split("; "), hours=hours,
+                              mode=mode, participants=tuple(p.strip() for p in re.split(r";\s*", people) if p.strip()), hours=hours,
                               period=ReportPeriod(int(review.period_key[:4]),
                                                   int(review.period_key[-2:])))
         updated = apply_tables(block, None, table)
