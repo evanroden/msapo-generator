@@ -63,8 +63,8 @@ def _tables(block, spec):
     columns = tuple(column.title for column in spec.columns)
     if block.rows and not columns:
         raise ValueError("The vendor table needs reviewed column headings.")
-    tables = ((*([ReportTable(columns, block.rows)] if block.rows else [])),
-              *block.extra_tables)
+    tables = tuple(([ReportTable(columns, block.rows)] if block.rows else [])
+                   + list(block.extra_tables))
     return tuple(table for table in tables if table.rows)
 
 
