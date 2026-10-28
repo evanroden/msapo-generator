@@ -131,3 +131,20 @@ def test_mixed_photo_document_order_reports_only_document_occurrence():
     changed = replace(report, blocks=(photos,))
     assert check_captions(changed) == ()
     assert photos.asset_captions == ("Ordinary photo A", "Ordinary photo B")
+
+
+def test_plain_photos_never_trigger_expensive_document_caption_measurement(monkeypatch):
+    import app.monthly_report_asset_layout as asset_layout
+
+    block, source, _ = payload()
+    photo_only = replace(block, asset_provenance=(), references=(),
+                         asset_captions=("Long photo caption " * 100,) * 3)
+    report = replace(draft(photo_only), sources=(source,))
+    assert document_page_indexes(photo_only, report.sources) == set()
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Unrelated ordinary photos must not run document caption measurement.")
+
+    monkeypatch.setattr(asset_layout, "document_caption_problems", forbidden)
+    assert check_captions(report) == ()
+    assert report.blocks == (photo_only,)
