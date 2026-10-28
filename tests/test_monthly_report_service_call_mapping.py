@@ -336,3 +336,37 @@ def test_native_word_reviewed_table_builds_one_source_attributed_section_block(s
     assert block.references == (reviewed.source_reference,)
     assert reviewed_word_maintenance_block(accepted, existing=block) == block
     assert sources.source_bytes(PROFILE, content.source) == original
+
+
+
+def test_xlsx_cmms_is_supported_but_annual_count_grid_is_not_calls(storage):
+    from openpyxl import Workbook
+    wb = Workbook()
+    sheet = wb.active
+    sheet.title = "Synthetic maintenance"
+    sheet.append(("Work Order Number", "Actual Finish", "Area", "Work Performed",
+                  "Equipment Tag", "Site", "State"))
+    sheet.append(("000061", "2026-09-09", "Mechanical", "Inspected AHU",
+                  "AHU-61", "Demo South", "Closed"))
+    buf = BytesIO()
+    wb.save(buf)
+    raw = buf.getvalue()
+    content, _ = sources.ingest(PROFILE, "export.xlsx", raw)
+    review = review_service_calls(content, PROFILE, PERIOD)
+    assert review.ready_for_inclusion
+    assert review.rows[0].wo == "000061"
+    assert review.rows[0].site == "south"
+    assert review.rows[0].finished == "2026-09-09"
+    assert reviewed_service_call_block(review).rows[0][2] == (
+        "Demonstration South Facility — Mechanical")
+    assert sources.source_bytes(PROFILE, content.source) == raw
+
+    summary = read_csv("annual-grid.csv",
+        b"Metric,January,February,March,Total\n"
+        b"PM Count,4,0,,4\n"
+        b"Open Orders,2,1,,3\n")
+    not_calls = review_service_calls(summary, PROFILE, PERIOD)
+    assert not_calls.rows and not not_calls.ready_for_inclusion
+    assert not_calls.notes
+    assert not_calls.counts()["unmatched"] == 2
+    assert sources.source_bytes(PROFILE, summary.source).startswith(b"Metric")
