@@ -34,6 +34,9 @@ def _smaller_image(data):
             options['exif'] = image.info['exif']
         if image.info.get('dpi'):
             options['dpi'] = image.info['dpi']
+        # Color profiles survive the privacy pass and must survive resizing.
+        if image.info.get('icc_profile'):
+            options['icc_profile'] = image.info['icc_profile']
         image.save(output, format=image.format, **options)
         return output.getvalue()
 
