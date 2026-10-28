@@ -492,6 +492,29 @@ def _row_key(table, row, site):
     return site, _schema(table), _table_scope(table.title), dimensions
 
 
+def duplicate_capacity_rows(tables):
+    """Locate repeated site/service/plant identities in one reviewed import.
+
+    Identical values are not proof of two distinct pieces of equipment. Keep
+    the original source rows visible and require a distinct label or explicit
+    removal instead of publishing two copies of the same capacity fact.
+    Positions are 1-based (source table, data row), suitable for review.
+    """
+    seen = {}
+    repeats = []
+    for table_number, table in enumerate(tables, 1):
+        for row_number, (row, site) in enumerate(zip(table.rows, table.site_keys), 1):
+            if not site:
+                continue  # Unmatched sites are rejected by the existing review gate.
+            key = _row_key(table, row, site)
+            previous = seen.get(key)
+            if previous is not None:
+                repeats.append((previous, (table_number, row_number), site))
+            else:
+                seen[key] = (table_number, row_number)
+    return tuple(repeats)
+
+
 def _saved_table_candidates(current, new, site):
     """Resolve within an observed heading before considering column shape.
 
@@ -530,6 +553,11 @@ def first_fill_tables(current, incoming):
     facility; an existing service's numeric change is not an automatic update.
     Provenance, units, NR and old snapshots remain unchanged.
     """
+    incoming = tuple(incoming)
+    if duplicate_capacity_rows(incoming):
+        # Do not publish an arbitrary subset of a source containing duplicate
+        # identities. The reviewed source stays available for explicit repair.
+        return ()
     occupied = {
         _row_key(table, row, site)
         for table in (current.tables if current else ())
@@ -552,6 +580,13 @@ def save_capacity(profile, tables, *, expected_revision, actor, reviewed_fingerp
     if not tables or reviewed_fingerprint != review_fingerprint(tables):
         raise ValueError("The capacity review changed. Review the current tables before saving.")
     _validate_tables(tables, contract_facilities(profile))
+    repeats = duplicate_capacity_rows(tables)
+    if repeats:
+        first, second, _ = repeats[0]
+        raise ValueError(
+            "Two capacity rows have the same site and labels "
+            f"(table {first[0]} row {first[1]}, table {second[0]} row {second[1]}). "
+            "Remove the duplicate or identify a different plant/service before saving.")
     if any("[unclear]" in cell.casefold() for t in tables for row in t.rows for cell in row):
         raise ValueError("Correct unreadable capacity cells against the source before saving.")
     if mode not in ("merge", "replace_sites", "keep_both"):
