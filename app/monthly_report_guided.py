@@ -1566,6 +1566,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     active_work.discard(browser_token, contract, selected, period,
                         expected_revision=st.session_state.get(prefix + "_active_sequence", 0),
                         expected_generation=st.session_state.get(prefix + "_active_generation", ""))
+                from app.monthly_report_review_preview_ui import discard_review_preview
+                discard_review_preview(prefix)
                 for key in list(st.session_state):
                     if key.startswith(prefix):
                         del st.session_state[key]

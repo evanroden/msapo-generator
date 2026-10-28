@@ -29,6 +29,17 @@ def _discard_preview(owner, current):
             pass
 
 
+def discard_review_preview(prefix):
+    """Retire this report's held ticket before its session keys disappear."""
+    owner_key = prefix + "_review_preview_owner"
+    state_key = prefix + "_review_draft_preview"
+    owner = st.session_state.get(owner_key)
+    if isinstance(owner, str) and owner:
+        _discard_preview(owner, st.session_state.get(state_key))
+    st.session_state.pop(state_key, None)
+    st.session_state.pop(owner_key, None)
+
+
 def _available(owner, ticket):
     try:
         return STORE.available(owner, ticket)
