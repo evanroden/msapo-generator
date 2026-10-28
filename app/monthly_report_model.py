@@ -327,6 +327,9 @@ class ReportDraft:
     synthetic: bool = False
     sources: tuple[ReportSource, ...] = ()
     follow_ups: tuple[ReportFollowUp, ...] = ()
+    # Report-owned, source-bound normalized row review receipts. JSON strings
+    # keep the frozen draft immutable and travel with snapshots/recovery.
+    source_row_reviews: tuple[str, ...] = ()
 
     @property
     def fingerprint(self) -> str:
@@ -352,6 +355,8 @@ def _digest(value: object) -> str:
     if isinstance(value, ReportSource) and not value.pdf_text_blocks:
         record.pop("pdf_text_blocks", None)
     if isinstance(value, ReportDraft):
+        if not record.get("source_row_reviews"):
+            record.pop("source_row_reviews", None)
         for block in record["blocks"]:
             if not block.get("asset_instances"):
                 block.pop("asset_instances", None)

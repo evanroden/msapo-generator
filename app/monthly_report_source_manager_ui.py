@@ -260,6 +260,12 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
         if selected and has_activity:
             render_workorder_metrics(draft.profile, draft.period, prefix,
                 st.session_state.get(prefix + "_evidence", ()), blocks, selected_id=selected)
+        if selected:
+            selected_content = next((item for item in st.session_state.get(prefix + "_evidence", ())
+                                     if item.source.id == selected), None)
+            if selected_content:
+                from app.monthly_report_work_order_review_ui import render_reviewed_rows
+                draft, blocks = render_reviewed_rows(draft, blocks, prefix, selected_content)
         if requested != selected:
             # The old source's ordinary inputs were delivered with this select
             # event. Commit them before switching its page controls; all native
