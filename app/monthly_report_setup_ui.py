@@ -8,6 +8,7 @@ from app import monthly_report_library as library
 from app.monthly_report_editor import _grid, _key, _signature
 from app.monthly_report_import import ImportMapping, imported_draft, map_items, read_import_image, is_logo_artwork, is_header_artwork
 from app.monthly_report_import_ui import _stage
+from app.monthly_report_content_kind import content_kind_description
 from app.monthly_report_model import Facility, ReportProfile, known_sections, layout_blocks
 from app.monthly_report_setup import (
     DECISIONS, design_profile, initial_decision, item_findings, merge_drafts, suggested_mappings,
@@ -22,7 +23,7 @@ def _image_review(path, item, prefix, field, scope, *, compact=False):
         st.session_state[prefix + "_preview"] = (item.id, read_import_image(path, item).data)
     preview = st.session_state.get(prefix + "_preview")
     if not compact and preview and preview[0] == item.id:
-        st.image(preview[1], width="stretch")
+        st.image(preview[1], width="stretch", caption="Imported picture for review; text and cells are not directly editable.")
     readings = st.session_state.setdefault(prefix + "_readings", {})
     job_key = prefix + "_image_job"
     job = st.session_state.get(job_key)
@@ -123,6 +124,7 @@ def render_legacy_setup(contract, period, prepared, field, *, state=None):
             st.session_state[select_key] = items[0].id
         item = by_id[st.selectbox("Content to review", list(by_id), format_func=lambda k: by_id[k].label, key=select_key)]
         st.write(titles.get(item.section, "Cover / unplaced"))
+        st.caption(content_kind_description(item))
         if item.text:
             st.text(item.text)
         if item.rows:

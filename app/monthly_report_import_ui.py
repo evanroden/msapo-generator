@@ -17,6 +17,7 @@ from app.monthly_report_import import (
     ImportMapping, imported_draft, inspect_docx, map_items, read_import_image, is_logo_artwork, is_header_artwork,
 )
 from app.monthly_report_model import known_sections, layout_blocks
+from app.monthly_report_content_kind import content_kind_description
 from app.monthly_report_upload_limits import byte_limit_label, docx_parser_help, docx_size_error, uploader_limit_mib
 
 
@@ -101,6 +102,7 @@ def render_import(state: library.LibraryState, field, browser_timezone: str = ""
             select_key = document_key + "_item_" + _signature(section)
             item_id = st.selectbox("Item to inspect", list(by_id), format_func=lambda key: by_id[key].label, key=select_key)
             item = by_id[item_id]
+            st.caption(content_kind_description(item))
             st.caption(f"{item.part} · position {item.position} · Word section {item.word_section} · suggested destination: {item.suggested_slot or 'unmatched'}")
             if item.note:
                 st.info(item.note)
@@ -119,7 +121,7 @@ def render_import(state: library.LibraryState, field, browser_timezone: str = ""
                         st.error(str(exc))
                 preview = st.session_state.get(prefix + "_preview")
                 if preview and preview[0] == item.id:
-                    st.image(preview[1], width="stretch")
+                    st.image(preview[1], width="stretch", caption="Imported picture for review; text and cells are not directly editable.")
             specs = {b.key: b for s in known_sections() for b in s.blocks} | {b.key: b for b in layout_blocks()}
             allowed = [b.key for b in specs.values() if (
                 item.kind == "image" and b.type in ("image_page", "image_grid", "pdf_pages") or
