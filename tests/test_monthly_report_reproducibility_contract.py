@@ -71,7 +71,7 @@ def test_three_report_variants_produce_stable_content_and_selected_sections(kind
     assert receipt["sections"][0] == ("organization", "1")
     if kind == "two_sites":
         assert not any(k in ("water", "training", "rfi") for k, _ in receipt["sections"])
-        assert ("proposals", "8") in receipt["sections"]
+        assert ("proposals", "9") in receipt["sections"]
     if kind == "regional_images":
         assert ("activity", "2") in receipt["sections"]
         original = assemble_docx(draft, acknowledged_fingerprint=draft.fingerprint,
