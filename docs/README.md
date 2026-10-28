@@ -30,6 +30,8 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 [Monthly report resource budget](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_RESOURCE_BUDGET.md) — viewport-driven previews, shared cache/converter limits and a capped-container acceptance probe.
 
+[Monthly report ownership matrix](monthly_report_ownership_matrix.md) — contract, site and report-month inheritance, explicit promotion and conflict rules, with unresolved owner decisions kept separate from approved behavior.
+
 Current next-LLM handoff and owner-requested testing release:
 [HANDOFF_MONTHLY_REPORT_2026-10-09.md](HANDOFF_MONTHLY_REPORT_2026-10-09.md).
 Read this before resuming report work; it distinguishes completed fixes from
