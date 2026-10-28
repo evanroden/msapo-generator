@@ -193,7 +193,14 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
             labels[actions[2]] = ("Use selected ENFRA template" if independent_template else
                                  "Use this report’s cover design" if cover_design_available
                                   else "Leave imported cover artwork out")
-        action = st.radio("What would you like to do?", actions, format_func=labels.get, key=field(p + "_action", old.get("action", actions[0])), horizontal=True)
+        action_key = field(p + "_action", old.get("action", actions[0]))
+        current_action = st.session_state.get(action_key)
+        # Keep the cover's native remount default consistent with its staged
+        # action. Unknown values still fall back to review, never approval.
+        action_index = (actions.index(current_action)
+                        if section.key == "cover" and current_action in actions else 0)
+        action = st.radio("What would you like to do?", actions, index=action_index,
+                          format_func=labels.get, key=action_key, horizontal=True)
         plan = {"key": section.key, "action": action, "target": section.key,
                 "omit": action == actions[2], "selected": [], "texts": {},
                 "tables": {}, "destinations": {},
