@@ -243,3 +243,42 @@ def test_out_of_scope_import_and_damaged_csv_review_fail_closed(scope):
     blob["workorders"]["review"]["rows"][0]["origin"]["cells"][0] = "OTHER-WO"
     with pytest.raises(ValueError, match="invalid|integrity"):
         restore_csv_review(blob)
+
+
+def test_cp1252_tab_delimited_rows_keep_unmapped_narrative_and_leading_zero(scope):
+    profile, period = scope
+    raw = (b"WO Number\tSite\tDate\tStatus\tNotes\n"
+           b"000077\tSouth\t2026-09-12\tClosed\tTechnician\x92s check\n")
+    source = imported(profile, "regional.tsv.csv", raw)
+    review = review_csv(source, profile, period)
+    assert review.ready_for_inclusion
+    row, = review.workorders.rows
+    assert (row.work_order, row.site, row.status) == (
+        "000077", "south", "Completed")
+    assert unmapped_cells(review.workorders, row.key) == (
+        (4, "Notes", "Technician’s check"),)
+    assert sources.source_bytes(profile, source.source) == raw
+
+
+def test_unsupported_short_numeric_year_requires_row_review_not_date_guess(scope):
+    profile, period = scope
+    source = imported(profile, "short-year.csv",
+        b"Work Order,Site,Date,Status\n0008,North,09/12/26,Completed\n")
+    result = review_csv(source, profile, period, numeric_date_order="MDY")
+    assert result.workorders.rows[0].work_date == ""
+    assert not result.ready_for_inclusion
+    assert "work_date needs review" in result.workorders.rows[0].issues
+    assert result.workorders.rows[0].origin.cells[2] == "09/12/26"
+
+
+def test_site_alias_change_requires_reconciliation_even_with_identical_csv_bytes(scope):
+    profile, period = scope
+    source = imported(profile, "scope.csv",
+        b"WO Number,Site,Date,Status\n0008,North,2026-09-12,Open\n")
+    first = review_csv(source, profile, period)
+    changed_profile = replace(profile, facilities=(
+        Facility("north-other", "Synthetic North Campus", ("North",)),
+        profile.facilities[1],
+    ))
+    with pytest.raises(ValueError, match="site/month"):
+        reimport_csv_review(first, review_csv(source, changed_profile, period))
