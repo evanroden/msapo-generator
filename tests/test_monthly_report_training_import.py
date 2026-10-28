@@ -340,10 +340,14 @@ def test_duplicate_source_sessions_need_review_not_overwrite(storage):
     before = review
     review = exclude_training_row(review, review.rows[1].key,
                                   expected_revision=review.revision)
-    assert not review.ready_for_import or review.rows[0].issues
-    with pytest.raises(ValueError, match="Review unknown"):
-        accepted_training_block(review, ResolvedBlock("training_summary", "This month"),
-                expected_block_fingerprint=ResolvedBlock("training_summary", "This month").fingerprint)
+    assert review.ready_for_import
+    assert review.rows[0].issues == ()
+    block = ResolvedBlock("training_summary", "This month")
+    updated = accepted_training_block(review, block,
+            expected_block_fingerprint=block.fingerprint)
+    assert len(updated.extra_tables[0].rows) == 1
+    assert updated.extra_tables[0].rows[0][0] == "Pump safety"
+    assert review.rows[1].excluded
     assert reimport_training_review(review, before) == review
 
 
