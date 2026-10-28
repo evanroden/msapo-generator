@@ -296,6 +296,21 @@ def reclaim_idle(base: Path, identity: str, generation: str, *, now: float | Non
     return True
 
 
+def current_generation_matches(base: Path) -> bool:
+    """Read-only lease check for an already-owned synthetic UI callback.
+
+    Unlike data_dir(), this never creates storage or refreshes its activity
+    marker. Missing, replaced or unowned namespaces fail closed.
+    """
+    identity, lease = scope(), generation()
+    if identity is None or lease is None:
+        return False
+    try:
+        return _marker(_location(base, identity) / _SENTINEL, identity) == lease
+    except (OSError, ValueError):
+        return False
+
+
 def reset(base: Path) -> None:
     """Delete only this verified isolated browser namespace, never production."""
     identity = scope()
