@@ -98,6 +98,33 @@ def test_direct_review_renders_unvisited_section_on_first_activation(monkeypatch
         store.close()
 
 
+def test_unchanged_repeat_click_keeps_one_ticket_and_one_render(monkeypatch, tmp_path):
+    app, store = setup(monkeypatch, tmp_path)
+    try:
+        renders = []
+        def render(draft, loader):
+            renders.append(draft.fingerprint)
+            return synthetic_preview(draft, loader)
+        monkeypatch.setattr(review_ui, 'preview_report', render)
+        click_preview(app)
+        original = preview_state(app)
+        assert store.available(owner(app), original['ticket'])
+        before = store.stats()
+        assert before['pdf_entries'] == 1
+        click_preview(app)
+        assert not app.exception
+        assert renders == [preview_fingerprint(app.session_state['draft'])]
+        assert preview_state(app) == original
+        assert store.available(owner(app), original['ticket'])
+        assert store.stats() == before
+        # Ordinary passive reruns must also leave the visible ticket intact.
+        app.run()
+        assert preview_state(app) == original
+        assert store.stats() == before
+    finally:
+        store.close()
+
+
 def test_new_edit_retire_old_ticket_before_any_current_claim(monkeypatch, tmp_path):
     app, store = setup(monkeypatch, tmp_path)
     try:
