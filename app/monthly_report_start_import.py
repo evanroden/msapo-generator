@@ -21,6 +21,8 @@ from app.monthly_report_sections import (
     table_without_prices,
 )
 from app.monthly_report_setup import MONTHLY_BLOCKS
+from app.monthly_report_source_content_roles import source_text_role, validate_role_reviews
+from app.monthly_report_source_table_roles import source_table_role, validate_table_role_reviews
 
 
 @dataclass(frozen=True)
@@ -136,7 +138,7 @@ def analyze_starting_report(inspection, profile, period, known_sites=(), *, conf
     for item in inspection.items:
         if item.suggested_slot not in MONTHLY_BLOCKS:
             continue
-        if item.kind == "image":
+        if item.kind == "image" or source_text_role(item) or source_table_role(item):
             uncertain.append(item.id)
             continue
         text = "\n".join((item.text, *(" ".join(row) for row in item.rows)))
@@ -152,7 +154,7 @@ def analyze_starting_report(inspection, profile, period, known_sites=(), *, conf
     # A cover can lag unfinished body edits. Only an item's own explicit date
     # proves old prose; undated work stays available for a section-level check.
     period_review = tuple(i.id for i in inspection.items
-                          if i.kind == "text" and i.id in uncertain) if (
+                          if i.kind == "text" and i.id in uncertain and not source_text_role(i)) if (
         source_period and source_period < requested and not current) else ()
     return StartingReportAnalysis(sites, relation, tuple(current), tuple(older), tuple(uncertain), source_period, period_review)
 
@@ -307,6 +309,14 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
                 if item.kind == "image" and slot in ("brand_logo", "client_logo"):
                     plan.setdefault("automatic_logo_skips", {}).setdefault(slot, []).append(item.id)
                 continue
+            if source_text_role(item) and section.key != "cover":
+                plan.setdefault("content_role_required", []).append(item.id)
+                questions.append("Review source instructions or example text.")
+                continue
+            if source_table_role(item):
+                plan.setdefault("table_role_required", []).append(item.id)
+                questions.append("Review source table instructions or examples.")
+                continue
             if item.id in analysis.older_items and item.kind != "image":
                 # Old prose is not current-month work. Its photos are still
                 # source artwork belonging to this exact section, however:
@@ -410,6 +420,11 @@ def _build_starting_import(path, inspection, plans, *, source_view=None, _operat
     plans = tuple(plans)
     if not all(p.get("approved") for p in plans):
         raise ValueError("Resolve the remaining starting-report questions before continuing.")
+    from app.monthly_report_operational_source import operational_items
+    items = operational_items(inspection, source_view)
+    for plan in plans:
+        validate_role_reviews(plan, items, inspection.sha256)
+        validate_table_role_reviews(plan, items, inspection.sha256)
     # Check before contribution filtering: Omit cannot erase its conflicting
     # preservation record or move an exact target into an inactive plan.
     for plan in plans:
