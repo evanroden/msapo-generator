@@ -61,8 +61,11 @@ def test_ar_at_section_ten_has_unique_contents_divider_and_body_heading():
     assert paragraphs.index("1. Organizational Chart") < paragraphs.index(
         "10. Accounts Receivable") < paragraphs.index(
         "11. Pending & Declined Proposals")
-    assert paragraphs.index("Section 10") < paragraphs.index(
-        "10. Accounts Receivable")
+    ar_positions = [index for index, text in enumerate(paragraphs)
+                    if text == "10. Accounts Receivable"]
+    # The first entry is the Contents label; the second is the section body.
+    assert len(ar_positions) == 2
+    assert ar_positions[0] < paragraphs.index("Section 10") < ar_positions[1]
     assert paragraphs.count("Synthetic nonfinancial status: invoice review is ongoing.") == 1
 
 
