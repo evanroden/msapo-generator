@@ -134,22 +134,23 @@ def test_native_start_requires_confirmation_and_durable_accepted_text_unchanged(
         monkeypatch, tmp_path):
     # The old source has only a *planned* October visit, plus undated work.
     # It must not become a completed October entry by merely uploading it.
-    path = report_file(tmp_path, month="September 2026",
-                       activity=("October 2026: a pump service is scheduled.",
+    path = report_file(tmp_path, month="July 2026",
+                       activity=("September 2026: a pump service is scheduled.",
                                  "Undated unfinished synthetic current notes."))
     original = path.read_bytes()
-    app = start_app(monkeypatch, tmp_path, path, period=OCTOBER)
+    # The existing production AppTest fixture targets September 2026.
+    app = start_app(monkeypatch, tmp_path, path)
     proceed = lambda: next(b for b in app.button
                            if b.label == "Continue to this month’s updates")
     assert not app.exception and proceed().disabled
     reviewer = next(c for c in app.checkbox
-                    if c.label == "This work belongs in October 2026")
+                    if c.label == "This work belongs in September 2026")
     assert not reviewer.value
     reviewer.check().run()
     assert not app.exception and not proceed().disabled
     draft = save_start(app)
     work = next(b for b in draft.blocks if b.key == "activity_summary")
-    assert "October 2026: a pump service is scheduled." in work.text
+    assert "September 2026: a pump service is scheduled." in work.text
     assert "Undated unfinished synthetic current notes." in work.text
     assert original == path.read_bytes()
 
