@@ -28,6 +28,7 @@ def report():
     draft = synthetic_draft(synthetic_profiles()[0], ReportPeriod(2026, 9))
     source = ReportSource(
         "register-source", "synthetic-issue-register.pdf", "f" * 64, ".pdf",
+        facility=synthetic_profiles()[0].facilities[0].title,
         page_texts=("Synthetic issue register with two rows.",),
     )
     block = ResolvedBlock("equipment_issues", "Last month",
