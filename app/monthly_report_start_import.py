@@ -31,6 +31,7 @@ class StartingReportAnalysis:
     older_items: tuple[str, ...]
     uncertain_items: tuple[str, ...]
     source_period: tuple[int, int] | None = None
+    period_review_items: tuple[str, ...] = ()
 
 
 def _words(value):
@@ -148,15 +149,12 @@ def analyze_starting_report(inspection, profile, period, known_sites=(), *, conf
             older.append(item.id)
         else:
             uncertain.append(item.id)
-    # A clearly older report supplies the design and standing information.
-    # A stale cover on a partially updated report must not discard undated new
-    # work, nor can it overrule a current date found inside the report body.
-    if source_period and source_period < requested and not current:
-        rollover = {i.id for i in inspection.items if i.suggested_slot in MONTHLY_BLOCKS
-                    and i.kind in ("text", "image")}
-        older = list(dict.fromkeys((*older, *sorted(rollover))))
-        uncertain = [identity for identity in uncertain if identity not in rollover]
-    return StartingReportAnalysis(sites, relation, tuple(current), tuple(older), tuple(uncertain), source_period)
+    # A cover can lag unfinished body edits. Only an item's own explicit date
+    # proves old prose; undated work stays available for a section-level check.
+    period_review = tuple(i.id for i in inspection.items
+                          if i.kind == "text" and i.id in uncertain) if (
+        source_period and source_period < requested and not current) else ()
+    return StartingReportAnalysis(sites, relation, tuple(current), tuple(older), tuple(uncertain), source_period, period_review)
 
 
 def _cover_photo_window(items):
@@ -369,6 +367,9 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
                                 and sum(i.kind == "image" and i.suggested_slot == slot for i in section.items) > 1)):
                     questions.append("A picture's purpose is not clear.")
                     continue
+            if item.id in analysis.period_review_items:
+                plan.setdefault("period_review_items", []).append(item.id)
+                questions.append("Check the reporting month for this work; the cover shows an earlier month.")
             if item.kind == "text" and contains_price(item.text):
                 questions.append("Remove pricing from the report text.")
                 continue

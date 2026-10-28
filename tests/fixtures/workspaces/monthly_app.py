@@ -82,6 +82,12 @@ if (os.environ.get("EPC_MONTHLY_TRAINING_TASK") == "1"
         render_reference(base, _field)
     st.stop()
 
+if os.environ.get("EPC_MONTHLY_IMPORT_RETENTION_TASK") == "1":
+    from scripts.workspace_import_retention import render as render_import_retention
+    with isolated(token):
+        render_import_retention(base, token, _field)
+    st.stop()
+
 if os.environ.get("EPC_MONTHLY_COVER_FALLBACK_TASK") == "1":
     from scripts.workspace_cover_template_fallback import render as render_fallback
     with isolated(token):

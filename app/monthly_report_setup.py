@@ -15,7 +15,7 @@ from app.monthly_report_asset_review import asset_fingerprint, normalize_asset_r
 
 
 MONTHLY_BLOCKS = frozenset({"work_orders", "activity_summary", "improvements", "mbcx_report", "service_calls",
-                          "vendor_reports", "water_reports", "training_summary", "accounts_receivable", "accounts_receivable_notes"})
+                          "vendor_reports", "water_monthly_update", "water_reports", "training_summary", "accounts_receivable", "accounts_receivable_notes"})
 PAGE_BLOCKS = frozenset({"vendor_reports", "water_reports", "mbcx_report"})
 PERIOD_REVIEW_BLOCKS = frozenset({"utility_analysis", "mbcx_status", "equipment_issues", "equipment_issues_evidence"})
 DECISIONS = ("Needs review", "Keep in report", "Save for reference", "Exclude from this draft")
@@ -160,6 +160,11 @@ def design_profile(profile, inspection, mappings, overrides=()):
         if s.key not in order:
             order.append(s.key)
         block_order.setdefault(s.key, [])
+        if (s.key == "water" and "water_reports" in block_order[s.key]
+                and "water_monthly_update" not in block_order[s.key]):
+            # A missing optional slot is a new default, not a user-selected
+            # trailing update. Preserve order when both slots were mapped.
+            block_order[s.key].insert(block_order[s.key].index("water_reports"), "water_monthly_update")
         block_order[s.key].extend(b.key for b in s.blocks if b.key not in block_order[s.key])
     return replace(profile, section_order=tuple(order), excluded_sections=tuple(s.key for s in skeleton if s.key not in included),
                    section_titles=tuple(found.items()), section_block_order=tuple((k, tuple(v)) for k, v in block_order.items()),

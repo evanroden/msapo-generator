@@ -612,7 +612,12 @@ def rederive_compatibility_view(path, expected_receipt=None):
     """Boundary primitive: caller receipts never grant permission by themselves."""
     path = Path(path)
     if path.stat().st_size > MAX_VIEW_SOURCE_BYTES: _fail('source byte budget')
-    view = derive_compatibility_view(path.read_bytes())
+    # The staged file can grow or be replaced after stat. Bound the read
+    # itself, and reject overflow before parsing rather than truncating it.
+    with path.open('rb') as stream:
+        original = stream.read(MAX_VIEW_SOURCE_BYTES + 1)
+    if len(original) > MAX_VIEW_SOURCE_BYTES: _fail('source byte budget')
+    view = derive_compatibility_view(original)
     if expected_receipt is not None and expected_receipt != view.receipt_bytes:
         _fail('stale or tampered source-view receipt')
     return view

@@ -11,7 +11,8 @@ function harness(mode='wide') {
     const label={getBoundingClientRect:()=>rect(64,52)};
     const select={value:'',children:[],closest:()=>label,
         replaceChildren(...items){this.children=items;this.value=items[0]?.value||'';replacements++;}};
-    const nav={querySelector:()=>select,getBoundingClientRect:label.getBoundingClientRect};
+    const reviewButton={disabled:true,onclick:null};
+    const nav={querySelector:selector=>selector==='.epc-review-shortcut'?reviewButton:select,getBoundingClientRect:label.getBoundingClientRect};
     const field={value:'Unblurred human wording',selectionStart:3,selectionEnd:9,dispatchEvent(){nativeEvents++}};
     const target=(offset,height,outside=false)=>{
         const node={isConnected:true,querySelector:()=>null,setAttribute(){},focus(options){assert.equal(options.preventScroll,true);document.activeElement=node;}};
@@ -37,7 +38,7 @@ function harness(mode='wide') {
     }
     const choose=id=>{select.value=id;select.onchange();measure()};
     measure();
-    return {state,root,scrollport,select,field,pairs,review,document,measure,choose,nav,label,controller:()=>controller,
+    return {state,root,scrollport,select,reviewButton,field,pairs,review,app,document,measure,choose,nav,label,controller:()=>controller,
         land:request=>context.ENFRAWorkspaceNavigation.land(state,request),
         cancelLanding:()=>context.ENFRAWorkspaceNavigation.cancelLanding(state),
         rerender(){controller.dispose();controller=create();measure()},dispose(){controller.dispose()},
@@ -476,4 +477,57 @@ test('the adapter anchors only around its own layout writes, in page scroll',()=
         'it is kept after the layout writes and before navigation positions anything');
     assert.match(measure,/if \(previous !== context\.mode && !ownsScroll && !ownedScrollBefore\)\s*\S*keepAnchor\(/,
         'only a layout change in page scroll is compensated');
+});
+
+for (const mode of ['wide','compact','tabletop','confined']) test(`${mode} direct Review reuses navigation and preserves return once`,()=>{
+    const h=harness(mode);
+    if(h.state.ownsScroll) h.root.scrollTop=650; else h.scrollport.scrollTop=600;
+    h.measure();
+    const oldOffset=h.pairs[1].pair.getBoundingClientRect().top;
+    const original={...h.field};
+    assert.equal(h.reviewButton.disabled,false);
+    h.reviewButton.onclick();h.measure();
+    assert.equal(h.state.navigationActive,'report_review');
+    assert.equal(h.document.activeElement,h.review);
+    const saved=h.state.navigationReturn;
+    h.scrollport.scrollTop+=250;
+    h.reviewButton.onclick();h.measure();
+    assert.equal(h.review.getBoundingClientRect().top,128,'Review remains a useful jump when already in Review');
+    assert.equal(h.state.navigationReturn,saved,'repeated Review must not erase the editing return');
+    h.choose('monthly_activity');
+    assert.equal(h.pairs[1].pair.getBoundingClientRect().top,oldOffset);
+    assert.equal(h.field.value,original.value);assert.equal(h.counts().nativeEvents,0);
+    h.dispose();assert.equal(h.reviewButton.onclick,null);
+});
+test('direct Review binding survives a rerender without duplicate scheduling',()=>{
+    const h=harness();h.rerender();
+    const before=h.counts().scheduled;
+    h.reviewButton.onclick();h.measure();
+    assert.equal(h.counts().scheduled,before+1);
+    h.dispose();assert.equal(h.reviewButton.onclick,null);
+});
+
+test('Review stays disabled until its destination exists and unbinds replaced controls',()=>{
+    const h=harness();h.app.querySelector=()=>null;h.measure();
+    assert.equal(h.reviewButton.disabled,true);
+    const before=h.counts().scheduled;
+    h.reviewButton.onclick();assert.equal(h.counts().scheduled,before);
+    h.app.querySelector=()=>h.review;h.measure();
+    assert.equal(h.reviewButton.disabled,false);
+    const replacement={disabled:true,onclick:null};
+    h.nav.querySelector=selector=>selector==='.epc-review-shortcut'?replacement:h.select;
+    h.measure();assert.equal(h.reviewButton.onclick,null);
+    assert.equal(replacement.disabled,false);
+    replacement.onclick();h.measure();assert.equal(h.state.navigationActive,'report_review');
+    h.dispose();assert.equal(replacement.onclick,null);
+});
+
+test('a deliberate Review click supersedes an unconsumed Activity landing',()=>{
+    const h=harness();h.land(['entry-1','monthly_activity']);
+    h.cancelLanding(); // native pointer/key capture precedes the click
+    h.reviewButton.onclick();h.measure();
+    assert.equal(h.state.navigationActive,'report_review');
+    assert.equal(h.document.activeElement,h.review);
+    h.land(['entry-1','monthly_activity']);h.measure();
+    assert.equal(h.state.navigationActive,'report_review');
 });
