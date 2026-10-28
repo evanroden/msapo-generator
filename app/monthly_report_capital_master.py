@@ -99,8 +99,8 @@ def _item(item):
         raise ValueError("A site exception must identify a separate contract-wide item.")
     if item.status_period and not MONTH.fullmatch(item.status_period):
         raise ValueError("Status confirmation needs an exact month.")
-    if item.status and not item.status_period:
-        raise ValueError("Do not report a capital status without its recorded month.")
+    if bool(item.status.strip()) != bool(item.status_period):
+        raise ValueError("A capital status and its recorded month must be reviewed together.")
     if item.target_date:
         if not DATE.fullmatch(item.target_date):
             raise ValueError("The capital target date must be ISO YYYY-MM-DD or blank.")
