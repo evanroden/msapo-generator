@@ -366,7 +366,13 @@ def _native_art_inventory(original_path, source_view, profile, period):
     path = Path(original_path)
     if path.stat().st_size > MAX_VIEW_SOURCE_BYTES:
         _error('source exceeds narrow view budget')
-    raw = path.read_bytes()
+    # A staged source can grow or be replaced between stat() and open().
+    # Enforce the *same* narrow-artwork cap on the read itself, before hashing
+    # or opening the Word package. Do not truncate, resave or alter the source.
+    with path.open('rb') as stream:
+        raw = stream.read(MAX_VIEW_SOURCE_BYTES + 1)
+    if len(raw) > MAX_VIEW_SOURCE_BYTES:
+        _error('source exceeds narrow view budget')
     if _hash(raw) != source_view.original_inspection.sha256:
         _error('immutable original changed')
     originals = {i.id: i for i in source_view.original_inspection.items}
