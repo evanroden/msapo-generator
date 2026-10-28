@@ -98,7 +98,9 @@ def test_only_price_free_historical_facts_reach_drafting_prompt_and_originals_ar
     assert facts == (clean,)
     encoded = content[0]["text"].split("\n")[-1]
     payload = json.loads(encoded)
-    assert payload["facts"] == [vars(clean)]
+    assert len(payload["facts"]) == 1
+    assert payload["facts"][0]["id"] == clean.id
+    assert payload["facts"][0]["quote"] == SAFE
     assert priced.id not in encoded
     assert "$500" not in encoded and "Invoice amount" not in encoded
     assert old == before and old.facts == (priced, clean)
