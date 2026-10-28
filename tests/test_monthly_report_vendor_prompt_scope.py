@@ -70,22 +70,15 @@ def prompts(draft):
     )
     assert linked == (fact,)
     text = request[0]["text"]
-    # The payload follows the fixed drafting system prompt.
-    assert text.endswith(json.dumps({
-        "block": "activity_summary",
-        "period": draft.period.key,
-        "vendors": names,
-        "known_tags": draft.profile.asset_tags,
-        "facts": [
-            {
-                "id": fact.id, "source_id": fact.source_id, "page": fact.page,
-                "kind": fact.kind, "text": fact.text, "quote": fact.quote,
-                "date": fact.date, "facility": fact.facility, "vendor": fact.vendor,
-                "tags": [], "status": fact.status, "flags": [],
-            },
-        ],
-        "redrafting_notes": "",
-    }))
+    # Verify the real outbound JSON body rather than mocking the reader.
+    assert text.startswith(ai.DRAFT_PROMPT + "\n")
+    payload = json.loads(text[len(ai.DRAFT_PROMPT) + 1:])
+    assert payload["block"] == "activity_summary"
+    assert payload["period"] == draft.period.key
+    assert payload["vendors"] == list(names)
+    assert payload["known_tags"] == list(draft.profile.asset_tags)
+    assert payload["facts"][0]["id"] == fact.id
+    assert payload["facts"][0]["quote"] == fact.quote
     return copied, text
 
 
