@@ -1,231 +1,281 @@
-"""Only saved, reviewed outage diagrams become reusable ENFRA standards."""
+"""Explicit contract procedures retain review, integrity, revision and history gates."""
+from dataclasses import asdict, replace
 
-from dataclasses import replace
-from io import BytesIO
-
-from PIL import Image
 import pytest
 
 from app import monthly_report_library as library
 from app import monthly_report_workflow_standards as standards
 from app.monthly_report_asset_review import approve_all_assets, pending_asset_indexes
-from app.monthly_report_model import ReportDraft, ReportPeriod, ResolvedBlock, synthetic_profiles
+from app.monthly_report_model import OrgChartNode, ReportPeriod, ReportTable, ResolvedBlock
+from test_monthly_report_contract_workflows import isolated, report, image_block, legacy, file_bytes
 
 
-@pytest.fixture(autouse=True)
-def runtime(tmp_path, monkeypatch):
-    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+def publish(contract="Contract A", color="navy", key="business_hours_workflow", revision=0):
+    block, assets = image_block(key, color)
+    draft = report(contract, (block,))
+    state = standards.save_standard(draft, block, assets, expected_revision=revision,
+                                   expected_fingerprint=block.fingerprint, confirmed=True)
+    return draft, block, assets, state
 
 
-def profile(contract="Original contract", key="site"):
-    return replace(synthetic_profiles()[0], contract=contract, key=key)
-
-
-def picture(color="navy"):
-    raw = BytesIO()
-    Image.new("RGB", (40, 40), color).save(raw, "PNG")
-    data = raw.getvalue()
-    return library.asset_reference(data, "png"), data
-
-
-def save_workflows(profile, *, color="navy", reviewed=True, keys=standards.WORKFLOW_KEYS):
-    state = library.save_profile(profile, expected_revision=0, actor="Synthetic Editor", confirmed=True)
-    reference, data = picture(color)
-    blocks = tuple(ResolvedBlock(key, "Library", asset_hashes=(reference,),
-                                 asset_captions=("Saved procedure",), references=("accepted-original",))
-                   for key in keys)
-    if reviewed:
-        blocks = tuple(approve_all_assets(block) for block in blocks)
-    library.save_import(profile.contract, profile.key, blocks, assets=((reference, data),),
-                        expected_revision=state.revision, actor="Synthetic Editor", confirmed=True)
-    return blocks, reference, data
-
-
-def draft(target=None, blocks=(), *, synthetic=False):
-    return ReportDraft(target or profile("Another contract"), ReportPeriod(2026, 10),
-                       "Synthetic Editor", (), blocks, synthetic=synthetic)
-
-
-def test_existing_saved_diagrams_seed_once_and_fill_a_different_contract():
-    original, reference, data = save_workflows(profile())
-    incoming = draft(blocks=(ResolvedBlock("activity_summary", "This month", text="Unrelated work"),))
-    assets = {}
-    applied = standards.apply_defaults(incoming, assets)
-    state = standards.load_standards()
-    assert state.revision == 1
-    assert {item.key for item in state.workflows} == set(standards.WORKFLOW_KEYS)
-    assert all(item.origin_contract == "Original contract" for item in state.workflows)
-    assert assets == {reference: data}
-    assert applied.blocks[0] == incoming.blocks[0]
-    for block in applied.blocks[1:]:
-        assert block.asset_hashes == (reference,)
-        assert block.asset_captions == ()
-        assert block.references[0].startswith("enfra-workflow-standard:")
-        assert pending_asset_indexes(block, sources=()) == ()
-    assert standards.apply_defaults(applied, assets) == applied
-    assert standards.load_standards() == state
-
-
-def test_different_site_cannot_overwrite_an_established_global_procedure():
-    save_workflows(profile())
-    first = standards.seed_from_saved_profile("Original contract", "site")
-    other, reference, _ = save_workflows(profile("Different contract"), color="red")
-    assert standards.seed_from_saved_profile("Different contract", "site") == first
-    incoming = draft(profile("Different contract"), other)
-    assert standards.apply_defaults(incoming, {}) == incoming
-    assert standards.load_standards() == first
-    assert all(item.block.asset_hashes != (reference,) for item in first.workflows)
-
-
-def test_separate_saved_profiles_can_fill_missing_standard_slots_without_replacing():
-    save_workflows(profile(), keys=standards.WORKFLOW_KEYS[:1])
-    initial = standards.seed_from_saved_profile("Original contract", "site")
-    save_workflows(profile("Other contract"), color="red", keys=standards.WORKFLOW_KEYS[1:])
-    complete = standards.seed_from_saved_profile("Other contract", "site")
-    assert initial.revision == 1 and complete.revision == 2
-    assert complete.workflows[0] == initial.workflows[0]
-    assert len(complete.workflows) == 2
-    assert (standards._path() / "history" / "00000001.json").exists()
-
-
-def test_unreviewed_or_unsaved_draft_diagrams_do_not_seed_defaults():
-    blocks, _, _ = save_workflows(profile(), reviewed=False)
-    assert standards.seed_from_saved_profile("Original contract", "site").revision == 0
-    incoming = draft(blocks=tuple(approve_all_assets(block) for block in blocks))
-    assert standards.apply_defaults(incoming, {}) == incoming
+def test_two_contracts_have_independent_defaults_and_versions():
+    a, a_block, a_assets, first = publish()
+    b, b_block, b_assets, other = publish("Contract B", "red")
+    assert first.revision == other.revision == 1
+    for contract, expected, expected_assets in (("Contract A", a_block, a_assets), ("Contract B", b_block, b_assets)):
+        assets = {}
+        target = report(contract, (ResolvedBlock("activity_summary", "This month", text="Keep monthly work"),), key="another-site")
+        before = file_bytes()
+        result = standards.apply_defaults(target, assets)
+        assert result.blocks[0] == target.blocks[0]
+        assert result.blocks[1].asset_hashes == expected.asset_hashes
+        assert result.blocks[1].references[0].startswith("contract-workflow-standard:v1:")
+        assert not pending_asset_indexes(result.blocks[1], sources=())
+        assert assets == expected_assets and file_bytes() == before
+        assert standards.apply_defaults(result, assets) == result
     assert standards.load_standards().revision == 0
+    assert standards.apply_defaults(report("Contract C"), {}) == report("Contract C")
 
 
-def test_text_only_placeholder_does_not_become_a_shared_diagram():
-    p = profile()
-    library.save_profile(p, expected_revision=0, actor="Editor", confirmed=True)
-    library.save_import(p.contract, p.key, (ResolvedBlock(standards.WORKFLOW_KEYS[0], "Library", text="Pending diagram"),),
-                        expected_revision=1, actor="Editor", confirmed=True)
-    assert standards.seed_from_saved_profile(p.contract, p.key).revision == 0
+def test_replacement_changes_only_future_defaults_not_saved_reports_or_other_contract():
+    a, block, assets, first = publish()
+    b, _, _, other = publish("Contract B", "red")
+    saved = library.save_snapshot(a, expected_revision=0, assets=tuple(assets.items()))
+    _, new, _, updated = publish(color="green", revision=1)
+    assert updated.revision == 2 and updated.workflows[0].block.asset_hashes == new.asset_hashes
+    assert standards.load_standards("Contract B") == other
+    assert library.load_snapshot(a.profile.contract, a.profile.key, a.period) == saved
+    assert standards.apply_defaults(a, {}) == a
+    history = standards._path("Contract A") / "history"
+    assert library._read(history / "00000001.json")["workflows"][0]["block"]["asset_hashes"] == list(block.asset_hashes)
+    assert sorted(p.name for p in history.iterdir()) == ["00000001.json", "00000002.json"]
 
 
-def test_empty_legacy_omissions_fill_but_existing_custom_procedures_are_pinned():
-    save_workflows(profile())
-    custom = ResolvedBlock(standards.WORKFLOW_KEYS[0], "This month", text="Existing site instruction")
-    incoming = draft(blocks=(custom, ResolvedBlock(standards.WORKFLOW_KEYS[1], "Omit")))
-    applied = standards.apply_defaults(incoming, {})
-    assert applied.blocks[0] == custom
-    assert applied.blocks[1].asset_hashes
-    assert applied.blocks[1].source == "Library"
+def test_explicit_save_is_idempotent_and_never_replaces_another_slot():
+    draft, block, assets, first = publish()
+    again = standards.save_standard(draft, block, assets, expected_revision=1,
+                                    expected_fingerprint=block.fingerprint, confirmed=True)
+    assert again == first
+    _, _, _, second = publish(key="after_hours_workflow", color="red", revision=1)
+    assert second.revision == 2 and second.workflows[0] == first.workflows[0]
 
 
-def test_missing_source_asset_never_publishes_half_a_standard():
-    _, reference, _ = save_workflows(profile())
-    (library._profile_path("Original contract", "site") / "assets" / reference).unlink()
-    with pytest.raises(library.LibraryError):
-        standards.seed_from_saved_profile("Original contract", "site")
-    assert standards.load_standards().revision == 0
+@pytest.mark.parametrize("kind", ["unreviewed", "omitted", "text_only", "synthetic", "unconfirmed", "unnamed", "stale_block", "wrong_block", "bad_revision"])
+def test_invalid_publication_retains_every_original(kind):
+    block, assets = image_block()
+    draft = report(blocks=(block,))
+    kwargs = dict(expected_revision=0, expected_fingerprint=block.fingerprint, confirmed=True)
+    if kind == "unreviewed":
+        block = replace(block, client_reviewed_fingerprint="", client_asset_reviews=())
+    elif kind == "omitted":
+        block = replace(block, source="Omit")
+    elif kind == "text_only":
+        block = ResolvedBlock(block.key, "This month", text="Awaiting a diagram")
+    elif kind == "synthetic":
+        draft = replace(draft, synthetic=True)
+    elif kind == "unconfirmed":
+        kwargs["confirmed"] = False
+    elif kind == "unnamed":
+        draft = replace(draft, prepared_by="")
+    elif kind == "stale_block":
+        kwargs["expected_fingerprint"] = "outdated"
+    elif kind == "bad_revision":
+        kwargs["expected_revision"] = True
+    if kind not in {"stale_block", "wrong_block"}:
+        draft = replace(draft, blocks=(block,))
+        kwargs["expected_fingerprint"] = block.fingerprint
+    if kind == "wrong_block":
+        draft = replace(draft, blocks=())
+    before = file_bytes()
+    with pytest.raises(ValueError):
+        standards.save_standard(draft, block, assets, **kwargs)
+    assert file_bytes() == before
+    assert standards.load_standards("Contract A").revision == 0
 
 
-def test_tampered_shared_asset_is_rejected_without_changing_the_report():
-    save_workflows(profile())
-    state = standards.seed_from_saved_profile("Original contract", "site")
-    reference = state.workflows[0].block.asset_hashes[0]
-    path = standards._path() / "assets" / reference
+def test_stale_revision_does_not_overwrite_current_standard():
+    first = publish()[-1]
+    block, assets = image_block(color="red")
+    before = file_bytes()
+    with pytest.raises(library.RevisionConflict, match="changed"):
+        standards.save_standard(report(blocks=(block,)), block, assets, expected_revision=0,
+                                expected_fingerprint=block.fingerprint, confirmed=True)
+    assert standards.load_standards("Contract A") == first and file_bytes() == before
+
+
+@pytest.mark.parametrize("bad", ["missing", "tampered"])
+def test_source_integrity_failure_never_publishes_a_partial_default(bad):
+    block, assets = image_block()
+    if bad == "missing":
+        assets = {}
+    else:
+        assets = {ref: b"changed" for ref in assets}
+    before = file_bytes()
+    with pytest.raises(ValueError):
+        standards.save_standard(report(blocks=(block,)), block, assets, expected_revision=0,
+                                expected_fingerprint=block.fingerprint, confirmed=True)
+    assert file_bytes() == before and standards.load_standards("Contract A").revision == 0
+
+
+def test_default_reads_are_atomic_on_later_corrupt_asset():
+    publish()
+    _, block, _, _ = publish(key="after_hours_workflow", color="red", revision=1)
+    ref = block.asset_hashes[0]
+    path = standards._path("Contract A") / "assets" / ref
     path.unlink()
     path.write_bytes(b"changed")
-    incoming = draft()
+    incoming, assets = report(), {"previous": b"unchanged"}
     with pytest.raises(library.LibraryError, match="integrity"):
-        standards.apply_defaults(incoming, {})
-    assert incoming.blocks == ()
+        standards.apply_defaults(incoming, assets)
+    assert incoming.blocks == () and assets == {"previous": b"unchanged"}
 
 
-def test_synthetic_report_opening_never_seeds_shared_state():
-    save_workflows(profile())
-    incoming = draft(synthetic=True)
-    assert standards.apply_defaults(incoming, {}) == incoming
-    assert standards.load_standards().revision == 0
+def test_populated_and_empty_omitted_slots_remain_pinned():
+    publish()
+    omitted = ResolvedBlock("business_hours_workflow", "Omit")
+    custom = ResolvedBlock("business_hours_workflow", "This month", text="Report-only procedure")
+    for block in (omitted, custom):
+        before = report(blocks=(block,))
+        assert standards.apply_defaults(before, {}) == before
 
 
-def test_review_then_save_progress_seeds_a_fresh_contract_without_any_import():
-    reference, data = picture("green")
-    blocks = tuple(approve_all_assets(ResolvedBlock(key, "This month", asset_hashes=(reference,)))
-                   for key in standards.WORKFLOW_KEYS)
-    first_report = draft(profile("Saved report contract"), blocks)
-    library.save_snapshot(first_report, expected_revision=0, assets=((reference, data),),
-                          entered_editor="Synthetic Editor")
-    assert not (library._profile_path(first_report.profile.contract, "site") / "manifest.json").exists()
+def test_default_does_not_copy_site_notes_contacts_nodes_or_captions():
+    block, assets = image_block()
+    mixed = approve_all_assets(replace(block, text="Site-only note", rows=(("Site-only", "Contact"),),
+        extra_tables=(ReportTable(("Site",), (("Site-only",),)),),
+        org_nodes=(OrgChartNode("manager", "Site-only person", "Supervisor"),),
+        asset_captions=("Site-only caption",), references=("site-only-source",)))
+    draft = report(blocks=(mixed,))
+    saved = standards.save_standard(draft, mixed, assets, expected_revision=0,
+                                    expected_fingerprint=mixed.fingerprint, confirmed=True)
+    pinned = saved.workflows[0].block
+    assert pinned.asset_hashes == mixed.asset_hashes
+    assert pinned.text == "" and pinned.rows == pinned.extra_tables == pinned.org_nodes == pinned.asset_captions == ()
+    assert "Site-only" not in repr(pinned) and not pending_asset_indexes(pinned)
+    assert standards.apply_defaults(draft, {}) == draft
+
+
+def test_explicit_use_preserves_adjacent_content_and_rejects_stale_actions():
+    _, expected, raw, state = publish()
+    existing = ResolvedBlock("business_hours_workflow", "Omit", text="Keep note",
+        extra_tables=(ReportTable(("Operator",), (("Synthetic contact",),)),), references=("note-source",))
+    draft, assets = report(blocks=(existing,)), {}
+    result = standards.use_standard(draft, existing, assets, expected_revision=1,
+                                    expected_fingerprint=existing.fingerprint)
+    assert result.source == "This month" and result.asset_hashes == expected.asset_hashes
+    assert result.text == existing.text and result.extra_tables == existing.extra_tables
+    assert "note-source" in result.references and assets == raw
+    with pytest.raises(library.RevisionConflict):
+        standards.use_standard(draft, existing, {}, expected_revision=0, expected_fingerprint=existing.fingerprint)
+    with pytest.raises(library.RevisionConflict):
+        standards.use_standard(draft, existing, {}, expected_revision=1, expected_fingerprint="old")
+    assert standards.load_standards("Contract A") == state
+
+
+def test_legacy_adoption_is_explicit_origin_scoped_and_nondestructive():
+    item = legacy()
+    before = file_bytes()
+    assert standards.legacy_candidate("Contract B", item.key) is None
+    with pytest.raises(library.RevisionConflict):
+        standards.adopt_legacy(report("Contract B"), item.key, expected_revision=0,
+                               expected_legacy_fingerprint=item.block.fingerprint, confirmed=True)
+    with pytest.raises(library.RevisionConflict):
+        standards.adopt_legacy(report(), item.key, expected_revision=0,
+                               expected_legacy_fingerprint="old", confirmed=True)
+    assert file_bytes() == before
+    state = standards.adopt_legacy(report(), item.key, expected_revision=0,
+                                  expected_legacy_fingerprint=item.block.fingerprint, confirmed=True)
+    assert state.revision == 1 and state.workflows[0].block.asset_hashes == item.block.asset_hashes
+    assert all(file_bytes()[path] == raw for path, raw in before.items())
+    assert standards.load_standards().revision == 1
+    assert standards.apply_defaults(report("Contract B"), {}) == report("Contract B")
+    assert standards.apply_defaults(report(), {}).blocks[0].asset_hashes == item.block.asset_hashes
+
+
+def test_contract_spelling_normalization_is_not_a_fuzzy_alias():
+    state = publish()[-1]
+    assert standards.load_standards("  CONTRACT   A ") == state
+    assert standards.load_standards("Contract-A").revision == 0
+
+
+def test_foreign_contract_manifest_fails_closed():
+    publish()
+    path = standards._path("Contract A") / "manifest.json"
+    value = library._read(path)
+    value["contract"] = "contract b"
+    library._atomic_write(path, library._json(value))
+    with pytest.raises(library.LibraryError, match="could not be read"):
+        standards.apply_defaults(report(), {})
+
+
+def test_snapshot_reopen_and_rollover_retain_approved_versions_and_exclusions():
+    from app.monthly_report_setup import new_month_draft
+    publish()
     assets = {}
-    applied = standards.apply_defaults(draft(), assets)
-    assert {block.key for block in applied.blocks} == set(standards.WORKFLOW_KEYS)
-    assert all(block.asset_hashes == (reference,) for block in applied.blocks)
-    assert all(pending_asset_indexes(block, sources=()) == () for block in applied.blocks)
-    assert assets == {reference: data}
-    assert {item.origin_contract for item in standards.load_standards().workflows} == {"Saved report contract"}
+    chosen = standards.apply_defaults(report(), assets)
+    saved = library.save_snapshot(chosen, expected_revision=0, assets=tuple(assets.items()))
+    publish(color="red", revision=1)
+    reloaded = library.load_snapshot(chosen.profile.contract, chosen.profile.key, chosen.period)
+    assert reloaded == saved
+    future = new_month_draft(reloaded.draft, ReportPeriod(2026, 11))
+    assert future.blocks[0].asset_hashes == chosen.blocks[0].asset_hashes
+    omitted = replace(chosen, blocks=(replace(chosen.blocks[0], source="Omit"),))
+    future_omitted = new_month_draft(omitted, ReportPeriod(2026, 11))
+    assert standards.apply_defaults(future_omitted, {}) == future_omitted
+    assert future_omitted.blocks[0].source == "Omit"
 
 
-def test_latest_reviewed_snapshot_is_preferred_over_older_standing_library():
-    source = profile()
-    _, old_reference, _ = save_workflows(source)
-    new_reference, data = picture("green")
-    updated = tuple(approve_all_assets(ResolvedBlock(key, "This month", asset_hashes=(new_reference,)))
-                    for key in standards.WORKFLOW_KEYS)
-    library.save_snapshot(draft(source, updated), expected_revision=0, assets=((new_reference, data),))
-    applied = standards.apply_defaults(draft(source), {})
-    assert old_reference != new_reference
-    assert all(block.asset_hashes == (new_reference,) for block in applied.blocks)
+@pytest.mark.parametrize("scope", ["profile", "section"])
+def test_excluded_organization_cannot_receive_missing_default_pages(scope):
+    from app.monthly_report_model import profile_sections
+    publish()
+    current = report()
+    current = replace(current, sections=profile_sections(current.profile))
+    if scope == "profile":
+        current = replace(current, profile=replace(current.profile, excluded_sections=("organization",)))
+    else:
+        current = replace(current, sections=tuple(replace(s, included=False) if s.key == "organization" else s
+                                                  for s in current.sections))
+    assets, before = {}, file_bytes()
+    assert standards.apply_defaults(current, assets) == current
+    assert assets == {} and file_bytes() == before
 
 
-@pytest.mark.parametrize("synthetic,reviewed", [(True, True), (False, False)])
-def test_synthetic_or_unreviewed_saved_report_cannot_seed_global_defaults(synthetic, reviewed):
-    reference, data = picture()
-    blocks = tuple(ResolvedBlock(key, "This month", asset_hashes=(reference,)) for key in standards.WORKFLOW_KEYS)
-    if reviewed:
-        blocks = tuple(approve_all_assets(block) for block in blocks)
-    library.save_snapshot(draft(profile("Saved only"), blocks, synthetic=synthetic), expected_revision=0,
-                          assets=((reference, data),))
-    incoming = draft()
-    assert standards.apply_defaults(incoming, {}) == incoming
-    assert standards.load_standards().revision == 0
+def test_fresh_guided_omission_requires_explicit_use_and_then_survives_rollover():
+    from types import SimpleNamespace
+    from app.monthly_report_guided import _initial_draft, complete_guided_sections
+    from app.monthly_report_setup import new_month_draft
+    publish()
+    profile = report().profile
+    state = SimpleNamespace(profile=profile, block=lambda key: None)
+    current = complete_guided_sections(_initial_draft(state, ReportPeriod(2026, 10), "Synthetic Editor"))
+    block = next(b for b in current.blocks if b.key == "business_hours_workflow")
+    assert block.source == "Omit"
+    assets, before = {}, file_bytes()
+    # The initializer's Omit is deliberately indistinguishable from a saved
+    # choice. Reuse stays explicit instead of silently overriding it.
+    assert standards.apply_defaults(current, assets) == current
+    assert assets == {} and file_bytes() == before
+    used = standards.use_standard(current, block, assets, expected_revision=1,
+                                   expected_fingerprint=block.fingerprint)
+    current = replace(current, blocks=tuple(used if b.key == block.key else b for b in current.blocks))
+    saved = library.save_snapshot(current, expected_revision=0, assets=tuple(assets.items()))
+    restored = library.load_snapshot(profile.contract, profile.key, current.period)
+    assert restored == saved
+    next_month = new_month_draft(restored.draft, ReportPeriod(2026, 11))
+    assert next(b for b in next_month.blocks if b.key == block.key).asset_hashes == used.asset_hashes
+    assert standards.apply_defaults(next_month, {}) == next_month
 
 
-def test_saved_import_bootstrap_is_a_source_even_without_standing_versions():
-    source = profile()
-    library.save_profile(source, expected_revision=0, actor="Editor", confirmed=True)
-    reference, data = picture("green")
-    blocks = tuple(approve_all_assets(ResolvedBlock(key, "This month", asset_hashes=(reference,)))
-                   for key in standards.WORKFLOW_KEYS)
-    imported = draft(source, blocks)
-    from dataclasses import asdict
-    path = library._profile_path(source.contract, source.key)
-    value = library._read(path / "manifest.json")
-    value["bootstrap"] = asdict(imported)
-    value["audit"].append({"action": "report_import", "at": library._now()})
-    library._atomic_write(path / "assets" / reference, data)
-    library._atomic_write(path / "manifest.json", library._json(value))
-    applied = standards.apply_defaults(draft(), {})
-    assert all(block.asset_hashes == (reference,) for block in applied.blocks)
-    assert len(applied.blocks) == 2
-
-
-def test_shared_diagrams_do_not_copy_source_site_notes_tables_nodes_or_captions():
-    from app.monthly_report_model import OrgChartNode, ReportTable
-    source = profile("North contract")
-    reference, data = picture()
-    mixed = approve_all_assets(ResolvedBlock(
-        standards.WORKFLOW_KEYS[0], "This month", text="North-only shutdown instruction",
-        rows=(("North-only control room", "555-0100"),),
-        extra_tables=(ReportTable(("Site", "Contact"), (("North", "North-only operator"),)),),
-        org_nodes=(OrgChartNode("north-manager", "North-only manager", "Supervisor"),),
-        asset_hashes=(reference,), asset_captions=("North-only escalation contacts",),
-        references=("north-original-source",),
-    ))
-    library.save_snapshot(draft(source, (mixed,)), expected_revision=0, assets=((reference, data),))
-    applied = standards.apply_defaults(draft(profile("South contract")), {})
-    shared = applied.blocks[0]
-    assert shared.asset_hashes == mixed.asset_hashes
-    assert shared.text == ""
-    assert shared.rows == shared.extra_tables == shared.org_nodes == shared.asset_captions == ()
-    assert shared.references != mixed.references
-    assert pending_asset_indexes(shared, sources=()) == ()
-    assert "North-only" not in repr(shared)
-    assert standards.load_standards().workflows[0].origin_contract == source.contract
-    # The original site's persisted report and current custom content stay intact.
-    assert library.load_snapshot(source.contract, source.key, ReportPeriod(2026, 10)).draft.blocks == (mixed,)
-    original = draft(source, (mixed,))
-    assert standards.apply_defaults(original, {}) == original
+def test_disappeared_source_review_cannot_be_promoted_to_contract_default():
+    block, assets = image_block()
+    reference = "a" * 64 + ":1:" + "b" * 64
+    block = approve_all_assets(replace(block, references=(reference,),
+                                      asset_provenance=((block.asset_hashes[0], (reference,)),)))
+    draft = report(blocks=(block,))
+    assert not pending_asset_indexes(block)
+    before = file_bytes()
+    with pytest.raises(ValueError, match="review every"):
+        standards.save_standard(draft, block, assets, expected_revision=0,
+                                expected_fingerprint=block.fingerprint, confirmed=True)
+    assert file_bytes() == before
