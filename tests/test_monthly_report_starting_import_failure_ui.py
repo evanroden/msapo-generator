@@ -127,6 +127,14 @@ def test_real_docx_admission_displays_first_rejecting_layer_and_durable_retry(
     original = path.read_bytes()
     supplied = {"raw": original}
     main_value = getattr(importer, attr)
+    stage_calls = []
+    native_stage = section_ui._stage
+
+    def counted_stage(upload):
+        stage_calls.append(upload.getvalue())
+        return native_stage(upload)
+
+    monkeypatch.setattr(section_ui, "_stage", counted_stage)
     with monkeypatch.context() as limited:
         limited.setattr(importer, attr, limit)
         app = _start(monkeypatch, tmp_path, supplied)
@@ -138,10 +146,12 @@ def test_real_docx_admission_displays_first_rejecting_layer_and_durable_retry(
         digest_keys = [key for key in app.session_state.filtered_state if key.endswith("_failed_digest")]
         notice_keys = [key for key in app.session_state.filtered_state if key.endswith("_failed_notice")]
         assert len(digest_keys) == len(notice_keys) == 1
+        assert stage_calls == [original], "The failed upload is parsed only once."
         saved_digest = app.session_state[digest_keys[0]]
         app.run()
         assert not app.exception and _fail_message(app) == initial
         assert app.session_state[digest_keys[0]] == saved_digest
+        assert stage_calls == [original], "Neutral reruns must not repeat parsing."
         assert path.read_bytes() == original
 
     # A real source parsed with its ordinary budget now works. The same-file
@@ -150,6 +160,7 @@ def test_real_docx_admission_displays_first_rejecting_layer_and_durable_retry(
     assert getattr(importer, attr) == main_value
     next(b for b in app.button if b.label == "Retry report analysis").click().run()
     assert not app.exception
+    assert stage_calls == [original, original], "Explicit retry parses the same bytes exactly once."
     assert all(not key.endswith("_failed_notice") for key in app.session_state.filtered_state)
     assert all(not key.endswith("_failed_digest") for key in app.session_state.filtered_state)
     stages = [(key, val) for key, val in app.session_state.filtered_state.items()
