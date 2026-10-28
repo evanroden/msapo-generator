@@ -247,11 +247,17 @@ def fact_numbers(facts):
 
 
 def vendor_names(draft):
-    """Only explicit vendor columns establish preferred spelling."""
+    """Use only included subcontractor names as optional drafting context.
+
+    An omitted block or excluded section retains its names for recovery, but
+    does not authorize copying them into an external Copilot/model prompt.
+    """
     names = []
-    specs = {b.key: b for s in draft.sections for b in s.blocks}
+    specs = {b.key: b for s in draft.sections if s.included for b in s.blocks}
+    if "subcontractor_matrix" not in specs:
+        return ()
     for block in draft.blocks:
-        if block.key != "subcontractor_matrix":
+        if block.key != "subcontractor_matrix" or block.source == "Omit":
             continue
         tables = (
             [(tuple(c.title for c in specs[block.key].columns), block.rows)]
