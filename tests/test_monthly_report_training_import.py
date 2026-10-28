@@ -447,3 +447,46 @@ def test_accepted_current_event_renders_once_in_generic_word_training_section(st
     assert "2026-09-13" in data and "Virtual" in data
     assert "Alice" in data and "1.5" in data
     assert not any("2025-09" in paragraph.text for paragraph in doc.paragraphs)
+
+
+
+def test_missing_completion_status_needs_specific_human_confirmation(storage):
+    content = ingest("unconfirmed.csv", (
+        b"Topic,Date,Method,Participants,Hours\n"
+        b"Safety drill,2026-09-13,Virtual,Alice,\n"))
+    review = reviewed(content, "events")
+    assert not review.ready_for_import
+    assert "Completion was not verified" in " ".join(review.rows[0].issues)
+    corrected = correct_training_row(
+        review, review.rows[0].key,
+        {"Completion status": "Completed"},
+        expected_revision=review.revision, profile=PROFILE, period=PERIOD)
+    assert corrected.ready_for_import
+    assert corrected.rows[0].origin.cells == (
+        "Safety drill", "2026-09-13", "Virtual", "Alice", "")
+    assert ("Completion status", "Completed") in corrected.rows[0].corrections
+    assert accepted_training_block(
+        corrected, ResolvedBlock("training_summary", "This month"),
+        expected_block_fingerprint=ResolvedBlock("training_summary", "This month").fingerprint
+    ).extra_tables[0].rows == ((
+        "Safety drill", "2026-09-13", "Virtual", "Alice", ""),)
+    assert sources.source_bytes(PROFILE, content.source)
+
+
+def test_already_mapped_native_source_table_cannot_be_added_twice(storage):
+    content = ingest("events.csv", (
+        b"Topic,Date,Method,Participants,Hours,Status\n"
+        b"Pump safety,2026-09-13,Virtual,Alice,1,Completed\n"))
+    review = reviewed(content, "events")
+    mapped = ReportTable(
+        ("Topic", "Date", "Method", "Participants", "Hours", "Status"),
+        (("Pump safety", "2026-09-13", "Virtual", "Alice", "1", "Completed"),),
+        review.source.reference)
+    block = ResolvedBlock("training_summary", "This month",
+                          text="Keep authored note",
+                          extra_tables=(mapped,))
+    with pytest.raises(ValueError, match="already in the report"):
+        accepted_training_block(review, block,
+            expected_block_fingerprint=block.fingerprint)
+    assert block.extra_tables == (mapped,)
+    assert block.text == "Keep authored note"
