@@ -11,6 +11,7 @@ from app import monthly_report_ai as ai, monthly_report_library as library
 from app.monthly_report_model import ResolvedBlock
 from app.monthly_report_ui_text import literal
 from app.receipt_jobs import start_receipt
+from app.monthly_report_upload_guidance import capacity_upload_options
 
 
 @st.fragment(run_every=1)
@@ -107,10 +108,8 @@ def _capacity_file(prefix):
     return st.file_uploader(
         "Thermal capacity file",
         type=sorted(suffix.lstrip(".") for suffix in capacity.SUPPORTED),
-        max_upload_size=128,
         key=prefix + "_capacity_upload",
-        help="DOCX: up to 128 MB. Other supported files: up to 30 MB. "
-             "Use capacity values for the relevant sites.",
+        **capacity_upload_options(),
     )
 
 
