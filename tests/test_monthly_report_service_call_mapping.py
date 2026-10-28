@@ -370,3 +370,25 @@ def test_xlsx_cmms_is_supported_but_annual_count_grid_is_not_calls(storage):
     assert not_calls.notes
     assert not_calls.counts()["unmatched"] == 2
     assert sources.source_bytes(PROFILE, summary.source).startswith(b"Metric")
+
+
+
+def test_excluding_a_duplicate_recalculates_remaining_workorder_without_row_loss(storage):
+    original = read_csv("duplicate-exclusion.csv",
+        b"WO #,Finish Date,Area,Task,Tag,Site,Status\n"
+        b"00091,2026-09-21,Plant,Repair pump,P-91,Demo North,Completed\n"
+        b"00091,2026-09-22,Plant,Repeat line,P-91,Demo North,Completed\n")
+    review = review_service_calls(original, PROFILE, PERIOD)
+    assert len(review.rows) == 2
+    assert review.counts()["ready"] == 0
+    assert not review.ready_for_inclusion
+    accepted = exclude_service_call(review, review.rows[1].key,
+        expected_revision=review.revision)
+    assert accepted.ready_for_inclusion
+    assert len(accepted.rows) == 2
+    assert accepted.rows[1].excluded
+    assert accepted.rows[0].issues == ()
+    assert len(reviewed_service_call_block(accepted).rows) == 1
+    assert reviewed_service_call_block(accepted).rows[0][0] == "00091"
+    assert reimport_service_calls(accepted, review) == accepted
+    assert sources.source_bytes(PROFILE, original.source).endswith(b"Completed\n")
