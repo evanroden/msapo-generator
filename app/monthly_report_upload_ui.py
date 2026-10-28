@@ -1002,10 +1002,10 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
     # Water, Scorecards and MBCx already have section-level instructions. Keep one
     # labeled uploader without a duplicate title, while retaining the complete
     # canonical page-review flow and its safety checks.
-    upload_area = (st.container() if destination == "water_reports" else
-                   st.popover("Add files", key=local_key + "_add_files",
-                              help="Upload a file or reuse a file already saved in this draft."))
-    with upload_area:
+    # One directly visible section source task. Preserve the existing uploader
+    # and saved-source widget identities across ordinary report reruns.
+    with st.container(key=local_key + "_add_files"):
+        st.text("Upload new")
         upload = st.file_uploader(upload_label, type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
                                  accept_multiple_files=True, max_upload_size=128, key=local_key + "_upload")
         picked = tuple((u.name, u.getvalue()) for u in (upload or ()))
@@ -1042,18 +1042,18 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
         owners = source_destinations(contents, bindings, blocks)
         unassigned = [c for c in contents if not owners[c.source.id]]
         if unassigned:
-            with st.expander("Use an uploaded file"):
-                choices = {c.source.id: c for c in unassigned}
-                choice_key = field(local_key + "_saved_choice", next(iter(choices)))
-                if st.session_state[choice_key] not in choices:
-                    st.session_state[choice_key] = next(iter(choices))
-                # The native serializer retains this formatter after the
-                # function reuses `choices` for the section's own files.
-                filenames = {identity: item.source.filename for identity, item in choices.items()}
-                chosen = st.selectbox("Saved file", list(choices), format_func=filenames.get, key=choice_key)
-                if st.button("Use in " + title, key=local_key + "_use_saved"):
-                    bindings[chosen] = destination
-                    st.session_state[key + "_section_routes"] = bindings
+            st.text("Already uploaded")
+            choices = {c.source.id: c for c in unassigned}
+            choice_key = field(local_key + "_saved_choice", next(iter(choices)))
+            if st.session_state[choice_key] not in choices:
+                st.session_state[choice_key] = next(iter(choices))
+            # Exact source identities, never filenames, select reusable originals.
+            # Showing this chooser is not approval or an automatic route.
+            filenames = {identity: item.source.filename for identity, item in choices.items()}
+            chosen = st.selectbox("Saved file", list(choices), format_func=filenames.get, key=choice_key)
+            if st.button("Use in " + title, key=local_key + "_use_saved"):
+                bindings[chosen] = destination
+                st.session_state[key + "_section_routes"] = bindings
     for message in st.session_state.get(local_key + "_messages", ()):
         st.warning(message)
     scoped = section_contents(contents, destination, bindings, blocks)
