@@ -190,9 +190,13 @@ def prepare_section_pages(profile, contents, destination, blocks, assets=None, *
         raise ValueError("Embedding limit is 150 selected image/PDF pages per report. Remove pages before adding more.")
     destinations = tuple((c.source.id, destination) for c in contents
                          if any(identity == c.source.id for identity, _ in pending))
+    # The default Add action is also append-only. Never prepare already
+    # included pages merely because they remain selected in the source record:
+    # their old review state, raster budget and stored asset are independent
+    # of the new page being added. Reuse the exact reviewed pending identities
+    # for both default and explicit-subset interactions.
     prepared = sources.prepare_pages(
-        profile, contents, destinations,
-        only_pages=frozenset(pending) if only_pages is not None else None)
+        profile, contents, destinations, only_pages=frozenset(pending))
     result = {}
     for block in prepared:
         indexes = tuple(n for n, reference in enumerate(block.references) if page_identity(reference) in pending)
