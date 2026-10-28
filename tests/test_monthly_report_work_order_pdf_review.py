@@ -160,12 +160,16 @@ def test_image_only_page_fails_closed_without_ocr_or_partial_approval(stored, mo
     assert sources.source_bytes(PROFILE, content.source) == raw
 
 
-def test_source_modified_or_out_of_budget_blocks_before_partial_return(stored):
+def test_source_modified_or_out_of_budget_blocks_before_partial_return(stored, monkeypatch):
     raw = _mixed_pdf()
     content = stored(raw)
-    with pytest.raises(ValueError, match="fingerprint|integrity|changed"):
-        review_pdf_workorders(PROFILE,
-            replace(content, source=replace(content.source, sha256="a" * 64)), PERIOD)
+    before = sources.source_bytes
+    monkeypatch.setattr(sources, "source_bytes",
+                        lambda profile, source: b"synthetic damaged copy")
+    with pytest.raises(ValueError, match="saved PDF changed"):
+        review_pdf_workorders(PROFILE, content, PERIOD)
+    monkeypatch.setattr(sources, "source_bytes", before)
+    assert sources.source_bytes(PROFILE, content.source) == raw
     with fitz.open() as pdf:
         for n in range(151):
             page = pdf.new_page()
