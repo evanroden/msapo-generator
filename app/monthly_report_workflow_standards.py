@@ -193,19 +193,53 @@ def legacy_candidate(contract, key):
                  if item.key == key and _contract(item.origin_contract) == _contract(contract)), None)
 
 
-def adopt_legacy(draft, key, *, expected_revision, expected_legacy_fingerprint, confirmed):
+def legacy_review_receipt(item):
+    """Bind explicit preview/adoption to the entire stored record and revision."""
+    state = load_standards()
+    if item not in state.workflows:
+        raise library.RevisionConflict("The legacy procedure changed. Preview it again.")
+    return hashlib.sha256(library._json((state.revision, asdict(item)))).hexdigest()
+
+
+def _independent_legacy(item):
+    """Recognize only the exact historical picture-only pinned record shape.
+
+    This establishes an independent artifact, not its lost source-page scope.
+    Only explicit same-contract legacy adoption may use this boundary.
+    """
+    block = item.block
+    if (len(block.references) != 1
+            or not re.fullmatch(r"enfra-workflow-standard:[a-f0-9]{64}", block.references[0])
+            or not re.fullmatch(r"[a-f0-9]{64}", item.origin_fingerprint)):
+        return False
+    library._valid_key(item.origin_profile)
+    expected = approve_all_assets(ResolvedBlock(block.key, "Library", asset_hashes=block.asset_hashes,
+        references=block.references,
+        asset_provenance=tuple((ref, block.references) for ref in block.asset_hashes)))
+    return block == expected
+
+
+def adopt_legacy(draft, key, *, expected_revision, expected_legacy_fingerprint, confirmed, expected_legacy_receipt=None):
     if draft.synthetic:
         raise library.LibraryError("Demonstration reports cannot change contract procedures.")
     item = legacy_candidate(draft.profile.contract, key)
     if item is None or item.block.fingerprint != expected_legacy_fingerprint:
         raise library.RevisionConflict("The legacy procedure changed or belongs to another contract. Review it again.")
-    checked = refresh_asset_source_context(item.block, draft.sources)
-    if not _eligible(checked) or not source_pages_allowed(checked, draft.sources, draft.profile):
+    if expected_legacy_receipt != legacy_review_receipt(item):
+        raise library.RevisionConflict("The legacy procedure or its recorded origin changed. Preview it again.")
+    independent = _independent_legacy(item)
+    checked = item.block if independent else refresh_asset_source_context(item.block, draft.sources)
+    if not _eligible(checked) or (not independent and not source_pages_allowed(checked, draft.sources, draft.profile)):
         raise library.LibraryError("Review the legacy procedure source pages and their selected-site scope before adoption.")
+    library._confirmation(draft.prepared_by, confirmed)
     assets = {ref: read_asset(ref) for ref in checked.asset_hashes}
-    return _publish(draft.profile.contract, checked, assets,
-                    origin_profile=item.origin_profile, origin_fingerprint=item.origin_fingerprint,
-                    expected_revision=expected_revision, actor=draft.prepared_by, confirmed=confirmed)
+    # Serialize with the historical seeder after read-only admission/integrity checks.
+    with library._locked(_path()):
+        if expected_legacy_receipt != legacy_review_receipt(item):
+            raise library.RevisionConflict("The legacy procedure changed while reading its pictures. Preview it again.")
+        return _publish(draft.profile.contract, checked, assets,
+                        origin_profile=item.origin_profile, origin_fingerprint=item.origin_fingerprint,
+                        expected_revision=expected_revision, actor=draft.prepared_by, confirmed=confirmed)
 
 
 def use_standard(draft, block, assets, *, expected_revision, expected_fingerprint):

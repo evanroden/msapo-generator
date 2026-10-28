@@ -98,7 +98,7 @@ def test_legacy_adoption_retains_current_source_site_boundary(kind):
         library._atomic_write(path / 'assets' / ref, raw)
     library._atomic_write(path / 'manifest.json', library._json({'schema': 1, 'revision': 1, 'workflows': [asdict(item)]}))
     before = file_bytes()
-    kwargs = dict(expected_revision=0, expected_legacy_fingerprint=block.fingerprint, confirmed=True)
+    kwargs = dict(expected_revision=0, expected_legacy_fingerprint=block.fingerprint, confirmed=True, expected_legacy_receipt=workflows.legacy_review_receipt(item))
     if kind == 'corrected':
         assert workflows.adopt_legacy(draft, block.key, **kwargs).revision == 1
         assert all(file_bytes()[name] == raw for name, raw in before.items())
