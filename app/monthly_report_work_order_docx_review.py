@@ -195,11 +195,18 @@ def _one_table(content: SourceContent, item: ImportItem, source_item: int,
     for number, (row, shape) in enumerate(zip(original, native_rows), 1):
         reason = _native_row_issue(shape)
         if number <= header_index:
-            # Keep exact preceding title/group rows as source context, but
-            # do not interpret them as work orders.
-            title = "Full-width title band" if _full_width_band(shape, row, width) else (
-                reason or "Heading or other preamble before work-order header")
+            # Only a recognized full-width merged title is harmless furniture.
+            # An arbitrary row before the header could contain unreviewed data
+            # or pricing, so retain and block it instead of skipping silently.
+            band = _full_width_band(shape, row, width)
+            recognized_title = band and row[0].casefold().strip() in (
+                "work order status", "pm status", "work orders", "work order list")
+            title = ("Full-width title band" if recognized_title else
+                     reason or "Unrecognized row preceding work-order headers.")
             preamble.append(WordUnmatchedRow(number, row, title))
+            if not recognized_title:
+                unmatched.append(WordUnmatchedRow(
+                    number, row, "Unrecognized content before the work-order headings."))
             continue
         if number == header_index + 1:
             continue  # Known column headings, never an additional record.
