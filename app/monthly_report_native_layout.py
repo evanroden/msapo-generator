@@ -1638,7 +1638,15 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     table_context = {} if master else supplied_table_context(
         draft, original, items, section_by_pos, native_tables, context_table_refs,
         styles=document.styles.element)
-    unchanged_items.update(item.id for context, _ in table_context.values() for item in context)
+    from app.monthly_report_native_table_flow import supplied_native_table_flows, rewrite_flow_paragraph
+    table_flows = {} if master else supplied_native_table_flows(
+        draft, original, items, section_by_pos, native_tables, context_table_refs,
+        styles=document.styles.element, supplied_notes=supplied_notes, source_ref=source_ref,
+        source_document=document)
+    flow_rewrites = {position: text for flow in table_flows.values() for position, text in flow.rewrites}
+    table_context.update({key: (flow.items, flow.remaining_text) for key, flow in table_flows.items()})
+    unchanged_items.update(item.id for context, _ in table_context.values() for item in context
+                           if item.position not in flow_rewrites)
     context_anchors = {key: original[context[0].position - 1]
                        for key, (context, _) in table_context.items()}
     from app.monthly_report_native_pages import NativePages
@@ -1737,6 +1745,10 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             if (unproved_diagram or (any(item.kind == "image" for item in group)
                     and not _is_native_divider_background(element, _text(element)))):
                 _clear_images(element)
+            continue
+        if position in flow_rewrites:
+            rewrite_flow_paragraph(element, flow_rewrites[position])
+            page_plan.emitted(element)
             continue
         substantive = [item for item in group if item.kind in ("text", "table", "image")]
         if (substantive and all(item.id in unchanged_items for item in substantive)
