@@ -1,3 +1,4 @@
+# Read-only verification refresh for #495; not part of a product release.
 name: Source verification bundle
 
 on:
