@@ -226,7 +226,9 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
             st.button(action, key=prefix + "_organization_open_" + key,
                       on_click=_change_part, args=(prefix, active_key, key))
             return
+        contract_inclusion = False
         def render_editor():
+            nonlocal contract_inclusion
             st.button("Done", key=prefix + "_organization_close_" + key,
                       on_click=_change_part, args=(prefix, active_key, ""))
             # The specialized editors retain the explicit Include of a left-out part.
@@ -248,7 +250,11 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
                         changed, prefix, assets, field, show_preview=show_preview,
                     )
                 return changed
-            return edit_content(spec, block)
+            from app.monthly_report_workflow_defaults_ui import render_contract_procedure
+            changed = edit_content(spec, block)
+            changed, contract_inclusion = render_contract_procedure(
+                current_draft, changed, assets, prefix)
+            return changed
 
         switch_key = prefix + "_deferred_contact_switch"
         settling = key == "contact_matrix" and isinstance(st.session_state.get(switch_key), dict)
@@ -261,7 +267,7 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
         # Opening and closing an unchanged part must not invalidate its saved
         # review; an explicit Include of a left-out part is a real change.
         from app.monthly_report_guided import included_left_out
-        updated[key] = (changed if included_left_out(prefix, key)
+        updated[key] = (changed if contract_inclusion or included_left_out(prefix, key)
                         or replace(changed, source=block.source) != block else block)
         if settling:
             request = st.session_state[switch_key]
@@ -296,8 +302,8 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
     for key, title in parts:
         with slots[key]:
             render_part(key, title)
-    with st.expander("ENFRA outage procedures", expanded=False):
-        st.caption("Saved procedures are included when selected. Changes here affect this report.")
+    with st.expander("Contract outage procedures", expanded=False):
+        st.caption("Use this contract’s procedures. Changes affect this report unless you explicitly save a contract default.")
         for key, title in ORGANIZATION_PARTS:
             if key in WORKFLOW_KEYS:
                 render_part(key, title)
