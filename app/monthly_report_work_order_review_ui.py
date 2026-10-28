@@ -140,7 +140,10 @@ def render_reviewed_rows(draft, blocks, prefix, content):
                         position = getattr(record.mapping, name)
                         value = dict(row.corrections).get(name,
                             row.origin.cells[position] if position is not None else "")
-                    st.text_input(LABELS[name], value=value, key=widget)
+                    if kind == "maintenance" and name in ("task", "area", "tag"):
+                        st.text_area(LABELS[name], value=value, key=widget)
+                    else:
+                        st.text_input(LABELS[name], value=value, key=widget)
                     pairs.append((name, widget))
                 widget = local + "_omit_" + row.key
                 st.checkbox("Omit this source row", value=row.excluded, key=widget)

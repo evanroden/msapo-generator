@@ -270,8 +270,13 @@ def review_service_calls(content: SourceContent, profile: ReportProfile,
         if wo_index is None or not cells[wo_index].strip():
             unmatched.append(UnmatchedRow(row_no, cells, "No unambiguous work-order ID; review continuation or group row."))
             continue
-        if any("\n" in cell or "\r" in cell for cell in cells):
-            unmatched.append(UnmatchedRow(row_no, cells, "Multiline source row needs review before insertion."))
+        # A quoted CSV cell or native Word task can contain intentional line
+        # breaks without representing additional work orders. Keep descriptive
+        # cells intact; identity/date/scope/status must still be scalar.
+        scalar_columns = (getattr(mapping, name) for name in ("wo", "finished", "site", "status"))
+        if any(index is not None and ("\n" in cells[index] or "\r" in cells[index])
+               for index in scalar_columns):
+            unmatched.append(UnmatchedRow(row_no, cells, "Multiline identity, date, site or status needs review before insertion."))
             continue
         def value(name):
             index = getattr(mapping, name)

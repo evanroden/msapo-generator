@@ -113,15 +113,17 @@ def stale_period_mentions(text: str, year: int, month: int) -> tuple[str, ...]:
 
 
 def _annual_work_order_month_cells(key, table):
-    """Coordinates of labels in the complete, two-measure annual grid only.
+    """Exempt only exact annual month-header cells, never operational dates.
 
-    Imported tables put repeated header bands in body rows. Preserve that
-    structure when classifying labels; never exempt a month by its text alone.
-    Row zero is the table's columns, followed by its unchanged body rows.
-    The legacy editor also saved a six-row form after removing both empty
-    first-half value rows. Recognize only these exact eight/six-row schemas;
-    unknown/partial/reordered shapes retain normal date review.
+    The source-bound site/month grid has twelve recognized headings. Original
+    half-year WO Received/Closed grids retain their own independent eight/six
+    row shape below. Other tables remain subject to ordinary date review.
     """
+    if key == "work_orders":
+        from app.monthly_report_annual_work_order_grid import annual_header_cells
+        cells = annual_header_cells(table)
+        if cells:
+            return cells
     rows = (table.columns, *table.rows)
     if key != "work_orders" or len(rows) not in (6, 8) or any(len(row) != 7 for row in rows):
         return frozenset()

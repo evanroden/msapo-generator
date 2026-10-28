@@ -141,9 +141,12 @@ def render_import(state: library.LibraryState, field, browser_timezone: str = ""
                 destination = st.selectbox("Confirmed destination", allowed, key=destination_key)
                 columns, header = (), True
                 if item.rows:
-                    header = st.checkbox("First row contains column headings", key=field(document_key + "_headers_" + item.id, True))
+                    header = st.checkbox("Row after the title contains column headings" if item.table_header_row else
+                                         "First row contains column headings",
+                                         key=field(document_key + "_headers_" + item.id, True))
+                    labels = item.rows[item.table_header_row] if header else item.rows[0]
                     columns = tuple(st.multiselect("Columns to keep in this order", list(range(len(item.rows[0]))),
-                                                    format_func=lambda i: f"{i+1}: {item.rows[0][i][:70] or 'blank'}",
+                                                    format_func=lambda i: f"{i+1}: {labels[i][:70] or 'blank'}",
                                                     key=field(document_key + "_columns_" + item.id, list(range(len(item.rows[0]))))))
                     st.caption("Imported columns remain editable text until you choose a typed monthly-upload mapping. Unselected columns stay in this source review.")
                 if st.button("Add confirmed mapping", key=document_key + "_add", disabled=bool(item.rows) and not columns):

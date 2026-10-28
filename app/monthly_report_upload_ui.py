@@ -1258,7 +1258,10 @@ def render_workorder_metrics(profile, period, prefix, contents, blocks, *, addit
     # It is offered as reviewable source evidence, never silently written over
     # an edited Activity paragraph.
     from app.monthly_report_work_order_csv import work_order_evidence
-    metrics_signature = _signature((period.key, profile.key,
+    # Counts depend on selected sites and every accepted site-name alias.
+    # A profile key can stay the same while its report-specific scope changes.
+    site_scope = tuple((site.key, site.title, site.aliases) for site in profile.facilities)
+    metrics_signature = _signature((period.key, profile.contract, profile.key, site_scope,
                                tuple(c.source.fingerprint for c in contents)))
     cache_key = local_key + "_workorder_metrics_cache"
     cached_evidence = st.session_state.get(cache_key)
@@ -1352,6 +1355,11 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                           _rich_text_scope(prefix), testing.scope(), testing.generation()))
     from app.monthly_report_native_loading import reserve_empty_uploader
     intake_label = "Add source files" if managed else labels[destination]
+    if managed:
+        # The same single native uploader owns both Activity jobs; describe
+        # their destinations rather than asking for a separate file-type step.
+        st.caption("Work-order export (CSV/XLSX): review rows and totals. "
+                   "Vendor service report (PDF/DOCX): review Activity text and evidence.")
     reserve_empty_uploader(local_key + "_upload_" + context, intake_label)
     uploaded = st.file_uploader(intake_label, type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
                                 accept_multiple_files=True, max_upload_size=128,
