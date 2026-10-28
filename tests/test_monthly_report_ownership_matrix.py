@@ -54,7 +54,7 @@ def test_cross_contract_workflow_reuse_is_a_meeting_requirement_not_a_claim_abou
         assert item["default"] == "explicit_reuse"
         assert item["promotion"] == "review_and_adopt"
         assert "global" in item["notes"].lower() or "cross-contract" in item["notes"].lower()
-    assert "global workflow-standards store" in DOCUMENT.read_text()
+    assert "global ENFRA standards path" in DOCUMENT.read_text()
     assert "#533" in DOCUMENT.read_text()
 
 
