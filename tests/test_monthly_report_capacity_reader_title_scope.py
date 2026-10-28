@@ -167,6 +167,20 @@ def test_source_page_and_evidence_controls_still_fail_closed(profile):
     assert capacity.load_capacity(profile.contract) is None
 
 
+def test_site_named_on_a_different_page_cannot_authorize_this_table(profile):
+    native = ReportSource(
+        "synthetic-two-page", "synthetic-two-page.pdf", "a" * 64, ".pdf",
+        page_texts=(UNSCOPED, "North Hospital has other equipment."),
+        selected_pages=(1, 2),
+    )
+    inspected = capacity.CapacityInspection(SourceContent(native), ())
+    suggestion = proposed("North Hospital steam capacity")
+    with pytest.raises(ValueError, match="site not on the cited page"):
+        capacity.reader_result(profile, inspected, suggestion)
+    assert not inspected.tables
+    assert capacity.load_capacity(profile.contract) is None
+
+
 def test_vision_page_keeps_existing_explicit_human_review_path(profile):
     # Visual content cannot be verified by native text extraction. Do not
     # pretend blank OCR text establishes the image's site or silently drop
