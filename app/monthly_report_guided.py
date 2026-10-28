@@ -402,7 +402,7 @@ def _standing_signature(blocks, included):
                              if b.key not in MONTHLY_EDIT_KEYS and b.key in keys))
 
 
-def _initial_draft(state, period, prepared):
+def _initial_draft(state, period, prepared, *, assets=None):
     blocks = []
     for spec in (*[b for s in profile_sections(state.profile) for b in s.blocks], *layout_blocks()):
         saved = state.block(spec.key)
@@ -413,7 +413,11 @@ def _initial_draft(state, period, prepared):
             # of activity. Stock paragraphs remain explicit editor choices;
             # never inject them as facts into a new client-facing report.
             blocks.append(ResolvedBlock(spec.key, "This month" if spec.required else "Omit"))
-    return ReportDraft(state.profile, period, prepared, profile_sections(state.profile), tuple(blocks))
+    draft = ReportDraft(state.profile, period, prepared, profile_sections(state.profile), tuple(blocks))
+    if assets is not None:
+        from app.monthly_report_org_chart_defaults import apply_defaults as apply_chart_defaults
+        draft = apply_chart_defaults(draft, assets, initial_profile_state=state)
+    return draft
 
 
 def _retained_content(block):
@@ -1309,7 +1313,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             draft = replace(new_month_draft(prior_draft, period), profile=profile)
             preserve_saved_defaults = True
         else:
-            draft = _initial_draft(state, period, prepared)
+            draft = _initial_draft(state, period, prepared, assets=assets)
         # A shared report's author is not the identity of a new visitor.
         # Only a setup/import just completed in this session can seed that name.
         current_actor = (draft.prepared_by if recovered_work else
@@ -1323,6 +1327,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             from app.monthly_report_capacity import resolve_capacity
             from app.monthly_report_workflow_standards import apply_defaults as apply_workflow_defaults
             draft = apply_workflow_defaults(resolve_capacity(draft), assets)
+            from app.monthly_report_org_chart_defaults import apply_defaults as apply_chart_defaults
+            draft = apply_chart_defaults(draft, assets)
         st.session_state[draft_key] = draft
         # A saved empty standing block is an intentional report choice, not a
         # first-use gap. Preserve it on reopen and next-month rollover alike.
@@ -1426,14 +1432,14 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 st.session_state[draft_key] = draft
                 st.rerun()
     from app.workspace_layout import workspace, workspace_section, workspace_columns
-    landing_section = "monthly_activity" if any(section.key == "activity" for section in draft.sections) else "monthly_cover"
+    landing_section = "monthly_cover"
     landing = landing_section if st.session_state.pop(prefix + "_land_on_editor", False) else ""
     with workspace("monthly", prefix, navigation_key="monthly_report_navigation", landing=landing):
         with st.container(key="monthly_report_navigation"):
-            st.markdown('<span class="epc-section-navigation"><label for="monthly-section-choice">Section</label>'
-                        '<select id="monthly-section-choice" class="epc-section-selector" aria-label="Jump to section" disabled>'
-                        '<option>Loading sections…</option></select>'
-                        '<button type="button" class="epc-review-shortcut" disabled>Review</button></span>', unsafe_allow_html=True)
+            st.markdown('<span class="epc-section-navigation">'
+                        '<button type="button" class="epc-section-back" disabled>Back</button>'
+                        '<span class="epc-section-progress" role="status" aria-live="polite">Cover</span>'
+                        '<button type="button" class="epc-section-next" disabled>Next</button></span>', unsafe_allow_html=True)
         with workspace_section("monthly_cover", "Cover"):
             editor_column, preview_column = workspace_columns("monthly_cover")
             with editor_column:

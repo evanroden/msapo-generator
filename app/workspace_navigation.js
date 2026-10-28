@@ -1,4 +1,4 @@
-/* One native section selector. The existing layout adapter owns scheduling. */
+/* Native sequential navigation and legacy section selector. The existing layout adapter owns scheduling. */
 globalThis.ENFRAWorkspaceNavigation = {
     // Entering the editor from report setup replaces the whole page, yet the
     // scroll root keeps the setup review's offset. Python sends this request
@@ -87,7 +87,8 @@ globalThis.ENFRAWorkspaceNavigation = {
     },
     create({root, app, scrollport, nav, state, geometry, schedule}) {
         if (!nav) return null;
-        let select = null, reviewButton = null, entries = [], signature = '';
+        let select = null, reviewButton = null, backButton = null, nextButton = null, progress = null;
+        let entries = [], signature = '';
         let restore = null;
         const box = node => node.getBoundingClientRect();
         const owner = () => state.ownsScroll ? root : scrollport;
@@ -109,10 +110,35 @@ globalThis.ENFRAWorkspaceNavigation = {
         };
         const choose = () => navigate(select.value);
         const openReview = () => navigate('report_review');
+        const step = delta => {
+            const index = entries.findIndex(item => item.id === state.navigationActive);
+            const target = entries[index + delta];
+            if (index >= 0 && target) navigate(target.id);
+        };
+        const back = () => step(-1), nextSection = () => step(1);
+        // Review corrections still reach their section directly, even when
+        // Review temporarily releases a confined editor's scroll ownership.
+        // Only the Monthly sequential toolbar owns these local anchors.
+        const correctSection = event => {
+            if (!backButton || event.defaultPrevented || event.button !== 0 ||
+                event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+            const link = event.target?.closest?.('a');
+            const match = /^#report-section-([a-z_]+)$/.exec(link?.getAttribute('href') || '');
+            if (!match || !app.contains(link)) return;
+            const id = 'monthly_' + match[1];
+            if (!entries.some(item => item.id === id && item.target.isConnected)) return;
+            event.preventDefault();
+            navigate(id);
+        };
+        app.addEventListener?.('click', correctSection);
         const prepare = (context, sample, pairs) => {
             const current = nav.querySelector('.epc-section-selector');
-            if (!current) return context;
-            if (current !== select) {select = current; signature = select._epcNavigationSignature || ''; select.onchange = choose;}
+            if (current !== select) {
+                if (select?.onchange === choose) select.onchange = null;
+                select = current;
+                signature = select?._epcNavigationSignature || '';
+                if (select) select.onchange = choose;
+            }
             entries = pairs.map(({id,pair,title}) => ({id, target:pair, title}));
             const review = app.querySelector('#report-review');
             if (review) entries.push({id:'report_review', target:review, title:'Review and download', outside:true});
@@ -123,8 +149,21 @@ globalThis.ENFRAWorkspaceNavigation = {
                 if (reviewButton) reviewButton.onclick = openReview;
             }
             if (reviewButton) reviewButton.disabled = !review;
+            const previous = nav.querySelector('.epc-section-back');
+            const following = nav.querySelector('.epc-section-next');
+            if (backButton !== previous) {
+                if (backButton?.onclick === back) backButton.onclick = null;
+                backButton = previous;
+                if (backButton) backButton.onclick = back;
+            }
+            if (nextButton !== following) {
+                if (nextButton?.onclick === nextSection) nextButton.onclick = null;
+                nextButton = following;
+                if (nextButton) nextButton.onclick = nextSection;
+            }
+            progress = nav.querySelector('.epc-section-progress');
             const next = JSON.stringify(entries.map(({id,title}) => [id,title]));
-            if (next !== signature) {
+            if (select && next !== signature) {
                 const selected = select.value;
                 select.replaceChildren(...entries.map(({id,title}) => {
                     const option = document.createElement('option'); option.value=id; option.textContent=title; return option;
@@ -165,7 +204,7 @@ globalThis.ENFRAWorkspaceNavigation = {
             return context;
         };
         const update = (context, sample) => {
-            if (!select) return;
+            if (!entries.length) return;
             const top=Math.max(sample.chromeBottom,sample.scrollport.y,sample.visual?.y||0)+height()+12;
             let request = entries.find(item => item.id === state.navigationRequest);
             if (request && state.landingRequest === request.id) {
@@ -211,11 +250,26 @@ globalThis.ENFRAWorkspaceNavigation = {
             }
             state.navigationActive=active;
             // Never change a menu's highlighted option while it has focus.
-            if (document.activeElement!==select && active && select.value!==active) select.value=active;
+            if (select && document.activeElement!==select && active && select.value!==active) select.value=active;
+            const index = entries.findIndex(item => item.id === active);
+            if (backButton) backButton.disabled = index <= 0;
+            if (nextButton) {
+                nextButton.disabled = index < 0 || index >= entries.length - 1;
+                const label = entries[index + 1]?.outside ? 'Review' : 'Next';
+                if (nextButton.textContent !== label) nextButton.textContent = label;
+            }
+            if (progress && index >= 0) {
+                const text = `${index + 1} of ${entries.length} · ${entries[index].title}`;
+                if (progress.textContent !== text) progress.textContent = text;
+                if (progress.dataset.section !== active) progress.dataset.section = active;
+            }
         };
         return {prepare,update,height,dispose(){
+            app.removeEventListener?.('click',correctSection);
             if(select?.onchange===choose)select.onchange=null;
             if(reviewButton?.onclick===openReview)reviewButton.onclick=null;
+            if(backButton?.onclick===back)backButton.onclick=null;
+            if(nextButton?.onclick===nextSection)nextButton.onclick=null;
         }};
     }
 };

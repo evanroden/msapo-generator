@@ -1,7 +1,7 @@
 const test=require('node:test'), assert=require('node:assert/strict'), fs=require('node:fs'), vm=require('node:vm');
 const geometry=require('../app/workspace_geometry.js');
 
-function harness(mode='wide') {
+function harness(mode='wide', sequential=false) {
     const state={mode,ownsScroll:mode==='tabletop'}, document={activeElement:null};
     let scheduled=0, replacements=0, nativeEvents=0;
     // Native DOMRect properties are prototype getters, not enumerable fields.
@@ -12,7 +12,15 @@ function harness(mode='wide') {
     const select={value:'',children:[],closest:()=>label,
         replaceChildren(...items){this.children=items;this.value=items[0]?.value||'';replacements++;}};
     const reviewButton={disabled:true,onclick:null};
-    const nav={querySelector:selector=>selector==='.epc-review-shortcut'?reviewButton:select,getBoundingClientRect:label.getBoundingClientRect};
+    const backButton={disabled:true,onclick:null}, nextButton={disabled:true,onclick:null,textContent:'Next'};
+    const progress={textContent:'Cover',dataset:{}};
+    const nav={querySelector:selector=>({
+        '.epc-review-shortcut':sequential?null:reviewButton,
+        '.epc-section-selector':sequential?null:select,
+        '.epc-section-back':sequential?backButton:null,
+        '.epc-section-next':sequential?nextButton:null,
+        '.epc-section-progress':sequential?progress:null,
+    })[selector] || null,getBoundingClientRect:label.getBoundingClientRect};
     const field={value:'Unblurred human wording',selectionStart:3,selectionEnd:9,dispatchEvent(){nativeEvents++}};
     const target=(offset,height,outside=false)=>{
         const node={isConnected:true,querySelector:()=>null,setAttribute(){},focus(options){assert.equal(options.preventScroll,true);document.activeElement=node;}};
@@ -23,7 +31,10 @@ function harness(mode='wide') {
     const pairs=[['monthly_cover','Cover',0,400],['monthly_activity','Monthly Activity Summary',400,1600],
         ['monthly_short','Short section',2000,80],['monthly_training','Training Summary',2080,1200],
         ['monthly_empty','Empty section',3280,220]].map(([id,title,offset,height])=>({id,title,pair:target(offset,height)}));
-    const review=target(4000,60,true), app={querySelector:()=>review};
+    let clickHandler=null;
+    const review=target(4000,60,true), app={querySelector:()=>review,contains:()=>true,
+        addEventListener(type,handler){if(type==='click')clickHandler=handler},
+        removeEventListener(type,handler){if(clickHandler===handler)clickHandler=null}};
     document.createElement=()=>({});
     const context={document};vm.runInNewContext(fs.readFileSync('app/workspace_navigation.js','utf8'),context);
     const create=()=>context.ENFRAWorkspaceNavigation.create({root,app,scrollport,nav,state,geometry,schedule(){scheduled++}});
@@ -38,7 +49,9 @@ function harness(mode='wide') {
     }
     const choose=id=>{select.value=id;select.onchange();measure()};
     measure();
-    return {state,root,scrollport,select,reviewButton,field,pairs,review,app,document,measure,choose,nav,label,controller:()=>controller,
+    return {correct(href,options={}){let prevented=false; const link={getAttribute:()=>href};
+        clickHandler({button:0,target:{closest:()=>link},preventDefault(){prevented=true},...options});
+        measure();return prevented;},state,root,scrollport,select,reviewButton,backButton,nextButton,progress,field,pairs,review,app,document,measure,choose,nav,label,controller:()=>controller,
         land:request=>context.ENFRAWorkspaceNavigation.land(state,request),
         cancelLanding:()=>context.ENFRAWorkspaceNavigation.cancelLanding(state),
         rerender(){controller.dispose();controller=create();measure()},dispose(){controller.dispose()},
@@ -194,7 +207,7 @@ test('a streamed navigation container binds through existing discovery and later
     const makeNav=()=>{
         const nav=element();nav.getBoundingClientRect=()=>({top:64,height:52});
         nav.select={value:'',disabled:true,closest:()=>nav,replaceChildren(...children){this.children=children;this.value=children[0]?.value||'';}};
-        nav.querySelector=()=>nav.select;return nav;
+        nav.querySelector=selector=>selector==='.epc-section-selector'?nav.select:null;return nav;
     };
     const document={activeElement:field,hidden:false,documentElement:{clientWidth:1180},body:element(),
         createElement:element,addEventListener(){},removeEventListener(){},querySelectorAll:()=>[],elementFromPoint:()=>null,
@@ -515,7 +528,7 @@ test('Review stays disabled until its destination exists and unbinds replaced co
     h.app.querySelector=()=>h.review;h.measure();
     assert.equal(h.reviewButton.disabled,false);
     const replacement={disabled:true,onclick:null};
-    h.nav.querySelector=selector=>selector==='.epc-review-shortcut'?replacement:h.select;
+    h.nav.querySelector=selector=>selector==='.epc-review-shortcut'?replacement:selector==='.epc-section-selector'?h.select:null;
     h.measure();assert.equal(h.reviewButton.onclick,null);
     assert.equal(replacement.disabled,false);
     replacement.onclick();h.measure();assert.equal(h.state.navigationActive,'report_review');
@@ -530,4 +543,41 @@ test('a deliberate Review click supersedes an unconsumed Activity landing',()=>{
     assert.equal(h.document.activeElement,h.review);
     h.land(['entry-1','monthly_activity']);h.measure();
     assert.equal(h.state.navigationActive,'report_review');
+});
+
+for(const mode of ['wide','compact','tabletop','confined'])test(`${mode} sequential controls work without a selector, preserve fields and reach Review`,()=>{
+    const h=harness(mode,true);
+    assert.equal(h.backButton.disabled,true);
+    assert.equal(h.nextButton.disabled,false);
+    assert.equal(h.progress.dataset.section,'monthly_cover');
+    const click=button=>{assert.equal(button.disabled,false);button.onclick();h.measure()};
+    for(let pass=0;pass<3;pass++){
+        click(h.nextButton);assert.equal(h.progress.dataset.section,'monthly_activity');
+        click(h.backButton);assert.equal(h.progress.dataset.section,'monthly_cover');
+    }
+    for(const id of ['monthly_activity','monthly_short','monthly_training','monthly_empty']){
+        click(h.nextButton);assert.equal(h.progress.dataset.section,id);
+    }
+    assert.equal(h.nextButton.textContent,'Review');
+    click(h.nextButton);assert.equal(h.progress.dataset.section,'report_review');
+    assert.equal(h.nextButton.disabled,true);assert.equal(h.state.reviewNavigation,true);
+    assert.equal(h.document.activeElement,h.review);
+    h.rerender();assert.equal(h.progress.dataset.section,'report_review');
+    click(h.backButton);assert.equal(h.progress.dataset.section,'monthly_empty');
+    assert.equal(h.field.value,'Unblurred human wording');assert.equal(h.counts().nativeEvents,0);
+    h.dispose();assert.equal(h.backButton.onclick,null);assert.equal(h.nextButton.onclick,null);
+});
+
+for(const mode of ['wide','tabletop','confined'])test(`${mode} final review correction links retain targeted access without jump menu`,()=>{
+    const h=harness(mode,true);
+    while(!h.nextButton.disabled){h.nextButton.onclick();h.measure()}
+    assert.equal(h.progress.dataset.section,'report_review');
+    assert.equal(h.correct('#report-section-activity',{ctrlKey:true}),false);
+    assert.equal(h.progress.dataset.section,'report_review');
+    assert.equal(h.correct('#report-section-missing'),false);
+    assert.equal(h.correct('#report-section-activity'),true);
+    assert.equal(h.progress.dataset.section,'monthly_activity');
+    assert.equal(h.state.reviewNavigation,false);
+    assert.equal(h.document.activeElement,h.pairs[1].pair);
+    h.nextButton.onclick();h.measure();assert.equal(h.progress.dataset.section,'monthly_short');
 });
