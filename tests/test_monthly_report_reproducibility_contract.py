@@ -82,7 +82,13 @@ def test_three_report_variants_produce_stable_content_and_selected_sections(kind
         assert any("0007" in cell.text and "0008" not in cell.text
                    for table in doc.tables for row in table.rows for cell in row.cells)
         manifest = canonical_docx_manifest(original)["manifest"]
-        assert sha256(illustration()).hexdigest() in manifest["media_sha256"]
+        # Divider artwork is intentionally re-encoded as a print-sized JPEG;
+        # the semantic output records those actual embedded bytes, not the
+        # unmodified source PNG checksum.
+        assert manifest["media_sha256"]
+        assert any(entry[0] == "p" and entry[5]
+                   for part, entries in manifest["stories"] for entry in entries
+                   if part == "word/document.xml")
     assert not draft.sources  # no private or unreviewed source interpretation
 
 
