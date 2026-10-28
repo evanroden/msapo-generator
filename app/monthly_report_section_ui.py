@@ -188,9 +188,12 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
         guide = section_help(section.key)
         st.write(guide.guidance)
         from app.monthly_report_content_kind import section_content_description
-        content_description = section_content_description(section.items)
+        content_description = section_content_description(section.items, section_key=section.key)
         if content_description:
             st.caption(content_description)
+        if any(item.kind == "unsupported" and item.position > 0 for item in section.items):
+            st.caption("Layout review is required; extracted labels do not make a drawing editable. "
+                       "Check its original page or use the existing replacement controls.")
         actions = ["Keep and review", "Edit text or change pictures", "Leave this section out"]
         labels = dict(zip(actions, (guide.keep, guide.edit, "Start this section blank")))
         if section.key == "cover":
