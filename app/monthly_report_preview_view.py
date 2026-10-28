@@ -474,7 +474,13 @@ export default function(component) {
         appObserver?.disconnect();
         if (editGate && onEditorReceipt) {
             editGate.listeners.delete(onEditorReceipt);
-            if (--editGate.refs === 0) {editGate.dispose();gates.delete(app);}
+            if (--editGate.refs === 0) {
+                editGate.dispose();
+                // Site/report transitions may mount the next workspace before
+                // this preview unmounts. Retire only the gate we still own;
+                // an old cleanup must not evict the new workspace's gate.
+                if (gates.get(app) === editGate) gates.delete(app);
+            }
         }
         workspace?.removeEventListener('epc-workspace-layout', layoutChanged);
         document.removeEventListener('visibilitychange', changed);
