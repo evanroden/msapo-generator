@@ -76,10 +76,12 @@ class DocxWorkOrderReview:
     tables: tuple[WordTableReview, ...]
     ignored_table_ids: tuple[str, ...]
     source_notices: tuple[str, ...] = ()
+    cross_table_duplicates: tuple[tuple[str, str], ...] = ()
 
     @property
     def ready_for_inclusion(self):
-        return bool(self.tables) and all(t.ready_for_inclusion for t in self.tables)
+        return (bool(self.tables) and not self.cross_table_duplicates
+                and all(t.ready_for_inclusion for t in self.tables))
 
 
 def _native_body(raw: bytes):
@@ -258,6 +260,19 @@ def _one_table(content: SourceContent, item: ImportItem, source_item: int,
         unmatched=tuple(unmatched), notices=tuple(warnings), review=normalized)
 
 
+def _cross_table_duplicates(tables):
+    """Two separate physical Word tables cannot each count the same site/WO."""
+    seen = {}
+    for table in tables:
+        if table.review is None:
+            continue
+        for row in table.review.rows:
+            if row.work_order and row.site and not row.excluded:
+                seen.setdefault((row.site, row.work_order.casefold()), set()).add(table.item_id)
+    return tuple(sorted(identity for identity, item_ids in seen.items()
+                        if len(item_ids) > 1))
+
+
 def review_docx_workorders(profile: ReportProfile, content: SourceContent,
                            period: ReportPeriod) -> DocxWorkOrderReview:
     """Only positive Activity work-order tables; no guessed cross-site routing."""
@@ -288,4 +303,5 @@ def review_docx_workorders(profile: ReportProfile, content: SourceContent,
         tables.append(_one_table(content, item, number, native, profile, period))
     return DocxWorkOrderReview(
         source.id, source.sha256, source.fingerprint, source.filename,
-        tuple(tables), tuple(ignored), inspection.notices)
+        tuple(tables), tuple(ignored), inspection.notices,
+        _cross_table_duplicates(tables))
