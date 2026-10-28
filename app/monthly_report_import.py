@@ -694,9 +694,25 @@ def inspect_docx(path: Path) -> DocxInspection:
                                     add("table", part, position, rows=rows, suggested_slot=content_slot or _suggest("table", text, section),
                                         note="Merged cells retain text in the first column of their span. Confirm headers and columns.")
                             elif text:
-                                add("text", part, position, text=text, note=source_note, suggested_slot=(content_slot if content_slot and not detected else _suggest("text", text, section, heading=bool(detected), part=part)))
-                                if part == "word/document.xml" and not section and len(titles) < 12:
-                                    titles.extend(line for line in text.splitlines() if 3 < len(line) < 180 and line not in titles)
+                                # A floating Word textbox has separate layout/review
+                                # ownership. Do not also offer its words as ordinary
+                                # editable paragraph text. Keep actual outside prose.
+                                # Native cover/title and header/footer handling has
+                                # its own source geometry and stays unchanged.
+                                ordinary_text = text
+                                if (element.tag == W + "p" and part == "word/document.xml"
+                                        and not cover_native_frame and not detected):
+                                    frames = {node for node in element.iter(W + "txbxContent")}
+                                    if frames:
+                                        ordinary_text = _text(element, exclude=frames)
+                                if ordinary_text:
+                                    add("text", part, position, text=ordinary_text, note=source_note,
+                                        suggested_slot=(content_slot if content_slot and not detected else
+                                                        _suggest("text", ordinary_text, section,
+                                                                 heading=bool(detected), part=part)))
+                                    if part == "word/document.xml" and not section and len(titles) < 12:
+                                        titles.extend(line for line in ordinary_text.splitlines()
+                                                      if 3 < len(line) < 180 and line not in titles)
                             image_nodes = [e for e in element.iter() if e.tag in (A + "blip", V + "imagedata")]
                             outside_images = [picture for picture in image_nodes if picture not in frame_image_nodes]
                             image_occurrences = {}
