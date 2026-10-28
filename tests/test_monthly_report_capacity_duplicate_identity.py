@@ -231,25 +231,25 @@ def test_duplicate_guard_does_not_modify_a_previous_report_only_capacity_block(p
 
 @pytest.mark.parametrize("value", ("10", "15"))
 def test_keep_both_cannot_duplicate_a_saved_identity_even_from_one_new_row(profile, value):
-    first = inspect(profile, HEAD + b"NH,East,Steam,10,20,lb/hr\\n")
+    first = inspect(profile, HEAD + b"NH,East,Steam,10,20,lb/hr\n")
     old = save(profile, first.tables)
     incoming = inspect(profile, (
-        HEAD + f"NH,East,Steam,{value},20,lb/hr\\n".encode()
+        HEAD + f"NH,East,Steam,{value},20,lb/hr\n".encode()
     ), "repeated-standing-identity.csv")
     assert capacity.duplicate_capacity_rows(incoming.tables) == ()
     with pytest.raises(ValueError, match="Keep both would duplicate"):
         save(profile, incoming.tables, revision=1, mode="keep_both")
     assert capacity.load_capacity(profile.contract) == old
     assert capacity.load_capacity(profile.contract, 1) == old
-    assert sources.source_bytes(profile, incoming.content.source).endswith(b"lb/hr\\n")
+    assert sources.source_bytes(profile, incoming.content.source).endswith(b"lb/hr\n")
 
 
 def test_keep_both_remains_available_for_genuinely_different_capacity_schema(profile):
-    original = inspect(profile, HEAD + b"NH,East,Steam,10,20,lb/hr\\n")
+    original = inspect(profile, HEAD + b"NH,East,Steam,10,20,lb/hr\n")
     first = save(profile, original.tables)
     alternate = inspect(profile, (
-        b"Facility,Plant,Service,Capacity,Units\\n"
-        b"NH,East,Steam,30,lb/hr\\n"
+        b"Facility,Plant,Service,Capacity,Units\n"
+        b"NH,East,Steam,30,lb/hr\n"
     ), "alternative-service-layout.csv")
     assert capacity.schema_conflicts(first, alternate.tables) == ("north",)
     with pytest.raises(ValueError, match="different columns"):
@@ -264,13 +264,13 @@ def test_keep_both_remains_available_for_genuinely_different_capacity_schema(pro
 
 
 def test_normal_merge_still_updates_one_matching_standing_row_without_duplicates(profile):
-    initial = inspect(profile, HEAD + b"NH,East,Steam,10,20,lb/hr\\n")
+    initial = inspect(profile, HEAD + b"NH,East,Steam,10,20,lb/hr\n")
     old = save(profile, initial.tables)
-    revised = inspect(profile, HEAD + b"NH,East,Steam,15,20,lb/hr\\n",
+    revised = inspect(profile, HEAD + b"NH,East,Steam,15,20,lb/hr\n",
                       "revised-steam.csv")
     current = save(profile, revised.tables, revision=1, mode="merge")
     assert current.revision == 2
     assert sum(len(table.rows) for table in current.tables) == 1
     assert current.tables[0].rows[0][3] == "15"
     assert capacity.load_capacity(profile.contract, 1) == old
-    assert sources.source_bytes(profile, initial.content.source).endswith(b"10,20,lb/hr\\n")
+    assert sources.source_bytes(profile, initial.content.source).endswith(b"10,20,lb/hr\n")
