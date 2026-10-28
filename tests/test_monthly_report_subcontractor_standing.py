@@ -327,3 +327,50 @@ def test_report_source_category_and_provenance_remain_in_standing_history(contra
         library._contract_directory(both.contract) / "manifest.json")
     assert raw["schema"] == 1 and raw["contract"] == both.contract
     assert raw["rows"][0]["source_reference"] == source.source_reference
+
+
+
+def test_stale_site_omission_does_not_target_global_parent_or_ghost_row(contracts):
+    both, _, south, _ = contracts
+    roster = approved(both)
+    # The South site has an exception; the global row ID is not the current
+    # displayed South contact and must not be a misleading omit target.
+    with pytest.raises(ValueError, match="not active"):
+        effective_vendor_rows(south, roster, SEPTEMBER,
+                              omitted=(("south", "shared-vendor"),))
+    with pytest.raises(ValueError, match="not active"):
+        effective_vendor_rows(south, roster, SEPTEMBER,
+                              omitted=(("south", "nonexistent"),))
+    selected = effective_vendor_rows(
+        south, roster, SEPTEMBER, omitted=(("south", "south-exception"),))
+    assert selected.selected == ()
+    assert load_vendor_roster(both.contract) == roster
+
+
+def test_contact_status_and_instruction_prices_fail_before_word_output(contracts):
+    both, north, _, _ = contracts
+    base = rows()[0]
+    expensive = replace(base, when_to_contact="Invoice $500 for annual service")
+    roster = save_vendor_roster(
+        both, (expensive,), expected_revision=0, actor="Editor", confirmed=True)
+    review = effective_vendor_rows(north, roster, SEPTEMBER)
+    with pytest.raises(ValueError, match="pricing"):
+        report_vendor_block(north, review)
+    assert load_vendor_roster(both.contract).rows[0].when_to_contact == (
+        "Invoice $500 for annual service")
+    # The exact original needs explicit report-safe correction, not a rewrite
+    # of approved standing or a silently discarded source field.
+
+
+def test_report_only_omission_carries_without_readding_approved_vendor(contracts):
+    both, north, _, _ = contracts
+    roster = approved(both)
+    partial = effective_vendor_rows(north, roster, SEPTEMBER,
+                                     omitted=(("north", "north-water"),))
+    block = report_vendor_block(north, partial)
+    old = report(north, block)
+    new = new_month_draft(old, OCTOBER)
+    assert len(new.blocks[0].rows) == 1
+    assert new.blocks[0].rows[0][2] == "Synthetic Mechanical"
+    assert new.blocks[0].references == (roster.reference,)
+    assert len(load_vendor_roster(north.contract).rows) == 3
