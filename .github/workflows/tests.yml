@@ -118,6 +118,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build production image for capped resource test
+        id: resource_image
         run: docker build --tag msapo-resource-check .
       - name: Exercise two preview visitors and final export at Starter limits
         run: |
@@ -138,6 +139,28 @@ jobs:
           path: test-artifacts/monthly-native-master/
           if-no-files-found: error
           retention-days: 7
+      - name: Exercise large Starting Report and mapping intake at Starter limits
+        if: always() && steps.resource_image.outcome == 'success'
+        run: |
+          docker run --name msapo-large-intake --memory=512m --memory-swap=512m --cpus=0.5 \
+            --env RESOURCE_REQUIRE_512_MB=1 --env ANTHROPIC_API_KEY=test-key-not-used \
+            --entrypoint python msapo-resource-check scripts/qa_monthly_report_large_intake.py
+          test "$(docker inspect --format='{{.State.OOMKilled}}' msapo-large-intake)" = false
+      - name: Retain large-intake resource evidence including first failure
+        if: always()
+        run: |
+          mkdir -p test-artifacts/monthly-large-intake
+          docker inspect msapo-large-intake > test-artifacts/monthly-large-intake/container.json || true
+          docker logs msapo-large-intake > test-artifacts/monthly-large-intake/run.log 2>&1 || true
+          docker cp msapo-large-intake:/tmp/monthly-large-intake/. test-artifacts/monthly-large-intake/ || true
+      - name: Upload large-intake resource evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monthly-large-intake-resources
+          path: test-artifacts/monthly-large-intake/
+          if-no-files-found: error
+          retention-days: 7
       - name: Remove synthetic resource container
         if: always()
-        run: docker rm --force msapo-resource-check || true
+        run: docker rm --force msapo-resource-check msapo-large-intake || true
