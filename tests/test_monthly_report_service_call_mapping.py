@@ -99,8 +99,8 @@ def test_two_csv_layouts_map_to_same_five_editable_fields(storage):
     assert a.unmapped(a.rows[1]) == ((7, "Hours", ""), (8, "Note", "Cleared"))
     block = reviewed_service_call_block(a)
     assert block.rows == (
-        ("00001", "2026-09-05", "Demo North — Plant A", "Inspect pump", "PMP-01"),
-        ("00002", "2026-09-06", "Demo North — Plant B", "Repair valve", "VLV-02"),
+        ("00001", "2026-09-05", "Demonstration North Facility — Plant A", "Inspect pump", "PMP-01"),
+        ("00002", "2026-09-06", "Demonstration North Facility — Plant B", "Repair valve", "VLV-02"),
     )
     assert block.references == (sources.source_reference(first.source, 1),)
     assert sources.source_bytes(PROFILE, first.source).startswith(b"WO #")
@@ -177,7 +177,7 @@ def test_financial_headers_require_specific_exclusion_review(storage):
     assert accepted.ready_for_inclusion
     output = reviewed_service_call_block(accepted)
     assert output.rows == (("00004", "2026-09-08",
-                            "Demo North — Plant", "Test pressure", "P-4"),)
+                            "Demonstration North Facility — Plant", "Test pressure", "P-4"),)
     assert not any("250" in value for row in output.rows for value in row)
     assert review.rows[0].origin.cells[-1] == "250.00"
     with pytest.raises(ValueError, match="changed"):
@@ -228,7 +228,7 @@ def test_word_import_keeps_title_and_partial_rows_without_false_completion(stora
     accepted = confirm_word_layout(excluded, expected_revision=excluded.revision)
     assert accepted.ready_for_inclusion
     assert reviewed_service_call_block(accepted).rows == (
-        ("0009", "2026-09-05", "Demo North — Boiler Room", "Replace seal", "PUMP-09"),)
+        ("0009", "2026-09-05", "Demonstration North Facility — Boiler Room", "Replace seal", "PUMP-09"),)
     assert sources.source_bytes(PROFILE, source.source) == raw
 
 
