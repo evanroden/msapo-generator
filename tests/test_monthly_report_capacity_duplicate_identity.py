@@ -274,3 +274,21 @@ def test_normal_merge_still_updates_one_matching_standing_row_without_duplicates
     assert current.tables[0].rows[0][3] == "15"
     assert capacity.load_capacity(profile.contract, 1) == old
     assert sources.source_bytes(profile, initial.content.source).endswith(b"10,20,lb/hr\n")
+
+
+
+def test_site_aliases_resolve_to_one_identity_and_do_not_double_count(profile):
+    raw = (
+        HEAD
+        + b"NH,East,Steam,100,200,lb/hr\n"
+        + b"North Hospital,East,Steam,100,200,lb/hr\n"
+    )
+    inspection = inspect(profile, raw)
+    assert inspection.tables[0].site_keys == ("north", "north")
+    assert capacity.duplicate_capacity_rows(inspection.tables) == (
+        ((1, 1), (1, 2), "north"),)
+    assert capacity.first_fill_tables(None, iter(inspection.tables)) == ()
+    with pytest.raises(ValueError, match="same site and labels"):
+        save(profile, inspection.tables)
+    assert capacity.load_capacity(profile.contract) is None
+    assert sources.source_bytes(profile, inspection.content.source) == raw
