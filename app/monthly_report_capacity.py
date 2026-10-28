@@ -605,6 +605,21 @@ def save_capacity(profile, tables, *, expected_revision, actor, reviewed_fingerp
                 if key in incoming and incoming[key] != row:
                     raise ValueError("Two capacity rows have the same site and labels but different values. Add the missing plant/service label before saving.")
                 incoming[key] = row
+        if mode == "keep_both" and current is not None:
+            # "Keep both" is for genuinely different capacity schemas, not
+            # two versions of the *same* site/service/plant measurement.
+            # Otherwise even a single incoming row can duplicate an approved
+            # standing row and falsely inflate the next report's capacity.
+            saved_keys = {
+                _row_key(old, row, site)
+                for old in current.tables
+                for row, site in zip(old.rows, old.site_keys)
+            }
+            if saved_keys.intersection(incoming):
+                raise ValueError(
+                    "Keep both would duplicate capacity rows with the same site "
+                    "and labels. Choose a distinct service/plant or replace "
+                    "the existing measurement instead.")
         replaced = set()
         if mode == "replace_sites":
             for new in tables:
