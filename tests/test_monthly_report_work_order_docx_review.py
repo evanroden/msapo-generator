@@ -308,3 +308,28 @@ def test_unrecognized_preamble_and_full_width_category_inside_data_need_review(t
     assert len(result.raw_rows) == 5
     assert result.unmatched[1].cells[0] == "Electrical category"
     assert sources.source_bytes(PROFILE, source.source) == raw
+
+
+def test_two_physical_activity_tables_with_the_same_workorder_do_not_double_count(tmp_path, monkeypatch):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    doc = Document()
+    doc.add_heading("2 Monthly Activity Summary", 1)
+    _table(doc, HEADERS, (
+        ("0044", "North", "2026-09-05", "Open", "HVAC"),
+        ("0045", "South", "2026-09-06", "Closed", "Electrical"),
+    ))
+    doc.add_paragraph("Work Order Status")
+    _table(doc, ALTERNATE, (
+        ("0044", "North", "2026-09-07", "Closed", "HVAC"),
+        ("0046", "South", "2026-09-08", "Open", "HVAC"),
+    ))
+    content, path, raw = _source(tmp_path, doc)
+    result = review_docx_workorders(PROFILE, content, PERIOD)
+    assert len(result.tables) == 2
+    assert all(table.status == "records" for table in result.tables)
+    assert all(table.ready_for_inclusion for table in result.tables)
+    assert result.cross_table_duplicates == (("north", "0044"),)
+    assert not result.ready_for_inclusion
+    assert result.tables[0].item_id != result.tables[1].item_id
+    assert result.tables[0].source_reference != result.tables[1].source_reference
+    assert sources.source_bytes(PROFILE, content.source) == path.read_bytes() == raw
