@@ -441,20 +441,34 @@ def review_contacts(draft, prefix, field, assets):
         signature = _signature((asdict(current) if current else None, asdict(candidate), missing))
         confirmed = st.checkbox("Replace this report’s contact matrix with this reviewed directory table", key=prefix + "_contacts_ok_" + signature)
         st.caption("This is an explicit replacement in this report only. It does not change shared report defaults, org charts, membership or the source workbook. Save progress to pin it for next month.")
+        from app.monthly_report_contact_undo import (
+            ContactUndoReceipt, capture_contact_undo, contact_undo_ready,
+            undo_contact_update,
+        )
         if st.button("Use reviewed contact table", key=prefix + "_use_contacts", disabled=not (confirmed and candidate.rows and not missing)):
-            st.session_state[prefix + "_contacts_undo"] = (current, draft.sections)
-            draft = directory.apply_contacts(draft, candidate)
+            # Undo owns only this explicit replacement. No later independent
+            # section, org-chart, picture, note or contact edit is rolled back.
+            changed = directory.apply_contacts(draft, candidate)
+            st.session_state[prefix + "_contacts_undo"] = capture_contact_undo(draft, changed)
+            draft = changed
             _resume_contacts(draft, prefix)
         undo = st.session_state.get(prefix + "_contacts_undo")
-        if undo and st.button("Undo contact table update", key=prefix + "_undo_contacts"):
-            blocks = {b.key: b for b in draft.blocks}
-            if undo[0]:
-                blocks["contact_matrix"] = undo[0]
-            else:
-                blocks.pop("contact_matrix", None)
-            draft = replace(draft, blocks=tuple(blocks.values()), sections=undo[1])
-            st.session_state.pop(prefix + "_contacts_undo", None)
-            _resume_contacts(draft, prefix)
+        if undo is not None:
+            if not isinstance(undo, ContactUndoReceipt):
+                # A session may survive an upgrade from the old (block,
+                # entire_sections) tuple. That broad receipt is not safe.
+                st.session_state.pop(prefix + "_contacts_undo", None)
+            elif not contact_undo_ready(draft, undo):
+                st.session_state.pop(prefix + "_contacts_undo", None)
+                st.warning("Contacts or their section changed since Apply. Undo is no longer available; newer report edits were preserved.")
+            elif st.button("Undo contact table update", key=prefix + "_undo_contacts"):
+                try:
+                    draft = undo_contact_update(draft, undo)
+                except ValueError:
+                    st.warning("Contacts changed before Undo could apply. Your current report is unchanged.")
+                else:
+                    st.session_state.pop(prefix + "_contacts_undo", None)
+                    _resume_contacts(draft, prefix)
     return draft
 
 
