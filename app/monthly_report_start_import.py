@@ -93,11 +93,22 @@ def mentioned_periods(text):
     periods = set()
     for month in range(1, 13):
         name = calendar.month_name[month]
-        for match in re.finditer(rf"\b(?:{name}|{name[:3]}\.?)\s+(?:\d{{1,2}},?\s+)?(20\d{{2}})\b", text, re.IGNORECASE):
+        variants = rf"{name}|{name[:3]}\\.?"
+        if month == 9:
+            variants += r"|Sept\\.?"
+        for match in re.finditer(
+                rf"\\b(?:{variants})\\s+(?:\\d{{1,2}},?\\s+)?(20\\d{{2}})\\b",
+                text, re.IGNORECASE):
             periods.add((int(match[1]), month))
     for match in re.finditer(r"\b(20\d{2})[-/](0?[1-9]|1[0-2])(?:[-/]\d{1,2})?\b", text):
         periods.add((int(match[1]), int(match[2])))
     for match in re.finditer(r"\b(0?[1-9]|1[0-2])/\d{1,2}/(20\d{2})\b", text):
+        periods.add((int(match[2]), int(match[1])))
+    # A self-contained MM/YYYY label can date a cover or planned body item,
+    # but a path component, work-order suffix, longer date or decimal cannot.
+    for match in re.finditer(
+            r"(?<![\\w/\\\\.\\-])(0?[1-9]|1[0-2])/(20\\d{2})(?![\\w/\\\\.\\-])",
+            text):
         periods.add((int(match[2]), int(match[1])))
     return periods
 
