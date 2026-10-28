@@ -12,6 +12,8 @@ def test_activity_writing_precedes_sources_and_keeps_one_native_editor(monkeypat
     app = monthly(monkeypatch, tmp_path)
     editor = next(item for item in app.text_area if item.label == "Activity summary")
     native_id = editor.id
+    next(item for item in app.button if item.label == "Done with source files").click().run()
+    editor = next(item for item in app.text_area if item.label == "Activity summary")
     text = "Direct writing remains first when source management opens."
     editor.set_value(text).run()
     next(item for item in app.button if item.label == "Manage source files").click().run()
@@ -45,7 +47,7 @@ def test_report_order_all_editors_and_direct_previews(monkeypatch, tmp_path):
     assert not any(item.label == "Report steps" for item in app.radio)
     assert not any(item.label in ("Section to update", "Site information to update") for item in app.selectbox)
     assert not any(item.label == "Show writing help" for item in app.toggle)
-    assert any(item.label == "Manage source files" for item in app.button)
+    assert any(item.label == "Done with source files" for item in app.button)
     assert not any(item.label == "Add work-order spreadsheets" for item in app.checkbox)
     assert next(item for item in app.text_area if item.label == "Activity summary")
     assert next(item for item in app.button if item.label == "Create Word and PDF")

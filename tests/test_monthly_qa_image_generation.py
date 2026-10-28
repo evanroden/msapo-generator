@@ -66,6 +66,10 @@ def test_qa_toolbar_generates_real_docx_with_ingested_source_page(monkeypatch, t
     # This invented image-resolver case explicitly belongs to Demo North.
     # The generic source page contains no site; use the real item form instead
     # of treating its earlier visual review as permission to include any site.
+    # First intake is already open. Exercise its explicit close and reopen,
+    # rather than assuming the old initially-collapsed manager state.
+    next(b for b in app.button if b.label == "Done with source files").click().run()
+    assert not app.exception
     next(b for b in app.button if b.label == "Manage source files").click().run()
     next(w for w in app.multiselect if w.label == "Source sites").set_value(["qa-north"])
     next(b for b in app.button if b.label == "Use these source details").click().run()

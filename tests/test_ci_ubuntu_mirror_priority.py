@@ -111,7 +111,7 @@ def test_pytest_renderer_setup_is_bounded_and_preserves_packages_and_trust():
         'fonts-crosextra-carlito', 'fonts-crosextra-caladea', 'fonts-texgyre',
         'fonts-opensymbol', 'fonts-urw-base35',
     ]
-    assert '    timeout-minutes: 90\n' in job
+    assert '    timeout-minutes: 120\n' in job
     assert 'continue-on-error' not in job
     assert '          python runtime/check_renderer.py\n' in job
     assert '        run: python -m pytest -q --junitxml=test-results.xml\n' in job

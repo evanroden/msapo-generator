@@ -87,7 +87,7 @@ globalThis.ENFRAWorkspaceNavigation = {
     },
     create({root, app, scrollport, nav, state, geometry, schedule}) {
         if (!nav) return null;
-        let select = null, entries = [], signature = '';
+        let select = null, reviewButton = null, entries = [], signature = '';
         let restore = null;
         const box = node => node.getBoundingClientRect();
         const owner = () => state.ownsScroll ? root : scrollport;
@@ -96,16 +96,19 @@ globalThis.ENFRAWorkspaceNavigation = {
         const height = () => box(nav).height;
         const capture = entry => entry ? {id:entry.id, scroll:owner().scrollTop,
             offset:box(entry.target).top-box(owner()).top} : null;
-        const choose = () => {
-            const entry = entries.find(item => item.id === select.value);
+        const navigate = id => {
+            const entry = entries.find(item => item.id === id);
             if (!entry?.target.isConnected) return;
             if (entry.outside) {
-                state.navigationReturn = capture(entries.find(item => item.id === state.navigationActive));
+                if (!state.reviewNavigation)
+                    state.navigationReturn = capture(entries.find(item => item.id === state.navigationActive));
                 state.reviewNavigation = true;
             } else if (!entry.outside) state.reviewNavigation = false;
             state.navigationRequest = entry.id; state.navigationActive = entry.id;
             schedule();
         };
+        const choose = () => navigate(select.value);
+        const openReview = () => navigate('report_review');
         const prepare = (context, sample, pairs) => {
             const current = nav.querySelector('.epc-section-selector');
             if (!current) return context;
@@ -113,6 +116,13 @@ globalThis.ENFRAWorkspaceNavigation = {
             entries = pairs.map(({id,pair,title}) => ({id, target:pair, title}));
             const review = app.querySelector('#report-review');
             if (review) entries.push({id:'report_review', target:review, title:'Review and download', outside:true});
+            const shortcut = nav.querySelector('.epc-review-shortcut');
+            if (shortcut !== reviewButton) {
+                if (reviewButton?.onclick === openReview) reviewButton.onclick = null;
+                reviewButton = shortcut;
+                if (reviewButton) reviewButton.onclick = openReview;
+            }
+            if (reviewButton) reviewButton.disabled = !review;
             const next = JSON.stringify(entries.map(({id,title}) => [id,title]));
             if (next !== signature) {
                 const selected = select.value;
@@ -203,6 +213,9 @@ globalThis.ENFRAWorkspaceNavigation = {
             // Never change a menu's highlighted option while it has focus.
             if (document.activeElement!==select && active && select.value!==active) select.value=active;
         };
-        return {prepare,update,height,dispose(){if(select?.onchange===choose)select.onchange=null;}};
+        return {prepare,update,height,dispose(){
+            if(select?.onchange===choose)select.onchange=null;
+            if(reviewButton?.onclick===openReview)reviewButton.onclick=null;
+        }};
     }
 };

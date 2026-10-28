@@ -21,6 +21,39 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests/fixtures/workspaces/work_order_rows_app.py"
 
 
+@pytest.mark.parametrize("change,dirty", [
+    ("evidence", False), ("tracked", True), ("staged", True),
+    ("untracked-source", True), ("other-evidence", True), ("tracked-evidence", True),
+])
+def test_checkout_provenance_excludes_only_this_drivers_generated_evidence(tmp_path, monkeypatch, change, dirty):
+    def git(*args):
+        return subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+    git("init", "-q")
+    source = tmp_path / "source.py"
+    source.write_text("original\n")
+    evidence = tmp_path / "test-artifacts" / "work-order-rows"
+    evidence.mkdir(parents=True)
+    baseline = evidence / "tracked-baseline.txt"
+    baseline.write_text("original\n")
+    git("add", ".")
+    git("-c", "user.name=Synthetic Test", "-c", "user.email=test@example.invalid",
+        "commit", "-qm", "Synthetic baseline")
+    (evidence / "streamlit.log").write_text("Synthetic evidence\n")
+    monkeypatch.setattr(qa, "ROOT", tmp_path)
+    monkeypatch.setattr(qa, "OUT", evidence)
+    if change in {"tracked", "staged"}:
+        source.write_text("changed\n")
+        if change == "staged":
+            git("add", "source.py")
+    elif change == "untracked-source":
+        (tmp_path / "new_source.py").write_text("new\n")
+    elif change == "other-evidence":
+        (evidence.parent / "unrelated.txt").write_text("unowned evidence\n")
+    elif change == "tracked-evidence":
+        baseline.write_text("changed\n")
+    assert qa.source_checkout_dirty() is dirty
+
+
 def mark(monkeypatch, tmp_path):
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("EPC_MONTHLY_DOM_FIXTURE", "1")

@@ -28,6 +28,7 @@ def _folder(base, token):
 
 def setup(base, token):
     from app import monthly_report_qa_fixture as fixture, monthly_report_library as library
+    from app import monthly_report_directory as directory
     from app.monthly_report_model import ReportTable
     from docx import Document
     folder = _folder(base, token)
@@ -40,6 +41,10 @@ def setup(base, token):
                    replace(block, extra_tables=(ReportTable(VENDOR_COLUMNS, VENDOR_ROWS, 'synthetic:custom-vendors'),))
                    if block.key == 'subcontractor_matrix' else block for block in draft.blocks)
     draft = replace(draft, blocks=blocks)
+    # Match the real saved-directory path before establishing immutable
+    # baselines. Populated rows alone leave the default image-page schema,
+    # which a later shared-directory refresh legitimately converts to a table.
+    draft = directory.apply_contacts(draft, next(b for b in blocks if b.key == "contact_matrix"))
     library.save_snapshot(draft, expected_revision=1, entered_editor=fixture.ACTOR)
     folder.mkdir()
     doc = Document()
@@ -103,10 +108,14 @@ def snapshot(base, token):
     working = _working_report(saved)
     journal = load(token, fixture.CONTRACT, fixture.profile().key, fixture.PERIOD)
     def state(draft):
+        unrelated = replace(draft, blocks=tuple(b for b in draft.blocks
+            if b.key not in {'contact_matrix','subcontractor_matrix'}))
         return {'contacts': asdict(next(b for b in draft.blocks if b.key == 'contact_matrix')),
                 'vendors': asdict(next(b for b in draft.blocks if b.key == 'subcontractor_matrix')),
-                'unrelated': replace(draft, blocks=tuple(b for b in draft.blocks
-                    if b.key not in {'contact_matrix','subcontractor_matrix'})).fingerprint}
+                'unrelated': unrelated.fingerprint,
+                # Only reached after _folder/namespace validate the marked synthetic fixture.
+                # Keep actual field evidence when a strict unrelated-content check fails.
+                'unrelated_payload': asdict(unrelated)}
     standing = directory.load_directory(fixture.CONTRACT)
     setup_record = json.loads((folder / 'setup.json').read_text())
     return {'scope': identity, 'generation': generation, 'saved_revision': saved.revision,

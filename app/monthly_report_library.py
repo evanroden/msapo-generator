@@ -374,6 +374,10 @@ def _validate_profile(profile: ReportProfile) -> None:
         raise LibraryError("Duplicate saved block order.")
     for key, order in profile.section_block_order:
         section = next((s for s in skeleton if s.key == key), None)
+        if key == "water" and order == ("water_reports",):
+            # Exact legacy Water order remains valid; profile_sections supplies
+            # the new optional update before pages in the working schema.
+            continue
         if section is None or len(set(order)) != len(order) or set(order) != {b.key for b in section.blocks}:
             raise LibraryError("Each section's block order must contain its blocks exactly once.")
     if profile.imported_from and not re.fullmatch(r"[0-9a-f]{64}", profile.imported_from):
