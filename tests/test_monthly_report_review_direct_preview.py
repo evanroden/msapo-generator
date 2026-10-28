@@ -54,7 +54,8 @@ def synthetic_preview(draft, loader):
 
 
 def preview_state(app):
-    return app.session_state.get('review_direct_review_draft_preview')
+    # AppTest exposes SafeSessionState, which has no dict-style .get method.
+    return app.session_state.filtered_state.get('review_direct_review_draft_preview')
 
 
 def owner(app):
