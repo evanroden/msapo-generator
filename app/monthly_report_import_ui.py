@@ -67,21 +67,32 @@ def render_import(state: library.LibraryState, field, browser_timezone: str = ""
         )
         if st.button("Read DOCX for mapping", key=prefix + "_read", disabled=upload is None):
             try:
-                old = st.session_state.pop(stage_key, None)
-                if old:
-                    old[0].cleanup()
+                # Inspection can fail after the upload is accepted. Keep the
+                # prior source and its review usable until this one is ready.
+                with st.spinner("Reading document structure and content…"):
+                    staged = _stage(upload)
+            except (ValueError, OSError) as exc:
+                st.error(str(exc))
+                if st.session_state.get(stage_key) is not None:
+                    st.caption("Your previous DOCX review and mappings are unchanged. Retry reading or choose another file.")
+            else:
+                old = st.session_state.get(stage_key)
+                st.session_state[stage_key] = staged
                 st.session_state[prefix + "_mappings"] = {}
                 st.session_state.pop(prefix + "_saved", None)
                 st.session_state.pop(prefix + "_preview", None)
-                with st.spinner("Reading document structure and content…"):
-                    staged = _stage(upload)
-                st.session_state[stage_key] = staged
-            except (ValueError, OSError) as exc:
-                st.error(str(exc))
+                if old:
+                    try:
+                        old[0].cleanup()
+                    except OSError:
+                        # The new review is already installed; cleanup failure
+                        # must not be misreported as a rejected replacement.
+                        st.warning("New DOCX ready for review; the previous temporary review could not be removed.")
         staged = st.session_state.get(stage_key)
         if staged is None:
             return
         _, path, inspection = staged
+        st.caption("Reviewing the last successfully read DOCX.")
         document_key = prefix + "_" + inspection.sha256[:16]
         mappings = st.session_state.setdefault(prefix + "_mappings", {})
         st.caption(f"{len(inspection.items)} items · {inspection.word_sections} Word sections. Word section counts do not determine report membership or layout.")
