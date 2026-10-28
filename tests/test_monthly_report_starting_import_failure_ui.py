@@ -164,7 +164,9 @@ def test_unreadable_new_source_retains_prior_staged_original_and_exact_error(
         monkeypatch, tmp_path):
     first = report_file(tmp_path, activity=("September 2026 previous synthetic work.",))
     first_raw = first.read_bytes()
-    second = report_file(tmp_path, activity=("September 2026 alternate source.",))
+    other_dir = tmp_path / "alternative"
+    other_dir.mkdir()
+    second = report_file(other_dir, activity=("September 2026 alternate source.",))
     second_raw = second.read_bytes()
     assert second_raw != first_raw
     supplied = {"raw": first_raw}
@@ -189,7 +191,7 @@ def test_unreadable_new_source_retains_prior_staged_original_and_exact_error(
         app.run()
         assert "256 MiB parsing limit" in _fail_message(app)
         assert app.session_state[stage_key] == prior
-    assert first.read_bytes() == second_raw  # same fixture path was deliberately reused
+    assert first.read_bytes() == first_raw and second.read_bytes() == second_raw
     assert prior[1].read_bytes() == first_raw
 
 
