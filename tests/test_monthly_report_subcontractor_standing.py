@@ -374,3 +374,40 @@ def test_report_only_omission_carries_without_readding_approved_vendor(contracts
     assert new.blocks[0].rows[0][2] == "Synthetic Mechanical"
     assert new.blocks[0].references == (roster.reference,)
     assert len(load_vendor_roster(north.contract).rows) == 3
+
+
+
+def test_unsaved_or_forged_roster_and_review_cannot_publish_vendor_contacts(contracts):
+    both, north, _, _ = contracts
+    from app.monthly_report_subcontractor_standing import VendorRoster
+    unsaved = VendorRoster(both.contract, 1, rows())
+    with pytest.raises((ValueError, library.LibraryError)):
+        effective_vendor_rows(north, unsaved, SEPTEMBER)
+    approved_master = approved(both)
+    ready = effective_vendor_rows(north, approved_master, SEPTEMBER)
+    tampered = replace(ready, selected=tuple(
+        replace(item, row=replace(item.row, contact="Unapproved edited contact"))
+        if item.row.id == "shared-vendor" else item for item in ready.selected))
+    with pytest.raises(ValueError, match="approved source"):
+        report_vendor_block(north, tampered)
+    with pytest.raises(ValueError, match="reference"):
+        report_vendor_block(north, replace(ready, master_reference="vendor-roster:fake:r00000001"))
+    assert report_vendor_block(north, ready).rows[0][3] == "Shared technician"
+
+
+def test_pinned_older_approved_roster_remains_reusable_after_new_master_revision(contracts):
+    both, north, _, _ = contracts
+    original = approved(both)
+    first = effective_vendor_rows(north, original, SEPTEMBER)
+    before = report_vendor_block(north, first)
+    revised = tuple(replace(row, phone="555-0808") if row.id == "shared-vendor" else row
+                    for row in original.rows)
+    next_master = save_vendor_roster(
+        both, revised, expected_revision=1, actor="Editor", confirmed=True)
+    assert next_master.revision == 2
+    after = report_vendor_block(north, first)
+    assert after == before
+    assert after.rows[0][4] == "555-0101"
+    fresh = report_vendor_block(north, effective_vendor_rows(north, next_master, SEPTEMBER))
+    assert fresh.rows[0][4] == "555-0808"
+    assert fresh.references != before.references
