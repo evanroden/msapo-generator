@@ -14,7 +14,7 @@ from app.monthly_report_import import inspect_docx
 from app.monthly_report_model import ReportPeriod, synthetic_profiles
 from app.monthly_report_start_import import (
     _target_month_evidence, analyze_starting_report, automatic_section_plans,
-    build_starting_import,
+    mentioned_periods,
 )
 from test_monthly_report_start_import import report_file, start_app, save_start
 
@@ -161,10 +161,42 @@ def test_native_start_requires_confirmation_and_durable_accepted_text_unchanged(
     assert reopened.draft == saved.draft
     assert original == path.read_bytes()
 
-    from app.monthly_report_docx import assemble_docx
-    rendered = Document(BytesIO(assemble_docx(
-        reopened.draft, acknowledged_fingerprint=reopened.draft.fingerprint)))
+    # Layout-only assembly checks preservation. The required fully populated
+    # client preflight/Generate journey remains a separate acceptance gate.
+    from app.monthly_report_docx import _build_docx
+    rendered = Document(BytesIO(_build_docx(reopened.draft)))
     text = "\n".join(p.text for p in rendered.paragraphs)
     assert "pump service is scheduled" in text
     assert "Undated unfinished" in text
     assert text.count("pump service is scheduled") == 1
+
+
+@pytest.mark.parametrize("label,expected", (
+    ("Sept 2026", {(2026, 9)}),
+    ("Sept. 2026", {(2026, 9)}),
+    ("09/2026", {(2026, 9)}),
+    ("9/2026", {(2026, 9)}),
+    ("10/2026", {(2026, 10)}),
+    ("2026-10-12", {(2026, 10)}),
+    ("September 3, 2026", {(2026, 9)}),
+    ("C:\\reports\\10/2026", set()),
+    ("PO-10/2026", set()),
+    ("10/2026.5", set()),
+    ("10/20/2026", {(2026, 10)}),
+    ("September inspection", set()),
+))
+def test_compact_source_period_evidence_is_bounded(label, expected):
+    assert mentioned_periods(label) == expected
+
+
+def test_compact_stale_cover_and_compact_future_task_still_require_review(tmp_path):
+    path, inspection = inspect(
+        tmp_path, ("10/2026: the generator inspection is planned.", "Undated pump notes."),
+        cover="09/2026")
+    result = analyze_starting_report(inspection, PROFILE, OCTOBER)
+    assert result.source_period == (2026, 9)
+    assert not result.current_items
+    task = work_item(inspection, "the generator inspection is planned")
+    assert task.id in result.period_review_items
+    assert not automatic_section_plans(inspection, result)["activity"]["approved"]
+    assert path.exists()
