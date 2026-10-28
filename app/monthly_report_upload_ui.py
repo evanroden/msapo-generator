@@ -1258,7 +1258,10 @@ def render_workorder_metrics(profile, period, prefix, contents, blocks, *, addit
     # It is offered as reviewable source evidence, never silently written over
     # an edited Activity paragraph.
     from app.monthly_report_work_order_csv import work_order_evidence
-    metrics_signature = _signature((period.key, profile.key,
+    # Counts depend on selected sites and every accepted site-name alias.
+    # A profile key can stay the same while its report-specific scope changes.
+    site_scope = tuple((site.key, site.title, site.aliases) for site in profile.facilities)
+    metrics_signature = _signature((period.key, profile.contract, profile.key, site_scope,
                                tuple(c.source.fingerprint for c in contents)))
     cache_key = local_key + "_workorder_metrics_cache"
     cached_evidence = st.session_state.get(cache_key)
