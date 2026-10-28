@@ -1,0 +1,45 @@
+name: Monthly simplicity acceptance
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  monthly-simplicity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - name: Install locked app and native browser harness
+        timeout-minutes: 20
+        run: |
+          sudo python3 scripts/ci_ubuntu_mirror_priority.py
+          python -m pip install -r requirements-dev.lock playwright==1.58.0
+          python scripts/patch_streamlit_frontend.py
+          python scripts/patch_streamlit_date_input.py
+          python -m playwright install --with-deps chromium webkit
+      - name: First intake and repeated Training without hidden disclosure clicks
+        timeout-minutes: 11
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 10 <<'NATIVE_TEST'
+          python -m pytest -q tests/test_monthly_simplicity_acceptance_contract.py
+          python scripts/qa_monthly_simplicity.py
+          NATIVE_TEST
+      - name: Retain synthetic first-failure and interaction evidence
+        if: always()
+        timeout-minutes: 3
+        uses: actions/upload-artifact@v4
+        with:
+          name: monthly-simplicity-${{ github.run_attempt }}
+          path: test-artifacts/monthly-simplicity/
+          retention-days: 7
+          if-no-files-found: error

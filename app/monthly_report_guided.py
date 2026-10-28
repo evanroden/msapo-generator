@@ -16,7 +16,7 @@ from app.monthly_report_busy_ui import recover_render_busy
 from app.monthly_report_checks import preflight
 from app.monthly_report_docx import estimate_bytes, generate_report, normalize_report_image
 from app.monthly_report_editor import _grid, _signature, _typed_table
-from app.monthly_report_model import (ReportDraft, ResolvedBlock, STOCK_TEXTS,
+from app.monthly_report_model import (ReportDraft, ResolvedBlock,
                                      layout_blocks, profile_sections, picture_replacement_references)
 from app.monthly_report_setup import MONTHLY_BLOCKS, merge_blocks, month_selector, new_month_draft, suggested_period
 from app.monthly_report_section_help import section_help, editor_section_guidance, editor_section_heading_help
@@ -408,9 +408,10 @@ def _initial_draft(state, period, prepared):
         saved = state.block(spec.key)
         if saved:
             blocks.append(saved)
-        elif spec.stock_text_keys:
-            blocks.append(ResolvedBlock(spec.key, "Stock text", text=STOCK_TEXTS[spec.stock_text_keys[0]]))
         else:
+            # A missing input is not evidence of a transition, outage, or lack
+            # of activity. Stock paragraphs remain explicit editor choices;
+            # never inject them as facts into a new client-facing report.
             blocks.append(ResolvedBlock(spec.key, "This month" if spec.required else "Omit"))
     return ReportDraft(state.profile, period, prepared, profile_sections(state.profile), tuple(blocks))
 
@@ -521,8 +522,17 @@ def complete_guided_sections(draft):
         section = existing.get(key, standard[key])
         present = {block.key for block in section.blocks}
         additions = tuple(block for block in standard[key].blocks if block.key not in present)
+        existing_blocks = section.blocks
+        if key == "water" and "water_reports" in present:
+            update = next((block for block in additions if block.key == "water_monthly_update"), None)
+            if update is not None:
+                # Upgrade an older page-only schema without rearranging any
+                # preexisting custom blocks or a deliberately placed update.
+                before_pages = next(i for i, block in enumerate(existing_blocks) if block.key == "water_reports")
+                existing_blocks = (*existing_blocks[:before_pages], update, *existing_blocks[before_pages:])
+                additions = tuple(block for block in additions if block is not update)
         sections.append(replace(section, included=True,
-                                blocks=tuple(replace(block, required=False) for block in (*section.blocks, *additions))))
+                                blocks=tuple(replace(block, required=False) for block in (*existing_blocks, *additions))))
     return replace(draft, sections=tuple(sections))
 
 
@@ -1233,7 +1243,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         read_status.empty()
     if completed_setup == selected:
         # The editor replaces the setup review but keeps its scroll offset.
-        # Start this deliberate entry at the first section, once.
+        # Start this deliberate entry at monthly work, once.
         st.session_state[prefix + "_land_on_editor"] = True
         record_report_preferences(browser_token, contract, selected)
         if imported:
@@ -1416,12 +1426,14 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 st.session_state[draft_key] = draft
                 st.rerun()
     from app.workspace_layout import workspace, workspace_section, workspace_columns
-    landing = "monthly_cover" if st.session_state.pop(prefix + "_land_on_editor", False) else ""
+    landing_section = "monthly_activity" if any(section.key == "activity" for section in draft.sections) else "monthly_cover"
+    landing = landing_section if st.session_state.pop(prefix + "_land_on_editor", False) else ""
     with workspace("monthly", prefix, navigation_key="monthly_report_navigation", landing=landing):
         with st.container(key="monthly_report_navigation"):
-            st.markdown('<label class="epc-section-navigation">Section'
-                        '<select class="epc-section-selector" aria-label="Jump to section" disabled>'
-                        '<option>Loading sections…</option></select></label>', unsafe_allow_html=True)
+            st.markdown('<span class="epc-section-navigation"><label for="monthly-section-choice">Section</label>'
+                        '<select id="monthly-section-choice" class="epc-section-selector" aria-label="Jump to section" disabled>'
+                        '<option>Loading sections…</option></select>'
+                        '<button type="button" class="epc-review-shortcut" disabled>Review</button></span>', unsafe_allow_html=True)
         with workspace_section("monthly_cover", "Cover"):
             editor_column, preview_column = workspace_columns("monthly_cover")
             with editor_column:

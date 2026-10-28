@@ -4,3 +4,7 @@
 .st-key-epc_workspace_monthly .st-key-monthly_report_navigation {background:var(--background-color,#fff);border-bottom:1px solid rgba(128,128,128,.25);padding:.25rem 0;}
 .st-key-epc_workspace_monthly .epc-section-navigation {display:flex;gap:.6rem;align-items:center;min-width:0;max-width:100%;background:var(--background-color,#fff);}
 .st-key-epc_workspace_monthly .epc-section-selector {font:inherit;color:inherit;background:var(--background-color,#fff);border:1px solid #557f7f;border-radius:.4rem;min-height:44px;min-width:0;width:min(32rem,100%);flex:0 1 32rem;padding:.4rem .6rem;}
+
+/* Reserve the direct Review action from native render; no late toolbar mount. */
+.st-key-epc_workspace_monthly .epc-review-shortcut {font:inherit;color:inherit;background:var(--background-color,#fff);border:1px solid #557f7f;border-radius:.4rem;min-height:44px;flex:0 0 auto;padding:.4rem .6rem;cursor:pointer;}
+.st-key-epc_workspace_monthly .epc-review-shortcut:focus-visible {outline:3px solid #557f7f;outline-offset:2px;}
