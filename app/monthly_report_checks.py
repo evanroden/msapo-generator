@@ -235,11 +235,24 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                         if page not in source.selected_pages or not 1 <= page <= len(source.page_texts) or not page_allowed(source, page):
                             checks.append(ReportCheck("client_source_page", f"Remove or review page {page} of {source.filename} in this section. Its current selection is not approved for the client report.", True, block.key))
             for number, table in enumerate(block.extra_tables, 1):
+                # The generic Word writer intentionally skips a headerless
+                # imported table, even when its rows contain real source
+                # values. Those values must not disappear silently after
+                # Review calls the section ready. Keep the original unchanged
+                # and require an explicit heading or exclusion instead.
+                has_values = any(str(cell).strip()
+                                 for row in table.rows for cell in row)
+                if has_values and not table.columns:
+                    checks.append(ReportCheck(
+                        "table_missing_columns",
+                        f"Imported table {number} in {block.key.replace('_', ' ')} "
+                        "has source rows but no column headings. Add headings "
+                        "or leave this table out before creating the report.",
+                        True, block.key))
                 # The generic Word writer can render only the declared table
                 # width. Catch this at review rather than failing on Create.
                 # Unprinted empty tables remain harmless and are not altered.
-                if table.columns and any(
-                        str(cell).strip() for row in table.rows for cell in row):
+                if table.columns and has_values:
                     too_wide = _first_wide_row(table.rows, len(table.columns))
                     if too_wide is not None:
                         row_number, cells = too_wide
