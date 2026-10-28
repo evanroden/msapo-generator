@@ -232,3 +232,57 @@ def test_unapproved_roster_rejects_unknown_facility_and_prices(monkeypatch, tmp_
     with pytest.raises(ValueError, match="pricing"):
         publish(north, rows(row(north.facilities[0].title, "Vendor", "Invoice $80")))
     assert not load_rosters(north.contract).entries
+
+
+def test_report_word_output_has_only_selected_site_and_preserves_vendor_status(monkeypatch, tmp_path):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    from app.monthly_report_docx import _build_docx
+    from app.monthly_report_model import ReportDraft
+    both = profile("Synthetic Contract A", "all-sites", ("north", "south"))
+    state = publish(both, rows(row(both.facilities[0].title, "Vendor North", ""),
+                               row(both.facilities[1].title, "Vendor South", "Pending")))
+    north = profile("Synthetic Contract A")
+    adopted = apply_roster(state, state.entries[0], north,
+                           ResolvedBlock("subcontractor_matrix", "Omit"), NATIVE_SPEC)
+    section = next(s for s in default_sections() if s.key == "subcontractors")
+    draft = ReportDraft(north, ReportPeriod(2026, 9), "Synthetic Editor",
+                        (section,), (adopted,))
+    raw = _build_docx(draft)
+    word = Document(BytesIO(raw))
+    text = "\n".join(cell.text for table in word.tables
+                     for tr in table.rows for cell in tr.cells)
+    assert text.count("Vendor North") == 1
+    assert "Vendor South" not in text
+    assert "Sub-Contractor Status" in "\n".join(p.text for p in word.paragraphs)
+    assert "Pending" not in text
+
+
+from tests.conftest import requires_libreoffice
+
+
+@requires_libreoffice
+def test_real_pdf_renders_shared_vendor_contact_once_without_other_sites(monkeypatch, tmp_path):
+    import fitz
+    from app import pdf_converter
+    from app.monthly_report_docx import _build_docx
+    from app.monthly_report_model import ReportDraft
+
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(pdf_converter, "OUTPUT_DIR", tmp_path)
+    both = profile("Synthetic Contract A", "all-sites", ("north", "south"))
+    state = publish(both, rows(row(both.facilities[0].title, "Synthetic Vendor North"),
+                               row(both.facilities[1].title, "Synthetic Vendor South")))
+    north = profile("Synthetic Contract A")
+    adopted = apply_roster(state, state.entries[0], north,
+                           ResolvedBlock("subcontractor_matrix", "Omit"), NATIVE_SPEC)
+    section = next(s for s in default_sections() if s.key == "subcontractors")
+    draft = ReportDraft(north, ReportPeriod(2026, 9), "Synthetic Editor",
+                        (section,), (adopted,))
+    document = tmp_path / "synthetic-vendor.docx"
+    document.write_bytes(_build_docx(draft))
+    pdf_file = pdf_converter.convert_to_pdf(document)
+    with fitz.open(pdf_file) as pdf:
+        all_text = "\n".join(page.get_text() for page in pdf)
+        assert all_text.count("Synthetic Vendor North") == 1
+        assert "Synthetic Vendor South" not in all_text
+        assert "Sub-Contractor Status" in all_text
