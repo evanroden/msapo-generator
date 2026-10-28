@@ -16,10 +16,12 @@ import csv
 import hashlib
 from pathlib import Path
 import re
+from xml.etree.ElementTree import ParseError as XMLParseError
 from zipfile import BadZipFile
 import zlib
 
 import pymupdf as fitz
+from lxml.etree import XMLSyntaxError
 from openpyxl import load_workbook
 
 from app import monthly_report_library as library, ocr
@@ -351,6 +353,8 @@ def _spreadsheet(raw: bytes, suffix: str) -> tuple[SourceTable, ...]:
             raise ValueError("Expanded workbook exceeds the safe parsing budget.")
     try:
         workbook = load_workbook(BytesIO(raw), read_only=True, data_only=True, keep_links=False)
+    except (XMLParseError, XMLSyntaxError) as exc:
+        raise ValueError("Workbook XML could not be read. Export a fresh XLSX or CSV copy.") from exc
     except TypeError as exc:
         raise ValueError("Workbook structure could not be read. Export a fresh XLSX or CSV copy.") from exc
     try:
@@ -373,6 +377,10 @@ def _spreadsheet(raw: bytes, suffix: str) -> tuple[SourceTable, ...]:
         if not tables:
             raise ValueError("Workbook has no nonempty worksheets.")
         return tuple(tables)
+    except (XMLParseError, XMLSyntaxError) as exc:
+        # Read-only worksheets decode XML lazily, after the workbook loads.
+        # Contain only these parser failures, not arbitrary product SyntaxError.
+        raise ValueError("Workbook XML could not be read. Export a fresh XLSX or CSV copy.") from exc
     except TypeError as exc:
         # openpyxl can reject malformed typed properties when reading either
         # the package or its lazy rows. Keep this decoder boundary separate
