@@ -80,7 +80,9 @@ def render_review_preview(draft, assets, prefix):
     # The native button identifies its exact report/source revision. A delayed
     # click from an earlier report cannot authorize a new preview on this key.
     button_key = prefix + "_review_preview_build_" + identity
-    # A click on the same complete draft must reuse its live ticket. Rebuilding\n    # would strand the previous PDF/raster files until cache expiry/eviction.\n    if st.button("Preview current draft", key=button_key) and current is None:
+    # A click on the same complete draft must reuse its live ticket. Rebuilding
+    # would strand the previous PDF/raster files until cache expiry/eviction.
+    if st.button("Preview current draft", key=button_key) and current is None:
         loader = lambda ref: (
             assets.get(ref) or library.read_asset(draft.profile.contract, draft.profile.key, ref))
         try:

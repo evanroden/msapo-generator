@@ -103,7 +103,7 @@ def test_unchanged_repeat_click_keeps_one_ticket_and_one_render(monkeypatch, tmp
     try:
         renders = []
         def render(draft, loader):
-            renders.append(draft.fingerprint)
+            renders.append(preview_fingerprint(draft))
             return synthetic_preview(draft, loader)
         monkeypatch.setattr(review_ui, 'preview_report', render)
         click_preview(app)
