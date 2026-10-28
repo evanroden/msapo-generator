@@ -34,6 +34,8 @@ def render_output_status(package, draft, snapshot, prefix):
             and (status is None or (baseline is not None and snapshot.revision > baseline))):
         revision = snapshot.revision
     st.success("Word and PDF ready to download" if package.pdf else "Word ready to download")
+    if package.contents_notice:
+        st.warning(package.contents_notice)
     if revision is not None:
         st.caption(f"[Shared version {revision}](#shared-report-history) · {draft.period.label}")
         return False

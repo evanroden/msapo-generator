@@ -103,6 +103,7 @@ class ReportPackage:
     source_view_digest: str = ""
     source_view_docx_sha256: str = ""
     source_view_art_digest: str = ""
+    contents_notice: str = ""
 
 
 def canonical_docx(raw: bytes) -> bytes:
@@ -531,10 +532,11 @@ def _generate_verified_report(draft, *, acknowledged_fingerprint, asset_loader, 
     docx = sanitize_package_transparency(docx)
     docx = sanitize_package_media(docx)
     pdf, error = _convert_report_pdf(draft, docx)
+    from app.monthly_report_contents_review import contents_notice_for
     return ReportPackage(docx, pdf, report_filename(draft, "docx"), report_filename(draft, "pdf"), draft.fingerprint, error,
                          source_view.receipt_sha256 if source_view is not None else "",
                          hashlib.sha256(docx).hexdigest() if source_view is not None else "",
-                         operation.art_digest)
+                         operation.art_digest, contents_notice_for(draft.profile))
 
 
 def retry_report_pdf(draft: ReportDraft, package: ReportPackage, *, source_view=None) -> ReportPackage:
