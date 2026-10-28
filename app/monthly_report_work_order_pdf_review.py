@@ -125,6 +125,8 @@ def _page_table(page):
         if result is None:
             continue
         heading_index, columns = result
+        mapping = suggest_mapping(columns)
+        identity_position = mapping.work_order
         width = len(columns)
         records, unknown = [], []
         for values in rows[heading_index + 1:]:
@@ -133,7 +135,7 @@ def _page_table(page):
             if tuple(_clean_cell(value).casefold() for value in values) == tuple(
                     col.casefold() for col in columns):
                 continue  # Header repeated at a page boundary or mid-table.
-            if len(values) != width or not values[0].strip():
+            if len(values) != width or identity_position is None or not values[identity_position].strip():
                 unknown.append(values)
                 continue  # Wrapped description / missing WO cannot be invented.
             records.append(values)
