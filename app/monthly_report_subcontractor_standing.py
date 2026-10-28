@@ -224,8 +224,11 @@ def effective_vendor_rows(profile: ReportProfile, roster: VendorRoster, period: 
             if row.sites and site_key not in row.sites:
                 continue
             chosen = exclusions.get((site_key, row.id), row)
-            if (site_key, chosen.id) not in omitted_set:
-                selected.append(EffectiveVendor(site_key, title, chosen))
+            selected.append(EffectiveVendor(site_key, title, chosen))
+    available = {(r.site_key, r.row.id) for r in selected}
+    if omitted_set - available:
+        raise ValueError("A vendor omission refers to a row that is not active at this site.")
+    selected = [r for r in selected if (r.site_key, r.row.id) not in omitted_set]
     # Historical status is still inspectable but never emitted as current.
     history = tuple((r.site_title, r.row.id, r.row.status_period, r.row.status)
                     for r in selected if r.row.status and r.row.status_period != period.key)
