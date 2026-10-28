@@ -280,3 +280,31 @@ def test_saved_word_source_hash_or_inventory_failure_never_returns_partial_rows(
     with pytest.raises(ValueError, match="inventory differs"):
         review_docx_workorders(PROFILE, stale, PERIOD)
     assert sources.source_bytes(PROFILE, source.source) == path.read_bytes() == raw
+
+
+def test_unrecognized_preamble_and_full_width_category_inside_data_need_review(tmp_path, monkeypatch):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    doc = Document()
+    doc.add_heading("2 Monthly Activity Summary", 1)
+    table = doc.add_table(rows=5, cols=5)
+    for cell, title in zip(table.rows[0].cells, ("Site Group", "", "", "", "")):
+        cell.text = title
+    for cell, title in zip(table.rows[1].cells, HEADERS):
+        cell.text = title
+    for cell, value in zip(table.rows[2].cells,
+                           ("0077", "North", "2026-09-02", "Open", "HVAC")):
+        cell.text = value
+    table.rows[3].cells[0].merge(table.rows[3].cells[-1]).text = "Electrical category"
+    for cell, value in zip(table.rows[4].cells,
+                           ("0078", "South", "2026-09-03", "Closed", "Electrical")):
+        cell.text = value
+    source, _, raw = _source(tmp_path, doc)
+    result, = review_docx_workorders(PROFILE, source, PERIOD).tables
+    assert result.status == "records"
+    assert not result.ready_for_inclusion
+    assert len(result.title_bands) == 1 and result.title_bands[0].word_row == 1
+    assert [row.word_row for row in result.unmatched] == [1, 4]
+    assert len(result.review.rows) == 2
+    assert len(result.raw_rows) == 5
+    assert result.unmatched[1].cells[0] == "Electrical category"
+    assert sources.source_bytes(PROFILE, source.source) == raw
