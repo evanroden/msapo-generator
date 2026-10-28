@@ -415,7 +415,10 @@ def default_sections() -> tuple[SectionSpec, ...]:
             ColumnSpec("facility", "Facility"), ColumnSpec("discipline", "Discipline"), ColumnSpec("vendor", "Vendor"),
             ColumnSpec("contact", "Contact"), ColumnSpec("phone", "Phone"), ColumnSpec("msa", "MSA"),
         )),)),
-        SectionSpec("water", "7", "Water Treatment Reports", (BlockSpec("water_reports", "pdf_pages"),)),
+        SectionSpec("water", "7", "Water Treatment Reports", (
+            BlockSpec("water_monthly_update", "rich_text"),
+            BlockSpec("water_reports", "pdf_pages"),
+        )),
         SectionSpec("issues", "8", "Equipment Performance Issues", (BlockSpec("equipment_issues", "rich_text", True), BlockSpec("equipment_issues_evidence", "pdf_pages", False))),
         SectionSpec("capital", "9", "Priority Capital Renewal List", (
             BlockSpec("capital_renewal", "table", columns=(
@@ -467,6 +470,9 @@ def profile_sections(profile: ReportProfile) -> tuple[SectionSpec, ...]:
             continue
         blocks = {b.key: overrides.get(b.key, b) for b in section.blocks}
         order = block_orders.get(section.key, tuple(blocks))
+        if section.key == "water" and order == ("water_reports",):
+            # Resolve the exact pre-update schema without rewriting saved history.
+            order = ("water_monthly_update", *order)
         if section.key == "mbcx" and "mbcx_report" in order and "mbcx_status" not in order:
             # Older designs stored their explanation and report pages together.
             # Keep their chosen order while making the separate update editable.
