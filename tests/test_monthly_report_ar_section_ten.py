@@ -212,10 +212,13 @@ def test_ar_measured_native_ten_is_visible_in_pdf_raster(tmp_path, monkeypatch):
             hits = page.search_for("10")
             assert len(hits) == 1
             area = hits[0]
+            # The verified native Word anchor intentionally overhangs the
+            # left page edge. Verify the visible intersecting glyph pixels,
+            # rather than demanding the authored text frame start at x >= 0.
             assert (area.width > 0 and area.height > 0
-                    and area.x0 >= -1 and area.y0 >= -1
-                    and area.x1 <= page.rect.width + 1
-                    and area.y1 <= page.rect.height + 1)
+                    and area.x1 > page.rect.x0 and area.x0 < page.rect.x1
+                    and area.y0 >= page.rect.y0 - 1
+                    and area.y1 <= page.rect.y1 + 1)
             # Text extraction is not visual proof. Independently inspect
             # rasterized pixels and require that the measured mint text ink
             # is present in BOTH halves of the bounding rectangle.
