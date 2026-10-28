@@ -528,13 +528,20 @@ def used_source_ids(draft: ReportDraft) -> set[str]:
             continue
         tables = [t for t in block.extra_tables if any(c.strip() for row in t.rows for c in row)]
         if not (block.text.strip() or block.asset_hashes or block.org_nodes or tables
-                or any(c.strip() for row in block.rows for c in row)):
+                or any(c.strip() for row in block.rows for c in row)
+                or any(p.text.strip() for p in block.ai_paragraphs)):
             continue
         references.extend(block.references)
         references.extend(t.reference for t in tables)
         references.extend(r for p in block.ai_paragraphs if p.text.strip() for r in p.references)
         references.extend(r for asset, refs in block.asset_provenance
                           if asset in block.asset_hashes for r in refs)
+        # Per-picture links are authoritative for duplicate-byte occurrences.
+        # Ignore an old occurrence whose image is not at its saved position.
+        references.extend(r for index, item in enumerate(block.asset_instances)
+                          if index < len(block.asset_hashes)
+                          and item.asset == block.asset_hashes[index]
+                          for r in item.references)
     sections = {s.key for s in included_sections(draft.sections)}
     references.extend(r for item in draft.follow_ups if item.included
                       and ("issues" if item.category == "issue" else "proposals") in sections

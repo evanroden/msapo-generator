@@ -1,9 +1,8 @@
 """Damaged-source recovery keeps valid evidence and saved report history intact."""
-from dataclasses import asdict, replace
+from dataclasses import replace
 from pathlib import Path
-import json
 
-from app.monthly_report_model import used_block_keys
+from app.monthly_report_model import used_source_ids
 from app.monthly_report_sources import ingest, source_bytes
 
 
@@ -28,12 +27,12 @@ def retain_unavailable(available, missing):
 
 
 def used_missing_sources(draft, missing):
-    from app.monthly_report_section_uploads import source_route
-    keys = used_block_keys(draft)
-    # A removed page's remembered destination is not supporting evidence.
-    # Actual narrative/page/provenance references remain in this dependency scan.
-    records = tuple(replace(block, references=tuple(ref for ref in block.references if source_route(ref) is None))
-                    for block in draft.blocks
-                    if block.key in keys and block.source != "Omit") + draft.follow_ups
-    serialized = "\n".join(json.dumps(asdict(record), ensure_ascii=False) for record in records)
-    return tuple(source for source in missing if source.id in serialized)
+    """Only unavailable originals actually cited by included report content.
+
+    The generation preflight already uses the authoritative source/page
+    provenance scan. Searching serialized report text instead can mistake a
+    plain SHA mention, unused image, disabled follow-up or old route for proof
+    that a missing original is still needed.
+    """
+    required = used_source_ids(draft)
+    return tuple(source for source in missing if source.id in required)
