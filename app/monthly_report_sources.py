@@ -71,7 +71,12 @@ def source_bytes(profile: ReportProfile, source: ReportSource) -> bytes:
     limit = 128 * 1024 * 1024 if source.suffix == ".docx" else MAX_FILE_BYTES
     if path.stat().st_size > limit:
         raise ValueError("Saved source exceeds the file limit.")
-    raw = path.read_bytes()
+    # Files can change after stat. Bound the actual allocation rather than
+    # trusting a previous size check; never return or hash truncated data.
+    with path.open("rb") as stream:
+        raw = stream.read(limit + 1)
+    if len(raw) > limit:
+        raise ValueError("Saved source exceeds the file limit.")
     if hashlib.sha256(raw).hexdigest() != source.sha256:
         raise ValueError("A source file failed its integrity check.")
     return raw
