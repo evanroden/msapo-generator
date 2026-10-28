@@ -322,3 +322,52 @@ def test_unapproved_or_forged_master_cannot_publish_a_report(fixture):
         capital_report_block(n, replace(proper, master_reference="capital-master:wrong"))
     assert capital_report_block(n, proper).rows[0][2] == (
         "Replace aging chilled-water pump")
+
+
+
+def test_only_current_site_can_change_an_approved_site_specific_item(fixture):
+    both, n, s, _ = fixture
+    original = approved(both)
+    changed = tuple(
+        replace(item, recommendation="Unauthorized South correction")
+        if item.key == "south-pump" else item for item in original.items)
+    with pytest.raises(ValueError, match="another site's capital entry"):
+        approved(n, changed, revision=1)
+    assert load_capital_master(both.contract) == original
+    permitted = approved(s, changed, revision=1)
+    assert permitted.revision == 2
+    assert load_capital_master(both.contract, 1) == original
+    assert permitted.items[0] == original.items[0]
+
+
+def test_status_and_source_month_must_be_reviewed_together(fixture):
+    both, _, _, _ = fixture
+    with pytest.raises(ValueError, match="status and its recorded month"):
+        approved(both, (CapitalItem(
+            "incomplete", "High", "Pump replacement",
+            status="Completed", status_period=""),))
+    with pytest.raises(ValueError, match="status and its recorded month"):
+        approved(both, (CapitalItem(
+            "incomplete", "High", "Pump replacement",
+            status="", status_period="2026-09"),))
+    assert load_capital_master(both.contract).revision == 0
+
+
+def test_archived_source_fields_and_zero_vs_blank_are_not_inferred(fixture):
+    both, n, _, _ = fixture
+    original = CapitalItem(
+        "legacy", "1", "Replace motor after inspection", "MTR-01",
+        extra_fields=(("Observed failures", "0"), ("Target quarter", "")),
+        source_reference="synthetic-original:4:hash")
+    master = approved(both, (original,))
+    assert master.items[0].extra_fields == (
+        ("Observed failures", "0"), ("Target quarter", ""))
+    selection = select_capital(n, master, SEPTEMBER)
+    block = capital_report_block(n, selection)
+    assert ("Synthetic North", "legacy", "Observed failures", "0") in block.extra_tables[0].rows
+    # A truly blank source cell remains in the approved master; it is never
+    # filled as a fabricated estimate or copied into the Word report as 0.
+    assert master.items[0].extra_fields[-1] == ("Target quarter", "")
+    assert not any(row[2] == "Target quarter" for row in block.extra_tables[0].rows)
+    assert block.references == (master.reference,)
+    assert load_capital_master(both.contract) == master
