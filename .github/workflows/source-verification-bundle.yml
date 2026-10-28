@@ -1,3 +1,4 @@
+# Read-only verification for the contract-specific workflow repair; not a release branch.
 name: Source verification bundle
 
 on:
