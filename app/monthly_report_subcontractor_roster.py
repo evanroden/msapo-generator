@@ -21,8 +21,11 @@ MAX_ROWS = 1000
 MAX_CELLS = 32000
 MAX_CELL_CHARS = 4000
 SHARED_REF_PREFIX = "subcontractor-roster:v1:"
-_SITE_COLUMNS = {"site", "facility", "location"}
-_SHARED_SITES = {"", "all", "all sites", "contract wide", "contract-wide", "shared"}
+_SITE_COLUMNS = {"site", "facility", "location", "hospital", "campus",
+                 "site name", "facility name", "location name",
+                 "site facility", "facility site"}
+_SHARED_SITES = {"", "all", "all sites", "all facilities", "all locations",
+                 "contract wide", "contract-wide", "shared"}
 
 
 @dataclass(frozen=True)
@@ -53,8 +56,11 @@ def _path(contract):
 
 def _site_column(table):
     choices = [index for index, heading in enumerate(table.columns)
-               if _key(heading) in _SITE_COLUMNS]
-    return choices[0] if len(choices) == 1 else None
+               if re.sub(r"[^a-z]+", " ", _key(heading)).strip() in _SITE_COLUMNS]
+    if len(choices) > 1:
+        # Ambiguous site identity is NOT permission for contract-wide reuse.
+        raise ValueError("Vendor table has several possible site headings. Clarify its site column before sharing.")
+    return choices[0] if choices else None
 
 
 def _tables(block, spec):
@@ -88,7 +94,7 @@ def _validate_tables(tables):
 
 def _facility_labels(profile):
     return tuple((facility.key, tuple(dict.fromkeys(
-        _key(value) for value in (facility.title, *facility.aliases) if value.strip())))
+        _key(value) for value in (facility.key, facility.title, *facility.aliases) if value.strip())))
         for facility in profile.facilities)
 
 
@@ -168,6 +174,8 @@ def save_roster(profile: ReportProfile, block: ResolvedBlock, spec, *,
     # a consumer receives a new contract-scoped version reference instead.
     reference = tuple(dict.fromkeys((*block.references, *(t.reference for t in original_tables
                                                         if t.reference))))
+    if len(reference) > 200 or any(not isinstance(ref, str) or len(ref) > 1000 for ref in reference):
+        raise ValueError("Vendor source references exceed their retention limit; review the source set.")
     snapshot = tuple(ReportTable(table.columns, table.rows, "")
                      for table in original_tables)
     path = _path(profile.contract)
