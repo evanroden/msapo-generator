@@ -176,17 +176,24 @@ def test_omitted_block_and_excluded_section_are_not_falsely_blocked():
     assert failures(report(block))  # The source remains when re-included.
 
 
-def test_unprinted_headerless_empty_imported_table_is_not_a_new_blocker():
+def test_headerless_data_is_blocked_but_empty_unprinted_tables_are_not():
     unprinted = ReportTable((), (("Unexpected cell",),), "unmapped-source")
     empty = ReportTable(("Facility", "Vendor"), (("", "", ""),), "empty-source")
     block = ResolvedBlock(
         "subcontractor_matrix", "This month",
         extra_tables=(unprinted, empty),
     )
-    # The generic writer explicitly skips headerless tables and all-empty
-    # tables. They are still retained in the editable source, not destroyed.
+    # The generic writer skips both, but the first contains genuine data;
+    # Review must expose that omission rather than silently marking it ready.
+    missing = tuple(c for c in preflight(report(block))
+                    if c.code == "table_missing_columns")
+    assert len(missing) == 1 and missing[0].blocking
+    assert "Imported table 1" in missing[0].message
+    assert missing[0].block_key == "subcontractor_matrix"
     assert failures(report(block)) == ()
     assert block.extra_tables == (unprinted, empty)
+    assert not any(c.code == "table_missing_columns" for c in preflight(
+        report(replace(block, extra_tables=(empty,)))))
 
 
 def test_pricing_gate_still_blocks_financial_columns_independently():
