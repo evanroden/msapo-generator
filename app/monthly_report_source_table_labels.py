@@ -5,6 +5,8 @@ do not infer completion, site ownership or facts from uploaded values.
 """
 from __future__ import annotations
 
+import re
+
 
 def _headings(table):
     return tuple(" ".join(str(title).casefold().split())
@@ -23,7 +25,7 @@ def table_task_label(table, destination: str, *, position=0, total=1) -> str:
         elif any(h in {"wo #", "wo", "work order", "work order number", "work order id"}
                  for h in headings):
             title = "Work-order records"
-        elif any("pm" in h or "preventive maintenance" in h
+        elif any(re.search(r"\bpm\b", h) or "preventive maintenance" in h
                  for h in headings):
             title = "Preventive maintenance summary"
         else:
