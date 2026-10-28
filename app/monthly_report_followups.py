@@ -76,11 +76,40 @@ def _proposal_details(text):
     return "; ".join(p for p in keep if p.strip()), decisions[0]
 
 
+def _proposal_table_details(columns, row, prices):
+    """Read table decisions before formatting; cell prose is not a new field.
+
+    Blank, unknown or conflicting decision columns require review. The source
+    row's nonfinancial cells stay literal, including semicolons and newlines.
+    """
+    fields = [(n, f"{columns[n]}: {value}") for n, value in enumerate(row)
+              if n not in prices and value.strip()]
+    original = "; ".join(text for _, text in fields)
+    indexes = []
+    for n, title in enumerate(columns):
+        title = title.strip()
+        # The importer disambiguates repeated headings with their physical
+        # column number. A repeated decision remains a decision, not prose.
+        duplicate = re.fullmatch(r"(.+) \((\d+)\)", title)
+        if duplicate and int(duplicate[2]) == n + 1 and duplicate[1] in columns[:n]:
+            title = duplicate[1]
+        if n not in prices and re.fullmatch(
+                r"(?:(?:proposal|approval)\s+)?(?:status|decision)", title, re.I):
+            indexes.append(n)
+    decisions = tuple(_DECISIONS.get(" ".join(row[n].casefold().split()))
+                      if n < len(row) else None for n in indexes)
+    remaining = "; ".join(text for n, text in fields if n not in indexes)
+    if decisions and all(decisions) and len(set(decisions)) == 1 and remaining:
+        return original, remaining, decisions[0]
+    return original, original, "not_confirmed"
+
+
 def normalize_proposal(item):
-    if item.category != "proposal":
+    # A typed decision is already independent of the author's free text. Only
+    # legacy issue-style statuses need migration from embedded decision fields.
+    if item.category != "proposal" or item.status in PROPOSAL_STATUSES:
         return item
-    text, decision = _proposal_details(item.text)
-    status = item.status if item.status in PROPOSAL_STATUSES else decision
+    text, status = _proposal_details(item.text)
     if (text, status) == (item.text, item.status):
         return item
     return replace(item, text=text, status=status, reviewed_fingerprint="")
@@ -531,6 +560,8 @@ def seed_followups(draft):
         texts = [text for text in _followup_text_items(block.text)
                  if text not in STOCK_TEXTS.values()
                  and not (category == "issue" and _no_equipment_issues(text))]
+        entries = [(text, *_proposal_details(text)) if category == "proposal"
+                   else (text, text, "ongoing") for text in texts]
         tables = (
             [(tuple(c.title for c in specs[block.key].columns), block.rows)]
             if block.key in specs and block.rows
@@ -541,17 +572,14 @@ def seed_followups(draft):
             width = max((len(row) for row in rows), default=len(columns))
             columns = (*columns, *(f"Detail {n+1}" for n in range(len(columns), width)))
             prices = table_price_columns(columns, rows)
-            texts += [
-                "; ".join(
-                    f"{columns[n]}: {value}"
-                    for n, value in enumerate(row)
-                    if n < len(columns) and n not in prices and value.strip()
-                )
-                for row in rows
-            ]
-        for text in texts:
-            original_text = text
-            text, status = _proposal_details(text) if category == "proposal" else (text, "ongoing")
+            for row in rows:
+                if category == "proposal":
+                    entries.append(_proposal_table_details(columns, row, prices))
+                else:
+                    text = "; ".join(f"{columns[n]}: {value}" for n, value in enumerate(row)
+                                     if n not in prices and value.strip())
+                    entries.append((text, text, "ongoing"))
+        for original_text, text, status in entries:
             identity = (category, original_text)
             occurrences[identity] = occurrences.get(identity, 0) + 1
             occurrence = occurrences[identity]
