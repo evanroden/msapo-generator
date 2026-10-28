@@ -157,8 +157,6 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
     if len(set(keys)) != len(keys):
         checks.append(ReportCheck("duplicate_blocks", "Block identities must be unique.", True))
     blocks = {b.key: b for b in draft.blocks}
-    image_grid_keys = {spec.key for section in sections for spec in section.blocks
-                       if spec.type == "image_grid"}
     # Names and contract labels are identifiers, not evidence that work happened
     # on a date. Keep price/placeholder checks but omit month review for these.
     texts = [("report_identity", draft.profile.title), ("report_identity", draft.prepared_by),
@@ -211,28 +209,6 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                 texts.extend((block.key, value) for node in block.org_nodes for value in (node.name, node.role, node.team))
             if type(block.photos_per_page) is not int or not 1 <= block.photos_per_page <= 6:
                 checks.append(ReportCheck("photo_layout", "Choose between 1 and 6 photos per page.", True, block.key))
-            # A standalone PDF-source page has a three-line caption limit in
-            # BOTH the generic and native Word writers. Check that same exact
-            # measured layout rule here, before Create can appear ready.
-            # Ordinary photos, omitted blocks and excluded sections are not
-            # standalone source pages and must not acquire this restriction.
-            if block.key in image_grid_keys and block.asset_hashes:
-                from app.monthly_report_asset_layout import (
-                    document_page_indexes, document_caption_problems)
-                # Ordinary photo grids need no measured 10pt font/layout work.
-                # Only confirmed, source-backed standalone document pages do.
-                if document_page_indexes(block, draft.sources):
-                    long_captions = document_caption_problems(block, draft.sources)
-                else:
-                    long_captions = ()
-                if long_captions:
-                    pictures = ", ".join(str(i + 1) for i in long_captions[:3])
-                    more = " and other pictures" if len(long_captions) > 3 else ""
-                    checks.append(ReportCheck(
-                        "document_caption",
-                        f"Shorten the source-page caption for picture {pictures}{more} "
-                        f"in {block.key.replace('_', ' ')} to at most three lines.",
-                        True, block.key))
             from app.monthly_report_asset_review import pending_asset_indexes
             pending_pictures = pending_asset_indexes(block, draft.sources)
             if pending_pictures:
