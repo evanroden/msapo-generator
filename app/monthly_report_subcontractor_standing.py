@@ -207,6 +207,8 @@ def effective_vendor_rows(profile: ReportProfile, roster: VendorRoster, period: 
     """Select one approved contact version per site, with site overrides first."""
     if roster.contract != profile.contract:
         raise ValueError("A different contract's subcontractors cannot enter this report.")
+    if roster.revision < 1 or roster_version(profile.contract, roster.revision) != roster:
+        raise ValueError("Only an explicitly approved, unchanged subcontractor roster can be reused.")
     _validate_rows(roster.rows)
     sites = {site.key: site.title for site in profile.facilities}
     if (len(omitted) != len(set(omitted)) or
@@ -250,6 +252,18 @@ def report_vendor_block(profile: ReportProfile, review: VendorReportReuse, *,
             or any(item.site_key not in sites or sites[item.site_key] != item.site_title
                    for item in review.selected)):
         raise ValueError("The subcontractor review no longer matches the selected sites.")
+    # A crafted or stale review must not create vendor facts without the exact
+    # approved contract/version and site omission decision it claims to use.
+    match = re.fullmatch(r"vendor-roster:([0-9a-f]{16}):r([0-9]{8})",
+                         review.master_reference)
+    if (match is None or match.group(1) != sha256(profile.contract.encode()).hexdigest()[:16]
+            or not int(match.group(2))):
+        raise ValueError("The subcontractor approval reference is invalid.")
+    expected = effective_vendor_rows(
+        profile, roster_version(profile.contract, int(match.group(2))),
+        ReportPeriod(*map(int, review.period_key.split("-"))), omitted=review.omitted)
+    if expected != review:
+        raise ValueError("The subcontractor selection no longer matches its approved source.")
     contacts = []
     instructions = []
     for record in review.selected:
