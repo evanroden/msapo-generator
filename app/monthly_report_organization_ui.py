@@ -190,6 +190,73 @@ def _change_part(prefix, active_key, selected):
     st.session_state[active_key] = selected
 
 
+
+def _contact_summary_tables(spec, block):
+    """Use the identical visible row/schema order as the authoritative editor."""
+    from app.monthly_report_visual_ui import _contact_block_tables
+    has_primary = bool(block.rows or (spec.type == "table" and spec.columns and not block.extra_tables))
+    return tuple(_contact_block_tables(block, spec, has_primary))
+
+
+def _open_contact_from_summary(prefix, active_key, spec, block, table_index, row_index, scope):
+    """Open an existing native row directly, without creating a second editor."""
+    from uuid import uuid4
+    from app.monthly_report_editor import _signature
+    from app.monthly_report_guided import _rich_text_scope
+    from app.monthly_report_visual_ui import _contact_widget_prefix
+
+    if scope != _rich_text_scope(prefix):
+        return  # An obsolete report/incarnation's click cannot select a new row.
+    tables = _contact_summary_tables(spec, block)
+    if (table_index >= len(tables) or row_index >= len(tables[table_index].rows)):
+        return
+    root = _contact_widget_prefix(prefix, "contact_matrix")
+    editor_key = root + "_compact_" + _signature((
+        tuple(table.columns for table in tables),
+        tuple(ref for ref in block.references
+              if not ref.startswith(("directory:", "directory-add-intent:"))),
+    ))
+    existing = st.session_state.get(editor_key)
+    st.session_state[root + "_compact_editor_key"] = editor_key
+    if isinstance(existing, dict) and existing.get("pending"):
+        # Expose an unresolved correction rather than replace its receipt.
+        _change_part(prefix, active_key, "contact_matrix")
+        return
+    record = (dict(existing) if isinstance(existing, dict)
+              and existing.get("tables") == tables else {})
+    record.update(tables=tables, active=(table_index, row_index),
+                  editor_slot=(table_index, row_index), fields=(),
+                  field_scope=uuid4().hex, epoch=uuid4().hex)
+    record.pop("pending", None)
+    st.session_state[editor_key] = record
+    _change_part(prefix, active_key, "contact_matrix")
+
+
+def _render_contact_summary_actions(spec, block, prefix, active_key):
+    """Put Edit beside saved contact summaries; keep bulk Add/Undo separately."""
+    if block.source == "Omit":
+        return
+    from app.monthly_report_editor import _signature
+    from app.monthly_report_guided import _rich_text_scope
+    from app.monthly_report_visual_ui import _contact_label
+
+    tables = _contact_summary_tables(spec, block)
+    if not any(table.rows for table in tables):
+        return
+    signature = _signature((tuple((table.columns, table.rows) for table in tables), block.references))
+    scope = _rich_text_scope(prefix)
+    for table_index, table in enumerate(tables):
+        for row_index, row in enumerate(table.rows):
+            description, action = st.columns([5, 1])
+            with description:
+                st.text(_contact_label(table.columns, row, row_index))
+            with action:
+                st.button("Edit contact",
+                          key=f"{prefix}_organization_contact_{signature}_{table_index}_{row_index}",
+                          on_click=_open_contact_from_summary,
+                          args=(prefix, active_key, spec, block, table_index, row_index, scope))
+
+
 def render_organization(draft, blocks, specs, prefix, assets, field, edit_content, *, show_preview=True):
     """Return updated blocks; only an explicit Edit opens a part's editor.
 
@@ -216,6 +283,8 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
         st.markdown("#### " + title)
         current_draft = replace(draft, blocks=tuple(updated.values()))
         _preview_part(current_draft, spec, block, prefix, assets, title, show_preview=show_preview)
+        if key == "contact_matrix" and st.session_state.get(active_key) != key:
+            _render_contact_summary_actions(spec, block, prefix, active_key)
         if st.session_state.get(active_key) != key:
             action = {
                 "org_chart": "Edit chart",
