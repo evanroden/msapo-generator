@@ -5,14 +5,13 @@ importer, client-page approval, image preparation and section appendix layer;
 they observe physical page raster requests as well as returned references.
 """
 from dataclasses import replace
-from io import BytesIO
 
 import pymupdf as fitz
 import pytest
 
 from app import monthly_report_sources as sources
 from app.monthly_report_content_policy import page_fingerprint
-from app.monthly_report_model import ResolvedBlock, synthetic_profiles
+from app.monthly_report_model import synthetic_profiles
 from app.monthly_report_section_uploads import (
     included_pages, pending_pages, preflight_whole_pdf,
     prepare_section_pages,
