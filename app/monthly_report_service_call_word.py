@@ -119,8 +119,36 @@ def review_word_maintenance(profile: ReportProfile, content: SourceContent,
         if table.review is None:
             continue
         for row in table.review.rows:
-            if row.wo and row.site:
+            if row.wo and row.site and not row.excluded:
                 seen.setdefault((row.site, row.wo.casefold()), set()).add(table.item_id)
     duplicates = tuple(sorted(key for key, ids in seen.items() if len(ids) > 1))
     return WordMaintenanceReview(source.id, source.sha256, tuple(tables),
                                  tuple(ignored), duplicates)
+
+
+
+def reviewed_word_maintenance_block(report: WordMaintenanceReview, *, existing=None):
+    """One atomic Section 5 block; no partial Word-table inclusion or duplicates."""
+    from app.monthly_report_service_call_mapping import reviewed_service_call_block
+    from app.monthly_report_model import ResolvedBlock
+    if report.cross_table_duplicates:
+        raise ValueError("Duplicate work orders across native Word tables need review.")
+    if not report.tables:
+        raise ValueError("No maintenance service-call tables were identified.")
+    blocks = []
+    for table in report.tables:
+        if table.review is None:
+            raise ValueError("A Word maintenance table still needs heading review.")
+        blocks.append(reviewed_service_call_block(table.review))
+    rows = tuple(row for block in blocks for row in block.rows)
+    references = tuple(dict.fromkeys(ref for block in blocks for ref in block.references))
+    result = ResolvedBlock("service_calls", "This month", rows=rows, references=references)
+    if existing is not None:
+        if existing.key != "service_calls":
+            raise ValueError("Wrong destination for maintenance source rows.")
+        if existing == result:
+            return existing
+        if (existing.source == "Omit" or existing.rows or existing.extra_tables
+                or existing.text.strip() or existing.asset_hashes):
+            raise ValueError("Edited Service Calls already exist. Review replacement before proceeding.")
+    return result
