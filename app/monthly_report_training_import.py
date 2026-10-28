@@ -292,6 +292,29 @@ def _matrix_issues(row, source_year, profile):
     return tuple(issues)
 
 
+def _mark_training_duplicates(rows, kind):
+    """Repeated source identities remain visible until explicitly resolved."""
+    label = "Duplicate Training source row needs review."
+    cleared = tuple(replace(row, issues=tuple(i for i in row.issues if i != label))
+                    for row in rows)
+    groups = {}
+    for index, row in enumerate(cleared):
+        if row.excluded:
+            continue
+        if kind == "events" and row.values[0] and row.values[1]:
+            key = (row.values[0].casefold(), row.values[1], row.values[3].casefold())
+        elif kind == "requirements" and row.values[0] and row.values[1]:
+            key = (row.values[0].casefold(), row.values[1].casefold())
+        else:
+            continue
+        groups.setdefault(key, []).append(index)
+    duplicates = {n for indices in groups.values() if len(indices) > 1
+                  for n in indices}
+    return tuple(replace(row, issues=(*row.issues, label))
+                 if index in duplicates else row
+                 for index, row in enumerate(cleared))
+
+
 def review_training_table(source: TrainingTableSource, profile: ReportProfile,
                           period: ReportPeriod, *, source_year: int | None = None):
     """Produce immutable candidate rows, retaining all source values and places.
@@ -347,22 +370,7 @@ def review_training_table(source: TrainingTableSource, profile: ReportProfile,
         row = replace(row, issues=_event_issues(row, period) if kind == "events"
                       else _matrix_issues(row, source_year, profile))
         candidates.append(row)
-    # One source row may appear again after a repeated heading or copying.
-    # Conflicting real training rows stay visible, not silently deduplicated.
-    groups = {}
-    for index, row in enumerate(candidates):
-        if kind == "events" and row.values[0] and row.values[1]:
-            identity = (row.values[0].casefold(), row.values[1], row.values[3].casefold())
-        elif kind == "requirements" and row.values[0] and row.values[1]:
-            identity = (row.values[0].casefold(), row.values[1].casefold())
-        else:
-            continue
-        groups.setdefault(identity, []).append(index)
-    duplicate_indices = {index for indices in groups.values() if len(indices) > 1
-                         for index in indices}
-    candidates = [replace(row, issues=(*row.issues, "Duplicate Training source row needs review."))
-                  if index in duplicate_indices else row
-                  for index, row in enumerate(candidates)]
+    candidates = _mark_training_duplicates(candidates, kind)
     normalized_cols = EVENT_COLUMNS if kind == "events" else (
         "Team member", "Site", *columns[2:])
     if kind == "events":
@@ -417,7 +425,7 @@ def correct_training_row(review: TrainingImportReview, key: str, changes: dict[s
                       else _matrix_issues(updated, review.source_year, profile))
     rows = list(review.rows)
     rows[index] = updated
-    return replace(review, rows=tuple(rows))
+    return replace(review, rows=_mark_training_duplicates(rows, review.kind))
 
 
 def exclude_training_row(review: TrainingImportReview, key: str, *,
@@ -429,7 +437,7 @@ def exclude_training_row(review: TrainingImportReview, key: str, *,
         raise ValueError("This source Training row is unavailable.")
     rows = list(review.rows)
     rows[matches[0]] = replace(rows[matches[0]], excluded=True)
-    return replace(review, rows=tuple(rows))
+    return replace(review, rows=_mark_training_duplicates(rows, review.kind))
 
 
 def confirm_training_word_layout(review: TrainingImportReview, *,
