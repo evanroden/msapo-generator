@@ -168,8 +168,18 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
     old = plans.get(section.key, {})
     # Streamlit includes an expander's label in its identity, even with a key.
     # A changing "Ready" suffix would close it and discard its active widgets.
-    box = st.expander(section.title, expanded=first, key=p + "_open", on_change="rerun")
-    if not box.open:
+    text_only_period_review = (bool(old.get("period_review_items"))
+                               and not old.get("new_assets")
+                               and not old.get("preserved_assets")
+                               and not old.get("word_page_records")
+                               and not old.get("native_art_review")
+                               and all(item.kind == "text" for item in section.items))
+    # A quick close/reopen must not let an older toggle rerun remove an
+    # active text editor. Keep this lightweight review mounted client-side.
+    # Media, tables and native artwork retain their deliberate lazy boundary.
+    box = st.expander(section.title, expanded=first, key=p + "_open",
+                      on_change="ignore" if text_only_period_review else "rerun")
+    if not text_only_period_review and not box.open:
         return
     with box:
         # Reserve the same position, but do not display stale approval from
@@ -183,13 +193,22 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
             labels[actions[2]] = ("Use selected ENFRA template" if independent_template else
                                  "Use this report’s cover design" if cover_design_available
                                   else "Leave imported cover artwork out")
-        action = st.radio("What would you like to do?", actions, format_func=labels.get, key=field(p + "_action", old.get("action", actions[0])), horizontal=True)
+        action_key = field(p + "_action", old.get("action", actions[0]))
+        current_action = st.session_state.get(action_key)
+        # Keep the cover's native remount default consistent with its staged
+        # action. Unknown values still fall back to review, never approval.
+        action_index = (actions.index(current_action)
+                        if section.key == "cover" and current_action in actions else 0)
+        action = st.radio("What would you like to do?", actions, index=action_index,
+                          format_func=labels.get, key=action_key, horizontal=True)
         plan = {"key": section.key, "action": action, "target": section.key,
                 "omit": action == actions[2], "selected": [], "texts": {},
                 "tables": {}, "destinations": {},
                 "new_assets": [(slot, image) for slot, image in old.get("new_assets", [])
                                if slot not in {"brand_logo", "client_logo"}],
                 "image_notes": dict(old.get("image_notes", {})), "automatic": old.get("automatic", False),
+                "period_review_items": tuple(old.get("period_review_items", ())),
+                "period_review_label": period.label,
                 "source_sha256": old.get("source_sha256", ""),
                 "source_site_relation": old.get("source_site_relation", ""),
                 "automatic_logo_skips": {role:list(ids) for role,ids in old.get("automatic_logo_skips", {}).items()},
@@ -269,9 +288,34 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 if not target:
                     blocking.append("Choose a section above, or leave this additional content out of the draft.")
             texts = [i for i in items if i.kind == "text"]
+            if old.get("period_review_items"):
+                # Period review may not bring explicitly old prose back merely
+                # because it shares a section with unfinished, undated work.
+                # A pending period item may be unselected because its price
+                # needs editing. Keep it visible; contains_price still blocks
+                # approval until the user removes that price explicitly.
+                retained_ids = old.get("combined_text_ids") or (
+                    *old.get("selected", ()), *old.get("period_review_items", ()))
+                texts = [i for i in texts if i.id in retained_ids]
             if texts:
-                combined = old.get("texts", {}).get(texts[0].id, "\n\n".join(i.text for i in texts))
-                text = st.text_area(guide.text_label, key=field(p + "_text", combined), height=200) if action == actions[1] else combined
+                prior_texts = old.get("texts", {})
+                if old.get("combined_text_ids"):
+                    # An existing section edit is already an aggregate. Never
+                    # append the original paragraphs again on its next rerun.
+                    combined = prior_texts.get(texts[0].id, "\n\n".join(i.text for i in texts))
+                else:
+                    # Automatic plans store one value per paragraph, not one
+                    # combined section under the first paragraph's identity.
+                    combined = "\n\n".join(prior_texts.get(i.id, i.text) for i in texts)
+                text = combined
+                if action == actions[1]:
+                    text_key = field(p + "_text", combined)
+                    # A native remount needs the exact delivered value in its
+                    # protobuf default too, including an intentional clear.
+                    # Seeding Python session state alone can render blank.
+                    text = st.text_area(guide.text_label,
+                                        value=st.session_state.get(text_key, combined),
+                                        key=text_key, height=200)
                 if action != actions[1]:
                     st.text(text[:14000])
                     if len(text) > 14000:
@@ -430,6 +474,12 @@ def _approve_plan(plan, p, field, old, plans, blocking, *, quote_price_risk=Fals
             "I reviewed this vendor quotation and excluded all pricing",
             key=field(p + "_price_quote_review_" + stamp,
                       old.get("approval_stamp") == stamp))
+    if plan.get("period_review_items") and not plan.get("omit"):
+        period_reviewed = st.checkbox(
+            "This work belongs in " + plan.get("period_review_label", "this month"),
+            key=field(p + "_undated_period_review_" + stamp,
+                      old.get("approval_stamp") == stamp))
+        reviewed = reviewed and period_reviewed
     plan["approved"] = bool(reviewed and not blocking)
     plan["approval_stamp"] = stamp if plan["approved"] else ""
     plans[plan["key"]] = plan
@@ -456,7 +506,12 @@ def render_pending_cover_selection(draft, assets, contract, period, state):
     if not staged:
         return draft, assets
     _, path, inspection = staged
-    plans = st.session_state.get(prefix + "_" + inspection.sha256[:16] + "_section_plans", {})
+    active = st.session_state.get(prefix + "_active_section_review")
+    # Only this render's exact source/view/membership scope may contribute a
+    # pending photo. Never guess a legacy key or reuse a superseded review.
+    if not active or active[0] != inspection.sha256:
+        return draft, assets
+    plans = st.session_state.get(active[1] + "_section_plans", {})
     plan = plans.get("cover", {})
     if plan.get("omit"):
         return draft, assets
@@ -502,7 +557,8 @@ def _starting_review_sections(sections, plans, diagram_failures):
         plan = plans.get(section.key, {})
         questions = plan.get("questions", ())
         if (plan.get("approved") and not questions
-                and not (section.key == "cover" and plan.get("omit"))):
+                and not (section.key == "cover" and plan.get("omit"))
+                and not plan.get("period_review_items")):
             continue
         if (section.key in diagram_failures and questions
                 and all(q.startswith("A Word diagram or image") for q in questions)):
@@ -596,6 +652,8 @@ def _source_view_admission(function):
         state, identity = values.get('state'), values.get('identity')
         prefix = ("report_setup_" + _signature((values['contract'], state.profile.key if state else identity.key if identity else "new", values['period'].key))
                   if 'contract' in values and 'period' in values else None)
+        if prefix:
+            st.session_state.pop(prefix + '_active_section_review', None)
         staged = st.session_state.get(prefix + '_stage') if prefix else None
         from app.monthly_report_source_view_runtime import import_candidate
         needs_view = staged is not None and import_candidate(staged[2])
@@ -770,6 +828,14 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     profiles = library.list_profiles(contract)
     known_sites = {f.key: f for f in (*_site_options(contract), *(f for profile in profiles for f in profile.facilities), *candidate.facilities)}
     analysis = analyze_starting_report(inspection, candidate, period, known_sites.values(), known_profiles=profiles)
+    from app.monthly_report_source_sites_ui import correct_detected_sites
+    confirmed_source = correct_detected_sites(
+        inspection, candidate, period, analysis.source_sites, tuple(known_sites.values()),
+        p, field, source_view=source_view)
+    if confirmed_source is not None:
+        analysis = analyze_starting_report(
+            inspection, candidate, period, known_sites.values(),
+            confirmed_sites=confirmed_source, known_profiles=profiles)
     if analysis.site_relation == "unknown":
         st.info("The starting report does not clearly name its sites. Confirm them once so another site's contacts and work are not copied into this report.")
         from app.monthly_report_start_import import source_sites
@@ -794,6 +860,9 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             return True
         analysis = analyze_starting_report(inspection, candidate, period, known_sites.values(),
                                           confirmed_sites=tuple({f.key: f for f in confirmed_sites}.values()))
+    from app.monthly_report_source_sites_ui import source_review_epoch
+    p += "_source_scope_" + source_review_epoch(
+        inspection, candidate, period, analysis.source_sites, analysis.site_relation, source_view)
     source_names = "; ".join(site.title for site in analysis.source_sites)
     st.caption("Starting report: " + source_names + (f" · {analysis.source_period[0]}-{analysis.source_period[1]:02d}" if analysis.source_period else " · source month not stated"))
     if analysis.site_relation == "other":
@@ -845,6 +914,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     intent = "Automatic starting report"
     sections = section_reviews(inspection, source_view=source_view)
     plans = st.session_state.setdefault(p + "_section_plans", {})
+    st.session_state[prefix + "_active_section_review"] = (inspection.sha256, p)
     # Preserve native diagrams at their evidenced Word/ENFRA section before
     # asking the operator about anything. Ordinary image parts already follow
     # suggested_slot; this path is only for complex native Word drawings.
@@ -1018,10 +1088,16 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     # same unresolved object.
     questions = _starting_review_sections(sections, plans, diagram_failures)
     if questions:
-        st.subheader("A few details need a check")
+        pending_review = any(not plans[s.key].get("approved") or plans[s.key].get("questions")
+                             for s in questions)
+        st.subheader("A few details need a check" if pending_review else "Imported content is ready")
         for index, section in enumerate(questions):
-            for message in seed[section.key]["questions"]:
-                st.caption(section.title + ": " + message)
+            # Keep month-confirmed content reachable for corrections. Reuse its
+            # stable, collapsible card rather than removing its widgets (and
+            # losing the only edit path) after acknowledgment.
+            if not plans[section.key].get("approved") or plans[section.key].get("questions"):
+                for message in seed[section.key]["questions"]:
+                    st.caption(section.title + ": " + message)
             _section_card(section, path, inspection, period, p, field, plans, index == 0,
                           cover_photo_ids=cover_photo_ids if section.key == "cover" else (),
                           cover_design_available=state is not None or bool(fallback_template),

@@ -16,6 +16,12 @@ def _signature(value) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()
 
 
+def _retry_section_upload(local_key, signature):
+    """Retire only the selection that displayed this retry action."""
+    if st.session_state.get(local_key + "_read") == signature:
+        st.session_state.pop(local_key + "_read", None)
+
+
 def _undecided_pages(content, source):
     exclusions = dict(source.client_page_exclusions)
     return [n for n in sources.image_numbers(content)
@@ -996,7 +1002,10 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
     # Water, Scorecards and MBCx already have section-level instructions. Keep one
     # labeled uploader without a duplicate title, while retaining the complete
     # canonical page-review flow and its safety checks.
-    with st.popover("Add files", key=local_key + "_add_files", help="Upload a file or reuse a file already saved in this draft."):
+    upload_area = (st.container() if destination == "water_reports" else
+                   st.popover("Add files", key=local_key + "_add_files",
+                              help="Upload a file or reuse a file already saved in this draft."))
+    with upload_area:
         upload = st.file_uploader(upload_label, type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
                                  accept_multiple_files=True, max_upload_size=128, key=local_key + "_upload")
         picked = tuple((u.name, u.getvalue()) for u in (upload or ()))
@@ -1023,6 +1032,13 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
             st.session_state[local_key + "_read"] = signature
         elif not picked:
             st.session_state.pop(local_key + "_read", None)
+        accepted = {content.source.sha256 for content in contents}
+        unread = tuple(name for name, raw in picked
+                       if hashlib.sha256(raw).hexdigest() not in accepted)
+        if unread:
+            st.caption("Retry unread files or replace them above. Existing report content is kept.")
+            st.button("Retry unread files", key=local_key + "_retry_upload_" + signature,
+                      on_click=_retry_section_upload, args=(local_key, signature))
         owners = source_destinations(contents, bindings, blocks)
         unassigned = [c for c in contents if not owners[c.source.id]]
         if unassigned:

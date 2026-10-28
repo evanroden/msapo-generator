@@ -352,9 +352,19 @@ def browser_task(engine, name, base):
         record.setdefault("save_status_geometry", []).append({"stage":stage,"viewport":page.viewport_size,
             "acknowledged_status":status,"native_gesture":gesture})
 
-    def panel(number):
+    def photo_disclosure(number):
         item = page.locator(PAIR).get_by_test_id("stExpander").filter(has=page.locator("summary").get_by_text("Photo " + str(number), exact=True))
         expect(item).to_have_count(1)
+        return item
+
+    def require_photo_disclosure(number, expanded, stage):
+        item = photo_disclosure(number)
+        actual = item.evaluate("node => node.matches('details') ? node.open : node.querySelector('details').open")
+        assert actual is expanded, f"{stage}: Photo {number} disclosure was {actual}, expected {expanded}"
+        record.setdefault("photo_disclosures", []).append({"stage": stage, "photo": number, "expanded": actual})
+
+    def panel(number):
+        item = photo_disclosure(number)
         if not item.evaluate("node => node.matches('details') ? node.open : node.querySelector('details').open"):
             item.locator("summary").first.click()
         return item
@@ -397,6 +407,8 @@ def browser_task(engine, name, base):
         assert initial["working"]["source"] == "This month"
         assert not initial["working"]["sources"]
         require_frontend_delivery(record)
+        intake = page.locator(PAIR).get_by_test_id("stExpander").filter(has=page.locator("summary").get_by_text("Add photos", exact=True))
+        assert intake.evaluate("node => node.matches('details') ? node.open : node.querySelector('details').open"), "Empty photo intake must start open"
         upload((1, 2))
         page.locator(PAIR).get_by_role("button", name="Add these photos", exact=True).click()
         capture("two-native-photos-added", block)
@@ -410,17 +422,24 @@ def browser_task(engine, name, base):
         page.locator(PAIR).get_by_role("button", name="Edit photos or captions", exact=True).click()
         expect(panel(1).get_by_role("button", name="Move earlier", exact=True)).to_be_disabled()
         expect(panel(2).get_by_role("button", name="Move later", exact=True)).to_be_disabled()
+        # A deliberate native collapse must survive both a sibling caption
+        # rerun and moving that closed photo to a different displayed number.
+        panel(2).locator("summary").first.click()
+        require_photo_disclosure(2, False, "deliberate-collapse")
         control = panel(1).get_by_role("textbox", name="Caption", exact=True)
         control.fill(MOVED)
         control.press("Tab")
         block = preserve_asset_reviews(block, replace(block, asset_captions=(MOVED, CAPTIONS[1])))
         capture("ordinary-caption-blur", block)
+        require_photo_disclosure(2, False, "sibling-caption-rerun")
         panel(1).get_by_role("button", name="Move later", exact=True).click()
         block = preserve_asset_reviews(block, replace(block, asset_hashes=(refs[1], refs[0]), asset_captions=(CAPTIONS[1], MOVED)))
         capture("desktop-move-later", block)
+        require_photo_disclosure(1, False, "closed-photo-follows-move")
         panel(2).get_by_role("button", name="Move earlier", exact=True).click()
         block = preserve_asset_reviews(block, replace(block, asset_hashes=refs[:2], asset_captions=(MOVED, CAPTIONS[1])))
         capture("desktop-reverse-earlier", block)
+        require_photo_disclosure(2, False, "closed-photo-follows-reverse-move")
         # Streamlit 1.61.1 labels both the scalar thumb and its group. The
         # native thumb's aria-labelledby joins those two labels, so its name
         # is "Photos per page Photos per page" in the retained first failure.
@@ -459,10 +478,20 @@ def browser_task(engine, name, base):
         page.locator(PAIR).get_by_role("button", name="Add these photos", exact=True).click()
         block = preserve_asset_reviews(block, replace(block, asset_hashes=refs, asset_captions=(ADDED, CAPTIONS[1], "")))
         capture("caption-delivered-with-add-old-reviews-retained", block)
+        require_photo_disclosure(3, True, "third-pending-caption-open")
         native_geometry("caption-with-add")
         record["action_delivery"].append(action_delivery(delivery, start, "Add these photos", ADDED))
         page.set_viewport_size({"width": 390, "height": 844})
         page.wait_for_function("() => document.querySelector('.epc-workspace')?.dataset.epcMode==='compact'")
+        require_photo_disclosure(3, True, "narrow-pending-caption-open")
+        # Exercise the disclosure itself with native keyboard activation;
+        # the panel helper must not rescue or hide an incorrect open state.
+        summary = photo_disclosure(3).locator("summary").first
+        summary.focus()
+        summary.press("Enter")
+        require_photo_disclosure(3, False, "narrow-keyboard-enter-collapse")
+        summary.press("Space")
+        require_photo_disclosure(3, True, "narrow-keyboard-space-reopen")
         panel(2)  # Establish the one normal action before editing another caption.
         start = len(delivery)
         panel(3).get_by_role("textbox", name="Caption", exact=True).fill(THIRD)
