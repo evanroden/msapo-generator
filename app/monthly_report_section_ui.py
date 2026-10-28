@@ -218,6 +218,11 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 "period_review_label": period.label,
                 "source_sha256": old.get("source_sha256", ""),
                 "source_site_relation": old.get("source_site_relation", ""),
+                "content_role_required": list(old.get("content_role_required", ())),
+                "content_role_reviews": dict(old.get("content_role_reviews", {})),
+                "content_role_aggregate": dict(old.get("content_role_aggregate", {})),
+                "table_role_required": list(old.get("table_role_required", ())),
+                "table_role_reviews": dict(old.get("table_role_reviews", {})),
                 "automatic_logo_skips": {role:list(ids) for role,ids in old.get("automatic_logo_skips", {}).items()},
                 "automatic_divider_skips": {role:list(ids) for role,ids in old.get("automatic_divider_skips", {}).items()},
                 "cover_photo_omitted": old.get("cover_photo_omitted", False),
@@ -267,7 +272,11 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 st.caption("This section stays in the report. The uploaded content remains in the saved original for reference.")
         else:
             from app.monthly_report_word_pages_ui import chart_page_review
-            if chart_page_review(section, path, period, p, field, old, plan, blocking):
+            from app.monthly_report_source_table_roles import source_table_role, review_source_table
+            marked_tables = any(source_table_role(item) for item in section.items)
+            if marked_tables and section.key == "organization":
+                st.info("This section has marked table instructions or examples. Review those tables below; copying their complete pages would retain the source values.")
+            if not marked_tables and chart_page_review(section, path, period, p, field, old, plan, blocking):
                 # A deliberate complete-page selection replaces automatic
                 # diagram capture; never combine two full-page copies.
                 plan["auto_native_diagrams"] = False
@@ -294,16 +303,18 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 plan["target"] = target
                 if not target:
                     blocking.append("Choose a section above, or leave this additional content out of the draft.")
+            from app.monthly_report_source_content_roles import render_role_texts, source_text_role
             texts = [i for i in items if i.kind == "text"]
             if old.get("period_review_items"):
-                # Period review may not bring explicitly old prose back merely
-                # because it shares a section with unfinished, undated work.
-                # A pending period item may be unselected because its price
-                # needs editing. Keep it visible; contains_price still blocks
-                # approval until the user removes that price explicitly.
+                # Keep unfinished undated work available without resurrecting
+                # explicitly old prose. Source-role questions are independent.
                 retained_ids = old.get("combined_text_ids") or (
                     *old.get("selected", ()), *old.get("period_review_items", ()))
-                texts = [i for i in texts if i.id in retained_ids]
+                texts = [i for i in texts if i.id in retained_ids or source_text_role(i)]
+            role_texts = render_role_texts(
+                texts, inspection, p, field, old, plan, blocking, editing=action == actions[1])
+            if role_texts:
+                texts = []
             if texts:
                 prior_texts = old.get("texts", {})
                 if old.get("combined_text_ids"):
@@ -340,6 +351,12 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                     st.warning("Check older dates in this section. Keep valid ongoing history; update only the parts that refer to this month’s work.")
             for n, item in enumerate((i for i in items if i.kind == "table"), 1):
                 table, removed = table_without_prices(item)
+                if source_table_role(item):
+                    table = review_source_table(item, table, n, inspection, p, field, old, plan, blocking)
+                    if table is not None:
+                        plan["tables"][item.id] = table
+                        plan["selected"].append(item.id)
+                    continue
                 table = old.get("tables", {}).get(item.id, table)
                 if table:
                     from app.monthly_report_table_review_ui import review_table_headings
