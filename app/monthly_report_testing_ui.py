@@ -239,8 +239,11 @@ def _render_reset_readiness(base):
     captured = testing.capture_namespace()
     generation = testing.generation()[:12]
 
-    @st.fragment(run_every="1s")
+    @st.fragment
     def readiness():
+        # A native probe reruns ONLY this fragment. Never schedule automatic
+        # work while ordinary editor/upload/history fragments are active.
+        st.button("Check reset readiness", key="monthly_qa_reset_probe")
         with captured():
             # Metadata has no text or layout footprint, including its Streamlit
             # wrapper. Never expose cookies, owner IDs, or the full lease.

@@ -92,8 +92,8 @@ def harness(monkeypatch):
         first = property(lambda self: self)
         def __init__(self, text=""):
             self.text = text
-        def click(self):
-            actions.append("reset click")
+        def click(self, **kwargs):
+            actions.append("probe click" if self.text == "probe" else "reset click")
         def wait_for(self, **kwargs):
             pass
         def text_content(self):
@@ -106,7 +106,11 @@ def harness(monkeypatch):
         def get_by_text(self, text, **kwargs):
             return readiness if isinstance(text, re.Pattern) and "readiness" in text.pattern else Locator()
         def get_by_role(self, *args, **kwargs):
-            return Locator()
+            return Locator("probe" if kwargs.get("name") == "Check reset readiness" else "")
+        def wait_for_timeout(self, delay):
+            clock[0] += delay / 1000
+            if busy_then_ready[0]:
+                readiness.text = readiness.text.replace(": busy", ": ready")
         def wait_for_function(self, source, **kwargs):
             if "notRunning" in source:
                 actions.append("observe script idle")
@@ -117,11 +121,19 @@ def harness(monkeypatch):
                 if copies[0] != 1 or stale[0]:
                     raise Timeout("ambiguous or stale receipt")
                 if args["prior"] is not None:
-                    if not fresh[0] or ": busy" in readiness.text:
-                        raise Timeout("not ready")
+                    if not fresh[0]:
+                        raise Timeout("not fresh")
                     if replace_generation[0]:
                         current["generation"] = "f" * 12
-                return SimpleNamespace(json_value=lambda: "111111111111")
+                if args["prior"] is None and "probe click" in actions:
+                    actions.append("confirm idle receipt")
+                    if replace_observation[0]:
+                        replace_observation[0] = False
+                        return SimpleNamespace(json_value=lambda: {
+                            "observation": "333333333333", "status": "ready"})
+                return SimpleNamespace(json_value=lambda: {
+                    "observation": "222222222222", "status": "busy" if ": busy" in readiness.text
+                    else "unavailable" if ": unavailable" in readiness.text else "ready"})
             actions.append("observe transition")
             assert kwargs["timeout"] == 40000
             return SimpleNamespace(json_value=lambda: outcome[0])
@@ -140,6 +152,9 @@ def harness(monkeypatch):
     monkeypatch.setattr(qa_public_build, "running_code_marker", lambda *args, **kwargs: Locator("Running code: " + "d" * 40))
     outcome = ["empty"]
     fresh = [True]
+    clock = [1]
+    busy_then_ready = [False]
+    replace_observation = [False]
     copies = [1]
     stale = [False]
     replace_generation = [False]
@@ -147,14 +162,14 @@ def harness(monkeypatch):
         actions.append("observe state:" + mode)
         return ({"mode": "empty", "generation": "b" * 12, "revision": 0}
                 if mode == "empty" else dict(current))
-    env = dict(re=re, parse_qs=parse_qs, urlparse=urlparse, time=SimpleNamespace(monotonic=lambda: 1),
+    env = dict(re=re, parse_qs=parse_qs, urlparse=urlparse, time=SimpleNamespace(monotonic=lambda: clock[0]),
                EXPECTED="d" * 40, URL="https://example.test", expect=expect, BrowserTimeout=Timeout,
                await_fixture_state=state, event=lambda *a, **k: None,
                state_diagnostics=lambda *a, **k: actions.append("diagnostics"))
     exec(compile(module, str(path), "exec"), env)
     return SimpleNamespace(env=env, page=Page(), original=original, current=current,
                            readiness=readiness, actions=actions, outcome=outcome, timeout=Timeout,
-                           fresh=fresh, replace_generation=replace_generation, copies=copies, stale=stale)
+                           fresh=fresh, replace_generation=replace_generation, copies=copies, stale=stale, busy_then_ready=busy_then_ready, replace_observation=replace_observation)
 
 
 def test_harness_never_clicks_reset_before_idle(harness):
@@ -256,11 +271,11 @@ def test_actual_browser_predicate_rejects_duplicates_stale_busy_and_old_observat
     nodes=[node('ready',true),node('busy')]; assert.equal(test(args),false);
     nodes=[node(),node()]; for(let i=0;i<100;i++) assert.equal(test(args),false);
     nodes=[node('ready',true)]; assert.equal(test(args),false);
-    nodes=[node('busy')]; assert.equal(test(args),false);
+    nodes=[node('busy')]; assert.equal(test(args).status,'busy');
     nodes=[node('ready',false,'bbbbbbbbbbbb')]; assert.equal(test(args),false);
     nodes=[node('ready',false,'aaaaaaaaaaaa','111111111111')]; assert.equal(test(args),false);
-    nodes=[node()]; assert.equal(test(args),'222222222222');
-    nodes=[node('busy')]; assert.equal(test({...args,prior:null}),'222222222222');
+    nodes=[node()]; assert.deepEqual(test(args),{observation:'222222222222',status:'ready'});
+    nodes=[node('busy')]; assert.equal(test({...args,prior:null}).observation,'222222222222');
     """
     subprocess.run(["node", "-e", script.replace("PREDICATE", predicate)], check=True)
 
@@ -308,3 +323,87 @@ def test_readiness_diagnostics_allowlist_invalid_values_and_bounded_duplicates()
     diagnostics = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "state_diagnostics")
     assert any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and
                n.func.id == "reset_readiness_diagnostics" for n in ast.walk(diagnostics))
+
+
+def test_probe_busy_then_idle_uses_native_actions_and_one_reset(harness):
+    h = harness
+    h.readiness.text = h.readiness.text.replace(": ready", ": busy")
+    h.busy_then_ready[0] = True
+    h.env["reset_fixture"](h.page, h.original, "test")
+    assert h.actions.count("probe click") == 2
+    assert h.actions.count("reset click") == 1
+    assert h.actions.index("observe script idle") < h.actions.index("probe click")
+
+
+def test_unavailable_probe_never_resets(harness):
+    h = harness
+    h.readiness.text = h.readiness.text.replace(": ready", ": unavailable")
+    with pytest.raises(AssertionError, match="unavailable"):
+        h.env["reset_fixture"](h.page, h.original, "test")
+    assert h.actions.count("probe click") == 1
+    assert "reset click" not in h.actions
+
+
+def test_ordinary_readiness_render_never_schedules_automatic_reruns():
+    import inspect
+    source = inspect.getsource(ui._render_reset_readiness)
+    assert "@st.fragment" in source
+    assert "run_every" not in source
+    assert "st.rerun" not in source
+    assert 'st.button("Check reset readiness", key="monthly_qa_reset_probe")' in source
+
+
+def test_real_probe_protocol_never_emits_auto_rerun_and_preserves_namespace(monkeypatch, tmp_path):
+    from streamlit.testing.v1 import AppTest
+    from streamlit.runtime.scriptrunner_utils.script_run_context import ScriptRunContext
+    messages = []
+    enqueue = ScriptRunContext.enqueue
+    def capture(self, message):
+        messages.append(message.WhichOneof("type"))
+        return enqueue(self, message)
+    monkeypatch.setattr(ScriptRunContext, "enqueue", capture)
+    source = """from pathlib import Path
+import streamlit as st
+from app import monthly_report_testing as qa
+from app.monthly_report_testing_ui import _render_reset_readiness
+with qa.isolated("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"):
+    base = Path(st.session_state["_base"])
+    qa.data_dir(base)
+    _render_reset_readiness(base)
+"""
+    app = AppTest.from_string(source, default_timeout=10)
+    app.session_state["_base"] = str(tmp_path)
+    app.run()
+    assert not app.exception
+    def receipt():
+        return next(x.proto.body for x in app.get("html") if "data-monthly-qa-reset-readiness" in x.proto.body)
+    before = receipt()
+    files = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    next(x for x in app.button if x.label == "Check reset readiness").click().run()
+    assert not app.exception
+    after = receipt()
+    assert re.search('data-generation="([^"]+)"', before)[1] == re.search('data-generation="([^"]+)"', after)[1]
+    assert re.search('data-observation="([^"]+)"', before)[1] != re.search('data-observation="([^"]+)"', after)[1]
+    assert files == {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    assert "auto_rerun" not in messages
+
+
+def test_ready_probe_finishes_before_reset_and_exact_observation_is_rechecked(harness):
+    h = harness
+    h.env["reset_fixture"](h.page, h.original, "test")
+    probe = h.actions.index("probe click")
+    confirm = h.actions.index("confirm idle receipt")
+    reset = h.actions.index("reset click")
+    assert "observe script idle" in h.actions[probe + 1:confirm]
+    assert probe < confirm < reset
+    assert h.actions.count("reset click") == 1
+
+
+def test_replaced_ready_observation_requires_another_native_probe(harness):
+    h = harness
+    h.replace_observation[0] = True
+    h.env["reset_fixture"](h.page, h.original, "test")
+    assert h.actions.count("probe click") == 2
+    assert h.actions.count("confirm idle receipt") == 2
+    assert h.actions.count("reset click") == 1
+    assert h.actions.index("reset click") > max(i for i, x in enumerate(h.actions) if x == "confirm idle receipt")

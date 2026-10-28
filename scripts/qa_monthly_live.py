@@ -205,16 +205,42 @@ def await_reset_admissible(page, from_state: dict, *, timeout: int = 40000) -> N
         if (node.closest('[data-stale="true"]') ||
             node.dataset.generation !== generation ||
             !/^[0-9a-f]{12}$/.test(node.dataset.observation || '')) return false;
-        if (prior !== null && (node.dataset.observation === prior ||
-            node.dataset.monthlyQaResetReadiness !== 'ready')) return false;
-        return node.dataset.observation;
+        if (!['ready', 'busy', 'unavailable'].includes(node.dataset.monthlyQaResetReadiness) ||
+            node.dataset.observation.length !== 12 ||
+            (prior !== null && node.dataset.observation === prior)) return false;
+        return {observation: node.dataset.observation, status: node.dataset.monthlyQaResetReadiness};
     }"""
-    observation = page.wait_for_function(
+    receipt = page.wait_for_function(
         receipt_predicate, arg={"generation": from_state["generation"], "prior": None},
         timeout=remaining()).json_value()
-    page.wait_for_function(
-        receipt_predicate, arg={"generation": from_state["generation"], "prior": observation},
-        timeout=remaining())
+    while True:
+        # No unsolicited timer: each read-only server probe follows a real
+        # native button click after full-script idle in this same context.
+        page.wait_for_function("""() => document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state') === 'notRunning'""",
+                               timeout=remaining())
+        page.get_by_role("button", name="Check reset readiness", exact=True).click(timeout=remaining())
+        receipt = page.wait_for_function(
+            receipt_predicate, arg={"generation": from_state["generation"], "prior": receipt["observation"]},
+            timeout=remaining()).json_value()
+        if receipt["status"] == "ready":
+            # Metadata may arrive before its fragment finishes. Never start a
+            # full-app Reset until that run is idle and this exact observation
+            # is still the sole current receipt.
+            page.wait_for_function("""() => document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state') === 'notRunning'""",
+                                   timeout=remaining())
+            confirmed = page.wait_for_function(
+                receipt_predicate, arg={"generation": from_state["generation"], "prior": None},
+                timeout=remaining()).json_value()
+            if confirmed == receipt:
+                break
+            # A full render superseded the observation. Obtain another native
+            # probe rather than accepting possibly early readiness from it.
+            receipt = confirmed
+            if receipt["status"] == "ready":
+                continue
+        if receipt["status"] != "busy":
+            raise AssertionError("Synthetic reset readiness is unavailable for this generation.")
+        page.wait_for_timeout(min(250, remaining()))
     # Recheck ownership after waiting. The server repeats its active-worker
     # guard on the click, so a job starting after this receipt still fails safe.
     state = await_fixture_state(page, from_state["mode"], timeout=remaining())
