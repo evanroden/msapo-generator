@@ -1,0 +1,77 @@
+name: Publish verified annual Training tree (helper only)
+on:
+  push:
+    branches: [verify/mr459-publish-20261027]
+    paths: [.github/workflows/verify-mr459-publish.yml]
+permissions:
+  contents: write
+jobs:
+  publish-exact-tree:
+    if: github.repository == 'evanroden/msapo-generator' && github.ref == 'refs/heads/verify/mr459-publish-20261027'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: bc53008012251e3858ffac2297818b78033cb5b7
+          persist-credentials: false
+      - name: Publish only the locally verified product tree to its isolated branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PYCODE'
+          import base64, hashlib, json, os, subprocess, urllib.request
+          from pathlib import Path
+          BASE = 'bc53008012251e3858ffac2297818b78033cb5b7'
+          BASE_TREE = '9e12ebfdc48699cd9063d009f867386d7342ee8c'
+          EXPECTED = '19ace1ff8acb43e51bb640e7b5bb37fbf617025e'
+          BRANCH = 'fix/mr459-annual-training-20261027'
+          REPO = 'evanroden/msapo-generator'
+          PATHS = sorted(['app/monthly_report_docx.py', 'app/monthly_report_native_layout.py',
+              'app/monthly_report_native_pages.py', 'app/monthly_report_training.py',
+              'app/monthly_report_training_style.py', 'app/monthly_report_training_ui.py',
+              'docs/MONTHLY_TRAINING_YEARS.md', 'tests/test_monthly_report_training_years.py',
+              'tests/test_monthly_report_training_year_outputs.py'])
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          def api(method, path, data=None):
+              raw = json.dumps(data).encode() if data is not None else None
+              request = urllib.request.Request('https://api.github.com/repos/' + REPO + '/' + path,
+                  data=raw, method=method, headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                  'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json',
+                  'X-GitHub-Api-Version': '2022-11-28'})
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  return json.load(response)
+          PARTS = ['bbe51da9a8a015f86231bce45db4f2d20e2440d4', '8e1298ebe854e672350ae4eee232273acb7fd316', '8869d2a864213e58c244900c4d4197583bf58ee4', '2c1e59a7653e77e658e18d65fba502cf404a7c19', 'e991c38bba94fd9f8dbef0dc9934629041e72a56', 'f384f6d98932b0e98c23f4898b45b007867d0a5d', 'e2cf1c4e6a8349c61d7400a7a4e5250c48b2339d', '30534d84d44f7825a1d728e1d2810be15e7aafe9', '36cfcdd0d2f356716c580be8b63052d0e97ee3df']
+          patches = []
+          for sha in PARTS:
+              raw = base64.b64decode(api('GET', 'git/blobs/' + sha)['content'])
+              assert hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest() == sha
+              patches.append(raw)
+          patch = b''.join(patches)
+          assert hashlib.sha256(patch).hexdigest() == 'b4f778dbbf552941ce66bb91411ac7606aef5f0460150ce7c31276dc56efdb89'
+          assert git('rev-parse', 'HEAD') == BASE
+          assert git('rev-parse', 'HEAD^{tree}') == BASE_TREE
+          subprocess.run(['git', 'apply', '--index', '--whitespace=error-all'], input=patch, check=True)
+          assert git('diff', '--cached', '--name-only').splitlines() == PATHS
+          assert git('write-tree') == EXPECTED
+          subprocess.run(['git', 'diff', '--cached', '--check'], check=True)
+          def guard():
+              assert api('GET', 'git/ref/heads/' + BRANCH)['object']['sha'] == BASE
+          guard()
+          entries = []
+          for path in PATHS:
+              raw = Path(path).read_bytes()
+              sha = hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest()
+              saved = api('POST', 'git/blobs', {'content': base64.b64encode(raw).decode(), 'encoding': 'base64'})
+              assert saved['sha'] == sha
+              entries.append({'path': path, 'mode': '100644', 'type': 'blob', 'sha': sha})
+          tree = api('POST', 'git/trees', {'base_tree': BASE_TREE, 'tree': entries})
+          assert tree['sha'] == EXPECTED
+          commit = api('POST', 'git/commits', {'message': 'Keep annual Training requirements separate by year\n\nRefs #459. Implementation and testing queue only; no merge or deployment.',
+              'tree': EXPECTED, 'parents': [BASE]})
+          guard()
+          api('PATCH', 'git/refs/heads/' + BRANCH, {'sha': commit['sha'], 'force': False})
+          print('Published verified product commit:', commit['sha'], 'tree:', EXPECTED)
+          print('This helper workflow is not part of the product PR. No main update, merge, deployment, or test waiver.')
+          PYCODE

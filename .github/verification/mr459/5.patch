@@ -1,0 +1,143 @@
+diff --git a/app/monthly_report_training_ui.py b/app/monthly_report_training_ui.py
+index b3908282c8afd744063a04ceebb126ebefd98379..4d3159fb1a7d62e927c92cabf3bd05e19c19b2be 100644
+--- a/app/monthly_report_training_ui.py
++++ b/app/monthly_report_training_ui.py
+@@ -12,7 +12,8 @@ from app.monthly_report_model import ReportTable
+ from app.monthly_report_training import (EVENT_COLUMNS, FORMATS, MATRIX_REF, STATUSES,
+     add_event, apply_tables, events_for_period, load_training, save_training, seed_matrix,
+     training_block, hospital_matrix, matrix_differs_from_current_standing,
+-    session_row_tokens, remove_event, replace_event)
++    session_row_tokens, remove_event, replace_event, is_matrix_reference, matrix_year,
++    matrix_for_year, matrix_title)
+ 
+ 
+ def _queue_session_removal(key, revision, index, scope):
+@@ -295,6 +296,57 @@ def _render_monthly_sessions(events, matrix, period, key, scope):
+             st.session_state.pop(pending_key, None)
+     return events
+ 
++def _matrix_grid(matrix, profile, key):
++    sites = [facility.title for facility in profile.facilities]
++    config = {"Site": st.column_config.SelectboxColumn("Site", options=sites, required=True)}
++    labels = {"": "— Not recorded (blank)", "Completed": "🟢 Completed", "Pending": "🟠 Pending", "Not required": "⚪ Not required", "Not recorded": "— Not recorded"}
++    config.update({name: st.column_config.SelectboxColumn(name, options=STATUSES, format_func=labels.get, required=True, default="Not recorded") for name in matrix.columns[2:]})
++    return _grid(key + "_grid_" + str(st.session_state.get(key + "_generation", 0)) + "_" + _signature(matrix.columns),
++                 [dict(zip(matrix.columns, row)) for row in matrix.rows]
++                 or [{name: "Not recorded" if index > 1 else "" for index, name in enumerate(matrix.columns)}],
++                 num_rows="dynamic", hide_index=True, column_config=config)
++
++
++def _queue_matrix_year(key, request):
++    st.session_state[key] = request
++
++
++def _requirements_year(draft, block, matrix, stored, directory, key, prefix):
++    """One explicit transition, after consuming pending edits in the old grid."""
++    from app.monthly_report_guided import _rich_text_scope
++    year = draft.period.year
++    request_key = prefix + "_training_year_request"
++    scope = _signature((draft.profile, draft.period, _rich_text_scope(prefix), block.source, draft.prepared_by, draft.synthetic))
++    expected = {"scope": scope, "matrix": _signature(matrix),
++                "revision": stored["revision"], "year": year}
++    request = st.session_state.pop(request_key, None)
++    changed = False
++    if request is not None and not isinstance(request, dict):
++        st.warning("The training year action is no longer valid. Review the matrix and try again.")
++        request = None
++    if request is not None:
++        canonical = next((t for t in block.extra_tables if is_matrix_reference(t.reference)), None)
++        report_changed = canonical is not None and _signature(canonical) != request.get("matrix")
++        if request != expected or report_changed or st.session_state.get(key + "_stale_standing"):
++            st.warning("The training matrix changed. Your edits are kept; review it before starting another year.")
++            if report_changed and request.get("scope") == scope and block.source != "Omit":
++                # An external report correction must not remain hidden behind
++                # this editor's older matrix buffer after the stale action.
++                matrix, changed = hospital_matrix(draft.profile, canonical, directory), True
++        elif matrix_year(matrix.reference) != year and block.source != "Omit" and not draft.synthetic:
++            proposed = matrix_for_year(draft.profile, matrix, stored, year, directory)
++            stored = save_training(draft.profile, proposed, expected_revision=stored["revision"], actor=draft.prepared_by)
++            matrix, changed = proposed, True
++            st.success(f"Requirements for {year} are ready. Earlier years and monthly sessions are unchanged.")
++    st.caption(matrix_title(matrix.reference))
++    if matrix_year(matrix.reference) != year:
++        st.caption(f"Starting {year} reuses saved {year} values where available; other sites keep their roster and requirements with statuses reset. Blank cells stay blank.")
++        st.button(f"Start {year} requirements", key=key + "_start_year_" + _signature(expected),
++                  on_click=_queue_matrix_year, args=(request_key, expected),
++                  disabled=draft.synthetic or block.source == "Omit" or bool(st.session_state.get(key + "_stale_standing")))
++    return matrix, stored, changed
++
++
+ def render_training(draft, blocks, prefix, field):
+     from app.monthly_report_directory import load_directory
+     if not draft.prepared_by.strip():
+@@ -320,7 +372,7 @@ def render_training(draft, blocks, prefix, field):
+             st.session_state[store_key] = load_training(draft.profile.contract)
+         stored = st.session_state[store_key]
+         directory = load_directory(draft.profile.contract)
+-        matrix = seed_matrix(draft.profile, block, stored, directory)
++        matrix = seed_matrix(draft.profile, block, stored, directory, year=draft.period.year)
+         matrix_key = key + "_matrix_draft"
+         if matrix_key not in st.session_state:
+             st.session_state[matrix_key] = matrix
+@@ -332,7 +384,7 @@ def render_training(draft, blocks, prefix, field):
+             st.session_state[matrix_key] = matrix
+             st.session_state[key + "_generation"] = st.session_state.get(key + "_generation", 0) + 1
+         st.subheader("Staff training requirements")
+-        st.caption("Requirements are shared for these sites and reused in future reports. Completed training and notes stay in this report.")
++        st.caption("Requirements are reused by site and year. Recorded sessions and monthly notes stay in this report.")
+         if st.session_state.get(key + "_stale_standing"):
+             st.warning("This report has an older training matrix. Review the latest shared training before changing the matrix. "
+                        "Monthly notes and the saved report version are unchanged.")
+@@ -351,17 +403,14 @@ def render_training(draft, blocks, prefix, field):
+                     explicit = True
+                     st.session_state[store_key] = stored
+                     st.session_state[matrix_key] = matrix
+-        sites = [facility.title for facility in draft.profile.facilities]
+-        config = {"Site": st.column_config.SelectboxColumn("Site", options=sites, required=True)}
+-        labels = {"": "— Not recorded (blank)", "Completed": "🟢 Completed", "Pending": "🟠 Pending", "Not required": "⚪ Not required", "Not recorded": "— Not recorded"}
+-        config.update({name: st.column_config.SelectboxColumn(name, options=STATUSES, format_func=labels.get, required=True, default="Not recorded") for name in matrix.columns[2:]})
+-        rows = _grid(key + "_grid_" + str(st.session_state.get(key + "_generation", 0)) + "_" + _signature(matrix.columns), [dict(zip(matrix.columns, row)) for row in matrix.rows] or [{name: "Not recorded" if index > 1 else "" for index, name in enumerate(matrix.columns)}],
+-                     num_rows="dynamic", hide_index=True, column_config=config)
++        matrix_slot = st.empty()
++        with matrix_slot.container():
++            rows = _matrix_grid(matrix, draft.profile, key)
+         # Defaults apply to absent new cells; an existing/explicit blank remains
+         # distinct from the recorded "Not recorded" option and is never saved
+         # merely because the matrix was displayed.
+         edited = ReportTable(matrix.columns, tuple(tuple(str(row.get(c, "Not recorded" if i > 1 else "") or "").strip()
+-                              for i, c in enumerate(matrix.columns)) for row in rows if row.get("Team member")), MATRIX_REF)
++                              for i, c in enumerate(matrix.columns)) for row in rows if row.get("Team member")), matrix.reference)
+         if hospital_matrix(draft.profile, edited, directory) != edited:
+             raise ValueError("This matrix is for hospital staff. Remove the identified ENFRA, asset-management or vendor person before saving.")
+         if edited != matrix:
+@@ -372,6 +421,17 @@ def render_training(draft, blocks, prefix, field):
+             st.session_state[matrix_key] = edited
+             matrix = edited
+             explicit = True
++        matrix, stored, switched_year = _requirements_year(
++            draft, block, matrix, stored, directory, key, prefix)
++        if switched_year:
++            st.session_state[store_key] = stored
++            st.session_state[matrix_key] = matrix
++            st.session_state[key + "_generation"] = st.session_state.get(key + "_generation", 0) + 1
++            # Replace the old grid immediately, with a new native edit-delta
++            # identity. Do not replay an old-year packet against the new rows.
++            with matrix_slot.container():
++                _matrix_grid(matrix, draft.profile, key)
++            explicit = True
+     except library.RevisionConflict as exc:
+         st.session_state[key + "_conflict"] = str(exc)
+         st.error(str(exc))
+@@ -410,8 +470,10 @@ def _reload_matrix(draft, blocks, block, key):
+     if st.button("Reload saved training matrix", key=key + "_reload"):
+         try:
+             latest = load_training(draft.profile.contract)
+-            without_matrix = replace(block, extra_tables=tuple(t for t in block.extra_tables if t.reference != MATRIX_REF))
+-            refreshed = seed_matrix(draft.profile, without_matrix, latest, load_directory(draft.profile.contract))
++            previous = next((t for t in block.extra_tables if is_matrix_reference(t.reference)), None)
++            year = matrix_year(previous.reference) if previous is not None else draft.period.year
++            without_matrix = replace(block, extra_tables=tuple(t for t in block.extra_tables if not is_matrix_reference(t.reference)))
++            refreshed = seed_matrix(draft.profile, without_matrix, latest, load_directory(draft.profile.contract), year=year)
+             st.session_state[key + "_saved"] = latest
+             st.session_state[key + "_matrix_draft"] = refreshed
+             st.session_state[key + "_stale_standing"] = False

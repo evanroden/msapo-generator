@@ -1,0 +1,24 @@
+diff --git a/app/monthly_report_native_layout.py b/app/monthly_report_native_layout.py
+index 156b7390cd94e9d12afd14f38a22076c28a51e86..a3e9deddd44822db27f0bc3fa51704e3db9c859b 100644
+--- a/app/monthly_report_native_layout.py
++++ b/app/monthly_report_native_layout.py
+@@ -2056,6 +2056,19 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
+                     page_plan.support.add(label[0])
+                 from app.monthly_report_training_style import style_training_table
+                 style_training_table(anchor, table_reference)
++                from app.monthly_report_training import matrix_title
++                title = matrix_title(table_reference)
++                if title:
++                    caption = OxmlElement("w:p")
++                    properties = OxmlElement("w:pPr")
++                    properties.append(OxmlElement("w:keepNext"))
++                    caption.append(properties)
++                    run = OxmlElement("w:r")
++                    text = OxmlElement("w:t"); text.text = title
++                    run.append(text); caption.append(run)
++                    anchor.addprevious(caption)
++                    page_plan.assigned(caption, anchor)
++                    page_plan.emitted(caption, kind="table-title")
+                 last = anchor
+         images = []
+         image_indexes = []

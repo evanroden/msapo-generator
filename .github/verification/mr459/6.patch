@@ -1,0 +1,59 @@
+diff --git a/docs/MONTHLY_TRAINING_YEARS.md b/docs/MONTHLY_TRAINING_YEARS.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..fc87fba3aa6c4f89b1ee84d8ed720ffcec9784f5
+--- /dev/null
++++ b/docs/MONTHLY_TRAINING_YEARS.md
+@@ -0,0 +1,53 @@
++# Annual Training requirements
++
++The Training matrix and completed-session list remain separate. A matrix status
++never creates a completed session, date, participant list, or hours.
++
++## Operator behavior
++
++An annual matrix names its year in review and in Word/PDF output. Existing
++unscoped matrices remain labeled **year not recorded**; opening a report does not
++assign a year to their recorded statuses or rewrite shared records.
++
++When a retained matrix belongs to a different or unknown year, **Start YYYY
++requirements** explicitly switches to the report's selected year. For each
++selected site, it uses that year's saved matrix if one exists. Otherwise it
++copies the displayed roster and requirement names, resets every nonblank status
++to **Not recorded**, and preserves intentional blanks. Earlier annual and
++unscoped records remain unchanged. Excluded Training requires explicit inclusion
++before this action is available. Demonstration reports cannot publish a year
++transition into the shared registry.
++
++A fresh report without a pinned matrix reuses its exact year's selected-site
++records. Missing sites can copy an earlier annual roster, but not its completion
++statuses. Future-year records are not used to seed earlier years. This read-only
++preparation does not publish shared data; an explicit matrix edit saves it.
++When only legacy unscoped data exists, it stays unscoped until a year transition.
++
++Same-year rollover preserves the matrix and drops monthly session records as
++before. Cross-year rollover preserves a pinned matrix with its original year
++label until the explicit switch, rather than silently relabeling historical
++completion. Report notes, other tables and pictures are independent.
++
++## Persistence and conflict rules
++
++The existing versioned contract manifest keeps its `schema: 1` envelope and
++legacy `sites` map. An optional `years` map holds each explicit year's `sites`.
++Annual tables use `training:matrix:v2:YYYY`; legacy tables keep
++`training:matrix:v1`. No new ReportTable fields or bulk migration are required.
++
++Each save checks the existing contract revision and updates only selected sites
++inside the appropriate year. Historical JSON versions, other years, other sites
++and other contracts are preserved. The existing metadata budget applies before
++publication. A stale or interrupted year-switch action does not overwrite an
++intervening matrix edit; the operator must review it and activate again.
++
++## Verification boundaries
++
++Synthetic tests cover year identity, blank statuses, scoped reuse, bounded
++storage failure, CAS conflicts, native Streamlit AppTest controls, pending edits,
++snapshot restoration, rollover, derivative DOCX and real LibreOffice PDF output.
++The core arbitrary imported annual-table mapping and actual browser/assistive
++technology/genuine branded-report acceptance remain separate work under #459
++and #496. This change does not alter #524's current-month-first layout or
++#432's repeated session-add behavior.
