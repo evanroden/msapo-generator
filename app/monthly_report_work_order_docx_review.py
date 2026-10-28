@@ -140,7 +140,7 @@ def _full_width_band(row, values, width):
 
 
 def _find_header(raw_rows, native_rows):
-    """Permit only clearly supported identity/date/status headings."""
+    """Recognize one header shape; identical repeats are continuation rows."""
     recognized = []
     for i, row in enumerate(raw_rows[:MAX_HEADERS_TO_CHECK]):
         if i >= len(native_rows) or _native_row_issue(native_rows[i]):
@@ -152,7 +152,11 @@ def _find_header(raw_rows, native_rows):
         if all(getattr(mapping, name) is not None
                for name in ("work_order", "work_date", "status")):
             recognized.append((i, row))
-    return recognized[0] if len(recognized) == 1 else None, len(recognized) > 1
+    if not recognized:
+        return None, False
+    patterns = {tuple(value.strip().casefold() for value in row)
+                for _, row in recognized}
+    return (recognized[0], False) if len(patterns) == 1 else (None, True)
 
 
 def _one_table(content: SourceContent, item: ImportItem, source_item: int,
@@ -228,7 +232,7 @@ def _one_table(content: SourceContent, item: ImportItem, source_item: int,
             notices=("No unambiguous work-order rows could be mapped.",))
     from app.monthly_report_content_policy import table_has_pricing
     warnings = []
-    if table_has_pricing(columns, tuple(candidates)):
+    if table_has_pricing(columns, tuple(candidates), work_orders=True):
         warnings.append(
             "Work-order source includes pricing/financial data; remove it from "
             "client-facing rows before approval. Original remains retained.")
