@@ -1,0 +1,1211 @@
+{
+  "schema_version": 1,
+  "repository": "evanroden/msapo-generator",
+  "baseline": "a1b2aa61aa92c596d424c95dba29be66135f3441",
+  "date": "2026-10-28",
+  "purpose": "Implementation/test handoff only; later agent reviews and deploys. This is not the canonical acceptance ledger.",
+  "tracker": 270,
+  "snapshot_at": "2026-10-28T16:17:47.593Z",
+  "swarm_pull_requests": [
+    {
+      "pr": 552,
+      "issue": 475,
+      "kind": "regression coverage",
+      "title": "Verify source/report persistence across fresh processes and competing writers",
+      "head": "9fde20df202cb374e18ee08355163f19fd51f844",
+      "tree": "ed8808d9ae25aadc85eff44000183d72db4acd68",
+      "focused": "31 passed, no skips",
+      "depends_on": [],
+      "remaining": "No runtime defect claimed; served persistence acceptance and undecided scope policies remain.",
+      "workflows": [
+        {
+          "id": 40722853624,
+          "name": "Tests",
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40722853624",
+          "status": "queued",
+          "conclusion": null,
+          "jobs": [
+            {
+              "id": 122938122160,
+              "name": "monthly-report-resources",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "id": 122938122749,
+              "name": "container",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938122758,
+              "name": "pytest",
+              "status": "in_progress",
+              "conclusion": null
+            }
+          ]
+        },
+        {
+          "id": 40722853726,
+          "name": "Monthly simplicity acceptance",
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40722853726",
+          "status": "completed",
+          "conclusion": "success",
+          "jobs": [
+            {
+              "id": 122938124009,
+              "name": "monthly-simplicity",
+              "status": "completed",
+              "conclusion": "success"
+            }
+          ]
+        }
+      ],
+      "url": "https://github.com/evanroden/msapo-generator/pull/552",
+      "review": "Independent code review found no blockers on the published tree; hosted and acceptance gates remain separate."
+    },
+    {
+      "pr": 553,
+      "issue": 481,
+      "kind": "calculation prerequisite",
+      "title": "Count reviewed normalized PM/non-PM work orders with row memberships",
+      "head": "3a2cc30ebd6568531d5d2b43bc4591c81a67b980",
+      "tree": "40dfe43b0972c11bf068a7d2562a510037e3d8c7",
+      "focused": "24 passed",
+      "depends_on": [
+        520
+      ],
+      "remaining": "Additive calculation API only; UI/report persistence and Section 2 output integration remain.",
+      "workflows": [
+        {
+          "id": 40722877544,
+          "name": "Tests",
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40722877544",
+          "status": "queued",
+          "conclusion": null,
+          "jobs": [
+            {
+              "id": 122938208774,
+              "name": "pytest",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938209103,
+              "name": "monthly-report-resources",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "id": 122938209212,
+              "name": "container",
+              "status": "queued",
+              "conclusion": null
+            }
+          ]
+        },
+        {
+          "id": 40722877559,
+          "name": "Monthly simplicity acceptance",
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40722877559",
+          "status": "queued",
+          "conclusion": null,
+          "jobs": [
+            {
+              "id": 122938209302,
+              "name": "monthly-simplicity",
+              "status": "queued",
+              "conclusion": null
+            }
+          ]
+        },
+        {
+          "id": 40722877551,
+          "name": "Adaptive workspace DOM",
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40722877551",
+          "status": "queued",
+          "conclusion": null,
+          "jobs": [
+            {
+              "id": 122938209672,
+              "name": "cover-first-display",
+              "status": "in_progress",
+              "conclusion": null
+            },
+            {
+              "id": 122938210187,
+              "name": "synthetic-history",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938210240,
+              "name": "workflow-shell-width",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938210305,
+              "name": "synthetic-work-order-rows",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938210336,
+              "name": "literal-labels",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938210396,
+              "name": "monthly-site-geometry",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938210404,
+              "name": "training-date",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938210417,
+              "name": "synthetic-progress-photos",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938210450,
+              "name": "preview-first-paint",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938210473,
+              "name": "synthetic-contact",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938210631,
+              "name": "synthetic-dom",
+              "status": "queued",
+              "conclusion": null
+            }
+          ]
+        }
+      ],
+      "url": "https://github.com/evanroden/msapo-generator/pull/553",
+      "review": "Independent code review found no blockers on the published tree; hosted and acceptance gates remain separate."
+    },
+    {
+      "pr": 554,
+      "issue": 284,
+      "kind": "runtime repair",
+      "title": "Contain malformed XLSX XML and preserve valid upload siblings",
+      "head": "f41ecee97db9e1c217b9d8be964a0a687692ba12",
+      "tree": "99ed8cbad09cc97ded6b98c730ac716f262f0251",
+      "focused": "6 failures before; 45 distinct focused/adjacent checks passed after",
+      "depends_on": [],
+      "remaining": "Native served upload/output acceptance pending.",
+      "workflows": [
+        {
+          "id": 40722882269,
+          "name": "Tests",
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40722882269",
+          "status": "queued",
+          "conclusion": null,
+          "jobs": [
+            {
+              "id": 122938224991,
+              "name": "container",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938225380,
+              "name": "monthly-report-resources",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938225734,
+              "name": "pytest",
+              "status": "queued",
+              "conclusion": null
+            }
+          ]
+        },
+        {
+          "id": 40722882121,
+          "name": "Adaptive workspace DOM",
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40722882121",
+          "status": "queued",
+          "conclusion": null,
+          "jobs": [
+            {
+              "id": 122938225560,
+              "name": "monthly-site-geometry",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938225925,
+              "name": "training-date",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938225955,
+              "name": "synthetic-dom",
+              "status": "in_progress",
+              "conclusion": null
+            },
+            {
+              "id": 122938225976,
+              "name": "synthetic-progress-photos",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938226002,
+              "name": "synthetic-contact",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938226036,
+              "name": "synthetic-work-order-rows",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938226069,
+              "name": "synthetic-history",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938226076,
+              "name": "literal-labels",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938226173,
+              "name": "preview-first-paint",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938226318,
+              "name": "workflow-shell-width",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938226586,
+              "name": "cover-first-display",
+              "status": "queued",
+              "conclusion": null
+            }
+          ]
+        },
+        {
+          "id": 40722882523,
+          "name": "Monthly simplicity acceptance",
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40722882523",
+          "status": "queued",
+          "conclusion": null,
+          "jobs": [
+            {
+              "id": 122938227234,
+              "name": "monthly-simplicity",
+              "status": "queued",
+              "conclusion": null
+            }
+          ]
+        }
+      ],
+      "url": "https://github.com/evanroden/msapo-generator/pull/554",
+      "review": "Independent code review found no blockers on the published tree; hosted and acceptance gates remain separate."
+    },
+    {
+      "pr": 555,
+      "issue": 494,
+      "kind": "schema prerequisite",
+      "title": "Inventory invoice source fields without changing financial-output permission",
+      "head": "ce8a34c20df3b4e22f0b67bda9d298780b3337a8",
+      "tree": "81f054985facd6f5d62a7d6f3df11be6a928d2e9",
+      "focused": "108 passed",
+      "depends_on": [],
+      "remaining": "Pure schema discovery only. No UI/import/output wiring. Financial decision #458 remains unresolved.",
+      "workflows": [
+        {
+          "id": 40723022097,
+          "name": "Adaptive workspace DOM",
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40723022097",
+          "status": "queued",
+          "conclusion": null,
+          "jobs": [
+            {
+              "id": 122938729983,
+              "name": "preview-first-paint",
+              "status": "in_progress",
+              "conclusion": null
+            },
+            {
+              "id": 122938730514,
+              "name": "cover-first-display",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938730524,
+              "name": "synthetic-progress-photos",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938730535,
+              "name": "workflow-shell-width",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938730563,
+              "name": "synthetic-contact",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938730733,
+              "name": "synthetic-history",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938730760,
+              "name": "synthetic-work-order-rows",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938730776,
+              "name": "training-date",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938730852,
+              "name": "literal-labels",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938730914,
+              "name": "monthly-site-geometry",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122938730941,
+              "name": "synthetic-dom",
+              "status": "queued",
+              "conclusion": null
+            }
+          ]
+        },
+        {
+          "id": 40723022116,
+          "name": "Monthly simplicity acceptance",
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40723022116",
+          "status": "queued",
+          "conclusion": null,
+          "jobs": [
+            {
+              "id": 122938728319,
+              "name": "monthly-simplicity",
+              "status": "queued",
+              "conclusion": null
+            }
+          ]
+        },
+        {
+          "id": 40723022074,
+          "name": "Tests",
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40723022074",
+          "status": "queued",
+          "conclusion": null,
+          "jobs": [
+            {
+              "id": 122938728472,
+              "name": "monthly-report-resources",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "id": 122938729212,
+              "name": "pytest",
+              "status": "in_progress",
+              "conclusion": null
+            },
+            {
+              "id": 122938729321,
+              "name": "container",
+              "status": "queued",
+              "conclusion": null
+            }
+          ]
+        }
+      ],
+      "url": "https://github.com/evanroden/msapo-generator/pull/555",
+      "review": "Independent code review found no blockers on the published tree; hosted and acceptance gates remain separate."
+    },
+    {
+      "pr": 557,
+      "issue": 460,
+      "kind": "contents limitation disclosure",
+      "title": "Show unavailable contents updates beside finished files",
+      "head": "9dfd2cf287a84d15fa8eefe770241e4b3498dc24",
+      "tree": "7c27c5a69341aa4a5e772231d01ebdf8b98e573c",
+      "focused": "6 failing-before regressions; 96 adjacent tests passed, final 11 contents tests passed",
+      "depends_on": [],
+      "remaining": "Static/Word-field warning only; actual dynamic TOC rebuilding, pagination and genuine output acceptance remain.",
+      "workflows": [
+        {
+          "id": 40723509760,
+          "name": "Monthly simplicity acceptance",
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40723509760",
+          "status": "queued",
+          "conclusion": null,
+          "jobs": [
+            {
+              "id": 122940490226,
+              "name": "monthly-simplicity",
+              "status": "queued",
+              "conclusion": null
+            }
+          ]
+        },
+        {
+          "id": 40723509790,
+          "name": "Adaptive workspace DOM",
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40723509790",
+          "status": "queued",
+          "conclusion": null,
+          "jobs": [
+            {
+              "id": 122940499614,
+              "name": "training-date",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122940500158,
+              "name": "workflow-shell-width",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122940500166,
+              "name": "synthetic-contact",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122940500276,
+              "name": "cover-first-display",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122940500305,
+              "name": "literal-labels",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122940500336,
+              "name": "synthetic-history",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122940500373,
+              "name": "monthly-site-geometry",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122940500437,
+              "name": "synthetic-progress-photos",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122940500461,
+              "name": "synthetic-work-order-rows",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122940500501,
+              "name": "synthetic-dom",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122940500565,
+              "name": "preview-first-paint",
+              "status": "queued",
+              "conclusion": null
+            }
+          ]
+        },
+        {
+          "id": 40723509745,
+          "name": "Finished PDF browser",
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40723509745",
+          "status": "queued",
+          "conclusion": null,
+          "jobs": [
+            {
+              "id": 122940490521,
+              "name": "current-session-pdf-browser",
+              "status": "queued",
+              "conclusion": null
+            }
+          ]
+        },
+        {
+          "id": 40723509818,
+          "name": "Tests",
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40723509818",
+          "status": "queued",
+          "conclusion": null,
+          "jobs": [
+            {
+              "id": 122940490292,
+              "name": "container",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122940490904,
+              "name": "monthly-report-resources",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122940490915,
+              "name": "pytest",
+              "status": "queued",
+              "conclusion": null
+            }
+          ]
+        }
+      ],
+      "url": "https://github.com/evanroden/msapo-generator/pull/557",
+      "review": "Independent code review found no blockers on the published tree; hosted and acceptance gates remain separate."
+    },
+    {
+      "pr": 558,
+      "issue": 277,
+      "also_refs": [
+        481
+      ],
+      "kind": "runtime repair",
+      "title": "Keep same-number work orders separate across explicit sites",
+      "head": "dfa1ffee00f224b874c04017f8bab6e103cca150",
+      "tree": "86d15b8c40c52085a3a0e923536eef724a305010",
+      "focused": "4 regressions failed before; 50 passed after",
+      "depends_on": [],
+      "remaining": "Fresh-main repair independent of #525/#553; real source/served acceptance pending.",
+      "workflows": [
+        {
+          "id": 40723652319,
+          "name": "Tests",
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40723652319",
+          "status": "queued",
+          "conclusion": null,
+          "jobs": [
+            {
+              "id": 122940995972,
+              "name": "monthly-report-resources",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122940996550,
+              "name": "container",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122940997028,
+              "name": "pytest",
+              "status": "queued",
+              "conclusion": null
+            }
+          ]
+        },
+        {
+          "id": 40723652784,
+          "name": "Adaptive workspace DOM",
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40723652784",
+          "status": "queued",
+          "conclusion": null,
+          "jobs": [
+            {
+              "id": 122940999663,
+              "name": "synthetic-contact",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122941000133,
+              "name": "training-date",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122941000185,
+              "name": "synthetic-work-order-rows",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122941000230,
+              "name": "synthetic-dom",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122941000327,
+              "name": "synthetic-progress-photos",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122941000346,
+              "name": "preview-first-paint",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122941000384,
+              "name": "synthetic-history",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122941000423,
+              "name": "monthly-site-geometry",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122941000433,
+              "name": "literal-labels",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122941000570,
+              "name": "cover-first-display",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122941000608,
+              "name": "workflow-shell-width",
+              "status": "queued",
+              "conclusion": null
+            }
+          ]
+        },
+        {
+          "id": 40723652323,
+          "name": "Monthly simplicity acceptance",
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40723652323",
+          "status": "in_progress",
+          "conclusion": null,
+          "jobs": [
+            {
+              "id": 122940997037,
+              "name": "monthly-simplicity",
+              "status": "in_progress",
+              "conclusion": null
+            }
+          ]
+        }
+      ],
+      "url": "https://github.com/evanroden/msapo-generator/pull/558",
+      "review": "Independent code review found no blockers on the published tree; hosted and acceptance gates remain separate."
+    },
+    {
+      "pr": 559,
+      "issue": 280,
+      "kind": "runtime repair",
+      "title": "Keep nonfinite numeric source cells editable without a widget crash",
+      "head": "bcb0f2970cde102e370f246ac0f3979ad1913eeb",
+      "tree": "89d98ee9b565a7fb4b4beef614ae9dfc72a73c71",
+      "focused": "15 failing-before cases; 77 passed, 1 existing LibreOffice-dependent skip; independent 19 new tests passed",
+      "depends_on": [],
+      "remaining": "Hosted renderer/browser gates and served row-edit acceptance pending.",
+      "workflows": [
+        {
+          "id": 40723830429,
+          "name": "Adaptive workspace DOM",
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40723830429",
+          "status": "queued",
+          "conclusion": null,
+          "jobs": [
+            {
+              "id": 122941626197,
+              "name": "synthetic-work-order-rows",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122941626564,
+              "name": "preview-first-paint",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122941626700,
+              "name": "training-date",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122941626733,
+              "name": "synthetic-history",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122941626810,
+              "name": "monthly-site-geometry",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122941626815,
+              "name": "synthetic-dom",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122941626839,
+              "name": "literal-labels",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122941626840,
+              "name": "workflow-shell-width",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122941626863,
+              "name": "synthetic-progress-photos",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122941627038,
+              "name": "cover-first-display",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122941627146,
+              "name": "synthetic-contact",
+              "status": "queued",
+              "conclusion": null
+            }
+          ]
+        },
+        {
+          "id": 40723830418,
+          "name": "Tests",
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40723830418",
+          "status": "queued",
+          "conclusion": null,
+          "jobs": [
+            {
+              "id": 122941624589,
+              "name": "monthly-report-resources",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122941625012,
+              "name": "container",
+              "status": "queued",
+              "conclusion": null
+            },
+            {
+              "id": 122941625260,
+              "name": "pytest",
+              "status": "queued",
+              "conclusion": null
+            }
+          ]
+        },
+        {
+          "id": 40723830552,
+          "name": "Monthly simplicity acceptance",
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40723830552",
+          "status": "queued",
+          "conclusion": null,
+          "jobs": [
+            {
+              "id": 122941625637,
+              "name": "monthly-simplicity",
+              "status": "queued",
+              "conclusion": null
+            }
+          ]
+        }
+      ],
+      "url": "https://github.com/evanroden/msapo-generator/pull/559",
+      "review": "Independent code review found no blockers on the published tree; hosted and acceptance gates remain separate."
+    },
+    {
+      "pr": 560,
+      "issue": 295,
+      "kind": "runtime repair",
+      "title": "Retire removed preview access while retrying failed file cleanup",
+      "head": "549fc446e4309cc64a87e1b4d466a1737f1acfed",
+      "tree": "933d6242f2967bc171e94d469bd263f1702f5da5",
+      "focused": "3 before regressions failed; final 43 passed; combined 51 with #546 and 63 with #548 passed",
+      "depends_on": [],
+      "remaining": "Shared preview-store file also touched by #546/#548; both merge-tree checks clean at inspected heads. Choose the applicable cache PR, then refresh integrated CI. Preview insertion rollback is outside this repair.",
+      "workflows": [
+        {
+          "id": 40724154644,
+          "name": "Tests",
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40724154644",
+          "status": "queued",
+          "conclusion": null
+        },
+        {
+          "id": 40724154568,
+          "name": "Monthly simplicity acceptance",
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40724154568",
+          "status": "queued",
+          "conclusion": null
+        },
+        {
+          "id": 40724154590,
+          "name": "Finished PDF browser",
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40724154590",
+          "status": "queued",
+          "conclusion": null
+        },
+        {
+          "id": 40724154623,
+          "name": "Adaptive workspace DOM",
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40724154623",
+          "status": "queued",
+          "conclusion": null
+        }
+      ],
+      "url": "https://github.com/evanroden/msapo-generator/pull/560",
+      "review": "Independent code review found no blockers on the published tree; hosted and acceptance gates remain separate."
+    }
+  ],
+  "additional_external_prs_observed": [
+    {
+      "number": 551,
+      "url": "https://github.com/evanroden/msapo-generator/pull/551",
+      "scope": "Saved-source reuse owned externally"
+    },
+    {
+      "number": 556,
+      "url": "https://github.com/evanroden/msapo-generator/pull/556",
+      "scope": "Prior Training import owned externally"
+    }
+  ],
+  "second_item_audits": [
+    {
+      "issue": 488,
+      "result": "46 existing vendor/contact/callback/isolation tests passed; no defect reproduced. New standing vendor promotion remains decision dependent."
+    },
+    {
+      "issue": 305,
+      "result": "No concrete defect found in completed-file controls/notice area; native keyboard/screen-reader acceptance remains unverified."
+    }
+  ],
+  "preexisting_open_pull_requests_at_discovery": [
+    {
+      "number": 550,
+      "title": "Preserve cover selections, simplify Monthly navigation, and reuse contract org charts",
+      "url": "https://github.com/evanroden/msapo-generator/pull/550"
+    },
+    {
+      "number": 549,
+      "title": "Render verified Section 10 Accounts Receivables divider without clipping",
+      "url": "https://github.com/evanroden/msapo-generator/pull/549"
+    },
+    {
+      "number": 548,
+      "title": "Avoid reopening PDFs when requested preview pages are already cached",
+      "url": "https://github.com/evanroden/msapo-generator/pull/548"
+    },
+    {
+      "number": 547,
+      "title": "Define contract, site and monthly ownership decisions for report reuse",
+      "url": "https://github.com/evanroden/msapo-generator/pull/547"
+    },
+    {
+      "number": 546,
+      "title": "Avoid reopening PDFs for fully cached preview page requests",
+      "url": "https://github.com/evanroden/msapo-generator/pull/546"
+    },
+    {
+      "number": 545,
+      "title": "Integrate reviewed monthly-report import and carryover repairs",
+      "url": "https://github.com/evanroden/msapo-generator/pull/545"
+    },
+    {
+      "number": 544,
+      "title": "Prevent repeated Capital sources from restoring removed rows after rollover",
+      "url": "https://github.com/evanroden/msapo-generator/pull/544"
+    },
+    {
+      "number": 543,
+      "title": "Map CMMS maintenance exports into reviewable Section 5 service calls",
+      "url": "https://github.com/evanroden/msapo-generator/pull/543"
+    },
+    {
+      "number": 542,
+      "title": "Preview full current report directly from Review without section visits",
+      "url": "https://github.com/evanroden/msapo-generator/pull/542"
+    },
+    {
+      "number": 541,
+      "title": "Preserve proposal table decisions and authored scope during carryover",
+      "url": "https://github.com/evanroden/msapo-generator/pull/541"
+    },
+    {
+      "number": 540,
+      "title": "Verify deterministic monthly Word/PDF assembly from accepted draft and pinned design",
+      "url": "https://github.com/evanroden/msapo-generator/pull/540"
+    },
+    {
+      "number": 539,
+      "title": "Make Activity source entry and imported tables understandable without table numbers",
+      "url": "https://github.com/evanroden/msapo-generator/pull/539"
+    },
+    {
+      "number": 537,
+      "title": "Keep annual Training requirements and completion statuses separate by year",
+      "url": "https://github.com/evanroden/msapo-generator/pull/537"
+    },
+    {
+      "number": 536,
+      "title": "Preserve multi-site annual work-order grids with exact month fields",
+      "url": "https://github.com/evanroden/msapo-generator/pull/536"
+    },
+    {
+      "number": 535,
+      "title": "Normalize native DOCX work-order tables without flattening merged source content",
+      "url": "https://github.com/evanroden/msapo-generator/pull/535"
+    },
+    {
+      "number": 533,
+      "title": "Keep outage-procedure defaults and legacy adoption within each contract",
+      "url": "https://github.com/evanroden/msapo-generator/pull/533"
+    },
+    {
+      "number": 532,
+      "title": "Map source issue-register rows into stable reviewable issue cards",
+      "url": "https://github.com/evanroden/msapo-generator/pull/532"
+    },
+    {
+      "number": 531,
+      "title": "Retain merged vendor trade bands as editable contact groups",
+      "url": "https://github.com/evanroden/msapo-generator/pull/531"
+    },
+    {
+      "number": 530,
+      "title": "Safely map native-text PDF work-order tables with page-level provenance",
+      "url": "https://github.com/evanroden/msapo-generator/pull/530"
+    },
+    {
+      "number": 529,
+      "title": "DIAGNOSTIC ONLY: passive WebKit intake delivery receipts for #527",
+      "url": "https://github.com/evanroden/msapo-generator/pull/529"
+    },
+    {
+      "number": 528,
+      "title": "Align remaining Monthly upload routes with enforced file and parsing limits",
+      "url": "https://github.com/evanroden/msapo-generator/pull/528"
+    },
+    {
+      "number": 526,
+      "title": "Map CSV work-order columns and numeric date locale into reviewed records",
+      "url": "https://github.com/evanroden/msapo-generator/pull/526"
+    },
+    {
+      "number": 525,
+      "title": "Fix stale work-order totals after selected site scope changes",
+      "url": "https://github.com/evanroden/msapo-generator/pull/525"
+    },
+    {
+      "number": 524,
+      "title": "Put monthly Training sessions and notes before shared requirements",
+      "url": "https://github.com/evanroden/msapo-generator/pull/524"
+    },
+    {
+      "number": 523,
+      "title": "Diagnostic only: trace proposal Close delivery in isolated QA fixture",
+      "url": "https://github.com/evanroden/msapo-generator/pull/523"
+    },
+    {
+      "number": 521,
+      "title": "Review marked template instructions and examples before importing report text",
+      "url": "https://github.com/evanroden/msapo-generator/pull/521"
+    },
+    {
+      "number": 520,
+      "title": "Define source-bound normalized work-order review and correction contract",
+      "url": "https://github.com/evanroden/msapo-generator/pull/520"
+    },
+    {
+      "number": 519,
+      "title": "Include complete Scorecard PDFs directly in Section 3",
+      "url": "https://github.com/evanroden/msapo-generator/pull/519"
+    },
+    {
+      "number": 517,
+      "title": "Select equipment-issue source pages using file-specific previews and checkboxes",
+      "url": "https://github.com/evanroden/msapo-generator/pull/517"
+    },
+    {
+      "number": 516,
+      "title": "Make report thermal capacity optional without clearing retained values",
+      "url": "https://github.com/evanroden/msapo-generator/pull/516"
+    },
+    {
+      "number": 514,
+      "title": "Distinguish editable Word content from image-only import pages",
+      "url": "https://github.com/evanroden/msapo-generator/pull/514"
+    },
+    {
+      "number": 512,
+      "title": "Distinguish editable imports from image-only and unsupported artwork",
+      "url": "https://github.com/evanroden/msapo-generator/pull/512"
+    },
+    {
+      "number": 508,
+      "title": "Test mixed-size MBCx PDF attachment geometry through Word and PDF",
+      "url": "https://github.com/evanroden/msapo-generator/pull/508"
+    },
+    {
+      "number": 507,
+      "title": "Test mixed-size and rotated MBCx PDF pages through Word/PDF",
+      "url": "https://github.com/evanroden/msapo-generator/pull/507"
+    },
+    {
+      "number": 506,
+      "title": "Require layout review before flattening Word tables with floating content",
+      "url": "https://github.com/evanroden/msapo-generator/pull/506"
+    },
+    {
+      "number": 503,
+      "title": "Import service-call headers after a merged title band",
+      "url": "https://github.com/evanroden/msapo-generator/pull/503"
+    },
+    {
+      "number": 502,
+      "title": "Inspect and download verified installed Word master",
+      "url": "https://github.com/evanroden/msapo-generator/pull/502"
+    },
+    {
+      "number": 501,
+      "title": "Expose thermal-capacity entry when report values already exist",
+      "url": "https://github.com/evanroden/msapo-generator/pull/501"
+    },
+    {
+      "number": 485,
+      "title": "Make MBCx PDF upload and complete-document inclusion the primary flow",
+      "url": "https://github.com/evanroden/msapo-generator/pull/485"
+    },
+    {
+      "number": 484,
+      "title": "Route site-qualified work-order tables to Activity work orders",
+      "url": "https://github.com/evanroden/msapo-generator/pull/484"
+    },
+    {
+      "number": 443,
+      "title": "Capture native row-action targets and menu lifecycle on first failure",
+      "url": "https://github.com/evanroden/msapo-generator/pull/443"
+    },
+    {
+      "number": 426,
+      "title": "Keep authored capacity and proposal context beside native source tables",
+      "url": "https://github.com/evanroden/msapo-generator/pull/426"
+    },
+    {
+      "number": 313,
+      "title": "Reconcile the remaining-work ledger with issue #270 and current release evidence",
+      "url": "https://github.com/evanroden/msapo-generator/pull/313"
+    },
+    {
+      "number": 266,
+      "title": "WIP: finish native RFI entry with preserved request schemas",
+      "url": "https://github.com/evanroden/msapo-generator/pull/266"
+    },
+    {
+      "number": 264,
+      "title": "Edit contacts and vendor contacts one row at a time",
+      "url": "https://github.com/evanroden/msapo-generator/pull/264"
+    },
+    {
+      "number": 169,
+      "title": "Phase 1 acceptance ledger: exact two-run live evidence, authentic UMMC reference and outstanding owner gate",
+      "url": "https://github.com/evanroden/msapo-generator/pull/169"
+    },
+    {
+      "number": 120,
+      "title": "Phase 1: actionable review, period warnings, jumps and honest output sizes",
+      "url": "https://github.com/evanroden/msapo-generator/pull/120"
+    },
+    {
+      "number": 110,
+      "title": "Persist active monthly report work across reconnects",
+      "url": "https://github.com/evanroden/msapo-generator/pull/110"
+    },
+    {
+      "number": 26,
+      "title": "Decouple runtime, AI, PDF, and storage providers",
+      "url": "https://github.com/evanroden/msapo-generator/pull/26"
+    },
+    {
+      "number": 18,
+      "title": "Require an internal access password",
+      "url": "https://github.com/evanroden/msapo-generator/pull/18"
+    }
+  ],
+  "requirements": [
+    "Confirm exact current PR head and dependency/base before counting checks",
+    "Tests: full pytest, production container, capped 512 MiB / 0.5 CPU resources",
+    "Monthly simplicity acceptance and applicable Adaptive/browser/import/cover gates",
+    "Preserve first failures; no blind retries or assertion weakening",
+    "Independent review, merge compatibility and final integrated commit testing",
+    "Serve exact deployed commit and genuine Word/PDF acceptance as required by issue scope"
+  ],
+  "boundaries": [
+    "No production deployment or merge performed by this swarm",
+    "Use synthetic fixtures; preserve authentic originals and saved versions",
+    "Invoice financial-output policy #458 remains undecided",
+    "Scope matrix #547 is proposal/documentation, not policy approval"
+  ]
+}
