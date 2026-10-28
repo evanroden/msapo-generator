@@ -82,6 +82,12 @@ if (os.environ.get("EPC_MONTHLY_TRAINING_TASK") == "1"
         render_reference(base, _field)
     st.stop()
 
+if os.environ.get("EPC_MONTHLY_FINANCIAL_PAGES_TASK") == "1":
+    from scripts.workspace_financial_pages import render as render_financial
+    with isolated(token):
+        render_financial(base, token, _field)
+    st.stop()
+
 if os.environ.get("EPC_MONTHLY_IMPORT_RETENTION_TASK") == "1":
     from scripts.workspace_import_retention import render as render_import_retention
     with isolated(token):

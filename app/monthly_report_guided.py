@@ -981,8 +981,35 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
     if local_destination:
         from app.monthly_report_upload_ui import render_section_uploads
         sources, additions, incoming_specs = render_section_uploads(
-            profile, period, prefix, field, local_destination, blocks=blocks, assets=assets)
-        draft = replace(draft, sources=_keep_missing_sources(prefix, sources))
+            profile, period, prefix, field, local_destination, blocks=blocks, assets=assets, sections=draft.sections)
+        financial_batch = incoming_specs.get("financial_batch")
+        if financial_batch is not None:
+            from app.monthly_report_mbcx_financial_pages import apply_financial_batch
+            consumed_key = prefix + "_financial_page_batches"
+            consumed = tuple(st.session_state.get(consumed_key, ()))
+            try:
+                proposed_draft, proposed_blocks = apply_financial_batch(
+                    draft, blocks, sources, financial_batch, editor_scope=_rich_text_scope(prefix), consumed=consumed,
+                    retained_sources=tuple(st.session_state.get(prefix + "_unavailable_sources", ())))
+            except ValueError as exc:
+                st.warning(str(exc))
+            else:
+                evidence_key = incoming_specs["financial_evidence_key"]
+                contents = st.session_state.get(evidence_key, ())
+                source_index = {source.id: source for source in proposed_draft.sources}
+                proposed_contents = tuple(replace(content, source=source_index.get(content.source.id, content.source)) for content in contents)
+                _advance_rich_text_receipt(prefix, blocks.get("mbcx_report"), proposed_blocks["mbcx_report"])
+                # Do not clear existing picture/caption widget packets: an
+                # unblurred human edit delivered with this action still owns
+                # its established reconciliation path and must not disappear.
+                draft, blocks = proposed_draft, proposed_blocks
+                st.session_state[evidence_key] = proposed_contents
+                st.session_state[consumed_key] = (*consumed, financial_batch.token)
+                forms = st.session_state.get("_monthly_source_detail_forms")
+                if isinstance(forms, dict) and financial_batch.source_id in forms:
+                    forms[financial_batch.source_id] = financial_batch.revised_content.source
+        else:
+            draft = replace(draft, sources=_keep_missing_sources(prefix, sources))
         if additions:
             draft, blocks = _apply_prepared(draft, blocks, additions, incoming_specs, prefix)
             if local_destination == "water_reports":

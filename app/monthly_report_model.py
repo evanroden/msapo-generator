@@ -14,6 +14,7 @@ import re
 from dataclasses import asdict, dataclass, replace
 from datetime import date
 from typing import Literal
+from app.monthly_report_financial_policy import SourceFinancialReview, ReviewedFinancialPage
 
 
 BlockType = Literal[
@@ -285,6 +286,8 @@ class ReportSource:
     scope_review: str = ""
     # Exact native PDF text-block offsets plus span digest; never inferred wraps.
     pdf_text_blocks: tuple[tuple[int, int, int, str], ...] = ()
+    financial_source_review: SourceFinancialReview | None = None
+    financial_page_reviews: tuple[ReviewedFinancialPage, ...] = ()
 
     @property
     def fingerprint(self) -> str:
@@ -351,11 +354,18 @@ def _digest(value: object) -> str:
         record.pop("scope_review", None)
     if isinstance(value, ReportSource) and not value.pdf_text_blocks:
         record.pop("pdf_text_blocks", None)
+    if isinstance(value, ReportSource):
+        for field in ("financial_source_review", "financial_page_reviews"):
+            if not record.get(field):
+                record.pop(field, None)
     if isinstance(value, ReportDraft):
         for block in record["blocks"]:
             if not block.get("asset_instances"):
                 block.pop("asset_instances", None)
         for source in record["sources"]:
+            for field in ("financial_source_review", "financial_page_reviews"):
+                if not source.get(field):
+                    source.pop(field, None)
             if not source.get("pdf_text_blocks"):
                 source.pop("pdf_text_blocks", None)
             if not source.get("scope_review"):

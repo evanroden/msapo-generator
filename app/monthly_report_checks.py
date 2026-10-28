@@ -226,8 +226,12 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                         checks.append(ReportCheck("client_source_missing", "The original source for an included picture is missing. Restore its source file or replace/remove the picture before generating.", True, block.key))
                     if source and reference in image_references and len(parts) == 3 and parts[1].isdigit():
                         page = int(parts[1])
-                        if page not in source.selected_pages or not 1 <= page <= len(source.page_texts) or not page_allowed(source, page):
-                            checks.append(ReportCheck("client_source_page", f"Remove or review page {page} of {source.filename} in this section. Its current selection is not approved for the client report.", True, block.key))
+                        page_captions = tuple(block.asset_captions[index] if index < len(block.asset_captions) else ""
+                                              for index in range(len(block.asset_hashes))
+                                              if reference in asset_context(block, index))
+                        if page not in source.selected_pages or not 1 <= page <= len(source.page_texts) or not page_allowed(source, page, profile=draft.profile, destination=block.key, output_captions=page_captions):
+                            from app.monthly_report_mbcx_financial_pages import has_financial_page_review
+                            checks.append(ReportCheck("financial_page" if has_financial_page_review(source, page) else "client_source_page", f"Remove or review page {page} of {source.filename} in this section. Its current selection is not approved for the client report.", True, block.key))
             for table in block.extra_tables:
                 month_labels = _annual_work_order_month_cells(block.key, table)
                 texts.extend((block.key, cell, None, (r, c) in month_labels)

@@ -115,6 +115,8 @@ def test_absent_scope_record_preserves_legacy_source_and_report_fingerprints(sam
         return sha256(json.dumps(record, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     source_record = asdict(draft.sources[0]); source_record.pop("scope_review")
     source_record.pop("pdf_text_blocks")  # Absent in the historical schema too.
+    source_record.pop("financial_source_review")
+    source_record.pop("financial_page_reviews")
     draft_record = asdict(draft)
     # The historical report schema predates occurrence metadata as well as
     # source-scope receipts. Current asdict() otherwise invents a new empty
@@ -124,6 +126,8 @@ def test_absent_scope_record_preserves_legacy_source_and_report_fingerprints(sam
     for source in draft_record["sources"]:
         source.pop("scope_review")
         source.pop("pdf_text_blocks")
+        source.pop("financial_source_review")
+        source.pop("financial_page_reviews")
     assert draft.sources[0].fingerprint == old_hash(source_record)
     assert draft.fingerprint == old_hash(draft_record)
     assert library.draft_from_dict(draft_record) == draft

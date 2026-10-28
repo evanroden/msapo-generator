@@ -299,6 +299,29 @@ def draft_from_dict(value: dict) -> ReportDraft:
 
 def source_from_dict(value: dict) -> ReportSource:
     fields = dict(value)
+    from app.monthly_report_financial_policy import FinancialScope, SourceFinancialReview, ReviewedFinancialPage
+    review = fields.get("financial_source_review")
+    if review is not None:
+        try:
+            if (not isinstance(review, dict) or type(review.get("version")) is not int or review["version"] != 1
+                    or any(not isinstance(review.get(k), str) for k in ("source_id", "source_sha256", "role", "audience"))
+                    or not isinstance(review.get("scope"), dict)
+                    or any(not isinstance(review["scope"].get(k), str) for k in ("contract_id", "site_id"))):
+                raise ValueError("Malformed financial review")
+            fields["financial_source_review"] = SourceFinancialReview(**{**review, "scope": FinancialScope(**review["scope"])})
+        except (KeyError, TypeError, ValueError) as exc:
+            raise LibraryError("Invalid saved financial source review.") from exc
+    try:
+        pages = fields.get("financial_page_reviews", ())
+        if (not isinstance(pages, (list, tuple)) or any(not isinstance(item, dict)
+                or type(item.get("number")) is not int or item["number"] < 1
+                or type(item.get("version")) is not int or item["version"] != 1
+                or any(not isinstance(item.get(k), str) for k in ("fingerprint", "source_review_fingerprint", "semantics"))
+                for item in pages) or len({item["number"] for item in pages}) != len(pages)):
+            raise ValueError("Malformed financial page review")
+        fields["financial_page_reviews"] = tuple(ReviewedFinancialPage(**item) for item in pages)
+    except (TypeError, ValueError) as exc:
+        raise LibraryError("Invalid saved financial page review.") from exc
     for key in ("tags", "page_texts", "selected_pages", "needs_vision", "notices"):
         fields[key] = tuple(fields.get(key, ()))
     fields["pdf_text_blocks"] = tuple(tuple(v) if isinstance(v, (tuple, list)) else v for v in fields.get("pdf_text_blocks", ()))

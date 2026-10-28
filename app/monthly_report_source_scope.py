@@ -42,7 +42,8 @@ def revision(source):
     # after every page Include/Exclude/caption review. Extracted content and
     # source metadata remain revision-bound; original bytes are bound below.
     return replace(source, scope_review="", selected_pages=(), captions=(),
-                   client_page_reviews=(), client_page_exclusions=()).fingerprint
+                   client_page_reviews=(), client_page_exclusions=(),
+                   financial_source_review=None, financial_page_reviews=()).fingerprint
 
 
 def _site_revision(source):

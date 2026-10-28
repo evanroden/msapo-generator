@@ -944,7 +944,7 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, peri
 
 
 def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, field,
-                           destination: str, *, blocks=None, assets=None):
+                           destination: str, *, blocks=None, assets=None, sections=None):
     """Return reviewed page additions; Water adds when its final review is done.
 
     The caller merges additions atomically. The source cache is canonical and
@@ -1108,6 +1108,16 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
                         st.warning(f"The whole PDF cannot fit the image budget: its checked pages "
                                    f"need at least {needed:.1f} MiB, with {available:.1f} MiB available. "
                                    "Reduce selected pages or remove existing evidence before reviewing.")
+    if destination == "mbcx_report":
+        from app.monthly_report_mbcx_financial_pages import render_reviewed_batch
+        from app.monthly_report_guided import _rich_text_scope
+        handled, revised, financial_batch = render_reviewed_batch(
+            profile, choices[selected], blocks, assets, local_key, period=period, editor_scope=_rich_text_scope(prefix), sections=sections)
+        if handled:
+            # The guided caller validates and commits the whole prepared draft;
+            # do not approve sources or renew old pictures ahead of that merge.
+            return tuple(c.source for c in contents), {}, (
+                {"financial_batch": financial_batch, "financial_evidence_key": key} if financial_batch else {})
     revised = _render_section_page_review(
         profile, choices[selected], local_key, field, blocks,
         period=period,
