@@ -12,6 +12,8 @@ from zipfile import ZipFile, ZIP_DEFLATED
 
 from PIL import Image
 
+from app.monthly_report_metafile_cache import cached_vector_png
+
 
 METAFILES = {'.emf', '.wmf'}
 _RENDER_VERSION = 'passive-metafile-v2'
@@ -94,11 +96,17 @@ def rasterize_metafile(raw, suffix):
                                         os.environ.get('FONTCONFIG_FILE', ''), os.environ.get('FONTCONFIG_PATH', ''))
     key = sha256(fingerprint + suffix.encode() + raw).hexdigest()
     cached = directory / (key + '.png')
-    if cached.exists() and cached.stat().st_size <= 24 * 1024 * 1024:
-        return cached.read_bytes()
+    hit = cached_vector_png(cached)
+    if hit is not None:
+        return hit
     if not _RENDER_LOCK.acquire(blocking=False):
         raise ImportError('Another report picture is being prepared. Try again in a moment.')
     try:
+        # Recheck after waiting for the render lock; a sibling may have
+        # completed the exact same derivative in the meantime.
+        hit = cached_vector_png(cached)
+        if hit is not None:
+            return hit
         package, size = _image_package(raw, suffix)
         with tempfile.TemporaryDirectory(prefix='drawing-', dir=directory) as temporary:
             temporary = Path(temporary)
