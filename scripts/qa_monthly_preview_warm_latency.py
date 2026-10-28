@@ -52,9 +52,11 @@ def benchmark(pages, repeats):
                 warm_ms.append((perf_counter() - begin) * 1000)
                 assert cold == again
             warm_opens = opened.call_count
+            # Register the replacement under its own ticket; put() validates
+            # the PDF and is not a raster page request. Count page opens only.
+            new_ticket = cache.put(owner, SimpleNamespace(pdf=changed, initial_page=0))
             opened.reset_mock()
             begin = perf_counter()
-            new_ticket = cache.put(owner, SimpleNamespace(pdf=changed, initial_page=0))
             new = cache.pages(owner, new_ticket, (0, 1), dpi=120)
             invalidated_ms = (perf_counter() - begin) * 1000
             replacement_opens = opened.call_count
