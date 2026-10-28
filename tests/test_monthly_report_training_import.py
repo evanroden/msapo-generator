@@ -191,8 +191,8 @@ def test_explicit_same_year_standing_values_are_preserved_but_not_events(storage
 
 def test_import_current_events_preserves_existing_matrix_and_authored_session(storage):
     content = ingest("current.csv", (
-        b"Topic,Date,Method,Participants,Hours\n"
-        b"Pump safety,2026-09-13,Virtual,Alice; Bob,1.5\n"))
+        b"Topic,Date,Method,Participants,Hours,Status\n"
+        b"Pump safety,2026-09-13,Virtual,Alice; Bob,1.5,Completed\n"))
     review = reviewed(content, "events")
     manual = add_event(None, title="Manual equipment review", when=date(2026, 9, 5),
                        mode="In person", participants=("Jo",), hours="", period=PERIOD)
@@ -330,9 +330,9 @@ def test_saved_review_receipt_and_source_row_fingerprints_survive_round_trip(sto
 
 def test_duplicate_source_sessions_need_review_not_overwrite(storage):
     content = ingest("duplicate.csv", (
-        b"Topic,Date,Mode,Attendees,Hours\n"
-        b"Pump safety,2026-09-13,Virtual,Alice,1\n"
-        b"Pump safety,2026-09-13,Virtual,Alice,2\n"))
+        b"Topic,Date,Mode,Attendees,Hours,Status\n"
+        b"Pump safety,2026-09-13,Virtual,Alice,1,Completed\n"
+        b"Pump safety,2026-09-13,Virtual,Alice,2,Completed\n"))
     review = reviewed(content, "events")
     assert len(review.rows) == 2
     assert all("Duplicate Training source row" in " ".join(r.issues) for r in review.rows)
@@ -354,7 +354,7 @@ def test_duplicate_source_sessions_need_review_not_overwrite(storage):
 def test_event_conflict_with_manual_same_identity_requires_review(storage):
     content = ingest("manual-conflict.csv", (
         b"Training,Date,Format,Participants,Hours\n"
-        b"Pump safety,2026-09-13,Virtual,Alice,2\n"))
+        b"Pump safety,2026-09-13,Virtual,Alice,2,Completed\n"))
     review = reviewed(content, "events")
     manual = add_event(None, title="Pump safety", when=date(2026, 9, 13),
                        mode="Virtual", participants=("Alice",), hours="1", period=PERIOD)
@@ -390,8 +390,8 @@ def test_unsupported_totals_grid_and_source_replacement_are_safe(storage):
 def test_xlsx_event_export_uses_saved_original_and_keeps_blank_values(storage):
     book = Workbook()
     worksheet = book.active
-    worksheet.append(("Topic", "Session Date", "Method", "Participants", "Hours"))
-    worksheet.append(("Pump safety", "2026-09-13", "Virtual", "Alice", None))
+    worksheet.append(("Topic", "Session Date", "Method", "Participants", "Hours", "Status"))
+    worksheet.append(("Pump safety", "2026-09-13", "Virtual", "Alice", None, "Completed"))
     raw_buffer = BytesIO()
     book.save(raw_buffer)
     raw = raw_buffer.getvalue()
@@ -405,8 +405,8 @@ def test_xlsx_event_export_uses_saved_original_and_keeps_blank_values(storage):
 def test_report_block_and_draft_roundtrip_preserves_training_sessions_and_notes(storage):
     from app.monthly_report_model import ReportDraft
     content = ingest("current.csv", (
-        b"Topic,Date,Method,Participants,Hours\n"
-        b"Pump safety,2026-09-13,Virtual,Alice,1.5\n"))
+        b"Topic,Date,Method,Participants,Hours,Status\n"
+        b"Pump safety,2026-09-13,Virtual,Alice,1.5,Completed\n"))
     review = reviewed(content, "events")
     block = ResolvedBlock("training_summary", "This month", text="A human review note")
     approved = accepted_training_block(review, block, expected_block_fingerprint=block.fingerprint)
@@ -428,7 +428,7 @@ def test_accepted_current_event_renders_once_in_generic_word_training_section(st
                             (PROFILE.facilities[0],))
     content = ingest("training.csv", (
         b"Topic,Date,Format,Participants,Hours\n"
-        b"Safety drill,2026-09-13,Virtual,Alice,1.5\n"), profile=profile)
+        b"Safety drill,2026-09-13,Virtual,Alice,1.5,Completed\n"), profile=profile)
     review = reviewed(content, "events", profile=profile)
     block = ResolvedBlock("training_summary", "This month")
     approved = accepted_training_block(review, block,
