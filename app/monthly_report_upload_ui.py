@@ -1226,6 +1226,7 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
         st.caption(f"{sum(page_allowed(by_id[identity].source, n) for identity, n in pending)} of {len(pending)} selected new pages checked.")
     else:
         st.caption("No new pages selected. Previously added pages remain in your report.")
+    st.text("Add destination: " + title)
     if st.button("Add reviewed pages", key=local_key + "_apply", disabled=not ready, type="primary"):
         try:
             with st.spinner("Adding the reviewed pages…"):
