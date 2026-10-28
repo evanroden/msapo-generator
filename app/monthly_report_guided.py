@@ -1081,6 +1081,9 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
             from app.monthly_report_visual_ui import edit_contacts
             block = _include_left_out(spec, block, prefix)
             block = edit_contacts(draft, spec, block, prefix, assets, field, show_preview=False)
+            if spec.key == "subcontractor_matrix":
+                from app.monthly_report_subcontractor_roster_ui import render_subcontractor_roster
+                block = render_subcontractor_roster(draft, spec, block, prefix, field)
         else:
             with writing if writing is not None and spec.key == "activity_summary" else nullcontext():
                 from app.monthly_report_asset_review import pending_asset_indexes
