@@ -1,0 +1,340 @@
+{
+  "synthetic_only": true,
+  "actual_route": "Monthly QA prefill, native file upload and issue editor",
+  "inputs": {
+    "synthetic-alpha-equipment.pdf": "5c6955ce8f7a7a4673ae0f5234408d20441b5a76fe680701b300a623c229b7bb",
+    "synthetic-beta-equipment.pdf": "531d10d1a2901aac3b21dda322ab0479e68af34aa5bc139bd6a15493e0f3d59f"
+  },
+  "steps": [
+    {
+      "stage": "pointer-and-keyboard",
+      "selected": [
+        "synthetic-alpha-equipment.pdf \u00b7 page 1",
+        "synthetic-alpha-equipment.pdf \u00b7 page 2"
+      ]
+    },
+    {
+      "stage": "file-identity-page-five-preview",
+      "selected": [
+        "synthetic-alpha-equipment.pdf \u00b7 page 2",
+        "synthetic-alpha-equipment.pdf \u00b7 page 5",
+        "synthetic-beta-equipment.pdf \u00b7 page 1"
+      ]
+    },
+    {
+      "stage": "shared-version-two-saved",
+      "selected": [
+        "synthetic-alpha-equipment.pdf \u00b7 page 2",
+        "synthetic-alpha-equipment.pdf \u00b7 page 5",
+        "synthetic-beta-equipment.pdf \u00b7 page 1"
+      ]
+    }
+  ],
+  "external": [],
+  "errors": [],
+  "limits": [
+    "No physical-device or production acceptance",
+    "This journey does not approve or embed evidence pages"
+  ],
+  "result": "failed",
+  "failure": {
+    "type": "TimeoutError",
+    "message": "Locator.click: Timeout 30000ms exceeded.\nCall log:\n  - waiting for get_by_role(\"option\", name=\"synthetic-beta-equipment.pdf\", exact=True)\n"
+  },
+  "last_choice": {
+    "target": "synthetic-beta-equipment.pdf",
+    "after_click": {
+      "node": 1,
+      "connected": true,
+      "rect": {
+        "x": 67,
+        "y": 359.078125,
+        "width": 379,
+        "height": 38,
+        "top": 359.078125,
+        "right": 446,
+        "bottom": 397.078125,
+        "left": 67
+      },
+      "expanded": "false",
+      "readonly": false,
+      "disabled": false,
+      "focused": true,
+      "hit": {
+        "tag": "INPUT",
+        "node": 1,
+        "text": ""
+      },
+      "running": "notRunning",
+      "events": [
+        {
+          "type": "pointerdown",
+          "trusted": true,
+          "node": 1,
+          "target": 1,
+          "expanded": "false",
+          "running": "notRunning",
+          "at": 3636.10000000149,
+          "x": 256.5,
+          "y": 378.07000732421875,
+          "rect": {
+            "x": 67,
+            "y": 359.078125,
+            "width": 379,
+            "height": 38,
+            "top": 359.078125,
+            "right": 446,
+            "bottom": 397.078125,
+            "left": 67
+          },
+          "connected": true,
+          "focused": false,
+          "hitTag": "INPUT"
+        },
+        {
+          "type": "focus",
+          "trusted": true,
+          "node": 1,
+          "target": 1,
+          "expanded": "true",
+          "running": "notRunning",
+          "at": 3651.9000000003725,
+          "x": null,
+          "y": null,
+          "rect": {
+            "x": 67,
+            "y": 359.078125,
+            "width": 379,
+            "height": 38,
+            "top": 359.078125,
+            "right": 446,
+            "bottom": 397.078125,
+            "left": 67
+          },
+          "connected": true,
+          "focused": true,
+          "hitTag": "DIV"
+        },
+        {
+          "type": "pointerup",
+          "trusted": true,
+          "node": 1,
+          "target": 1,
+          "expanded": "true",
+          "running": "notRunning",
+          "at": 3654.2000000011176,
+          "x": 256.5,
+          "y": 378.07000732421875,
+          "rect": {
+            "x": 67,
+            "y": 359.078125,
+            "width": 379,
+            "height": 38,
+            "top": 359.078125,
+            "right": 446,
+            "bottom": 397.078125,
+            "left": 67
+          },
+          "connected": true,
+          "focused": true,
+          "hitTag": "INPUT"
+        },
+        {
+          "type": "click",
+          "trusted": true,
+          "node": 1,
+          "target": 1,
+          "expanded": "true",
+          "running": "notRunning",
+          "at": 3654.5,
+          "x": 256,
+          "y": 378,
+          "rect": {
+            "x": 67,
+            "y": 359.078125,
+            "width": 379,
+            "height": 38,
+            "top": 359.078125,
+            "right": 446,
+            "bottom": 397.078125,
+            "left": 67
+          },
+          "connected": true,
+          "focused": true,
+          "hitTag": "INPUT"
+        },
+        {
+          "type": "focus",
+          "trusted": false,
+          "node": 1,
+          "target": 1,
+          "expanded": "false",
+          "running": "notRunning",
+          "at": 3669.60000000149,
+          "x": null,
+          "y": null,
+          "rect": {
+            "x": 67,
+            "y": 359.078125,
+            "width": 379,
+            "height": 38,
+            "top": 359.078125,
+            "right": 446,
+            "bottom": 397.078125,
+            "left": 67
+          },
+          "connected": true,
+          "focused": true,
+          "hitTag": "DIV"
+        }
+      ]
+    },
+    "after_option_attempt": {
+      "node": 1,
+      "connected": true,
+      "rect": {
+        "x": 67,
+        "y": 359.078125,
+        "width": 379,
+        "height": 38,
+        "top": 359.078125,
+        "right": 446,
+        "bottom": 397.078125,
+        "left": 67
+      },
+      "expanded": "false",
+      "readonly": false,
+      "disabled": false,
+      "focused": true,
+      "hit": {
+        "tag": "INPUT",
+        "node": 1,
+        "text": ""
+      },
+      "running": "notRunning",
+      "events": [
+        {
+          "type": "pointerdown",
+          "trusted": true,
+          "node": 1,
+          "target": 1,
+          "expanded": "false",
+          "running": "notRunning",
+          "at": 3636.10000000149,
+          "x": 256.5,
+          "y": 378.07000732421875,
+          "rect": {
+            "x": 67,
+            "y": 359.078125,
+            "width": 379,
+            "height": 38,
+            "top": 359.078125,
+            "right": 446,
+            "bottom": 397.078125,
+            "left": 67
+          },
+          "connected": true,
+          "focused": false,
+          "hitTag": "INPUT"
+        },
+        {
+          "type": "focus",
+          "trusted": true,
+          "node": 1,
+          "target": 1,
+          "expanded": "true",
+          "running": "notRunning",
+          "at": 3651.9000000003725,
+          "x": null,
+          "y": null,
+          "rect": {
+            "x": 67,
+            "y": 359.078125,
+            "width": 379,
+            "height": 38,
+            "top": 359.078125,
+            "right": 446,
+            "bottom": 397.078125,
+            "left": 67
+          },
+          "connected": true,
+          "focused": true,
+          "hitTag": "DIV"
+        },
+        {
+          "type": "pointerup",
+          "trusted": true,
+          "node": 1,
+          "target": 1,
+          "expanded": "true",
+          "running": "notRunning",
+          "at": 3654.2000000011176,
+          "x": 256.5,
+          "y": 378.07000732421875,
+          "rect": {
+            "x": 67,
+            "y": 359.078125,
+            "width": 379,
+            "height": 38,
+            "top": 359.078125,
+            "right": 446,
+            "bottom": 397.078125,
+            "left": 67
+          },
+          "connected": true,
+          "focused": true,
+          "hitTag": "INPUT"
+        },
+        {
+          "type": "click",
+          "trusted": true,
+          "node": 1,
+          "target": 1,
+          "expanded": "true",
+          "running": "notRunning",
+          "at": 3654.5,
+          "x": 256,
+          "y": 378,
+          "rect": {
+            "x": 67,
+            "y": 359.078125,
+            "width": 379,
+            "height": 38,
+            "top": 359.078125,
+            "right": 446,
+            "bottom": 397.078125,
+            "left": 67
+          },
+          "connected": true,
+          "focused": true,
+          "hitTag": "INPUT"
+        },
+        {
+          "type": "focus",
+          "trusted": false,
+          "node": 1,
+          "target": 1,
+          "expanded": "false",
+          "running": "notRunning",
+          "at": 3669.60000000149,
+          "x": null,
+          "y": null,
+          "rect": {
+            "x": 67,
+            "y": 359.078125,
+            "width": 379,
+            "height": 38,
+            "top": 359.078125,
+            "right": 446,
+            "bottom": 397.078125,
+            "left": 67
+          },
+          "connected": true,
+          "focused": true,
+          "hitTag": "DIV"
+        }
+      ]
+    }
+  },
+  "environment": "Stock shared-venv Streamlit frontend; selected_frontend rejected missing overlay compatibility. This is NOT the repository-installed release frontend."
+}

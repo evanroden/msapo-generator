@@ -1,0 +1,395 @@
+{
+  "synthetic_only": true,
+  "physical_device": false,
+  "browsers": {},
+  "checks": [
+    {
+      "browser": "chromium",
+      "name": "normal label pointer sets Include synthetic-alpha-equipment.pdf \u00b7 page 1 as issue evidence",
+      "passed": true,
+      "detail": {
+        "input": {
+          "x": 445,
+          "y": 757.296875,
+          "width": 13,
+          "height": 13,
+          "top": 757.296875,
+          "right": 458,
+          "bottom": 770.296875,
+          "left": 445
+        },
+        "label": {
+          "x": 446,
+          "y": 753.296875,
+          "width": 339.765625,
+          "height": 42,
+          "top": 753.296875,
+          "right": 785.765625,
+          "bottom": 795.296875,
+          "left": 446
+        },
+        "parentClip": "rect(0px, 0px, 0px, 0px)",
+        "hitTag": "P",
+        "labelOwnsHit": true
+      }
+    },
+    {
+      "browser": "chromium",
+      "name": "normal label pointer sets Include synthetic-beta-equipment.pdf \u00b7 page 1 as issue evidence",
+      "passed": true,
+      "detail": {
+        "input": {
+          "x": 445,
+          "y": 706.703125,
+          "width": 13,
+          "height": 13,
+          "top": 706.703125,
+          "right": 458,
+          "bottom": 719.703125,
+          "left": 445
+        },
+        "label": {
+          "x": 446,
+          "y": 702.703125,
+          "width": 339.765625,
+          "height": 42,
+          "top": 702.703125,
+          "right": 785.765625,
+          "bottom": 744.703125,
+          "left": 446
+        },
+        "parentClip": "rect(0px, 0px, 0px, 0px)",
+        "hitTag": "P",
+        "labelOwnsHit": true
+      }
+    },
+    {
+      "browser": "chromium",
+      "name": "normal label pointer sets Include synthetic-alpha-equipment.pdf \u00b7 page 1 as issue evidence",
+      "passed": true,
+      "detail": {
+        "input": {
+          "x": 445,
+          "y": 823.703125,
+          "width": 13,
+          "height": 13,
+          "top": 823.703125,
+          "right": 458,
+          "bottom": 836.703125,
+          "left": 445
+        },
+        "label": {
+          "x": 446,
+          "y": 819.703125,
+          "width": 339.765625,
+          "height": 42,
+          "top": 819.703125,
+          "right": 785.765625,
+          "bottom": 861.703125,
+          "left": 446
+        },
+        "parentClip": "rect(0px, 0px, 0px, 0px)",
+        "hitTag": "P",
+        "labelOwnsHit": true
+      }
+    },
+    {
+      "browser": "chromium",
+      "name": "normal label pointer sets Include synthetic-alpha-equipment.pdf \u00b7 page 5 as issue evidence",
+      "passed": true,
+      "detail": {
+        "input": {
+          "x": 445,
+          "y": 790.703125,
+          "width": 13,
+          "height": 13,
+          "top": 790.703125,
+          "right": 458,
+          "bottom": 803.703125,
+          "left": 445
+        },
+        "label": {
+          "x": 446,
+          "y": 786.703125,
+          "width": 339.765625,
+          "height": 42,
+          "top": 786.703125,
+          "right": 785.765625,
+          "bottom": 828.703125,
+          "left": 446
+        },
+        "parentClip": "rect(0px, 0px, 0px, 0px)",
+        "hitTag": "P",
+        "labelOwnsHit": true
+      }
+    },
+    {
+      "browser": "chromium",
+      "name": "Issue page native pointer/Space/file distinction/preview/reload",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "browser": "playwright-webkit",
+      "name": "normal label pointer sets Include synthetic-alpha-equipment.pdf \u00b7 page 1 as issue evidence",
+      "passed": true,
+      "detail": {
+        "input": {
+          "x": 445,
+          "y": 434,
+          "width": 12,
+          "height": 12,
+          "top": 434,
+          "right": 457,
+          "bottom": 446,
+          "left": 445
+        },
+        "label": {
+          "x": 446,
+          "y": 429,
+          "width": 336.59375,
+          "height": 42,
+          "top": 429,
+          "right": 782.59375,
+          "bottom": 471,
+          "left": 446
+        },
+        "parentClip": "rect(0px, 0px, 0px, 0px)",
+        "hitTag": "P",
+        "labelOwnsHit": true
+      }
+    },
+    {
+      "browser": "playwright-webkit",
+      "name": "normal label pointer sets Include synthetic-beta-equipment.pdf \u00b7 page 1 as issue evidence",
+      "passed": true,
+      "detail": {
+        "input": {
+          "x": 445,
+          "y": 383,
+          "width": 12,
+          "height": 12,
+          "top": 383,
+          "right": 457,
+          "bottom": 395,
+          "left": 445
+        },
+        "label": {
+          "x": 446,
+          "y": 378,
+          "width": 336.59375,
+          "height": 42,
+          "top": 378,
+          "right": 782.59375,
+          "bottom": 420,
+          "left": 446
+        },
+        "parentClip": "rect(0px, 0px, 0px, 0px)",
+        "hitTag": "P",
+        "labelOwnsHit": true
+      }
+    },
+    {
+      "browser": "playwright-webkit",
+      "name": "normal label pointer sets Include synthetic-alpha-equipment.pdf \u00b7 page 1 as issue evidence",
+      "passed": true,
+      "detail": {
+        "input": {
+          "x": 445,
+          "y": 500,
+          "width": 12,
+          "height": 12,
+          "top": 500,
+          "right": 457,
+          "bottom": 512,
+          "left": 445
+        },
+        "label": {
+          "x": 446,
+          "y": 495,
+          "width": 336.59375,
+          "height": 42,
+          "top": 495,
+          "right": 782.59375,
+          "bottom": 537,
+          "left": 446
+        },
+        "parentClip": "rect(0px, 0px, 0px, 0px)",
+        "hitTag": "P",
+        "labelOwnsHit": true
+      }
+    },
+    {
+      "browser": "playwright-webkit",
+      "name": "normal label pointer sets Include synthetic-alpha-equipment.pdf \u00b7 page 5 as issue evidence",
+      "passed": true,
+      "detail": {
+        "input": {
+          "x": 445,
+          "y": 467,
+          "width": 12,
+          "height": 12,
+          "top": 467,
+          "right": 457,
+          "bottom": 479,
+          "left": 445
+        },
+        "label": {
+          "x": 446,
+          "y": 462,
+          "width": 336.59375,
+          "height": 42,
+          "top": 462,
+          "right": 782.59375,
+          "bottom": 504,
+          "left": 446
+        },
+        "parentClip": "rect(0px, 0px, 0px, 0px)",
+        "hitTag": "P",
+        "labelOwnsHit": true
+      }
+    },
+    {
+      "browser": "playwright-webkit",
+      "name": "Issue page native pointer/Space/file distinction/preview/reload",
+      "passed": true,
+      "detail": null
+    }
+  ],
+  "failures": [],
+  "result": "passed",
+  "tested_tree": "5496721f0b34717314c7f6cb4d0bfcb5c62253ea",
+  "candidate_head": "375c30d2f12460af91c74ab7b7c82a99d818eafa",
+  "frontend": {
+    "already_patched": false,
+    "bundle": "DateInput.BXvTEfuB.enfra-overlay-9a5cd87d3c6cd8da82fc.js",
+    "closure_count": 83,
+    "combobox_bundle": "fuzzyFilterSelectOptions.Bf8rcmtM.enfra-overlay-9a5cd87d3c6cd8da82fc.js",
+    "combobox_sha256": "1fd50f53fc360f6d76a8414159b45d2faf278b4131cd1668175c0e02f066f1e3",
+    "date_bundle": "DateInput.BXvTEfuB.enfra-overlay-9a5cd87d3c6cd8da82fc.js",
+    "date_sha256": "4b115712228d73706acae95ce27d6738d8275499e7b5d3ee6217066138acd76b",
+    "entry": "index.enfra-frontend-674a43a68598.js",
+    "floating_bundle": "useFloatingOverlay.NyFxHaQF.enfra-overlay-9a5cd87d3c6cd8da82fc.js",
+    "floating_resize": true,
+    "floating_sha256": "068c7a1d8f287a9630e11d88c28aa8444651b61b49888c284839b7c44f936d15",
+    "generation": "9a5cd87d3c6cd8da82fc4039dd49eae005c4b2825e563d46570cdec92847f4f8",
+    "instant_expander": true,
+    "latest_scroll_close": true,
+    "no_cache_advertisements": true,
+    "original_entry_sha256": "2ca8d2fdc237ec568ac10b8aae70c21e28c9e25ea1924378f068f7a81af6fe6e",
+    "original_floating_sha256": "0bb3da6d472fd03e249c6c42e6cb3c1e6f4e9f57804278d94cda231638d06e80",
+    "original_overlay_sha256": "5e80c1c53af853d75e4116c2a3a036016395f6175b1d9089a80b65444750b36a",
+    "original_sha256": "d152ac48cbaa8213d627e0207a45d0acc8b9c35494d07827a25ac7b02f791ccc",
+    "original_virtualizer_sha256": "1ebdea14d07b36247a221305bfbb455b368a7fe79c86b24f509743c278a29ce6",
+    "overlay_bundle": "Tooltip.DJg7muty.enfra-overlay-9a5cd87d3c6cd8da82fc.js",
+    "overlay_sha256": "ee953e60f4afdb0fe6b51b8a66d892dcf746548518fc334b1a6975d508bf87ac",
+    "patched_entry_sha256": "674a43a685981c3358c9c00197cb33b1a8264c76d76753158ea3515d68424c5f",
+    "patched_sha256": "4b115712228d73706acae95ce27d6738d8275499e7b5d3ee6217066138acd76b",
+    "queued_scroll": true,
+    "scalar_date": true,
+    "selection_safe_close": true,
+    "tab_navigation": true,
+    "version": "1.61.1",
+    "virtualizer_bundle": "fuzzyFilterSelectOptions.Bf8rcmtM.enfra-overlay-9a5cd87d3c6cd8da82fc.js",
+    "virtualizer_resize": true,
+    "virtualizer_sha256": "1fd50f53fc360f6d76a8414159b45d2faf278b4131cd1668175c0e02f066f1e3"
+  },
+  "journeys": {
+    "chromium": {
+      "synthetic_only": true,
+      "actual_route": "Monthly QA prefill, native file upload and issue editor",
+      "inputs": {
+        "synthetic-alpha-equipment.pdf": "4bd52bf021a04598c42085f3fd43421a3241ab1e3048b4bee1a019f1220bfc7b",
+        "synthetic-beta-equipment.pdf": "1b549eae830e52cfff77e2c6729e7cbf6a2284f681d76c0d75996b4dfbdcc966"
+      },
+      "steps": [
+        {
+          "stage": "pointer-and-keyboard",
+          "selected": [
+            "synthetic-alpha-equipment.pdf \u00b7 page 1",
+            "synthetic-alpha-equipment.pdf \u00b7 page 2"
+          ]
+        },
+        {
+          "stage": "file-identity-page-five-preview",
+          "selected": [
+            "synthetic-alpha-equipment.pdf \u00b7 page 2",
+            "synthetic-alpha-equipment.pdf \u00b7 page 5",
+            "synthetic-beta-equipment.pdf \u00b7 page 1"
+          ]
+        },
+        {
+          "stage": "shared-version-two-saved",
+          "selected": [
+            "synthetic-alpha-equipment.pdf \u00b7 page 2",
+            "synthetic-alpha-equipment.pdf \u00b7 page 5",
+            "synthetic-beta-equipment.pdf \u00b7 page 1"
+          ]
+        },
+        {
+          "stage": "durable-reload-narrow",
+          "selected": [
+            "synthetic-alpha-equipment.pdf \u00b7 page 2",
+            "synthetic-alpha-equipment.pdf \u00b7 page 5",
+            "synthetic-beta-equipment.pdf \u00b7 page 1"
+          ]
+        }
+      ],
+      "external": [],
+      "errors": [],
+      "limits": [
+        "No physical-device or production acceptance",
+        "This journey does not approve or embed evidence pages"
+      ],
+      "result": "passed"
+    },
+    "playwright-webkit": {
+      "synthetic_only": true,
+      "actual_route": "Monthly QA prefill, native file upload and issue editor",
+      "inputs": {
+        "synthetic-alpha-equipment.pdf": "b93d6b25266c6fba73bd2c5603a3f7f412d1d41ffed9b987d04e330574650a86",
+        "synthetic-beta-equipment.pdf": "4cfd626ba3e82ec8111cb3f0e623baea9f8f3de2764d343b2caf8388223966a0"
+      },
+      "steps": [
+        {
+          "stage": "pointer-and-keyboard",
+          "selected": [
+            "synthetic-alpha-equipment.pdf \u00b7 page 1",
+            "synthetic-alpha-equipment.pdf \u00b7 page 2"
+          ]
+        },
+        {
+          "stage": "file-identity-page-five-preview",
+          "selected": [
+            "synthetic-alpha-equipment.pdf \u00b7 page 2",
+            "synthetic-alpha-equipment.pdf \u00b7 page 5",
+            "synthetic-beta-equipment.pdf \u00b7 page 1"
+          ]
+        },
+        {
+          "stage": "shared-version-two-saved",
+          "selected": [
+            "synthetic-alpha-equipment.pdf \u00b7 page 2",
+            "synthetic-alpha-equipment.pdf \u00b7 page 5",
+            "synthetic-beta-equipment.pdf \u00b7 page 1"
+          ]
+        },
+        {
+          "stage": "durable-reload-narrow",
+          "selected": [
+            "synthetic-alpha-equipment.pdf \u00b7 page 2",
+            "synthetic-alpha-equipment.pdf \u00b7 page 5",
+            "synthetic-beta-equipment.pdf \u00b7 page 1"
+          ]
+        }
+      ],
+      "external": [],
+      "errors": [],
+      "limits": [
+        "No physical-device or production acceptance",
+        "This journey does not approve or embed evidence pages"
+      ],
+      "result": "passed"
+    }
+  }
+}
