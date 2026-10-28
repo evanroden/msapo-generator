@@ -3,9 +3,8 @@
 Synthetic only. Tests ensure actionable 1-based row positions and that
 original/unknown cells survive correction, omission, snapshot and output.
 """
-from dataclasses import asdict, replace
+from dataclasses import replace
 from io import BytesIO
-import json
 
 from docx import Document
 import pytest
@@ -75,7 +74,7 @@ def test_second_source_row_is_named_and_existing_safe_first_row_remains():
     assert block.rows[0] == service_row()
 
 
-def test_valid_full_width_and_short_rows_still_render_in_one_native_word_table():
+def test_valid_full_width_and_short_rows_still_render_in_one_generic_word_table():
     block = ResolvedBlock("service_calls", "This month",
                           rows=(service_row(), ("000013", "2026-09-15", "Plant")))
     draft = report(block)
