@@ -6,7 +6,7 @@ This cache never reads, evicts or migrates the durable report library.
 from __future__ import annotations
 
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 from pathlib import Path
 import tempfile
@@ -40,6 +40,7 @@ class _Stored:
     size: int
     ticket: PreviewTicket
     used: float
+    retired: bool = False
 
 
 class PreviewStore:
@@ -60,17 +61,25 @@ class PreviewStore:
         self._lock = RLock()
 
     def _remove(self, key):
-        entry = self._files.pop(key, None)
+        entry = self._files.get(key)
         if entry is not None:
-            self._disk_bytes -= entry.size
-            entry.path.unlink(missing_ok=True)
+            # Revoke access before touching disk. A failed unlink must neither
+            # revive this ticket nor hide its bytes from the global budget.
+            self._files[key] = replace(entry, retired=True)
         for raster in [value for value in self._rasters if value[0] == key]:
             self._raster_bytes -= len(self._rasters.pop(raster))
+        if entry is not None:
+            try:
+                entry.path.unlink(missing_ok=True)
+            except OSError:
+                return
+            self._files.pop(key)
+            self._disk_bytes -= entry.size
 
     def _expire(self):
         now = monotonic()
         for key, entry in list(self._files.items()):
-            if now - entry.used > self.max_age:
+            if entry.retired or now - entry.used > self.max_age:
                 self._remove(key)
 
     def put(self, owner, preview):
@@ -90,9 +99,16 @@ class PreviewStore:
         ticket = PreviewTicket(uuid4().hex, len(sizes), sizes, first)
         with self._lock:
             self._expire()
-            while self._files and (self._disk_bytes + len(raw) > self.disk_limit
-                                   or len(self._files) >= self.max_entries):
-                self._remove(next(iter(self._files)))
+            # Try each owned file at most once; a failed deletion cannot spin
+            # eviction or permit a new write beyond the accounted disk limit.
+            for key in tuple(self._files):
+                if (self._disk_bytes + len(raw) <= self.disk_limit
+                        and len(self._files) < self.max_entries):
+                    break
+                self._remove(key)
+            if (self._disk_bytes + len(raw) > self.disk_limit
+                    or len(self._files) >= self.max_entries):
+                raise OSError('The preview cache is waiting for temporary files to be removed. Retry this preview.')
             if self._directory is None:
                 self._directory = tempfile.TemporaryDirectory(prefix='monthly-preview-cache-')
             path = Path(self._directory.name) / (ticket.key + '.pdf')
@@ -110,7 +126,7 @@ class PreviewStore:
     def _get(self, owner, ticket):
         self._expire()
         entry = self._files.get(ticket.key) if isinstance(ticket, PreviewTicket) else None
-        if entry is None or entry.owner != owner or entry.ticket != ticket:
+        if entry is None or entry.retired or entry.owner != owner or entry.ticket != ticket:
             return None
         if not entry.path.is_file():
             self._remove(ticket.key)
@@ -185,6 +201,11 @@ class PreviewStore:
             if self._directory is not None:
                 self._directory.cleanup()
                 self._directory = None
+                # Directory cleanup may succeed after an individual unlink
+                # failed transiently. Only then can its remaining bytes clear.
+                self._files.clear()
+                self._rasters.clear()
+                self._disk_bytes = self._raster_bytes = 0
 
 
 # Live and QA previews must never share a PDF/raster store or entry budget.
