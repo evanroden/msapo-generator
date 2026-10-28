@@ -306,6 +306,9 @@ def render_training(draft, blocks, prefix, field):
     # inclusion decision; only an explicit Include or edit is.
     explicit = block.source != original_block.source
     key = prefix + "_training_" + _signature((draft.profile.contract, tuple(f.key for f in draft.profile.facilities), draft.period.key))
+    # Place monthly work first without changing matrix resolution/save order:
+    # session participant choices still use the resolved matrix below.
+    monthly_inputs = st.container(key=key + "_monthly_inputs")
     had_conflict = bool(st.session_state.get(key + "_conflict"))
     if had_conflict:
         blocks = _reload_matrix(draft, blocks, block, key)
@@ -382,7 +385,8 @@ def render_training(draft, blocks, prefix, field):
     from app.monthly_report_guided import _rich_text_scope
     scope = _rich_text_scope(prefix)
     shown_events = events_for_period(block, draft.period)
-    events = _render_monthly_sessions(shown_events, matrix, draft.period, key, scope)
+    with monthly_inputs:
+        events = _render_monthly_sessions(shown_events, matrix, draft.period, key, scope)
     tabled = apply_tables(block, matrix, events)
     if block.source == "Omit" and not explicit and events == shown_events:
         tabled = replace(tabled, source="Omit")
@@ -391,8 +395,9 @@ def render_training(draft, blocks, prefix, field):
     # already does. A one-shot session-state set_value is not the first-mount
     # default and can otherwise be echoed back as an unintended empty edit.
     # The pinned keyed textarea retains its ID and accepts deliberate clears.
-    notes = st.text_area("Training notes", value=block.text,
-                         key=field(key + "_notes_" + _signature(block.references), block.text), height=120)
+    with monthly_inputs:
+        notes = st.text_area("Training notes", value=block.text,
+                             key=field(key + "_notes_" + _signature(block.references), block.text), height=120)
     if notes != block.text:
         block = replace(block, text=notes, source="This month", reviewed_fingerprint="", client_reviewed_fingerprint="")
     if block != original_block or block.key in blocks:
