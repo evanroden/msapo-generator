@@ -1587,10 +1587,6 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     st.divider()
     with st.container():
         st.subheader("Review and download", anchor="report-review")
-        # Build the Review preview from the canonical report, not the set of
-        # editor sections which happened to become visible in the browser.
-        from app.monthly_report_review_preview_ui import render_review_preview
-        render_review_preview(draft, assets, prefix)
         from app.monthly_report_picture_batch_ui import review_picture_batch
         if prepared.strip():
             from app.monthly_report_asset_review import pending_asset_indexes
@@ -1645,6 +1641,11 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 st.caption("Automatic recovery for new edits is unavailable in this browser.")
             else:
                 st.warning("Automatic recovery is unavailable in this browser. Save a report version before leaving.")
+        # Every native editor, picture decision and recovery-save attempt has
+        # now reached the authoritative draft. A preview must not race an
+        # uncommitted image caption or a source-review choice in this render.
+        from app.monthly_report_review_preview_ui import render_review_preview
+        render_review_preview(draft, assets, prefix)
         if package and package.fingerprint != draft.fingerprint:
             from app.monthly_report_output_ui import discard_current_session_pdf_preview
             discard_current_session_pdf_preview(prefix, _rich_text_scope(prefix))
