@@ -432,7 +432,13 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
                     else:
                         pdf_text_blocks.extend(spans)
     elif suffix in ocr.SUPPORTED_IMAGE_SUFFIXES:
-        normalize_report_image(raw, suffix)  # Validate before caching or paid work.
+        try:
+            normalize_report_image(raw, suffix)  # Validate before caching or paid work.
+        except SyntaxError as exc:
+            # Pillow can defer malformed EXIF until orientation/decoding.
+            # Contain only that reader boundary, not later product errors.
+            raise ValueError("Image structure or metadata could not be read. "
+                             "Export a fresh PNG or JPEG copy and upload it again.") from exc
         page_texts, needs_vision = [""], [1]
     elif suffix == ".txt":
         page_texts = [raw.decode("utf-8-sig")]
