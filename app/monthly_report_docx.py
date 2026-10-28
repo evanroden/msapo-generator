@@ -483,6 +483,10 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
             for imported in block.extra_tables:
                 if not imported.columns or not any(c is not None and str(c).strip() for row in imported.rows for c in row):
                     continue
+                from app.monthly_report_training import matrix_title
+                title = matrix_title(imported.reference)
+                if title:
+                    document.add_paragraph(title).paragraph_format.keep_with_next = True
                 table = document.add_table(rows=1, cols=len(imported.columns))
                 table.style = "Light Shading Accent 1"
                 for cell, title in zip(table.rows[0].cells, imported.columns):
