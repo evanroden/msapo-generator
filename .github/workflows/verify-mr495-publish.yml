@@ -1,0 +1,87 @@
+name: Publish verified proposal repair (helper only)
+
+on:
+  push:
+    branches: [verify/mr495-publish-20261028]
+    paths: [.github/workflows/verify-mr495-publish.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  publish-exact-tree:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Publish only the verified product tree to its isolated branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import base64
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import urllib.request
+          import zlib
+
+          BASE = 'a1b2aa61aa92c596d424c95dba29be66135f3441'
+          BASE_TREE = '682cb20b3bc5c47753c2b07be5deb42407c84de7'
+          TREE = '6bfb184ba32c44a9df8bb1ebc870553129a37a99'
+          BRANCH = 'fix/mr495-proposal-cell-decisions-20261028'
+          FILES = {
+              'app/monthly_report_followups.py': '6f082efd92bcd7e4677f97f8d1d517f8dc368dc1',
+              'tests/test_monthly_report_proposal_table_carryover.py': '111abcc7e16e9739a7bff4aebe0a2cef5219d203',
+              'tests/test_monthly_report_proposal_table_outputs.py': '69c01d1fb81c9000b41fc4157a40e32837b0d6ca',
+          }
+          assert os.environ['GITHUB_REPOSITORY'] == 'evanroden/msapo-generator'
+          assert os.environ['GITHUB_REF'] == 'refs/heads/verify/mr495-publish-20261028'
+          raw = zlib.decompress(Path('.verification/mr495-product.patch.zlib').read_bytes())
+          assert hashlib.sha256(raw).hexdigest() == '305e467bc8e888f0cc9f951c31da0eb587fb836e76d42637654de69a255e56b2'
+          patch = Path(os.environ['RUNNER_TEMP']) / 'product.patch'
+          patch.write_bytes(raw)
+          def git(*args):
+              return subprocess.check_output(['git', *args]).decode().strip()
+          assert git('rev-parse', BASE + '^{tree}') == BASE_TREE
+          subprocess.run(['git', 'checkout', '--detach', BASE], check=True)
+          subprocess.run(['git', 'apply', '--index', '--check', str(patch)], check=True)
+          subprocess.run(['git', 'apply', '--index', str(patch)], check=True)
+          assert set(git('diff', '--cached', '--name-only', BASE).splitlines()) == set(FILES)
+          assert git('write-tree') == TREE
+          for path, expected in FILES.items():
+              assert git('hash-object', path) == expected
+          def request(method, endpoint, data=None):
+              payload = None if data is None else json.dumps(data).encode()
+              req = urllib.request.Request(
+                  'https://api.github.com/repos/evanroden/msapo-generator/' + endpoint,
+                  data=payload, method=method, headers={
+                      'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                      'Accept': 'application/vnd.github+json',
+                      'X-GitHub-Api-Version': '2022-11-28',
+                      'Content-Type': 'application/json',
+                  })
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  return json.load(response)
+          ref = 'git/refs/heads/' + BRANCH
+          assert request('GET', ref)['object']['sha'] == BASE, 'Repair branch moved; do not overwrite it'
+          entries = []
+          for path, expected in FILES.items():
+              blob = request('POST', 'git/blobs', {
+                  'encoding': 'base64', 'content': base64.b64encode(Path(path).read_bytes()).decode()})
+              assert blob['sha'] == expected
+              entries.append({'path': path, 'mode': '100644', 'type': 'blob', 'sha': expected})
+          tree = request('POST', 'git/trees', {'base_tree': BASE_TREE, 'tree': entries})
+          assert tree['sha'] == TREE
+          commit = request('POST', 'git/commits', {
+              'message': 'Preserve proposal table cell roles during monthly carryover\n\nRefs #495. Implementation and testing queue only; no merge or deployment.',
+              'tree': TREE, 'parents': [BASE]})
+          request('PATCH', ref, {'sha': commit['sha'], 'force': False})
+          assert request('GET', ref)['object']['sha'] == commit['sha']
+          print('Published product head', commit['sha'], 'tree', TREE)
+          PY
