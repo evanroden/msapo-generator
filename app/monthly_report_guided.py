@@ -1032,6 +1032,8 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
     if section.key == "training":
         from app.monthly_report_training_ui import render_training
         blocks = render_training(draft, blocks, prefix, field)
+        from app.monthly_report_training_review_ui import render_training_import
+        draft, blocks = render_training_import(draft, blocks, prefix)
         handled.add("training_summary")
     if section.key == "organization":
         from app.monthly_report_organization_ui import render_organization
