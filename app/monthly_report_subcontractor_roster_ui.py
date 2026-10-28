@@ -16,6 +16,25 @@ from app.monthly_report_subcontractor_roster import (
 )
 
 
+def _preview_rows(table):
+    """Show every positional source cell, including repeated or blank headings.
+
+    Labels are display-only. Saved roster columns and report output retain
+    their original literal headings and exact cell positions.
+    """
+    reserved = {name for name in table.columns if name.strip()}
+    labels, used = [], set()
+    for index, heading in enumerate(table.columns, start=1):
+        base = heading if heading.strip() else f"Column {index}"
+        label, suffix = base, 2
+        while label in used or (label != heading and label in reserved):
+            label = f"{base} ({suffix})"
+            suffix += 1
+        labels.append(label)
+        used.add(label)
+    return [dict(zip(labels, row)) for row in table.rows[:200]]
+
+
 def render_subcontractor_roster(draft, spec, block, prefix, field):
     if not draft.prepared_by.strip():
         return block
@@ -64,8 +83,7 @@ def render_subcontractor_roster(draft, spec, block, prefix, field):
             entry = choices[chosen]
             if st.checkbox("Review saved roster rows", key=key + "_show_" + chosen):
                 for table in entry.tables:
-                    st.dataframe([dict(zip(table.columns, row)) for row in table.rows[:200]],
-                                 hide_index=True)
+                    st.dataframe(_preview_rows(table), hide_index=True)
                     if len(table.rows) > 200:
                         st.caption("Showing the first 200 saved rows; no rows were discarded.")
             existing = bool(block.rows or any(table.rows for table in block.extra_tables))

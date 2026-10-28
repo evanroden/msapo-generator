@@ -283,9 +283,12 @@ def test_real_pdf_renders_shared_vendor_contact_once_without_other_sites(monkeyp
     pdf_file = pdf_converter.convert_to_pdf(document)
     with fitz.open(pdf_file) as pdf:
         all_text = "\n".join(page.get_text() for page in pdf)
-        assert all_text.count("Synthetic Vendor North") == 1
-        assert "Synthetic Vendor South" not in all_text
-        assert "Sub-Contractor Status" in all_text
+        # The converter can wrap a single table cell across PDF text lines.
+        # Normalize whitespace only; still verify actual rendered PDF text.
+        normalized = " ".join(all_text.split())
+        assert normalized.count("Synthetic Vendor North") == 1
+        assert "Synthetic Vendor South" not in normalized
+        assert "Sub-Contractor Status" in normalized
 
 
 def test_ambiguous_site_headers_and_unapproved_scope_fail_closed(monkeypatch, tmp_path):

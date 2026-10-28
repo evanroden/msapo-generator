@@ -3,8 +3,9 @@ from dataclasses import replace
 
 from streamlit.testing.v1 import AppTest
 
-from app.monthly_report_model import ReportPeriod, ReportDraft, ResolvedBlock, default_sections
+from app.monthly_report_model import ReportPeriod, ReportDraft, ReportTable, ResolvedBlock, default_sections
 from app.monthly_report_subcontractor_roster import load_rosters, save_roster
+from app.monthly_report_subcontractor_roster_ui import _preview_rows
 from test_monthly_report_subcontractor_roster import (
     NATIVE_SPEC, profile, row, rows,
 )
@@ -76,6 +77,9 @@ def test_share_is_approval_bound_and_does_not_mutate_report(monkeypatch, tmp_pat
 
 def test_another_site_cannot_see_site_only_roster_but_can_choose_contract_roster(
         monkeypatch, tmp_path):
+    # Set the isolated storage root *before* the first direct save. Previously
+    # the initial save went to the default store, then launch changed the root.
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
     north = profile("Synthetic Contract A")
     south = profile("Synthetic Contract A", "a2", ("south",))
     source = rows(row(north.facilities[0].title, "Site only"))
@@ -133,3 +137,37 @@ def test_risky_contract_wide_promotion_refuses_explicit_site_rows(monkeypatch, t
     assert any("names a site" in w.value.lower() for w in app.warning)
     assert load_rosters(north.contract).revision == 0
     assert app.session_state["vendor_block"] == before
+
+
+def test_saved_roster_preview_keeps_repeated_blank_and_literal_column_labels(
+        monkeypatch, tmp_path):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    north = profile("Synthetic Contract A")
+    source = ReportTable(
+        ("Vendor", "Contact", "Contact", "", "Column 4", "Contact (2)"),
+        (("Synthetic Vendor", "First contact", "Second contact",
+          "Blank heading value", "Literal Column 4", "Literal Contact (2)"),),
+    )
+    preview = _preview_rows(source)
+    assert len(preview) == 1
+    assert len(preview[0]) == len(source.columns)
+    assert len(set(preview[0])) == len(source.columns)
+    assert list(preview[0].values()) == list(source.rows[0])
+    assert preview[0]["Contact"] == "First contact"
+    assert preview[0]["Contact (2)"] == "Literal Contact (2)"
+
+    stored = save_roster(
+        north, ResolvedBlock("subcontractor_matrix", "This month", extra_tables=(source,)),
+        NATIVE_SPEC, site_keys=("north",), expected_revision=0,
+        actor="Synthetic Editor", confirmed=True,
+    )
+    assert stored.entries[0].tables[0].columns == source.columns
+    assert stored.entries[0].tables[0].rows == source.rows
+    app = launch(monkeypatch, tmp_path, north, rows())
+    check(app, "Review saved roster rows").check().run()
+    assert not app.exception
+    shown = app.dataframe[0].value
+    assert list(shown.columns) == list(preview[0])
+    assert list(shown.iloc[0]) == list(source.rows[0])
+    # Opening a preview does not publish, change or overwrite the shared data.
+    assert load_rosters(north.contract) == stored
