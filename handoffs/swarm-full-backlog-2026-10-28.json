@@ -38,8 +38,8 @@
       "issue": 276,
       "title": "Verify monetary exclusion without blocking technical Monthly content",
       "owner": "root",
-      "status": "implemented; acceptance open",
-      "detail": "Merged monetary guards; root current-main focused batch passed. Genuine output/privacy acceptance remains.",
+      "status": "implementation complete; testing launched",
+      "detail": "Confirmed by lane audit; exact integrated CI and applicable served/owner acceptance remain separate. Existing and new implementations are included in this count.",
       "candidates": [],
       "url": "https://github.com/evanroden/msapo-generator/issues/276"
     },
@@ -47,11 +47,10 @@
       "issue": 277,
       "title": "Verify grounded Activity extraction and safe mixed-source routing",
       "owner": "workorder_metrics_repair",
-      "status": "active implementation / audit",
-      "detail": "Agent must finish remaining code and enumerate exact tests or concrete acceptance dependencies.",
+      "status": "implementation complete; testing launched",
+      "detail": "Confirmed by lane audit; exact integrated CI and applicable served/owner acceptance remain separate. Existing and new implementations are included in this count.",
       "candidates": [
-        558,
-        580
+        602
       ],
       "url": "https://github.com/evanroden/msapo-generator/issues/277"
     },
@@ -61,7 +60,9 @@
       "owner": "root",
       "status": "repair in progress",
       "detail": "Root traced shared native text-input first-focus race to pinned client initializer; focused repair and tests underway.",
-      "candidates": [],
+      "candidates": [
+        594
+      ],
       "url": "https://github.com/evanroden/msapo-generator/issues/278"
     },
     {
@@ -88,8 +89,8 @@
       "issue": 281,
       "title": "Preserve truthful period provenance through Monthly rollover",
       "owner": "queue_audit/source_durability",
-      "status": "active implementation / audit",
-      "detail": "Agent must finish remaining code and enumerate exact tests or concrete acceptance dependencies.",
+      "status": "implementation complete; testing launched",
+      "detail": "Confirmed by lane audit; exact integrated CI and applicable served/owner acceptance remain separate. Existing and new implementations are included in this count.",
       "candidates": [
         565
       ],
@@ -99,8 +100,8 @@
       "issue": 282,
       "title": "Synchronize source captions and retire only owned report pages",
       "owner": "queue_audit/source_durability",
-      "status": "active implementation / audit",
-      "detail": "Agent must finish remaining code and enumerate exact tests or concrete acceptance dependencies.",
+      "status": "implementation complete; testing launched",
+      "detail": "Confirmed by lane audit; exact integrated CI and applicable served/owner acceptance remain separate. Existing and new implementations are included in this count.",
       "candidates": [],
       "url": "https://github.com/evanroden/msapo-generator/issues/282"
     },
@@ -128,8 +129,8 @@
       "issue": 285,
       "title": "Validate supported facts and minimize reader prompt data",
       "owner": "root",
-      "status": "implemented; acceptance open",
-      "detail": "Merged date, quantity and Copilot repairs; deterministic current-main checks pass. Paid/live-reader and served acceptance separate.",
+      "status": "implementation complete; testing launched",
+      "detail": "Confirmed by lane audit; exact integrated CI and applicable served/owner acceptance remain separate. Existing and new implementations are included in this count.",
       "candidates": [],
       "url": "https://github.com/evanroden/msapo-generator/issues/285"
     },
@@ -137,8 +138,8 @@
       "issue": 286,
       "title": "Preserve native capacity schemas and formatted values during import",
       "owner": "queue_audit/source_durability",
-      "status": "active implementation / audit",
-      "detail": "Agent must finish remaining code and enumerate exact tests or concrete acceptance dependencies.",
+      "status": "implementation / acceptance audit active",
+      "detail": "Existing report-versus-standing capacity behavior is authorized. Not blocked by a new policy decision; inspect #572 and native output.",
       "candidates": [
         572
       ],
@@ -148,8 +149,8 @@
       "issue": 287,
       "title": "Make shared capacity updates conflict-aware and explicitly reusable",
       "owner": "queue_audit/source_durability",
-      "status": "active implementation / audit",
-      "detail": "Agent must finish remaining code and enumerate exact tests or concrete acceptance dependencies.",
+      "status": "implementation / acceptance audit active",
+      "detail": "Existing report-versus-standing capacity behavior is authorized. Not blocked by a new policy decision; inspect #572 and native output.",
       "candidates": [
         572
       ],
@@ -159,8 +160,8 @@
       "issue": 288,
       "title": "Make directory imports idempotent with reviewable identity conflicts",
       "owner": "queue_audit/source_durability",
-      "status": "active implementation / audit",
-      "detail": "Agent must finish remaining code and enumerate exact tests or concrete acceptance dependencies.",
+      "status": "implementation complete; testing launched",
+      "detail": "Confirmed by lane audit; exact integrated CI and applicable served/owner acceptance remain separate. Existing and new implementations are included in this count.",
       "candidates": [],
       "url": "https://github.com/evanroden/msapo-generator/issues/288"
     },
@@ -168,8 +169,8 @@
       "issue": 289,
       "title": "Keep directory selection usable when one record or logo is corrupt",
       "owner": "queue_audit/source_durability",
-      "status": "active implementation / audit",
-      "detail": "Agent must finish remaining code and enumerate exact tests or concrete acceptance dependencies.",
+      "status": "implementation complete; testing launched",
+      "detail": "Confirmed by lane audit; exact integrated CI and applicable served/owner acceptance remain separate. Existing and new implementations are included in this count.",
       "candidates": [],
       "url": "https://github.com/evanroden/msapo-generator/issues/289"
     },
@@ -186,8 +187,8 @@
       "issue": 291,
       "title": "Decide bounded retention for raw directory workbook originals",
       "owner": "queue_audit/source_durability",
-      "status": "candidate testing; reviewed",
-      "detail": "30-day policy already approved/implemented. #574 adds real admin-handler journey; root independently2pass, agent34pass.",
+      "status": "implementation complete; testing launched",
+      "detail": "Confirmed by lane audit; exact integrated CI and applicable served/owner acceptance remain separate. Existing and new implementations are included in this count.",
       "candidates": [
         574
       ],
@@ -197,8 +198,8 @@
       "issue": 292,
       "title": "Bound abandoned fixture runs while preserving shared originals",
       "owner": "queue_audit/source_durability",
-      "status": "candidate testing; reviewed",
-      "detail": "38 focused pass; root independently reviewed and ran3 process tests. #570 hosted tests queued.",
+      "status": "implementation complete; testing launched",
+      "detail": "Confirmed by lane audit; exact integrated CI and applicable served/owner acceptance remain separate. Existing and new implementations are included in this count.",
       "candidates": [
         570
       ],
@@ -217,8 +218,8 @@
       "issue": 295,
       "title": "Clean up owned conversion processes and removed receipt previews",
       "owner": "root",
-      "status": "candidate testing",
-      "detail": "Published #560 failed-unlink retirement/retry fix, 43 focused pass; refresh hosted exact head.",
+      "status": "implementation complete; testing launched",
+      "detail": "Confirmed by lane audit; exact integrated CI and applicable served/owner acceptance remain separate. Existing and new implementations are included in this count.",
       "candidates": [
         560
       ],
@@ -229,9 +230,9 @@
       "title": "Align generation preflight with renderer limits and package privacy",
       "owner": "root",
       "status": "candidate testing; broader audit active",
-      "detail": "Fresh external #564 caption-preflight repair queued. Broader package/privacy acceptance remains.",
+      "detail": "Combined standalone candidates duplicated existing layout checks;12before failures repaired in canonical helper.128 focused tests including native output/privacy passed, independent37pass. Broader genuine/served acceptance remains.",
       "candidates": [
-        564
+        606
       ],
       "url": "https://github.com/evanroden/msapo-generator/issues/296"
     },
@@ -239,8 +240,8 @@
       "issue": 297,
       "title": "Preserve deliberate exclusions and source decisions across carry and re-entry",
       "owner": "queue_audit/source_durability",
-      "status": "active implementation / audit",
-      "detail": "Agent must finish remaining code and enumerate exact tests or concrete acceptance dependencies.",
+      "status": "implementation complete; testing launched",
+      "detail": "Confirmed by lane audit; exact integrated CI and applicable served/owner acceptance remain separate. Existing and new implementations are included in this count.",
       "candidates": [],
       "url": "https://github.com/evanroden/msapo-generator/issues/297"
     },
@@ -250,7 +251,9 @@
       "owner": "queue_audit/import_readiness",
       "status": "active implementation / audit",
       "detail": "Agent must finish remaining code and enumerate exact tests or concrete acceptance dependencies.",
-      "candidates": [],
+      "candidates": [
+        601
+      ],
       "url": "https://github.com/evanroden/msapo-generator/issues/298"
     },
     {
@@ -284,8 +287,8 @@
       "issue": 302,
       "title": "Verify recovery choices, history and partial generation outcomes",
       "owner": "queue_audit/source_durability",
-      "status": "active implementation / audit",
-      "detail": "Agent must finish remaining code and enumerate exact tests or concrete acceptance dependencies.",
+      "status": "implementation complete; testing launched",
+      "detail": "Confirmed by lane audit; exact integrated CI and applicable served/owner acceptance remain separate. Existing and new implementations are included in this count.",
       "candidates": [],
       "url": "https://github.com/evanroden/msapo-generator/issues/302"
     },
@@ -320,8 +323,8 @@
       "issue": 428,
       "title": "Remove deprecated fitz imports from PDF runtime and QA",
       "owner": "root",
-      "status": "implemented; acceptance open",
-      "detail": "Merged #429. Current app/scripts use supported imports; root focused tests pass. Final served-revision check pending.",
+      "status": "implementation complete; testing launched",
+      "detail": "Confirmed by lane audit; exact integrated CI and applicable served/owner acceptance remain separate. Existing and new implementations are included in this count.",
       "candidates": [],
       "url": "https://github.com/evanroden/msapo-generator/issues/428"
     },
@@ -329,8 +332,8 @@
       "issue": 434,
       "title": "Put current-month Training ahead of standing requirements",
       "owner": "training_import_repair",
-      "status": "active implementation / audit",
-      "detail": "Agent must finish remaining code and enumerate exact tests or concrete acceptance dependencies.",
+      "status": "implementation complete; testing launched",
+      "detail": "Confirmed by lane audit; exact integrated CI and applicable served/owner acceptance remain separate. Existing and new implementations are included in this count.",
       "candidates": [
         573
       ],
@@ -340,8 +343,8 @@
       "issue": 435,
       "title": "Open empty photo intake and pending caption editors automatically",
       "owner": "queue_audit",
-      "status": "active implementation / audit",
-      "detail": "Agent must finish remaining code and enumerate exact tests or concrete acceptance dependencies.",
+      "status": "implementation complete; testing launched",
+      "detail": "Confirmed by lane audit; exact integrated CI and applicable served/owner acceptance remain separate. Existing and new implementations are included in this count.",
       "candidates": [],
       "url": "https://github.com/evanroden/msapo-generator/issues/435"
     },
@@ -358,8 +361,8 @@
       "issue": 437,
       "title": "Expose uploaded-file reuse and the current Add destination directly",
       "owner": "queue_audit",
-      "status": "active implementation / audit",
-      "detail": "Agent must finish remaining code and enumerate exact tests or concrete acceptance dependencies.",
+      "status": "implementation complete; testing launched",
+      "detail": "Confirmed by lane audit; exact integrated CI and applicable served/owner acceptance remain separate. Existing and new implementations are included in this count.",
       "candidates": [
         551
       ],
@@ -409,10 +412,10 @@
       "issue": 452,
       "title": "Recognize site-qualified Activity work-order and PM headings",
       "owner": "workorder_metrics_repair",
-      "status": "active implementation / audit",
-      "detail": "Agent must finish remaining code and enumerate exact tests or concrete acceptance dependencies.",
+      "status": "implementation complete; testing launched",
+      "detail": "Confirmed by lane audit; exact integrated CI and applicable served/owner acceptance remain separate. Existing and new implementations are included in this count.",
       "candidates": [
-        484
+        602
       ],
       "url": "https://github.com/evanroden/msapo-generator/issues/452"
     },
@@ -420,10 +423,10 @@
       "issue": 453,
       "title": "Detect merged title bands before service-call column headers",
       "owner": "workorder_metrics_repair",
-      "status": "active implementation / audit",
-      "detail": "Agent must finish remaining code and enumerate exact tests or concrete acceptance dependencies.",
+      "status": "implementation complete; testing launched",
+      "detail": "Confirmed by lane audit; exact integrated CI and applicable served/owner acceptance remain separate. Existing and new implementations are included in this count.",
       "candidates": [
-        503
+        602
       ],
       "url": "https://github.com/evanroden/msapo-generator/issues/453"
     },
@@ -431,11 +434,10 @@
       "issue": 454,
       "title": "Add an explicit schema adapter for annual multi-site work-order grids",
       "owner": "workorder_metrics_repair",
-      "status": "active implementation / audit",
-      "detail": "Agent must finish remaining code and enumerate exact tests or concrete acceptance dependencies.",
+      "status": "implementation complete; testing launched",
+      "detail": "Confirmed by lane audit; exact integrated CI and applicable served/owner acceptance remain separate. Existing and new implementations are included in this count.",
       "candidates": [
-        536,
-        580
+        602
       ],
       "url": "https://github.com/evanroden/msapo-generator/issues/454"
     },
@@ -443,8 +445,8 @@
       "issue": 455,
       "title": "Preserve vendor category bands as groups rather than contact rows",
       "owner": "queue_audit/source_durability",
-      "status": "active implementation / audit",
-      "detail": "Agent must finish remaining code and enumerate exact tests or concrete acceptance dependencies.",
+      "status": "implementation complete; testing launched",
+      "detail": "Confirmed by lane audit; exact integrated CI and applicable served/owner acceptance remain separate. Existing and new implementations are included in this count.",
       "candidates": [
         531,
         545
@@ -524,7 +526,7 @@
       "status": "active implementation / audit",
       "detail": "Agent must finish remaining code and enumerate exact tests or concrete acceptance dependencies.",
       "candidates": [
-        566
+        601
       ],
       "url": "https://github.com/evanroden/msapo-generator/issues/463"
     },
@@ -535,7 +537,7 @@
       "status": "active implementation / audit",
       "detail": "Agent must finish remaining code and enumerate exact tests or concrete acceptance dependencies.",
       "candidates": [
-        521
+        601
       ],
       "url": "https://github.com/evanroden/msapo-generator/issues/464"
     },
@@ -569,7 +571,7 @@
       "status": "candidate testing; reviewed",
       "detail": "Preserved #506, completed standalone floating-frame inventory #575; independent7tests passed, hosted queued.",
       "candidates": [
-        575
+        601
       ],
       "url": "https://github.com/evanroden/msapo-generator/issues/467"
     },
@@ -577,8 +579,8 @@
       "issue": 468,
       "title": "Keep PDF batch limits visible before users invest in page review",
       "owner": "queue_audit",
-      "status": "active implementation / audit",
-      "detail": "Agent must finish remaining code and enumerate exact tests or concrete acceptance dependencies.",
+      "status": "implementation complete; testing launched",
+      "detail": "Confirmed by lane audit; exact integrated CI and applicable served/owner acceptance remain separate. Existing and new implementations are included in this count.",
       "candidates": [],
       "url": "https://github.com/evanroden/msapo-generator/issues/468"
     },
@@ -657,10 +659,10 @@
       "issue": 476,
       "title": "[MR-010A] Define a reviewable normalized work-order table with source provenance",
       "owner": "workorder_metrics_repair",
-      "status": "active implementation / audit",
-      "detail": "Agent must finish remaining code and enumerate exact tests or concrete acceptance dependencies.",
+      "status": "implementation complete; testing launched",
+      "detail": "Confirmed by lane audit; exact integrated CI and applicable served/owner acceptance remain separate. Existing and new implementations are included in this count.",
       "candidates": [
-        580
+        602
       ],
       "url": "https://github.com/evanroden/msapo-generator/issues/476"
     },
@@ -668,10 +670,10 @@
       "issue": 477,
       "title": "[MR-009] Replace Activity table-number dropdowns with source-oriented entry",
       "owner": "workorder_metrics_repair",
-      "status": "active implementation / audit",
-      "detail": "Agent must finish remaining code and enumerate exact tests or concrete acceptance dependencies.",
+      "status": "implementation complete; testing launched",
+      "detail": "Confirmed by lane audit; exact integrated CI and applicable served/owner acceptance remain separate. Existing and new implementations are included in this count.",
       "candidates": [
-        539
+        602
       ],
       "url": "https://github.com/evanroden/msapo-generator/issues/477"
     },
@@ -679,10 +681,10 @@
       "issue": 478,
       "title": "[MR-010B] Extend existing CSV work-order intake with editable column mapping",
       "owner": "workorder_metrics_repair",
-      "status": "active implementation / audit",
-      "detail": "Agent must finish remaining code and enumerate exact tests or concrete acceptance dependencies.",
+      "status": "implementation complete; testing launched",
+      "detail": "Confirmed by lane audit; exact integrated CI and applicable served/owner acceptance remain separate. Existing and new implementations are included in this count.",
       "candidates": [
-        580
+        602
       ],
       "url": "https://github.com/evanroden/msapo-generator/issues/478"
     },
@@ -690,10 +692,10 @@
       "issue": 479,
       "title": "[MR-010C] Normalize work-order tables from PDF with visible uncertainty and provenance",
       "owner": "workorder_metrics_repair",
-      "status": "active implementation / audit",
-      "detail": "Agent must finish remaining code and enumerate exact tests or concrete acceptance dependencies.",
+      "status": "implementation complete; testing launched",
+      "detail": "Confirmed by lane audit; exact integrated CI and applicable served/owner acceptance remain separate. Existing and new implementations are included in this count.",
       "candidates": [
-        580
+        602
       ],
       "url": "https://github.com/evanroden/msapo-generator/issues/479"
     },
@@ -701,10 +703,10 @@
       "issue": 480,
       "title": "[MR-010D] Normalize work-order tables from DOCX without losing native source structure",
       "owner": "workorder_metrics_repair",
-      "status": "active implementation / audit",
-      "detail": "Agent must finish remaining code and enumerate exact tests or concrete acceptance dependencies.",
+      "status": "implementation complete; testing launched",
+      "detail": "Confirmed by lane audit; exact integrated CI and applicable served/owner acceptance remain separate. Existing and new implementations are included in this count.",
       "candidates": [
-        580
+        602
       ],
       "url": "https://github.com/evanroden/msapo-generator/issues/480"
     },
@@ -712,12 +714,10 @@
       "issue": 481,
       "title": "[MR-011] Calculate reviewable PM, non-PM and optional trade work-order counts",
       "owner": "workorder_metrics_repair",
-      "status": "active implementation / audit",
-      "detail": "Agent must finish remaining code and enumerate exact tests or concrete acceptance dependencies.",
+      "status": "implementation complete; testing launched",
+      "detail": "Confirmed by lane audit; exact integrated CI and applicable served/owner acceptance remain separate. Existing and new implementations are included in this count.",
       "candidates": [
-        553,
-        558,
-        580
+        602
       ],
       "url": "https://github.com/evanroden/msapo-generator/issues/481"
     },
@@ -736,10 +736,10 @@
       "issue": 483,
       "title": "[MR-017] Map heterogeneous CMMS maintenance exports to editable service-call fields",
       "owner": "workorder_metrics_repair",
-      "status": "active implementation / audit",
-      "detail": "Agent must finish remaining code and enumerate exact tests or concrete acceptance dependencies.",
+      "status": "implementation complete; testing launched",
+      "detail": "Confirmed by lane audit; exact integrated CI and applicable served/owner acceptance remain separate. Existing and new implementations are included in this count.",
       "candidates": [
-        580
+        602
       ],
       "url": "https://github.com/evanroden/msapo-generator/issues/483"
     },
@@ -791,9 +791,9 @@
       "title": "[MR-020] Let users select equipment evidence pages from thumbnails and checkboxes",
       "owner": "queue_audit/source_durability",
       "status": "active implementation / audit",
-      "detail": "Agent must finish remaining code and enumerate exact tests or concrete acceptance dependencies.",
+      "detail": "Actual gallery journey published; WebKit passes, Chromium narrow select failure under diagnosis. No retry-to-green acceptance.",
       "candidates": [
-        517
+        604
       ],
       "url": "https://github.com/evanroden/msapo-generator/issues/490"
     },
@@ -813,8 +813,8 @@
       "issue": 492,
       "title": "[MR-022] Import and reuse the Priority Capital Renewal list with explicit contract scope",
       "owner": "training_import_repair",
-      "status": "active implementation / audit",
-      "detail": "Agent must finish remaining code and enumerate exact tests or concrete acceptance dependencies.",
+      "status": "implementation complete; testing launched",
+      "detail": "Confirmed by lane audit; exact integrated CI and applicable served/owner acceptance remain separate. Existing and new implementations are included in this count.",
       "candidates": [
         544
       ],
@@ -861,7 +861,8 @@
       "status": "active implementation / audit",
       "detail": "Agent must finish remaining code and enumerate exact tests or concrete acceptance dependencies.",
       "candidates": [
-        573
+        573,
+        597
       ],
       "url": "https://github.com/evanroden/msapo-generator/issues/496"
     },
@@ -887,5 +888,8 @@
       ],
       "url": "https://github.com/evanroden/msapo-generator/issues/498"
     }
-  ]
+  ],
+  "confirmed_implementation_complete_testing_launched": 29,
+  "not_yet_confirmed_complete": 55,
+  "count_definition": "Code completion plus testing launched, not deployment-ready, issue closure, all CI green or full owner acceptance."
 }
