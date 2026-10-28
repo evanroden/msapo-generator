@@ -52,10 +52,12 @@ def _original_jpeg_hashes(source_path: str) -> frozenset[str]:
 
 def compact_native_photos_for_pdf(raw: bytes, *, pinned_source: Path,
                                    max_edge: int = MAX_EDGE) -> bytes:
-    """Reduce JPEGs matching the pinned master, and nothing else.
+    """Reduce RGB JPEGs matching the pinned master, and nothing else.
 
     Existing page geometry, font drawing, native Word table grids, and names
     remain untouched. This disposable copy is used ONLY for PDF conversion.
+    Keep color profiles and exactly encodable density; other modes or unusual
+    densities retain their original bytes instead of changing interpretation.
     No JPEG in the master: return the exact original bytes.
     """
     from PIL import Image, UnidentifiedImageError
@@ -74,17 +76,30 @@ def compact_native_photos_for_pdf(raw: bytes, *, pinned_source: Path,
                 try:
                     with Image.open(BytesIO(data)) as source:
                         width, height = source.size
-                        if (max(width, height) > max_edge and width * height >= MIN_AREA
+                        dpi = source.info.get("dpi")
+                        # The JPEG writer rounds density to 16-bit integer DPI.
+                        # Preserve unusual densities rather than round or wrap.
+                        density_encodable = not dpi or all(
+                            0 < value <= 65535 and int(value) == value for value in dpi)
+                        if (source.mode == "RGB" and density_encodable
+                                and max(width, height) > max_edge and width * height >= MIN_AREA
                                 and width * height <= 40_000_000
                                 and source.getexif().get(274, 1) == 1):
                             # Only bounded RGB photographs are eligible. JPEG
                             # schematics with a panoramic ratio remain sharp.
                             ratio = width / height
                             if 0.5 <= ratio <= 3:
-                                image = source.convert("RGB")
+                                image = source.copy()
                                 image.thumbnail((max_edge, max_edge), Image.Resampling.LANCZOS)
                                 dst = BytesIO()
-                                image.save(dst, "JPEG", quality=88, optimize=True)
+                                # Carry permitted display metadata with the same
+                                # RGB interpretation; do not copy author metadata.
+                                options = {}
+                                if source.info.get("icc_profile"):
+                                    options["icc_profile"] = source.info["icc_profile"]
+                                if dpi:
+                                    options["dpi"] = dpi
+                                image.save(dst, "JPEG", quality=88, optimize=True, **options)
                                 reduced = dst.getvalue()
                                 if len(reduced) < len(data):
                                     data = reduced
