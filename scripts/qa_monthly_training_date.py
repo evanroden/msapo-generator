@@ -432,17 +432,29 @@ def exercise_participant_reference(browser_type, engine):
         # (top~780 in the 1365x900 viewport). Geometry
         # at the native error itself was not independently recorded.
         # No spacer, viewport event, refinding after typing or rescue gesture.
+        # A natural WebKit wheel step is quantized and its initial layout can
+        # already place the input above the approximate 780px reference. Never
+        # demand an unreachable exact pixel or synthesize a DOM scroll position.
+        # Preserve the single native wheel action and verify the input remains
+        # inside the original reference band and fully in the viewport.
+        target_top = min(780, before["y"])
         page.mouse.move(before["x"] + before["width"] / 2, 400)
-        page.mouse.wheel(0, before["y"] - 780)
-        page.wait_for_function("""input=>Math.abs(input.getBoundingClientRect().top-780)<=1""",
-                               arg=original_input, timeout=5000)
+        page.mouse.wheel(0, before["y"] - target_top)
+        page.wait_for_function("""({input,target})=>{
+          if(!input.isConnected)return false;
+          const rect=input.getBoundingClientRect();
+          return Math.abs(rect.top-target)<=16 && rect.top>=0 &&
+            rect.bottom<=innerHeight && rect.width>0;
+        }""", arg={"input": original_input, "target": target_top}, timeout=5000)
         positioned = original_input.bounding_box()
         expected_input_width = OBSERVED_INPUT_CONTENT_WIDTH[engine] + NATIVE_INPUT_HORIZONTAL_PADDING
         live.EVIDENCE["reference_geometry"] = {"before_scroll": before, "positioned": positioned,
             "original_87_input_content_width": OBSERVED_INPUT_CONTENT_WIDTH[engine],
             "native_input_horizontal_padding": NATIVE_INPUT_HORIZONTAL_PADDING,
-            "expected_input_border_width": expected_input_width, "target_input_top": 780}
+            "expected_input_border_width": expected_input_width, "target_input_top": target_top,
+            "native_wheel_delta": before["y"] - target_top, "wheel_quantization_tolerance_px": 16}
         assert positioned is not None and abs(positioned["width"] - expected_input_width) <= 1
+        assert abs(positioned["y"] - target_top) <= 16
         live.EVIDENCE["phase"] = "reference-one-native-participant-pointer-selection"
         enter_topic_and_participant(page, original_input=original_input)
         frontend.require()
