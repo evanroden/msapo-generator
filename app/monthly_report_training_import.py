@@ -514,3 +514,77 @@ def accepted_training_block(review: TrainingImportReview, block: ResolvedBlock,
     if review.source.reference not in updated.references:
         updated = replace(updated, references=(*updated.references, review.source.reference))
     return updated
+
+
+
+def training_review_record(review: TrainingImportReview):
+    """Portable, non-authoritative review receipt for a future source editor."""
+    return {"schema": 1, "sha256": review.revision, "review": asdict(review)}
+
+
+def restore_training_review(receipt):
+    """Validate a review snapshot and exact original row identities on reopening.
+
+    This does not read a different original or write any saved report. The
+    caller still verifies the saved source bytes before publishing a change.
+    """
+    if not isinstance(receipt, dict) or receipt.get("schema") != 1:
+        raise ValueError("Unknown Training review schema.")
+    try:
+        value = receipt["review"]
+        original = value["source"]
+        source = TrainingTableSource(
+            original["filename"], original["source_id"],
+            original["source_sha256"], original["source_fingerprint"],
+            original["number"], original["reference"],
+            tuple(original["columns"]),
+            tuple(tuple(v) for v in original["rows"]),
+            original["word_item_id"], original["word_section"], original["native_word"])
+        rows = []
+        for item in value["rows"]:
+            identity = item["origin"]
+            row_origin = TrainingOrigin(
+                identity["source_id"], identity["source_sha256"],
+                identity["source_fingerprint"], identity["source_reference"],
+                identity["table_number"], identity["row_number"],
+                tuple(identity["columns"]), tuple(identity["cells"]))
+            rows.append(TrainingImportRow(
+                row_origin, tuple(item["values"]), item["status"],
+                tuple(item["issues"]),
+                tuple(tuple(change) for change in item["corrections"]),
+                item["excluded"]))
+        review = TrainingImportReview(
+            source, value["period_key"], value["kind"], value["source_year"],
+            tuple(value["original_columns"]),
+            tuple(tuple(row) for row in value["original_rows"]),
+            tuple(value["normalized_columns"]), tuple(rows),
+            tuple(value["issues"]),
+            tuple((row[0], tuple(row[1]), row[2]) for row in value["unmatched"]),
+            value["native_layout_confirmed"])
+    except (KeyError, TypeError, ValueError, IndexError) as exc:
+        raise ValueError("The saved Training review is incomplete.") from exc
+    if review.revision != receipt.get("sha256"):
+        raise ValueError("The saved Training review failed its integrity check.")
+    if (review.kind not in ("events", "requirements", "unresolved")
+            or len(review.original_rows) > MAX_ROWS + MAX_HEADER_ROWS
+            or len(review.original_columns) > MAX_COLUMNS
+            or len(review.original_rows) * len(review.original_columns) > MAX_CELLS
+            or len(review.rows) > len(review.original_rows)
+            or not re.fullmatch(r"\d{4}-(?:0[1-9]|1[0-2])", review.period_key)
+            or review.source_year is not None and (
+                type(review.source_year) is not int or not 1000 <= review.source_year <= 9999)
+            or len({row.key for row in review.rows}) != len(review.rows)):
+        raise ValueError("The saved Training review exceeds its identity or size limits.")
+    for row in review.rows:
+        origin = row.origin
+        if (origin.source_id != source.source_id
+                or origin.source_sha256 != source.source_sha256
+                or origin.source_fingerprint != source.source_fingerprint
+                or origin.source_reference != source.reference
+                or origin.table_number != source.number
+                or origin.columns != review.original_columns
+                or not 1 <= origin.row_number <= len(review.original_rows)
+                or origin.cells != review.original_rows[origin.row_number - 1]
+                or len(row.values) != len(review.normalized_columns)):
+            raise ValueError("The saved Training review lost source-row identity.")
+    return review
