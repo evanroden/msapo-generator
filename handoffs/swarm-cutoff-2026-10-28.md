@@ -66,3 +66,9 @@ Financial #458/#494 policy decisions and genuine-report/served acceptance #219/#
 2. Read worker checkpoint additions below/new handoff files and preserve unpublished work before further edits.
 3. Resolve failed tests and remaining implementation items from the full84 ledger, including stale claims.
 4. Build one nonduplicate integration set, validate interactions, then perform the user's separate release review. Leave unresolved acceptance issues open.
+
+## Final worker updates
+
+- Workflow guard #609: 45 tests plus actual three-stage upgrade passed. Exact-head runs queued: Tests40741073909, Adaptive40741073850, Upgrade40741073959, Simplicity40741073830. A separate #533 review finding about obsolete picture-only source references blocking replacement is identified but **not started**; retain it as remaining repair work.
+- Gallery #604: rerun of original exact code with an isolated runtime containing the repository overlay/date patch passed the full Chromium journey. WebKit continuation pending at this checkpoint. Earlier stock-runtime failure is retained as environment-specific evidence; no new product fix claimed.
+- Final intake integration committed locally42d4c2f99e6b12692895413c74ab976c6845e3cd (tree3cffd424b6afd1e31bdbc0f5565e75759a9fe684), publishing from #603. 57 focused and216 broader tests passed. Final integrated large-intake process result was lost: **not a pass**; older #582 probe passed and capped hosted job remains a gate.

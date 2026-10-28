@@ -1,5 +1,7 @@
 # Full Monthly Report backlog — active swarm checkpoint
 
+**Latest continuation:** read [cutoff handoff](swarm-cutoff-2026-10-28.md) first for current exact heads, queued runs, integration choices, and unfinished work.
+
 This supersedes the eight-PR stopping point. Work continues through all **84 specific open Monthly Report items**, including claims from October 27 or earlier. The three trackers (#270, #450, #469) and five unrelated Expense/PO items are excluded from that count.
 
 Six workers plus the coordinator are active. This is an execution checkpoint, not a claim that all items are finished. Existing candidates, newly implemented repairs, test failures, policy decisions and served/authentic acceptance are kept distinct. Do not merge duplicate or cumulative candidates twice. No merge or deployment is authorized for this swarm; a later agent handles release.
