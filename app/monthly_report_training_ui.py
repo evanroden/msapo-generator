@@ -398,6 +398,8 @@ def render_training(draft, blocks, prefix, field):
                          key=field(key + "_notes_" + _signature(block.references), block.text), height=120)
     if notes != block.text:
         block = replace(block, text=notes, source="This month", reviewed_fingerprint="", client_reviewed_fingerprint="")
+    from app.monthly_report_training_source_tables_ui import render_source_tables
+    block = render_source_tables(draft, block, prefix)
     if block != original_block or block.key in blocks:
         blocks = dict(blocks)
         blocks[block.key] = block
