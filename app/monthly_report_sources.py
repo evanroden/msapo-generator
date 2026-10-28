@@ -81,7 +81,12 @@ def source_bytes(profile: ReportProfile, source: ReportSource) -> bytes:
     limit = file_size_limit(source.suffix)
     if path.stat().st_size > limit:
         raise ValueError(source_size_error(source.suffix, limit))
-    raw = path.read_bytes()
+    # Files can change after stat. Bound the actual allocation rather than
+    # trusting a previous size check; never return or hash truncated data.
+    with path.open("rb") as stream:
+        raw = stream.read(limit + 1)
+    if len(raw) > limit:
+        raise ValueError(source_size_error(source.suffix, limit))
     if hashlib.sha256(raw).hexdigest() != source.sha256:
         raise ValueError("A source file failed its integrity check.")
     return raw
