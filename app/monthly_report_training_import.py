@@ -273,7 +273,9 @@ def _event_issues(row, period):
                 raise ValueError()
         except ValueError:
             errors.append("Hours must be positive or left blank.")
-    if row.status and _name(row.status) not in COMPLETE:
+    if not row.status:
+        errors.append("Completion was not verified in the source; confirm this event.")
+    elif _name(row.status) not in COMPLETE:
         errors.append("Source status does not show completed training.")
     return tuple(errors)
 
