@@ -16,26 +16,36 @@ A report is a **pinned version of approved or manually authored information**, n
 
 The table summarizes **intended ownership/decision status**, not necessarily deployed storage behavior. `explicit_reuse` means a reviewed, scoped reuse decision; it does not permit background adoption. Every row's exception and source module are in JSON.
 
-| Data/asset | Scope | Decision evidence | Inheritance | Promotion to standing | New month |
-| --- | --- | --- | --- | --- | --- |
-| enfra_branding | contract | proposed_policy | explicit_reuse | approved_shared_save | reuse_standing |
-| client_branding | contract | proposed_policy | explicit_reuse | approved_shared_save | reuse_standing |
-| cover_photo | report | existing_implementation | explicit_reuse | approved_shared_save | review_source |
-| workflow_business_hours | contract | explicit_requirement | explicit_reuse | review_and_adopt | reuse_standing |
-| workflow_after_hours | contract | explicit_requirement | explicit_reuse | review_and_adopt | reuse_standing |
-| org_chart | site | proposed_policy | explicit_reuse | approved_shared_save | reuse_standing |
-| facility_contacts | contract_site | existing_implementation | explicit_reuse | approved_shared_save | reuse_standing |
-| thermal_capacity | unresolved | open_decision | review_before_reuse | decision_required | review_source |
-| subcontractor_contacts | contract | meeting_intent | explicit_reuse | approved_shared_save | reuse_standing |
-| subcontractor_status | contract_site | proposed_policy | explicit_reuse | approved_shared_save | confirm_current |
-| capital_renewal | contract_site | meeting_intent | explicit_reuse | approved_shared_save | carry_context |
-| proposals | report | proposed_policy | carry_context_only | approved_shared_save | carry_context |
-| issues | report | existing_implementation | carry_context_only | not_applicable | carry_context |
-| training_requirements | contract_site | existing_implementation | explicit_reuse | approved_shared_save | reuse_standing |
-| training_events | report_month | existing_implementation | never_automatic | not_applicable | reset |
-| activity_work_orders | report_month | existing_implementation | never_automatic | not_applicable | reset |
-| monthly_attachments | report_month | existing_implementation | never_automatic | not_applicable | review_source |
-| source_originals | source_archive | existing_implementation | never_automatic | review_and_adopt | review_source |
+| Data/asset | Scope | Evidence | Source of truth | Inheritance | Report override | Standing promotion | Conflict rule | New month |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| enfra_branding | contract | proposed_policy | Contract's approved profile/design asset, pinned into a report | explicit_reuse | Pinned report picture; a report-only replacement never edits the contract-approved logo. | approved_shared_save | proposed_standing_cas | reuse_standing |
+| client_branding | contract | proposed_policy | Selected contract's approved design/profile asset | explicit_reuse | Pinned report picture; a changed-client logo does not alter any other profile. | approved_shared_save | proposed_standing_cas | reuse_standing |
+| cover_photo | report | existing_implementation | Selected site's reviewed photograph in a pinned report/version | explicit_reuse | Pinned report-only cover choice; choosing Omit or another photo changes only this report version. | approved_shared_save | report_cas | review_source |
+| workflow_business_hours | contract | explicit_requirement | Contract-approved, versioned diagram (not a global ENFRA default) | explicit_reuse | Pin selected contract diagram version into report; Omit is local and preserved. | review_and_adopt | proposed_standing_cas | reuse_standing |
+| workflow_after_hours | contract | explicit_requirement | Contract-approved, versioned diagram (not a global ENFRA default) | explicit_reuse | Pin selected contract diagram version into report; Omit remains explicit after rollover. | review_and_adopt | proposed_standing_cas | reuse_standing |
+| org_chart | site | proposed_policy | Approved chart for the confirmed site(s), retained as a pinned report asset | explicit_reuse | Report-only site chart replacement leaves approved chart/version unchanged until an explicit shared save. | approved_shared_save | proposed_standing_cas | reuse_standing |
+| facility_contacts | contract_site | existing_implementation | Versioned contract directory, contract-wide contacts plus explicit site-bound contacts | explicit_reuse | A reviewed report contact correction is local; promote only exact record/identity to the contract directory. | approved_shared_save | standing_cas | reuse_standing |
+| thermal_capacity | unresolved | open_decision | Current code stores versioned contract capacity tables with row-level site_keys; reports pin selected-site snapshots | review_before_reuse | User-edited or intentionally omitted report values override an eligible shared copy; changing standing capacity is separate. | decision_required | standing_cas | review_source |
+| subcontractor_contacts | contract | meeting_intent | Proposed approved contract-level vendor roster, filtered by explicit site exceptions | explicit_reuse | Report-only contact or trade correction does not publish new contract master rows. | approved_shared_save | proposed_standing_cas | reuse_standing |
+| subcontractor_status | contract_site | proposed_policy | Proposed contract template plus site-qualified effective status and last-confirmed date | explicit_reuse | Report-only status correction stays in its report unless explicitly confirmed for contract/site use. | approved_shared_save | proposed_standing_cas | confirm_current |
+| capital_renewal | contract_site | meeting_intent | Proposed contract list with row-level site/asset identity; pinned monthly report view | explicit_reuse | Site/report-specific omission and manual recommendation edits win over source reimport or proposed shared values. | approved_shared_save | proposed_standing_cas | carry_context |
+| proposals | report | proposed_policy | Saved report proposal cards/table with source occurrence and status | carry_context_only | One report's pending/declined statuses and omit decisions are pinned; no silent shared status promotion. | approved_shared_save | report_cas | carry_context |
+| issues | report | existing_implementation | Report-specific issue cards and source evidence; explicit current-month update confirmation | carry_context_only | An issue update/omission is versioned in the report; a carried update is not silently current. | not_applicable | report_cas | carry_context |
+| training_requirements | contract_site | existing_implementation | Versioned training manifest by contract and site; report retains its own MATRIX_REF copy | explicit_reuse | A report's pinned matrix may differ from newer contract/site training revision; explicit shared-save/refresh required. | approved_shared_save | standing_cas | reuse_standing |
+| training_events | report_month | existing_implementation | Period-bound EVENT_REF report table; historic events remain in prior saved snapshots | never_automatic | Session edit/clear is specific to this report month, not shared requirements or an earlier report. | not_applicable | report_cas | reset |
+| activity_work_orders | report_month | existing_implementation | Selected report's source-bound, site/date-reviewed CMMS or manually entered work | never_automatic | Typed row, source selection or exclusion changes only this report version; no automatic standing publication. | not_applicable | report_cas | reset |
+| monthly_attachments | report_month | existing_implementation | Immutable source bytes and explicitly selected/reviewed section pages, tied to report period and site | never_automatic | Selected reviewed pages/captions are pinned to report/source occurrences; Omit remains local. | not_applicable | report_cas | review_source |
+| source_originals | source_archive | existing_implementation | Byte-verified original/source identity; report-specific references and receipts; separate read-only reference shelf | never_automatic | Never mutate original bytes; a replacement has new hash/identity and separately reviewed report reference. | review_and_adopt | immutable_sha256 | review_source |
+
+### Conflict-code meanings
+
+- `report_cas`: a report/version save uses the expected report revision; a stale editor preserves its own draft for an explicit comparison.
+- `standing_cas`: an existing reviewed standing store uses a contract/site expected revision before writing a new immutable version.
+- `proposed_standing_cas`: a recommended future scope rule, **not** proof that a shared standing store or promotion action is already deployed.
+- `immutable_sha256`: original bytes cannot be edited or silently replaced under the same source identity. A newly selected file has a new source hash and requires its own scope/approval.
+
+Even where a standing store uses CAS, a report-only override does not advance that standing revision. A new standing revision does not rewrite already published report versions.
+
 
 ## Scope and precedence
 
