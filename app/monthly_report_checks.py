@@ -217,8 +217,14 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
             # Ordinary photos, omitted blocks and excluded sections are not
             # standalone source pages and must not acquire this restriction.
             if block.key in image_grid_keys and block.asset_hashes:
-                from app.monthly_report_asset_layout import document_caption_problems
-                long_captions = document_caption_problems(block, draft.sources)
+                from app.monthly_report_asset_layout import (
+                    document_page_indexes, document_caption_problems)
+                # Ordinary photo grids need no measured 10pt font/layout work.
+                # Only confirmed, source-backed standalone document pages do.
+                if document_page_indexes(block, draft.sources):
+                    long_captions = document_caption_problems(block, draft.sources)
+                else:
+                    long_captions = ()
                 if long_captions:
                     pictures = ", ".join(str(i + 1) for i in long_captions[:3])
                     more = " and other pictures" if len(long_captions) > 3 else ""
