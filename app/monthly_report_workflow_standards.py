@@ -142,6 +142,24 @@ def _publish(contract, block, assets, *, origin_profile, origin_fingerprint,
         return state
 
 
+def _require_current_source_pages(block, sources):
+    """Publication cannot remove provenance that still requires page consent."""
+    from app.monthly_report_asset_review import asset_context
+    from app.monthly_report_content_policy import page_allowed
+    source_index = {source.id: source for source in sources}
+    references = {reference for index in range(len(block.asset_hashes))
+                  for reference in asset_context(block, index)}
+    for reference in references:
+        parts = reference.split(":")
+        if len(parts) != 3 or not parts[1].isdigit():
+            continue
+        source, number = source_index.get(parts[0]), int(parts[1])
+        if (source is None or not 1 <= number <= len(source.page_texts)
+                or number not in source.selected_pages or not page_allowed(source, number)):
+            raise library.LibraryError(
+                "Review and include each linked source page before saving a contract procedure.")
+
+
 def save_standard(draft, block, assets, *, expected_revision, expected_fingerprint, confirmed):
     """An explicit report action publishes only this contract's reviewed picture."""
     if draft.synthetic:
@@ -154,6 +172,7 @@ def save_standard(draft, block, assets, *, expected_revision, expected_fingerpri
     checked = refresh_asset_source_context(block, draft.sources)
     if not _eligible(checked):
         raise library.LibraryError("Include and review every procedure picture before saving a contract default.")
+    _require_current_source_pages(checked, draft.sources)
     prepared = {ref: (assets[ref] if ref in assets else library.read_asset(
         draft.profile.contract, draft.profile.key, ref)) for ref in checked.asset_hashes}
     return _publish(draft.profile.contract, checked, prepared,
