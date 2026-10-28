@@ -51,7 +51,7 @@ def test_four_current_parts_need_no_keep_or_change_questions():
         "#### After-hours outage procedure", "#### Facility contacts",
     }
     assert not at.text_area and not at.checkbox and not at.radio and not at.selectbox
-    assert len(at.button) == 4
+    assert len(at.button) == 5  # Four part actions plus direct saved-contact Edit.
     procedures = next(item for item in at.expander if item.label == "ENFRA outage procedures")
     assert procedures.proto.expanded is False
     assert {item.label for item in procedures.button} == {
@@ -137,6 +137,64 @@ def test_editing_one_contact_retains_notes_and_other_parts():
     assert contacts.text == original["contact_matrix"].text
     assert contacts.references == original["contact_matrix"].references
     assert all(block == original[key] for key, block in blocks.items() if key != "contact_matrix")
+
+
+
+def test_existing_contact_opens_from_summary_in_one_activation():
+    at = app()
+    assert not at.exception
+    assert not at.text_input
+    assert [item.label for item in at.button].count("Edit contact") == 1
+    click(at, "Edit contact")  # No outer "Edit contacts" click.
+    assert not at.exception
+    assert at.session_state["test_organization_change"] == "contact_matrix"
+    assert next(item for item in at.text_input if item.label == "Name")
+    next(item for item in at.text_input if item.label == "Name").input("Directly Corrected Person").run()
+    assert at.session_state["blocks"]["contact_matrix"].extra_tables[0].rows == (
+        ("Operator", "Directly Corrected Person"),)
+    assert (at.session_state["blocks"]["contact_matrix"].text
+            == at.session_state["original"]["contact_matrix"].text)
+    click(at, "Done")
+    assert not at.exception
+    assert at.session_state["blocks"]["contact_matrix"].extra_tables[0].rows == (
+        ("Operator", "Directly Corrected Person"),)
+    assert [item.label for item in at.button].count("Edit contact") == 1
+
+
+def test_direct_contact_actions_keep_distinct_duplicate_rows_and_custom_cells():
+    script = SCRIPT.replace(
+        'st.session_state.setdefault("original", original)',
+        '''original["contact_matrix"] = replace(
+    original["contact_matrix"], extra_tables=(ReportTable(("Role", "Name", "Custom"),
+    (("Operator", "Same Person", "first"), ("Operator", "Same Person", "second"))),))
+st.session_state.setdefault("original", original)''',
+    )
+    at = AppTest.from_string(script).run()
+    assert not at.exception
+    actions = [item for item in at.button if item.label == "Edit contact"]
+    assert len(actions) == 2
+    actions[1].click().run()
+    assert not at.exception
+    next(item for item in at.text_input if item.label == "Name").input("Changed Second Person").run()
+    rows = at.session_state["blocks"]["contact_matrix"].extra_tables[0].rows
+    assert rows == (("Operator", "Same Person", "first"),
+                    ("Operator", "Changed Second Person", "second"))
+    click(at, "Done")
+    assert not at.exception
+    assert at.session_state["blocks"]["contact_matrix"].extra_tables[0].rows == rows
+
+
+def test_omitted_contacts_remain_excluded_until_explicit_inclusion():
+    script = SCRIPT.replace(
+        'st.session_state.setdefault("original", original)',
+        '''original["contact_matrix"] = replace(original["contact_matrix"], source="Omit")
+st.session_state.setdefault("original", original)''',
+    )
+    at = AppTest.from_string(script).run()
+    assert not at.exception
+    assert not [item for item in at.button if item.label == "Edit contact"]
+    assert [item for item in at.button if item.label == "Edit contacts"]
+    assert at.session_state["blocks"] == at.session_state["original"]
 
 
 def test_missing_saved_page_is_recoverable_and_retained():
