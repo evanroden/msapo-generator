@@ -125,7 +125,7 @@ def _item(item):
         raise ValueError("Remove or explicitly resolve financial content before approving capital defaults.")
     if any(price_column(name) for name, _ in item.extra_fields):
         raise ValueError("Financial source columns cannot enter approved client-report defaults.")
-    if any("\n" in item.source_reference or "\r" in item.source_reference for _ in (0,)):
+    if "\n" in item.source_reference or "\r" in item.source_reference:
         raise ValueError("Source reference must be a single bounded identity.")
     return item
 
@@ -206,6 +206,15 @@ def save_capital_master(profile: ReportProfile, items: tuple[CapitalItem, ...], 
         incoming = {item.key: item for item in items}
         if set(old) - set(incoming) != set(removed_ids):
             raise ValueError("Previously approved capital entries need explicit removal.")
+        if any(key not in old for key in removed_ids):
+            raise ValueError("Only existing approved capital entries can be removed.")
+        # Exact row retirement may not erase an independently approved site
+        # merely because another site has a current edit. Global rows require
+        # deliberate contract-level approval; they are not inferred here.
+        for key in removed_ids:
+            old_item = old[key]
+            if old_item.site_keys and not set(old_item.site_keys) <= chosen:
+                raise ValueError("Removing another site's capital item requires its approved scope.")
         known_sites = chosen | {site for item in previous.items for site in item.site_keys}
         for item in items:
             if item.key not in old or item != old[item.key]:
