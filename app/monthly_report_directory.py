@@ -34,6 +34,7 @@ MAX_CELLS = 100_000
 MAX_TEXT = 4_000_000
 MAX_SITES = 500
 MAX_CONTACTS = 50
+MAX_CONTACT_SOURCE_TEXT = 1000
 MAX_XML_ELEMENTS = 750_000
 MAX_XML_TEXT = 8_000_000
 MAX_XML_DEPTH = 64
@@ -777,6 +778,42 @@ def same_contact_value(field, value, other):
     return " ".join(value.casefold().split()) == " ".join(other.casefold().split())
 
 
+def contact_source_union(*sources):
+    """Keep newest complete references and the first when it fits beside them.
+
+    Shared directory revisions retain their earlier provenance snapshots. A
+    current contact needs a bounded summary, in both workbook import routes,
+    so routine corrections never make an otherwise valid record unsavable.
+    """
+    # Semicolons are valid worksheet-name characters. Only a known workbook
+    # fingerprint or report identity begins a new stored reference; unknown
+    # legacy text stays opaque rather than being split into invented pieces.
+    references = [s for source in sources
+                  for s in re.split(r";(?=(?:[0-9a-f]{64}|report):)", source) if s]
+    # A correction may reuse an older workbook. Keep that reference recent
+    # instead of discarding it merely because it already appears in history.
+    parts = list(dict.fromkeys(reversed(references)))[::-1]
+    if references:
+        first = references[0]
+        parts = [first, *(part for part in parts if part != first)]
+    if len(";".join(parts)) <= MAX_CONTACT_SOURCE_TEXT or len(parts) < 2:
+        return ";".join(parts)
+    first, newest = parts[0], parts[-1]
+    if len(newest) > MAX_CONTACT_SOURCE_TEXT:
+        return newest  # never split a legacy reference; normal record limits still apply
+    # An accepted legacy anchor may itself fill the entire summary budget.
+    # Its earlier revision stays intact; it cannot displace the current source.
+    anchor = [first] if len(first) + 1 + len(newest) <= MAX_CONTACT_SOURCE_TEXT else []
+    kept, size = [], len(first) if anchor else 0
+    for part in reversed(parts[1:]):
+        addition = len(part) + bool(size)
+        if size + addition > MAX_CONTACT_SOURCE_TEXT:
+            break
+        kept.insert(0, part)
+        size += addition
+    return ";".join((*anchor, *kept))
+
+
 def proposed_contacts(existing, incoming):
     """Blank updates cannot erase saved details or attach an old phone to a new person.
 
@@ -809,7 +846,7 @@ def proposed_contacts(existing, incoming):
                 if all(merged[f] == getattr(old, f) for f in merged):
                     continue  # nothing new for this person; keep the saved record
                 contact = replace(contact, **merged,
-                                  source=";".join(dict.fromkeys(s for s in (contact.source, old.source) if s)))
+                                  source=contact_source_union(old.source, contact.source))
             result[index] = contact
         else:
             result.append(contact)
