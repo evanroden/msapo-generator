@@ -1,0 +1,485 @@
+{
+  "schema_version": 1,
+  "title": "Monthly Report — ownership and carryover decisions",
+  "audited_main": "a1b2aa61aa92c596d424c95dba29be66135f3441",
+  "purpose": "Planning and review contract only; this file does not authorize or implement migration or data promotion.",
+  "status_definitions": {
+    "explicit_requirement": "Owner meeting/intake explicitly rejects the unsafe behavior. Implementation must conform; may not be on main.",
+    "meeting_intent": "Source meeting expressed desired reuse, but detailed ownership/promotion/conflict policy remains proposed.",
+    "existing_implementation": "A verified main-branch code behavior, not independently served acceptance or an owner-wide policy.",
+    "proposed_policy": "A candidate design for review; NOT authorized for silent promotion, mass rewrite or deployment.",
+    "open_decision": "Requires an explicit owner/contract decision; preserve current safe behavior, never infer consent."
+  },
+  "scope_definitions": {
+    "contract": "One approved contract identity, never another contract.",
+    "site": "One confirmed site identity; multi-site use requires explicit membership.",
+    "contract_site": "Contract-bounded rows individually linked to confirmed sites; some records may be contract-wide only when explicit.",
+    "report": "Pinned report-version item, with optional historical carry context.",
+    "report_month": "Evidence only for its exact report month and site selection.",
+    "source_archive": "Unmodified source/reference bytes and scoped receipts, not an active report or approved standing default.",
+    "unresolved": "No general inheritance scope approved; retain narrower existing site-bound behavior."
+  },
+  "inheritance_values": [
+    "explicit_reuse",
+    "review_before_reuse",
+    "carry_context_only",
+    "never_automatic"
+  ],
+  "promotion_values": [
+    "approved_shared_save",
+    "review_and_adopt",
+    "decision_required",
+    "not_applicable"
+  ],
+  "next_month_values": [
+    "reuse_standing",
+    "confirm_current",
+    "carry_context",
+    "reset",
+    "review_source"
+  ],
+  "global_safety_invariants": [
+    "A report-only edit changes only its working draft until an explicit shared save; never advances a standing source head.",
+    "An Omit/exclude/removed row in a report is not permission to rewrite or delete a contract/site master.",
+    "An approved standing update is versioned with an expected revision and does not rewrite prior pinned report history.",
+    "No contract B value/artwork/source page may be inherited into contract A; ambiguous membership must require review.",
+    "Unresolved site, source date, artwork purpose, pricing or provenance never becomes approved by a passive open/reload.",
+    "The prior month may contribute historical context; it does not prove a current-month completion or attachment.",
+    "Every original source and previous report version is preserved under any proposed scope migration."
+  ],
+  "items": [
+    {
+      "id": "enfra_branding",
+      "label": "ENFRA brand logo / approved company identity",
+      "scope": "contract",
+      "decision": "proposed_policy",
+      "default": "explicit_reuse",
+      "promotion": "approved_shared_save",
+      "next_month": "reuse_standing",
+      "source": "Contract's approved profile/design asset, pinned into a report",
+      "notes": "No other-contract logo; logo is never a cover photograph. Current approved profile assets are profile-bound, not a proven global shared brand rule.",
+      "code": [
+        "app/monthly_report_library.py",
+        "app/monthly_report_model.py"
+      ]
+    },
+    {
+      "id": "client_branding",
+      "label": "Client logo and contract terminology",
+      "scope": "contract",
+      "decision": "proposed_policy",
+      "default": "explicit_reuse",
+      "promotion": "approved_shared_save",
+      "next_month": "reuse_standing",
+      "source": "Selected contract's approved design/profile asset",
+      "notes": "No automatic transfer between clients; changing contract identity requires new scope confirmation.",
+      "code": [
+        "app/monthly_report_library.py",
+        "app/monthly_report_model.py"
+      ]
+    },
+    {
+      "id": "cover_photo",
+      "label": "Report cover photograph",
+      "scope": "report",
+      "decision": "existing_implementation",
+      "default": "explicit_reuse",
+      "promotion": "approved_shared_save",
+      "next_month": "review_source",
+      "source": "Selected site's reviewed photograph in a pinned report/version",
+      "notes": "Original aspect ratio and photo role are independently reviewed. Client/ENFRA logos cannot replace cover photography.",
+      "code": [
+        "app/monthly_report_model.py",
+        "app/monthly_report_library.py"
+      ]
+    },
+    {
+      "id": "workflow_business_hours",
+      "label": "Business-hours outage workflow diagram",
+      "scope": "contract",
+      "decision": "explicit_requirement",
+      "default": "explicit_reuse",
+      "promotion": "review_and_adopt",
+      "next_month": "reuse_standing",
+      "source": "Contract-approved, versioned diagram (not a global ENFRA default)",
+      "notes": "Main at audited SHA still has a global workflow-standards store; PR #533 proposes a contract-specific replacement. No automatic legacy adoption or cross-contract copy.",
+      "code": [
+        "app/monthly_report_workflow_standards.py",
+        "app/monthly_report_library.py"
+      ]
+    },
+    {
+      "id": "workflow_after_hours",
+      "label": "After-hours outage workflow diagram",
+      "scope": "contract",
+      "decision": "explicit_requirement",
+      "default": "explicit_reuse",
+      "promotion": "review_and_adopt",
+      "next_month": "reuse_standing",
+      "source": "Contract-approved, versioned diagram (not a global ENFRA default)",
+      "notes": "Absence is a real empty/omitted state, not permission to seed another contract's artwork.",
+      "code": [
+        "app/monthly_report_workflow_standards.py",
+        "app/monthly_report_library.py"
+      ]
+    },
+    {
+      "id": "org_chart",
+      "label": "Organizational chart / site structure",
+      "scope": "site",
+      "decision": "proposed_policy",
+      "default": "explicit_reuse",
+      "promotion": "approved_shared_save",
+      "next_month": "reuse_standing",
+      "source": "Approved chart for the confirmed site(s), retained as a pinned report asset",
+      "notes": "An organization-wide diagram is not silently applied to different facilities. Report-only edits do not modify the standing chart.",
+      "code": [
+        "app/monthly_report_model.py",
+        "app/monthly_report_library.py"
+      ]
+    },
+    {
+      "id": "facility_contacts",
+      "label": "Facility contacts and contract contact directory",
+      "scope": "contract_site",
+      "decision": "existing_implementation",
+      "default": "explicit_reuse",
+      "promotion": "approved_shared_save",
+      "next_month": "reuse_standing",
+      "source": "Versioned contract directory, contract-wide contacts plus explicit site-bound contacts",
+      "notes": "Match exact saved site identity or uniquely confirmed alias; report edits do not silently reassign a person or overwrite another site's record.",
+      "code": [
+        "app/monthly_report_directory.py",
+        "app/monthly_report_library.py"
+      ]
+    },
+    {
+      "id": "thermal_capacity",
+      "label": "Thermal capacity: site, plant and service values",
+      "scope": "unresolved",
+      "decision": "open_decision",
+      "default": "review_before_reuse",
+      "promotion": "decision_required",
+      "next_month": "review_source",
+      "source": "Current code stores versioned contract capacity tables with row-level site_keys; reports pin selected-site snapshots",
+      "notes": "Owner has not approved general contract-wide versus site-level sharing of capacity assumptions. Preserve row/site/plant/service units. No site B refill from site A or numerical inference.",
+      "code": [
+        "app/monthly_report_capacity.py"
+      ]
+    },
+    {
+      "id": "subcontractor_contacts",
+      "label": "Subcontractor contacts, trade bands and contact instructions",
+      "scope": "contract",
+      "decision": "meeting_intent",
+      "default": "explicit_reuse",
+      "promotion": "approved_shared_save",
+      "next_month": "reuse_standing",
+      "source": "Proposed approved contract-level vendor roster, filtered by explicit site exceptions",
+      "notes": "Shared roster promotion is not implemented/approved merely because a report imported a vendor list. Keep source category/trade bands and report-only overrides; see #488/#455.",
+      "code": [
+        "app/monthly_report_model.py",
+        "app/monthly_report_library.py"
+      ]
+    },
+    {
+      "id": "subcontractor_status",
+      "label": "Subcontractor status / when to contact",
+      "scope": "contract_site",
+      "decision": "proposed_policy",
+      "default": "explicit_reuse",
+      "promotion": "approved_shared_save",
+      "next_month": "confirm_current",
+      "source": "Proposed contract template plus site-qualified effective status and last-confirmed date",
+      "notes": "Contacts may persist; current service/call status cannot be silently treated as a new-month action. Unknown status remains unknown.",
+      "code": [
+        "app/monthly_report_model.py",
+        "app/monthly_report_setup.py"
+      ]
+    },
+    {
+      "id": "capital_renewal",
+      "label": "Priority capital renewal recommendations",
+      "scope": "contract_site",
+      "decision": "meeting_intent",
+      "default": "explicit_reuse",
+      "promotion": "approved_shared_save",
+      "next_month": "carry_context",
+      "source": "Proposed contract list with row-level site/asset identity; pinned monthly report view",
+      "notes": "Source import alone cannot promote a recommendation to contract master or restore a deliberately deleted row. #544 handles exact-source replays; source dates/history retained.",
+      "code": [
+        "app/monthly_report_setup.py",
+        "app/monthly_report_library.py"
+      ]
+    },
+    {
+      "id": "proposals",
+      "label": "Pending and declined proposal items",
+      "scope": "report",
+      "decision": "proposed_policy",
+      "default": "carry_context_only",
+      "promotion": "approved_shared_save",
+      "next_month": "carry_context",
+      "source": "Saved report proposal cards/table with source occurrence and status",
+      "notes": "Pending is not Declined; a prior status and date must remain attributable to source/month. A report-only omission is not a permanent contract decision.",
+      "code": [
+        "app/monthly_report_followups.py",
+        "app/monthly_report_setup.py"
+      ]
+    },
+    {
+      "id": "issues",
+      "label": "Open equipment issues and evidence/update status",
+      "scope": "report",
+      "decision": "existing_implementation",
+      "default": "carry_context_only",
+      "promotion": "not_applicable",
+      "next_month": "carry_context",
+      "source": "Report-specific issue cards and source evidence; explicit current-month update confirmation",
+      "notes": "Carry an unresolved issue, not a claim that its old evidence or Updated wording happened again this month. Resolve/omit requires an explicit action.",
+      "code": [
+        "app/monthly_report_issues.py",
+        "app/monthly_report_setup.py"
+      ]
+    },
+    {
+      "id": "training_requirements",
+      "label": "Standing staff training requirements / annual status matrix",
+      "scope": "contract_site",
+      "decision": "existing_implementation",
+      "default": "explicit_reuse",
+      "promotion": "approved_shared_save",
+      "next_month": "reuse_standing",
+      "source": "Versioned training manifest by contract and site; report retains its own MATRIX_REF copy",
+      "notes": "Current main has contract+site standing matrix; annual-year separation is being worked on in PR #537 and must not be claimed as implemented on main. A completed requirement status does not create an event.",
+      "code": [
+        "app/monthly_report_training.py",
+        "app/monthly_report_training_ui.py"
+      ]
+    },
+    {
+      "id": "training_events",
+      "label": "Completed training sessions (date, topic, participants, hours)",
+      "scope": "report_month",
+      "decision": "existing_implementation",
+      "default": "never_automatic",
+      "promotion": "not_applicable",
+      "next_month": "reset",
+      "source": "Period-bound EVENT_REF report table; historic events remain in prior saved snapshots",
+      "notes": "No past session may be relabeled as completed this month; missing date, participants and hours remain unknown. See #496.",
+      "code": [
+        "app/monthly_report_training.py",
+        "app/monthly_report_training_ui.py"
+      ]
+    },
+    {
+      "id": "activity_work_orders",
+      "label": "Current-month work orders, service calls and operational narrative",
+      "scope": "report_month",
+      "decision": "existing_implementation",
+      "default": "never_automatic",
+      "promotion": "not_applicable",
+      "next_month": "reset",
+      "source": "Selected report's source-bound, site/date-reviewed CMMS or manually entered work",
+      "notes": "One site's totals cannot be used as the other site's; prior month totals are historical, not current. Vendor service PDFs belong in Activity unless onsite work is explicitly ENFRA performed.",
+      "code": [
+        "app/monthly_report_setup.py",
+        "app/monthly_report_model.py"
+      ]
+    },
+    {
+      "id": "monthly_attachments",
+      "label": "Scorecards, commissioning, water, vendor, progress photos and other attachments",
+      "scope": "report_month",
+      "decision": "existing_implementation",
+      "default": "never_automatic",
+      "promotion": "not_applicable",
+      "next_month": "review_source",
+      "source": "Immutable source bytes and explicitly selected/reviewed section pages, tied to report period and site",
+      "notes": "Do not carry an included attachment into a new month as freshly produced evidence. No pricing/legal/private pages or unreviewed artwork; approval is occurrence-bound.",
+      "code": [
+        "app/monthly_report_library.py",
+        "app/monthly_report_setup.py"
+      ]
+    },
+    {
+      "id": "source_originals",
+      "label": "Imported report, uploaded source file and shared reference shelf",
+      "scope": "source_archive",
+      "decision": "existing_implementation",
+      "default": "never_automatic",
+      "promotion": "review_and_adopt",
+      "next_month": "review_source",
+      "source": "Byte-verified original/source identity; report-specific references and receipts; separate read-only reference shelf",
+      "notes": "Preserve hashes, attribution and original bytes. Storing a reference is never evidence of approved cross-contract reuse; do not purge/publish source files under a scope migration.",
+      "code": [
+        "app/monthly_report_shared_source_bundles.py",
+        "app/monthly_report_library.py"
+      ]
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "workflows_between_contracts",
+      "contracts": [
+        "A",
+        "B"
+      ],
+      "sites": [
+        "A1",
+        "A2",
+        "B1",
+        "B2"
+      ],
+      "months": [
+        "2026-09",
+        "2026-10"
+      ],
+      "steps": [
+        "Approve A's business-hours diagram explicitly for A.",
+        "Create an October A2 report and reuse the approved A diagram.",
+        "Create an October B1 report without any B-approved diagram."
+      ],
+      "expected": [
+        "A2 may reuse the exact A contract version, pinned into its October report.",
+        "B1 must remain empty/ask for B approval, not inherit A artwork.",
+        "A September report retains its original version after an A October replacement."
+      ]
+    },
+    {
+      "id": "report_only_contact_correction",
+      "contracts": [
+        "A",
+        "B"
+      ],
+      "sites": [
+        "A1",
+        "A2",
+        "B1",
+        "B2"
+      ],
+      "months": [
+        "2026-09",
+        "2026-10"
+      ],
+      "steps": [
+        "Open October A1 report from its approved contact directory.",
+        "Edit one phone number as report-only.",
+        "Reopen October A2, September A1, and contract B1 reports."
+      ],
+      "expected": [
+        "A1's October report contains the correction only after it is saved.",
+        "The shared A directory and A2 stay unchanged until explicit master-save with expected revision.",
+        "September A1 and B1 remain unchanged after all operations."
+      ]
+    },
+    {
+      "id": "vendor_master_promotion",
+      "contracts": [
+        "A",
+        "B"
+      ],
+      "sites": [
+        "A1",
+        "A2",
+        "B1",
+        "B2"
+      ],
+      "months": [
+        "2026-09",
+        "2026-10"
+      ],
+      "steps": [
+        "Import vendor trade-band contacts into October A1.",
+        "Make a report-only vendor correction.",
+        "Explicitly promote a reviewed A contract roster at expected revision."
+      ],
+      "expected": [
+        "Unreviewed imports do not create standing vendors.",
+        "A2 sees the approved A roster only on intentional reuse, with source/trade identity preserved.",
+        "A previous A1 version and all contract B records remain pinned and unchanged."
+      ]
+    },
+    {
+      "id": "capacity_site_partition",
+      "contracts": [
+        "A",
+        "B"
+      ],
+      "sites": [
+        "A1",
+        "A2",
+        "B1",
+        "B2"
+      ],
+      "months": [
+        "2026-09",
+        "2026-10"
+      ],
+      "steps": [
+        "Review A1 chilled-water capacity from exact original source.",
+        "Save a contract capacity revision containing A1's explicit site key.",
+        "Open October A2's capacity panel."
+      ],
+      "expected": [
+        "A2 does not inherit A1 numeric values by location guess or schema similarity.",
+        "Separate A1 steam/chilled-water and plant/units remain distinct.",
+        "The broader capacity reuse policy remains unresolved pending explicit owner decision."
+      ]
+    },
+    {
+      "id": "history_and_monthly_facts",
+      "contracts": [
+        "A",
+        "B"
+      ],
+      "sites": [
+        "A1",
+        "A2",
+        "B1",
+        "B2"
+      ],
+      "months": [
+        "2026-09",
+        "2026-10"
+      ],
+      "steps": [
+        "Complete September A1 training event and work-order table.",
+        "Create October from saved September report.",
+        "Inspect October and then reopen September."
+      ],
+      "expected": [
+        "September facts/events remain in the September pinned version.",
+        "October does not call September events/work orders 'completed this month'.",
+        "Standing approved training requirements remain available without inventing completion."
+      ]
+    },
+    {
+      "id": "capital_proposal_revision",
+      "contracts": [
+        "A",
+        "B"
+      ],
+      "sites": [
+        "A1",
+        "A2",
+        "B1",
+        "B2"
+      ],
+      "months": [
+        "2026-09",
+        "2026-10"
+      ],
+      "steps": [
+        "Correct an October A1 capital recommendation as report-only.",
+        "Import the same original again and encounter a conflicting historic row.",
+        "Review a Pending and a Declined proposal with source dates."
+      ],
+      "expected": [
+        "The intentionally removed or corrected capital row is not silently resurrected.",
+        "Reimport conflict keeps current report edits and requires explicit review.",
+        "Pending and Declined statuses stay distinct; other contracts and prior snapshots do not change."
+      ]
+    }
+  ]
+}
