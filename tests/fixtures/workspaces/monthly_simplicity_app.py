@@ -12,6 +12,14 @@ from uuid import uuid4
 
 if os.environ.get("EPC_MONTHLY_SIMPLICITY_TASK") != "1":
     raise ValueError("This fixture requires the explicit simplicity task flag.")
+# Diagnostics opt in only inside the separately marked disposable fixture.
+if os.environ.get("EPC_MONTHLY_SIMPLICITY_DIAGNOSTICS") == "1":
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+    import streamlit as st
+    from app import monthly_report_guided
+    from scripts.qa_simplicity_delivery import install
+    install(st, monthly_report_guided)
 runpy.run_path(str(Path(__file__).with_name("monthly_fresh_app.py")), run_name="__main__")
 
 import streamlit as st

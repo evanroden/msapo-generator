@@ -163,7 +163,15 @@ def exercise(engine, name, record):
         else:
             request.continue_()
     context.route("**/*", route)
+    diagnostic = os.environ.get("EPC_MONTHLY_SIMPLICITY_DIAGNOSTICS") == "1"
+    if diagnostic:
+        context.tracing.start(screenshots=False, snapshots=False, sources=False)
     page = context.new_page()
+    if diagnostic:
+        from scripts.qa_simplicity_delivery import Wire
+        wire = Wire()
+        wire.attach(page)
+        page.add_init_script((ROOT / "scripts/qa_simplicity_pointer.js").read_text())
     collector = (ROOT / "scripts/qa_fresh_native_errors.js").read_text()
     assert collector.count("http://127.0.0.1:8529") == 1
     page.add_init_script(collector.replace("http://127.0.0.1:8529", f"http://127.0.0.1:{PORT}"))
@@ -289,6 +297,21 @@ def exercise(engine, name, record):
         raise
     finally:
         record["external_requests"], record["browser_errors"] = external, errors
+        if diagnostic:
+            try:
+                record["delivery_wire"] = wire.rows
+                record["delivery_pointer"] = page.evaluate("() => window.__enfraSimplicityPointer || []")
+                record["final_receipt"] = page.evaluate("() => { const n=document.querySelector('[data-monthly-simplicity-receipt]'); if(!n) return null; const r=JSON.parse(n.getAttribute('data-monthly-simplicity-receipt')); return {fingerprint:r.fingerprint, sources:r.sources}; }")
+            except Exception as error:
+                record["diagnostic_capture_failed"] = type(error).__name__
+            try:
+                from scripts.qa_simplicity_delivery import safe_trace
+                with tempfile.TemporaryDirectory(prefix="simplicity-trace-") as trace_root:
+                    trace_path = Path(trace_root) / "raw.zip"
+                    context.tracing.stop(path=str(trace_path))
+                    record["delivery_trace"] = safe_trace(trace_path)
+            except Exception:
+                pass
         context.close()
         browser.close()
 
