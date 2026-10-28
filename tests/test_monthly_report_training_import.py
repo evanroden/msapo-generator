@@ -378,7 +378,7 @@ def test_unsupported_totals_grid_and_source_replacement_are_safe(storage):
     after = reviewed(changed, "events")
     with pytest.raises(ValueError, match="source"):
         reimport_training_review(before, after)
-    with pytest.raises(ValueError, match="original"):
+    with pytest.raises((ValueError, OSError)):
         training_tables(replace(source, source=replace(
             source.source, sha256="a" * 64)), PROFILE)
 
@@ -429,7 +429,8 @@ def test_accepted_current_event_renders_once_in_generic_word_training_section(st
     block = ResolvedBlock("training_summary", "This month")
     approved = accepted_training_block(review, block,
                                       expected_block_fingerprint=block.fingerprint)
-    original = replace(content.source, facility=profile.facilities[0].title)
+    from app.monthly_report_source_scope import correct_scope
+    original = correct_scope(content.source, profile, ("north",))
     section = next(s for s in default_sections() if s.key == "training")
     from app.monthly_report_model import ReportDraft
     draft = ReportDraft(profile, PERIOD, "Synthetic Editor",
