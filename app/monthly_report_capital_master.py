@@ -315,6 +315,7 @@ def capital_report_block(profile: ReportProfile, selection: CapitalSelection,
     if existing == block:
         return existing
     if (existing.source == "Omit" or existing.rows or existing.extra_tables
-            or existing.text.strip() or existing.asset_hashes):
+            or existing.text.strip() or existing.asset_hashes
+            or existing.references):
         raise ValueError("Existing report-only capital edits or omissions require explicit replacement.")
     return block
