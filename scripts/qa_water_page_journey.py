@@ -335,9 +335,10 @@ def choose_page(page, number):
 
 
 def upload(page, raw):
-    page.locator(WATER).get_by_role("button", name="Add files", exact=True).click()
     uploader = page.locator('[data-testid="stFileUploader"]').filter(
         has=page.get_by_text("Water-treatment files", exact=True))
+    expect(uploader).to_be_visible()
+    expect(page.locator(WATER).get_by_role("button", name="Add files", exact=True)).to_have_count(0)
     uploader.locator('input[type="file"]').set_input_files(
         {"name": NAME, "mimeType": "application/pdf", "buffer": raw})
     expect(page.locator(WATER).get_by_text(NAME, exact=True)).to_be_visible(timeout=45000)

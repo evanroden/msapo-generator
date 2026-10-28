@@ -631,7 +631,7 @@ def _queue_photo_action(key, request):
 
 def edit_photos(draft, block, prefix, assets, field, *, show_preview=True):
     from app.monthly_report_guided import _rich_text_scope
-    from app.monthly_report_photo_controls import photo_caption_identity, photo_order_identity, photo_move_request, move_photo, remove_photo
+    from app.monthly_report_photo_controls import photo_caption_identity, photo_disclosure_identity, photo_order_identity, photo_move_request, move_photo, remove_photo
     from app.monthly_report_asset_instances import append_human_asset, has_human_asset
     block = preserve_asset_reviews(block, block)
     p = prefix + "_photos_" + block.key
@@ -667,7 +667,9 @@ def edit_photos(draft, block, prefix, assets, field, *, show_preview=True):
         st.session_state[cycle_key] = {"scope": scope, "token": uuid4().hex}
         st.session_state[prefix + "_period_editor_refresh"] = True
 
-    with st.expander("Add photos", expanded=False):
+    # Keyed native disclosures retain deliberate user collapse across passive
+    # reruns. Their initial defaults expose pending work without a new action.
+    with st.expander("Add photos", expanded=not block.asset_hashes, key=p + "_intake_" + scope):
         uploads = st.file_uploader(
             "Progress photos", label_visibility="collapsed",
             type=["jpg", "jpeg", "png", "heic", "heif", "webp"],
@@ -740,7 +742,10 @@ def edit_photos(draft, block, prefix, assets, field, *, show_preview=True):
                                   for n in range(len(block.asset_hashes)))
         captions = list(existing_captions)
         for n in visible:
-            with st.expander("Photo " + str(n + 1), expanded=len(block.asset_hashes) <= 2):
+            panel_identity = photo_disclosure_identity(block, n, scope=scope)
+            with st.expander("Photo " + str(n + 1),
+                             expanded=n in pending_indexes or len(block.asset_hashes) <= 2,
+                             key=p + "_panel_" + panel_identity):
                 captions[n] = st.text_area("Caption", key=field(p + f"_caption_{field_identity}_{n}", existing_captions[n]),
                                           max_chars=600, height=90)
                 earlier, later = (st.empty(), st.empty()) if editing and len(block.asset_hashes) > 1 else (None, None)
