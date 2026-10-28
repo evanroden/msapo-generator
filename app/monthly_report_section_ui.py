@@ -348,10 +348,19 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                     st.caption("Pricing columns were removed from this client-facing table. The original table is retained in the uploaded report.")
                 if table:
                     st.write(f"Table {n}")
-                    rows = [dict(zip(table.columns, r)) for r in table.rows]
+                    # Headings are source content, not unique cell identities.
+                    # Number only colliding display labels; keep the saved schema
+                    # and each physical column separate through native grid edits.
+                    display_columns = table.columns
+                    grid_identity = table.columns
+                    if len(set(display_columns)) != len(display_columns):
+                        display_columns = tuple(f"{index + 1}. {title}" for index, title in enumerate(display_columns))
+                        # Retire any older grid seed that already collapsed cells.
+                        grid_identity = (table.columns, display_columns)
+                    rows = [dict(zip(display_columns, r)) for r in table.rows]
                     if action == actions[1]:
-                        rows = _grid(p + "_table_" + item.id + "_" + _signature(table.columns), rows, num_rows="dynamic", hide_index=True)
-                        table = ReportTable(table.columns, tuple(tuple("" if r.get(c) is None else str(r[c]) for c in table.columns) for r in rows))
+                        rows = _grid(p + "_table_" + item.id + "_" + _signature(grid_identity), rows, num_rows="dynamic", hide_index=True)
+                        table = replace(table, rows=tuple(tuple("" if r.get(c) is None else str(r[c]) for c in display_columns) for r in rows))
                     else:
                         st.dataframe(rows[:300], hide_index=True)
                         if len(rows) > 300:
@@ -512,8 +521,8 @@ def render_pending_cover_selection(draft, assets, contract, period, state):
     staged = st.session_state.get(prefix + "_stage")
     if not staged:
         return draft, assets
-    _, path, inspection = staged
     active = st.session_state.get(prefix + "_active_section_review")
+    _, path, inspection = staged
     # Only this render's exact source/view/membership scope may contribute a
     # pending photo. Never guess a legacy key or reuse a superseded review.
     if not active or active[0] != inspection.sha256:
