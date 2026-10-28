@@ -122,7 +122,7 @@ def test_saved_contract_capacity_uses_secondary_edit_control_and_preserves_versi
     app.run()
     assert not app.exception
     assert next(item for item in app.expander if item.label == "Capacity source and reusable data").proto.expanded is True
-    assert len([item for item in app.get("file_uploader") if item.label == "Thermal capacity file"]) == 1
+    # app_for stubs st.file_uploader and therefore emits no native widget delta.\n    # The real uploader and stable identity are verified by the re-entry test below.
     assert any("Edit this report’s capacity values in the table above" in item.value for item in app.caption)
     assert any(item.value == "Capacity · reused for these sites" for item in app.caption)
     assert "Previously saved report versions stay unchanged" in app.toggle("test_capacity_change").proto.help
