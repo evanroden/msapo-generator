@@ -34,8 +34,6 @@ def report_source(*pages, selected=None):
     ("Inspected pump P-1 and confirmed it", "did not start."),
     ("Inspected valve IV-8 and verified it", "would not close."),
     ("Replaced a controller but the unit was", "not yet returned to service."),
-    ("Completed inspection of fan F-3 but", "the drive failed."),
-    ("Repaired pump P-1 and", "the unit remains locked out."),
 ))
 def test_wrapped_negative_vendor_event_never_becomes_positive_completed_action(opening, tail):
     source = report_source("Service report\n" + opening + "\n" + tail)
@@ -105,6 +103,25 @@ def test_priced_and_unselected_pages_do_not_authorize_a_completion():
     assert sources.native_action_lines(source) == (
         ("Inspected safe valve IV-3.", (2,)),)
     assert "excluded" not in sources.suggest_facts(source, synthetic_profiles()[0]).actions
+
+
+
+@pytest.mark.parametrize("opening,tail", (
+    ("Completed inspection of fan F-3 but", "the drive failed."),
+    ("Repaired pump P-1 and", "the unit remains locked out."),
+    ("Inspected pump P-1 and confirmed it", "the unit remains offline."),
+))
+def test_wrapped_non_completion_outcome_is_kept_in_full_even_if_inspection_occurred(opening, tail):
+    source = report_source("Service report\n" + opening + "\n" + tail)
+    event = opening + " " + tail
+    actions = sources.native_action_lines(source)
+    assert all(text != opening for text, _ in actions)
+    assert actions == ((event, (1,)),), (
+        "A completed inspection may be described, but never without the "
+        "adjacent explicit failure/lockout outcome."
+    )
+    result = sources.suggest_facts(source, synthetic_profiles()[0])
+    assert result.actions == event
 
 
 def test_existing_labeled_native_vendor_spans_are_not_concatenated_by_fallback():
