@@ -88,7 +88,7 @@ def table_without_prices(item):
     rows = item.rows
     if not rows:
         return None, ()
-    if item.section == "activity":
+    if getattr(item, "section", "") == "activity":
         from app.monthly_report_annual_work_order_grid import annual_site_month_table
         annual = annual_site_month_table(item)
         if annual is not None:
