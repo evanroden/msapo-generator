@@ -6,7 +6,7 @@ This cache never reads, evicts or migrates the durable report library.
 from __future__ import annotations
 
 from collections import OrderedDict
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 import math
 from pathlib import Path
 import tempfile
@@ -65,7 +65,8 @@ class PreviewStore:
         if entry is not None:
             # Revoke access before touching disk. A failed unlink must neither
             # revive this ticket nor hide its bytes from the global budget.
-            self._files[key] = replace(entry, retired=True)
+            self._files[key] = _Stored(entry.owner, entry.path, entry.size,
+                                       entry.ticket, entry.used, retired=True)
         for raster in [value for value in self._rasters if value[0] == key]:
             self._raster_bytes -= len(self._rasters.pop(raster))
         if entry is not None:
