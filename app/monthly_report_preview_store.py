@@ -142,6 +142,17 @@ class PreviewStore:
             if entry is None:
                 return None
             result = []
+            # Fast path: all requested JPEGs still belong to this live,
+            # owner-checked ticket. Opening its PDF again merely to return
+            # those bytes adds filesystem and PDF parsing latency on every
+            # scroll/poll, even though no page needs decoding.
+            if all((ticket.key, index, dpi) in self._rasters for index in indexes):
+                for index in indexes:
+                    key = (ticket.key, index, dpi)
+                    raw = self._rasters.pop(key)
+                    self._rasters[key] = raw  # Keep the same LRU order as a normal hit.
+                    result.append((index, raw))
+                return tuple(result)
             with fitz.open(entry.path) as document:
                 for index in indexes:
                     cache_key = (ticket.key, index, dpi)
