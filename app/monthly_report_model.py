@@ -545,10 +545,28 @@ def used_source_ids(draft: ReportDraft) -> set[str]:
     return {p[0] for p in parts if len(p) == 3 and p[1].isdigit()}
 
 
+MAX_REPORT_FILENAME_BYTES = 240
+
+
 def report_filename(draft: ReportDraft, extension: Literal["docx", "pdf"]) -> str:
-    title = f"{draft.profile.contract} - {draft.profile.title} {draft.period.label} Monthly Report"
-    # A display name is never allowed to create a path or a response-header line.
-    title = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "-", title).strip(" .")
+    """Use a stable filesystem-safe basename for the paired Word/PDF exports."""
+    if extension not in ("docx", "pdf"):
+        raise ValueError("Only DOCX or PDF report filename extensions are supported.")
+    raw = f"{draft.profile.contract} - {draft.profile.title} {draft.period.label} Monthly Report"
+    # A display name must not create a path, response-header line or invalid UTF-8.
+    title = re.sub(r'[\\/:*?"<>|\x00-\x1f\x7f-\x9f\ud800-\udfff]', "-", raw).strip(" .")
+    # Reserve room for .docx for *both* outputs, so Word and PDF share a stem.
+    stem_bytes = MAX_REPORT_FILENAME_BYTES - len(".docx")
+    if len(title.encode("utf-8")) > stem_bytes:
+        digest = hashlib.sha256(raw.encode("utf-8", "backslashreplace")).hexdigest()[:12]
+        ending = f" [{digest}] {draft.period.label} Monthly Report"
+        budget = stem_bytes - len(ending.encode("utf-8"))
+        if budget <= 0:
+            raise ValueError("Report period is too long for a safe export filename.")
+        prefix = re.sub(r'[\\/:*?"<>|\x00-\x1f\x7f-\x9f\ud800-\udfff]', "-",
+                        f"{draft.profile.contract} - {draft.profile.title}").strip(" .")
+        prefix = prefix.encode("utf-8")[:budget].decode("utf-8", "ignore").rstrip(" .")
+        title = prefix + ending
     return f"{title}.{extension}"
 
 
