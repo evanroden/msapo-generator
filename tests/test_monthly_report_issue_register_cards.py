@@ -10,9 +10,11 @@ from app.monthly_report_docx import assemble_docx
 from app.monthly_report_issue_register import mapped_issue_register
 from app.monthly_report_issues import canonical_issues
 from app.monthly_report_model import (
-    ReportFollowUp, ReportPeriod, ReportTable, ResolvedBlock, synthetic_draft, synthetic_profiles,
+    ReportFollowUp, ReportPeriod, ReportSource, ReportTable, ResolvedBlock,
+    default_sections, synthetic_draft, synthetic_profiles,
 )
 from app.monthly_report_setup import merge_drafts
+from app.monthly_report_sources import source_reference
 
 
 COLUMNS = ("Issue", "Owner", "Reported Date", "Status", "Action", "Client Detail")
@@ -23,12 +25,17 @@ ROWS = (
 
 
 def report():
-    source = synthetic_draft(synthetic_profiles()[0], ReportPeriod(2026, 9))
+    draft = synthetic_draft(synthetic_profiles()[0], ReportPeriod(2026, 9))
+    source = ReportSource(
+        "register-source", "synthetic-issue-register.pdf", "f" * 64, ".pdf",
+        page_texts=("Synthetic issue register with two rows.",),
+    )
     block = ResolvedBlock("equipment_issues", "Last month",
-        extra_tables=(ReportTable(COLUMNS, ROWS, "source:register-01"),),
+        extra_tables=(ReportTable(COLUMNS, ROWS, source_reference(source, 1)),),
         references=("docx:" + "f" * 64 + ":word-table-1",))
-    return replace(source, blocks=tuple(
-        block if value.key == block.key else value for value in source.blocks))
+    return replace(draft,
+        sections=tuple(section for section in default_sections() if section.key == "issues"),
+        blocks=(block,), sources=(source,))
 
 
 def test_recognized_open_closed_and_unmapped_columns_are_reviewable():
