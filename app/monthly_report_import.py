@@ -585,6 +585,15 @@ def inspect_docx(path: Path) -> DocxInspection:
                             if part.startswith(("word/header", "word/footer")):
                                 _remove_page_field_results(element, page_fields)
                             text = _text(element)
+                            # Some Word producers emit text frames without the
+                            # DrawingML/VML wrappers inventoried below. Their labels
+                            # are layout evidence, not ordinary narrative or headings.
+                            standalone_frame = (element.tag != W + "tbl"
+                                and any(node.tag == W + "txbxContent" for node in element.iter())
+                                and not any(node.tag in (V + "group", V + "shape", V + "rect")
+                                    or (node.tag == A + "graphicData"
+                                        and not node.get("uri", "").endswith("/picture"))
+                                    for node in element.iter()))
                             # Generic captions may use only text outside native frame
                             # subtrees. Inner labels belong to their own occurrences.
                             frame_nodes = ({node for node in element.iter() if node.tag in _NATIVE_CAPTION_FRAMES}
@@ -604,7 +613,10 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 section, content_slot = note_owners.get((kind, identity), ("unmatched", ""))
                                 source_note = kind + ":" + identity
                             detected = None
-                            if part == "word/document.xml" and element.tag != W + "tbl":
+                            if standalone_frame:
+                                heading_fragments = []
+                                heading_positions = []
+                            if part == "word/document.xml" and element.tag != W + "tbl" and not standalone_frame:
                                 if "tableofcontents" in re.sub(r"[^a-z]", "", text.casefold()):
                                     toc_section, section, heading_fragments = word_section, "", []
                                     heading_positions = []
@@ -648,7 +660,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                                     source_note = "Native section heading"
                                 section = detected
                                 content_slot = ""
-                            compact_text = re.sub(r"[^a-z]", "", text.casefold())
+                            compact_text = "" if standalone_frame else re.sub(r"[^a-z]", "", text.casefold())
                             if section == "activity":
                                 if compact_text in ("workorderstatus", "pmstatus"):
                                     content_slot = "work_orders"
@@ -688,11 +700,27 @@ def inspect_docx(path: Path) -> DocxInspection:
                                             raise ImportError("Table is too wide to review safely.")
                                         cells.extend([""] * (count - 1))
                                     rows.append(tuple(cells))
-                                if rows and not picture_table:
+                                # Cell text extraction cannot represent floating frames or
+                                # non-picture drawings. Keep this source occurrence in review
+                                # instead of offering a flattened, editable replacement.
+                                complex_table = any(
+                                    node.tag in (W + "txbxContent", V + "group")
+                                    or (node.tag == A + "graphicData"
+                                        and not node.get("uri", "").endswith("/picture"))
+                                    for node in element.iter())
+                                if complex_table:
+                                    add("unsupported", part, position, text=text,
+                                        note="Word table contains text boxes or unsupported drawings and needs manual layout review. "
+                                             "Retain its source page or add a reviewed replacement; extracted text does not preserve the layout.")
+                                elif rows and not picture_table:
                                     width = max(map(len, rows))
                                     rows = tuple(row + ("",) * (width - len(row)) for row in rows)
                                     add("table", part, position, rows=rows, suggested_slot=content_slot or _suggest("table", text, section),
                                         note="Merged cells retain text in the first column of their span. Confirm headers and columns.")
+                            elif standalone_frame:
+                                add("unsupported", part, position, text=text,
+                                    note="Word text frame needs manual layout review. Preserve and review its complete page "
+                                         "or add a reviewed replacement; extracted labels do not preserve the layout.")
                             elif text:
                                 add("text", part, position, text=text, note=source_note, suggested_slot=(content_slot if content_slot and not detected else _suggest("text", text, section, heading=bool(detected), part=part)))
                                 if part == "word/document.xml" and not section and len(titles) < 12:

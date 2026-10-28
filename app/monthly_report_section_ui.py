@@ -188,9 +188,12 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
         guide = section_help(section.key)
         st.write(guide.guidance)
         from app.monthly_report_content_kind import section_content_description
-        content_description = section_content_description(section.items)
+        content_description = section_content_description(section.items, section_key=section.key)
         if content_description:
             st.caption(content_description)
+        if any(item.kind == "unsupported" and item.position > 0 for item in section.items):
+            st.caption("Layout review is required; extracted labels do not make a drawing editable. "
+                       "Check its original page or use the existing replacement controls.")
         actions = ["Keep and review", "Edit text or change pictures", "Leave this section out"]
         labels = dict(zip(actions, (guide.keep, guide.edit, "Start this section blank")))
         if section.key == "cover":
@@ -1131,14 +1134,8 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                           source_view=source_view, profile=candidate)
     with st.expander("Review what will be carried across (optional)", key=p + "_check_import", on_change="rerun") as details:
         if details.open:
-            for section in sections:
-                if section not in questions:
-                    plan = plans[section.key]
-                    has_content = any(plan.get(key) for key in ("selected", "new_assets", "preserved_assets"))
-                    status = "ready" if has_content else "starts blank"
-                    if not plan.get("approved") or plan.get("questions"):
-                        status = "needs review"
-                    st.caption(section.title + " · " + status)
+            from app.monthly_report_carryover_summary import render_carryover_summary
+            render_carryover_summary(sections, plans)
     remaining = [s.title for s in sections if not plans.get(s.key, {}).get("approved")]
     todo = [*missing, *(["Review these sections: " + "; ".join(remaining) + "."] if remaining else [])]
     if fallback_error:

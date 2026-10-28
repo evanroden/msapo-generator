@@ -28,6 +28,9 @@ on:
       - 'scripts/qa_po_adaptive.py'
       - 'scripts/qa_monthly_adaptive.py'
       - 'scripts/qa_monthly_literal_labels.py'
+      - 'scripts/qa_import_picture_alt.py'
+      - 'tests/test_import_picture_accessibility.py'
+      - 'tests/import_picture_accessibility_test.cjs'
       - 'scripts/qa_work_order_rows.py'
       - 'tests/test_work_order_row_browser_contract.py'
       - 'scripts/qa_browser_diagnostics.py'
@@ -192,6 +195,9 @@ on:
       - 'scripts/qa_po_adaptive.py'
       - 'scripts/qa_monthly_adaptive.py'
       - 'scripts/qa_monthly_literal_labels.py'
+      - 'scripts/qa_import_picture_alt.py'
+      - 'tests/test_import_picture_accessibility.py'
+      - 'tests/import_picture_accessibility_test.cjs'
       - 'scripts/qa_work_order_rows.py'
       - 'tests/test_work_order_row_browser_contract.py'
       - 'scripts/qa_browser_diagnostics.py'
@@ -432,13 +438,21 @@ jobs:
           python scripts/ci_native_test_budget.py --minutes 10 <<'NATIVE_TEST'
           python scripts/qa_monthly_literal_labels.py
           NATIVE_TEST
+      - name: Imported images have their own caption as accessible name
+        timeout-minutes: 6
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 5 <<'NATIVE_TEST'
+          python scripts/qa_import_picture_alt.py
+          NATIVE_TEST
       - name: Upload literal-label evidence immediately, including first failures
         if: always()
         timeout-minutes: 3
         uses: actions/upload-artifact@v4
         with:
           name: monthly-literal-label-browser-evidence
-          path: test-artifacts/monthly-literal-labels/
+          path: |
+            test-artifacts/monthly-literal-labels/
+            test-artifacts/import-picture-alt/
           retention-days: 7
           if-no-files-found: warn
   synthetic-progress-photos:
