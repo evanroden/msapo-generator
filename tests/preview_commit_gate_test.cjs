@@ -338,3 +338,88 @@ test('a label click and its forwarded input click agree ('+(selected?'already se
     assert.equal(h.sent.length,selected?2:0);
     h.cleanup();
 });
+
+
+test('old workspace cleanup cannot evict a newer live native editor gate',()=>{
+    // During a site/report switch Streamlit may mount a new keyed workspace
+    // before disposing the old preview. Both editors share the same stApp,
+    // but their gate ownership and full-render receipts are independent.
+    const app=new Element(),oldWorkspace=new Element(),nextWorkspace=new Element();
+    const oldPair=new Element(),nextPair=new Element();
+    app.setAttribute('data-test-script-state','notRunning');
+    oldWorkspace.dataset.epcFullRender='old-before';
+    nextWorkspace.dataset.epcFullRender='new-before';
+    const document=new Element(),window={devicePixelRatio:1},timers=new Map(),sent=[];
+    const intersections=[],mutations=[];let seq=0;
+    document.createElement=tag=>new Element(tag);
+    class Intersection {constructor(callback){this.callback=callback;intersections.push(this);}observe(){}disconnect(){}}
+    class Mutation {constructor(callback){this.callback=callback;mutations.push(this);}observe(){}disconnect(){}}
+    class Resize {constructor(callback){this.callback=callback;}observe(){}disconnect(){}}
+    const context={window,document,Map,JSON,Array,Number,Math,String,Boolean,
+        IntersectionObserver:Intersection,MutationObserver:Mutation,ResizeObserver:Resize,
+        setTimeout:(callback,delay)=>{timers.set(++seq,{callback,delay});return seq;},
+        clearTimeout:id=>timers.delete(id)};
+    const code=fs.readFileSync('app/monthly_report_preview_view.py','utf8').split('JS = r"""\n')[1].split('\n"""')[0];
+    const render=vm.runInNewContext('('+code.replace('export default function','function')+')',context);
+    const mount=(workspace,pair,where)=>{
+        const {root,panel}=dom();
+        root.closest=selector=>selector==='[data-testid="stApp"]'?app:
+            selector==='[class*="st-key-epc_workspace_"]'?workspace:
+            selector==='[class*="st-key-epc_pair_"]'?pair:null;
+        const cleanup=render({parentElement:root,data:{generation:'one',
+            viewScope:where,pages:[],sizes:[],ready:false},
+            setStateValue:(name,value)=>sent.push({where,name,value})});
+        return {cleanup,panel};
+    };
+    const fire=()=>{
+        for(const [id,item] of [...timers]){
+            if(item.delay===120){timers.delete(id);item.callback();}
+        }
+    };
+    const old=mount(oldWorkspace,oldPair,'old|activity');
+    const map=window.__enfraPreviewNativeEditGates,oldGate=map.get(app);
+    assert.ok(oldGate);assert.equal(oldGate.refs,1);
+    const first=mount(nextWorkspace,nextPair,'new|activity');
+    const current=map.get(app);
+    assert.ok(current&&current!==oldGate);
+    assert.equal(current.refs,1);
+    assert.equal(app.listeners.get('change').size,2,
+        'old gate exists briefly until its old preview is disposed');
+
+    old.cleanup(); // old mounted preview unmounts AFTER the new gate exists
+    assert.equal(map.get(app),current,
+        'retiring an older gate must not delete the new workspace ownership');
+    assert.equal(app.listeners.get('change').size,1);
+    const second=mount(nextWorkspace,nextPair,'new|evidence');
+    assert.equal(map.get(app),current,
+        'a new sibling preview must reuse the existing new-workspace gate');
+    assert.equal(current.refs,2);
+    assert.equal(app.listeners.get('change').size,1,
+        'gate must not create a second native editor input/change listener');
+
+    // The new gate still blocks view traffic during an actual native edit.
+    const target={type:'text',matches:s=>s==='input,textarea,select',closest:()=>null};
+    for(const listener of app.listeners.get('change'))listener({target});
+    assert.equal(current.pending,true);assert.equal(current.blockAll,true);
+    // Select each newly visible reference and drain only normal viewport timers.
+    intersections[1].callback([{isIntersecting:true}]);
+    intersections[2].callback([{isIntersecting:true}]);
+    fire();
+    assert.equal(sent.filter(x=>x.name==='viewport'&&x.value.visible).length,0,
+        'no visible reference may overtake the full editor commit');
+
+    nextWorkspace.dataset.epcFullRender='new-after-native-edit';
+    for(const observer of mutations)observer.callback();
+    assert.equal(current.pending,false,'only the new workspace receipt releases its hold');
+    fire();
+    assert.equal(sent.filter(x=>x.name==='viewport'&&x.value.visible).length,2,
+        'both new-workspace previews may resume only after that receipt');
+
+    first.cleanup();
+    assert.equal(map.get(app),current);
+    assert.equal(current.refs,1);
+    second.cleanup();
+    assert.equal(map.get(app),undefined);
+    assert.equal(app.listeners.get('change').size,0);
+    assert.equal(timers.size,0);
+});
