@@ -8,6 +8,7 @@ from hashlib import sha256
 from io import BytesIO
 import multiprocessing
 import os
+import sys
 
 from PIL import Image
 import pymupdf
@@ -67,6 +68,18 @@ def _competing_writer(root, contract, key, writer, ready, start, results):
     except library.RevisionConflict:
         # The losing caller still owns its unsaved edit for normal recovery UI.
         results.put((writer, "conflict", saved.revision, candidate.prepared_by))
+
+
+def _start_spawned_workers(monkeypatch, children):
+    # Full-suite Streamlit AppTest can leave __main__.__file__ pointing at a
+    # generated UI script. Spawn would execute that script outside Streamlit,
+    # fail before entering our worker, and leave the IPC queue empty.
+    # Bootstrap from this side-effect-free test module instead. This preserves
+    # fresh interpreters and leaves the parent's __main__ unchanged.
+    with monkeypatch.context() as temporary:
+        temporary.setattr(sys.modules["__main__"], "__file__", __file__, raising=False)
+        for child in children:
+            child.start()
 
 
 def _finish(children):
@@ -129,7 +142,7 @@ def test_fresh_process_reopens_scoped_originals_and_pinned_reports_after_rollove
     results = context.Queue()
     child = context.Process(target=_fresh_reader, args=(tmp_path, scopes, results))
     try:
-        child.start()
+        _start_spawned_workers(monkeypatch, (child,))
         assert results.get(timeout=30) == expected
         child.join(timeout=10)
         assert child.exitcode == 0
@@ -155,8 +168,7 @@ def test_independent_process_writers_preserve_the_winner_history_and_losing_edit
                 args=(tmp_path, profile.contract, profile.key, name, ready, start, results))
                 for name in ("Synthetic editor A", "Synthetic editor B")]
     try:
-        for child in children:
-            child.start()
+        _start_spawned_workers(monkeypatch, children)
         assert {ready.get(timeout=30) for _ in children} == {"Synthetic editor A", "Synthetic editor B"}
         start.set()
         outcomes = [results.get(timeout=30) for _ in children]
