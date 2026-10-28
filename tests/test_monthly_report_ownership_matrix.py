@@ -41,6 +41,8 @@ def test_complete_scope_matrix_has_unique_sources_and_known_decision_vocabulary(
         assert item["default"] in MATRIX["inheritance_values"], item["id"]
         assert item["promotion"] in MATRIX["promotion_values"], item["id"]
         assert item["next_month"] in MATRIX["next_month_values"], item["id"]
+        assert item["version_conflict"] in MATRIX["override_conflict_values"], item["id"]
+        assert len(item["report_override"].strip()) >= 45, item["id"]
         assert len(item["notes"].strip()) >= 40
         assert item["source"].strip() and item["label"].strip()
         assert item["code"] and all((ROOT / path).is_file() for path in item["code"])
@@ -77,6 +79,12 @@ def test_no_proposed_or_unapproved_standing_content_is_automatically_promoted():
                                          "decision_required", "not_applicable"}
     for name in ("subcontractor_contacts", "capital_renewal", "org_chart"):
         assert ITEMS[name]["promotion"] == "approved_shared_save"
+        assert ITEMS[name]["version_conflict"] == "proposed_standing_cas"
+    for name in ("facility_contacts", "thermal_capacity", "training_requirements"):
+        assert ITEMS[name]["version_conflict"] == "standing_cas"
+    for name in ("issues", "proposals", "training_events", "monthly_attachments"):
+        assert ITEMS[name]["version_conflict"] == "report_cas"
+    assert ITEMS["source_originals"]["version_conflict"] == "immutable_sha256"
     assert ITEMS["source_originals"]["scope"] == "source_archive"
     assert ITEMS["source_originals"]["default"] == "never_automatic"
 
@@ -119,7 +127,8 @@ def test_markdown_is_complete_and_explicitly_rejects_unauthorized_migration():
     for case in MATRIX["scenarios"]:
         assert "### " + case["id"] in content
     for required in ("Open choices", "not a production data migration",
-                     "original", "version", "Omit", "source", "scope"):
+                     "original", "version", "Omit", "source", "scope",
+                     "Report override", "Conflict rule"):
         assert required.casefold() in content.casefold()
     assert len(MATRIX["global_safety_invariants"]) >= 6
     assert any("contract B" in item for item in MATRIX["global_safety_invariants"])
