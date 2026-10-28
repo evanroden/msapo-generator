@@ -286,3 +286,44 @@ def test_real_pdf_renders_shared_vendor_contact_once_without_other_sites(monkeyp
         assert all_text.count("Synthetic Vendor North") == 1
         assert "Synthetic Vendor South" not in all_text
         assert "Sub-Contractor Status" in all_text
+
+
+def test_ambiguous_site_headers_and_unapproved_scope_fail_closed(monkeypatch, tmp_path):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    north = profile("Synthetic Contract A")
+    ambiguous = ReportTable(
+        ("Facility", "Site", "Vendor", "Contact"),
+        ((north.facilities[0].title, north.facilities[0].title,
+          "Synthetic vendor", "Synthetic contact"),))
+    with pytest.raises(ValueError, match="several possible site headings"):
+        publish(north, ResolvedBlock("subcontractor_matrix", "This month",
+                                    extra_tables=(ambiguous,)))
+    with pytest.raises(ValueError, match="explicitly selected"):
+        publish(north, rows(row(north.facilities[0].title, "Vendor")),
+                site_keys=("south",))
+    assert load_rosters(north.contract).revision == 0
+
+
+def test_site_name_variants_cannot_escape_selected_site_and_all_sites_stays_shared(
+        monkeypatch, tmp_path):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    both = profile("Synthetic Contract A", "all-sites", ("north", "south"))
+    table = ReportTable(
+        ("Facility / Site", "Vendor", "Status"),
+        (("All sites", "Shared Vendor", ""),
+         ("Demo North", "North Vendor", "0"),
+         ("Demo South", "South Vendor", "Not recorded")),
+        "synthetic:source:sites",
+    )
+    # A compound Site/Facility heading cannot automatically leak South's row
+    # into a North-only report, even after the shared version is updated.
+    for column in ("Facility Name", "Site / Facility"):
+        revised = replace(table, columns=(column, *table.columns[1:]))
+        state = publish(both, ResolvedBlock("subcontractor_matrix", "This month",
+            extra_tables=(revised,)), revision=load_rosters(both.contract).revision)
+        north = profile("Synthetic Contract A")
+        visible = apply_roster(state, state.entries[-1], north,
+            ResolvedBlock("subcontractor_matrix", "Omit"), NATIVE_SPEC)
+        flattened = str(visible.extra_tables)
+        assert "Shared Vendor" in flattened and "North Vendor" in flattened
+        assert "South Vendor" not in flattened
