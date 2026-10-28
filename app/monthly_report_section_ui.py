@@ -11,6 +11,8 @@ import streamlit as st
 from app import monthly_report_library as library
 from app.monthly_report_content_policy import contains_price, table_has_pricing
 from app.monthly_report_docx import normalize_report_image
+from app.monthly_report_cover_images import image_byte_limit, read_picture_upload, normalize_cover_photo
+from app.monthly_report_upload_limits import uploader_limit_mib, byte_limit_label
 from app.monthly_report_editor import _grid, _key, _signature
 from app.monthly_report_import import imported_draft
 from app.monthly_report_import_ui import _stage
@@ -123,12 +125,25 @@ def _replacement_pictures(section, p, plan):
     use_key = p + "_new_cover_photo_use"
     pending_use = st.session_state.pop(use_key, "") if section.key == "cover" else ""
     for slot, label in labels.items():
-        upload = st.file_uploader(label, type=["png", "jpg", "jpeg", "heic", "heif", "webp"], key=p + "_replacement_" + slot, max_upload_size=30)
+        is_cover_photo = slot == "cover_photo"
+        upload = st.file_uploader(label, type=["png", "jpg", "jpeg", "heic", "heif", "webp"],
+                                  key=p + "_replacement_" + slot,
+                                  max_upload_size=uploader_limit_mib(image_byte_limit(cover_photo=is_cover_photo)),
+                                  help=f"Up to {byte_limit_label(image_byte_limit(cover_photo=True))} and 40 million pixels; large photos may need resizing when the service is busy."
+                                       if is_cover_photo else None)
         if upload:
             try:
-                replacements[slot] = normalize_report_image(upload.getvalue(), Path(upload.name).suffix, line_art=section.key == "organization" or slot.endswith("logo"))
-            except (ValueError, OSError):
-                st.error("This picture could not be read. Choose another image; your previous selection is retained.")
+                if is_cover_photo:
+                    raw = read_picture_upload(upload, cover_photo=True)
+                    replacements[slot] = normalize_cover_photo(raw, Path(upload.name).suffix)
+                else:
+                    replacements[slot] = normalize_report_image(upload.getvalue(), Path(upload.name).suffix, line_art=section.key == "organization" or slot.endswith("logo"))
+            except (ValueError, OSError) as exc:
+                if is_cover_photo:
+                    from app.monthly_report_cover_ui import _picture_error
+                    st.error(_picture_error(exc))
+                else:
+                    st.error("This picture could not be read. Choose another image; your previous selection is retained.")
         if slot in replacements:
             if slot == "cover_photo" and pending_use:
                 if hashlib.sha256(replacements[slot].data).hexdigest() == pending_use:

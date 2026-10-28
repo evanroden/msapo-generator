@@ -5,6 +5,8 @@ on:
     paths:
       - 'app/monthly_report_native_loading.py'
       - 'app/monthly_report_setup.py'
+      - 'app/workspace_layout.js'
+      - 'app/workspace_navigation.js'
       - 'scripts/qa_monthly_period_first_paint.py'
       - 'tests/fixtures/workspaces/period_mount_app.py'
       - 'tests/test_monthly_report_native_loading.py'
@@ -15,6 +17,8 @@ on:
     paths:
       - 'app/monthly_report_native_loading.py'
       - 'app/monthly_report_setup.py'
+      - 'app/workspace_layout.js'
+      - 'app/workspace_navigation.js'
       - 'scripts/qa_monthly_period_first_paint.py'
       - 'tests/fixtures/workspaces/period_mount_app.py'
       - 'tests/test_monthly_report_native_loading.py'

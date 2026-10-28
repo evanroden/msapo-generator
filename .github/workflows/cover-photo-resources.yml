@@ -1,0 +1,102 @@
+name: Cover photograph resources
+
+on:
+  pull_request:
+    paths:
+      - 'app/monthly_report_cover*.py'
+      - 'app/monthly_report_docx.py'
+      - 'app/monthly_report_section_ui.py'
+      - 'app/monthly_report_render_jobs.py'
+      - 'app/monthly_report_upload_limits.py'
+      - 'app/ocr.py'
+      - 'scripts/qa_cover_photo_resources.py'
+      - 'tests/test_cover_photo_size_limits.py'
+      - 'Dockerfile'
+      - 'requirements*.txt'
+      - 'requirements*.lock'
+      - '.github/workflows/cover-photo-resources.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'app/monthly_report_cover*.py'
+      - 'app/monthly_report_docx.py'
+      - 'app/monthly_report_section_ui.py'
+      - 'app/monthly_report_render_jobs.py'
+      - 'app/monthly_report_upload_limits.py'
+      - 'app/ocr.py'
+      - 'scripts/qa_cover_photo_resources.py'
+      - 'tests/test_cover_photo_size_limits.py'
+      - 'Dockerfile'
+      - 'requirements*.txt'
+      - 'requirements*.lock'
+      - '.github/workflows/cover-photo-resources.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cover-photo-resources:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build complete production image
+        run: docker build --tag msapo-cover-resource-check .
+      - name: Generate bounded synthetic codec fixtures outside the measured process
+        run: |
+          mkdir -p test-artifacts/cover-fixtures test-artifacts/cover-resources
+          timeout 180 docker run --name msapo-cover-generator \
+            --memory=1536m --memory-swap=1536m --cpus=2 \
+            --mount type=tmpfs,destination=/tmp,tmpfs-size=268435456 \
+            --volume "$PWD/test-artifacts/cover-fixtures:/fixtures" \
+            --entrypoint python msapo-cover-resource-check \
+            scripts/qa_cover_photo_resources.py --generate /fixtures
+          test "$(docker inspect --format='{{.State.OOMKilled}}' msapo-cover-generator)" = false
+          test "$(du -sb test-artifacts/cover-fixtures | cut -f1)" -lt 470810624
+      - name: Exercise encoded limits, retained visitors, decoder refusals and report-slot retry
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_case() {
+            name="$1"; file="$2"; visitors="$3"; expected="$4"; shift 4
+            set +e
+            timeout 180 docker run --name "msapo-cover-$name" \
+              --memory=512m --memory-swap=512m --cpus=0.5 \
+              --env RESOURCE_REQUIRE_512_MB=1 --env ANTHROPIC_API_KEY=test-key-not-used \
+              --volume "$PWD/test-artifacts/cover-fixtures:/fixtures:ro" \
+              --entrypoint python msapo-cover-resource-check scripts/qa_cover_photo_resources.py \
+              --probe "/fixtures/$file" --concurrent "$visitors" --expect "$expected" "$@" \
+              2>&1 | tee "test-artifacts/cover-resources/$name.log"
+            status=${PIPESTATUS[0]}
+            set -e
+            test "$(docker inspect --format='{{.State.OOMKilled}}' "msapo-cover-$name")" = false
+            test "$status" -eq 0
+          }
+          run_case png-one large.png 1 success
+          run_case png-two large.png 2 safe
+          run_case jpeg-one large.jpg 1 success
+          run_case jpeg-two large.jpg 2 success
+          run_case webp-one large.webp 1 memory
+          run_case webp-two large.webp 2 memory
+          run_case heif-one large.heic 1 memory
+          run_case heif-two large.heic 2 memory
+          run_case progressive-444-one progressive-444.jpg 1 memory
+          run_case progressive-444-two progressive-444.jpg 2 memory
+          run_case progressive-420-one progressive-420.jpg 1 memory
+          run_case progressive-420-two progressive-420.jpg 2 memory
+          run_case progressive-gray-one progressive-gray.jpg 1 success
+          run_case progressive-gray-two progressive-gray.jpg 2 memory
+          run_case report-slot-retry large.jpg 2 success --slot-retry
+      - name: Retain measurements and refusal evidence (no source images)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cover-photograph-resource-measurements
+          path: test-artifacts/cover-resources/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Remove probe containers
+        if: always()
+        run: |
+          docker ps --all --quiet --filter 'name=msapo-cover-' | xargs -r docker rm --force

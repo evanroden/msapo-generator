@@ -10,6 +10,8 @@ import streamlit as st
 from app import monthly_report_library as library
 from app.monthly_report_asset_review import preserve_asset_reviews
 from app.monthly_report_docx import normalize_report_image
+from app.monthly_report_cover_images import image_byte_limit, read_picture_upload, normalize_cover_photo
+from app.monthly_report_upload_limits import byte_limit_label, uploader_limit_mib
 from app.monthly_report_editor import _signature
 from app.monthly_report_model import ResolvedBlock, picture_replacement_references
 
@@ -23,8 +25,9 @@ PICTURES = (
 
 def replace_cover_picture(block, data, suffix, assets):
     """Replace only the requested slot; identical artwork keeps its review."""
-    image = normalize_report_image(data, suffix, line_art=block.key != "cover_photo",
-                                   preserve_transparency=block.key in ("brand_logo", "client_logo"))
+    image = (normalize_cover_photo(data, suffix) if block.key == "cover_photo" else
+             normalize_report_image(data, suffix, line_art=True,
+                                    preserve_transparency=block.key in ("brand_logo", "client_logo")))
     reference = library.asset_reference(image.data, image.extension)
     assets[reference] = image.data
     if block.source != "Omit" and block.asset_hashes == (reference,):
@@ -64,18 +67,25 @@ def render_cover_photograph(blocks, prefix, assets, asset_loader, *, scope):
                 st.warning("The current photograph could not be displayed. Choose a replacement or leave it out.")
         upload = st.file_uploader(
             "New photograph for this report", type=["png", "jpg", "jpeg", "heic", "heif", "webp"],
-            max_upload_size=30, key=prefix + "_cover_photograph_upload_" + identity,
-            help="PNG, JPEG, HEIC, HEIF or WebP, up to 30 MB. The current photograph stays until you use the replacement.",
+            max_upload_size=uploader_limit_mib(image_byte_limit(cover_photo=True)),
+            key=prefix + "_cover_photograph_upload_" + identity,
+            help=_picture_help(cover_photo=True),
         )
         if upload:
-            raw, suffix = upload.getvalue(), Path(upload.name).suffix
+            try:
+                raw = read_picture_upload(upload, cover_photo=True)
+            except (ValueError, OSError) as exc:
+                st.error(_picture_error(exc))
+                raw = None
+        if upload and raw is not None:
+            suffix = Path(upload.name).suffix
             source = _signature((identity, sha256(raw).hexdigest(), suffix))
             use = st.button("Use this photograph", key=prefix + "_cover_photograph_use_" + source)
             if use and st.session_state.get(cycle_key) == cycle:
                 try:
                     result["cover_photo"] = replace_cover_picture(block, raw, suffix, assets)
-                except (ValueError, OSError):
-                    st.error("This photograph could not be read. Choose another image; the current photograph is retained.")
+                except (ValueError, OSError) as exc:
+                    st.error(_picture_error(exc))
                 else:
                     st.session_state[cycle_key] = {"scope": scope, "token": uuid4().hex}
                     # Redraw only after the caller commits every editor field
@@ -98,17 +108,34 @@ def _set_action(key, action):
     st.session_state[key] = action
 
 
+def _picture_help(*, cover_photo=False):
+    return ("PNG, JPEG, HEIC, HEIF or WebP, up to "
+            + byte_limit_label(image_byte_limit(cover_photo=cover_photo))
+            + ". Single image, at most 40 million pixels. Your current artwork stays until you use the replacement.")
+
+
+def _picture_error(exc):
+    # Show our actionable validation messages, not arbitrary decoder internals.
+    message = str(exc)
+    if isinstance(exc, ValueError) and message.startswith(("Choose ", "Image is too large", "This image is empty", "Another report", "This photograph needs more memory")):
+        return message
+    return "This picture could not be read. Export a fresh PNG or JPEG; your current artwork is retained."
+
+
 def _upload_picture(block, title, prefix, assets):
     noun = title if title.startswith("ENFRA") else title.lower()
     upload = st.file_uploader(
         "New " + noun, type=["png", "jpg", "jpeg", "heic", "heif", "webp"],
         key=prefix + "_upload_" + block.key,
+        max_upload_size=uploader_limit_mib(image_byte_limit(cover_photo=block.key == "cover_photo")),
+        help=_picture_help(cover_photo=block.key == "cover_photo"),
     )
     if upload and st.button("Use this " + noun, key=prefix + "_use_" + block.key):
         try:
-            block = replace_cover_picture(block, upload.getvalue(), Path(upload.name).suffix, assets)
-        except (ValueError, OSError):
-            st.error("This picture could not be read. Choose another image; your current artwork is retained.")
+            raw = read_picture_upload(upload, cover_photo=block.key == "cover_photo")
+            block = replace_cover_picture(block, raw, Path(upload.name).suffix, assets)
+        except (ValueError, OSError) as exc:
+            st.error(_picture_error(exc))
         else:
             st.success(title + " updated in this draft. Save progress to keep the change.")
     return block
