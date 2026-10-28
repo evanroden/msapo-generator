@@ -382,6 +382,74 @@ def _spreadsheet(raw: bytes, suffix: str) -> tuple[SourceTable, ...]:
         workbook.close()
 
 
+def _cached_extraction(data, digest, suffix):
+    """Decode only disposable extraction records, without coercing bad JSON shapes."""
+    def sequence(value):
+        if not isinstance(value, list):
+            raise ValueError("Invalid source extraction cache sequence.")
+        return value
+
+    for name in ("client_page_policy", "native_action_policy", "vendor_passage_policy"):
+        if type(data.get(name, 0)) is not int or data.get(name, 0) < 0:
+            raise ValueError("Invalid source extraction cache policy.")
+    record = data["source"]
+    if not isinstance(record, dict):
+        raise ValueError("Invalid source extraction cache record.")
+    source = library.source_from_dict(record)
+    if (source.id, source.sha256, source.suffix) != (digest, digest, suffix):
+        raise ValueError("Source extraction cache identity changed.")
+    for name, value in asdict(source).items():
+        if isinstance(value, tuple):
+            sequence(record.get(name, []))
+        elif not isinstance(value, str):
+            raise ValueError("Invalid source extraction cache text.")
+    if any(not isinstance(text, str) for name in ("tags", "page_texts", "notices")
+           for text in getattr(source, name)):
+        raise ValueError("Invalid source extraction cache text.")
+    if any(type(page) is not int or not 1 <= page <= len(source.page_texts)
+           for name in ("selected_pages", "needs_vision") for page in getattr(source, name)):
+        raise ValueError("Invalid source extraction cache page.")
+    for name in ("captions", "client_page_reviews", "client_page_exclusions"):
+        if any(not isinstance(pair, list) or len(pair) != 2 or type(pair[0]) is not int
+               or not isinstance(pair[1], str) for pair in record.get(name, [])):
+            raise ValueError("Invalid source extraction cache page metadata.")
+    tables = []
+    for table in sequence(data.get("tables", [])):
+        columns = sequence(table["columns"])
+        rows = sequence(table["rows"])
+        if (not isinstance(table["name"], str) or any(not isinstance(title, str) for title in columns)
+                or any(len(sequence(row)) != len(columns) or any(not isinstance(cell, str) for cell in row)
+                       for row in rows)):
+            raise ValueError("Invalid source extraction cache table.")
+        tables.append(SourceTable(table["name"], tuple(columns), tuple(tuple(row) for row in rows)))
+    if suffix in (".csv", ".xlsx") and (not tables or any(not table.columns for table in tables)):
+        raise ValueError("Invalid source extraction cache table.")
+    images = sequence(data.get("image_items", []))
+    if any(not isinstance(pair, list) or len(pair) != 2 or type(pair[0]) is not int
+           or not 1 <= pair[0] <= len(source.page_texts) or not isinstance(pair[1], str) for pair in images):
+        raise ValueError("Invalid source extraction cache image.")
+    return SourceContent(source, tuple(tables), tuple(tuple(pair) for pair in images))
+
+
+def _same_source_bytes(path, raw):
+    """Verify a cached original with bounded reads before skipping its republish."""
+    library._qa_path_guard(path)
+    if path.is_symlink():
+        return False
+    try:
+        with path.open("rb") as stored:
+            for offset in range(0, len(raw), 1024 * 1024):
+                chunk = raw[offset:offset + 1024 * 1024]
+                if stored.read(len(chunk)) != chunk:
+                    return False
+            matches = not stored.read(1)
+    except FileNotFoundError:
+        return False
+    if matches:
+        library._qa_path_guard(path)
+    return matches
+
+
 def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceContent, tuple[tuple[str, bytes], ...]]:
     """Cache local extraction. Caller enforces aggregate count/byte/text budgets."""
     from app.monthly_report_content_policy import suggested_pages
@@ -393,18 +461,27 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
     digest = hashlib.sha256(raw).hexdigest()
     path, cache = _path(profile, digest, suffix), _path(profile, digest, ".json")
     attachments = ()
+    rebuild_cache = False
     if cache.exists() and path.exists() and suffix not in (".eml", ".msg"):
-        data = library._read(cache)
-        source = library.source_from_dict(data["source"])
-        tables = tuple(SourceTable(t["name"], tuple(t["columns"]), tuple(tuple(r) for r in t["rows"])) for t in data.get("tables", ()))
-        if source.suffix == suffix and (suffix != ".pdf" or data.get("vendor_passage_policy", 0) >= 7):
+        library._qa_path_guard(cache)
+        try:
+            data = library._read(cache)
+            content = _cached_extraction(data, digest, suffix)
+        except (ValueError, TypeError, LookupError, AttributeError):
+            # Cache damage is recoverable; a stale/foreign QA namespace is not.
+            library._qa_path_guard(cache)
+            content = None
+        if content is not None and (suffix != ".pdf" or data.get("vendor_passage_policy", 0) >= 7):
+            source = content.source
             if data.get("client_page_policy", 0) < 1 and suffix not in (".csv", ".xlsx"):
                 source = replace(source, selected_pages=suggested_pages(source))
             if data.get("native_action_policy", 0) < 1:
                 # This is the original extraction cache, never a reviewed draft.
                 source = replace(source, actions="\n".join(line for line, _ in native_action_lines(source))[:6000])
-            return SourceContent(replace(source, filename=filename), tables, tuple(tuple(p) for p in data.get("image_items", ()))), ()
-    library._atomic_write(path, raw)
+            return replace(content, source=replace(source, filename=filename)), ()
+        rebuild_cache = True
+    if not rebuild_cache or not _same_source_bytes(path, raw):
+        library._atomic_write(path, raw)
     page_texts, needs_vision, tables, image_items, notices = [], [], (), [], []
     pdf_text_blocks = []
     span_budget_exceeded = False
