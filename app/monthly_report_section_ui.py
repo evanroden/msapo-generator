@@ -767,6 +767,12 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     if upload is not None and st.session_state.get(prefix + "_failed_digest") == digest:
         st.warning(st.session_state.get(prefix + "_failed_notice",
                   "This report could not be analyzed. Choose a valid DOCX or retry; your existing work was preserved."))
+        if failed_hash != digest:
+            # On the first rejected upload, the earlier Retry control did not
+            # exist when the digest was checked. Show it *now* rather than
+            # requiring a neutral second click/rerun to reveal recovery.
+            # On later renders the same keyed button was already mounted above.
+            st.button("Retry report analysis", key=prefix + "_retry_analysis")
         st.info("The newly selected file has not been analyzed. Retry or choose another file before continuing.")
         return True
     if not optional_import:
