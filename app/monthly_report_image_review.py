@@ -56,12 +56,39 @@ def prepare_bytes_review(scope, raw, suffix):
     return reserve_review(scope, digest, content)
 
 
+def _valid_review_digest(digest):
+    return (isinstance(digest, str) and len(digest) == 64
+            and all(c in "0123456789abcdef" for c in digest))
+
+
+def _cached_review_text(cache):
+    """An incomplete disposable result is a cache miss, not an approved read.
+
+    The report-wide usage ledger is separate and must never be reset on a miss.
+    """
+    if not cache.exists() or cache.is_symlink():
+        return None
+    try:
+        text = library._read(cache).get("text")
+    except (OSError, ValueError):
+        return None
+    return text if isinstance(text, str) and text.strip() and len(text) <= 40000 else None
+
+
 def reserve_review(scope, digest, content):
+    if not _valid_review_digest(digest):
+        raise ValueError("Invalid image review identity.")
     root = review_directory(scope)
     cache = root / (digest + ".json")
-    if cache.exists():
-        return digest, library._read(cache)["text"], None
+    cached = _cached_review_text(cache)
+    if cached is not None:
+        return digest, cached, None
     with library._locked(root):
+        # Another worker may have completed the same digest while this caller
+        # waited. Do not enqueue an unnecessary duplicate image-reading job.
+        cached = _cached_review_text(cache)
+        if cached is not None:
+            return digest, cached, None
         budget = root / "budget.json"
         value = library._read(budget) if budget.exists() else {"schema": 1, "images": []}
         if digest not in value["images"]:
@@ -73,6 +100,8 @@ def reserve_review(scope, digest, content):
 
 
 def complete_review(scope: str, digest: str, text: str):
-    if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+    if not _valid_review_digest(digest):
         raise ValueError("Invalid image review identity.")
+    if not isinstance(text, str) or not text.strip() or len(text) > 40000:
+        raise ValueError("Image reading was empty or exceeded its text budget. Review the image manually.")
     library._atomic_write(review_directory(scope) / (digest + ".json"), library._json({"schema": 1, "text": text}))
