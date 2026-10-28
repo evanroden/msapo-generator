@@ -227,3 +227,145 @@ def test_snapshot_reopen_preserves_unmapped_cells_and_no_implicit_repair(monkeyp
     assert loaded.draft.blocks[0].extra_tables[0].rows[0][-1] == "Unmapped original note"
     assert loaded.draft.blocks[0].text == "Independent note"
     assert saved.draft.blocks == loaded.draft.blocks
+
+
+
+def test_unheaded_source_content_is_an_actionable_blocker_instead_of_silent_loss():
+    original = ReportTable(
+        (), (("00123", "Pending renewal", "October context"),),
+        "synthetic-immutable-docx:9",
+    )
+    block = ResolvedBlock("capital_renewal", "This month",
+                          text="Keep independently authored note.",
+                          extra_tables=(original,))
+    draft = report(block)
+    warnings = tuple(c for c in preflight(draft)
+                     if c.code == "table_missing_columns")
+    assert len(warnings) == 1
+    assert warnings[0].blocking
+    assert warnings[0].block_key == "capital_renewal"
+    assert "Imported table 1" in warnings[0].message
+    assert "no column headings" in warnings[0].message
+    assert "Add headings" in warnings[0].message
+    assert failures(draft) == ()  # Not a *width* mismatch.
+    with pytest.raises(ValueError, match="no column headings"):
+        assemble_docx(draft, acknowledged_fingerprint=draft.fingerprint)
+    assert block.extra_tables == (original,)
+    assert block.text == "Keep independently authored note."
+    assert original.reference == "synthetic-immutable-docx:9"
+
+
+def test_failing_headerless_second_table_retains_a_good_first_table():
+    good = ReportTable(
+        ("Asset", "Status"), (("PUMP-01", "Open"),), "original:1")
+    missing = ReportTable(
+        (), (("BOILER-02", "Needs replacement"),), "original:2")
+    block = ResolvedBlock(
+        "capital_renewal", "This month",
+        extra_tables=(good, missing),
+    )
+    draft = report(block)
+    errors = tuple(c for c in preflight(draft)
+                   if c.code == "table_missing_columns")
+    assert len(errors) == 1
+    assert "Imported table 2" in errors[0].message
+    with pytest.raises(ValueError, match="Imported table 2"):
+        assemble_docx(draft, acknowledged_fingerprint=draft.fingerprint)
+    assert block.extra_tables == (good, missing)
+    assert good.rows == (("PUMP-01", "Open"),)
+
+
+def test_adding_reviewed_headings_prints_full_source_row_and_keeps_good_sibling():
+    good = ReportTable(
+        ("Asset", "Status"), (("PUMP-01", "Open"),), "original:1")
+    raw = ReportTable(
+        (), (("BOILER-02", "Needs replacement"),), "original:2")
+    old = ResolvedBlock("capital_renewal", "This month",
+                        text="Independently written capital context.",
+                        extra_tables=(good, raw))
+    assert any(c.code == "table_missing_columns" for c in preflight(report(old)))
+    reviewed = replace(raw, columns=("Asset", "Recommendation"))
+    new = replace(old, extra_tables=(good, reviewed))
+    draft = report(new)
+    assert not any(c.code in ("table_missing_columns", "table_columns")
+                   for c in preflight(draft))
+    result = Document(BytesIO(assemble_docx(
+        draft, acknowledged_fingerprint=draft.fingerprint)))
+    assert len(result.tables) == 2
+    assert tuple(c.text for c in result.tables[0].rows[1].cells) == (
+        "PUMP-01", "Open")
+    assert tuple(c.text for c in result.tables[1].rows[0].cells) == (
+        "Asset", "Recommendation")
+    assert tuple(c.text for c in result.tables[1].rows[1].cells) == (
+        "BOILER-02", "Needs replacement")
+    assert "Independently written capital context." in "\n".join(
+        paragraph.text for paragraph in result.paragraphs)
+    assert reviewed.reference == raw.reference
+    assert raw.columns == ()
+    assert raw.rows == reviewed.rows
+
+
+def test_all_empty_or_whitespace_only_headerless_rows_remain_unprinted_and_allowed():
+    empty = ReportTable((), (), "empty:1")
+    whitespace = ReportTable((), ((" ", "\t"), ("", "")), "empty:2")
+    block = ResolvedBlock("subcontractor_matrix", "This month",
+                          extra_tables=(empty, whitespace))
+    draft = report(block)
+    assert not any(c.code == "table_missing_columns" for c in preflight(draft))
+    assert block.extra_tables == (empty, whitespace)
+    # The writer intentionally skips these blank/no-header tables.
+    result = Document(BytesIO(assemble_docx(
+        draft, acknowledged_fingerprint=draft.fingerprint)))
+    assert len(result.tables) == 0
+
+
+def test_omit_or_excluded_section_keeps_headerless_source_in_draft_without_review_block():
+    missing = ReportTable((), (("Water vendor", "Category: chemical"),),
+                          "synthetic:3")
+    block = ResolvedBlock("subcontractor_matrix", "This month",
+                          extra_tables=(missing,), references=("synthetic:3",))
+    included = report(block)
+    assert any(c.code == "table_missing_columns" for c in preflight(included))
+    omitted = report(replace(block, source="Omit"))
+    excluded = report(block, included=False)
+    for item in (omitted, excluded):
+        assert not any(c.code == "table_missing_columns" for c in preflight(item))
+        assert item.blocks[0].extra_tables[0].rows == missing.rows
+        assert item.blocks[0].references == ("synthetic:3",)
+    assert omitted.blocks[0].source == "Omit"
+
+
+def test_persisted_headerless_source_keeps_all_values_and_requires_review_after_reopen(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    raw = ReportTable(
+        (), (("North", "Boiler check"), ("South", "Pump service")),
+        "source:original:2",
+    )
+    block = ResolvedBlock("subcontractor_matrix", "This month",
+                          text="Report-only instructions remain.",
+                          extra_tables=(raw,), references=("source:original:2",))
+    draft = report(block)
+    assert any(c.code == "table_missing_columns" for c in preflight(draft))
+    library.save_snapshot(draft, expected_revision=0)
+    stored = library.load_snapshot(draft.profile.contract, draft.profile.key,
+                                   draft.period)
+    assert stored.revision == 1
+    assert stored.draft.blocks == (block,)
+    assert stored.draft.blocks[0].text == "Report-only instructions remain."
+    assert stored.draft.blocks[0].extra_tables[0].reference == raw.reference
+    assert stored.draft.blocks[0].extra_tables[0].rows == raw.rows
+    assert any(c.code == "table_missing_columns" for c in preflight(stored.draft))
+    with pytest.raises(ValueError, match="no column headings"):
+        assemble_docx(stored.draft, acknowledged_fingerprint=stored.draft.fingerprint)
+
+
+def test_headerless_data_still_runs_independent_financial_preflight():
+    # Missing headings is not permission to bypass privacy gates.
+    imported = ReportTable((), (("Invoice amount: $1000",),), "source:4")
+    draft = report(ResolvedBlock(
+        "subcontractor_matrix", "This month",
+        extra_tables=(imported,)))
+    codes = {c.code for c in preflight(draft) if c.blocking}
+    assert "table_missing_columns" in codes
+    assert "pricing" in codes
