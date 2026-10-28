@@ -136,14 +136,18 @@ def test_repeated_rows_with_one_valid_sibling_do_not_auto_publish_partial_source
     assert capacity.load_capacity(profile.contract) is None
     # A corrected *new source*, rather than an invisible in-memory truncation,
     # is the only input that may be published.
-    corrected = inspect(profile, GOOD, "corrected-capacity.csv")
+    corrected_raw = (
+        HEAD + b"NH,East,Steam,0,NR,lb/hr\n"
+        + b"SH,West,Chilled water,800,1000,tons\n"
+    )
+    corrected = inspect(profile, corrected_raw, "corrected-capacity.csv")
     assert capacity.duplicate_capacity_rows(corrected.tables) == ()
     assert capacity.first_fill_tables(None, corrected.tables) == corrected.tables
     state = save(profile, corrected.tables)
     assert state.revision == 1
     assert len(state.tables[0].rows) == 2
     assert sources.source_bytes(profile, inspection.content.source) == raw
-    assert sources.source_bytes(profile, corrected.content.source) == GOOD
+    assert sources.source_bytes(profile, corrected.content.source) == corrected_raw
 
 
 def test_duplicate_import_cannot_change_other_sites_or_existing_history(profile):
