@@ -119,9 +119,14 @@ def test_logo_branding_admin_keeps_title_as_native_text_not_a_generated_link(
     app, saved, logo, _ = install(monkeypatch, tmp_path,
         "[Untrusted](https://example.invalid) **synthetic**")
     app = AppTest.from_string("""
-from app.monthly_report_branding_ui import render_branding
 import streamlit as st
-render_branding(lambda key, default: st.session_state.setdefault(key, default) and key)
+from app.monthly_report_branding_ui import render_branding
+
+def field(key, default):
+    st.session_state.setdefault(key, default)
+    return key
+
+render_branding(field)
 """).run()
     assert not app.exception
     # The selector/dataframe are native text widgets; they must not change
