@@ -106,11 +106,12 @@ def _validate_fields(row):
 def _validate_rows(rows):
     if not isinstance(rows, tuple) or len(rows) > MAX_ROWS:
         raise ValueError("Store at most 250 approved subcontractor rows.")
+    for row in rows:
+        _validate_fields(row)
     if len({r.id for r in rows}) != len(rows):
         raise ValueError("Duplicate subcontractor row identities require review.")
     lookup = {row.id: row for row in rows}
     for row in rows:
-        _validate_fields(row)
         if row.override_of:
             parent = lookup.get(row.override_of)
             if parent is None or parent.sites or parent.override_of:
@@ -225,15 +226,6 @@ def effective_vendor_rows(profile: ReportProfile, roster: VendorRoster, period: 
             chosen = exclusions.get((site_key, row.id), row)
             if (site_key, chosen.id) not in omitted_set:
                 selected.append(EffectiveVendor(site_key, title, chosen))
-    # Site-only records that do not replace a global row are separate contacts.
-    for site_key, title in sites.items():
-        for row in roster.rows:
-            if not row.override_of and row.sites:
-                continue  # already added above
-            if row.override_of or site_key not in row.sites:
-                continue
-            if (site_key, row.id) not in omitted_set:
-                selected.append(EffectiveVendor(site_key, title, row))
     # Historical status is still inspectable but never emitted as current.
     history = tuple((r.site_title, r.row.id, r.row.status_period, r.row.status)
                     for r in selected if r.row.status and r.row.status_period != period.key)
@@ -293,3 +285,35 @@ def report_vendor_block(profile: ReportProfile, review: VendorReportReuse, *,
         raise ValueError("This report has subcontractor edits or an omission. "
                          "Review replacement before reusing the master.")
     return candidate
+
+
+
+def rollover_subcontractor_block(block: ResolvedBlock, period: ReportPeriod) -> ResolvedBlock:
+    """Retain pinned contacts/instructions; never reassert old monthly status.
+
+    Normal report rollover copies the exact saved block. Its optional current
+    status table must therefore clear statuses confirmed for an *older* month,
+    while preserving site/trade/vendor identity, contact rows, Omit and author
+    notes. The old snapshot and approved contract master stay untouched.
+    Custom/imported tables do not use this specific recognized schema.
+    """
+    if block.key != "subcontractor_matrix":
+        return block
+    expected = ("Facility", "Category", "Trade", "Vendor", "When to contact",
+                "Current status", "Confirmed month")
+    tables = []
+    for table in block.extra_tables:
+        if (tuple(table.columns) != expected or
+                not table.reference.startswith("vendor-roster:")):
+            tables.append(table)
+            continue
+        updated_rows = tuple(
+            (*row[:5], row[5] if len(row) == 7 and row[6] == period.key else "",
+             row[6] if len(row) == 7 and row[6] == period.key else "")
+            if len(row) == 7 else row for row in table.rows
+        )
+        tables.append(replace(table, rows=updated_rows))
+    if tuple(tables) == block.extra_tables:
+        return block
+    return replace(block, extra_tables=tuple(tables),
+                   reviewed_fingerprint="", client_reviewed_fingerprint="")
