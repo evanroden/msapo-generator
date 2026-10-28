@@ -206,14 +206,15 @@ def _row_issues(row, period_key, facilities):
 def _duplicates(rows):
     counts = {}
     for row in rows:
-        if row.wo and row.site:
+        if row.wo and row.site and not row.excluded:
             key = row.site, row.wo.casefold()
             counts[key] = counts.get(key, 0) + 1
     result = []
     for row in rows:
         issues = tuple(issue for issue in row.issues
                        if issue != "Duplicate work-order identity.")
-        if row.wo and row.site and counts.get((row.site, row.wo.casefold()), 0) > 1:
+        if (row.wo and row.site and not row.excluded
+                and counts.get((row.site, row.wo.casefold()), 0) > 1):
             issues += ("Duplicate work-order identity.",)
         result.append(replace(row, issues=issues))
     return tuple(result)
@@ -339,7 +340,7 @@ def exclude_service_call(review: ServiceCallReview, key, *, expected_revision, e
         raise ValueError("The source row is no longer selectable.")
     rows = list(review.rows)
     rows[matches[0]] = replace(rows[matches[0]], excluded=excluded)
-    return replace(review, rows=tuple(rows))
+    return replace(review, rows=_duplicates(rows))
 
 
 def exclude_unmatched_call(review: ServiceCallReview, row_number: int, *,
@@ -462,6 +463,8 @@ def restore_service_call_review(value):
                    or row.origin.source_id != review.source_id
                    or row.origin.table_number != review.table_number
                    or row.origin.columns != review.original_columns
+                   or row.origin.row_number < 1
+                   or row.origin.cells not in review.original_rows
                    for row in review.rows)):
         raise ValueError("The CMMS review lost source-row provenance.")
     return review
