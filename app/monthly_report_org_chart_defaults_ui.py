@@ -51,6 +51,6 @@ def render_chart_defaults(draft,block,assets,prefix):
         confirm=st.checkbox('Make this reviewed chart available to future reports in this scope',key=root+'_confirm_'+token+'_'+target)
         checked=charts.refresh_asset_source_context(block,draft.sources)
         st.button('Publish chart default',key=root+'_save_'+token+'_'+target,
-            disabled=not confirm or draft.synthetic or not charts.eligible(checked) or not charts.source_pages_allowed(checked,draft.sources),
+            disabled=not confirm or draft.synthetic or not charts.eligible(checked) or not charts.source_pages_allowed(checked,draft.sources,draft.profile),
             on_click=_queue,args=(request_key,dict(receipt,action='save',target=target)))
     return block,explicit

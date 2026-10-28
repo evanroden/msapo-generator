@@ -103,17 +103,21 @@ def read_asset(contract, reference):
         raise library.LibraryError('A saved chart picture is unavailable.') from exc
 
 
-def source_pages_allowed(block, sources):
+def source_pages_allowed(block, sources, profile):
     from app.monthly_report_content_policy import page_allowed
     index = {s.id:s for s in sources}
-    for ref in {r for i in range(len(block.asset_hashes)) for r in asset_context(block,i)}:
+    from app.monthly_report_source_scope import visual_source_scope_valid
+    references = {r for i in range(len(block.asset_hashes)) for r in asset_context(block,i)}
+    if block.org_nodes:
+        references.update(block.references)
+    for ref in references:
         if ref.startswith(('docx:','contract-org-chart:v1:','asset-source-context:v1:')):
             continue
         parts = ref.split(':')
         if len(parts) != 3 or not parts[1].isdigit() or not re.fullmatch(r'[a-f0-9]{64}',parts[2]):
             return False
         source, page = index.get(parts[0]), int(parts[1])
-        if source is None or page not in source.selected_pages or not 1 <= page <= len(source.page_texts) or not page_allowed(source,page):
+        if source is None or page not in source.selected_pages or not 1 <= page <= len(source.page_texts) or not page_allowed(source,page) or not visual_source_scope_valid(source,profile,artwork_keys=(block.key,)):
             return False
     return True
 
@@ -128,8 +132,8 @@ def save_default(draft, block, assets, *, scope, expected_revision, expected_fin
         raise library.RevisionConflict('This chart changed. Review it before publishing.')
     site = _site(draft.profile,scope)
     checked = refresh_asset_source_context(block,draft.sources)
-    if not eligible(checked) or not source_pages_allowed(checked,draft.sources):
-        raise library.LibraryError('Include and review the chart and its source pages before publishing.')
+    if not eligible(checked) or not source_pages_allowed(checked,draft.sources,draft.profile):
+        raise library.LibraryError('Include and review the chart, its source pages and their selected-site scope before publishing.')
     prepared = {ref:_verify(ref,assets[ref] if ref in assets else library.read_asset(draft.profile.contract,draft.profile.key,ref)) for ref in block.asset_hashes}
     identity = hashlib.sha256(library._json((_contract(draft.profile.contract),site,asdict(checked)))).hexdigest()
     reference = 'contract-org-chart:v1:' + identity

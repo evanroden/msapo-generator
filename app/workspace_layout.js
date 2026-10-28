@@ -371,7 +371,15 @@ export default function(component) {
         });
         if (previous !== context.mode && activeBefore) {
             // Same DOM/editor remains; only translate the meaningful scroll anchor.
-            if (ownsScroll) root.scrollTop += activeBefore.pair.getBoundingClientRect().top - context.editor.y;
+            if (ownsScroll) {
+                // Enter at the same unobscured reading line as Back/Next.
+                // Root-top alignment hides the heading behind the sticky
+                // toolbar and makes a later return jump by that toolbar's
+                // height plus its reading gap. Without navigation, retain
+                // the other tools' existing root-top alignment.
+                const inset = navigation ? navigation.height() + 12 : 0;
+                root.scrollTop += activeBefore.pair.getBoundingClientRect().top - context.editor.y - inset;
+            }
             else if (ownedScrollBefore) scrollport.scrollTop = state.outerScroll || 0;
         }
         // When the layout itself changes (the first wide layout after a load,

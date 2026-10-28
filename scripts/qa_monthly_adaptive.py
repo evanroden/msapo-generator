@@ -330,6 +330,7 @@ def exercise_section_navigation(page, browser, field):
     for entry in reversed(entries[:-1]):
         navigate_sections(page, entry['id'], keyboard=True)
     check(browser, "Back and Next visit every editor and Review in report order", True)
+    navigation_receipt(page, browser + " before tabletop mode entry")
     inject(page, [{"x": 0, "y": 0, "width": 1440, "height": 380},
                   {"x": 0, "y": 410, "width": 1440, "height": 490}])
     mode(page, "tabletop")
@@ -340,6 +341,7 @@ def exercise_section_navigation(page, browser, field):
     before_field = field.evaluate("n=>({value:n.value,start:n.selectionStart,end:n.selectionEnd})")
     before_offset = page.locator(ACTIVITY).evaluate("n=>n.getBoundingClientRect().top-n.closest('.epc-workspace').getBoundingClientRect().top")
     before_runtime = page.evaluate(CLIENT_SNAPSHOT)["server"]
+    navigation_receipt(page, browser + " first tabletop Activity reading line")
     navigate_sections(page, "report_review")
     mode(page, "compact")
     expect(page.locator("#report-review")).to_be_in_viewport()
@@ -353,6 +355,7 @@ def exercise_section_navigation(page, browser, field):
     navigate_sections(page, "monthly_activity")
     mode(page, "tabletop")
     after_offset = page.locator(ACTIVITY).evaluate("n=>n.getBoundingClientRect().top-n.closest('.epc-workspace').getBoundingClientRect().top")
+    navigation_receipt(page, browser + " sequential tabletop Activity return")
     check(browser, "sequential return restores actual lower-editor reading position", abs(after_offset-before_offset) <= TOLERANCE,
           {"before": before_offset, "after": after_offset})
     check(browser, "sequential navigation preserves the same native Activity input and pending selection",
@@ -381,6 +384,7 @@ def navigation_receipt(page, label):
             navSpace:getComputedStyle(root).getPropertyValue('--epc-nav-space'),
             navMinHeight:getComputedStyle(document.querySelector('.st-key-monthly_report_navigation')).minHeight,
             section:document.querySelector('.epc-section-progress')?.dataset.section,
+            navigationActive:root?._epcWorkspace?.navigationActive,activePreview:root?._epcWorkspace?.active,
             focus:{tag:active?.tagName,id:active?.id,text:active?.textContent?.slice(0,100)},
             mainScroll:document.querySelector('[data-testid="stMain"]')?.scrollTop,rootScroll:root?.scrollTop};
     }""")

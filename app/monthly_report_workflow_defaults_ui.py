@@ -41,7 +41,8 @@ def render_contract_procedure(draft, block, assets, prefix):
             elif action == "adopt":
                 state = workflows.adopt_legacy(draft, block.key,
                     expected_revision=request["revision"],
-                    expected_legacy_fingerprint=request["legacy_fingerprint"], confirmed=True)
+                    expected_legacy_fingerprint=request["legacy_fingerprint"], confirmed=True,
+                    expected_legacy_receipt=request.get("legacy_receipt"))
                 st.success("Legacy procedure adopted for this contract only. Existing report pages are unchanged.")
             else:
                 raise ValueError("Review the current procedure action again.")
@@ -73,7 +74,7 @@ def render_contract_procedure(draft, block, assets, prefix):
               key=root + "_save_" + identity,
               disabled=draft.synthetic or not workflows._eligible(
                   workflows.refresh_asset_source_context(block, draft.sources))
-                  or not workflows.source_pages_allowed(block, draft.sources),
+                  or not workflows.source_pages_allowed(block, draft.sources, draft.profile),
               help="Publish these reviewed procedure pictures only for this contract. Existing reports stay pinned.",
               on_click=_queue, args=(request_key, dict(receipt, action="save")))
     if not item and not draft.synthetic:
@@ -81,9 +82,13 @@ def render_contract_procedure(draft, block, assets, prefix):
             legacy = workflows.legacy_candidate(draft.profile.contract, block.key)
             if legacy:
                 with st.expander("Review legacy procedure for this contract"):
-                    st.caption("Recorded source: " + literal(legacy.origin_profile)
-                               + ". Adoption preserves the legacy original and history.")
-                    review_key = root + "_legacy_" + legacy.block.fingerprint
+                    st.caption("Recorded source contract: " + literal(legacy.origin_contract)
+                               + " · profile: " + literal(legacy.origin_profile))
+                    st.caption("Review this saved artifact for this contract before adopting. Historical pinned procedures "
+                               "do not retain original source-page links; adoption does not validate that lost history. "
+                               "The legacy original and saved reports remain unchanged.")
+                    legacy_receipt = workflows.legacy_review_receipt(legacy)
+                    review_key = root + "_legacy_" + legacy_receipt
                     if st.button("Preview legacy procedure", key=review_key + "_preview"):
                         st.session_state[review_key] = True
                     if st.session_state.get(review_key):
@@ -95,7 +100,7 @@ def render_contract_procedure(draft, block, assets, prefix):
                     st.button("Adopt legacy procedure for this contract", key=review_key + "_adopt_" + identity,
                               disabled=not st.session_state.get(review_key),
                               on_click=_queue, args=(request_key, dict(receipt, action="adopt",
-                                  legacy_fingerprint=legacy.block.fingerprint)))
+                                  legacy_fingerprint=legacy.block.fingerprint, legacy_receipt=legacy_receipt)))
         except (ValueError, OSError) as exc:
             st.warning("Legacy procedure is unavailable; existing originals were retained. " + literal(exc))
     return block, explicit

@@ -14,7 +14,7 @@ from test_monthly_report_org_chart_defaults import scopes, fresh, picture, with_
 @pytest.mark.parametrize('revoked',[None,'selection','review','stale'])
 def test_source_page_current_consent_is_required(scopes,revoked):
     a1,_,_,_=scopes
-    source=ReportSource('a'*64,'synthetic-chart.pdf','b'*64,'.pdf',page_texts=('Synthetic reporting chart.',),selected_pages=(1,))
+    source=ReportSource('a'*64,'synthetic-chart.pdf','b'*64,'.pdf',facility='A1',page_texts=('Synthetic reporting chart.',),selected_pages=(1,))
     source=replace(source,client_page_reviews=((1,page_fingerprint(source,1)),))
     b,a=picture('red');ref=f'{source.id}:1:{source.fingerprint}'
     b=replace(b,references=(ref,),asset_provenance=((b.asset_hashes[0],(ref,)),))

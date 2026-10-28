@@ -178,13 +178,13 @@ def test_legacy_adoption_is_explicit_origin_scoped_and_nondestructive():
     assert standards.legacy_candidate("Contract B", item.key) is None
     with pytest.raises(library.RevisionConflict):
         standards.adopt_legacy(report("Contract B"), item.key, expected_revision=0,
-                               expected_legacy_fingerprint=item.block.fingerprint, confirmed=True)
+                               expected_legacy_fingerprint=item.block.fingerprint, expected_legacy_receipt=standards.legacy_review_receipt(item), confirmed=True)
     with pytest.raises(library.RevisionConflict):
         standards.adopt_legacy(report(), item.key, expected_revision=0,
                                expected_legacy_fingerprint="old", confirmed=True)
     assert file_bytes() == before
     state = standards.adopt_legacy(report(), item.key, expected_revision=0,
-                                  expected_legacy_fingerprint=item.block.fingerprint, confirmed=True)
+                                  expected_legacy_fingerprint=item.block.fingerprint, expected_legacy_receipt=standards.legacy_review_receipt(item), confirmed=True)
     assert state.revision == 1 and state.workflows[0].block.asset_hashes == item.block.asset_hashes
     assert all(file_bytes()[path] == raw for path, raw in before.items())
     assert standards.load_standards().revision == 1

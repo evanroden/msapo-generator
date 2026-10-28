@@ -581,3 +581,30 @@ for(const mode of ['wide','tabletop','confined'])test(`${mode} final review corr
     assert.equal(h.document.activeElement,h.pairs[1].pair);
     h.nextButton.onclick();h.measure();assert.equal(h.progress.dataset.section,'monthly_short');
 });
+
+for(const mode of ['tabletop','confined'])test(`${mode} mode entry and later sequential return share the unobscured reading line`,()=>{
+    const h=harness(mode,true);
+    h.state.navigationActive='monthly_activity';
+    // Execute the real layout adapter's ownership-transition branch. The
+    // navigation harness alone used to skip this branch and therefore missed
+    // its different (toolbar-obscured) alignment before the first Next click.
+    const adapter=fs.readFileSync('app/workspace_layout.js','utf8');
+    const start=adapter.indexOf('        if (previous !== context.mode && activeBefore) {');
+    const end=adapter.indexOf('\n        // When the layout itself changes',start);
+    assert.ok(start>=0 && end>start);
+    vm.runInNewContext(adapter.slice(start,end),{
+        previous:'wide',context:{mode:mode==='tabletop'?'tabletop':'compact',editor:{y:500}},
+        activeBefore:{pair:h.pairs[1].pair},ownsScroll:true,ownedScrollBefore:false,
+        root:h.root,scrollport:h.scrollport,state:h.state,navigation:h.controller(),
+    });
+    h.measure();
+    assert.equal(h.progress.dataset.section,'monthly_activity');
+    const offset=()=>h.pairs[1].pair.getBoundingClientRect().top-h.root.getBoundingClientRect().top;
+    const before=offset();
+    assert.equal(before,h.controller().height()+12,'first entry is below the toolbar, not hidden at root top');
+    while(!h.nextButton.disabled){h.nextButton.onclick();h.measure()}
+    while(h.progress.dataset.section!=='monthly_activity'){h.backButton.onclick();h.measure()}
+    assert.equal(offset(),before,'no toolbar-height jump on sequential return');
+    assert.equal(h.field.value,'Unblurred human wording');
+    assert.equal(h.counts().nativeEvents,0);
+});

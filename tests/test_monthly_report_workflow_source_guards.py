@@ -16,7 +16,7 @@ from test_monthly_report_workflow_standards import publish
 def imported_procedure():
     source = ReportSource('a' * 64, 'synthetic-procedure.pdf', 'b' * 64, '.pdf',
                           page_texts=('Technical outage procedure: inspect pump and reset controls.',),
-                          selected_pages=(1,))
+                          selected_pages=(1,), facility=report().profile.facilities[0].title)
     source = replace(source, client_page_reviews=((1, page_fingerprint(source, 1)),))
     reference = f'{source.id}:1:{source.fingerprint}'
     block, assets = image_block(color='red')
