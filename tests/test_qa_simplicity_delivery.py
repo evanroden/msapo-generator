@@ -140,3 +140,21 @@ def test_diagnostic_workflow_optin_is_only_on_existing_native_step():
     assert sha256(source.replace(addition,'',1).encode()).hexdigest()=='bd0bd3522b1ba5f7a8eb21fa65623453bbf6cefa116e47e831273ec56d0cae69'
     assert not any('qa_simplicity_delivery' in p.read_text() for p in Path('app').glob('*.py'))
     assert 'EPC_MONTHLY_SIMPLICITY_DIAGNOSTICS' not in Path('tests/fixtures/workspaces/monthly_fresh_app.py').read_text()
+
+
+def test_observed_scope_matches_consumer_without_creating_epoch():
+    from app.monthly_report_editor import _signature
+    draft=SimpleNamespace(fingerprint='draft',profile=SimpleNamespace(key='profile'),period=SimpleNamespace(key='month'),blocks=(),sources=())
+    prefix='report_guided_scope_test'
+    scope=_signature((prefix,'epoch','generation'))
+    assert len(scope)==20
+    state={prefix+'_draft':draft,prefix+'_rich_text_epoch':'epoch','_monthly_qa_generation':'generation',
+           prefix+'_pending_accepted_workorders':{'scope':scope}}
+    before=dict(state)
+    row=diagnostic.snapshot(state)[0]
+    assert row['action_scope']==row['request']['scope']==diagnostic.digest(scope)
+    assert state==before
+    del state[prefix+'_rich_text_epoch']
+    before=dict(state)
+    assert 'action_scope' not in diagnostic.snapshot(state)[0]
+    assert state==before

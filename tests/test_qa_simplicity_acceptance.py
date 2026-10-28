@@ -47,4 +47,5 @@ def diagnostics_enabled(monkeypatch,tmp_path):
  assert [r['phase'] for r in callbacks]==['before','after']
  assert not callbacks[0]['state'][0]['pending']
  assert callbacks[1]['state'][0]['pending']
+ assert callbacks[1]['state'][0]['action_scope']==callbacks[1]['state'][0]['request']['scope']
  assert any(r['kind']=='activity-render' and r['phase']=='after' and r['state'] and not r['state'][0]['manager'] for r in rows)

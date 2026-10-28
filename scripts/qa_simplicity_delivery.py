@@ -41,7 +41,7 @@ def snapshot(state):
             row['request']['reference_revision'] = digest(str(pending.get('reference','')).split(':')[-1])
             epoch = state.get(prefix + '_rich_text_epoch')
             if epoch is not None:
-                from app.monthly_report_upload_ui import _signature
+                from app.monthly_report_editor import _signature
                 scope = _signature((prefix, epoch, state.get('_monthly_qa_generation', '')))
                 row['action_scope'] = digest(scope)
         rows.append(row)
