@@ -142,6 +142,12 @@ def _annual_work_order_month_cells(key, table):
     return frozenset((index, column) for index, _, _ in bands for column in range(1, 7))
 
 
+def _first_wide_row(rows, width):
+    """Return the 1-based source row and physical width without truncating cells."""
+    return next(((n, len(row)) for n, row in enumerate(rows, 1)
+                 if len(row) > width), None)
+
+
 def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck, ...]:
     checks = []
     from app.monthly_report_designs import is_master
@@ -228,7 +234,22 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                         page = int(parts[1])
                         if page not in source.selected_pages or not 1 <= page <= len(source.page_texts) or not page_allowed(source, page):
                             checks.append(ReportCheck("client_source_page", f"Remove or review page {page} of {source.filename} in this section. Its current selection is not approved for the client report.", True, block.key))
-            for table in block.extra_tables:
+            for number, table in enumerate(block.extra_tables, 1):
+                # The generic Word writer can render only the declared table
+                # width. Catch this at review rather than failing on Create.
+                # Unprinted empty tables remain harmless and are not altered.
+                if table.columns and any(
+                        str(cell).strip() for row in table.rows for cell in row):
+                    too_wide = _first_wide_row(table.rows, len(table.columns))
+                    if too_wide is not None:
+                        row_number, cells = too_wide
+                        checks.append(ReportCheck(
+                            "table_columns",
+                            f"Imported table {number}, row {row_number} in "
+                            f"{block.key.replace('_', ' ')} has {cells} cells but "
+                            f"{len(table.columns)} columns. Add a heading or "
+                            "correct the row before creating the report.",
+                            True, block.key))
                 month_labels = _annual_work_order_month_cells(block.key, table)
                 texts.extend((block.key, cell, None, (r, c) in month_labels)
                              for r, row in enumerate((table.columns, *table.rows))
@@ -282,6 +303,19 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                 texts.extend((spec.key, caption) for caption in block.asset_captions)
                 texts.extend((spec.key, cell) for row in block.rows for cell in row)
                 if block.rows:
+                    # A known section schema is fixed-width in the Word writer.
+                    # Keep every source value editable; never silently clip an
+                    # unrecognized extra column during review or generation.
+                    if spec.columns:
+                        too_wide = _first_wide_row(block.rows, len(spec.columns))
+                        if too_wide is not None:
+                            row_number, cells = too_wide
+                            checks.append(ReportCheck(
+                                "table_columns",
+                                f"Row {row_number} in {spec.key.replace('_', ' ')} "
+                                f"has {cells} cells but only {len(spec.columns)} "
+                                "columns. Correct the row before creating the report.",
+                                True, spec.key))
                     if table_has_pricing(tuple(c.title for c in spec.columns), block.rows, work_orders=spec.type == "work_order_grid"):
                         checks.append(ReportCheck("pricing", "Remove pricing or clarify ambiguous total rows in the client table.", True, spec.key))
                     texts.extend((spec.key, col.title) for col in spec.columns)
