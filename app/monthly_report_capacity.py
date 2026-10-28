@@ -396,11 +396,14 @@ def _reader_title_sites_supported(title, text, facilities):
     the existing review rules.
     """
     title, text = _normal(title), _normal(text)
+
+    def names_site(name, content):
+        return bool(re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", content))
+
     for facility in facilities:
         names = directory.facility_names(facility)
-        pattern = lambda name: r"(?<!\w)" + re.escape(name) + r"(?!\w)"
-        if any(re.search(pattern(name), title) for name in names):
-            if not any(re.search(pattern(name), text) for name in names):
+        if any(names_site(name, title) for name in names):
+            if not any(names_site(name, text) for name in names):
                 return False
     return True
 
