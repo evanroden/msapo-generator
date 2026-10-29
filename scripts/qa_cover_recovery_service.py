@@ -196,6 +196,18 @@ def unchanged(before, after, *, token, original_digest, allow_derivatives=(), la
     assert original[2] == original_digest, 'Retained original is not the exact uploaded source'
 
 
+def unchanged_large_upload(before, after, *, token, original_digest, baseline, state):
+    """Use the same strict selected-art allowance after a saved visitor upload.
+
+    The baseline was captured before the action; unchanged() independently
+    binds its reference to the pre-action library hash/size and exact journal.
+    """
+    request = state['working']['request']
+    unchanged(before, after, token=token, original_digest=original_digest,
+              allow_derivatives=(request['derivative'],) if request['status']=='ready' else (),
+              last_good_reference=baseline['working']['cover']['asset_hashes'][0])
+
+
 def wait(page, *, after=0, status=None, revision=None):
     from playwright.sync_api import Error as BrowserError, TimeoutError as BrowserTimeout
     try:
@@ -377,7 +389,7 @@ def main(args):
                 assert state['working']['request']['status'] in ('pending','unrecoverable','ready')
                 assert large.stat().st_size in state['held_upload_sizes']
                 assert state['working']['request']['sha256']==large_digest
-                unchanged(before,inventory(args.container,token),token=token,original_digest=large_digest,allow_derivatives=(state['working']['request']['derivative'],) if state['working']['request']['status']=='ready' else ())
+                unchanged_large_upload(before,inventory(args.container,token),token=token,original_digest=large_digest,baseline=baseline,state=state)
                 states.append(state)
                 checkpoint('large-native-upload-'+str(len(states)),state)
             # No reload or Use: a native read-only receipt action proves BOTH

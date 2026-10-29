@@ -183,8 +183,9 @@ def test_timeout_diagnostic_read_failure_does_not_mask_original(capsys,browser_e
     assert 'unavailable' in capsys.readouterr().out
 
 
-@pytest.mark.parametrize('mutation',[None,'wrong-hash','wrong-size','wrong-reference','other-profile','extra-object','changed-existing','absent-library'])
-def test_only_exact_existing_last_good_art_may_be_copied_to_private_journal(mutation):
+@pytest.mark.parametrize('route',['direct','large-upload'])
+@pytest.mark.parametrize('mutation',[None,'wrong-hash','wrong-size','wrong-reference','other-profile','other-visitor','extra-object','changed-existing','absent-library'])
+def test_only_exact_existing_last_good_art_may_be_copied_to_private_journal(mutation,route):
     from app import monthly_report_qa_fixture as fixture,monthly_report_library as library
     token='a'*32;digest=sha256(b'corrupt original').hexdigest();picture='1'*64+'.jpg'
     profile=Path('library')/library._contract_directory(fixture.CONTRACT)/fixture.profile().key
@@ -197,10 +198,18 @@ def test_only_exact_existing_last_good_art_may_be_copied_to_private_journal(muta
     if mutation=='wrong-size':after[copy][0]=43
     if mutation=='wrong-reference':after[str(journal/'assets'/('2'*64+'.jpg'))]=after.pop(copy)
     if mutation=='other-profile':after[str(journal.parent.parent/'other'/fixture.PERIOD.key/'assets'/picture)]=after.pop(copy)
+    if mutation=='other-visitor':after[copy.replace(sha256(token.encode()).hexdigest(),sha256(('b'*32).encode()).hexdigest())]=after.pop(copy)
     if mutation=='extra-object':after['objects/11/'+'1'*64]=[42,200,'1'*64]
     if mutation=='changed-existing':after[shared][1]+=1
     if mutation=='absent-library':before.pop(shared);after.pop(shared)
-    def check():unchanged(before,after,token=token,original_digest=digest,last_good_reference=picture)
+    def check():
+        if route=='direct':
+            unchanged(before,after,token=token,original_digest=digest,last_good_reference=picture)
+        else:
+            from scripts.qa_cover_recovery_service import unchanged_large_upload
+            baseline={'working':{'cover':{'asset_hashes':[picture]}}}
+            state={'working':{'request':{'status':'pending','derivative':''}}}
+            unchanged_large_upload(before,after,token=token,original_digest=digest,baseline=baseline,state=state)
     if mutation is None:check()
     else:
         with pytest.raises(AssertionError):check()
@@ -323,3 +332,18 @@ def test_fixture_setup_ack_timeout_releases_real_holder(monkeypatch,tmp_path):
         held=getattr(sys,key,None)
         if held:held['release'].set();held['thread'].join(2)
         if hasattr(sys,key):delattr(sys,key)
+
+
+def test_large_upload_callsite_binds_preaction_baseline_and_keeps_liveness_checks():
+    import ast,inspect
+    from scripts import qa_cover_recovery_service as gate
+    source=inspect.getsource(gate.main)
+    tree=ast.parse(source)
+    calls=[n for n in ast.walk(tree) if isinstance(n,ast.Call)
+           and isinstance(n.func,ast.Name) and n.func.id=='unchanged_large_upload']
+    assert len(calls)==1
+    values={kw.arg:ast.unparse(kw.value) for kw in calls[0].keywords}
+    assert values['baseline']=='baseline' and values['state']=='state'
+    assert values['token']=='token' and values['original_digest']=='large_digest'
+    assert "checkpoint('two-browser-held-large-uploads')" in source
+    assert "fresh['held_upload_sizes']" in source
