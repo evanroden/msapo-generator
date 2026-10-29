@@ -189,6 +189,7 @@ def test_legacy_draft_fingerprint_and_saved_source_stay_unchanged(monkeypatch,tm
     from app.monthly_report_model import ReportPeriod
     draft=replace(synthetic_draft(synthetic_profiles()[0],ReportPeriod(2026,10)),sources=(s,))
     old=asdict(draft)
+    old.pop('source_row_reviews',None)
     for source in old['sources']:
         source.pop('pdf_text_blocks'); source.pop('scope_review')
     for block in old['blocks']:
