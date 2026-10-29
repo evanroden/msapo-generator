@@ -874,12 +874,17 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, peri
             st.caption("This page is already included. Remove it using the report pictures below, if needed.")
     else:
         captions = dict(source.captions)
-        caption_key = field(p + f"_caption_{page}", captions.get(page, f"{source.filename} · page/item {page}"))
-        captions[page] = st.text_input("Page caption", key=caption_key)
-        source = replace(source, captions=tuple(sorted(captions.items())))
+        default_caption = captions.get(page, f"{source.filename} · page/item {page}")
+        caption_key = field(p + f"_caption_{page}", default_caption)
+        caption = st.text_input("Page caption", key=caption_key)
+        # Showing an unvisited page must not change a saved report. Keep the
+        # generated suggestion local until an edit or explicit page decision.
+        if page in captions or caption != default_caption:
+            captions[page] = caption
+            source = replace(source, captions=tuple(sorted(captions.items())))
         kind, reason = page_status(source.page_texts[page - 1], unreadable=page in source.needs_vision)
-        blocked = kind in ("pricing", "legal", "blank", "signature") or contains_price(captions[page])
-        if contains_price(captions[page]):
+        blocked = kind in ("pricing", "legal", "blank", "signature") or contains_price(caption)
+        if contains_price(caption):
             reason = "Remove pricing from the caption before including this page."
         (st.warning if blocked else st.caption)(reason)
         st.caption("Include confirms that you checked this page and caption: relevant work, no prices, and no legal-only, blank or signature-only content.")
@@ -894,6 +899,10 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, peri
         if omit.button("Exclude page", key=p + "_omit_page"):
             action = "omit"
         if action:
+            # Bind the exact displayed caption before calculating either
+            # decision receipt; a navigation-only visit does not do this.
+            if page not in dict(source.captions):
+                source = replace(source, captions=tuple(sorted({**dict(source.captions), page: caption}.items())))
             selected = set(source.selected_pages)
             reviews, exclusions = dict(source.client_page_reviews), dict(source.client_page_exclusions)
             if action == "keep":

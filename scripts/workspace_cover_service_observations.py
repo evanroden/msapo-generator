@@ -40,7 +40,7 @@ def contention_controls(base, token):
         held = {'owner': token, 'ready': ready, 'release': release, 'acquired': False}
         def run():
             try:
-                with work_slot(wait_seconds=0):
+                with work_slot(wait_seconds=5):
                     held['acquired'] = True
                     held['deadline'] = time.monotonic() + 15
                     ready.set()
@@ -52,7 +52,10 @@ def contention_controls(base, token):
         held['thread'] = Thread(target=run, daemon=True)
         setattr(sys, key, held)
         held['thread'].start()
-        if not ready.wait(2) or not held['acquired']:
+        if not ready.wait(7) or not held['acquired']:
+            # A timed-out setup must never leave a late-acquiring holder behind.
+            release.set()
+            held['thread'].join(2)
             raise ValueError('Synthetic contention did not acquire actual work slot')
     if held and held['owner'] == token:
         if st.button('QA release controlled report contention'):

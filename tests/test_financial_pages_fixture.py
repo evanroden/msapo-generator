@@ -96,7 +96,10 @@ assert renewed.blocks[-1].asset_hashes==accepted.blocks[-1].asset_hashes
 assert [i.key for i in renewed.blocks[-1].asset_instances]==[i.key for i in accepted.blocks[-1].asset_instances]
 assert renewed.blocks[-1].asset_captions==accepted.blocks[-1].asset_captions
 assert not [c for c in preflight(renewed) if c.blocking]
+# The unreviewed third page has been displayed but never edited or accepted.
+assert 3 not in dict(renewed.sources[0].captions)
 button('Save synthetic draft')
+ui.st.file_uploader=lambda *a,**kw:[]
 # New native browser session restores exclusively from the real snapshot.
 b=AppTest.from_file(str(Path.cwd()/'tests/fixtures/workspaces/monthly_app.py'),default_timeout=60)
 b.session_state['_monthly_dom_app_test_token']='a'*32;b.run();assert not b.exception
@@ -281,3 +284,16 @@ def test_native_page_actions_require_visible_choices_matching_server_receipt():
     assert "current=receipt(page)['review_pages']" in flow
     assert "r'^Remove Page '" in flow and '.to_have_count(len(current))' in flow
     assert "act(lambda:combo.press('Backspace'))" in flow
+
+
+def test_component_diagnostics_identify_caption_only_without_changing_digest():
+    from dataclasses import replace
+    from scripts.workspace_financial_pages import draft_component_hashes
+    from app.monthly_report_model import ReportDraft, ReportPeriod, ReportSource, synthetic_profiles
+    source=ReportSource('synthetic','client.pdf','a'*64,'.pdf')
+    draft=ReportDraft(synthetic_profiles()[0],ReportPeriod(2026,9),'Synthetic',(),(),sources=(source,))
+    changed=replace(draft,sources=(replace(source,captions=((3,'client.pdf · page/item 3'),)),))
+    before=draft.fingerprint
+    a,b=draft_component_hashes(draft),draft_component_hashes(changed)
+    assert {key for key in a if a[key]!=b[key]}=={'sources','sources.0.captions'}
+    assert draft.fingerprint==before and changed.fingerprint!=before

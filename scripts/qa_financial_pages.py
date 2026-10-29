@@ -282,7 +282,7 @@ def exercise(engine,name,source,base,scenario):
         act(lambda:page.get_by_role('button',name='Save synthetic draft',exact=True).click())
         saved=receipt(page);assert saved['saved']==saved['fingerprint']
         page.reload();reopened=receipt(page)
-        for key in ('assets','occurrences','captions','sources','fingerprint'):assert reopened[key]==saved[key],key
+        for key in ('assets','occurrences','captions','sources','fingerprint'):assert reopened[key]==saved[key],(key, {name:(saved.get('components',{}).get(name),value) for name,value in reopened.get('components',{}).items() if saved.get('components',{}).get(name)!=value})
         page.get_by_role('button',name='Build synthetic preview and outputs',exact=True).click()
         built=receipt(page,{'output.draft':reopened['fingerprint']})
         assert built['output']['pdf']>0 and built['output']['preview']>0

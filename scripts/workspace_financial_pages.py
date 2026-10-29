@@ -3,7 +3,7 @@
 Only empty report setup, explicit failure injection and read-only receipts are
 fixture controls. Upload/review/merge uses the real ordered MBCx section.
 """
-from dataclasses import replace
+from dataclasses import asdict, replace
 from hashlib import sha256
 from html import escape
 from io import BytesIO
@@ -27,6 +27,19 @@ def make_source(directory, vendor=False):
         page.draw_rect(fitz.Rect(40,160,90,210),fill=marker,color=marker)
     path=Path(directory)/('vendor-mixed.pdf' if vendor else 'client-mixed.pdf')
     path.parent.mkdir(parents=True,exist_ok=True);doc.save(path);doc.close();return path
+
+
+def draft_component_hashes(draft):
+    """Read-only synthetic diagnostics; never change the canonical digest."""
+    def digest(value):
+        return sha256(json.dumps(value,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+    values=asdict(draft)
+    result={name:digest(value) for name,value in values.items()}
+    for group in ('sources','blocks'):
+        for index,value in enumerate(values[group]):
+            for name,field in value.items():
+                result[f'{group}.{index}.{name}']=digest(field)
+    return result
 
 
 def render(base,token,field):
@@ -85,7 +98,7 @@ def render(base,token,field):
     from app.monthly_report_checks import preflight
     block=blocks.get('mbcx_report')
     saved=library.load_snapshot(p.contract,p.key,period)
-    record={'fault':fault,'render':st.session_state.financial_render,'scope':identity,'generation':generation,'fingerprint':draft.fingerprint,
+    record={'fault':fault,'render':st.session_state.financial_render,'scope':identity,'generation':generation,'fingerprint':draft.fingerprint,'components':draft_component_hashes(draft),
         'review_pages':next((list(v) for k,v in st.session_state.items() if k.startswith(prefix+'_evidence_section_mbcx_report_financial_') and k.endswith('_pages')),[]),
         'sources':[{'id':s.id,'sha256':s.sha256,'classification':s.classification,'facility':s.facility,'service_date':s.service_date,
             'financial_grants':[r.number for r in s.financial_page_reviews],

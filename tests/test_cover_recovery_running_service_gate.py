@@ -251,3 +251,75 @@ def test_runtime_bookkeeping_never_hides_invalid_or_linked_files(tmp_path,mutati
     if mutation=='boolean-pid':value['pid']=True;path.write_text(json.dumps(value))
     with pytest.raises((AssertionError,ValueError,OSError)):
         runtime_bookkeeping(root,path)
+
+
+@pytest.mark.parametrize("busy_seconds,success", [(0.5,True),(7,False)])
+def test_fixture_real_contention_acquisition_waits_boundedly_and_never_leaks(monkeypatch,tmp_path,busy_seconds,success):
+    import sys,time,threading
+    from scripts import workspace_cover_service_observations as fixture
+    from app.monthly_report_render_jobs import work_slot
+    import streamlit as st
+    key='_cover_service_qa_contention'
+    monkeypatch.delattr(sys,key,raising=False)
+    monkeypatch.setattr(fixture,'require',lambda *a:None)
+    captions=[]
+    monkeypatch.setattr(st,'button',lambda label:label=='QA hold real report work slot for 15 seconds')
+    monkeypatch.setattr(st,'caption',captions.append)
+    entered=threading.Event();release=threading.Event()
+    def preview():
+        with work_slot(wait_seconds=0):
+            entered.set();release.wait(busy_seconds)
+    prior=threading.Thread(target=preview);prior.start();assert entered.wait(2)
+    start=time.monotonic()
+    try:
+        if success:
+            fixture.contention_controls(tmp_path,'a'*32)
+            elapsed=time.monotonic()-start
+            assert .4<=elapsed<3
+            held=getattr(sys,key)
+            assert held['acquired'] and held['thread'].is_alive()
+            assert 'QA controlled contention active: true' in captions
+            assert 13<held['deadline']-time.monotonic()<=15
+        else:
+            with pytest.raises(ValueError,match='did not acquire'):
+                fixture.contention_controls(tmp_path,'a'*32)
+            elapsed=time.monotonic()-start
+            assert 4.5<=elapsed<7
+            held=getattr(sys,key)
+            assert not held['acquired'] and held['release'].is_set()
+            assert not held['thread'].is_alive()
+            assert 'QA controlled contention active: true' not in captions
+    finally:
+        release.set();prior.join(2)
+        held=getattr(sys,key,None)
+        if held:held['release'].set();held['thread'].join(2)
+        if hasattr(sys,key):delattr(sys,key)
+    with work_slot(wait_seconds=0):pass
+
+
+def test_fixture_setup_ack_timeout_releases_real_holder(monkeypatch,tmp_path):
+    import sys,threading
+    from scripts import workspace_cover_service_observations as fixture
+    from app.monthly_report_render_jobs import work_slot
+    import streamlit as st
+    key='_cover_service_qa_contention'
+    monkeypatch.delattr(sys,key,raising=False)
+    monkeypatch.setattr(fixture,'require',lambda *a:None)
+    monkeypatch.setattr(st,'button',lambda label:label=='QA hold real report work slot for 15 seconds')
+    class LostAck(threading.Event):
+        def wait(self,timeout=None):
+            assert timeout==7
+            assert super().wait(2)
+            return False
+    events=iter([LostAck(),threading.Event()])
+    monkeypatch.setattr(fixture,'Event',lambda:next(events))
+    try:
+        with pytest.raises(ValueError,match='did not acquire'):
+            fixture.contention_controls(tmp_path,'a'*32)
+        held=getattr(sys,key)
+        assert held['release'].is_set() and not held['thread'].is_alive()
+        with work_slot(wait_seconds=0):pass
+    finally:
+        held=getattr(sys,key,None)
+        if held:held['release'].set();held['thread'].join(2)
+        if hasattr(sys,key):delattr(sys,key)
