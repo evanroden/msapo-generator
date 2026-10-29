@@ -26,10 +26,17 @@ def receipt(page, *, reviews=None, included=None, saved=None, previous_review=No
       return (wanted.reviews===null||v.reviews===wanted.reviews) &&
         (wanted.included===null||v.tables.some(t=>t.rows.some(r=>r[0]==='Synthetic drill'))===wanted.included) &&
         (wanted.saved===null||v.saved_revision===wanted.saved) &&
-        (wanted.previous===null||v.review_revision!==wanted.previous) &&
-        document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')==='notRunning';
+        (wanted.previous===null||v.review_revision!==wanted.previous);
     }''', arg={"reviews": reviews, "included": included, "saved": saved, "previous": previous_review}, timeout=30000)
-    return json.loads(page.locator('[data-training-review-receipt]').get_attribute('data-training-review-receipt'))
+    app = page.locator('[data-testid="stApp"]')
+    page.wait_for_function('''() => {
+      const app=document.querySelector('[data-testid="stApp"]');
+      const state=app?.getAttribute('data-test-script-state');
+      return Boolean(app) && state!=='running' && state!=='rerunRequested';
+    }''', timeout=5000)
+    value = json.loads(page.locator('[data-training-review-receipt]').get_attribute('data-training-review-receipt'))
+    value["_script_state"] = app.get_attribute("data-test-script-state")
+    return value
 
 
 def journey(engine, name):

@@ -25,6 +25,11 @@ def test_reviewed_current_and_historical_rows_render_once_with_truthful_labels(t
     source.add_paragraph("Synthetic North")
     source.add_heading("12 Training Summary", 1)
     source.add_paragraph("Original synthetic placeholder")
+    prototype = source.add_table(rows=2, cols=5)
+    for cell, value in zip(prototype.rows[0].cells, ("Topic", "Date", "Method", "Participants", "Hours")):
+        cell.text = value
+    for cell, value in zip(prototype.rows[1].cells, ("Native placeholder", "", "", "", "")):
+        cell.text = value
     path = tmp_path / "synthetic-training-design.docx"
     source.save(path)
     original = path.read_bytes()
