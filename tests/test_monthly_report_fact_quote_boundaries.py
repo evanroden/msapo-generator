@@ -107,6 +107,32 @@ def test_numeric_sign_decimal_and_compound_token_are_not_silent_support(source_t
         read(source(source_text), quote)
 
 
+@pytest.mark.parametrize("page,quote", (
+    ("Pressure measured 40.9 psi at the pump.", "Pressure measured 40."),
+    ("Energy use was 1,200,000 kWh.", "Energy use was 1,200,"),
+    ("Inspected valve V-4-A during service.", "Inspected valve V-4-"),
+    ("Unit V-2/3 was offline.", "Unit V-2/"),
+))
+def test_quote_endpoint_separator_cannot_hide_source_token_continuation(page, quote):
+    with pytest.raises(ValueError, match="evidence quote"):
+        read(source(page), quote)
+
+
+def test_sentence_punctuation_after_complete_value_remains_valid_evidence():
+    original = source("Pressure measured 40. Then pump stopped.")
+    facts = read(original, "Pressure measured 40.")
+    assert len(facts) == 1
+    assert facts[0].quote == "Pressure measured 40."
+
+
+@pytest.mark.parametrize("page,quote", (
+    ("Pressure measured 40.9 psi.", ".9 psi"),
+    ("Unit V-2/3 was offline.", "/3 was offline."),
+))
+def test_quote_starting_at_separator_inside_source_token_is_not_complete(page, quote):
+    assert not ai._quote_on_source_token_boundaries(page, quote)
+
+
 def test_existing_price_and_fact_page_gates_remain_unchanged():
     original = source("Inspected pump P-1. Invoice: $900.")
     with pytest.raises(ValueError, match="pricing"):

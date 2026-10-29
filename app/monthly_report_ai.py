@@ -449,15 +449,31 @@ def _quote_on_source_token_boundaries(native: str, quote: str) -> bool:
         end = at + len(needle)
         left = value[at - 1] if at else ""
         right = value[end] if end < len(value) else ""
-        left_extends = word(needle[0]) and (
-            word(left)
-            or left in ("-", "+", "\u2212")
-            or (left in (".", ",", "/") and at > 1 and word(value[at - 2]))
+        compound = ("-", "+", "\u2212", ".", ",", "/")
+        left_extends = (
+            word(needle[0]) and (
+                word(left)
+                or left in ("-", "+", "\u2212")
+                or (left in (".", ",", "/")
+                    and at > 1 and word(value[at - 2]))
+            )
+        ) or (
+            len(needle) > 1
+            and needle[0] in compound
+            and word(needle[1])
+            and word(left)
         )
-        right_extends = word(needle[-1]) and (
-            word(right)
-            or (right in ("-", "+", "\u2212", ".", ",", "/")
-                and end + 1 < len(value) and word(value[end + 1]))
+        right_extends = (
+            word(needle[-1]) and (
+                word(right)
+                or (right in compound
+                    and end + 1 < len(value) and word(value[end + 1]))
+            )
+        ) or (
+            len(needle) > 1
+            and needle[-1] in compound
+            and word(needle[-2])
+            and word(right)
         )
         if not left_extends and not right_extends:
             return True
