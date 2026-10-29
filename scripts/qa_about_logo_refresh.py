@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts.workspace_history_observations import namespace, storage_state
 from scripts.workspace_logo_refresh_observations import MODES, artwork
+from scripts.workspace_logo_click_observations import native_click_geometry
 
 OUT = ROOT / 'test-artifacts/about-logo-refresh'
 URL = 'http://127.0.0.1:8546'
@@ -80,8 +81,9 @@ def about(page):
 def native_outputs(page, directory, expected):
     prior = receipt(page)
     sequence = prior['sequence']
-    page.get_by_role('button', name='Render synthetic native logo outputs', exact=True).click()
-    wait_state(page, after=sequence, scope=prior['scope'], generation=prior['generation'])
+    with native_click_geometry(page, directory):
+        page.get_by_role('button', name='Render synthetic native logo outputs', exact=True).click()
+        wait_state(page, after=sequence, scope=prior['scope'], generation=prior['generation'])
     for label, name in (('Download synthetic native Word', 'actual.docx'), ('Download synthetic native PDF', 'actual.pdf')):
         with page.expect_download(timeout=30000) as event:
             page.get_by_role('button', name=label, exact=True).click()
