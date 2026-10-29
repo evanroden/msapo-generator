@@ -20,6 +20,7 @@ from app.monthly_report_model import (
     ReportDraft, ReportPeriod, ResolvedBlock, default_sections, synthetic_profiles,
 )
 from app.monthly_report_section_uploads import prepare_section_pages
+from app.monthly_report_source_scope import correct_scope
 
 
 # Unusual solid RGBs avoid accidental matches against standard report branding.
@@ -75,6 +76,7 @@ def _prepared_report(tmp_path, monkeypatch):
     checked = replace(content.source, client_page_reviews=tuple(
         (number, page_fingerprint(content.source, number)) for number in indexes
     ))
+    checked = correct_scope(checked, profile, (profile.facilities[0].key,))
     content = replace(content, source=checked)
     assert all(page_allowed(checked, number) for number in indexes)
     prepared = prepare_section_pages(profile, (content,), "mbcx_report", {})
