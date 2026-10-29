@@ -16,20 +16,36 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 OUT = ROOT / "test-artifacts" / "training-source-review"
 URL = "http://127.0.0.1:8537"
+RECEIPT_PREFIX = "QA Training review receipt: "
 
 
 def receipt(page, *, reviews=None, included=None, saved=None, previous_review=None):
-    page.wait_for_function('''wanted => {
-      const node=document.querySelector('[data-training-review-receipt]');
-      if(!node)return false;
-      const v=JSON.parse(node.dataset.trainingReviewReceipt);
-      return (wanted.reviews===null||v.reviews===wanted.reviews) &&
-        (wanted.included===null||v.tables.some(t=>t.rows.some(r=>r[0]==='Synthetic drill'))===wanted.included) &&
-        (wanted.saved===null||v.saved_revision===wanted.saved) &&
-        (wanted.previous===null||v.review_revision!==wanted.previous) &&
-        document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')==='notRunning';
-    }''', arg={"reviews": reviews, "included": included, "saved": saved, "previous": previous_review}, timeout=30000)
-    return json.loads(page.locator('[data-training-review-receipt]').get_attribute('data-training-review-receipt'))
+    payload = {"prefix": RECEIPT_PREFIX, "wanted": {"reviews": reviews, "included": included,
+        "saved": saved, "previous": previous_review}}
+    page.wait_for_function('''payload => {
+      for (const node of document.querySelectorAll('body *')) {
+        const text=node.textContent||'';
+        if(!text.startsWith(payload.prefix))continue;
+        let v;
+        try{v=JSON.parse(text.slice(payload.prefix.length))}catch{continue}
+        const wanted=payload.wanted;
+        if ((wanted.reviews===null||v.reviews===wanted.reviews) &&
+            (wanted.included===null||v.tables.some(t=>t.rows.some(r=>r[0]==='Synthetic drill'))===wanted.included) &&
+            (wanted.saved===null||v.saved_revision===wanted.saved) &&
+            (wanted.previous===null||v.review_revision!==wanted.previous) &&
+            document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')==='notRunning')
+          return true;
+      }
+      return false;
+    }''', arg=payload, timeout=30000)
+    return page.evaluate('''prefix => {
+      for (const node of document.querySelectorAll('body *')) {
+        const text=node.textContent||'';
+        if(!text.startsWith(prefix))continue;
+        try{return JSON.parse(text.slice(prefix.length))}catch{}
+      }
+      throw new Error('Training receipt text disappeared after readiness.');
+    }''', RECEIPT_PREFIX)
 
 
 def journey(engine, name):
