@@ -19,7 +19,7 @@ def test_empty_section_has_one_uploader_with_stable_identity(tmp_path, monkeypat
     uploaders = app.get('file_uploader')
     assert len(uploaders) == 1
     assert uploaders[0].proto.id.endswith(f'-synthetic_evidence_section_{destination}_upload')
-    assert len(add_file_popovers(app)) == (0 if destination == 'water_reports' else 1)
+    assert len(add_file_popovers(app)) == (1 if destination == 'vendor_reports' else 0)
     assert app.session_state['test_blocks'] == {}
     assert app.session_state['test_sources'] == ()
 

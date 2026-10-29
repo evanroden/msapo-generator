@@ -1002,7 +1002,9 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
     # Water, Scorecards and MBCx already have section-level instructions. Keep one
     # labeled uploader without a duplicate title, while retaining the complete
     # canonical page-review flow and its safety checks.
-    upload_area = (st.container() if destination == "water_reports" else
+    if destination in {"mbcx_report", "utility_analysis"}:
+        st.caption("Upload a PDF to include its complete report. Supporting files and existing page choices remain available.")
+    upload_area = (st.container() if destination in {"water_reports", "mbcx_report", "utility_analysis"} else
                    st.popover("Add files", key=local_key + "_add_files",
                               help="Upload a file or reuse a file already saved in this draft."))
     with upload_area:
@@ -1108,6 +1110,18 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
                         st.warning(f"The whole PDF cannot fit the image budget: its checked pages "
                                    f"need at least {needed:.1f} MiB, with {available:.1f} MiB available. "
                                    "Reduce selected pages or remove existing evidence before reviewing.")
+    if destination in {"mbcx_report", "utility_analysis"} and choices[selected].source.suffix == ".pdf":
+        from app.monthly_report_mbcx_pdf import render_whole_pdf
+        batch = render_whole_pdf(profile, choices[selected], blocks, assets,
+                                 local_key, prefix, field, period=period, destination=destination)
+        if batch is not None:
+            revised, additions = batch
+            contents = tuple(revised if c.source.id == selected else c for c in contents)
+            st.session_state[key] = contents
+            forms = st.session_state.get("_monthly_source_detail_forms")
+            if isinstance(forms, dict) and selected in forms:
+                forms[selected] = revised.source
+            return tuple(c.source for c in contents), additions, {}
     revised = _render_section_page_review(
         profile, choices[selected], local_key, field, blocks,
         period=period,

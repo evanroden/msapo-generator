@@ -59,42 +59,43 @@ def render_mbcx(status, pages, prefix, field, edit_pages):
         if status.source == "Omit":
             st.text(status.text)
     else:
-        key = field(prefix + "_mbcx_status_" + status_scope, status.text)
-        choice_key = prefix + "_mbcx_sentence_chosen_" + status_scope
-        current_text = st.session_state.get(key, status.text)
-        if not current_text.strip():
-            for column, (label, sentence) in zip(st.columns(len(STATUS_STARTERS)), STATUS_STARTERS):
-                column.button(label, key=prefix + "_mbcx_starter_" + status_scope + "_" + str(STATUS_STARTERS.index((label, sentence))),
-                              on_click=_choose_sentence, args=(key, sentence, choice_key))
-        else:
-            selected = next((label for label, sentence in STATUS_STARTERS if sentence == current_text), None)
-            if selected:
-                st.caption("Status: " + selected)
-        from app.monthly_report_native_loading import reserve_text_area
-        reserve_text_area(key, 120)
-        text = st.text_area("Status or findings", key=key, value=status.text, height=120,
-                            help="This is the exact wording that will print when included. Leave it empty if your attached pages need no introduction.")
-        choice = st.session_state.pop(choice_key, None)
-        chose_sentence = choice == "chosen"
-        if choice == "kept":
-            st.info("Your wording was kept. Clear it before choosing a status.")
-        if text != status.text or chose_sentence:
-            status = replace(status, source="Omit" if status.source == "Omit" else "This month",
-                             text=text, reviewed_fingerprint="", client_reviewed_fingerprint="")
-            if chose_sentence:
-                status = replace(status, ai_written=False, ai_paragraphs=(), ai_evidence_fingerprint="", references=())
-        # Bind the action to the native text just delivered in this run. A
-        # button drawn before the field would retain its previous fingerprint
-        # after an edit and the next click would miss the current action ID.
-        status = _include_update(status, prefix, scope)
-        if status.ai_written:
-            if status.reviewed:
-                st.caption("This wording has been checked. Its review is retained until the wording or sources change.")
+        with st.expander("Optional status or findings", expanded=bool(status.text.strip())):
+            key = field(prefix + "_mbcx_status_" + status_scope, status.text)
+            choice_key = prefix + "_mbcx_sentence_chosen_" + status_scope
+            current_text = st.session_state.get(key, status.text)
+            if not current_text.strip():
+                for column, (label, sentence) in zip(st.columns(len(STATUS_STARTERS)), STATUS_STARTERS):
+                    column.button(label, key=prefix + "_mbcx_starter_" + status_scope + "_" + str(STATUS_STARTERS.index((label, sentence))),
+                                  on_click=_choose_sentence, args=(key, sentence, choice_key))
             else:
-                st.caption("Check this suggested wording against its sources, then use the update. Your choice is saved with this wording.")
-                if st.button("Use this update", key=prefix + "_mbcx_update_review_" + status_scope + "_" + status.fingerprint,
-                             disabled=status.source == "Omit"):
-                    status = replace(status, reviewed_fingerprint=status.fingerprint)
+                selected = next((label for label, sentence in STATUS_STARTERS if sentence == current_text), None)
+                if selected:
+                    st.caption("Status: " + selected)
+            from app.monthly_report_native_loading import reserve_text_area
+            reserve_text_area(key, 120)
+            text = st.text_area("Status or findings", key=key, value=status.text, height=120,
+                                help="This is the exact wording that will print when included. Leave it empty if your attached pages need no introduction.")
+            choice = st.session_state.pop(choice_key, None)
+            chose_sentence = choice == "chosen"
+            if choice == "kept":
+                st.info("Your wording was kept. Clear it before choosing a status.")
+            if text != status.text or chose_sentence:
+                status = replace(status, source="Omit" if status.source == "Omit" else "This month",
+                                 text=text, reviewed_fingerprint="", client_reviewed_fingerprint="")
+                if chose_sentence:
+                    status = replace(status, ai_written=False, ai_paragraphs=(), ai_evidence_fingerprint="", references=())
+            # Bind the action to the native text just delivered in this run. A
+            # button drawn before the field would retain its previous fingerprint
+            # after an edit and the next click would miss the current action ID.
+            status = _include_update(status, prefix, scope)
+            if status.ai_written:
+                if status.reviewed:
+                    st.caption("This wording has been checked. Its review is retained until the wording or sources change.")
+                else:
+                    st.caption("Check this suggested wording against its sources, then use the update. Your choice is saved with this wording.")
+                    if st.button("Use this update", key=prefix + "_mbcx_update_review_" + status_scope + "_" + status.fingerprint,
+                                 disabled=status.source == "Omit"):
+                        status = replace(status, reviewed_fingerprint=status.fingerprint)
     # The single report uploader is already rendered above. A status-only
     # MBCx report is valid and requires no second page count or upload prompt.
     if pages.text.strip() or pages.ai_paragraphs:
