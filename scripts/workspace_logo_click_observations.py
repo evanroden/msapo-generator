@@ -102,3 +102,37 @@ def native_click_geometry(page, directory):
             # is itself explicit rather than silently reporting a clean run.
             if not native_failed:
                 raise
+
+
+# This is the disposable native-output oracle, not the production Generate
+# action or About's first-click replacement action. Server notRunning alone
+# does not mean the lazy native controls above this appended helper have mounted.
+OUTPUT_READY = r'''wanted => {
+  if (location.origin !== 'http://127.0.0.1:8546') return false;
+  const nodes=document.querySelectorAll('[data-enfra-logo-refresh]');
+  if (!nodes.length) return false;
+  let state;
+  try {state=JSON.parse(nodes[nodes.length-1].dataset.enfraLogoRefresh);} catch {return false;}
+  if (state.scope!==wanted.scope || state.generation!==wanted.generation ||
+      state.sequence!==wanted.sequence || !state.original_unchanged ||
+      document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')!=='notRunning') return false;
+  const main=document.querySelector('[data-testid="stMain"]');
+  const inFlow=node=>node.isConnected && [...node.getClientRects()].some(r=>r.width>0 && r.height>0) &&
+    getComputedStyle(node).visibility!=='hidden';
+  const button=[...document.querySelectorAll('button')].find(n=>n.textContent.trim()==='Render synthetic native logo outputs');
+  if (!main || !button || !main.contains(button) || button.disabled || !inFlow(button)) return false;
+  // Include offscreen main-flow controls: native click will scroll past them.
+  // Ignore sidebar and collapsed/non-layout placeholders, neither moves helper.
+  return ![...main.querySelectorAll('[data-testid="stSkeleton"]')].some(inFlow);
+}'''
+
+
+def click_ready_native_output(page, prior):
+    """One native helper click; readiness shares its existing 30-second budget."""
+    import time
+    deadline = time.monotonic() + 30
+    page.wait_for_function(OUTPUT_READY, arg={key: prior[key] for key in ('scope', 'generation', 'sequence')}, timeout=30000)
+    remaining = (deadline - time.monotonic()) * 1000
+    if remaining <= 0:
+        raise TimeoutError('Synthetic native output readiness exhausted click deadline')
+    page.get_by_role('button', name='Render synthetic native logo outputs', exact=True).click(timeout=remaining)

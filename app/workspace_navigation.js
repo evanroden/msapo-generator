@@ -1,4 +1,4 @@
-/* One native section selector. The existing layout adapter owns scheduling. */
+/* Native sequential navigation and legacy section selector. The existing layout adapter owns scheduling. */
 globalThis.ENFRAWorkspaceNavigation = {
     // Entering the editor from report setup replaces the whole page, yet the
     // scroll root keeps the setup review's offset. Python sends this request
@@ -12,6 +12,7 @@ globalThis.ENFRAWorkspaceNavigation = {
         state.navigationRequest = section;
         state.navigationReturn = null;
         state.reviewNavigation = false;
+        state.explicitReview = false;
     },
     // A landing waits for its section to render. Once the reader acts
     // first, it must not scroll or take focus from them (an open menu
@@ -27,6 +28,51 @@ globalThis.ENFRAWorkspaceNavigation = {
     // reader has moved on, even while that control still has focus.
     noteInput(state, event) {
         if (!event.isTrusted) return;
+        // Chromium may change scrollTop while late previews mount, without a
+        // reader scrolling. That must not turn Review's first Back into a
+        // second step. A real scroll gesture hands control back to geometry.
+        const editable = event.target?.closest?.('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="combobox"]');
+        const spaceActivation = event.key === ' ' &&
+            event.target?.closest?.('button, [role="button"], summary');
+        const scrollKey = event.type === 'keydown' && !editable && !spaceActivation &&
+            ['ArrowUp','ArrowDown','PageUp','PageDown','Home','End',' '].includes(event.key);
+        const scrollTarget = event.type === 'pointerdown' &&
+            event.target?.matches?.('[data-testid="stMain"], .epc-workspace') ? event.target : null;
+        const bounds = scrollTarget?.getBoundingClientRect();
+        // Native scrollbar gutters are outside the element's client box;
+        // clicking ordinary blank page content is not a scroll gesture.
+        const scrollbar = bounds && (
+            event.clientX >= bounds.left + scrollTarget.clientLeft + scrollTarget.clientWidth && event.clientX < bounds.right ||
+            event.clientY >= bounds.top + scrollTarget.clientTop + scrollTarget.clientHeight && event.clientY < bounds.bottom);
+        let vertical = 0;
+        if (event.type === 'wheel' && !event.ctrlKey && !event.metaKey)
+            vertical = event.deltaY || 0;
+        if (event.type === 'touchstart')
+            state.reviewTouch = event.touches?.length === 1 ? {x:event.touches[0].clientX,y:event.touches[0].clientY} : null;
+        if (event.type === 'touchmove') {
+            const prior=state.reviewTouch, touch=event.touches?.length===1 ? event.touches[0] : null;
+            if (prior && touch) {
+                const dx=prior.x-touch.clientX, dy=prior.y-touch.clientY;
+                if (Math.abs(dy)>Math.abs(dx)) vertical=dy;
+            }
+            state.reviewTouch=touch ? {x:touch.clientX,y:touch.clientY} : null;
+        }
+        if (event.type === 'touchend' || event.type === 'touchcancel') state.reviewTouch=null;
+        // A nested editor/list can consume the gesture without moving the
+        // page. At its boundary normal scroll chaining may reach the page;
+        // overscroll containment deliberately prevents that handoff.
+        if (vertical) for (let node=event.target; node; node=node.parentElement) {
+            if (node.matches?.('[data-testid="stMain"], .epc-workspace')) break;
+            if (!(node.scrollHeight>node.clientHeight)) continue;
+            const style=getComputedStyle(node);
+            if (!/auto|scroll/.test(style.overflowY)) continue;
+            const consumes=vertical<0 ? node.scrollTop>0 : node.scrollTop<node.scrollHeight-node.clientHeight;
+            if (consumes || /contain|none/.test(style.overscrollBehaviorY)) {vertical=0;break;}
+        }
+        if (vertical || scrollKey || scrollbar) state.explicitReview = false;
+        // A stationary touch tap still belongs to its preceding pointerdown
+        // (including native Add-row focus provenance). Movement/cancel ends it.
+        if (event.type === 'touchstart' || event.type === 'touchend') return;
         const activation = event.type === 'pointerdown' ||
             event.type === 'keydown' && (event.key === 'Enter' || event.key === ' ');
         const keyed = activation ? event.target?.closest?.('[class*="st-key-"]') : null;
@@ -87,7 +133,8 @@ globalThis.ENFRAWorkspaceNavigation = {
     },
     create({root, app, scrollport, nav, state, geometry, schedule}) {
         if (!nav) return null;
-        let select = null, reviewButton = null, entries = [], signature = '';
+        let select = null, reviewButton = null, backButton = null, nextButton = null, progress = null;
+        let entries = [], signature = '';
         let restore = null;
         const box = node => node.getBoundingClientRect();
         const owner = () => state.ownsScroll ? root : scrollport;
@@ -104,15 +151,52 @@ globalThis.ENFRAWorkspaceNavigation = {
                     state.navigationReturn = capture(entries.find(item => item.id === state.navigationActive));
                 state.reviewNavigation = true;
             } else if (!entry.outside) state.reviewNavigation = false;
+            state.explicitReview = Boolean(entry.outside);
             state.navigationRequest = entry.id; state.navigationActive = entry.id;
             schedule();
         };
+        // Layout has already translated this editor into its new scroll root.
+        // Transfer that anchor, not the old root's current-section history;
+        // fractional pixels at the reading line must not select its predecessor.
+        // An explicit Back/Next/Review request still wins in update().
+        const reanchor = id => {
+            if (state.navigationRequest) return;
+            const entry=entries.find(item=>item.id===id && !item.outside && item.target.isConnected);
+            if (!entry) return;
+            state.navigationActive=id;
+            state.navigationJump={id,scroll:owner().scrollTop};
+        };
         const choose = () => navigate(select.value);
         const openReview = () => navigate('report_review');
+        const step = delta => {
+            const index = entries.findIndex(item => item.id === state.navigationActive);
+            const target = entries[index + delta];
+            if (index >= 0 && target) navigate(target.id);
+        };
+        const back = () => step(-1), nextSection = () => step(1);
+        // Review corrections still reach their section directly, even when
+        // Review temporarily releases a confined editor's scroll ownership.
+        // Only the Monthly sequential toolbar owns these local anchors.
+        const correctSection = event => {
+            if (!backButton || event.defaultPrevented || event.button !== 0 ||
+                event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+            const link = event.target?.closest?.('a');
+            const match = /^#report-section-([a-z_]+)$/.exec(link?.getAttribute('href') || '');
+            if (!match || !app.contains(link)) return;
+            const id = 'monthly_' + match[1];
+            if (!entries.some(item => item.id === id && item.target.isConnected)) return;
+            event.preventDefault();
+            navigate(id);
+        };
+        app.addEventListener?.('click', correctSection);
         const prepare = (context, sample, pairs) => {
             const current = nav.querySelector('.epc-section-selector');
-            if (!current) return context;
-            if (current !== select) {select = current; signature = select._epcNavigationSignature || ''; select.onchange = choose;}
+            if (current !== select) {
+                if (select?.onchange === choose) select.onchange = null;
+                select = current;
+                signature = select?._epcNavigationSignature || '';
+                if (select) select.onchange = choose;
+            }
             entries = pairs.map(({id,pair,title}) => ({id, target:pair, title}));
             const review = app.querySelector('#report-review');
             if (review) entries.push({id:'report_review', target:review, title:'Review and download', outside:true});
@@ -123,8 +207,21 @@ globalThis.ENFRAWorkspaceNavigation = {
                 if (reviewButton) reviewButton.onclick = openReview;
             }
             if (reviewButton) reviewButton.disabled = !review;
+            const previous = nav.querySelector('.epc-section-back');
+            const following = nav.querySelector('.epc-section-next');
+            if (backButton !== previous) {
+                if (backButton?.onclick === back) backButton.onclick = null;
+                backButton = previous;
+                if (backButton) backButton.onclick = back;
+            }
+            if (nextButton !== following) {
+                if (nextButton?.onclick === nextSection) nextButton.onclick = null;
+                nextButton = following;
+                if (nextButton) nextButton.onclick = nextSection;
+            }
+            progress = nav.querySelector('.epc-section-progress');
             const next = JSON.stringify(entries.map(({id,title}) => [id,title]));
-            if (next !== signature) {
+            if (select && next !== signature) {
                 const selected = select.value;
                 select.replaceChildren(...entries.map(({id,title}) => {
                     const option = document.createElement('option'); option.value=id; option.textContent=title; return option;
@@ -152,7 +249,7 @@ globalThis.ENFRAWorkspaceNavigation = {
             // section, preserving its paragraph offset when scroll ownership
             // changes back to the measured tabletop/confined layout.
             // The editor's end precedes Review, so it is the return boundary.
-            if (state.reviewNavigation && !state.navigationRequest && review &&
+            if (state.reviewNavigation && !state.explicitReview && !state.navigationRequest && review &&
                 scrollport.scrollTop < (state.reviewScrollTop ?? scrollport.scrollTop)-1 &&
                 box(root).bottom > Math.max(sample.chromeBottom, sample.scrollport.y)+height()+48) {
                 const id=geometry.selectActiveSection(entries.filter(item=>!item.outside).map(item=>({id:item.id,top:box(item.target).top,bottom:box(item.target).bottom})),null,line,0);
@@ -165,7 +262,7 @@ globalThis.ENFRAWorkspaceNavigation = {
             return context;
         };
         const update = (context, sample) => {
-            if (!select) return;
+            if (!entries.length) return;
             const top=Math.max(sample.chromeBottom,sample.scrollport.y,sample.visual?.y||0)+height()+12;
             let request = entries.find(item => item.id === state.navigationRequest);
             if (request && state.landingRequest === request.id) {
@@ -211,11 +308,26 @@ globalThis.ENFRAWorkspaceNavigation = {
             }
             state.navigationActive=active;
             // Never change a menu's highlighted option while it has focus.
-            if (document.activeElement!==select && active && select.value!==active) select.value=active;
+            if (select && document.activeElement!==select && active && select.value!==active) select.value=active;
+            const index = entries.findIndex(item => item.id === active);
+            if (backButton) backButton.disabled = index <= 0;
+            if (nextButton) {
+                nextButton.disabled = index < 0 || index >= entries.length - 1;
+                const label = entries[index + 1]?.outside ? 'Review' : 'Next';
+                if (nextButton.textContent !== label) nextButton.textContent = label;
+            }
+            if (progress && index >= 0) {
+                const text = `${index + 1} of ${entries.length} · ${entries[index].title}`;
+                if (progress.textContent !== text) progress.textContent = text;
+                if (progress.dataset.section !== active) progress.dataset.section = active;
+            }
         };
-        return {prepare,update,height,dispose(){
+        return {prepare,update,height,reanchor,dispose(){
+            app.removeEventListener?.('click',correctSection);
             if(select?.onchange===choose)select.onchange=null;
             if(reviewButton?.onclick===openReview)reviewButton.onclick=null;
+            if(backButton?.onclick===back)backButton.onclick=null;
+            if(nextButton?.onclick===nextSection)nextButton.onclick=null;
         }};
     }
 };

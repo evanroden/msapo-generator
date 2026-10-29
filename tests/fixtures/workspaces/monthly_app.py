@@ -82,6 +82,12 @@ if (os.environ.get("EPC_MONTHLY_TRAINING_TASK") == "1"
         render_reference(base, _field)
     st.stop()
 
+if os.environ.get("EPC_MONTHLY_FINANCIAL_PAGES_TASK") == "1":
+    from scripts.workspace_financial_pages import render as render_financial
+    with isolated(token):
+        render_financial(base, token, _field)
+    st.stop()
+
 if os.environ.get("EPC_MONTHLY_IMPORT_RETENTION_TASK") == "1":
     from scripts.workspace_import_retention import render as render_import_retention
     with isolated(token):
@@ -155,8 +161,17 @@ install_synthetic_observations(base)
 
 st.title("Synthetic actual Monthly workspace QA")
 with isolated(token):
-    render(token, "America/New_York", _field, _move, base)
+    if os.environ.get("EPC_MONTHLY_COVER_SERVICE_TASK") == "1":
+        from scripts.workspace_cover_memory_phases import observe
+        with observe(base, token):
+            render(token, "America/New_York", _field, _move, base)
+    else:
+        render(token, "America/New_York", _field, _move, base)
     emit_snapshot()
+    if os.environ.get("EPC_MONTHLY_COVER_SERVICE_TASK") == "1":
+        from scripts.workspace_cover_service_observations import contention_controls, emit
+        contention_controls(base, token)
+        emit(base, token)
     emit_text_snapshot(base, token)
     if os.environ.get("EPC_MONTHLY_TRAINING_TASK") == "1":
         emit_training_snapshot(base, token)

@@ -657,8 +657,8 @@ def prepare_pages(profile: ReportProfile, contents: tuple[SourceContent, ...],
         raise ValueError("The requested source pages changed. Review them again before inclusion.")
     if len(planned) > MAX_EMBED_PAGES:
         raise ValueError("Embedding limit is 150 selected image/PDF pages per report. Reduce the selection before preparing.")
-    for content, _, number in planned:
-        if not page_allowed(content.source, number):
+    for content, slot, number in planned:
+        if not page_allowed(content.source, number, profile=profile, destination=slot):
             raise ValueError(f"Check page {number} of {content.source.filename} before including it. Prices, legal-only and blank/signature-only pages cannot be included.")
     grouped, total = {}, 0
     for content, slot, number in planned:
