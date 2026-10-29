@@ -115,6 +115,13 @@ def journey(engine, name):
     evidence = {"browser": name, "synthetic": True, "steps": [], "errors": errors, "external": external}
     try:
         page.goto(URL + '/?case=' + name, wait_until='domcontentloaded')
+        # Hosted Chromium/WebKit both complete this first full Streamlit render
+        # just beyond the old 30s receipt budget. Keep every Training receipt
+        # predicate strict; only give the initial app script a bounded startup
+        # budget before checking the exact review state.
+        page.wait_for_function("""() =>
+          document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')==='notRunning'
+        """, timeout=45000)
         evidence['steps'].append(receipt(page, reviews=0, included=False))
         page.get_by_text('Import Training from a saved source', exact=True).click()
         page.get_by_role('button', name='Review this Training table', exact=True).click()
