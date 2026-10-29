@@ -7,6 +7,7 @@ display changes alone cannot change the report.
 from dataclasses import replace
 from datetime import date
 from functools import partial
+import math
 import re
 from uuid import uuid4
 
@@ -119,7 +120,10 @@ def _field_default(value, kind):
         if kind == "date":
             return date.fromisoformat(value) if value else None
         if kind in {"number", "currency"}:
-            return float(value) if value else None
+            number = float(value) if value else None
+            # Unknown source spellings and overflowing numeric strings must
+            # remain correctable text, not invalid native number-input values.
+            return number if number is None or math.isfinite(number) else value
     except (TypeError, ValueError):
         pass  # Keep a recorded unknown value as editable text.
     return value
