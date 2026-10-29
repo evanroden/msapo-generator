@@ -15,7 +15,8 @@ def restore_sources(profile, records):
     recovered, missing = [], []
     for source in records:
         try:
-            content, _ = ingest(profile, safe_source_name(source), source_bytes(profile, source))
+            # Ingest sanitizes the full name; UI truncation can change its suffix.
+            content, _ = ingest(profile, str(source.filename), source_bytes(profile, source))
             recovered.append(replace(content, source=source))
         except (ValueError, OSError, RuntimeError):
             missing.append(source)
