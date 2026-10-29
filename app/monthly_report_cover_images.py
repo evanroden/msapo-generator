@@ -9,6 +9,16 @@ MEMORY_ERROR = ("This photograph needs more memory than is currently available. 
                 "Resize a copy or try again when other reports finish; your current artwork is unchanged.")
 
 
+def cover_uploader_limit_mb():
+    """Native transport ceiling only; exact server admission stays64 MiB.
+
+    Locked Streamlit uses decimal MB on non-Windows browsers and binary MiB on
+    Windows. Round for the smaller unit so neither rejects supported bytes.
+    Actual retained native buffers count in cgroup usage before any decoding.
+    """
+    return (MAX_COVER_PHOTO_BYTES + 999_999) // 1_000_000
+
+
 def image_byte_limit(*, cover_photo=False):
     return MAX_COVER_PHOTO_BYTES if cover_photo else MAX_REPORT_IMAGE_BYTES
 

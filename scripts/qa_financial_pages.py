@@ -33,7 +33,7 @@ INCLUDE='Include reviewed financial pages'
 
 def all_cases_passed(report):
     return (set(report.get('cases',{}))=={e+'/'+s for e in ENGINES for s in SCENARIOS}
-        and not report.get('failures') and all(c.get('result')=='passed' for c in report['cases'].values()))
+        and not report.get('failures') and all(c.get('result')=='passed' and c.get('date_selector_contract')=='passed' for c in report['cases'].values()))
 
 
 def receipt(page,expected=None):return wait_receipt(page,'data-financial-pages',expected,timeout=120000)
@@ -105,12 +105,18 @@ def upload_source_pdf(page, source):
     control.set_input_files(str(source))
 
 
-def fill_source_date(details, value):
+def source_date_widget(page, details):
+    # `has` is evaluated relative to each candidate widget. Its inner locator
+    # must start at the page, NOT include the ancestor details locator again.
+    return details.get_by_test_id('stDateInput').filter(
+        has=page.get_by_text('Source date',exact=True))
+
+
+def fill_source_date(page, details, value):
     """The visible widget label owns a native field named 'Select a date.'."""
     from playwright.sync_api import expect
     expect(details).to_have_count(1)
-    widget=details.get_by_test_id('stDateInput').filter(
-        has=details.get_by_text('Source date',exact=True))
+    widget=source_date_widget(page,details)
     expect(widget).to_have_count(1)
     control=widget.get_by_test_id('stDateInputField')
     expect(control).to_have_count(1)
@@ -118,6 +124,47 @@ def fill_source_date(details, value):
     expect(control).to_be_enabled()
     control.fill(value)
     control.press('Tab')
+
+
+def date_selector_contract(context):
+    """Hosted real selector engine test, isolated from the application/session.
+
+    Minimal markup retains the observed Streamlit label/field/ancestor shape.
+    This page has no report state and cannot prime an application review.
+    """
+    from playwright.sync_api import expect
+    probe=context.new_page()
+    def widget(label,identifier):
+        return ('<div data-testid="stDateInput"><label data-testid="stWidgetLabel">'
+                '<span aria-hidden="true"><div><p>'+label+'</p></div></span></label>'
+                '<input id="'+identifier+'" data-testid="stDateInputField" '
+                'aria-label="Select a date." type="text" placeholder="YYYY-MM-DD"></div>')
+    def markup(labels):
+        return ('<div data-testid="stExpander"><details open><summary>Date and facility · target</summary>'
+                + ''.join(widget(label,'target-'+str(i)) for i,label in enumerate(labels))
+                + '</details></div><div data-testid="stExpander"><details open>'
+                '<summary>Other source</summary>'+widget('Source date','unrelated')+'</details></div>')
+    def details():
+        return probe.get_by_test_id('stExpander').filter(
+            has=probe.locator('summary').filter(has_text='Date and facility · target'))
+    try:
+        probe.set_content(markup(('Report date','Source date')))
+        owner=details()
+        # Reproduce the old implementation's zero-match using Playwright itself.
+        wrong=owner.get_by_test_id('stDateInput').filter(has=owner.get_by_text('Source date',exact=True))
+        expect(wrong).to_have_count(0)
+        expect(source_date_widget(probe,owner)).to_have_count(1)
+        fill_source_date(probe,owner,'2026-09-02')
+        expect(probe.locator('#target-1')).to_have_value('2026-09-02')
+        expect(probe.locator('#target-0')).to_have_value('')
+        expect(probe.locator('#unrelated')).to_have_value('')
+        probe.set_content(markup(('Source date','Source date')))
+        expect(source_date_widget(probe,details())).to_have_count(2)
+        probe.set_content(markup(('Report date','Source date extra')))
+        expect(source_date_widget(probe,details())).to_have_count(0)
+    finally:
+        probe.close()
+    return 'passed'
 
 
 def exercise(engine,name,source,base,scenario):
@@ -165,6 +212,7 @@ def exercise(engine,name,source,base,scenario):
         for number in numbers:
             combo.click();act(lambda:page.get_by_role('option',name=__import__('re').compile(r'^Page '+str(number)+r' ·')).click());combo.press('Escape')
     try:
+        record['date_selector_contract']=date_selector_contract(context)
         page.goto(URL);receipt(page)
         page.get_by_role('button',name='Add files',exact=True).click()
         upload_source_pdf(page,source)
@@ -214,7 +262,7 @@ def exercise(engine,name,source,base,scenario):
         check(OPEN,False)
         details=page.get_by_test_id('stExpander').filter(has=page.locator('summary').filter(has_text='Date and facility'))
         if not details.locator('details').evaluate('n=>n.open'):details.locator('summary').click()
-        fill_source_date(details,'2026-09-02')
+        fill_source_date(page,details,'2026-09-02')
         act(lambda:details.get_by_role('button',name='Use these source details',exact=True).click())
         stale=receipt(page,{'sources.0.service_date':'2026-09-02'});assert 2 not in stale['sources'][0]['allowed']
         assert stale['assets']==accepted['assets']

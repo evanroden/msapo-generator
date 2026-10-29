@@ -16,15 +16,18 @@ import sys
 from app import monthly_report_library as library
 from app import monthly_report_cover_storage as private
 from app.monthly_report_cover_originals import cover_original_path
+from app.monthly_report_cover_images import cover_uploader_limit_mb
 
 MIB = 1024*1024
 MAX_OUTPUT_BYTES = 4*MIB
 MAX_CACHE_RECORDS = 64
 WALL_SECONDS = 15
-# Reserve two additional 64 MiB uploads plus 64 MiB parent/IO margin. Existing
+# Reserve two maximum native (Windows MiB) upload buffers plus 64 MiB margin.
+# The exact accepted source cap remains64 MiB; rejected transport padding can
+# still briefly occupy native buffers. Existing
 # retained uploads are already included in actual cgroup memory.current. This
 # is conservative admission, not protection against unlimited concurrent users.
-PARENT_UPLOAD_RESERVE = 192*MIB
+PARENT_UPLOAD_RESERVE = (2*cover_uploader_limit_mb()+64)*MIB
 _WORKER = Path(__file__).resolve().parents[1] / 'scripts' / 'cover_image_worker.py'
 
 @dataclass(frozen=True)

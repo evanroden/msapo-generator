@@ -229,3 +229,32 @@ def test_programming_errors_are_not_silently_treated_as_image_failure(profile,mo
     monkeypatch.setattr(docx,'normalize_report_image',broken)
     with pytest.raises(RuntimeError,match='programmer error'):
         recovery.recover_cover_original(profile,reference)
+
+
+@pytest.mark.parametrize("available", [256, 263])
+def test_isolated_future_upload_reserve_accounts_for_native_padding(profile, monkeypatch, available):
+    from app import monthly_report_render_jobs as jobs
+    from app.monthly_report_cover_images import cover_uploader_limit_mb
+    assert recovery.PARENT_UPLOAD_RESERVE == (2*cover_uploader_limit_mb()+64)*1024*1024 == 200*1024*1024
+    ref=store_cover_original(profile,b'photo needing isolated recovery')
+    monkeypatch.setattr(jobs,'memory_headroom',lambda:available*1024*1024)
+    monkeypatch.setattr(recovery,'_normal_candidate',lambda *a:('memory',None))
+    monkeypatch.setattr(recovery,'_run_worker',lambda *a:pytest.fail('must reserve future native buffers'))
+    outcome=recovery.recover_cover_original(profile,ref)
+    assert outcome.status=='pending' and outcome.reason=='memory_busy'
+
+
+@pytest.mark.parametrize("available,budget", [(264,64),(327,64),(328,128),(456,256)])
+def test_isolated_worker_budget_starts_after_full_native_future_reserve(profile, monkeypatch, available, budget):
+    from app import monthly_report_render_jobs as jobs
+    ref=store_cover_original(profile,b'photo needing isolated recovery')
+    monkeypatch.setattr(jobs,'memory_headroom',lambda:available*1024*1024)
+    monkeypatch.setattr(recovery,'_normal_candidate',lambda *a:('memory',None))
+    calls=[]
+    def worker(source,target,limit):
+        calls.append(limit)
+        return 'memory_limit'
+    monkeypatch.setattr(recovery,'_run_worker',worker)
+    outcome=recovery.recover_cover_original(profile,ref)
+    assert calls==[budget*1024*1024]
+    assert outcome.status=='pending'

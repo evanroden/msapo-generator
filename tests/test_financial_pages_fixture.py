@@ -25,7 +25,7 @@ def test_inputs_are_real_bounded_mixed_pdfs_and_no_auto_financial_grants(tmp_pat
 
 def test_native_gate_requires_both_complete_engines_and_scenarios():
     from scripts.qa_financial_pages import all_cases_passed,ENGINES,SCENARIOS
-    cases={e+'/'+s:{'result':'passed'} for e in ENGINES for s in SCENARIOS}
+    cases={e+'/'+s:{'result':'passed','date_selector_contract':'passed'} for e in ENGINES for s in SCENARIOS}
     assert all_cases_passed({'cases':cases,'failures':[]})
     assert not all_cases_passed({'cases':{},'failures':[]})
     assert not all_cases_passed({'cases':cases,'failures':['failure']})
@@ -223,6 +223,8 @@ def test_native_date_field_is_scoped_by_visible_widget_label(monkeypatch,labels,
         def __init__(self):self.nodes=['details']
         def get_by_test_id(self,testid):
             assert testid=='stDateInput';return Locator(list(labels))
+        def get_by_text(self,*args,**kwargs):raise AssertionError('has locator must not repeat ancestor details')
+    class Page:
         def get_by_text(self,label,*,exact):
             assert exact and label=='Source date';return Locator([v for v in labels if v==label])
         def get_by_role(self,*args,**kwargs):raise AssertionError('Visible Source date is not a textbox accessible name')
@@ -233,10 +235,10 @@ def test_native_date_field_is_scoped_by_visible_widget_label(monkeypatch,labels,
         def to_be_enabled(self):assert len(self.locator.nodes)==1
     monkeypatch.setitem(sys.modules,'playwright.sync_api',SimpleNamespace(expect=Expect))
     if expected!=1:
-        with pytest.raises(AssertionError):fill_source_date(Details(),'2026-09-02')
+        with pytest.raises(AssertionError):fill_source_date(Page(),Details(),'2026-09-02')
         assert not events
     else:
-        fill_source_date(Details(),'2026-09-02')
+        fill_source_date(Page(),Details(),'2026-09-02')
         assert events==[('fill','Source date','2026-09-02'),('press','Tab')]
 
 
@@ -246,6 +248,21 @@ def test_date_control_keeps_form_submission_and_canonical_receipt_assertion():
     helper=inspect.getsource(fill_source_date)
     assert 'first(' not in helper and 'force=' not in helper and 'timeout=' not in helper
     flow=inspect.getsource(exercise)
-    assert "fill_source_date(details,'2026-09-02')" in flow
+    assert "fill_source_date(page,details,'2026-09-02')" in flow
     assert "name='Use these source details',exact=True" in flow
     assert "'sources.0.service_date':'2026-09-02'" in flow
+
+
+def test_hosted_selector_contract_is_required_for_case_acceptance():
+    from scripts.qa_financial_pages import all_cases_passed,ENGINES,SCENARIOS,date_selector_contract,exercise
+    import inspect
+    cases={e+'/'+s:{'result':'passed','date_selector_contract':'passed'} for e in ENGINES for s in SCENARIOS}
+    for key in cases:
+        for status in (None,'running','failed'):
+            assert not all_cases_passed({'cases':{**cases,key:{'result':'passed','date_selector_contract':status}},'failures':[]})
+    contract=inspect.getsource(date_selector_contract)
+    assert 'probe.set_content' in contract and 'expect(wrong).to_have_count(0)' in contract
+    assert "fill_source_date(probe,owner,'2026-09-02')" in contract
+    assert '.to_have_count(2)' in contract and '.to_have_count(0)' in contract
+    assert 'date_selector_contract(context)' in inspect.getsource(exercise)
+    assert 'force=' not in contract and '.first' not in contract

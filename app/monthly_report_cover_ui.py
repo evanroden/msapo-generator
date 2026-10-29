@@ -10,7 +10,7 @@ import streamlit as st
 from app import monthly_report_library as library
 from app.monthly_report_asset_review import preserve_asset_reviews
 from app.monthly_report_docx import normalize_report_image
-from app.monthly_report_cover_images import image_byte_limit, read_picture_upload, normalize_cover_photo
+from app.monthly_report_cover_images import image_byte_limit, read_picture_upload, normalize_cover_photo, cover_uploader_limit_mb
 from app.monthly_report_upload_limits import byte_limit_label, uploader_limit_mib
 from app.monthly_report_editor import _signature
 from app.monthly_report_model import ResolvedBlock, picture_replacement_references
@@ -67,7 +67,7 @@ def render_cover_photograph(blocks, prefix, assets, asset_loader, *, scope, repo
                 st.warning("The current photograph could not be displayed. Choose a replacement or leave it out.")
         upload = st.file_uploader(
             "New photograph for this report", type=["png", "jpg", "jpeg", "heic", "heif", "webp"],
-            max_upload_size=uploader_limit_mib(image_byte_limit(cover_photo=True)),
+            max_upload_size=cover_uploader_limit_mb(),
             key=prefix + "_cover_photograph_upload_" + identity,
             help=_picture_help(cover_photo=True),
         )
@@ -135,7 +135,8 @@ def _upload_picture(block, title, prefix, assets):
     upload = st.file_uploader(
         "New " + noun, type=["png", "jpg", "jpeg", "heic", "heif", "webp"],
         key=prefix + "_upload_" + block.key,
-        max_upload_size=uploader_limit_mib(image_byte_limit(cover_photo=block.key == "cover_photo")),
+        max_upload_size=(cover_uploader_limit_mb() if block.key == "cover_photo" else
+                         uploader_limit_mib(image_byte_limit())),
         help=_picture_help(cover_photo=block.key == "cover_photo"),
     )
     if upload and st.button("Use this " + noun, key=prefix + "_use_" + block.key):

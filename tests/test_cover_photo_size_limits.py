@@ -110,7 +110,7 @@ def test_advanced_photo_uploader_advertises_effective_cap():
     app = cover_app(empty=True)
     button(app, 'Change cover photo').click().run()
     widget = app.get('file_uploader')[0]
-    assert widget.proto.max_upload_size_mb == 64
+    assert widget.proto.max_upload_size_mb == 68
     assert '64 MiB' in widget.proto.help and '40 million pixels' in widget.proto.help
     assert not app.exception
 
@@ -328,3 +328,73 @@ def test_noninterleaved_jpeg_reserves_original_coefficients():
     payload = b'\x01' + raw[scan+5:scan+7] + b'\0\x3f\0'
     changed = raw[:scan+2] + (len(payload)+2).to_bytes(2,'big') + payload + raw[scan+2+length:]
     assert cover_codec_header(changed).coefficient_bytes >= 81*57*3*2
+
+@pytest.mark.parametrize("platform_base", [1000, 1024])
+def test_cover_native_transport_ceiling_preserves_exact_backend_cap(platform_base):
+    from app.monthly_report_cover_images import cover_uploader_limit_mb, read_picture_upload
+    ceiling = cover_uploader_limit_mb()
+    assert ceiling == 68
+    assert 64*MIB <= ceiling*platform_base**2
+    class Oversized:
+        size = 64*MIB+1
+        def tell(self): raise AssertionError("overflow must reject before any read/copy")
+    with pytest.raises(ValueError, match="64 MiB"):
+        read_picture_upload(Oversized(), cover_photo=True)
+
+
+def test_cover_native_transport_padding_is_in_actual_memory_headroom(monkeypatch):
+    from app import monthly_report_cover_images as images, monthly_report_render_jobs as jobs
+    # Two worst-case Windows-native buffers (68 MiB each) are already resident.
+    # No decoder may ignore them merely because the exact server cap is64MiB.
+    monkeypatch.setattr(jobs, "memory_headroom", lambda: 512*MIB-192*MIB-2*68*MIB)
+    with pytest.raises(ValueError, match="memory"):
+        images.check_cover_headroom(64*MIB, pixels=40_000_000, image_format="JPEG")
+
+
+def test_installed_streamlit_frontend_converts_cover_ceiling_on_both_platforms():
+    """Execute the actual locked bundle conversion, not a mock of its units."""
+    import json
+    from pathlib import Path
+    import re
+    import subprocess
+    import streamlit
+    from app.monthly_report_cover_images import cover_uploader_limit_mb
+    folder = Path(streamlit.__file__).parent/'static/static/js'
+    files = list(folder.glob('*.js'))
+    uploader = next(p.read_text() for p in files
+                    if p.name.startswith('FileUploader.') and 'maxUploadSizeMb' in p.read_text())
+    assert re.search(r'\w+\(\w+,\w+\.Megabyte,\w+\.Byte\)', uploader)
+    bundle = next(p.read_text() for p in files
+                  if 'Megabyte=' in p.read_text() and 'nt=s()?1024:1e3' in p.read_text())
+    conversion = re.search(r'it=(\(e,t,n\)=>\{.*?\}),at=', bundle).group(1)
+    platform_bundle = next(p.read_text() for p in files
+                           if 'function Vt(){return/^Win/i.test(navigator.platform)}' in p.read_text())
+    platform = re.search(r'function Vt\(\)\{[^}]+\}', platform_bundle).group(0)
+    script = """
+const results=[];
+for(const name of ['Linux x86_64','MacIntel','Win32']){
+ const navigator={platform:name};
+ PLATFORM
+ const s=Vt, nt=s()?1024:1e3, rt=['gb','mb','kb','b'];
+ const convert=CONVERT;
+ results.push([name,convert(64,'mb','b'),convert(CEILING,'mb','b')]);
+}
+console.log(JSON.stringify(results));
+""".replace('PLATFORM', platform).replace('CONVERT', conversion).replace('CEILING', str(cover_uploader_limit_mb()))
+    rows = json.loads(subprocess.check_output(['node','-e',script], text=True, timeout=10))
+    assert rows == [
+        ['Linux x86_64',64_000_000,68_000_000],
+        ['MacIntel',64_000_000,68_000_000],
+        ['Win32',64*MIB,68*MIB],
+    ]
+    assert all(native >= 64*MIB for _,_,native in rows)
+
+
+def test_ordinary_cover_widget_uses_transport_ceiling_but_help_keeps_exact_cap(tmp_path, monkeypatch):
+    from test_cover_recovery_ui import harness
+    monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path))
+    app = harness()
+    widget = app.get('file_uploader')[0]
+    assert widget.proto.max_upload_size_mb == 68
+    assert '64 MiB' in widget.proto.help
+    assert not app.exception
