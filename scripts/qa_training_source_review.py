@@ -23,7 +23,7 @@ def receipt(page, *, reviews=None, included=None, saved=None, previous_review=No
     payload = {"prefix": RECEIPT_PREFIX, "wanted": {"reviews": reviews, "included": included,
         "saved": saved, "previous": previous_review}}
     predicate = '''payload => {
-      for (const node of document.querySelectorAll('body *')) {
+      for (const node of document.querySelectorAll('[data-testid="stCaptionContainer"]')) {
         const text=node.textContent||'';
         const at=text.indexOf(payload.prefix);
         if(at<0)continue;
@@ -74,7 +74,7 @@ def receipt(page, *, reviews=None, included=None, saved=None, previous_review=No
         raise AssertionError("Training receipt readiness diagnostics: " +
                              json.dumps(probe, sort_keys=True, ensure_ascii=False)) from exc
     return page.evaluate('''prefix => {
-      for (const node of document.querySelectorAll('body *')) {
+      for (const node of document.querySelectorAll('[data-testid="stCaptionContainer"]')) {
         const text=node.textContent||'';
         const at=text.indexOf(prefix);
         if(at<0)continue;
