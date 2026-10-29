@@ -41,13 +41,14 @@ def watch_logo_open(monkeypatch, path, calls, *, grow=False, substitute=None):
         if candidate == path and mode == "rb":
             opened.append(candidate)
             if grow:
-                # This mutation of a synthetic fixture occurs AFTER stat().
-                # A byte added here must be rejected by the bounded read,
-                # not only by a later image/fingerprint validation.
-                with opening(candidate, "ab") as stream:
-                    stream.write(b"!")
-            actual = (BytesIO(substitute) if substitute is not None
-                      else opening(candidate, mode, *args, **kwargs))
+                # Immutable stored art cannot be appended to. Present the
+                # post-stat growth in the exact opened stream instead.
+                with opening(candidate, mode, *args, **kwargs) as source:
+                    original = source.read(branding.MAX_IMAGE_BYTES + 1)
+                actual = BytesIO(original + b"!")
+            else:
+                actual = (BytesIO(substitute) if substitute is not None
+                          else opening(candidate, mode, *args, **kwargs))
             return MeteredRead(actual, calls)
         return opening(candidate, mode, *args, **kwargs)
 
@@ -102,19 +103,15 @@ def test_growing_file_between_stat_and_open_is_rejected_before_decoding(
         installed, monkeypatch):
     state, logo, original, path = installed
     calls = []
-    try:
-        with monkeypatch.context() as scope:
-            scope.setattr(branding, "MAX_IMAGE_BYTES", len(original))
-            opened = watch_logo_open(scope, path, calls, grow=True)
-            scope.setattr(branding, "_image",
-                          lambda *_: pytest.fail("Over-limit artwork reached the image decoder"))
-            with pytest.raises(branding.LogoArtworkError, match="size limit"):
-                branding.read_logo(logo)
-        assert opened == [path] and calls == [len(original) + 1]
-        assert path.read_bytes() == original + b"!"
-    finally:
-        # Only repair the intentionally altered synthetic fixture.
-        path.write_bytes(original)
+    with monkeypatch.context() as scope:
+        scope.setattr(branding, "MAX_IMAGE_BYTES", len(original))
+        opened = watch_logo_open(scope, path, calls, grow=True)
+        scope.setattr(branding, "_image",
+                      lambda *_: pytest.fail("Over-limit artwork reached the image decoder"))
+        with pytest.raises(branding.LogoArtworkError, match="size limit"):
+            branding.read_logo(logo)
+    assert opened == [path] and calls == [len(original) + 1]
+    assert path.read_bytes() == original
     assert branding.read_logo(logo) == original
     assert branding.load_branding() == state
 
@@ -160,18 +157,16 @@ def test_growing_existing_logo_cannot_publish_a_new_shared_collection(
     manifest = (branding._path() / "manifest.json").read_bytes()
     initial_history = (branding._path() / "history" / "00000001.json").read_bytes()
     calls = []
-    try:
-        with monkeypatch.context() as scope:
-            scope.setattr(branding, "MAX_IMAGE_BYTES", len(original))
-            opened = watch_logo_open(scope, path, calls, grow=True)
-            scope.setattr(branding, "_image",
-                          lambda *_: pytest.fail("Over-limit restore reached image validation"))
-            with pytest.raises(branding.LogoArtworkError, match="size limit"):
-                branding.restore_branding(
-                    1, expected_revision=1, actor="Synthetic Restorer", confirmed=True)
-        assert opened == [path] and calls == [len(original) + 1]
-    finally:
-        path.write_bytes(original)
+    with monkeypatch.context() as scope:
+        scope.setattr(branding, "MAX_IMAGE_BYTES", len(original))
+        opened = watch_logo_open(scope, path, calls, grow=True)
+        scope.setattr(branding, "_image",
+                      lambda *_: pytest.fail("Over-limit restore reached image validation"))
+        with pytest.raises(branding.LogoArtworkError, match="size limit"):
+            branding.restore_branding(
+                1, expected_revision=1, actor="Synthetic Restorer", confirmed=True)
+    assert opened == [path] and calls == [len(original) + 1]
+    assert path.read_bytes() == original
     assert (branding._path() / "manifest.json").read_bytes() == manifest
     assert (branding._path() / "history" / "00000001.json").read_bytes() == initial_history
     assert not (branding._path() / "history" / "00000002.json").exists()
