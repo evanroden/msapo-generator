@@ -13,7 +13,7 @@ def _saved_time(value):
         if parsed.tzinfo is None:
             return "Time unavailable"
         return parsed.astimezone(timezone.utc).strftime("%H:%M UTC")
-    except (AttributeError, TypeError, ValueError):
+    except (AttributeError, TypeError, ValueError, OverflowError):
         return "Time unavailable"
 
 
