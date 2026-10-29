@@ -11,6 +11,7 @@ from io import BytesIO
 import json
 from pathlib import Path
 import secrets
+import re
 import subprocess
 import time
 from urllib.parse import urlparse
@@ -118,7 +119,7 @@ print(json.dumps(out))
 """.replace('TOKEN', repr(token)))
 
 
-def unchanged(before, after, *, token, original_digest, allow_derivatives=()):
+def unchanged(before, after, *, token, original_digest, allow_derivatives=(), last_good_reference=""):
     """Exact permitted private source/cache and current-journal paths only."""
     from app import monthly_report_qa_fixture as fixture, monthly_report_library as library
     contract = library._contract_directory(fixture.CONTRACT)
@@ -134,10 +135,24 @@ def unchanged(before, after, *, token, original_digest, allow_derivatives=()):
         digest=reference.split('.')[0]
         permitted.update((str(journal/'assets'/reference),str(Path('objects')/digest[:2]/digest),
                           str(Path('objects')/digest[:2]/'.write-lock')))
+    if last_good_reference:
+        # A shared save clears private journal assets. Keeping a later pending
+        # upload may recreate ONLY the already-selected photograph in that
+        # browser journal. Bind it to independently hashed pre-action library
+        # bytes; never allow a new shared asset, object, profile or arbitrary ref.
+        assert re.fullmatch(r'[0-9a-f]{64}\.jpg', last_good_reference)
+        source = before.get(str(private/'assets'/last_good_reference))
+        assert source is not None and 0 < source[0] <= 4*MIB
+        assert source[2] == last_good_reference.split('.')[0]
+        target = str(journal/'assets'/last_good_reference)
+        if target in after:
+            assert after[target][0] == source[0] and after[target][2] == source[2], 'Last-good journal copy changed'
+        permitted.add(target)
     for name, record in before.items():
         if name != str(journal/'working.json'):
             assert after.get(name) == record, ('Existing stored file changed', name)
-    assert after.keys()-before.keys() <= permitted, 'Unrelated stored file added'
+    unexpected = after.keys()-before.keys()-permitted
+    assert not unexpected, ('Unrelated stored file added', sorted(unexpected)[:8], len(unexpected))
     original=after[str(private/'cover-originals'/(original_digest+'.original'))]
     assert original[2] == original_digest, 'Retained original is not the exact uploaded source'
 
@@ -269,7 +284,7 @@ def main(args):
             baseline=wait(page);before=inventory(args.container,token)
             failed=upload(page,b'not a decodable photograph','synthetic-corrupt.png')
             assert failed['working']['request']['status']=='unrecoverable'
-            same_content(baseline,failed);unchanged(before,inventory(args.container,token),token=token,original_digest=sha256(b'not a decodable photograph').hexdigest())
+            same_content(baseline,failed);unchanged(before,inventory(args.container,token),token=token,original_digest=sha256(b'not a decodable photograph').hexdigest(),last_good_reference=baseline['working']['cover']['asset_hashes'][0])
             checkpoint('corrupt-retains-last-good-and-history',failed)
             # Bounded real process lock. No decoder or report function mocked.
             page.get_by_role('button',name='QA hold real report work slot for 15 seconds',exact=True).click()

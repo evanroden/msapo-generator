@@ -398,6 +398,8 @@ export default function(component) {
             globalThis.ENFRAWorkspaceNavigation?.keepAnchor(anchor, scrollport);
         state.mode = context.mode;
         state.ownsScroll = ownsScroll;
+        if (previous !== context.mode && ownsScroll && activeBefore)
+            navigation?.reanchor(activeBefore.id);
         navigation?.update(context,sample);
         updateActive(context);
         globalThis.ENFRAWorkspaceNavigation?.focusEntries(state, root);

@@ -181,3 +181,26 @@ def test_timeout_diagnostic_read_failure_does_not_mask_original(capsys,browser_e
     with pytest.raises(BrowserTimeout) as caught:wait(Page())
     assert caught.value is error
     assert 'unavailable' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('mutation',[None,'wrong-hash','wrong-size','wrong-reference','other-profile','extra-object','changed-existing','absent-library'])
+def test_only_exact_existing_last_good_art_may_be_copied_to_private_journal(mutation):
+    from app import monthly_report_qa_fixture as fixture,monthly_report_library as library
+    token='a'*32;digest=sha256(b'corrupt original').hexdigest();picture='1'*64+'.jpg'
+    profile=Path('library')/library._contract_directory(fixture.CONTRACT)/fixture.profile().key
+    journal=Path('active_work')/sha256(token.encode()).hexdigest()/library._contract_directory(fixture.CONTRACT)/fixture.profile().key/fixture.PERIOD.key
+    shared=str(profile/'assets'/picture);copy=str(journal/'assets'/picture)
+    original=str(profile/'cover-originals'/(digest+'.original'))
+    before={shared:[42,100,'1'*64],'snapshots/immutable.json':[10,80,'saved']}
+    after={**deepcopy(before),copy:[42,200,'1'*64],original:[16,200,digest]}
+    if mutation=='wrong-hash':after[copy][2]='2'*64
+    if mutation=='wrong-size':after[copy][0]=43
+    if mutation=='wrong-reference':after[str(journal/'assets'/('2'*64+'.jpg'))]=after.pop(copy)
+    if mutation=='other-profile':after[str(journal.parent.parent/'other'/fixture.PERIOD.key/'assets'/picture)]=after.pop(copy)
+    if mutation=='extra-object':after['objects/11/'+'1'*64]=[42,200,'1'*64]
+    if mutation=='changed-existing':after[shared][1]+=1
+    if mutation=='absent-library':before.pop(shared);after.pop(shared)
+    def check():unchanged(before,after,token=token,original_digest=digest,last_good_reference=picture)
+    if mutation is None:check()
+    else:
+        with pytest.raises(AssertionError):check()

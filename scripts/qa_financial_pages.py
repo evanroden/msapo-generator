@@ -105,6 +105,21 @@ def upload_source_pdf(page, source):
     control.set_input_files(str(source))
 
 
+def fill_source_date(details, value):
+    """The visible widget label owns a native field named 'Select a date.'."""
+    from playwright.sync_api import expect
+    expect(details).to_have_count(1)
+    widget=details.get_by_test_id('stDateInput').filter(
+        has=details.get_by_text('Source date',exact=True))
+    expect(widget).to_have_count(1)
+    control=widget.get_by_test_id('stDateInputField')
+    expect(control).to_have_count(1)
+    expect(control).to_be_visible()
+    expect(control).to_be_enabled()
+    control.fill(value)
+    control.press('Tab')
+
+
 def exercise(engine,name,source,base,scenario):
     from playwright.sync_api import expect
     out=OUT/name/scenario;out.mkdir(parents=True,exist_ok=True)
@@ -199,10 +214,9 @@ def exercise(engine,name,source,base,scenario):
         check(OPEN,False)
         details=page.get_by_test_id('stExpander').filter(has=page.locator('summary').filter(has_text='Date and facility'))
         if not details.locator('details').evaluate('n=>n.open'):details.locator('summary').click()
-        date=details.get_by_role('textbox',name='Source date',exact=True)
-        date.fill('2026-09-02');date.press('Tab')
+        fill_source_date(details,'2026-09-02')
         act(lambda:details.get_by_role('button',name='Use these source details',exact=True).click())
-        stale=receipt(page);assert 2 not in stale['sources'][0]['allowed']
+        stale=receipt(page,{'sources.0.service_date':'2026-09-02'});assert 2 not in stale['sources'][0]['allowed']
         assert stale['assets']==accepted['assets']
         check(OPEN);pages([1,2]);expect(page.get_by_role('checkbox',name=VISUAL,exact=True)).not_to_be_checked()
         check(VISUAL);act(include.click);renewed=receipt(page)

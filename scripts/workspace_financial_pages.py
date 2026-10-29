@@ -87,7 +87,7 @@ def render(base,token,field):
     saved=library.load_snapshot(p.contract,p.key,period)
     record={'fault':fault,'render':st.session_state.financial_render,'scope':identity,'generation':generation,'fingerprint':draft.fingerprint,
         'review_pages':next((list(v) for k,v in st.session_state.items() if k.startswith(prefix+'_evidence_section_mbcx_report_financial_') and k.endswith('_pages')),[]),
-        'sources':[{'id':s.id,'sha256':s.sha256,'classification':s.classification,'facility':s.facility,
+        'sources':[{'id':s.id,'sha256':s.sha256,'classification':s.classification,'facility':s.facility,'service_date':s.service_date,
             'financial_grants':[r.number for r in s.financial_page_reviews],
             'allowed':[n for n in s.selected_pages if page_allowed(s,n,profile=p,destination='mbcx_report')],
             'reviews':list(s.client_page_reviews)} for s in draft.sources],

@@ -81,7 +81,8 @@ assert a.session_state['financial_draft']==before
 a.selectbox[0].set_value('None').run();a.multiselect[0].set_value([2]).run();check('I reviewed');button('Include reviewed financial pages')
 check('Review client',False)
 next(c for c in a.date_input if c.label=='Source date').set_value(date(2026,9,2)).run();button('Use these source details')
-stale=a.session_state['financial_draft'];assert not page_allowed(stale.sources[0],2,profile=stale.profile,destination='mbcx_report')
+stale=a.session_state['financial_draft'];assert stale.sources[0].service_date=='2026-09-02'
+assert not page_allowed(stale.sources[0],2,profile=stale.profile,destination='mbcx_report')
 check('Review client');a.multiselect[0].set_value([1,2]).run();assert not next(c for c in a.checkbox if c.label.startswith('I reviewed')).value
 check('I reviewed');button('Include reviewed financial pages')
 renewed=a.session_state['financial_draft']
@@ -193,3 +194,58 @@ def test_source_upload_label_matches_production_owner_and_ui_call_is_preserved()
     assert "get_by_text('MBCx report files',exact=True)" in helper
     flow=inspect.getsource(exercise)
     assert "name='Add files',exact=True" in flow and 'upload_source_pdf(page,source)' in flow
+
+
+@pytest.mark.parametrize('labels,expected',[
+    (('Report date','Source date'),1),
+    (('Source date','Report date'),1),
+    (('Source date',),1),
+    (('Source date extra','Report date'),0),
+    (('Source date','Source date'),2),
+])
+def test_native_date_field_is_scoped_by_visible_widget_label(monkeypatch,labels,expected):
+    """Offline contract models the observed native input's non-label aria name."""
+    import sys
+    from types import SimpleNamespace
+    from scripts.qa_financial_pages import fill_source_date
+    events=[]
+    class Locator:
+        def __init__(self,nodes):self.nodes=nodes
+        def filter(self,*,has):return Locator([n for n in self.nodes if n in has.nodes])
+        def get_by_test_id(self,testid):
+            assert testid=='stDateInputField'
+            return Field(self.nodes)
+    class Field(Locator):
+        def fill(self,value):
+            assert len(self.nodes)==1;events.append(('fill',self.nodes[0],value))
+        def press(self,key):events.append(('press',key))
+    class Details(Locator):
+        def __init__(self):self.nodes=['details']
+        def get_by_test_id(self,testid):
+            assert testid=='stDateInput';return Locator(list(labels))
+        def get_by_text(self,label,*,exact):
+            assert exact and label=='Source date';return Locator([v for v in labels if v==label])
+        def get_by_role(self,*args,**kwargs):raise AssertionError('Visible Source date is not a textbox accessible name')
+    class Expect:
+        def __init__(self,locator):self.locator=locator
+        def to_have_count(self,n):assert len(self.locator.nodes)==n
+        def to_be_visible(self):assert len(self.locator.nodes)==1
+        def to_be_enabled(self):assert len(self.locator.nodes)==1
+    monkeypatch.setitem(sys.modules,'playwright.sync_api',SimpleNamespace(expect=Expect))
+    if expected!=1:
+        with pytest.raises(AssertionError):fill_source_date(Details(),'2026-09-02')
+        assert not events
+    else:
+        fill_source_date(Details(),'2026-09-02')
+        assert events==[('fill','Source date','2026-09-02'),('press','Tab')]
+
+
+def test_date_control_keeps_form_submission_and_canonical_receipt_assertion():
+    import inspect
+    from scripts.qa_financial_pages import fill_source_date,exercise
+    helper=inspect.getsource(fill_source_date)
+    assert 'first(' not in helper and 'force=' not in helper and 'timeout=' not in helper
+    flow=inspect.getsource(exercise)
+    assert "fill_source_date(details,'2026-09-02')" in flow
+    assert "name='Use these source details',exact=True" in flow
+    assert "'sources.0.service_date':'2026-09-02'" in flow

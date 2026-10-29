@@ -715,3 +715,43 @@ for(const roleButton of [false,true])test(`Space on ${roleButton?'role-button an
     h.scrollport.scrollTop-=727;h.measure();
     assert.equal(h.state.reviewNavigation,roleButton);
 });
+
+for(const activityTop of [481.34375,481.375])for(const prior of ['monthly_organization','monthly_activity',null])
+test(`mode anchor hands fractional ${activityTop} to coordinator from ${prior}`,()=>{
+    const h=harness('tabletop',true);
+    h.pairs[0].id='monthly_organization';
+    h.root.getBoundingClientRect=()=>({top:416,bottom:900,height:484});
+    h.nav.getBoundingClientRect=()=>({top:424,bottom:477,height:53});
+    h.pairs[0].pair.getBoundingClientRect=()=>({top:-35.8125,bottom:activityTop-16,height:501.1875});
+    h.pairs[1].pair.getBoundingClientRect=()=>({top:activityTop,bottom:1721.5625,height:1240.1875});
+    h.root.scrollTop=773;
+    h.state.navigationActive=prior;h.state.navigationJump=null;
+    const focus=h.document.activeElement,scroll=h.root.scrollTop,counts=h.counts();
+    h.controller().reanchor('monthly_activity');h.measure();
+    assert.equal(h.progress.dataset.section,'monthly_activity');
+    assert.equal(h.state.navigationActive,'monthly_activity');
+    assert.equal(h.root.scrollTop,scroll,'handoff performs no additional scroll');
+    assert.equal(h.document.activeElement,focus,'handoff performs no focus');
+    assert.deepEqual(h.counts(),counts,'handoff neither schedules nor dispatches input');
+    // The handoff is not a permanent section lock: subsequent native scrolling
+    // continues through the existing reading-line geometry.
+    h.root.scrollTop+=50;
+    h.pairs[1].pair.getBoundingClientRect=()=>({top:activityTop-50,bottom:1671.5625,height:1240.1875});
+    h.measure();assert.equal(h.progress.dataset.section,'monthly_activity');
+});
+
+test('pending explicit Next takes precedence over a mode anchor; removed anchor is ignored',()=>{
+    const h=harness('tabletop',true);
+    h.nextButton.onclick(); // Cover -> Activity pending native navigation.
+    assert.equal(h.state.navigationRequest,'monthly_activity');
+    const active=h.state.navigationActive;
+    h.controller().reanchor('monthly_training');
+    assert.equal(h.state.navigationRequest,'monthly_activity');
+    assert.equal(h.state.navigationActive,active);
+    h.measure();assert.equal(h.progress.dataset.section,'monthly_activity');
+    const saved={active:h.state.navigationActive,jump:h.state.navigationJump};
+    h.controller().reanchor('monthly_removed');
+    assert.equal(h.state.navigationActive,saved.active);assert.equal(h.state.navigationJump,saved.jump);
+    h.pairs[3].pair.isConnected=false;h.controller().reanchor('monthly_training');
+    assert.equal(h.state.navigationActive,saved.active);assert.equal(h.state.navigationJump,saved.jump);
+});

@@ -155,6 +155,17 @@ globalThis.ENFRAWorkspaceNavigation = {
             state.navigationRequest = entry.id; state.navigationActive = entry.id;
             schedule();
         };
+        // Layout has already translated this editor into its new scroll root.
+        // Transfer that anchor, not the old root's current-section history;
+        // fractional pixels at the reading line must not select its predecessor.
+        // An explicit Back/Next/Review request still wins in update().
+        const reanchor = id => {
+            if (state.navigationRequest) return;
+            const entry=entries.find(item=>item.id===id && !item.outside && item.target.isConnected);
+            if (!entry) return;
+            state.navigationActive=id;
+            state.navigationJump={id,scroll:owner().scrollTop};
+        };
         const choose = () => navigate(select.value);
         const openReview = () => navigate('report_review');
         const step = delta => {
@@ -311,7 +322,7 @@ globalThis.ENFRAWorkspaceNavigation = {
                 if (progress.dataset.section !== active) progress.dataset.section = active;
             }
         };
-        return {prepare,update,height,dispose(){
+        return {prepare,update,height,reanchor,dispose(){
             app.removeEventListener?.('click',correctSection);
             if(select?.onchange===choose)select.onchange=null;
             if(reviewButton?.onclick===openReview)reviewButton.onclick=null;
