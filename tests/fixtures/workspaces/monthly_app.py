@@ -161,7 +161,12 @@ install_synthetic_observations(base)
 
 st.title("Synthetic actual Monthly workspace QA")
 with isolated(token):
-    render(token, "America/New_York", _field, _move, base)
+    if os.environ.get("EPC_MONTHLY_COVER_SERVICE_TASK") == "1":
+        from scripts.workspace_cover_memory_phases import observe
+        with observe(base, token):
+            render(token, "America/New_York", _field, _move, base)
+    else:
+        render(token, "America/New_York", _field, _move, base)
     emit_snapshot()
     if os.environ.get("EPC_MONTHLY_COVER_SERVICE_TASK") == "1":
         from scripts.workspace_cover_service_observations import contention_controls, emit

@@ -39,6 +39,41 @@ def replace_cover_picture(block, data, suffix, assets):
     ))
 
 
+def _reuse_cover_upload(upload, key):
+    """Release only the redundant native return-copy, never the selected file.
+
+    The exact current-editor key is already bound to scope and action cycle.
+    Streamlit owns the stored object; we read immutable bytes without changing
+    its cursor or session state. Any mismatch keeps the ordinary return value.
+    """
+    from io import BytesIO, SEEK_END
+    from streamlit.runtime.uploaded_file_manager import UploadedFile
+    if type(upload) is not UploadedFile:
+        return upload
+    stored = st.session_state.get(key)
+    if type(stored) is not UploadedFile:
+        return upload
+    fields = ('file_id', 'name', 'type', 'size')
+    if any(getattr(stored, name) != getattr(upload, name) for name in fields):
+        return upload
+    try:
+        sizes = []
+        for value in (upload, stored):
+            position = BytesIO.tell(value)
+            try:
+                sizes.append(BytesIO.seek(value, 0, SEEK_END))
+            finally:
+                BytesIO.seek(value, position)
+        if (sizes[0] != sizes[1] or sizes[0] != upload.size
+                or not 0 < sizes[0] <= image_byte_limit(cover_photo=True)):
+            return upload
+        if BytesIO.getvalue(upload) != BytesIO.getvalue(stored):
+            return upload
+    except (ValueError, OSError):
+        return upload
+    return stored
+
+
 def render_cover_photograph(blocks, prefix, assets, asset_loader, *, scope, report=None, revision=0):
     """The ordinary report's optional photo, without design/logo administration.
 
@@ -65,12 +100,14 @@ def render_cover_photograph(blocks, prefix, assets, asset_loader, *, scope, repo
                 st.image(asset_loader(block.asset_hashes[0]), width="stretch")
             except (ValueError, OSError, KeyError):
                 st.warning("The current photograph could not be displayed. Choose a replacement or leave it out.")
+        upload_key = prefix + "_cover_photograph_upload_" + identity
         upload = st.file_uploader(
             "New photograph for this report", type=["png", "jpg", "jpeg", "heic", "heif", "webp"],
             max_upload_size=cover_uploader_limit_mb(),
-            key=prefix + "_cover_photograph_upload_" + identity,
+            key=upload_key,
             help=_picture_help(cover_photo=True),
         )
+        upload = _reuse_cover_upload(upload, upload_key)
         raw = None
         if upload:
             try:
