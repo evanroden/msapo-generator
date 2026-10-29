@@ -800,19 +800,27 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
         except (ValueError, OSError) as exc:
             # Original audit and existing blocking questions remain truthful.
             from app.monthly_report_compatibility_view import CompatibilityBudgetError, MAX_VIEW_SOURCE_BYTES
-            if isinstance(exc, CompatibilityBudgetError):
-                native_art_size_limited = True
-                st.warning(
-                    "Automatic native-artwork interpretation stopped. " + str(exc) + " "
-                    "This is a processing limit, not evidence that the artwork is damaged. "
-                    "Your original and current review are unchanged. Use an available independent "
-                    "template below, or keep the original and upload a smaller test copy. "
-                    "Replacing the upload starts a new review.")
-            elif path.stat().st_size > MAX_VIEW_SOURCE_BYTES and "source byte budget" in str(exc):
+            # Route the typed source-size refusal to its exact native-artwork
+            # limit warning; other processing budgets remain distinct.
+            source_byte_budget = (isinstance(exc, CompatibilityBudgetError)
+                                  and exc.budget == "source byte budget"
+                                  and exc.limit == MAX_VIEW_SOURCE_BYTES)
+            if (source_byte_budget or
+                    (not isinstance(exc, CompatibilityBudgetError)
+                     and path.stat().st_size > MAX_VIEW_SOURCE_BYTES
+                     and "source byte budget" in str(exc))):
                 native_art_size_limited = True
                 st.warning(
                     f"This file is within the {byte_limit_label(docx_import.MAX_DOCX_BYTES)} upload limit, but automatic native-artwork "
                     f"interpretation is limited to {byte_limit_label(MAX_VIEW_SOURCE_BYTES)}. "
+                    "This is a processing limit, not evidence that the artwork is damaged. "
+                    "Your original and current review are unchanged. Use an available independent "
+                    "template below, or keep the original and upload a smaller test copy. "
+                    "Replacing the upload starts a new review.")
+            elif isinstance(exc, CompatibilityBudgetError):
+                native_art_size_limited = True
+                st.warning(
+                    "Automatic native-artwork interpretation stopped. " + str(exc) + " "
                     "This is a processing limit, not evidence that the artwork is damaged. "
                     "Your original and current review are unchanged. Use an available independent "
                     "template below, or keep the original and upload a smaller test copy. "
