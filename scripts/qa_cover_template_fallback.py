@@ -19,6 +19,7 @@ from urllib.request import urlopen
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from scripts.qa_about_logo_refresh import controller_environment
+from scripts.qa_import_receipts import wait_receipt
 from scripts.workspace_cover_template_fallback import make_source, EDITED
 from scripts.workspace_history_observations import namespace
 from app.monthly_report_compatibility_view import MAX_VIEW_SOURCE_BYTES
@@ -30,8 +31,8 @@ REPORT={'synthetic_only':True,'physical_device':False,'real_upload_and_review_co
         'native_source_byte_limit':MAX_VIEW_SOURCE_BYTES,'cases':{},'failures':[]}
 
 
-def receipt(page):
-    return json.loads(page.locator('[data-enfra-template-fallback]').last.get_attribute('data-enfra-template-fallback'))
+def receipt(page, expected=None, *, timeout=30000):
+    return wait_receipt(page, 'data-enfra-template-fallback', expected, timeout=timeout)
 
 
 def exercise(engine,name,source,base):
@@ -78,27 +79,23 @@ def exercise(engine,name,source,base):
         page.get_by_role('button',name='Use ENFRA template and keep this review',exact=True).click()
         expect(page.get_by_text(re.compile('whole report, not just its cover'))).to_be_visible()
         expect(proceed).to_be_enabled(timeout=120000)
-        expect(page.locator('[data-enfra-template-fallback]')).to_have_attribute('data-enfra-template-fallback',re.compile(r'"template_chosen": true'))
-        selected=receipt(page)
+        selected=receipt(page, {'template_chosen': True})
         assert not selected['saved'] and selected['profile_count']==0
         assert selected['template_chosen'] and EDITED in selected['staged_texts']
         page.screenshot(path=str(out/'review-before-save.png'),full_page=True)
         proceed.click()
         expect(page.get_by_text('Synthetic reviewed report saved',exact=True)).to_be_visible(timeout=120000)
-        expect(page.locator('[data-enfra-template-fallback]')).to_have_attribute('data-enfra-template-fallback',re.compile(r'"saved": true'))
-        saved=receipt(page)
+        saved=receipt(page, {'saved': True})
         assert saved['saved'] and saved['profile_count']==1 and EDITED in saved['saved_texts']
         assert saved['template'].startswith('enfra_master:')
         assert saved['source_sha256']==sha256(source.read_bytes()).hexdigest()
         assert saved['source_bytes']==source.stat().st_size
         page.reload()
         expect(page.get_by_text('Synthetic reviewed report saved',exact=True)).to_be_visible(timeout=120000)
-        expect(page.locator('[data-enfra-template-fallback]')).to_have_attribute('data-enfra-template-fallback',re.compile(r'"saved": true'))
-        reloaded=receipt(page)
+        reloaded=receipt(page, {'saved': True})
         assert reloaded['saved_texts']==saved['saved_texts'] and reloaded['source_sha256']==saved['source_sha256']
         page.get_by_role('button',name='Build saved synthetic DOCX',exact=True).click()
-        expect(page.locator('[data-enfra-template-fallback]')).to_have_attribute('data-enfra-template-fallback',re.compile('edited_text_present'),timeout=120000)
-        final=receipt(page)
+        final=receipt(page, {'saved': True, 'output.edited_text_present': True}, timeout=120000)
         assert final['output']['edited_text_present'] and final['output']['unread_source_art_absent'] and final['output']['pricing_absent']
         target,_,_=namespace(base,token)
         generated=target/'monthly_reports'/'qa-fallback-final.docx'

@@ -1,5 +1,5 @@
 /* Only app-owned workspace containers and their locked-version adapter classes. */
-.stMainBlockContainer:has(.epc-workspace) {max-width:1680px !important;}
+/* Outer shell width belongs to the shared native page CSS, not adapter readiness. */
 .epc-workspace .epc-pair-marker {display:none;}
 .epc-workspace {--epc-preview-top:5rem; --epc-preview-height:min(78dvh, 780px);}
 .epc-workspace-pair, .epc-workspace-editor, .epc-workspace-reference {min-inline-size:0;}

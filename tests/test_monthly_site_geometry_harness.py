@@ -193,3 +193,48 @@ console.log(JSON.stringify([run(false),run(true),run(false,true)]));
 
     assert hidden['range_text'] == 'Site: test' and not hidden['text_rects']
     assert hidden['invisible'] == [{'reason': 'non-whitespace text has no nonempty range rectangles'}]
+
+
+def test_native_scroll_sampler_waits_for_quiet_after_motion_and_retains_frames():
+    from scripts.qa_monthly_site_geometry import wait_for_native_scroll_stability
+    now=[0.0];positions=iter([10,30,60,90,100]+[100]*20);samples=[]
+    def frame():
+        now[0]+=.016
+        return {'mainScroll':next(positions),'mainScrollMax':1000}
+    value=wait_for_native_scroll_stability(frame,{'mainScroll':0},samples,clock=lambda:now[0])
+    assert value['mainScroll']==100 and len(samples)>=13
+    assert now[0]>=.2 and [row['mainScroll'] for row in samples[:5]]==[10,30,60,90,100]
+
+
+def test_native_scroll_sampler_rejects_unsettled_motion_or_ignored_key():
+    import pytest
+    from scripts.qa_monthly_site_geometry import wait_for_native_scroll_stability
+    for moving in (False,True):
+        now=[0.0];samples=[]
+        def frame():
+            now[0]+=.016
+            return {'mainScroll':now[0]*100 if moving else 0,'mainScrollMax':10000}
+        with pytest.raises(AssertionError,match='did not settle'):
+            wait_for_native_scroll_stability(frame,{'mainScroll':0},samples,clock=lambda:now[0])
+        assert 3<=now[0]<3.1 and samples
+
+
+def test_native_scroll_sampler_accepts_stable_bottom_without_fabricating_motion():
+    from scripts.qa_monthly_site_geometry import wait_for_native_scroll_stability
+    now=[0.0];samples=[]
+    def frame():
+        now[0]+=.016
+        return {'mainScroll':100,'mainScrollMax':100}
+    result=wait_for_native_scroll_stability(frame,{'mainScroll':100},samples,clock=lambda:now[0])
+    assert result['mainScroll']==100 and now[0]>=.12
+
+
+def test_native_scroll_deadline_cannot_be_overridden_by_late_bottom_sample():
+    import pytest
+    from scripts.qa_monthly_site_geometry import wait_for_native_scroll_stability
+    now=[0.]
+    def frame():
+        now[0]=3.1
+        return {'mainScroll':100,'mainScrollMax':100}
+    with pytest.raises(AssertionError,match='did not settle'):
+        wait_for_native_scroll_stability(frame,{'mainScroll':100},[],clock=lambda:now[0])

@@ -19,6 +19,10 @@ on:
       - 'scripts/qa_preview_first_paint.py'
       - 'tests/test_preview_first_paint_contract.py'
       - 'scripts/qa_sidebar_navigation.py'
+      - 'app/workflow_shell.css'
+      - 'scripts/patch_streamlit_metadata.py'
+      - 'scripts/qa_workflow_shell_width.py'
+      - 'tests/test_workflow_shell_width.py'
       - 'tests/test_sidebar_navigation.py'
       - 'scripts/qa_expense_adaptive.py'
       - 'scripts/qa_po_adaptive.py'
@@ -179,6 +183,10 @@ on:
       - 'scripts/qa_preview_first_paint.py'
       - 'tests/test_preview_first_paint_contract.py'
       - 'scripts/qa_sidebar_navigation.py'
+      - 'app/workflow_shell.css'
+      - 'scripts/patch_streamlit_metadata.py'
+      - 'scripts/qa_workflow_shell_width.py'
+      - 'tests/test_workflow_shell_width.py'
       - 'tests/test_sidebar_navigation.py'
       - 'scripts/qa_expense_adaptive.py'
       - 'scripts/qa_po_adaptive.py'
@@ -719,13 +727,6 @@ jobs:
           python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
           python scripts/qa_report_row_cards.py
           NATIVE_TEST
-      - name: Compact contact native lifecycle, shared recovery and actual outputs
-        if: ${{ !cancelled() }}
-        timeout-minutes: 26
-        run: |
-          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
-          python scripts/qa_compact_contact_journey.py
-          NATIVE_TEST
       - name: Fresh ordinary Water page review from empty omitted state
         if: ${{ !cancelled() }}
         timeout-minutes: 26
@@ -780,6 +781,54 @@ jobs:
         with:
           name: fresh-native-owner-diagnostic-evidence
           path: test-artifacts/fresh-native-owner-diagnostic/
+          retention-days: 7
+          if-no-files-found: warn
+
+  synthetic-contact:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install locked app and browser harness
+        timeout-minutes: 20
+        run: |
+          sudo python3 scripts/ci_ubuntu_mirror_priority.py
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-calc
+          python -m pip install -r requirements-dev.lock
+          python scripts/patch_streamlit_frontend.py
+          python -m pip install playwright==1.58.0
+          python -m playwright install --with-deps chromium webkit
+      - name: Apply exact locked scalar date compatibility repair
+        timeout-minutes: 16
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 15 <<'NATIVE_TEST'
+          python scripts/patch_streamlit_date_input.py
+          NATIVE_TEST
+      - name: Compact contact native lifecycle, shared recovery and actual outputs
+        if: ${{ !cancelled() }}
+        timeout-minutes: 16
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 15 <<'NATIVE_TEST'
+          python scripts/qa_compact_contact_journey.py
+          NATIVE_TEST
+      - name: Upload contact evidence including first failures
+        if: always()
+        timeout-minutes: 3
+        uses: actions/upload-artifact@v4
+        with:
+          name: compact-contact-browser-evidence-${{ github.run_attempt }}
+          path: test-artifacts/compact-contact-journey/
           retention-days: 7
           if-no-files-found: warn
 
@@ -852,5 +901,40 @@ jobs:
         with:
           name: monthly-site-geometry-${{ github.run_attempt }}
           path: test-artifacts/monthly-site-geometry/
+          retention-days: 7
+          if-no-files-found: warn
+
+  workflow-shell-width:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - name: Install locked app and shell-width browser harness
+        timeout-minutes: 20
+        run: |
+          sudo python3 scripts/ci_ubuntu_mirror_priority.py
+          python -m pip install -r requirements-dev.lock
+          python scripts/patch_streamlit_metadata.py
+          python scripts/patch_streamlit_frontend.py
+          python -m pip install playwright==1.58.0
+          python -m playwright install --with-deps chromium webkit
+      - name: Synthetic shared-shell first paint and workflow transitions
+        timeout-minutes: 26
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/qa_workflow_shell_width.py
+          NATIVE_TEST
+      - name: Retain first shell-width failures and traces
+        if: always()
+        timeout-minutes: 3
+        uses: actions/upload-artifact@v4
+        with:
+          name: workflow-shell-width-${{ github.run_attempt }}
+          path: test-artifacts/workflow-shell-width/
           retention-days: 7
           if-no-files-found: warn

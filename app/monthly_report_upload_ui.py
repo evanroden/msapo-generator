@@ -16,6 +16,12 @@ def _signature(value) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()
 
 
+def _retry_section_upload(local_key, signature):
+    """Retire only the selection that displayed this retry action."""
+    if st.session_state.get(local_key + "_read") == signature:
+        st.session_state.pop(local_key + "_read", None)
+
+
 def _undecided_pages(content, source):
     exclusions = dict(source.client_page_exclusions)
     return [n for n in sources.image_numbers(content)
@@ -998,9 +1004,9 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
     # canonical page-review flow and its safety checks.
     if destination in {"mbcx_report", "utility_analysis"}:
         st.caption("Upload a PDF to include its complete report. Supporting files and existing page choices remain available.")
-        upload_area = st.container()
-    else:
-        upload_area = st.popover("Add files", key=local_key + "_add_files", help="Upload a file or reuse a file already saved in this draft.")
+    upload_area = (st.container() if destination in {"water_reports", "mbcx_report", "utility_analysis"} else
+                   st.popover("Add files", key=local_key + "_add_files",
+                              help="Upload a file or reuse a file already saved in this draft."))
     with upload_area:
         upload = st.file_uploader(upload_label, type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
                                  accept_multiple_files=True, max_upload_size=128, key=local_key + "_upload")
@@ -1028,6 +1034,13 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
             st.session_state[local_key + "_read"] = signature
         elif not picked:
             st.session_state.pop(local_key + "_read", None)
+        accepted = {content.source.sha256 for content in contents}
+        unread = tuple(name for name, raw in picked
+                       if hashlib.sha256(raw).hexdigest() not in accepted)
+        if unread:
+            st.caption("Retry unread files or replace them above. Existing report content is kept.")
+            st.button("Retry unread files", key=local_key + "_retry_upload_" + signature,
+                      on_click=_retry_section_upload, args=(local_key, signature))
         owners = source_destinations(contents, bindings, blocks)
         unassigned = [c for c in contents if not owners[c.source.id]]
         if unassigned:
@@ -1065,6 +1078,38 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
         st.caption(choices[selected].source.filename)
     else:
         selected = st.selectbox("File to review", list(choices), format_func=lambda v: choices[v].source.filename, key=selected_key)
+    if choices[selected].source.suffix == ".pdf":
+        from app.monthly_report_section_uploads import preflight_whole_pdf
+        try:
+            budget = preflight_whole_pdf(profile, choices[selected], destination, blocks)
+        except (ValueError, OSError) as exc:
+            st.warning(str(exc))
+        else:
+            st.caption(f"Whole PDF: {budget.new_pages} new pages · "
+                       f"{budget.available_pages} report page slots available"
+                       + (f" · {budget.already_included} already included" if budget.already_included else ""))
+            if not budget.pages_fit:
+                st.warning(f"The whole PDF cannot fit: {budget.new_pages} new pages need "
+                           f"{budget.available_pages} available slots. Include fewer pages "
+                           "or remove existing report pages before reviewing this file.")
+            elif budget.new_pages and st.button("Check whole-PDF image size", key=local_key + "_pdf_preflight_" + selected,
+                                                help="Optional: measure print-size pages against the remaining 60 MiB image budget before reviewing them."):
+                try:
+                    measured = preflight_whole_pdf(
+                        profile, choices[selected], destination, blocks, assets, measure_bytes=True)
+                except (ValueError, OSError) as exc:
+                    st.warning("Whole-PDF size check could not finish: " + str(exc))
+                else:
+                    needed = measured.new_image_bytes / (1024 * 1024)
+                    available = measured.remaining_bytes / (1024 * 1024)
+                    if measured.images_fit:
+                        st.success(f"All {measured.new_pages} new pages fit the current image budget "
+                                   f"({needed:.1f} of {available:.1f} MiB available). "
+                                   "Page-content review is still required.")
+                    else:
+                        st.warning(f"The whole PDF cannot fit the image budget: its checked pages "
+                                   f"need at least {needed:.1f} MiB, with {available:.1f} MiB available. "
+                                   "Reduce selected pages or remove existing evidence before reviewing.")
     if destination in {"mbcx_report", "utility_analysis"} and choices[selected].source.suffix == ".pdf":
         from app.monthly_report_mbcx_pdf import render_whole_pdf
         batch = render_whole_pdf(profile, choices[selected], blocks, assets,

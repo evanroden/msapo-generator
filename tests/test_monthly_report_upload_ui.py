@@ -13,7 +13,9 @@ def app_with_library(monkeypatch, tmp_path):
 
 
 def open_source_manager(app):
-    next(w for w in app.button if w.label == "Manage source files").click().run()
+    opener = next((w for w in app.button if w.label == "Manage source files"), None)
+    if opener is not None:
+        opener.click().run()
     assert not app.exception
     assert any(w.label == "Add source files" for w in app.get("file_uploader"))
     assert not any(w.label == "Read monthly files" for w in app.button)

@@ -294,3 +294,56 @@ def test_unfinished_file_selection_is_one_task_not_n_fake_detail_errors():
     assert _source_status_caption(states, pending=False) == "2 source files · 1 need details"
     assert _source_status_caption((ready, ready), pending=False) == "2 source files"
     assert _source_status_caption((), pending=False) == ""
+
+
+def test_first_file_intake_is_open_but_explicit_done_survives_reruns(monkeypatch, tmp_path):
+    from test_monthly_report_ui import monthly
+    app = monthly(monkeypatch, tmp_path)
+    assert not app.exception
+    before = current_draft(app)
+    assert not before.sources
+    assert any('_source_manager_panel{display:block' in item.value for item in app.markdown)
+    assert any(w.label == 'Add source files' for w in app.get('file_uploader'))
+    button(app, 'Done with source files').click().run()
+    app.run()
+    assert not app.exception
+    assert any('_source_manager_panel{display:none' in item.value for item in app.markdown)
+    assert current_draft(app) == before
+    button(app, 'Manage source files').click().run()
+    assert any('_source_manager_panel{display:block' in item.value for item in app.markdown)
+    assert current_draft(app) == before
+
+
+def test_replaced_unresolved_source_does_not_close_current_file(monkeypatch, tmp_path):
+    app = resolved_app(monkeypatch, tmp_path)
+    button(app, 'Manage source files').click().run()
+    status_key = next(key for key in app.session_state.filtered_state
+                      if key.endswith('_source_manager_resolution'))
+    # Prior render concerned a different, unresolved source. Removing/replacing
+    # it is not confirmation of the currently open source task.
+    app.session_state[status_key] = {'synthetic-previous-source': False}
+    app.run()
+    assert not app.exception
+    assert any('_source_manager_panel{display:block' in item.value for item in app.markdown)
+    app.run()
+    assert any('_source_manager_panel{display:block' in item.value for item in app.markdown)
+
+
+def test_explicit_native_reopen_wins_over_simultaneous_resolution(monkeypatch, tmp_path):
+    app = resolved_app(monkeypatch, tmp_path)
+    source = current_draft(app).sources[0]
+    status_key = next(key for key in app.session_state.filtered_state
+                      if key.endswith('_source_manager_resolution'))
+    # A stale rendered summary can receive an explicit open at the same time
+    # its source becomes resolved. The user's action must win over auto-close.
+    app.session_state[status_key] = {source.id: False}
+    button(app, 'Manage source files').click().run()
+    assert not app.exception
+    assert any('_source_manager_panel{display:block' in item.value for item in app.markdown)
+    app.run()
+    assert any('_source_manager_panel{display:block' in item.value for item in app.markdown)
+    assert not any(key.endswith('_open_request') for key in app.session_state.filtered_state)
+    # The one-shot precedence must not disable normal later quiet completion.
+    app.session_state[status_key] = {source.id: False}
+    app.run()
+    assert any('_source_manager_panel{display:none' in item.value for item in app.markdown)

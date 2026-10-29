@@ -28,6 +28,51 @@ def test_fixture_requires_marked_isolated_storage(monkeypatch,tmp_path):
     assert not (tmp_path / 'monthly_reports').exists()
 
 
+@pytest.mark.parametrize('check', ['initial-schema', 'concurrent-directory-refresh'])
+def test_contact_fixture_uses_canonical_directory_schema(monkeypatch, tmp_path, check):
+    from dataclasses import asdict, replace
+    from app import monthly_report_directory as directory
+    from app import monthly_report_library as library
+    from app import monthly_report_qa_fixture as fixture
+    from app import monthly_report_testing as testing
+    from scripts.workspace_contact_observations import setup
+
+    monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path))
+    monkeypatch.setenv('EPC_MONTHLY_DOM_FIXTURE', '1')
+    monkeypatch.setenv('EPC_MONTHLY_CONTACT_TASK', '1')
+    (tmp_path / 'monthly-dom-synthetic-only.marker').write_text('synthetic-monthly-dom-v1')
+    with testing.isolated(TOKEN):
+        testing.data_dir(tmp_path)
+        setup(tmp_path, TOKEN)
+        saved = library.load_snapshot(fixture.CONTRACT, fixture.profile().key, fixture.PERIOD)
+        draft = saved.draft
+        contact = next(b for b in draft.blocks if b.key == 'contact_matrix')
+        spec = next(b for s in draft.sections for b in s.blocks if b.key == 'contact_matrix')
+        if check == 'initial-schema':
+            assert spec == directory.CONTACT_SPEC
+        previous = directory.load_directory(fixture.CONTRACT)
+        north = previous.sites[0]
+        changed = replace(north.contacts[0], phone='202-555-0176')
+        sites = (replace(north, contacts=(changed, *north.contacts[1:])), *previous.sites[1:])
+        directory.save_directory(fixture.CONTRACT, sites, expected_revision=previous.revision,
+                                 actor=fixture.ACTOR, confirmed=True)
+        # Reproduce a committed shared write arriving before the old working
+        # copy has received its acknowledgment, without any browser timing.
+        refreshed = directory.refresh_directory_contacts(draft)
+        current = next(b for b in refreshed.blocks if b.key == 'contact_matrix')
+        assert current.rows != contact.rows
+        assert current.rows[0][3] == '202-555-0176'
+        def unrelated(value):
+            return replace(value, blocks=tuple(b for b in value.blocks
+                           if b.key not in {'contact_matrix', 'subcontractor_matrix'}))
+        assert asdict(unrelated(refreshed)) == asdict(unrelated(draft))
+        assert unrelated(refreshed).fingerprint == unrelated(draft).fingerprint
+        assert next(b for b in refreshed.blocks if b.key == 'subcontractor_matrix') == next(
+            b for b in draft.blocks if b.key == 'subcontractor_matrix')
+        assert library.load_snapshot(fixture.CONTRACT, fixture.profile().key, fixture.PERIOD) == saved
+    assert not (tmp_path / 'monthly_reports').exists()
+
+
 def test_guided_contact_fixture_receipts_and_real_native_outputs(monkeypatch,tmp_path,app_test_process):
     if not app_test_process:
         return
@@ -46,6 +91,9 @@ def test_guided_contact_fixture_receipts_and_real_native_outputs(monkeypatch,tmp
     assert not app.exception
     baseline = receipt(app)
     assert baseline['working'] == baseline['durable']
+    unrelated_payload = baseline['working']['unrelated_payload']
+    assert unrelated_payload['synthetic'] is True
+    assert not {'contact_matrix', 'subcontractor_matrix'} & {b['key'] for b in unrelated_payload['blocks']}
     assert baseline['working']['contacts']['source'] == 'Library'
     assert len(baseline['working']['vendors']['extra_tables'][0]['rows']) == 3
     app.run()
@@ -59,6 +107,7 @@ def test_guided_contact_fixture_receipts_and_real_native_outputs(monkeypatch,tmp
     assert state['working'] == state['durable']
     assert state['directory']['sites'][0]['contacts'][-1]['phone'] == '202-555-0174'
     assert state['working']['vendors'] == baseline['working']['vendors']
+    assert state['working']['unrelated_payload'] == unrelated_payload
     assert state['saved_unchanged'] and state['original_unchanged']
     next(b for b in app.button if b.label=='Close editing').click().run()
     next(b for b in app.button if b.label=='Fail next synthetic shared save before commit').click().run()
@@ -157,3 +206,145 @@ def test_output_check_reads_a_phone_the_pdf_wrapped_after_its_hyphen():
     validate_outputs(word.getvalue(), wrapped, rows)
     with pytest.raises(AssertionError):
         validate_outputs(word.getvalue(), wrapped, [(*rows[0][:3], "202-555-0198", "")])
+
+
+class FakeContactSocket:
+    def __init__(self, url='ws://127.0.0.1:8520/_stcore/stream'):
+        self.url = url
+        self.sent = []
+        self.closed = None
+        self.server = None
+
+    def connect_to_server(self):
+        self.server = FakeContactSocket()
+        return self.server
+
+    def on_message(self, callback):
+        self.receive = callback
+
+    def send(self, raw):
+        self.sent.append(raw)
+
+    def close(self, **kwargs):
+        self.closed = kwargs
+
+
+@pytest.mark.parametrize('url', ['ws://example.com:8520/', 'ws://127.0.0.1:8521/',
+                                 'wss://127.0.0.1:8520/', 'ws://user@127.0.0.1:8520/'])
+def test_contact_gate_rejects_nonfixture_destinations(url):
+    from scripts.qa_compact_contact_journey import ContactDeliveryGate
+    rejected = []
+    socket = FakeContactSocket(url)
+    ContactDeliveryGate(rejected).route(socket)
+    assert rejected == [url] and socket.server is None
+    assert socket.closed['code'] == 1008
+
+
+def test_contact_gate_preserves_frames_and_outgoing_messages():
+    from streamlit.proto.ForwardMsg_pb2 import ForwardMsg
+    from scripts.qa_compact_contact_journey import ContactDeliveryGate
+    gate, socket = ContactDeliveryGate([]), FakeContactSocket()
+    gate.route(socket)
+    socket.server.receive(b'initial')
+    assert socket.sent == [b'initial']
+    gate.hold()
+    fragment = ForwardMsg(script_finished=ForwardMsg.FINISHED_FRAGMENT_RUN_SUCCESSFULLY).SerializeToString()
+    socket.server.receive(fragment)
+    assert not gate.finished
+    finished = ForwardMsg(script_finished=ForwardMsg.FINISHED_SUCCESSFULLY).SerializeToString()
+    for raw in (b'first', finished, b'last'):
+        socket.server.receive(raw)
+    socket.receive(b'native-widget-message')
+    assert socket.server.sent == [b'native-widget-message']
+    assert gate.finished and socket.sent == [b'initial']
+    assert gate.release() == 4
+    assert socket.sent == [b'initial', fragment, b'first', finished, b'last']
+    assert gate.frames == [] and not gate.holding
+
+
+def test_contact_gate_buffer_is_bounded():
+    from scripts.qa_compact_contact_journey import ContactDeliveryGate
+    gate, socket = ContactDeliveryGate([]), FakeContactSocket()
+    gate.route(socket)
+    gate.hold()
+    gate.buffered_bytes = 32 * 1024 * 1024
+    with pytest.raises(AssertionError):
+        socket.server.receive(b'x')
+
+
+def held_press_evidence():
+    import copy
+    before = {'node':7,'connected':True,'visible':True,'disabled':False,
+              'rect':{'x':10,'y':20,'width':100,'height':30}}
+    return {'before':before,'after':copy.deepcopy(before),'release_hit_owned':True,
+            'events':[{'type':kind,'trusted':True,'node':7,'label':'Edit contact'}
+                      for kind in ('pointerdown','pointerup','click')]}
+
+
+def test_contact_held_press_accepts_only_stable_native_delivery():
+    from scripts.qa_compact_contact_journey import validate_held_contact_press
+    validate_held_contact_press(held_press_evidence())
+
+
+@pytest.mark.parametrize('mutation', ['remount','move','disabled','disconnected','hidden',
+                                     'wrong-hit','untrusted','missing-up','missing-click'])
+def test_contact_held_press_rejects_lost_or_moved_activation(mutation):
+    from scripts.qa_compact_contact_journey import validate_held_contact_press
+    value = held_press_evidence()
+    if mutation == 'remount': value['after']['node'] = 8
+    elif mutation == 'move': value['after']['rect']['y'] += 3
+    elif mutation == 'disabled': value['after']['disabled'] = True
+    elif mutation == 'disconnected': value['after']['connected'] = False
+    elif mutation == 'hidden': value['after']['visible'] = False
+    elif mutation == 'wrong-hit': value['release_hit_owned'] = False
+    elif mutation == 'untrusted': value['events'][-1]['trusted'] = False
+    elif mutation == 'missing-up': value['events'].pop(1)
+    else: value['events'].pop()
+    with pytest.raises(AssertionError):
+        validate_held_contact_press(value)
+
+
+def test_contact_runner_retains_ordinary_and_additional_held_case(monkeypatch):
+    from scripts import qa_compact_contact_journey as qa
+    calls = []
+    def task(browser, name, *, held_recovery):
+        calls.append((name, held_recovery))
+        if not held_recovery:
+            raise AssertionError('preserved first failure')
+    monkeypatch.setattr(qa, 'browser_task', task)
+    with pytest.raises(AssertionError, match='preserved first failure'):
+        qa.browser_cases(None, 'webkit')
+    assert calls == [('webkit', False), ('webkit-held-recovery', True)]
+
+
+def test_failed_capture_retains_synthetic_payload_before_strict_assertions():
+    script = (ROOT/'scripts/qa_compact_contact_journey.py').read_text()
+    capture = script.split('    def capture(', 1)[1].split('    def outputs(', 1)[0]
+    saved = "record['failed_capture'] = {'stage': stage, 'receipt': state}"
+    check = "assert state['working']['unrelated'] == baseline['working']['unrelated']"
+    assert capture.index(saved) < capture.index(check)
+    assert capture.index(check) < capture.index("record.pop('failed_capture', None)")
+    fixture = (ROOT/'scripts/workspace_contact_observations.py').read_text()
+    snapshot = fixture.split('def snapshot(', 1)[1].split('def render(', 1)[0]
+    assert snapshot.index('_folder(base, token)') < snapshot.index("'unrelated_payload': asdict(unrelated)")
+
+
+def test_native_phone_entry_accepts_ready_first_focus_and_exact_replacement():
+    from scripts.qa_compact_contact_journey import validate_native_phone_entry
+    events = [dict(type=kind, node=7, trusted=True, connected=True, value=value)
+              for kind, value in [('focusin', 'old'), ('beforeinput', 'old'), ('input', 'new')]]
+    validate_native_phone_entry(events, 'old', 'new')
+
+
+@pytest.mark.parametrize('failure', ['empty-focus', 'concatenation', 'remount', 'untrusted', 'disconnected'])
+def test_native_phone_entry_rejects_hydration_or_delivery_corruption(failure):
+    from scripts.qa_compact_contact_journey import validate_native_phone_entry
+    events = [dict(type=kind, node=7, trusted=True, connected=True, value=value)
+              for kind, value in [('focusin', 'old'), ('beforeinput', 'old'), ('input', 'new')]]
+    if failure == 'empty-focus': events[0]['value'] = ''
+    elif failure == 'concatenation': events[-1]['value'] = 'oldnew'
+    elif failure == 'remount': events[-1]['node'] = 8
+    elif failure == 'untrusted': events[-1]['trusted'] = False
+    else: events[-1]['connected'] = False
+    with pytest.raises(AssertionError):
+        validate_native_phone_entry(events, 'old', 'new')

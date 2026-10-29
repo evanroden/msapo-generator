@@ -270,6 +270,7 @@ render_import(library.load_profile(RRH_CONTRACT, "synthetic"), _field)
     inspection = importer.inspect_docx(source)
     table = next(i for i in inspection.items if i.kind == "table")
     next(w for w in app.selectbox if w.label == "Item to inspect").set_value(table.id).run()
+    assert any("Native Word table" in c.value for c in app.caption)
     next(w for w in app.selectbox if w.label == "Confirmed destination").set_value("service_calls").run()
     next(b for b in app.button if b.label == "Add confirmed mapping").click().run()
     assert not app.exception

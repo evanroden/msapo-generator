@@ -189,7 +189,7 @@ def journey(browser, width, output, record, *, focus_baseline=False):
         assert all(row["area"] == 0 for row in record["workflow_overlap"]), record["workflow_overlap"]
         record["main_padding_top"] = page.locator(".block-container").evaluate(
             "node => getComputedStyle(node).paddingTop")
-        assert record["main_padding_top"] == ("60px" if width <= 1100 else "20px")
+        assert record["main_padding_top"] == ("60px" if width <= 1780 else "20px")
         require_quiet_chrome(page)
         page.screenshot(path=str(output / "collapsed.png"))
 

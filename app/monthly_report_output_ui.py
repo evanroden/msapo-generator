@@ -37,9 +37,9 @@ def render_output_status(package, draft, snapshot, prefix):
     if revision is not None:
         st.caption(f"[Shared version {revision}](#shared-report-history) · {draft.period.label}")
         return False
-    message = (status["error"] if status else "") or "No shared-version save was confirmed for these files."
-    st.warning("Downloads are ready, but this version was not saved in shared report history: " + message)
-    st.caption("Retry saving this version below. Your files stay available; saving does not generate them again.")
+    error = status["error"] if status else ""
+    st.warning("Shared save failed: " + error if error else "Shared save not confirmed.")
+    st.caption("Retry saving below. Files remain available; this won\'t regenerate them.")
     return True
 
 
