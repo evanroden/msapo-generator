@@ -26,6 +26,31 @@ def test_display_only_description_adapter():
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_native_caption_update_uses_the_visible_checkbox_label():
+    driver = (ROOT / "scripts/qa_import_picture_alt.py").read_text()
+    # Streamlit intentionally clips the accessible input to 1px. Keep the
+    # ordinary label pointer gesture and checked-state receipt before asserting
+    # the updated image name; never force a click on the hidden input.
+    start = driver.index('checkbox = page.get_by_role("checkbox", name="Use updated caption", exact=True)')
+    end = driver.index('expect(first).to_have_attribute("alt", "Updated synthetic pump inspection · Image-only")')
+    gesture = driver[start:end]
+    required = (
+        'expect(checkbox).to_have_count(1)',
+        'expect(checkbox).not_to_be_checked()',
+        'label = checkbox.locator("xpath=ancestor::label")',
+        'expect(label).to_have_count(1)',
+        'expect(label.get_by_role("checkbox")).to_have_count(1)',
+        'expect(label).to_be_visible()',
+        'label.click()',
+        'expect(checkbox).to_be_checked()',
+    )
+    positions = [gesture.index(item) for item in required]
+    assert positions == sorted(positions)
+    assert gesture.count('.click(') == 1
+    for forbidden in ('.check(', 'force=', '.evaluate(', '.dispatch_event(', '.press(', 'sleep(', 'wait_for_timeout('):
+        assert forbidden not in gesture
+
+
 def _picture_job(text):
     from test_ci_native_test_budget import parse_jobs, validate_workflow
 

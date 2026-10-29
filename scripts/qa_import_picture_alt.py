@@ -41,7 +41,17 @@ def exercise(browser, name):
         expect(second).to_have_attribute("alt", "Original chart/contact page 2 · Image-only")
         # Native st.image still uses its index for images outside our owners.
         expect(unrelated).to_have_attribute("alt", "0")
-        page.get_by_role("checkbox", name="Use updated caption", exact=True).check()
+        checkbox = page.get_by_role("checkbox", name="Use updated caption", exact=True)
+        expect(checkbox).to_have_count(1)
+        expect(checkbox).not_to_be_checked()
+        # The accessible input is clipped to 1px by Streamlit. People click
+        # its native visible label; preserve that single ordinary gesture.
+        label = checkbox.locator("xpath=ancestor::label")
+        expect(label).to_have_count(1)
+        expect(label.get_by_role("checkbox")).to_have_count(1)
+        expect(label).to_be_visible()
+        label.click()
+        expect(checkbox).to_be_checked()
         expect(first).to_have_attribute("alt", "Updated synthetic pump inspection · Image-only")
         page.get_by_role("button", name="Unrelated rerun", exact=True).click()
         expect(first).to_have_attribute("alt", "Updated synthetic pump inspection · Image-only")
