@@ -15,6 +15,7 @@ export default function(component) {
         state.mode = null;
         state.compactPositions = new WeakMap();
         state.reviewNavigation = false;
+        state.explicitReview = false;
         state.navigationActive = null;
         state.navigationJump = null;
         state.navigationRequest = null;
@@ -34,7 +35,7 @@ export default function(component) {
         }
     }
     const noteInput = event => globalThis.ENFRAWorkspaceNavigation?.noteInput(state, event);
-    for (const type of ['pointerdown', 'keydown', 'wheel']) {
+    for (const type of ['pointerdown', 'keydown', 'wheel', 'touchstart', 'touchmove', 'touchend', 'touchcancel']) {
         document.addEventListener(type, noteInput, {capture:true, passive:true});
         subscriptions.push(() => document.removeEventListener(type, noteInput, {capture:true}));
     }
@@ -268,7 +269,13 @@ export default function(component) {
             return;
         }
         const list = pairs.map(({id,pair}) => ({id, ...rect(pair)}));
-        state.active = geometry.selectActiveSection(list, state.active, context.editor.y + 32, 24);
+        // Navigation has just resolved the current editor below its measured
+        // toolbar, including explicit steps and boundary hysteresis. A second
+        // fixed reading line above that toolbar can select the previous section
+        // and hide the current editor's preview after a mode change.
+        const coordinated = navigation && list.some(({id}) => id === state.navigationActive);
+        state.active = coordinated ? state.navigationActive :
+            geometry.selectActiveSection(list, state.active, context.editor.y + 32, 24);
         pairs.forEach(({id,pair}) => {pair.dataset.epcActive = String(id === state.active);});
     }
     let waitingForGesture = false;
@@ -371,7 +378,15 @@ export default function(component) {
         });
         if (previous !== context.mode && activeBefore) {
             // Same DOM/editor remains; only translate the meaningful scroll anchor.
-            if (ownsScroll) root.scrollTop += activeBefore.pair.getBoundingClientRect().top - context.editor.y;
+            if (ownsScroll) {
+                // Enter at the same unobscured reading line as Back/Next.
+                // Root-top alignment hides the heading behind the sticky
+                // toolbar and makes a later return jump by that toolbar's
+                // height plus its reading gap. Without navigation, retain
+                // the other tools' existing root-top alignment.
+                const inset = navigation ? navigation.height() + 12 : 0;
+                root.scrollTop += activeBefore.pair.getBoundingClientRect().top - context.editor.y - inset;
+            }
             else if (ownedScrollBefore) scrollport.scrollTop = state.outerScroll || 0;
         }
         // When the layout itself changes (the first wide layout after a load,
@@ -383,6 +398,8 @@ export default function(component) {
             globalThis.ENFRAWorkspaceNavigation?.keepAnchor(anchor, scrollport);
         state.mode = context.mode;
         state.ownsScroll = ownsScroll;
+        if (previous !== context.mode && ownsScroll && activeBefore)
+            navigation?.reanchor(activeBefore.id);
         navigation?.update(context,sample);
         updateActive(context);
         globalThis.ENFRAWorkspaceNavigation?.focusEntries(state, root);

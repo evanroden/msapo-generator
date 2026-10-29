@@ -84,8 +84,8 @@ def test_diagnostic_does_not_change_native_click_or_wait_predicate():
     import inspect
     from scripts.qa_about_logo_refresh import native_outputs
     source = inspect.getsource(native_outputs)
-    assert source.count('.click()') == 2  # one Render, one download-loop action
-    assert source.count("name='Render synthetic native logo outputs', exact=True).click()") == 1
+    assert source.count('.click()') == 1  # download-loop; helper owns the single Render click
+    assert source.count("click_ready_native_output(page, prior)") == 1
     assert "wait_state(page, after=sequence, scope=prior['scope'], generation=prior['generation'])" in source
     for forbidden in ('force=', 'wait_for_timeout', 'scroll_into_view', '.focus(', 'setTimeout', 'requestAnimationFrame'):
         assert forbidden not in source + INSTALL
