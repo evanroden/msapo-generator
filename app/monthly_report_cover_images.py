@@ -33,12 +33,30 @@ def read_picture_upload(upload, *, cover_photo=False):
     limit = image_byte_limit(cover_photo=cover_photo)
     if getattr(upload, 'size', 0) > limit:
         raise ValueError(image_size_error(cover_photo=cover_photo))
-    position = upload.tell()
-    try:
-        upload.seek(0)
-        raw = upload.read(limit + 1)
-    finally:
-        upload.seek(position)
+    from io import BytesIO, SEEK_END
+    from streamlit.runtime.uploaded_file_manager import UploadedFile
+    if cover_photo and type(upload) in (BytesIO, UploadedFile):
+        # Streamlit returns a deepcopy of its stored UploadedFile. read() on
+        # that mutable BytesIO allocates another full buffer; builtin getvalue
+        # safely exposes immutable copy-on-write bytes instead. Verify actual
+        # length first, not the uploader's mutable size metadata. Do not use
+        # getbuffer(): exporting a writable view itself forces a COW copy.
+        position = BytesIO.tell(upload)
+        try:
+            actual_size = BytesIO.seek(upload, 0, SEEK_END)
+        finally:
+            BytesIO.seek(upload, position)
+        if actual_size > limit:
+            raise ValueError(image_size_error(cover_photo=cover_photo))
+        raw = BytesIO.getvalue(upload)
+    else:
+        # Unknown stream/subclass methods keep the existing bounded protocol.
+        position = upload.tell()
+        try:
+            upload.seek(0)
+            raw = upload.read(limit + 1)
+        finally:
+            upload.seek(position)
     if len(raw) > limit:
         raise ValueError(image_size_error(cover_photo=cover_photo))
     if not raw:

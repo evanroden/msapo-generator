@@ -398,3 +398,59 @@ def test_ordinary_cover_widget_uses_transport_ceiling_but_help_keeps_exact_cap(t
     assert widget.proto.max_upload_size_mb == 68
     assert '64 MiB' in widget.proto.help
     assert not app.exception
+
+
+def test_native_deepcopy_read_reuses_immutable_buffer_without_second_copy():
+    from copy import deepcopy
+    import tracemalloc
+    from streamlit.proto.Common_pb2 import FileURLs
+    from streamlit.runtime.uploaded_file_manager import UploadedFile, UploadedFileRec
+    from app.monthly_report_cover_images import read_picture_upload
+    raw = b'x' * (8*MIB)
+    native = UploadedFile(UploadedFileRec('id', 'photo.jpg', 'image/jpeg', raw), FileURLs())
+    tracemalloc.start()
+    try:
+        returned = deepcopy(native)  # Locked Streamlit register_widget behavior.
+        returned.seek(7)
+        before, _ = tracemalloc.get_traced_memory()
+        result = read_picture_upload(returned, cover_photo=True)
+        _, peak = tracemalloc.get_traced_memory()
+        assert peak - before < MIB, 'Reading must not allocate another full uploaded buffer'
+        assert result is BytesIO.getvalue(returned)
+        assert result == raw and returned.tell() == 7
+        returned.seek(0); returned.write(b'y')
+        assert result == raw, 'Returned bytes remain immutable after uploader mutation'
+    finally:
+        tracemalloc.stop()
+
+
+@pytest.mark.parametrize('claimed_size', [0, 1, 64*MIB])
+def test_native_actual_size_guard_rejects_lying_metadata_without_materializing(claimed_size):
+    from streamlit.proto.Common_pb2 import FileURLs
+    from streamlit.runtime.uploaded_file_manager import UploadedFile, UploadedFileRec
+    from app.monthly_report_cover_images import read_picture_upload
+    source = UploadedFile(UploadedFileRec('id', 'photo.jpg', 'image/jpeg', b'x'*(64*MIB+1)), FileURLs())
+    source.size = claimed_size
+    source.seek(7)
+    import tracemalloc
+    tracemalloc.start()
+    try:
+        with pytest.raises(ValueError, match='64 MiB'):
+            read_picture_upload(source, cover_photo=True)
+        assert tracemalloc.get_traced_memory()[1] < MIB
+        assert source.tell() == 7
+    finally:
+        tracemalloc.stop()
+
+
+def test_untrusted_bytesio_subclass_stays_on_bounded_read_not_getvalue():
+    from app.monthly_report_cover_images import read_picture_upload
+    class Foreign(BytesIO):
+        def getvalue(self):
+            raise AssertionError('Untrusted getvalue must not run')
+        def read(self, count=-1):
+            assert count == 64*MIB+1
+            return super().read(count)
+    source=Foreign(b'abc'); source.seek(1)
+    assert read_picture_upload(source, cover_photo=True)==b'abc'
+    assert source.tell()==1
