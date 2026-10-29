@@ -231,7 +231,7 @@ def test_upload_setup_reviews_sections_and_preserves_partial_work(monkeypatch, t
     from app.monthly_report_sections import section_reviews
     inspection = inspect_docx(path)
     stage_key = next(k for k in app.session_state.filtered_state if k.startswith("report_setup_") and k.endswith("_stage"))
-    prefix = stage_key.removesuffix("_stage") + "_" + inspection.sha256[:16]
+    prefix = app.session_state[stage_key.removesuffix("_stage") + "_active_section_review"][1]
     for section in section_reviews(inspection):
         if app.session_state[prefix + "_section_plans"][section.key]["approved"]:
             continue
@@ -261,7 +261,7 @@ def test_upload_setup_reviews_sections_and_preserves_partial_work(monkeypatch, t
 def test_all_sections_preserve_content_and_saved_status_across_new_sessions(monkeypatch, tmp_path):
     app = monthly(monkeypatch, tmp_path)
     next(w for w in app.text_input if w.label == "Prepared by").set_value("Synthetic Editor").run()
-    assert not any(w.label.startswith("Include ") for w in app.checkbox)
+    assert not any(w.label.startswith("Include ") and w.label != "Include thermal capacity" for w in app.checkbox)
     next(b for b in app.button if b.label == "Save shared version").click().run()
     assert any('role="status"' in w.value and 'data-save-state="shared"' in w.value
                and "Shared report" in w.value and "Version 1 is saved" in w.value
@@ -273,7 +273,7 @@ def test_all_sections_preserve_content_and_saved_status_across_new_sessions(monk
     new = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
     new.segmented_control[0].set_value("Monthly report").run()
     choose_report(new, synthetic_profiles()[0].facilities[0].title)
-    assert not any(w.label.startswith("Include ") for w in new.checkbox)
+    assert not any(w.label.startswith("Include ") and w.label != "Include thermal capacity" for w in new.checkbox)
     assert any("Opened shared version 1 · September 2026" in w.value for w in new.caption)
     new.run()
     assert next(w for w in new.text_area if w.label == "Activity summary").value == "Synthetic initial activity."

@@ -59,7 +59,12 @@ def test_unconfirmed_package_save_is_not_hidden_by_an_older_matching_snapshot(ui
     assert retry is True
     assert not any("Shared version" in caption for caption in messages.caption)
     assert len(messages.warning) == 1
-    assert (error or "No shared-version save was confirmed for these files.") in messages.warning[0]
+    assert messages.warning == [
+        "Shared save failed: " + error if error else "Shared save not confirmed."
+    ]
+    assert messages.caption == [
+        "Retry saving below. Files remain available; this won\'t regenerate them."
+    ]
     assert messages.success == ["Word and PDF ready to download"]
 
 

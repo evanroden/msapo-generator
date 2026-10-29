@@ -23,7 +23,7 @@ def action(app, first_line, title="Accepted safety event"):
     return next(button for button in app.button if button.label.startswith(first_line + "\n\n") and title in button.label)
 
 
-def test_success_add_shows_row_resets_closes_and_allows_a_deliberate_second_entry(training):
+def test_success_add_shows_row_resets_stays_open_and_allows_a_deliberate_second_entry(training):
     app, draft, matrix, event, standing, saved = training
     old_key = widget(app, "text_input", "Training topic").key
     fill_session(app)
@@ -36,8 +36,12 @@ def test_success_add_shows_row_resets_closes_and_allows_a_deliberate_second_entr
     assert widget(app, "date_input", "Training date").value is None
     assert widget(app, "multiselect", "Participants").value == []
     assert widget(app, "text_input", "Hours (optional)").value == ""
-    assert next(e for e in app.expander if e.label == "Add completed training").proto.expanded is False
+    assert next(e for e in app.expander if e.label == "Add completed training").proto.expanded is True
     assert any("Training added to this report." == message.value for message in app.success)
+    fresh_key = widget(app, "text_input", "Training topic").key
+    app.run()
+    assert widget(app, "text_input", "Training topic").key == fresh_key
+    assert next(e for e in app.expander if e.label == "Add completed training").proto.expanded is True
     assert any(" · 1 hour" in caption.value for caption in app.caption)
     assert not any("1 hours" in caption.value for caption in app.caption)
     widget(app, "button", "Add completed training").click().run()
@@ -154,6 +158,7 @@ def test_cancel_edit_keeps_saved_row_and_resets_to_add(training):
     assert rows(app) == before
     assert widget(app, "text_input", "Training topic").value == ""
     assert not any(button.label == "Save session" for button in app.button)
+    assert next(e for e in app.expander if e.label == "Add completed training").proto.expanded is False
 
 
 def test_edit_rejects_a_changed_collection_without_replacing_a_different_row(training):

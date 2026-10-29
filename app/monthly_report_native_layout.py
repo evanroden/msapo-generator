@@ -1638,13 +1638,24 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     table_context = {} if master else supplied_table_context(
         draft, original, items, section_by_pos, native_tables, context_table_refs,
         styles=document.styles.element)
-    unchanged_items.update(item.id for context, _ in table_context.values() for item in context)
+    from app.monthly_report_native_table_flow import supplied_native_table_flows, rewrite_flow_paragraph
+    table_flows = {} if master else supplied_native_table_flows(
+        draft, original, items, section_by_pos, native_tables, context_table_refs,
+        styles=document.styles.element, supplied_notes=supplied_notes, source_ref=source_ref,
+        source_document=document)
+    flow_rewrites = {position: text for flow in table_flows.values() for position, text in flow.rewrites}
+    table_context.update({key: (flow.items, flow.remaining_text) for key, flow in table_flows.items()})
+    unchanged_items.update(item.id for context, _ in table_context.values() for item in context
+                           if item.position not in flow_rewrites)
     context_anchors = {key: original[context[0].position - 1]
                        for key, (context, _) in table_context.items()}
     from app.monthly_report_native_pages import NativePages
     unchanged_positions = {item.position for item in inspection.items
                            if item.part == "word/document.xml" and item.id in unchanged_items}
     page_plan = NativePages(body, original, section_by_pos, headings, unchanged_positions, fresh=master, source_header_scope=source_header_scope)
+    from app.monthly_report_native_empty_activity import empty_activity_panels
+    empty_panels = empty_activity_panels(draft, original, section_by_pos, unchanged_positions, headings)
+    cleared_activity_paragraphs = set()
     work_order_labels = _work_order_table_labels(original, items, section_by_pos)
     from app.monthly_report_native_text import (narrative_prototype, write_narrative,
                                                  header_contains_label)
@@ -1735,6 +1746,10 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                     and not _is_native_divider_background(element, _text(element)))):
                 _clear_images(element)
             continue
+        if position in flow_rewrites:
+            rewrite_flow_paragraph(element, flow_rewrites[position])
+            page_plan.emitted(element)
+            continue
         substantive = [item for item in group if item.kind in ("text", "table", "image")]
         if (substantive and all(item.id in unchanged_items for item in substantive)
                 and not any(item.note.startswith("Unmapped native SmartArt") for item in group)):
@@ -1796,6 +1811,8 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                     text_prototypes[slot].append((element, prototype))
                     section_text[sec].append(deepcopy(prototype))
                 _set_text(element, "")
+                if sec == "activity":
+                    cleared_activity_paragraphs.add(element)
                 if label:
                     region = page_plan.owner.get(element)
                     properties = page_plan.regions[region].properties if region is not None else document.sections[-1]._sectPr
@@ -1876,6 +1893,29 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     from app.monthly_report_native_narrative_visibility import narrative_visibility_writer
     visible_narrative = narrative_visibility_writer(document)
     specs = {b.key: (s.key, b) for s in draft.sections for b in s.blocks}
+    water_update_anchor = None
+    water_order = next(([b.key for b in s.blocks] for s in draft.sections if s.key == "water"), [])
+    water_update = blocks.get("water_monthly_update")
+    if (water_update is not None and water_update.source != "Omit" and water_update.text
+            and water_update.key not in unchanged and (not section_key or section_key == "water")
+            and "water_monthly_update" in water_order and "water_reports" in water_order
+            and water_order.index("water_monthly_update") < water_order.index("water_reports")):
+        reports = blocks.get("water_reports")
+        report_refs = (set(reports.references) | {t.reference for t in reports.extra_tables}
+                       if reports is not None else set())
+        vendor_anchor = next((element for position, element in enumerate(original, 1)
+                              if section_by_pos.get(position) == "water" and position not in headings
+                              and element.getparent() is body and any(
+                                  item.kind in ("text", "table", "image") and
+                                  (item.suggested_slot == "water_reports" or source_ref(item) in report_refs)
+                                  for item in items[position])), None)
+        old_anchors = text_prototypes.get("water_monthly_update", ())
+        if vendor_anchor is not None and (not old_anchors or
+                original.index(vendor_anchor) < original.index(old_anchors[0][0])):
+            # Reserve the summary's position before vendor frames are replaced
+            # or retained at their source anchors, even if draft blocks arrive
+            # in a different order. Never move existing custom schema order.
+            water_update_anchor = text_anchor("water", before=vendor_anchor, role="water_monthly_update")
     render_blocks = list(draft.blocks)
     if draft.follow_ups:
         from app.monthly_report_followups import report_text
@@ -1935,7 +1975,9 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             anchors = text_prototypes.get(block.key)
             context_anchor = context_anchors.get(block.key)
             role_anchor = narrative_role_anchors.get((sec, block.key))
-            if context_anchor is not None and (not anchors or
+            if block.key == "water_monthly_update" and water_update_anchor is not None:
+                anchors = [water_update_anchor]
+            elif context_anchor is not None and (not anchors or
                     original.index(context_anchor) < original.index(anchors[0][0])):
                 # A newly added note still leads its section when the source's
                 # only prior prose is now retained beside its exact table.
@@ -2277,11 +2319,20 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             if brand and brand.source != "Omit" and brand.asset_hashes and asset_loader:
                 approved.add(hashlib.sha256(asset_loader(brand.asset_hashes[0])).hexdigest())
             _remove_unapproved_header_images(part, approved, approved_header_nodes)
+    for panel in empty_panels:
+        panel.remove_if_empty(body, page_plan, cleared_activity_paragraphs)
     page_plan.finish(document=document)
     from app.monthly_report_divider_numerals import fit_proposals_numeral
     fit_proposals_numeral(document, section_key=section_key)
     from app.monthly_report_native_design import name_report_in_contents_notice
     name_report_in_contents_notice(body)
+    from app.monthly_report_semantic_headings import mark_native_section_headings
+    # Navigation metadata belongs to the derivative only; source geometry,
+    # visible style, header/artwork and report contents remain unchanged.
+    navigable = {section.key for section in draft.sections if section.included}
+    if section_key is not None:
+        navigable.intersection_update((section_key,))
+    mark_native_section_headings(document, original, headings, section_by_pos, navigable)
     if source_region_observer is not None:
         source_region_observer(body, page_plan)
     result = BytesIO()

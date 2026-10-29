@@ -28,6 +28,7 @@ def _folder(base, token):
 
 def setup(base, token):
     from app import monthly_report_qa_fixture as fixture, monthly_report_library as library
+    from app import monthly_report_directory as directory
     from app.monthly_report_model import ReportTable
     from docx import Document
     folder = _folder(base, token)
@@ -40,6 +41,10 @@ def setup(base, token):
                    replace(block, extra_tables=(ReportTable(VENDOR_COLUMNS, VENDOR_ROWS, 'synthetic:custom-vendors'),))
                    if block.key == 'subcontractor_matrix' else block for block in draft.blocks)
     draft = replace(draft, blocks=blocks)
+    # Match the real saved-directory path before establishing immutable
+    # baselines. Populated rows alone leave the default image-page schema,
+    # which a later shared-directory refresh legitimately converts to a table.
+    draft = directory.apply_contacts(draft, next(b for b in blocks if b.key == "contact_matrix"))
     library.save_snapshot(draft, expected_revision=1, entered_editor=fixture.ACTOR)
     folder.mkdir()
     doc = Document()

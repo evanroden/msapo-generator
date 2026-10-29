@@ -37,8 +37,9 @@ def reserve_period_selector(key, label):
             + skeleton + '::after{content:"";display:block;height:2.5rem;}</style>')
 
 
-def reserve_empty_uploader(key, label):
-    if st.__version__ != "1.61.1" or st.session_state.get(key):
+def reserve_empty_uploader(key, label, *, label_visibility="visible"):
+    if (st.__version__ != "1.61.1" or st.session_state.get(key)
+            or label_visibility not in {"visible", "collapsed"}):
         return
     selector = _selector(key)
     skeleton = selector + ' > [data-testid="stSkeleton"]'
@@ -48,12 +49,16 @@ def reserve_empty_uploader(key, label):
     caption = json.dumps(label, ensure_ascii=False)
     for char, escaped in (("<", r"\3c "), (">", r"\3e "), ("&", r"\26 ")):
         caption = caption.replace(char, escaped)
+    # A collapsed native label occupies no space. Preserve the existing visible
+    # label rule verbatim; only the empty photo intake requests this variant.
+    label_rule = (skeleton + '::before{content:' + caption + ';display:block;visibility:hidden;'
+                  'font-size:.875rem;line-height:1.5rem;margin-bottom:.25rem;white-space:normal;}'
+                  if label_visibility == "visible" else "")
     st.html(
         '<style>' + selector + ':has(> [data-testid="stSkeleton"])'
         '{container-type:inline-size;container-name:' + container + ';}'
         + skeleton + '{height:auto;}'
-        + skeleton + '::before{content:' + caption + ';display:block;visibility:hidden;'
-        'font-size:.875rem;line-height:1.5rem;margin-bottom:.25rem;white-space:normal;}'
+        + label_rule
         + skeleton + '::after{content:"";display:block;height:4.25rem;}'
         # The pinned empty dropzone stacks its button and size hint below 23rem:
         # padding1.5rem + button2.5rem + gap.75rem + hint1.4rem.

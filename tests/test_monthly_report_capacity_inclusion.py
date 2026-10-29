@@ -17,6 +17,58 @@ def _toggle(app):
     return next(x for x in app.checkbox if x.label == "Include thermal capacity")
 
 
+@pytest.mark.parametrize("shared", [False, True])
+def test_new_report_capacity_is_available_and_can_first_fill(profile, shared):
+    from app.monthly_report_guided import _initial_draft
+
+    state = library.save_profile(profile, expected_revision=0,
+                                 actor="Synthetic Editor", confirmed=True)
+    standing = saved(profile) if shared else None
+    initial = _initial_draft(state, draft(profile).period, "Synthetic Editor")
+    empty = next(b for b in initial.blocks if b.key == "thermal_capacity")
+    assert empty.source != "Omit"
+    current = capacity.resolve_capacity(initial)
+    block = next(b for b in current.blocks if b.key == "thermal_capacity")
+    assert bool(block.extra_tables) is shared
+    if shared:
+        assert block == capacity.capacity_block(profile, standing)
+    app = AppTest.from_string(TASK_APP)
+    app.session_state["test_draft"] = current
+    app.run()
+    assert not app.exception
+    assert _toggle(app).value
+    assert sum(w.label == "Thermal capacity file" for w in app.get("file_uploader")) == 1
+    assert next(w for w in app.expander if w.label == "Capacity source and reusable data").proto.expanded
+    assert capacity.load_capacity(profile.contract) == standing
+    assert library.load_profile(profile.contract, profile.key) == state
+
+
+@pytest.mark.parametrize("retained", [False, True])
+def test_new_report_preserves_an_explicit_saved_capacity_omission(profile, retained):
+    from app.monthly_report_guided import _initial_draft
+
+    state = library.save_profile(profile, expected_revision=0,
+                                 actor="Synthetic Editor", confirmed=True)
+    standing = saved(profile)
+    block = (capacity.capacity_block(profile, standing) if retained else
+             ResolvedBlock("thermal_capacity", "This month"))
+    omitted = capacity_inclusion(block, False)
+    state = library.replace_block(profile.contract, profile.key, "thermal_capacity", omitted,
+                                  label="Explicit omission", expected_revision=state.revision,
+                                  actor="Synthetic Editor", confirmed=True)
+    initial = _initial_draft(state, draft(profile).period, "Synthetic Editor")
+    assert next(b for b in initial.blocks if b.key == "thermal_capacity") == omitted
+    assert capacity.resolve_capacity(initial) is initial
+    app = AppTest.from_string(TASK_APP)
+    app.session_state["test_draft"] = initial
+    app.run()
+    assert not app.exception
+    assert not _toggle(app).value
+    assert not any(w.label == "Thermal capacity file" for w in app.get("file_uploader"))
+    assert capacity.load_capacity(profile.contract) == standing
+    assert library.load_profile(profile.contract, profile.key) == state
+
+
 @pytest.mark.parametrize("source", ["empty", "shared", "manual"])
 def test_omission_survives_shared_first_fill_and_snapshot(profile, source):
     state = saved(profile)
@@ -76,7 +128,10 @@ def test_native_toggle_keeps_same_event_edit_and_restores_table(profile):
     assert omitted.source == "Omit"
     assert omitted.extra_tables[0].rows[0][2] == "NR"
     assert not any(w.label == "Thermal capacity file" for w in app.get("file_uploader"))
-    assert any(w.label == "Utility result files" for w in app.get("file_uploader"))
+    # This sibling upload stays available when capacity is omitted. Its stable
+    # task identity also covers the Scorecard wording introduced by #519.
+    assert any(w.id.endswith("_evidence_section_utility_analysis_upload")
+               for w in app.get("file_uploader"))
     assert not app.dataframe
     app.run()
     assert app.session_state["test_draft"].blocks[0] == omitted
