@@ -25,9 +25,10 @@ def receipt(page, *, reviews=None, included=None, saved=None, previous_review=No
     predicate = '''payload => {
       for (const node of document.querySelectorAll('body *')) {
         const text=node.textContent||'';
-        if(!text.startsWith(payload.prefix))continue;
+        const at=text.indexOf(payload.prefix);
+        if(at<0)continue;
         let v;
-        try{v=JSON.parse(text.slice(payload.prefix.length))}catch{continue}
+        try{v=JSON.parse(text.slice(at+payload.prefix.length))}catch{continue}
         const wanted=payload.wanted;
         if ((wanted.reviews===null||v.reviews===wanted.reviews) &&
             (wanted.included===null||v.tables.some(t=>t.rows.some(r=>r[0]==='Synthetic drill'))===wanted.included) &&
@@ -75,8 +76,9 @@ def receipt(page, *, reviews=None, included=None, saved=None, previous_review=No
     return page.evaluate('''prefix => {
       for (const node of document.querySelectorAll('body *')) {
         const text=node.textContent||'';
-        if(!text.startsWith(prefix))continue;
-        try{return JSON.parse(text.slice(prefix.length))}catch{}
+        const at=text.indexOf(prefix);
+        if(at<0)continue;
+        try{return JSON.parse(text.slice(at+prefix.length))}catch{}
       }
       throw new Error('Training receipt text disappeared after readiness.');
     }''', RECEIPT_PREFIX)
