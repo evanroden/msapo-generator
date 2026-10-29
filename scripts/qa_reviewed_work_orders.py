@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
@@ -30,6 +31,8 @@ def state(draft):
     blocks = {b.key: b for b in draft.blocks}
     reviews = [json.loads(value) for value in draft.source_row_reviews]
     return {"fingerprint": draft.fingerprint, "reviews": len(draft.source_row_reviews),
+        "sources": [{"id": source.id, "date": source.service_date, "facility": source.facility}
+                    for source in draft.sources],
         "records": {r["kind"]: r["groups"][0]["record"]["review"]["rows"] for r in reviews},
         "workorders": [asdict(t) for t in blocks["work_orders"].extra_tables],
         "maintenance": [asdict(t) for t in blocks["service_calls"].extra_tables],
@@ -52,7 +55,13 @@ def settled(page, predicate):
 def select(page, label, option):
     # This journey deliberately uses the native keyboard opener. Pointer
     # dropdown/scroll behavior has its own repository-wide browser gate.
-    page.get_by_role("combobox", name=label, exact=True).press("ArrowDown")
+    # Locator.press does not scroll its target into view. Opening an offscreen
+    # popup and letting the later option click scroll it closes the native
+    # overlay before that click can land, especially after a narrow reload.
+    control = page.get_by_role("combobox", name=label, exact=True)
+    control.scroll_into_view_if_needed()
+    settled(page, "v=>true")
+    control.press("ArrowDown")
     page.get_by_role("option", name=option, exact=True).click()
 
 
@@ -67,15 +76,24 @@ def validate_output(word, pdf):
     document = Document(BytesIO(word))
     tables = [tuple(tuple(c.text for c in row.cells) for row in t.rows) for t in document.tables]
     work = next(t for t in tables if t[0][0] == "Work order")
+    counts = next(t for t in tables if t[0][0] == "Uploaded row sample")
     calls = next(t for t in tables if t[0][0] == "WO #")
     assert [row[0] for row in work[1:]] == ["000001", "000002"]
     assert [row[4] for row in work[1:]] == ["Completed", "Completed"]
     assert [row[0] for row in calls[1:]] == ["000001", "000002"]
     assert calls[1][3] == TASK
+    assert counts[1:] == (
+        ("All reviewed rows in scope", "2", "2", "0"),
+        ("PM", "1", "1", "0"),
+        ("Non-PM", "1", "1", "0"),
+        ("Unclassified work type", "0", "0", "0"),
+    )
     with pymupdf.open(stream=pdf, filetype="pdf") as rendered:
         text = "\n".join(page.get_text() for page in rendered)
     assert text.count("000001") == text.count("000002") == 2
-    assert "Pressure checked through native controls" in text
+    # PDF extraction exposes visual line wrapping inside the narrow task cell.
+    # Keep exact multiline text above for Word; preserve word order/content here.
+    assert " ".join(TASK.split()) in " ".join(text.split())
     return {"docx_sha256": sha256(word).hexdigest(), "pdf_sha256": sha256(pdf).hexdigest()}
 
 
@@ -109,13 +127,19 @@ def exercise(browser, name):
         start = page.get_by_role("button", name="Review and correct imported rows", exact=True)
         expect(start).to_be_visible(timeout=25000)
         # Source scope is a real source-details action, not a fixture override.
-        facility = page.get_by_role("combobox", name="Source facility", exact=True)
-        if facility.count():
-            panel = page.get_by_test_id("stExpander").filter(has=facility)
-            if not panel.evaluate("n=>(n.matches('details')?n:n.querySelector('details')).open"):
-                panel.locator("summary").click()
-            select(page, "Source facility", "Demonstration North Facility")
-            page.get_by_role("button", name="Use these source details", exact=True).click()
+        # Source details may be in a collapsed expander. A visible-only count
+        # silently skipped this required native review in the WIP journey.
+        facility = page.get_by_role("combobox", name="Source facility", exact=True, include_hidden=True)
+        expect(facility).to_have_count(1)
+        panel = page.get_by_test_id("stExpander").filter(has=facility)
+        if not panel.evaluate("n=>(n.matches('details')?n:n.querySelector('details')).open"):
+            panel.locator("summary").click()
+        select(page, "Source facility", "Demonstration North Facility")
+        source_date = panel.get_by_test_id("stDateInput").get_by_role("textbox")
+        source_date.fill("2026-09-04")
+        source_date.press("Tab")
+        page.get_by_role("button", name="Use these source details", exact=True).click()
+        settled(page, "v=>v.working.sources.length===1 && v.working.sources[0].date==='2026-09-04' && v.working.sources[0].facility==='north'")
         start.click()
         settled(page, "v=>v.working.reviews===1")
         status = page.get_by_role("textbox", name="Recorded status", exact=True)
@@ -177,6 +201,7 @@ def exercise(browser, name):
         record["passed"] = True
     except Exception as error:
         record["first_failure"] = str(error)
+        record["traceback"] = traceback.format_exc()
         page.screenshot(path=str(out / "first-failure.png"), full_page=True)
         (out / "first-failure.html").write_text(page.content())
         raise
@@ -193,7 +218,8 @@ def main():
         base = Path(directory)
         (base / "monthly-dom-synthetic-only.marker").write_text("synthetic-monthly-dom-v1")
         env = dict(os.environ, EPC_DATA_DIR=str(base), EPC_MONTHLY_DOM_FIXTURE="1",
-            EPC_REVIEWED_WORK_ORDER_FIXTURE="1", ANTHROPIC_API_KEY="", SMARTSHEET_API_MODE="disabled")
+            EPC_REVIEWED_WORK_ORDER_FIXTURE="1", ANTHROPIC_API_KEY="", SMARTSHEET_API_MODE="disabled",
+            STREAMLIT_GLOBAL_DEVELOPMENT_MODE="false")
         with (OUT / "streamlit.log").open("w") as log:
             process = subprocess.Popen([sys.executable, "-m", "streamlit", "run",
                 "tests/fixtures/workspaces/reviewed_work_orders_app.py", "--server.address", "127.0.0.1",
