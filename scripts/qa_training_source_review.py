@@ -23,21 +23,17 @@ def receipt(page, *, reviews=None, included=None, saved=None, previous_review=No
     payload = {"prefix": RECEIPT_PREFIX, "wanted": {"reviews": reviews, "included": included,
         "saved": saved, "previous": previous_review}}
     predicate = '''payload => {
-      for (const node of document.querySelectorAll('[data-testid="stCaptionContainer"]')) {
-        const text=node.textContent||'';
-        const at=text.indexOf(payload.prefix);
-        if(at<0)continue;
-        let v;
-        try{v=JSON.parse(text.slice(at+payload.prefix.length))}catch{continue}
-        const wanted=payload.wanted;
-        if ((wanted.reviews===null||v.reviews===wanted.reviews) &&
-            (wanted.included===null||v.tables.some(t=>t.rows.some(r=>r[0]==='Synthetic drill'))===wanted.included) &&
-            (wanted.saved===null||v.saved_revision===wanted.saved) &&
-            (wanted.previous===null||v.review_revision!==wanted.previous) &&
-            document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')==='notRunning')
-          return true;
-      }
-      return false;
+      const text=document.body?.innerText||'';
+      const at=text.lastIndexOf(payload.prefix);
+      if(at<0)return false;
+      let v;
+      try{v=JSON.parse(text.slice(at+payload.prefix.length).trim())}catch{return false}
+      const wanted=payload.wanted;
+      return (wanted.reviews===null||v.reviews===wanted.reviews) &&
+        (wanted.included===null||v.tables.some(t=>t.rows.some(r=>r[0]==='Synthetic drill'))===wanted.included) &&
+        (wanted.saved===null||v.saved_revision===wanted.saved) &&
+        (wanted.previous===null||v.review_revision!==wanted.previous) &&
+        document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')==='notRunning';
     }'''
     try:
         page.wait_for_function(predicate, arg=payload, timeout=30000)
@@ -64,23 +60,35 @@ def receipt(page, *, reviews=None, included=None, saved=None, previous_review=No
             });
             if(candidates.length>=8)break;
           }
+          const bodyText=document.body?.innerText||'';
+          const receiptAt=bodyText.lastIndexOf(payload.prefix);
+          const bodyReceipt=receiptAt<0?null:bodyText.slice(receiptAt+payload.prefix.length).trim();
+          let parsedBodyReceipt=null, bodyReceiptError=null;
+          try{parsedBodyReceipt=bodyReceipt===null?null:JSON.parse(bodyReceipt)}
+          catch(error){bodyReceiptError=String(error)}
           return {
             script_state:document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')||null,
-            body_has_prefix:(document.body?.textContent||'').includes(payload.prefix),
+            body_has_prefix:bodyText.includes(payload.prefix),
+            body_receipt:bodyReceipt?.slice(0,1200)||null,
+            body_receipt_error:bodyReceiptError,
+            parsed_body_receipt:parsedBodyReceipt&&{
+              reviews:parsedBodyReceipt.reviews, saved_revision:parsedBodyReceipt.saved_revision,
+              review_revision:parsedBodyReceipt.review_revision,
+              included:Array.isArray(parsedBodyReceipt.tables)&&parsedBodyReceipt.tables.some(
+                table=>Array.isArray(table.rows)&&table.rows.some(row=>row[0]==='Synthetic drill')),
+              table_count:Array.isArray(parsedBodyReceipt.tables)?parsedBodyReceipt.tables.length:null
+            },
             candidates,
-            body_tail:(document.body?.innerText||'').slice(-2500)
+            body_tail:bodyText.slice(-2500)
           };
         }''', payload)
         raise AssertionError("Training receipt readiness diagnostics: " +
                              json.dumps(probe, sort_keys=True, ensure_ascii=False)) from exc
     return page.evaluate('''prefix => {
-      for (const node of document.querySelectorAll('[data-testid="stCaptionContainer"]')) {
-        const text=node.textContent||'';
-        const at=text.indexOf(prefix);
-        if(at<0)continue;
-        try{return JSON.parse(text.slice(at+prefix.length))}catch{}
-      }
-      throw new Error('Training receipt text disappeared after readiness.');
+      const text=document.body?.innerText||'';
+      const at=text.lastIndexOf(prefix);
+      if(at<0)throw new Error('Training receipt prefix disappeared after readiness.');
+      return JSON.parse(text.slice(at+prefix.length).trim());
     }''', RECEIPT_PREFIX)
 
 
