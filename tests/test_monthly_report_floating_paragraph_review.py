@@ -113,3 +113,44 @@ def test_native_section_title_inside_frame_keeps_legacy_heading_route(tmp_path):
                for item in inspected.items)
     assert any(item.kind == "unsupported" and "Monthly Activity Summary" in item.text
                for item in inspected.items)
+
+
+def _verified_native_text_frame(text):
+    """A closed, editable Word frame already recognized by native design."""
+    return parse_xml(
+        '<w:r xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+        'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">'
+        '<w:drawing><wp:inline><wp:extent cx="1828800" cy="280670"/>'
+        '<a:graphic><a:graphicData '
+        'uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">'
+        '<wps:wsp><wps:cNvSpPr txBox="1"/>'
+        '<wps:spPr><a:prstGeom prst="rect"/></wps:spPr>'
+        '<wps:txbx><w:txbxContent><w:p><w:r><w:t>'
+        + text +
+        '</w:t></w:r></w:p></w:txbxContent></wps:txbx>'
+        '</wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>'
+    )
+
+
+def test_proved_editable_native_frame_still_maps_without_changing_original(tmp_path):
+    """Filtering unproved drawings must not erase existing approved text."""
+    document = Document()
+    document.add_heading("EQUIPMENT PERFORMANCE ISSUES", 1)
+    paragraph = document.add_paragraph()
+    prose = "Synthetic verified native pump inspection completed."
+    paragraph._p.append(_verified_native_text_frame(prose))
+    source = tmp_path / "closed-native-text.docx"
+    document.save(source)
+    original = source.read_bytes()
+    inspection = importer.inspect_docx(source)
+    assert any(
+        item.kind == "native_layout" and item.note == "Editable native text frames"
+        and item.text == prose for item in inspection.items
+    )
+    assert any(
+        item.kind == "text" and item.suggested_slot == "equipment_issues"
+        and item.text == prose for item in inspection.items
+    )
+    assert source.read_bytes() == original

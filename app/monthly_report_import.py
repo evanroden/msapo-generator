@@ -704,7 +704,21 @@ def inspect_docx(path: Path) -> DocxInspection:
                                         and not cover_native_frame and not detected):
                                     frames = {node for node in element.iter(W + "txbxContent")}
                                     if frames:
-                                        ordinary_text = _text(element, exclude=frames)
+                                        from app.monthly_report_native_design import native_layout_role
+                                        # Reuse the existing closed-shape proof. A
+                                        # verified editable/contents frame retains
+                                        # ordinary text; unsupported or divergent
+                                        # floating drawings remain layout-only.
+                                        text_role = (native_layout_role(
+                                            element, text, part=part, section=section,
+                                            word_section=word_section
+                                        ) if alternatives_equivalent else "")
+                                        if text_role not in (
+                                            "Editable native text frames",
+                                            "Native contents text frames",
+                                            "Native contents notice and artwork",
+                                        ):
+                                            ordinary_text = _text(element, exclude=frames)
                                 if ordinary_text:
                                     add("text", part, position, text=ordinary_text, note=source_note,
                                         suggested_slot=(content_slot if content_slot and not detected else
