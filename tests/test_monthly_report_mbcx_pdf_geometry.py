@@ -146,6 +146,11 @@ def test_real_word_pdf_preserves_every_mbcx_corner_and_next_section(tmp_path, mo
     assert package.docx and package.pdf, package.pdf_error
     word = Document(BytesIO(package.docx))
     assert len(word.inline_shapes) == len(PAGES)
+    # The page boundary must be attached to its next source image. A separate
+    # break-only paragraph can render as an unwanted blank physical page.
+    pictures = [p for p in word.paragraphs if p._p.xpath(".//w:drawing")]
+    assert len(pictures) == len(PAGES)
+    assert all(p.paragraph_format.page_break_before is True for p in pictures[1:])
     with fitz.open(stream=original, filetype="pdf") as source:
         for inline, page in zip(word.inline_shapes, source):
             actual = inline.width / inline.height
