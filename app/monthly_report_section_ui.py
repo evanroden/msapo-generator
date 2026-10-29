@@ -729,7 +729,6 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
         failed_hash = st.session_state.get(prefix + "_failed_digest")
         retry = False
         if failed_hash == digest:
-            st.warning("This starting report could not be analyzed. The previous draft remains unchanged.")
             retry = st.button("Retry report analysis", key=prefix + "_retry_analysis")
         # A committed upload still mounted after saving must not reopen itself.
         # Once another source is staged, however, reselecting that committed
@@ -739,20 +738,31 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             try:
                 with st.spinner("Reading sections and cover pictures…"):
                     incoming = _stage(upload)
+            except (ValueError, OSError) as exc:
+                # Retain only a vetted reason; parser strings can contain
+                # private source fragments or paths. Neutral reruns preserve
+                # this diagnosis until an explicit retry or different source.
+                from app.monthly_report_starting_errors import starting_docx_failure_notice
+                st.session_state[prefix + "_failed_digest"] = digest
+                st.session_state[prefix + "_failed_notice"] = starting_docx_failure_notice(exc)
+            else:
                 previous = st.session_state.get(prefix + "_stage")
                 st.session_state[prefix + "_stage"] = incoming
                 st.session_state[prefix + "_image_conflict_incarnation"] = uuid4().hex
                 st.session_state.pop(prefix + "_image_replacements", None)
                 st.session_state.pop(original_token_key, None)
                 st.session_state.pop(prefix + "_failed_digest", None)
-                if previous and previous[0]:
-                    previous[0].cleanup()
-                st.rerun()
-            except (ValueError, OSError) as exc:
-                st.session_state[prefix + "_failed_digest"] = digest
-                st.warning("This report could not be analyzed. Choose a valid DOCX or retry; your existing work was preserved.")
+                st.session_state.pop(prefix + "_failed_notice", None)
+                try:
+                    if previous and previous[0]:
+                        previous[0].cleanup()
+                except OSError:
+                    st.warning("The new report is ready for review; the previous temporary review could not be removed.")
+                else:
+                    st.rerun()
     else:
         st.session_state.pop(prefix + "_failed_digest", None)
+        st.session_state.pop(prefix + "_failed_notice", None)
         # Removing then selecting the same file is an explicit new import.
         # An unchanged native uploader after a successful save is not.
         st.session_state.pop(prefix + "_committed_upload_digest", None)
@@ -764,6 +774,14 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             previous[0].cleanup()
             st.session_state.pop(prefix + "_stage", None)
     if upload is not None and st.session_state.get(prefix + "_failed_digest") == digest:
+        st.warning(st.session_state.get(prefix + "_failed_notice",
+                  "This report could not be analyzed. Choose a valid DOCX or retry; your existing work was preserved."))
+        if failed_hash != digest:
+            # On the first rejected upload, the earlier Retry control did not
+            # exist when the digest was checked. Show it *now* rather than
+            # requiring a neutral second click/rerun to reveal recovery.
+            # On later renders the same keyed button was already mounted above.
+            st.button("Retry report analysis", key=prefix + "_retry_analysis")
         st.info("The newly selected file has not been analyzed. Retry or choose another file before continuing.")
         return True
     if not optional_import:
@@ -781,12 +799,28 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             source_view = derive_import_view(path, inspection)
         except (ValueError, OSError) as exc:
             # Original audit and existing blocking questions remain truthful.
-            from app.monthly_report_compatibility_view import MAX_VIEW_SOURCE_BYTES
-            if path.stat().st_size > MAX_VIEW_SOURCE_BYTES and "source byte budget" in str(exc):
+            from app.monthly_report_compatibility_view import CompatibilityBudgetError, MAX_VIEW_SOURCE_BYTES
+            # Route the typed source-size refusal to its exact native-artwork
+            # limit warning; other processing budgets remain distinct.
+            source_byte_budget = (isinstance(exc, CompatibilityBudgetError)
+                                  and exc.budget == "source byte budget"
+                                  and exc.limit == MAX_VIEW_SOURCE_BYTES)
+            if (source_byte_budget or
+                    (not isinstance(exc, CompatibilityBudgetError)
+                     and path.stat().st_size > MAX_VIEW_SOURCE_BYTES
+                     and "source byte budget" in str(exc))):
                 native_art_size_limited = True
                 st.warning(
                     f"This file is within the {byte_limit_label(docx_import.MAX_DOCX_BYTES)} upload limit, but automatic native-artwork "
                     f"interpretation is limited to {byte_limit_label(MAX_VIEW_SOURCE_BYTES)}. "
+                    "This is a processing limit, not evidence that the artwork is damaged. "
+                    "Your original and current review are unchanged. Use an available independent "
+                    "template below, or keep the original and upload a smaller test copy. "
+                    "Replacing the upload starts a new review.")
+            elif isinstance(exc, CompatibilityBudgetError):
+                native_art_size_limited = True
+                st.warning(
+                    "Automatic native-artwork interpretation stopped. " + str(exc) + " "
                     "This is a processing limit, not evidence that the artwork is damaged. "
                     "Your original and current review are unchanged. Use an available independent "
                     "template below, or keep the original and upload a smaller test copy. "
