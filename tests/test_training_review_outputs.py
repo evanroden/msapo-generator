@@ -47,8 +47,9 @@ def test_reviewed_current_and_historical_rows_render_once_with_truthful_labels(t
     pdf = pdf_converter.convert_to_pdf(word).read_bytes()
     with pymupdf.open(stream=pdf, filetype="pdf") as output:
         text = "\n".join(page.get_text() for page in output)
+        normalized_text = " ".join(text.split())
         assert text.count("Current drill") == text.count("Prior drill") == 1
-        assert "Historical training" in text and "2026-08-11" in text
+        assert "Historical training" in normalized_text and "2026-08-11" in text
         assert "Incomplete" not in text
         folder = Path(os.environ.get("INDEPENDENT_OUTPUT", str(tmp_path))) / "training-reviewed-import" / ("native" if native else "plain")
         folder.mkdir(parents=True, exist_ok=True)

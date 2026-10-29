@@ -72,4 +72,4 @@ receipt = {"synthetic": True, "fingerprint": draft.fingerprint, "saved_revision"
     "reviews": len(draft.source_row_reviews), "notes": draft.blocks[0].text,
     "review_revision": sha256("\n".join(draft.source_row_reviews).encode()).hexdigest(),
     "tables": [{"reference": t.reference, "columns": t.columns, "rows": t.rows} for t in draft.blocks[0].extra_tables]}
-st.html('<div data-training-review-receipt="' + html.escape(json.dumps(receipt), quote=True) + '"></div>')
+st.html('<span hidden data-training-review-receipt="' + html.escape(json.dumps(receipt), quote=True) + '"></span>')
