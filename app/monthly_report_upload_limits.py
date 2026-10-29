@@ -37,3 +37,10 @@ def docx_parser_help(*, expanded: int, member: int, xml_part: int,
         "A file below the upload limit can still exceed these limits. "
         "Use a smaller import copy or fewer selected images; keep the original unchanged."
     )
+
+
+def source_size_error(suffix: str, limit_bytes: int) -> str:
+    """Name the actual type's limit rather than the largest chooser ceiling."""
+    return (f"This {suffix.lstrip('.').upper()} file exceeds the "
+            f"{byte_limit_label(limit_bytes)} upload limit. "
+            "Choose a smaller copy; keep the original unchanged.")
