@@ -83,7 +83,13 @@ check('Review client',False)
 next(c for c in a.date_input if c.label=='Source date').set_value(date(2026,9,2)).run();button('Use these source details')
 stale=a.session_state['financial_draft'];assert stale.sources[0].service_date=='2026-09-02'
 assert not page_allowed(stale.sources[0],2,profile=stale.profile,destination='mbcx_report')
-check('Review client');a.multiselect[0].set_value([1,2]).run();assert not next(c for c in a.checkbox if c.label.startswith('I reviewed')).value
+check('Review client')
+w=a.multiselect[0]
+assert w.value==[2], w.value
+assert [int(w.proto.options[i].split()[1]) for i in w.proto.default]==w.value
+assert not w.proto.set_value
+assert not page_allowed(a.session_state['financial_draft'].sources[0],2,profile=stale.profile,destination='mbcx_report')
+a.multiselect[0].set_value([1,2]).run();assert not next(c for c in a.checkbox if c.label.startswith('I reviewed')).value
 check('I reviewed');button('Include reviewed financial pages')
 renewed=a.session_state['financial_draft']
 assert renewed.blocks[-1].asset_hashes==accepted.blocks[-1].asset_hashes
@@ -266,3 +272,12 @@ def test_hosted_selector_contract_is_required_for_case_acceptance():
     assert '.to_have_count(2)' in contract and '.to_have_count(0)' in contract
     assert 'date_selector_contract(context)' in inspect.getsource(exercise)
     assert 'force=' not in contract and '.first' not in contract
+
+
+def test_native_page_actions_require_visible_choices_matching_server_receipt():
+    import inspect
+    from scripts.qa_financial_pages import exercise
+    flow=inspect.getsource(exercise)
+    assert "current=receipt(page)['review_pages']" in flow
+    assert "r'^Remove Page '" in flow and '.to_have_count(len(current))' in flow
+    assert "act(lambda:combo.press('Backspace'))" in flow

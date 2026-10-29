@@ -31,6 +31,19 @@ from app.monthly_report_sections import (
 from app.monthly_report_setup import design_profile, item_findings
 
 
+def _cover_action_key(prefix):
+    """Retire only the cover radio when an explicit template action replaces it."""
+    epoch = st.session_state.get(prefix + "_cover_action_epoch", "")
+    return prefix + ("_cover_choice_" + epoch if epoch else "") + "_section_cover_action"
+
+
+def _replace_cover_action(prefix, action):
+    # A browser can submit the old radio alongside the next button click.
+    # A new identity isolates that payload without overriding fresh choices.
+    st.session_state[prefix + "_cover_action_epoch"] = uuid4().hex
+    st.session_state[_cover_action_key(prefix)] = action
+
+
 def plan_signature(plan):
     value = {k: v for k, v in plan.items() if k not in ("new_assets", "preserved_assets", "approved", "approval_stamp")}
     value["new_assets"] = [(slot, hashlib.sha256(image.data).hexdigest()) for slot, image in plan.get("new_assets", ())]
@@ -215,7 +228,8 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
         if section.key != "other" and any(item.kind == "image" for item in section.items):
             st.caption("Picture text and cells are not directly editable. Choose “" +
                        labels[actions[1]] + "” to reach replacement uploads.")
-        action_key = field(p + "_action", old.get("action", actions[0]))
+        action_key = field(_cover_action_key(prefix) if section.key == "cover" else p + "_action",
+                           old.get("action", actions[0]))
         current_action = st.session_state.get(action_key)
         # Keep the cover's native remount default consistent with its staged
         # action. Unknown values still fall back to review, never approval.
@@ -1028,11 +1042,11 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                             "template": available_template, "scope": template_scope, "cover_plan": deepcopy(plans["cover"])}
                         plans["cover"] = dict(plans["cover"], action="Leave this section out", omit=True,
                                                approved=True, questions=[])
-                        st.session_state[p + "_section_cover_action"] = "Leave this section out"
+                        _replace_cover_action(p, "Leave this section out")
                         st.rerun()
                 elif st.button("Keep uploaded report design instead", key=p + "_cancel_template"):
                     plans["cover"] = template_choice["cover_plan"]
-                    st.session_state[p + "_section_cover_action"] = plans["cover"].get("action", "Keep and review")
+                    _replace_cover_action(p, plans["cover"].get("action", "Keep and review"))
                     st.session_state.pop(template_choice_key, None)
                     st.rerun()
     cover_photo_ids = ()

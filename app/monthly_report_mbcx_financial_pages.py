@@ -280,8 +280,18 @@ def render_reviewed_batch(profile,content,blocks,assets,prefix,*,period,editor_s
     if not available:
         st.caption('No eligible pages to review. Deliberate exclusions and other sections are unchanged.')
         return True,content,{}
-    pages=tuple(st.multiselect('Pages to review together',available,key=key+'_pages',max_selections=4,
+    # A reopened/late native mount consumes proto.default after the one-shot
+    # set_value packet is gone. Keep it aligned with the current choice, not
+    # an implicit empty list; this does not select or approve additional pages.
+    page_key=key+'_pages'
+    choice_key=key+'_page_choice'
+    # Non-widget navigation choice survives disclosure cleanup; an explicitly
+    # delivered empty widget value takes precedence over the remembered choice.
+    pending=st.session_state.get(page_key,st.session_state.get(choice_key,()))
+    pending_pages=tuple(n for n in pending if n in available)
+    pages=tuple(st.multiselect('Pages to review together',available,key=page_key,default=pending_pages,max_selections=4,
         format_func=lambda n:f'Page {n}' + (' · already included' if (source.id,n) in owners else ' · new')))
+    st.session_state[choice_key]=pages
     receipts=[];failure=False;edited=[]
     for number in pages:
         try:

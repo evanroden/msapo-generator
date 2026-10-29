@@ -203,10 +203,19 @@ def exercise(engine,name,source,base,scenario):
         combo=page.get_by_role('combobox',name=label,exact=True)
         combo.click();act(lambda:page.get_by_role('option',name=text,exact=True).click())
     def pages(numbers):
+        current=receipt(page)['review_pages']
+        widget=page.get_by_test_id('stMultiSelect').filter(
+            has=page.get_by_text('Pages to review together',exact=True))
+        expect(widget).to_have_count(1)
+        # Never treat a hidden/stale server choice as a removable native tag.
+        # A mismatch is a product hydration failure, not a reason to skip an action.
+        expect(widget.get_by_role('button',name=__import__('re').compile(r'^Remove Page '))).to_have_count(len(current))
+        for number in current:
+            expect(widget.get_by_role('button',name=__import__('re').compile(r'^Remove Page '+str(number)+r' ·'))).to_have_count(1)
         combo=page.get_by_role('combobox',name='Pages to review together',exact=True)
         # Ordinary keyboard removal, not DOM or session-state mutation.
         combo.click()
-        for _ in range(len(receipt(page)['review_pages'])):
+        for _ in range(len(current)):
             act(lambda:combo.press('Backspace'))
         combo.press('Escape');receipt(page)
         for number in numbers:

@@ -204,3 +204,50 @@ def test_only_exact_existing_last_good_art_may_be_copied_to_private_journal(muta
     if mutation is None:check()
     else:
         with pytest.raises(AssertionError):check()
+
+
+@pytest.mark.parametrize('name',['.conversion-lock','.active-office.json'])
+def test_only_exact_valid_runtime_bookkeeping_is_outside_content_inventory(tmp_path,name):
+    import os
+    from scripts.qa_cover_recovery_service import runtime_bookkeeping
+    root=tmp_path/'monthly_reports';folder=root/'render-jobs';folder.mkdir(parents=True)
+    path=folder/name
+    boot=Path('/proc/sys/kernel/random/boot_id').read_text().strip()+':'+os.readlink('/proc/self/ns/pid')
+    raw=b'' if name=='.conversion-lock' else __import__('json').dumps({'pid':os.getpid(),'boot':boot}).encode()
+    path.write_bytes(raw)
+    assert runtime_bookkeeping(root,path)
+    # Renderer state can be created/updated/removed without changing report content.
+    if name=='.active-office.json':
+        path.write_text(__import__('json').dumps({'pid':os.getpid()+1,'boot':boot}))
+        assert runtime_bookkeeping(root,path)
+    path.unlink()
+    assert runtime_bookkeeping(root,path)
+    unknown=folder/'other.json';unknown.write_bytes(raw)
+    assert not runtime_bookkeeping(root,unknown)
+    other=root/'library'/'render-jobs';other.mkdir(parents=True)
+    wrong=other/name;wrong.write_bytes(raw)
+    assert not runtime_bookkeeping(root,wrong)
+
+
+@pytest.mark.parametrize('mutation',['malformed','oversize','symlink','hardlink','fifo','parent-link','wrong-boot','extra-key','boolean-pid','lock-content'])
+def test_runtime_bookkeeping_never_hides_invalid_or_linked_files(tmp_path,mutation):
+    import os,json
+    from scripts.qa_cover_recovery_service import runtime_bookkeeping
+    root=tmp_path/'monthly_reports';folder=root/'render-jobs';folder.mkdir(parents=True)
+    path=folder/('.conversion-lock' if mutation=='lock-content' else '.active-office.json')
+    boot=Path('/proc/sys/kernel/random/boot_id').read_text().strip()+':'+os.readlink('/proc/self/ns/pid')
+    value={'pid':os.getpid(),'boot':boot}
+    path.write_text(json.dumps(value))
+    if mutation=='malformed':path.write_text('{')
+    if mutation=='oversize':path.write_bytes(b'x'*1025)
+    if mutation=='symlink':
+        path.unlink();path.symlink_to(tmp_path/'elsewhere')
+    if mutation=='hardlink':os.link(path,tmp_path/'alias')
+    if mutation=='fifo':path.unlink();os.mkfifo(path)
+    if mutation=='parent-link':
+        folder.rename(root/'real');folder.symlink_to(root/'real',target_is_directory=True)
+    if mutation=='wrong-boot':value['boot']='other';path.write_text(json.dumps(value))
+    if mutation=='extra-key':value['data']='unexpected';path.write_text(json.dumps(value))
+    if mutation=='boolean-pid':value['pid']=True;path.write_text(json.dumps(value))
+    with pytest.raises((AssertionError,ValueError,OSError)):
+        runtime_bookkeeping(root,path)

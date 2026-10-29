@@ -500,3 +500,41 @@ def test_visual_consent_does_not_replay_into_new_month_or_editor(monkeypatch,tmp
     app.run()
     assert not app.exception and app.button[0].disabled and not app.checkbox[-1].value
     assert app.session_state['content'].source.financial_source_review is None
+
+
+def test_financial_page_choice_native_default_tracks_current_selection(monkeypatch,tmp_path):
+    """A late native mount must not show empty while the server previews page1."""
+    from streamlit.testing.v1 import AppTest
+    monkeypatch.setenv('EPC_DATA_DIR',str(tmp_path))
+    app=AppTest.from_string(APP).run()
+    app.checkbox[0].check().run();app.multiselect[0].set_value([1]).run()
+    assert not app.exception
+    widget=app.multiselect[0];native_id=widget.proto.id
+    assert widget.value==[1]
+    assert list(widget.proto.default)==[0]
+    assert not widget.proto.set_value
+    before=app.session_state['content']
+    app.run()
+    assert list(app.multiselect[0].proto.default)==[0]
+    assert app.multiselect[0].proto.id==native_id
+    assert app.session_state['content']==before
+    assert not before.source.financial_page_reviews
+    app.multiselect[0].set_value([]).run();app.run()
+    assert app.multiselect[0].value==[] and list(app.multiselect[0].proto.default)==[]
+    assert app.multiselect[0].proto.id==native_id
+    assert not app.session_state.filtered_state.get('blocks',{})
+
+
+def test_financial_page_choice_remount_and_explicit_clear_do_not_grant(monkeypatch,tmp_path):
+    from streamlit.testing.v1 import AppTest
+    monkeypatch.setenv('EPC_DATA_DIR',str(tmp_path))
+    app=AppTest.from_string(APP).run();app.checkbox[0].check().run()
+    app.multiselect[0].set_value([1]).run();before=app.session_state['content']
+    app.checkbox[0].uncheck().run();app.run();app.checkbox[0].check().run()
+    assert app.multiselect[0].value==[1] and list(app.multiselect[0].proto.default)==[0]
+    assert app.session_state['content']==before and not before.source.financial_page_reviews
+    assert not next(c for c in app.checkbox if c.label.startswith('I reviewed')).value
+    app.multiselect[0].set_value([]).run()
+    app.checkbox[0].uncheck().run();app.run();app.checkbox[0].check().run()
+    assert app.multiselect[0].value==[] and list(app.multiselect[0].proto.default)==[]
+    assert not app.session_state.filtered_state.get('blocks',{})

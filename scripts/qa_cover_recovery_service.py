@@ -89,6 +89,43 @@ def assert_resources(value):
     assert int(events['oom_kill']) == int(events['oom']) == 0
 
 
+def runtime_bookkeeping(root, path):
+    """Validate exactly two ephemeral renderer records, never report content.
+
+    These records can change during background previews. Do not compare their
+    mtime/hash as user content, but reject links, unexpected bytes or scope.
+    """
+    import os
+    import stat
+    relative = path.relative_to(root).as_posix()
+    if relative not in ("render-jobs/.conversion-lock", "render-jobs/.active-office.json"):
+        return False
+    assert not root.is_symlink() and not path.parent.is_symlink()
+    assert path.parent.is_dir()
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return True  # Only these exact transient records may disappear.
+    try:
+        info = os.fstat(fd)
+        assert stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+        limit = 0 if path.name == ".conversion-lock" else 1024
+        assert 0 <= info.st_size <= limit
+        raw = os.read(fd, limit + 1)
+        assert len(raw) <= limit
+        if path.name == ".conversion-lock":
+            assert raw == b""
+        else:
+            value = json.loads(raw)
+            assert type(value) is dict and set(value) == {"pid", "boot"}
+            assert type(value["pid"]) is int and value["pid"] > 1
+            boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+            assert value["boot"] == boot + ":" + os.readlink("/proc/self/ns/pid")
+    finally:
+        os.close(fd)
+    return True
+
+
 def inventory(container, token):
     # Exact namespace only, fresh bounded streaming hashes; no original bytes
     # leave the service. Unlike the small history observer, this inventory is
@@ -97,6 +134,7 @@ def inventory(container, token):
     return docker_json(container, """
 import hashlib,json
 from pathlib import Path
+from scripts.qa_cover_recovery_service import runtime_bookkeeping
 base=Path('/qa-data')
 assert base.is_dir() and not base.is_symlink()
 assert (base/'monthly-dom-synthetic-only.marker').read_text()=='synthetic-monthly-dom-v1'
@@ -110,6 +148,7 @@ assert not root.is_symlink() and root.resolve().is_relative_to(base.resolve())
 out={};total=0
 for n,p in enumerate(sorted(root.rglob('*'))):
  assert n<1024 and not p.is_symlink()
+ if runtime_bookkeeping(root,p):continue
  if not p.is_file():continue
  stat=p.stat();total+=stat.st_size
  assert stat.st_size<=64*1024*1024 and total<=384*1024*1024
