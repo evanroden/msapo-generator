@@ -22,6 +22,7 @@ from app.monthly_report_model import (
     ReportDraft, ReportPeriod, ResolvedBlock, default_sections, synthetic_profiles,
 )
 from app.monthly_report_section_uploads import prepare_section_pages
+from app.monthly_report_source_scope import correct_scope
 
 
 # Page 3 and 4 have rotated page dictionaries, not just landscape artwork.
@@ -98,6 +99,9 @@ def fixture_source(tmp_path, monkeypatch):
     source = replace(source, client_page_reviews=tuple(
         (n, page_fingerprint(source, n)) for n in range(1, len(GEOMETRIES) + 1)
     ))
+    # Per-page visual approval is not approval of the source's exact site.
+    # The fixture covers only this actual synthetic profile facility.
+    source = correct_scope(source, profile, (profile.facilities[0].key,))
     content = replace(content, source=source)
     return profile, content, original
 
