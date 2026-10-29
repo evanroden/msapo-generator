@@ -15,6 +15,7 @@ export default function(component) {
         state.mode = null;
         state.compactPositions = new WeakMap();
         state.reviewNavigation = false;
+        state.explicitReview = false;
         state.navigationActive = null;
         state.navigationJump = null;
         state.navigationRequest = null;
@@ -34,7 +35,7 @@ export default function(component) {
         }
     }
     const noteInput = event => globalThis.ENFRAWorkspaceNavigation?.noteInput(state, event);
-    for (const type of ['pointerdown', 'keydown', 'wheel']) {
+    for (const type of ['pointerdown', 'keydown', 'wheel', 'touchstart', 'touchmove', 'touchend', 'touchcancel']) {
         document.addEventListener(type, noteInput, {capture:true, passive:true});
         subscriptions.push(() => document.removeEventListener(type, noteInput, {capture:true}));
     }
@@ -268,7 +269,13 @@ export default function(component) {
             return;
         }
         const list = pairs.map(({id,pair}) => ({id, ...rect(pair)}));
-        state.active = geometry.selectActiveSection(list, state.active, context.editor.y + 32, 24);
+        // Navigation has just resolved the current editor below its measured
+        // toolbar, including explicit steps and boundary hysteresis. A second
+        // fixed reading line above that toolbar can select the previous section
+        // and hide the current editor's preview after a mode change.
+        const coordinated = navigation && list.some(({id}) => id === state.navigationActive);
+        state.active = coordinated ? state.navigationActive :
+            geometry.selectActiveSection(list, state.active, context.editor.y + 32, 24);
         pairs.forEach(({id,pair}) => {pair.dataset.epcActive = String(id === state.active);});
     }
     let waitingForGesture = false;

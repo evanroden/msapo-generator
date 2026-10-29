@@ -36,7 +36,7 @@ function harness(mode='wide', sequential=false) {
         addEventListener(type,handler){if(type==='click')clickHandler=handler},
         removeEventListener(type,handler){if(clickHandler===handler)clickHandler=null}};
     document.createElement=()=>({});
-    const context={document};vm.runInNewContext(fs.readFileSync('app/workspace_navigation.js','utf8'),context);
+    const context={document,getComputedStyle:node=>node.style||{overflowY:"auto",overscrollBehaviorY:"auto"}};vm.runInNewContext(fs.readFileSync('app/workspace_navigation.js','utf8'),context);
     const create=()=>context.ENFRAWorkspaceNavigation.create({root,app,scrollport,nav,state,geometry,schedule(){scheduled++}});
     let controller=create();
     const sample={chromeBottom:64,scrollport:{y:0},visual:{y:0}};
@@ -54,6 +54,7 @@ function harness(mode='wide', sequential=false) {
         measure();return prevented;},state,root,scrollport,select,reviewButton,backButton,nextButton,progress,field,pairs,review,app,document,measure,choose,nav,label,controller:()=>controller,
         land:request=>context.ENFRAWorkspaceNavigation.land(state,request),
         cancelLanding:()=>context.ENFRAWorkspaceNavigation.cancelLanding(state),
+        input:event=>context.ENFRAWorkspaceNavigation.noteInput(state,event),
         rerender(){controller.dispose();controller=create();measure()},dispose(){controller.dispose()},
         counts:()=>({scheduled,replacements,nativeEvents})};
 }
@@ -118,6 +119,7 @@ for(const mode of ['tabletop','confined'])test(`${mode} current section excludes
 
 test('reverse scroll from review restores tabletop at the visible paragraph without a trap',()=>{
     const h=harness('tabletop');h.root.scrollTop=650;h.measure();h.choose('report_review');
+    h.input({isTrusted:true,type:'wheel',deltaY:-10,target:{}});
     h.scrollport.scrollTop=2700;
     const oldOffset=h.pairs[3].pair.getBoundingClientRect().top;
     h.measure();assert.equal(h.state.ownsScroll,true);assert.equal(h.state.reviewNavigation,false);
@@ -395,7 +397,7 @@ test('the adapter consumes entry focus from its existing measurement and records
     const layout=fs.readFileSync('app/workspace_layout.js','utf8');
     const measure=layout.split('function measure() {')[1].split('\n    function schedule()')[0];
     assert.match(measure,/ENFRAWorkspaceNavigation\?\.focusEntries\(state, root\)/);
-    assert.match(layout,/for \(const type of \['pointerdown', 'keydown', 'wheel'\]\) \{\s*document\.addEventListener\(type, noteInput/,
+    assert.match(layout,/for \(const type of \['pointerdown', 'keydown', 'wheel', 'touchstart', 'touchmove', 'touchend', 'touchcancel'\]\) \{\s*document\.addEventListener\(type, noteInput/,
         'presses, keys and wheel scrolling are all recorded');
     assert.doesNotMatch(layout,/setInterval|setTimeout/,'no polling or timers');
 });
@@ -607,4 +609,109 @@ for(const mode of ['tabletop','confined'])test(`${mode} mode entry and later seq
     assert.equal(offset(),before,'no toolbar-height jump on sequential return');
     assert.equal(h.field.value,'Unblurred human wording');
     assert.equal(h.counts().nativeEvents,0);
+});
+
+for(const mode of ['wide','compact','tabletop'])test(`${mode} passive Review scroll displacement cannot turn first Back into a skipped section`,()=>{
+    const h=harness(mode,true);
+    while(h.progress.dataset.section!=='report_review'){h.nextButton.onclick();h.measure();}
+    // Hosted Chromium: no input between Review's confirmed progress and
+    // scrollTop16865 ->16138. The old reverse-scroll heuristic exited Review.
+    const reviewScroll=h.scrollport.scrollTop;
+    h.scrollport.scrollTop=reviewScroll-727;h.measure();
+    assert.equal(h.state.reviewNavigation,true);
+    assert.equal(h.progress.dataset.section,'report_review');
+    h.backButton.onclick();h.measure();
+    assert.equal(h.progress.dataset.section,'monthly_empty');
+});
+for(const event of [
+    {type:'wheel',deltaY:-10}, {type:'wheel',deltaY:-2,deltaX:20}, {type:'touchmove',touches:[{clientX:0,clientY:10}]}, {type:'keydown',key:'PageUp'},
+    {type:'keydown',key:'ArrowUp'}, {type:'keydown',key:'Home'},
+    {type:'keydown',key:' ',shiftKey:true},
+    {type:'pointerdown',clientX:995,clientY:500,target:{matches:()=>true,closest:()=>null,clientLeft:0,clientTop:0,clientWidth:984,clientHeight:1000,getBoundingClientRect:()=>({left:0,right:1000,top:0,bottom:1000})}},
+])test(`explicit Review yields to genuine ${event.type} ${event.key||'scrollbar'} scrolling`,()=>{
+    const h=harness('wide',true);
+    while(h.progress.dataset.section!=='report_review'){h.nextButton.onclick();h.measure();}
+    if(event.type==='touchmove') h.input({isTrusted:true,type:'touchstart',touches:[{clientX:0,clientY:0}],target:{}});
+    h.input({isTrusted:true,target:{},...event});
+    h.scrollport.scrollTop=2700;h.measure();
+    assert.equal(h.state.reviewNavigation,false);
+    assert.equal(h.progress.dataset.section,'monthly_training');
+});
+for(const event of [
+    {isTrusted:false,type:'wheel'}, {isTrusted:true,type:'keydown',key:'Tab'},
+    {isTrusted:true,type:'keydown',key:'Enter'},
+    {isTrusted:true,type:'pointerdown'},
+    {isTrusted:true,type:'pointerdown',clientX:500,clientY:500,target:{matches:()=>true,closest:()=>null,clientLeft:0,clientTop:0,clientWidth:984,clientHeight:1000,getBoundingClientRect:()=>({left:0,right:1000,top:0,bottom:1000})}},
+    {isTrusted:true,type:'keydown',key:' ',target:{closest:selector=>selector.startsWith('button')?{}:null}},
+    {isTrusted:true,type:'keydown',key:'ArrowUp',target:{closest:selector=>selector.startsWith('input')?{}:null}},
+])test(`non-scroll ${JSON.stringify(event)} cannot release deliberate Review`,()=>{
+    const h=harness('wide',true);
+    while(h.progress.dataset.section!=='report_review'){h.nextButton.onclick();h.measure();}
+    h.input({target:{},...event});
+    h.scrollport.scrollTop-=727;h.measure();
+    assert.equal(h.state.reviewNavigation,true);
+    assert.equal(h.progress.dataset.section,'report_review');
+});
+
+test('explicit Review guard transfers through Back, repeated Review and corrective links',()=>{
+    const h=harness('wide',true);
+    while(h.progress.dataset.section!=='report_review'){h.nextButton.onclick();h.measure();}
+    assert.equal(h.state.explicitReview,true);
+    h.rerender();assert.equal(h.state.explicitReview,true);
+    h.backButton.onclick();h.measure();assert.equal(h.state.explicitReview,false);
+    assert.equal(h.progress.dataset.section,'monthly_empty');
+    h.nextButton.onclick();h.measure();assert.equal(h.state.explicitReview,true);
+    h.correct('#report-section-activity');assert.equal(h.state.explicitReview,false);
+    assert.equal(h.progress.dataset.section,'monthly_activity');
+    h.land(['new-entry','monthly_cover']);assert.equal(h.state.explicitReview,false);
+});
+
+for(const event of [
+    {type:'wheel',deltaY:-20,ctrlKey:true}, {type:'wheel',deltaY:-20,metaKey:true},
+    {type:'wheel',deltaY:0,deltaX:20},
+    {type:'wheel',deltaY:-20,target:{scrollHeight:300,clientHeight:100,scrollTop:50}},
+    {type:'touchmove',touches:[{clientX:0,clientY:20}],target:{scrollHeight:300,clientHeight:100,scrollTop:50}},
+    {type:'touchmove',touches:[{clientX:20,clientY:0}]},
+    {type:'touchmove',touches:[{clientX:0,clientY:20},{clientX:10,clientY:20}]},
+    {type:'wheel',deltaY:-20,target:{scrollHeight:300,clientHeight:100,scrollTop:0,style:{overflowY:'auto',overscrollBehaviorY:'contain'}}},
+])test(`non-page gesture ${JSON.stringify(event)} retains explicit Review`,()=>{
+    const h=harness('wide',true);
+    while(h.progress.dataset.section!=='report_review'){h.nextButton.onclick();h.measure();}
+    h.input({isTrusted:true,type:'touchstart',touches:[{clientX:0,clientY:0}],target:{}});
+    h.input({isTrusted:true,target:{},...event});
+    h.scrollport.scrollTop-=727;h.measure();
+    assert.equal(h.state.reviewNavigation,true);
+    assert.equal(h.progress.dataset.section,'report_review');
+});
+for(const type of ['wheel','touchmove'])test(`${type} chains from nested scroller boundary to page`,()=>{
+    const h=harness('wide',true);
+    while(h.progress.dataset.section!=='report_review'){h.nextButton.onclick();h.measure();}
+    h.input({isTrusted:true,type:'touchstart',touches:[{clientX:0,clientY:0}],target:{}});
+    h.input({isTrusted:true,type,deltaY:-20,touches:[{clientX:0,clientY:20}],target:{scrollHeight:300,clientHeight:100,scrollTop:0}});
+    h.scrollport.scrollTop=2700;h.measure();
+    assert.equal(h.state.reviewNavigation,false);
+    assert.equal(h.progress.dataset.section,'monthly_training');
+});
+
+test('stationary touch Add preserves pointerdown provenance until entry arrives',()=>{
+    const h=entryHarness();h.input('row_add');
+    h.input('row_add',true,'touchstart');h.input('row_add',true,'touchend');
+    h.root.markers=[h.marker('touch-tap')];h.focus();
+    assert.equal(h.document.activeElement,h.field);
+    assert.equal(h.counts().focused,1);
+});
+for(const type of ['touchmove','touchcancel'])test(`${type} cancels pending Add focus provenance`,()=>{
+    const h=entryHarness();h.input('row_add');h.input('row_add',true,'touchstart');
+    h.input('row_add',true,type);h.input('row_add',true,'touchend');
+    h.root.markers=[h.marker('touch-moved')];h.focus();
+    assert.equal(h.counts().focused,0);
+});
+
+for(const roleButton of [false,true])test(`Space on ${roleButton?'role-button anchor activates':'plain anchor scrolls page'}`,()=>{
+    const h=harness('wide',true);
+    while(h.progress.dataset.section!=='report_review'){h.nextButton.onclick();h.measure();}
+    const anchor={closest:selector=>selector.includes('a[href]') || roleButton&&selector.includes('[role="button"]') ? {} : null};
+    h.input({isTrusted:true,type:'keydown',key:' ',target:anchor});
+    h.scrollport.scrollTop-=727;h.measure();
+    assert.equal(h.state.reviewNavigation,roleButton);
 });

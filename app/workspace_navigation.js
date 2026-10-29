@@ -12,6 +12,7 @@ globalThis.ENFRAWorkspaceNavigation = {
         state.navigationRequest = section;
         state.navigationReturn = null;
         state.reviewNavigation = false;
+        state.explicitReview = false;
     },
     // A landing waits for its section to render. Once the reader acts
     // first, it must not scroll or take focus from them (an open menu
@@ -27,6 +28,51 @@ globalThis.ENFRAWorkspaceNavigation = {
     // reader has moved on, even while that control still has focus.
     noteInput(state, event) {
         if (!event.isTrusted) return;
+        // Chromium may change scrollTop while late previews mount, without a
+        // reader scrolling. That must not turn Review's first Back into a
+        // second step. A real scroll gesture hands control back to geometry.
+        const editable = event.target?.closest?.('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="combobox"]');
+        const spaceActivation = event.key === ' ' &&
+            event.target?.closest?.('button, [role="button"], summary');
+        const scrollKey = event.type === 'keydown' && !editable && !spaceActivation &&
+            ['ArrowUp','ArrowDown','PageUp','PageDown','Home','End',' '].includes(event.key);
+        const scrollTarget = event.type === 'pointerdown' &&
+            event.target?.matches?.('[data-testid="stMain"], .epc-workspace') ? event.target : null;
+        const bounds = scrollTarget?.getBoundingClientRect();
+        // Native scrollbar gutters are outside the element's client box;
+        // clicking ordinary blank page content is not a scroll gesture.
+        const scrollbar = bounds && (
+            event.clientX >= bounds.left + scrollTarget.clientLeft + scrollTarget.clientWidth && event.clientX < bounds.right ||
+            event.clientY >= bounds.top + scrollTarget.clientTop + scrollTarget.clientHeight && event.clientY < bounds.bottom);
+        let vertical = 0;
+        if (event.type === 'wheel' && !event.ctrlKey && !event.metaKey)
+            vertical = event.deltaY || 0;
+        if (event.type === 'touchstart')
+            state.reviewTouch = event.touches?.length === 1 ? {x:event.touches[0].clientX,y:event.touches[0].clientY} : null;
+        if (event.type === 'touchmove') {
+            const prior=state.reviewTouch, touch=event.touches?.length===1 ? event.touches[0] : null;
+            if (prior && touch) {
+                const dx=prior.x-touch.clientX, dy=prior.y-touch.clientY;
+                if (Math.abs(dy)>Math.abs(dx)) vertical=dy;
+            }
+            state.reviewTouch=touch ? {x:touch.clientX,y:touch.clientY} : null;
+        }
+        if (event.type === 'touchend' || event.type === 'touchcancel') state.reviewTouch=null;
+        // A nested editor/list can consume the gesture without moving the
+        // page. At its boundary normal scroll chaining may reach the page;
+        // overscroll containment deliberately prevents that handoff.
+        if (vertical) for (let node=event.target; node; node=node.parentElement) {
+            if (node.matches?.('[data-testid="stMain"], .epc-workspace')) break;
+            if (!(node.scrollHeight>node.clientHeight)) continue;
+            const style=getComputedStyle(node);
+            if (!/auto|scroll/.test(style.overflowY)) continue;
+            const consumes=vertical<0 ? node.scrollTop>0 : node.scrollTop<node.scrollHeight-node.clientHeight;
+            if (consumes || /contain|none/.test(style.overscrollBehaviorY)) {vertical=0;break;}
+        }
+        if (vertical || scrollKey || scrollbar) state.explicitReview = false;
+        // A stationary touch tap still belongs to its preceding pointerdown
+        // (including native Add-row focus provenance). Movement/cancel ends it.
+        if (event.type === 'touchstart' || event.type === 'touchend') return;
         const activation = event.type === 'pointerdown' ||
             event.type === 'keydown' && (event.key === 'Enter' || event.key === ' ');
         const keyed = activation ? event.target?.closest?.('[class*="st-key-"]') : null;
@@ -105,6 +151,7 @@ globalThis.ENFRAWorkspaceNavigation = {
                     state.navigationReturn = capture(entries.find(item => item.id === state.navigationActive));
                 state.reviewNavigation = true;
             } else if (!entry.outside) state.reviewNavigation = false;
+            state.explicitReview = Boolean(entry.outside);
             state.navigationRequest = entry.id; state.navigationActive = entry.id;
             schedule();
         };
@@ -191,7 +238,7 @@ globalThis.ENFRAWorkspaceNavigation = {
             // section, preserving its paragraph offset when scroll ownership
             // changes back to the measured tabletop/confined layout.
             // The editor's end precedes Review, so it is the return boundary.
-            if (state.reviewNavigation && !state.navigationRequest && review &&
+            if (state.reviewNavigation && !state.explicitReview && !state.navigationRequest && review &&
                 scrollport.scrollTop < (state.reviewScrollTop ?? scrollport.scrollTop)-1 &&
                 box(root).bottom > Math.max(sample.chromeBottom, sample.scrollport.y)+height()+48) {
                 const id=geometry.selectActiveSection(entries.filter(item=>!item.outside).map(item=>({id:item.id,top:box(item.target).top,bottom:box(item.target).bottom})),null,line,0);

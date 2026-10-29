@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 
 def make_source(directory, vendor=False):
-    import fitz
+    import pymupdf as fitz
     from app.monthly_report_model import synthetic_profiles
     p=synthetic_profiles()[0]
     text=(f'{p.facilities[0].title}\nSeptember 2026\nENFRA MBCx commissioning report\n')

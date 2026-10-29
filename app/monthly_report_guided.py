@@ -27,6 +27,12 @@ MONTHLY_EDIT_KEYS = MONTHLY_BLOCKS | {"equipment_issues", "utility_analysis", "c
 STEPS = ("1 · Report", "2 · This month’s work", "3 · Site information", "4 · Review & download")
 
 
+def _same_recoverable_draft(left, right):
+    """Output equality alone does not mean a private upload intent was saved."""
+    return (left.fingerprint == right.fingerprint
+            and left.cover_recovery_request == right.cover_recovery_request)
+
+
 def _monthly_specs(section):
     # Capacity is standing data but belongs beside utility results in the UI.
     # This routing must not change rollover or standing-review semantics.
@@ -1301,7 +1307,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         active_sequence = active.revision if active else 0
         current_head_revision = snapshot.revision if snapshot else 0
         if active and active.base_snapshot_revision != current_head_revision and not (resume or completed_setup == selected):
-            if snapshot and snapshot.draft.fingerprint == active.draft.fingerprint:
+            if snapshot and _same_recoverable_draft(snapshot.draft, active.draft):
                 # Already published as a completed version; no stale recovery.
                 active_generation = active_work.discard(browser_token, contract, selected, period,
                     expected_revision=active.revision, expected_generation=active_generation)
@@ -1639,9 +1645,12 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 # its recovery attempt below, never before delivered edits.
                 st.session_state[prefix + "_period_editor_refresh"] = True
         st.session_state[draft_key] = draft
-        if recovery_available and snapshot and snapshot.draft.fingerprint == draft.fingerprint:
+        if (recovery_available and snapshot and _same_recoverable_draft(snapshot.draft, draft)
+                and not st.session_state.get(prefix + "_active_sequence", 0)
+                and recovery_ack_error is None):
             # The complete current version already exists in immutable history;
             # no new browser journal is necessary after Generate/Save.
+            # Existing journals must still record reversions to that version.
             save_status.shared_saved(snapshot.revision)
         elif recovery_available:
             try:
@@ -1672,7 +1681,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 # persistence attempt above retries the current draft once.
                 st.button("Retry browser save", key=prefix + "_retry_browser_save")
         else:
-            if snapshot and snapshot.draft.fingerprint == draft.fingerprint:
+            if snapshot and _same_recoverable_draft(snapshot.draft, draft):
                 # A completed/saved version is still saved, even when cookies
                 # prevent separately retaining unfinished browser changes.
                 save_status.shared_saved(snapshot.revision)

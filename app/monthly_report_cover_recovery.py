@@ -141,6 +141,12 @@ def _normal_candidate(source, reference):
         raise
 
 
+# A selected upload is foreground work: give an already-running preview a
+# bounded chance to finish, while work_slot prevents new previews overtaking it.
+# No decoder is admitted until the lock is actually acquired.
+WORK_SLOT_WAIT_SECONDS = 5
+
+
 def recover_cover_original(profile, reference):
     """At most two worker attempts per original/policy, second only at more RAM.
 
@@ -156,7 +162,7 @@ def recover_cover_original(profile, reference):
     if os.name!='posix':
         return CoverRecoveryOutcome('pending',reason='isolation_unavailable')
     try:
-        with work_slot(wait_seconds=0), private.locked_folder(folder):
+        with work_slot(wait_seconds=WORK_SLOT_WAIT_SECONDS), private.locked_folder(folder):
             record={}
             if cache_path.exists():
                 try:

@@ -135,3 +135,61 @@ def test_output_oracle_uses_input_page_identity_not_report_asset_claims(tmp_path
     if mutation!='none':
         with pytest.raises(AssertionError):verify_outputs(tmp_path,source)
     else:assert verify_outputs(tmp_path,source)['report.pdf']['pages']==2
+
+
+@pytest.mark.parametrize('labels,expected',[
+    (('Image page for MBCx report','MBCx report files'),1),
+    (('MBCx report files','Image page for MBCx report'),1),
+    (('MBCx report files',),1),
+    (('Image page for MBCx report','MBCx report files extra'),0),
+    (('MBCx report files','MBCx report files'),2),
+])
+def test_source_upload_locator_is_exact_unique_and_not_image_owner(monkeypatch,labels,expected):
+    """Offline locator contract, not native-browser proof.
+
+    Model the fluent locator operations against two independently labelled DOM
+    subtrees. Duplicate or missing source owners must fail before any upload.
+    """
+    import sys
+    from types import SimpleNamespace
+    from scripts.qa_financial_pages import upload_source_pdf
+    uploads=[]
+    class Locator:
+        def __init__(self,nodes):self.nodes=nodes
+        def filter(self,*,has):
+            return Locator([n for n in self.nodes if n['label'] in has.nodes])
+        def locator(self,selector):
+            assert selector=='input[type=file]'
+            return Locator(self.nodes)
+        def set_input_files(self,path):
+            assert len(self.nodes)==1
+            uploads.append((self.nodes[0]['label'],path))
+    class Page:
+        def get_by_test_id(self,identifier):
+            assert identifier=='stFileUploader'
+            return Locator([{'label':label} for label in labels])
+        def get_by_text(self,text,*,exact):
+            assert exact is True and text=='MBCx report files'
+            return Locator([label for label in labels if label==text])
+    class Expect:
+        def __init__(self,locator):self.locator=locator
+        def to_have_count(self,count):assert len(self.locator.nodes)==count
+    monkeypatch.setitem(sys.modules,'playwright.sync_api',SimpleNamespace(expect=Expect))
+    if expected!=1:
+        with pytest.raises(AssertionError):upload_source_pdf(Page(),Path('synthetic.pdf'))
+        assert uploads==[]
+    else:
+        upload_source_pdf(Page(),Path('synthetic.pdf'))
+        assert uploads==[('MBCx report files','synthetic.pdf')]
+
+
+def test_source_upload_label_matches_production_owner_and_ui_call_is_preserved():
+    from app.monthly_report_section_uploads import SECTION_UPLOADS
+    from scripts.qa_financial_pages import upload_source_pdf,exercise
+    import inspect
+    assert SECTION_UPLOADS['mbcx_report'][1]=='MBCx report files'
+    helper=inspect.getsource(upload_source_pdf)
+    assert 'first(' not in helper and 'nth(' not in helper and 'force=' not in helper
+    assert "get_by_text('MBCx report files',exact=True)" in helper
+    flow=inspect.getsource(exercise)
+    assert "name='Add files',exact=True" in flow and 'upload_source_pdf(page,source)' in flow

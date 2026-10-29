@@ -41,7 +41,7 @@ def receipt(page,expected=None):return wait_receipt(page,'data-financial-pages',
 
 def independent_page_pixels(source):
     # Independent oracle from the selected INPUT pages, not report asset IDs.
-    import fitz
+    import pymupdf as fitz
     from PIL import Image
     with fitz.open(source) as document:
         result=[]
@@ -55,7 +55,7 @@ def independent_page_pixels(source):
 
 def verify_outputs(directory, source):
     """Check actual Word/preview embedded pixels and real LibreOffice PDF paint."""
-    import fitz
+    import pymupdf as fitz
     from PIL import Image
     input_pages=independent_page_pixels(source)
     expected_assets=input_pages[:2];forbidden=input_pages[2]
@@ -88,6 +88,21 @@ def verify_outputs(directory, source):
         assert forbidden_pixels<10, 'Forbidden page3 cyan marker in PDF'
         result['report.pdf']={'sha256':sha256(raw).hexdigest(),'pages':len(doc),'page1_magenta_pixels':colored,'page2_green_pixels':green,'forbidden_cyan_pixels':forbidden_pixels}
     return result
+
+
+def upload_source_pdf(page, source):
+    """Choose the source-file owner, not the separate image-page uploader.
+
+    Keep strict uniqueness: duplicated/stale source owners must fail rather than
+    silently choosing the first native input or uploading to another route.
+    """
+    from playwright.sync_api import expect
+    uploader=page.get_by_test_id('stFileUploader').filter(
+        has=page.get_by_text('MBCx report files',exact=True))
+    expect(uploader).to_have_count(1)
+    control=uploader.locator('input[type=file]')
+    expect(control).to_have_count(1)
+    control.set_input_files(str(source))
 
 
 def exercise(engine,name,source,base,scenario):
@@ -137,7 +152,7 @@ def exercise(engine,name,source,base,scenario):
     try:
         page.goto(URL);receipt(page)
         page.get_by_role('button',name='Add files',exact=True).click()
-        page.get_by_test_id('stFileUploader').locator('input[type=file]').set_input_files(str(source))
+        upload_source_pdf(page,source)
         initial=receipt(page,{'sources.0.sha256':sha256(source.read_bytes()).hexdigest()})
         assert len(initial['sources'])==1
         assert initial['sources'][0]['sha256']==sha256(source.read_bytes()).hexdigest()

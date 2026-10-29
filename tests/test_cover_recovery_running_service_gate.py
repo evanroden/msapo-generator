@@ -125,3 +125,59 @@ def test_rendered_art_assertion_uses_independent_source_visual_signature():
         # Rasterization/JPEG tolerance must not hide removal or wrong ordering.
         stream=BytesIO();art.save(stream,'JPEG',quality=82)
         assert_visible_last_good(stream.getvalue())
+
+
+@pytest.fixture
+def browser_errors(monkeypatch):
+    # Pure protocol tests do not install or launch a local browser. The hosted
+    # native gate uses the actual Playwright package installed by its workflow.
+    import sys
+    from types import ModuleType
+    module=ModuleType('playwright.sync_api')
+    class BrowserError(Exception):pass
+    class BrowserTimeout(BrowserError):pass
+    module.Error=BrowserError;module.TimeoutError=BrowserTimeout
+    monkeypatch.setitem(sys.modules,'playwright.sync_api',module)
+    return BrowserTimeout
+
+
+@pytest.mark.parametrize('raw,expected', [
+    ('{"working":{"request":{"status":"pending"}},"durable":{"request":null}}','pending'),
+    ('x'*32769,'unavailable'),
+    ('not json','unavailable'),
+    (None,'unavailable'),
+    ('{"x":'+'['*16000+'0'+']'*16000+'}','unavailable'),
+], ids=['receipt','oversize','malformed','absent','deeply-nested'])
+def test_timeout_diagnostic_is_bounded_read_only_and_keeps_original_failure(raw,expected,capsys,browser_errors):
+    BrowserTimeout=browser_errors
+    from scripts.qa_cover_recovery_service import wait, RECEIPT
+    error=BrowserTimeout('original wait failure')
+    class Page:
+        last=property(lambda self:self)
+        def wait_for_function(self,*args,**kwargs):
+            assert kwargs['timeout']==120000
+            raise error
+        def locator(self,selector):
+            assert selector==RECEIPT
+            return self
+        def get_attribute(self,name,**kwargs):
+            assert name=='data-cover-service-receipt' and kwargs['timeout']==1000
+            return raw
+    with pytest.raises(BrowserTimeout) as caught:wait(Page())
+    assert caught.value is error
+    printed=capsys.readouterr().out
+    assert expected in printed
+    assert len(printed.encode())<33000
+    assert 'x'*100 not in printed
+
+
+def test_timeout_diagnostic_read_failure_does_not_mask_original(capsys,browser_errors):
+    BrowserTimeout=browser_errors
+    from scripts.qa_cover_recovery_service import wait
+    error=BrowserTimeout('original')
+    class Page:
+        def wait_for_function(self,*a,**kw):raise error
+        def locator(self,*a):raise BrowserTimeout('receipt unreachable')
+    with pytest.raises(BrowserTimeout) as caught:wait(Page())
+    assert caught.value is error
+    assert 'unavailable' in capsys.readouterr().out

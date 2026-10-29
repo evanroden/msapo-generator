@@ -128,3 +128,57 @@ def test_two_transient_denials_do_not_exhaust_later_ready_resume(draft,monkeypat
     ready=recovery.attempt_cover_recovery(second,revision=0,assets=assets,event='resume')
     assert ready.cover_recovery_request.status=='ready'
     assert ready.blocks==draft.blocks
+
+
+def test_brief_background_preview_contention_prepares_upload_without_reopen(draft):
+    """The real foreground lock waits for an already-running preview to finish."""
+    from threading import Event, Thread
+    from app import monthly_report_render_jobs as jobs
+    import time
+    requested=recovery.begin_cover_recovery(draft,raw(),revision=0)
+    held=Event()
+    def preview():
+        with jobs.work_slot(preview=True):
+            held.set()
+            time.sleep(.5)
+    thread=Thread(target=preview);thread.start()
+    try:
+        assert held.wait(2)
+        assets={}
+        ready=recovery.attempt_cover_recovery(requested,revision=0,assets=assets,event='upload')
+        assert ready.cover_recovery_request.status=='ready'
+        assert ready.blocks==draft.blocks  # Use remains the selection boundary.
+        assert ready.cover_recovery_request.events==('upload',)
+        assert assets
+    finally:
+        thread.join(2)
+        assert not thread.is_alive()
+
+
+def test_long_contention_is_bounded_and_does_not_spend_decoder_attempt(draft,monkeypatch):
+    from threading import Event, Thread
+    from app import monthly_report_render_jobs as jobs
+    import time
+    monkeypatch.setattr(recovery,'WORK_SLOT_WAIT_SECONDS',.03)
+    requested=recovery.begin_cover_recovery(draft,raw(),revision=0)
+    held=Event();release=Event()
+    def preview():
+        with jobs.work_slot(preview=True):
+            held.set();assert release.wait(3)
+    thread=Thread(target=preview);thread.start()
+    try:
+        assert held.wait(2)
+        started=time.monotonic()
+        pending=recovery.attempt_cover_recovery(requested,revision=0,assets={},event='upload')
+        assert time.monotonic()-started<1
+        assert pending.cover_recovery_request.status=='pending'
+        assert pending.cover_recovery_request.reason=='work_busy'
+        assert pending.cover_recovery_request.events==()
+        assert pending.blocks==draft.blocks
+        folder=library._profile_path(draft.profile.contract,draft.profile.key)/'cover-recovery'
+        assert not folder.exists(), 'Denied admission must not start/cache a decode.'
+    finally:
+        release.set();thread.join(2)
+        assert not thread.is_alive()
+    ready=recovery.attempt_cover_recovery(pending,revision=0,assets={},event='resume')
+    assert ready.cover_recovery_request.status=='ready' and ready.blocks==draft.blocks

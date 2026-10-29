@@ -143,6 +143,29 @@ def unchanged(before, after, *, token, original_digest, allow_derivatives=()):
 
 
 def wait(page, *, after=0, status=None, revision=None):
+    from playwright.sync_api import Error as BrowserError, TimeoutError as BrowserTimeout
+    try:
+        return _wait(page, after=after, status=status, revision=revision)
+    except BrowserTimeout:
+        # Preserve the first failure, with only the existing bounded synthetic
+        # read-only receipt. Never fetch source bytes or alter timeout/assertions.
+        serialized = '{"receipt":"unavailable"}'
+        try:
+            raw = page.locator(RECEIPT).last.get_attribute(
+                'data-cover-service-receipt', timeout=1000)
+            if raw is not None and len(raw.encode('utf-8')) <= 32 * 1024:
+                value = json.loads(raw)
+                if isinstance(value, dict):
+                    candidate = json.dumps(value, ensure_ascii=False, separators=(',', ':'))
+                    if len(candidate.encode('utf-8')) <= 32 * 1024:
+                        serialized = candidate
+        except (BrowserError, ValueError, RecursionError):
+            pass  # Diagnostic failure must not replace the original timeout.
+        print('COVER_SERVICE_TIMEOUT_RECEIPT ' + serialized, flush=True)
+        raise
+
+
+def _wait(page, *, after=0, status=None, revision=None):
     page.wait_for_function("""w => {
  const es=document.querySelectorAll('[data-cover-service-receipt]');
  if(!es.length)return false;
