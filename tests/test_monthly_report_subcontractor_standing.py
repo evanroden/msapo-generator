@@ -66,6 +66,60 @@ def rows():
     )
 
 
+@pytest.mark.parametrize("payload", (
+    {},
+    {"rows": None},
+    {"rows": {}},
+    {"rows": ""},
+    # The parallel table-roster implementation uses the same contract path
+    # and schema number. Its approved entries must never mean empty rows.
+    {"entries": [{"id": "a" * 32, "sites": ["north"],
+                  "site_labels": [["north", ["north", "site north"]]],
+                  "tables": [{"columns": ["Vendor"],
+                              "rows": [["Synthetic preserved vendor"]],
+                              "reference": ""}],
+                  "origin_references": [], "actor": "Synthetic editor",
+                  "saved_at": "2026-09-01T00:00:00+00:00"}]},
+    {"rows": [], "entries": []},
+))
+def test_unknown_roster_schema_cannot_be_read_as_empty_or_overwritten(
+        contracts, payload):
+    both, _, _, _ = contracts
+    folder = (library._root() / "subcontractor_rosters" /
+              library._contract_directory(both.contract))
+    record = {"schema": 1, "contract": both.contract, "revision": 1,
+              "actor": "Synthetic editor", "updated_at": "synthetic", **payload}
+    original = library._json(record)
+    manifest = folder / "manifest.json"
+    historical = folder / "history" / "00000001.json"
+    library._atomic_write(manifest, original)
+    library._atomic_write(historical, original)
+
+    with pytest.raises(library.LibraryError):
+        load_vendor_roster(both.contract)
+    with pytest.raises(library.LibraryError):
+        roster_version(both.contract, 1)
+    with pytest.raises(library.LibraryError):
+        save_vendor_roster(both, rows(), expected_revision=1,
+                           actor="Synthetic editor", confirmed=True)
+    assert manifest.read_bytes() == original
+    assert historical.read_bytes() == original
+    assert not (folder / "history" / "00000002.json").exists()
+
+
+def test_explicit_empty_roster_remains_valid_after_confirmed_retirement(contracts):
+    both, _, _, _ = contracts
+    first = approved(both)
+    empty = save_vendor_roster(
+        both, (), expected_revision=first.revision,
+        actor="Synthetic editor", confirmed=True,
+        removed_ids=tuple(row.id for row in first.rows))
+    assert empty.rows == () and empty.revision == 2
+    assert load_vendor_roster(both.contract) == empty
+    assert roster_version(both.contract, 1) == first
+    assert roster_version(both.contract, 2) == empty
+
+
 def approved(profile):
     return save_vendor_roster(
         profile, rows(), expected_revision=0, actor="Synthetic editor", confirmed=True)

@@ -134,10 +134,18 @@ def _decode(value, contract):
             or value.get("contract") != contract or
             type(value.get("revision")) is not int or value["revision"] < 0):
         raise library.LibraryError("The contract subcontractor roster has an invalid saved identity.")
+    # A missing/foreign collection is not an intentionally empty roster.
+    # The table-roster candidate shares this namespace and schema number but
+    # stores ``entries``. Never discard those approved records by decoding
+    # them as zero rows and then allowing a confirmed CAS update to replace it.
+    if not isinstance(value.get("rows"), list) or "entries" in value:
+        raise library.LibraryError(
+            "The saved subcontractor roster uses an unsupported format. "
+            "Existing records were not changed.")
     try:
         rows = tuple(VendorStandingRow(
             **{**item, "sites": tuple(item.get("sites", ()))})
-            for item in value.get("rows", ()))
+            for item in value["rows"])
         result = VendorRoster(contract, value["revision"], rows,
                               value.get("actor", ""), value.get("updated_at", ""))
         _validate_rows(rows)
