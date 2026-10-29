@@ -276,6 +276,11 @@ def spec_from_dict(value: dict) -> BlockSpec:
 
 def draft_from_dict(value: dict) -> ReportDraft:
     try:
+        reviews = value.get("source_row_reviews", ())
+        if (not isinstance(reviews, (tuple, list)) or len(reviews) > 100
+                or any(not isinstance(item, str) for item in reviews)
+                or sum(len(item) for item in reviews) > 16_000_000):
+            raise ValueError("Invalid work-order review receipts.")
         sections = tuple(SectionSpec(
             key=s["key"], number=s["number"], title=s["title"],
             blocks=tuple(BlockSpec(
@@ -292,6 +297,7 @@ def draft_from_dict(value: dict) -> ReportDraft:
             address_line=value.get("address_line", ""), synthetic=value.get("synthetic", False),
             sources=tuple(source_from_dict(s) for s in value.get("sources", ())),
             follow_ups=tuple(ReportFollowUp(**{**item, "references":tuple(item.get("references",()))}) for item in value.get("follow_ups",())),
+            source_row_reviews=tuple(reviews),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise LibraryError("Invalid report snapshot.") from exc
