@@ -39,6 +39,15 @@ def _image():
     return output.getvalue()
 
 
+def _replace_synthetic_file(path, raw):
+    # Content-addressed originals/rasters are intentionally read-only. Replace
+    # this test-created inode to simulate corruption, retaining its file mode.
+    mode = path.stat().st_mode & 0o777
+    path.unlink()
+    path.write_bytes(raw)
+    path.chmod(mode)
+
+
 def _setup(profile, marker="A", *, suffix=".pdf"):
     raw = _pdf(marker) if suffix == ".pdf" else _image()
     content, _ = sources.ingest(profile, f"synthetic-{marker}{suffix}", raw)
@@ -58,7 +67,7 @@ def test_bad_disposable_pdf_cache_is_rebuilt_from_untouched_original(profile, fa
     if failure == "missing":
         asset.unlink()
     elif failure == "tampered":
-        asset.write_bytes(b"damaged cached JPEG")
+        _replace_synthetic_file(asset, b"damaged cached JPEG")
     elif failure == "malformed_json":
         cache.write_text("{not valid json", encoding="utf-8")
     else:
@@ -102,8 +111,8 @@ def test_png_preview_cache_rebuild_and_same_source_other_purpose_unchanged(profi
 def test_original_corruption_is_not_hidden_by_a_bad_cached_page(profile):
     content, _, _, cache, asset = _setup(profile)
     original = sources._path(profile, content.source.sha256, ".pdf")
-    original.write_bytes(b"synthetic corrupted original")
-    asset.write_bytes(b"synthetic corrupted cache")
+    _replace_synthetic_file(original, b"synthetic corrupted original")
+    _replace_synthetic_file(asset, b"synthetic corrupted cache")
     prior_cache = cache.read_bytes()
     with pytest.raises(ValueError, match="integrity"):
         sources.page_image(profile, content, 1, preview=True)
@@ -162,3 +171,4 @@ def test_actual_cached_read_is_bounded_even_if_file_was_replaced(profile, monkey
     assert sources.page_image(profile, content, 1, preview=True) == first
     assert observed == [17]
     assert sources._path(profile, content.source.sha256, ".pdf").read_bytes() == original
+
