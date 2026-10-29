@@ -146,3 +146,106 @@ def test_full_state_sidebar_matrix_cannot_pass_with_missing_setup_or_conflict():
     for missing in ('monthly-setup','monthly-conflict'):
         with pytest.raises(AssertionError):
             validate_state_coverage([row for row in states if not (row['state']==missing and row['sidebar_open'])])
+
+
+def test_native_measurement_rejects_placeholders_stale_and_wrong_owners():
+    """Execute the actual browser predicate without starting a browser."""
+    import json
+    import subprocess
+    from scripts.qa_workflow_shell_width import NATIVE_READINESS
+    script = r'''
+const assert=require('node:assert/strict');
+class Node {
+ constructor(text=''){this.textContent=text;this.attrs={};this.children=[];this.stale=false;this.visible=true;}
+ getBoundingClientRect(){return {width:this.visible?100:0,height:20};}
+ getAttribute(k){return this.attrs[k]??null;}
+ contains(n){return this.children.includes(n)||this.children.some(c=>c.contains(n));}
+ closest(){return this.stale?this:null;}
+ querySelectorAll(s){return this.queries?.[s]??[];}
+}
+const app=new Node(),main=new Node(),shell=new Node(),owner=new Node(),group=new Node();
+const radios=['Purchase order','Expense reimbursement','Monthly report'].map(x=>new Node(x));
+radios[2].attrs['aria-checked']='true';
+const caption=new Node('State: monthly-setup');
+app.attrs['data-test-script-state']='notRunning';
+main.children=[shell];shell.children=[owner];owner.children=[group];
+group.queries={'[role="radio"]':radios};main.queries={'[data-testid="stCaptionContainer"]':[caption]};
+const nodes={'[data-testid="stApp"]':[app],'[data-testid="stMain"]':[main],'.block-container':[shell],
+ '.st-key-workflow_mode':[owner],'.st-key-workflow_mode [role="radiogroup"]':[], '[data-testid="stSkeleton"]':[new Node()]};
+global.document={querySelectorAll:s=>nodes[s]??[]};
+global.getComputedStyle=()=>({visibility:'visible',display:'block'});
+const probe=PROBE;
+assert.equal(probe('monthly-setup').ready,false); // null / skeleton is not native readiness
+assert.equal(probe('monthly-setup').skeletonCount,1);
+nodes['.st-key-workflow_mode [role="radiogroup"]']=[group];
+assert.equal(probe('monthly-setup').ready,true);
+assert.equal(probe('po').ready,false); // wrong selected native workflow
+assert.equal(probe('monthly-ready').ready,false); // stale phase caption
+assert.equal(probe('unknown').ready,false);
+owner.stale=true;assert.equal(probe('monthly-setup').ready,false);owner.stale=false;
+shell.children=[];assert.equal(probe('monthly-setup').ready,false);shell.children=[owner];
+nodes['.st-key-workflow_mode'].push(new Node());assert.equal(probe('monthly-setup').ready,false);nodes['.st-key-workflow_mode'].pop();
+caption.stale=true;assert.equal(probe('monthly-setup').ready,false);caption.stale=false;
+app.attrs['data-test-script-state']='running';assert.equal(probe('monthly-setup').ready,false);
+app.attrs['data-test-script-state']='notRunning';group.visible=false;assert.equal(probe('monthly-setup').ready,false);
+group.visible=true;assert.equal(probe('monthly-setup').ready,true);
+'''.replace('const probe=PROBE;', 'const probe='+NATIVE_READINESS+';')
+    subprocess.run(['node','-e',script],check=True,capture_output=True,text=True)
+
+
+def test_measurement_mount_wait_shares_idle_deadline_and_retains_timing():
+    from scripts.qa_workflow_shell_width import wait_native_measurement
+    calls=[]
+    class Handle:
+        def json_value(self):return {'ready':True,'at':150}
+        def dispose(self):calls.append('dispose')
+    class Page:
+        def get_by_test_id(self,name):return self
+        def to_have_attribute(self,*args,**kwargs):calls.append(('idle',kwargs['timeout']))
+        def evaluate(self,js,*args):
+            if args:
+                if not any(isinstance(x,tuple) and x[0]=='wait' for x in calls):
+                    return {'ready':False,'at':100,'groupCount':0,'skeletonCount':4}
+                return {'ready':True,'at':151}
+            calls.append('two-frames')
+        def wait_for_function(self,js,**kwargs):
+            calls.append(('wait',kwargs['timeout'],kwargs['arg']))
+            assert 'r.ready ? r : false' in js
+            return Handle()
+    times=iter([0,1,3,4,5]);evidence={}
+    wait_native_measurement(Page(),'monthly-setup',evidence,lambda x:x,clock=lambda:next(times))
+    assert calls==[('idle',44000),('wait',42000,'monthly-setup'),'dispose','two-frames']
+    assert evidence['initial_after_backend_idle']['skeletonCount']==4
+    assert evidence['backend_idle_to_native_ready_ms']==50
+
+
+def test_measurement_expired_or_replaced_owner_never_authorizes_geometry():
+    import pytest
+    from scripts.qa_workflow_shell_width import wait_native_measurement
+    class Page:
+        def get_by_test_id(self,name):return self
+        def to_have_attribute(self,*args,**kwargs):pass
+        def evaluate(self,js,*args):return {'ready':False,'at':100}
+        def wait_for_function(self,*args,**kwargs):return self
+        def json_value(self):return {'ready':True,'at':150}
+        def dispose(self):pass
+    times=iter([0,46])
+    with pytest.raises(TimeoutError):
+        wait_native_measurement(Page(),'monthly-ready',{},lambda x:x,clock=lambda:next(times))
+    with pytest.raises(AssertionError,match='owner changed'):
+        wait_native_measurement(Page(),'monthly-ready',{},lambda x:x,clock=lambda:0)
+
+
+def test_measurement_late_final_owner_evaluation_cannot_admit_geometry():
+    import pytest
+    from scripts.qa_workflow_shell_width import wait_native_measurement
+    class Page:
+        def get_by_test_id(self,name):return self
+        def to_have_attribute(self,*args,**kwargs):pass
+        def evaluate(self,js,*args):return {'ready':True,'at':100}
+        def wait_for_function(self,*args,**kwargs):return self
+        def json_value(self):return {'ready':True,'at':150}
+        def dispose(self):pass
+    times=iter([0,1,2,3,46])
+    with pytest.raises(TimeoutError):
+        wait_native_measurement(Page(),'monthly-ready',{},lambda x:x,clock=lambda:next(times))

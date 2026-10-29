@@ -5,6 +5,8 @@ on:
     paths:
       - 'app/monthly_report_native_loading.py'
       - 'app/monthly_report_setup.py'
+      - 'app/workspace_layout.js'
+      - 'app/workspace_navigation.js'
       - 'scripts/qa_monthly_period_first_paint.py'
       - 'tests/fixtures/workspaces/period_mount_app.py'
       - 'tests/test_monthly_report_native_loading.py'
@@ -15,6 +17,8 @@ on:
     paths:
       - 'app/monthly_report_native_loading.py'
       - 'app/monthly_report_setup.py'
+      - 'app/workspace_layout.js'
+      - 'app/workspace_navigation.js'
       - 'scripts/qa_monthly_period_first_paint.py'
       - 'tests/fixtures/workspaces/period_mount_app.py'
       - 'tests/test_monthly_report_native_loading.py'
@@ -23,6 +27,13 @@ on:
 
 permissions:
   contents: read
+
+# Avoid duplicating full browser and renderer work for superseded PR heads.
+# Every new PR revision still starts all applicable required checks.
+# Main/dispatch runs have distinct run IDs and are never canceled by PR activity.
+concurrency:
+  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   monthly-period-first-paint:

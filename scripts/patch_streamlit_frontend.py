@@ -28,6 +28,7 @@ try:
     from scripts.streamlit_overlay_resize import OVERLAY_BUNDLE, OVERLAY_SHA256, repair_overlay
     from scripts.streamlit_virtualizer_resize import VIRTUALIZER_BUNDLE, VIRTUALIZER_SHA256, repair_virtualizer
     from scripts.streamlit_floating_resize import FLOATING_BUNDLE, FLOATING_SHA256, repair_floating
+    from scripts.streamlit_text_input_default import TEXT_INPUT_BUNDLE, repair_text_input_default
 except ModuleNotFoundError:  # Direct `python scripts/...` entrypoint.
     from streamlit_forward_cache import repair_forward_cache
     from streamlit_expander_motion import repair_expander_motion
@@ -35,6 +36,7 @@ except ModuleNotFoundError:  # Direct `python scripts/...` entrypoint.
     from streamlit_overlay_resize import OVERLAY_BUNDLE, OVERLAY_SHA256, repair_overlay
     from streamlit_virtualizer_resize import VIRTUALIZER_BUNDLE, VIRTUALIZER_SHA256, repair_virtualizer
     from streamlit_floating_resize import FLOATING_BUNDLE, FLOATING_SHA256, repair_floating
+    from streamlit_text_input_default import TEXT_INPUT_BUNDLE, repair_text_input_default
 
 STREAMLIT_VERSION = "1.61.1"
 INDEX_BUNDLE = "index.bE3scgDe.js"
@@ -70,6 +72,7 @@ class Publication:
     no_cache_advertisements: bool
     instant_expander: bool
     tab_navigation: bool
+    text_input_default: bool
 
 
 def _references(raw):
@@ -147,7 +150,14 @@ def _locked_sources(scripts):
 def _publication(sources, members, scalar_date, *, virtualizer_resize=True,
                  floating_resize=True, queued_scroll=True, latest_scroll_close=True,
                  selection_safe_close=True, no_cache_advertisements=True, instant_expander=True,
-                 tab_navigation=True):
+                 tab_navigation=True, text_input_default=None):
+    # Calls reconstructing a named historical recipe must retain its bytes.
+    # An unqualified publication means the current recipe, including first
+    # text-input display; explicit flags still reconstruct every old version.
+    if text_input_default is None:
+        text_input_default = all((virtualizer_resize, floating_resize, queued_scroll,
+            latest_scroll_close, selection_safe_close, no_cache_advertisements,
+            instant_expander, tab_navigation))
     if not floating_resize:
         originals = json.loads(MANIFEST_PATH.read_bytes())["members"]
         sources = {name: raw for name, raw in sources.items() if name in originals}
@@ -169,6 +179,8 @@ def _publication(sources, members, scalar_date, *, virtualizer_resize=True,
         repaired[FLOATING_BUNDLE] = repair_floating(sources[FLOATING_BUNDLE])
     if scalar_date:
         repaired[DATE_BUNDLE] = sources[DATE_BUNDLE].replace(DATE_ORIGINAL, DATE_REPAIRED, 1)
+    if text_input_default:
+        repaired[TEXT_INPUT_BUNDLE] = repair_text_input_default(sources[TEXT_INPUT_BUNDLE])
     # This digest binds all original source pins, their graph, exact repair
     # bytes, configuration and naming recipe. A whole-generation name handles
     # the five-chunk native ESM cycle without circular final-byte hashes.
@@ -192,7 +204,7 @@ def _publication(sources, members, scalar_date, *, virtualizer_resize=True,
     names[INDEX_BUNDLE] = _entry_name(payloads[INDEX_BUNDLE])
     return Publication(names, payloads, scalar_date, virtualizer_resize, floating_resize, queued_scroll,
                        queued_scroll and latest_scroll_close, generation, selection_safe_close, no_cache_advertisements, instant_expander,
-                       selection_safe_close and tab_navigation)
+                       selection_safe_close and tab_navigation, text_input_default)
 
 
 def _legacy_variants(sources):
@@ -228,13 +240,14 @@ def _validated_publications(static_dir, installed_version):
                                      floating_resize=floating, queued_scroll=scroll,
                                      latest_scroll_close=latest, selection_safe_close=selection,
                                      no_cache_advertisements=no_refs, instant_expander=instant,
-                                     tab_navigation=tab)
-                         for tab, instant, no_refs, selection, latest, scroll, floating, guard in (
-                             (True, True, True, True, True, True, True, True),
-                             (False, True, True, True, True, True, True, True), (False, False, True, True, True, True, True, True),
-                             (False, False, False, True, True, True, True, True), (False, False, False, False, True, True, True, True),
-                             (False, False, False, False, False, True, True, True), (False, False, False, False, False, False, True, True),
-                             (False, False, False, False, False, False, False, True), (False, False, False, False, False, False, False, False))
+                                     tab_navigation=tab, text_input_default=text_default)
+                         for text_default, tab, instant, no_refs, selection, latest, scroll, floating, guard in (
+                             (True, True, True, True, True, True, True, True, True),
+                             (False, True, True, True, True, True, True, True, True),
+                             (False, False, True, True, True, True, True, True, True), (False, False, False, True, True, True, True, True, True),
+                             (False, False, False, False, True, True, True, True, True), (False, False, False, False, False, True, True, True, True),
+                             (False, False, False, False, False, False, True, True, True), (False, False, False, False, False, False, False, True, True),
+                             (False, False, False, False, False, False, False, False, True), (False, False, False, False, False, False, False, False, False))
                          for flag in (False, True))
     legacy, legacy_date_name, legacy_date = _legacy_variants(sources)
     variants = {**legacy, **{p.names[INDEX_BUNDLE]: (p.payloads[INDEX_BUNDLE], p.scalar_date) for p in publications}}
@@ -297,6 +310,7 @@ def _receipt(publication):
             "no_cache_advertisements": publication.no_cache_advertisements,
             "instant_expander": publication.instant_expander,
             "tab_navigation": publication.tab_navigation,
+            "text_input_default": publication.text_input_default,
             "combobox_bundle": publication.names[COMBOBOX_BUNDLE],
             "combobox_sha256": sha256(publication.payloads[COMBOBOX_BUNDLE]).hexdigest(),
             "floating_bundle": publication.names.get(FLOATING_BUNDLE, FLOATING_BUNDLE),

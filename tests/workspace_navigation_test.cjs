@@ -1,7 +1,7 @@
 const test=require('node:test'), assert=require('node:assert/strict'), fs=require('node:fs'), vm=require('node:vm');
 const geometry=require('../app/workspace_geometry.js');
 
-function harness(mode='wide') {
+function harness(mode='wide', sequential=false) {
     const state={mode,ownsScroll:mode==='tabletop'}, document={activeElement:null};
     let scheduled=0, replacements=0, nativeEvents=0;
     // Native DOMRect properties are prototype getters, not enumerable fields.
@@ -12,7 +12,15 @@ function harness(mode='wide') {
     const select={value:'',children:[],closest:()=>label,
         replaceChildren(...items){this.children=items;this.value=items[0]?.value||'';replacements++;}};
     const reviewButton={disabled:true,onclick:null};
-    const nav={querySelector:selector=>selector==='.epc-review-shortcut'?reviewButton:select,getBoundingClientRect:label.getBoundingClientRect};
+    const backButton={disabled:true,onclick:null}, nextButton={disabled:true,onclick:null,textContent:'Next'};
+    const progress={textContent:'Cover',dataset:{}};
+    const nav={querySelector:selector=>({
+        '.epc-review-shortcut':sequential?null:reviewButton,
+        '.epc-section-selector':sequential?null:select,
+        '.epc-section-back':sequential?backButton:null,
+        '.epc-section-next':sequential?nextButton:null,
+        '.epc-section-progress':sequential?progress:null,
+    })[selector] || null,getBoundingClientRect:label.getBoundingClientRect};
     const field={value:'Unblurred human wording',selectionStart:3,selectionEnd:9,dispatchEvent(){nativeEvents++}};
     const target=(offset,height,outside=false)=>{
         const node={isConnected:true,querySelector:()=>null,setAttribute(){},focus(options){assert.equal(options.preventScroll,true);document.activeElement=node;}};
@@ -23,9 +31,12 @@ function harness(mode='wide') {
     const pairs=[['monthly_cover','Cover',0,400],['monthly_activity','Monthly Activity Summary',400,1600],
         ['monthly_short','Short section',2000,80],['monthly_training','Training Summary',2080,1200],
         ['monthly_empty','Empty section',3280,220]].map(([id,title,offset,height])=>({id,title,pair:target(offset,height)}));
-    const review=target(4000,60,true), app={querySelector:()=>review};
+    let clickHandler=null;
+    const review=target(4000,60,true), app={querySelector:()=>review,contains:()=>true,
+        addEventListener(type,handler){if(type==='click')clickHandler=handler},
+        removeEventListener(type,handler){if(clickHandler===handler)clickHandler=null}};
     document.createElement=()=>({});
-    const context={document};vm.runInNewContext(fs.readFileSync('app/workspace_navigation.js','utf8'),context);
+    const context={document,getComputedStyle:node=>node.style||{overflowY:"auto",overscrollBehaviorY:"auto"}};vm.runInNewContext(fs.readFileSync('app/workspace_navigation.js','utf8'),context);
     const create=()=>context.ENFRAWorkspaceNavigation.create({root,app,scrollport,nav,state,geometry,schedule(){scheduled++}});
     let controller=create();
     const sample={chromeBottom:64,scrollport:{y:0},visual:{y:0}};
@@ -38,9 +49,12 @@ function harness(mode='wide') {
     }
     const choose=id=>{select.value=id;select.onchange();measure()};
     measure();
-    return {state,root,scrollport,select,reviewButton,field,pairs,review,app,document,measure,choose,nav,label,controller:()=>controller,
+    return {correct(href,options={}){let prevented=false; const link={getAttribute:()=>href};
+        clickHandler({button:0,target:{closest:()=>link},preventDefault(){prevented=true},...options});
+        measure();return prevented;},state,root,scrollport,select,reviewButton,backButton,nextButton,progress,field,pairs,review,app,document,measure,choose,nav,label,controller:()=>controller,
         land:request=>context.ENFRAWorkspaceNavigation.land(state,request),
         cancelLanding:()=>context.ENFRAWorkspaceNavigation.cancelLanding(state),
+        input:event=>context.ENFRAWorkspaceNavigation.noteInput(state,event),
         rerender(){controller.dispose();controller=create();measure()},dispose(){controller.dispose()},
         counts:()=>({scheduled,replacements,nativeEvents})};
 }
@@ -105,6 +119,7 @@ for(const mode of ['tabletop','confined'])test(`${mode} current section excludes
 
 test('reverse scroll from review restores tabletop at the visible paragraph without a trap',()=>{
     const h=harness('tabletop');h.root.scrollTop=650;h.measure();h.choose('report_review');
+    h.input({isTrusted:true,type:'wheel',deltaY:-10,target:{}});
     h.scrollport.scrollTop=2700;
     const oldOffset=h.pairs[3].pair.getBoundingClientRect().top;
     h.measure();assert.equal(h.state.ownsScroll,true);assert.equal(h.state.reviewNavigation,false);
@@ -194,7 +209,7 @@ test('a streamed navigation container binds through existing discovery and later
     const makeNav=()=>{
         const nav=element();nav.getBoundingClientRect=()=>({top:64,height:52});
         nav.select={value:'',disabled:true,closest:()=>nav,replaceChildren(...children){this.children=children;this.value=children[0]?.value||'';}};
-        nav.querySelector=()=>nav.select;return nav;
+        nav.querySelector=selector=>selector==='.epc-section-selector'?nav.select:null;return nav;
     };
     const document={activeElement:field,hidden:false,documentElement:{clientWidth:1180},body:element(),
         createElement:element,addEventListener(){},removeEventListener(){},querySelectorAll:()=>[],elementFromPoint:()=>null,
@@ -382,7 +397,7 @@ test('the adapter consumes entry focus from its existing measurement and records
     const layout=fs.readFileSync('app/workspace_layout.js','utf8');
     const measure=layout.split('function measure() {')[1].split('\n    function schedule()')[0];
     assert.match(measure,/ENFRAWorkspaceNavigation\?\.focusEntries\(state, root\)/);
-    assert.match(layout,/for \(const type of \['pointerdown', 'keydown', 'wheel'\]\) \{\s*document\.addEventListener\(type, noteInput/,
+    assert.match(layout,/for \(const type of \['pointerdown', 'keydown', 'wheel', 'touchstart', 'touchmove', 'touchend', 'touchcancel'\]\) \{\s*document\.addEventListener\(type, noteInput/,
         'presses, keys and wheel scrolling are all recorded');
     assert.doesNotMatch(layout,/setInterval|setTimeout/,'no polling or timers');
 });
@@ -515,7 +530,7 @@ test('Review stays disabled until its destination exists and unbinds replaced co
     h.app.querySelector=()=>h.review;h.measure();
     assert.equal(h.reviewButton.disabled,false);
     const replacement={disabled:true,onclick:null};
-    h.nav.querySelector=selector=>selector==='.epc-review-shortcut'?replacement:h.select;
+    h.nav.querySelector=selector=>selector==='.epc-review-shortcut'?replacement:selector==='.epc-section-selector'?h.select:null;
     h.measure();assert.equal(h.reviewButton.onclick,null);
     assert.equal(replacement.disabled,false);
     replacement.onclick();h.measure();assert.equal(h.state.navigationActive,'report_review');
@@ -530,4 +545,213 @@ test('a deliberate Review click supersedes an unconsumed Activity landing',()=>{
     assert.equal(h.document.activeElement,h.review);
     h.land(['entry-1','monthly_activity']);h.measure();
     assert.equal(h.state.navigationActive,'report_review');
+});
+
+for(const mode of ['wide','compact','tabletop','confined'])test(`${mode} sequential controls work without a selector, preserve fields and reach Review`,()=>{
+    const h=harness(mode,true);
+    assert.equal(h.backButton.disabled,true);
+    assert.equal(h.nextButton.disabled,false);
+    assert.equal(h.progress.dataset.section,'monthly_cover');
+    const click=button=>{assert.equal(button.disabled,false);button.onclick();h.measure()};
+    for(let pass=0;pass<3;pass++){
+        click(h.nextButton);assert.equal(h.progress.dataset.section,'monthly_activity');
+        click(h.backButton);assert.equal(h.progress.dataset.section,'monthly_cover');
+    }
+    for(const id of ['monthly_activity','monthly_short','monthly_training','monthly_empty']){
+        click(h.nextButton);assert.equal(h.progress.dataset.section,id);
+    }
+    assert.equal(h.nextButton.textContent,'Review');
+    click(h.nextButton);assert.equal(h.progress.dataset.section,'report_review');
+    assert.equal(h.nextButton.disabled,true);assert.equal(h.state.reviewNavigation,true);
+    assert.equal(h.document.activeElement,h.review);
+    h.rerender();assert.equal(h.progress.dataset.section,'report_review');
+    click(h.backButton);assert.equal(h.progress.dataset.section,'monthly_empty');
+    assert.equal(h.field.value,'Unblurred human wording');assert.equal(h.counts().nativeEvents,0);
+    h.dispose();assert.equal(h.backButton.onclick,null);assert.equal(h.nextButton.onclick,null);
+});
+
+for(const mode of ['wide','tabletop','confined'])test(`${mode} final review correction links retain targeted access without jump menu`,()=>{
+    const h=harness(mode,true);
+    while(!h.nextButton.disabled){h.nextButton.onclick();h.measure()}
+    assert.equal(h.progress.dataset.section,'report_review');
+    assert.equal(h.correct('#report-section-activity',{ctrlKey:true}),false);
+    assert.equal(h.progress.dataset.section,'report_review');
+    assert.equal(h.correct('#report-section-missing'),false);
+    assert.equal(h.correct('#report-section-activity'),true);
+    assert.equal(h.progress.dataset.section,'monthly_activity');
+    assert.equal(h.state.reviewNavigation,false);
+    assert.equal(h.document.activeElement,h.pairs[1].pair);
+    h.nextButton.onclick();h.measure();assert.equal(h.progress.dataset.section,'monthly_short');
+});
+
+for(const mode of ['tabletop','confined'])test(`${mode} mode entry and later sequential return share the unobscured reading line`,()=>{
+    const h=harness(mode,true);
+    h.state.navigationActive='monthly_activity';
+    // Execute the real layout adapter's ownership-transition branch. The
+    // navigation harness alone used to skip this branch and therefore missed
+    // its different (toolbar-obscured) alignment before the first Next click.
+    const adapter=fs.readFileSync('app/workspace_layout.js','utf8');
+    const start=adapter.indexOf('        if (previous !== context.mode && activeBefore) {');
+    const end=adapter.indexOf('\n        // When the layout itself changes',start);
+    assert.ok(start>=0 && end>start);
+    vm.runInNewContext(adapter.slice(start,end),{
+        previous:'wide',context:{mode:mode==='tabletop'?'tabletop':'compact',editor:{y:500}},
+        activeBefore:{pair:h.pairs[1].pair},ownsScroll:true,ownedScrollBefore:false,
+        root:h.root,scrollport:h.scrollport,state:h.state,navigation:h.controller(),
+    });
+    h.measure();
+    assert.equal(h.progress.dataset.section,'monthly_activity');
+    const offset=()=>h.pairs[1].pair.getBoundingClientRect().top-h.root.getBoundingClientRect().top;
+    const before=offset();
+    assert.equal(before,h.controller().height()+12,'first entry is below the toolbar, not hidden at root top');
+    while(!h.nextButton.disabled){h.nextButton.onclick();h.measure()}
+    while(h.progress.dataset.section!=='monthly_activity'){h.backButton.onclick();h.measure()}
+    assert.equal(offset(),before,'no toolbar-height jump on sequential return');
+    assert.equal(h.field.value,'Unblurred human wording');
+    assert.equal(h.counts().nativeEvents,0);
+});
+
+for(const mode of ['wide','compact','tabletop'])test(`${mode} passive Review scroll displacement cannot turn first Back into a skipped section`,()=>{
+    const h=harness(mode,true);
+    while(h.progress.dataset.section!=='report_review'){h.nextButton.onclick();h.measure();}
+    // Hosted Chromium: no input between Review's confirmed progress and
+    // scrollTop16865 ->16138. The old reverse-scroll heuristic exited Review.
+    const reviewScroll=h.scrollport.scrollTop;
+    h.scrollport.scrollTop=reviewScroll-727;h.measure();
+    assert.equal(h.state.reviewNavigation,true);
+    assert.equal(h.progress.dataset.section,'report_review');
+    h.backButton.onclick();h.measure();
+    assert.equal(h.progress.dataset.section,'monthly_empty');
+});
+for(const event of [
+    {type:'wheel',deltaY:-10}, {type:'wheel',deltaY:-2,deltaX:20}, {type:'touchmove',touches:[{clientX:0,clientY:10}]}, {type:'keydown',key:'PageUp'},
+    {type:'keydown',key:'ArrowUp'}, {type:'keydown',key:'Home'},
+    {type:'keydown',key:' ',shiftKey:true},
+    {type:'pointerdown',clientX:995,clientY:500,target:{matches:()=>true,closest:()=>null,clientLeft:0,clientTop:0,clientWidth:984,clientHeight:1000,getBoundingClientRect:()=>({left:0,right:1000,top:0,bottom:1000})}},
+])test(`explicit Review yields to genuine ${event.type} ${event.key||'scrollbar'} scrolling`,()=>{
+    const h=harness('wide',true);
+    while(h.progress.dataset.section!=='report_review'){h.nextButton.onclick();h.measure();}
+    if(event.type==='touchmove') h.input({isTrusted:true,type:'touchstart',touches:[{clientX:0,clientY:0}],target:{}});
+    h.input({isTrusted:true,target:{},...event});
+    h.scrollport.scrollTop=2700;h.measure();
+    assert.equal(h.state.reviewNavigation,false);
+    assert.equal(h.progress.dataset.section,'monthly_training');
+});
+for(const event of [
+    {isTrusted:false,type:'wheel'}, {isTrusted:true,type:'keydown',key:'Tab'},
+    {isTrusted:true,type:'keydown',key:'Enter'},
+    {isTrusted:true,type:'pointerdown'},
+    {isTrusted:true,type:'pointerdown',clientX:500,clientY:500,target:{matches:()=>true,closest:()=>null,clientLeft:0,clientTop:0,clientWidth:984,clientHeight:1000,getBoundingClientRect:()=>({left:0,right:1000,top:0,bottom:1000})}},
+    {isTrusted:true,type:'keydown',key:' ',target:{closest:selector=>selector.startsWith('button')?{}:null}},
+    {isTrusted:true,type:'keydown',key:'ArrowUp',target:{closest:selector=>selector.startsWith('input')?{}:null}},
+])test(`non-scroll ${JSON.stringify(event)} cannot release deliberate Review`,()=>{
+    const h=harness('wide',true);
+    while(h.progress.dataset.section!=='report_review'){h.nextButton.onclick();h.measure();}
+    h.input({target:{},...event});
+    h.scrollport.scrollTop-=727;h.measure();
+    assert.equal(h.state.reviewNavigation,true);
+    assert.equal(h.progress.dataset.section,'report_review');
+});
+
+test('explicit Review guard transfers through Back, repeated Review and corrective links',()=>{
+    const h=harness('wide',true);
+    while(h.progress.dataset.section!=='report_review'){h.nextButton.onclick();h.measure();}
+    assert.equal(h.state.explicitReview,true);
+    h.rerender();assert.equal(h.state.explicitReview,true);
+    h.backButton.onclick();h.measure();assert.equal(h.state.explicitReview,false);
+    assert.equal(h.progress.dataset.section,'monthly_empty');
+    h.nextButton.onclick();h.measure();assert.equal(h.state.explicitReview,true);
+    h.correct('#report-section-activity');assert.equal(h.state.explicitReview,false);
+    assert.equal(h.progress.dataset.section,'monthly_activity');
+    h.land(['new-entry','monthly_cover']);assert.equal(h.state.explicitReview,false);
+});
+
+for(const event of [
+    {type:'wheel',deltaY:-20,ctrlKey:true}, {type:'wheel',deltaY:-20,metaKey:true},
+    {type:'wheel',deltaY:0,deltaX:20},
+    {type:'wheel',deltaY:-20,target:{scrollHeight:300,clientHeight:100,scrollTop:50}},
+    {type:'touchmove',touches:[{clientX:0,clientY:20}],target:{scrollHeight:300,clientHeight:100,scrollTop:50}},
+    {type:'touchmove',touches:[{clientX:20,clientY:0}]},
+    {type:'touchmove',touches:[{clientX:0,clientY:20},{clientX:10,clientY:20}]},
+    {type:'wheel',deltaY:-20,target:{scrollHeight:300,clientHeight:100,scrollTop:0,style:{overflowY:'auto',overscrollBehaviorY:'contain'}}},
+])test(`non-page gesture ${JSON.stringify(event)} retains explicit Review`,()=>{
+    const h=harness('wide',true);
+    while(h.progress.dataset.section!=='report_review'){h.nextButton.onclick();h.measure();}
+    h.input({isTrusted:true,type:'touchstart',touches:[{clientX:0,clientY:0}],target:{}});
+    h.input({isTrusted:true,target:{},...event});
+    h.scrollport.scrollTop-=727;h.measure();
+    assert.equal(h.state.reviewNavigation,true);
+    assert.equal(h.progress.dataset.section,'report_review');
+});
+for(const type of ['wheel','touchmove'])test(`${type} chains from nested scroller boundary to page`,()=>{
+    const h=harness('wide',true);
+    while(h.progress.dataset.section!=='report_review'){h.nextButton.onclick();h.measure();}
+    h.input({isTrusted:true,type:'touchstart',touches:[{clientX:0,clientY:0}],target:{}});
+    h.input({isTrusted:true,type,deltaY:-20,touches:[{clientX:0,clientY:20}],target:{scrollHeight:300,clientHeight:100,scrollTop:0}});
+    h.scrollport.scrollTop=2700;h.measure();
+    assert.equal(h.state.reviewNavigation,false);
+    assert.equal(h.progress.dataset.section,'monthly_training');
+});
+
+test('stationary touch Add preserves pointerdown provenance until entry arrives',()=>{
+    const h=entryHarness();h.input('row_add');
+    h.input('row_add',true,'touchstart');h.input('row_add',true,'touchend');
+    h.root.markers=[h.marker('touch-tap')];h.focus();
+    assert.equal(h.document.activeElement,h.field);
+    assert.equal(h.counts().focused,1);
+});
+for(const type of ['touchmove','touchcancel'])test(`${type} cancels pending Add focus provenance`,()=>{
+    const h=entryHarness();h.input('row_add');h.input('row_add',true,'touchstart');
+    h.input('row_add',true,type);h.input('row_add',true,'touchend');
+    h.root.markers=[h.marker('touch-moved')];h.focus();
+    assert.equal(h.counts().focused,0);
+});
+
+for(const roleButton of [false,true])test(`Space on ${roleButton?'role-button anchor activates':'plain anchor scrolls page'}`,()=>{
+    const h=harness('wide',true);
+    while(h.progress.dataset.section!=='report_review'){h.nextButton.onclick();h.measure();}
+    const anchor={closest:selector=>selector.includes('a[href]') || roleButton&&selector.includes('[role="button"]') ? {} : null};
+    h.input({isTrusted:true,type:'keydown',key:' ',target:anchor});
+    h.scrollport.scrollTop-=727;h.measure();
+    assert.equal(h.state.reviewNavigation,roleButton);
+});
+
+for(const activityTop of [481.34375,481.375])for(const prior of ['monthly_organization','monthly_activity',null])
+test(`mode anchor hands fractional ${activityTop} to coordinator from ${prior}`,()=>{
+    const h=harness('tabletop',true);
+    h.pairs[0].id='monthly_organization';
+    h.root.getBoundingClientRect=()=>({top:416,bottom:900,height:484});
+    h.nav.getBoundingClientRect=()=>({top:424,bottom:477,height:53});
+    h.pairs[0].pair.getBoundingClientRect=()=>({top:-35.8125,bottom:activityTop-16,height:501.1875});
+    h.pairs[1].pair.getBoundingClientRect=()=>({top:activityTop,bottom:1721.5625,height:1240.1875});
+    h.root.scrollTop=773;
+    h.state.navigationActive=prior;h.state.navigationJump=null;
+    const focus=h.document.activeElement,scroll=h.root.scrollTop,counts=h.counts();
+    h.controller().reanchor('monthly_activity');h.measure();
+    assert.equal(h.progress.dataset.section,'monthly_activity');
+    assert.equal(h.state.navigationActive,'monthly_activity');
+    assert.equal(h.root.scrollTop,scroll,'handoff performs no additional scroll');
+    assert.equal(h.document.activeElement,focus,'handoff performs no focus');
+    assert.deepEqual(h.counts(),counts,'handoff neither schedules nor dispatches input');
+    // The handoff is not a permanent section lock: subsequent native scrolling
+    // continues through the existing reading-line geometry.
+    h.root.scrollTop+=50;
+    h.pairs[1].pair.getBoundingClientRect=()=>({top:activityTop-50,bottom:1671.5625,height:1240.1875});
+    h.measure();assert.equal(h.progress.dataset.section,'monthly_activity');
+});
+
+test('pending explicit Next takes precedence over a mode anchor; removed anchor is ignored',()=>{
+    const h=harness('tabletop',true);
+    h.nextButton.onclick(); // Cover -> Activity pending native navigation.
+    assert.equal(h.state.navigationRequest,'monthly_activity');
+    const active=h.state.navigationActive;
+    h.controller().reanchor('monthly_training');
+    assert.equal(h.state.navigationRequest,'monthly_activity');
+    assert.equal(h.state.navigationActive,active);
+    h.measure();assert.equal(h.progress.dataset.section,'monthly_activity');
+    const saved={active:h.state.navigationActive,jump:h.state.navigationJump};
+    h.controller().reanchor('monthly_removed');
+    assert.equal(h.state.navigationActive,saved.active);assert.equal(h.state.navigationJump,saved.jump);
+    h.pairs[3].pair.isConnected=false;h.controller().reanchor('monthly_training');
+    assert.equal(h.state.navigationActive,saved.active);assert.equal(h.state.navigationJump,saved.jump);
 });

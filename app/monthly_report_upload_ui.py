@@ -874,12 +874,17 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, peri
             st.caption("This page is already included. Remove it using the report pictures below, if needed.")
     else:
         captions = dict(source.captions)
-        caption_key = field(p + f"_caption_{page}", captions.get(page, f"{source.filename} · page/item {page}"))
-        captions[page] = st.text_input("Page caption", key=caption_key)
-        source = replace(source, captions=tuple(sorted(captions.items())))
+        default_caption = captions.get(page, f"{source.filename} · page/item {page}")
+        caption_key = field(p + f"_caption_{page}", default_caption)
+        caption = st.text_input("Page caption", key=caption_key)
+        # Showing an unvisited page must not change a saved report. Keep the
+        # generated suggestion local until an edit or explicit page decision.
+        if page in captions or caption != default_caption:
+            captions[page] = caption
+            source = replace(source, captions=tuple(sorted(captions.items())))
         kind, reason = page_status(source.page_texts[page - 1], unreadable=page in source.needs_vision)
-        blocked = kind in ("pricing", "legal", "blank", "signature") or contains_price(captions[page])
-        if contains_price(captions[page]):
+        blocked = kind in ("pricing", "legal", "blank", "signature") or contains_price(caption)
+        if contains_price(caption):
             reason = "Remove pricing from the caption before including this page."
         (st.warning if blocked else st.caption)(reason)
         st.caption("Include confirms that you checked this page and caption: relevant work, no prices, and no legal-only, blank or signature-only content.")
@@ -894,6 +899,10 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, peri
         if omit.button("Exclude page", key=p + "_omit_page"):
             action = "omit"
         if action:
+            # Bind the exact displayed caption before calculating either
+            # decision receipt; a navigation-only visit does not do this.
+            if page not in dict(source.captions):
+                source = replace(source, captions=tuple(sorted({**dict(source.captions), page: caption}.items())))
             selected = set(source.selected_pages)
             reviews, exclusions = dict(source.client_page_reviews), dict(source.client_page_exclusions)
             if action == "keep":
@@ -944,7 +953,7 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, peri
 
 
 def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, field,
-                           destination: str, *, blocks=None, assets=None):
+                           destination: str, *, blocks=None, assets=None, sections=None):
     """Return reviewed page additions; Water adds when its final review is done.
 
     The caller merges additions atomically. The source cache is canonical and
@@ -1108,6 +1117,16 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
                         st.warning(f"The whole PDF cannot fit the image budget: its checked pages "
                                    f"need at least {needed:.1f} MiB, with {available:.1f} MiB available. "
                                    "Reduce selected pages or remove existing evidence before reviewing.")
+    if destination == "mbcx_report":
+        from app.monthly_report_mbcx_financial_pages import render_reviewed_batch
+        from app.monthly_report_guided import _rich_text_scope
+        handled, revised, financial_batch = render_reviewed_batch(
+            profile, choices[selected], blocks, assets, local_key, period=period, editor_scope=_rich_text_scope(prefix), sections=sections)
+        if handled:
+            # The guided caller validates and commits the whole prepared draft;
+            # do not approve sources or renew old pictures ahead of that merge.
+            return tuple(c.source for c in contents), {}, (
+                {"financial_batch": financial_batch, "financial_evidence_key": key} if financial_batch else {})
     revised = _render_section_page_review(
         profile, choices[selected], local_key, field, blocks,
         period=period,
@@ -1258,7 +1277,10 @@ def render_workorder_metrics(profile, period, prefix, contents, blocks, *, addit
     # It is offered as reviewable source evidence, never silently written over
     # an edited Activity paragraph.
     from app.monthly_report_work_order_csv import work_order_evidence
-    metrics_signature = _signature((period.key, profile.key,
+    # Counts depend on selected sites and every accepted site-name alias.
+    # A profile key can stay the same while its report-specific scope changes.
+    site_scope = tuple((site.key, site.title, site.aliases) for site in profile.facilities)
+    metrics_signature = _signature((period.key, profile.contract, profile.key, site_scope,
                                tuple(c.source.fingerprint for c in contents)))
     cache_key = local_key + "_workorder_metrics_cache"
     cached_evidence = st.session_state.get(cache_key)
