@@ -200,17 +200,27 @@ def suggest_facts(source: ReportSource, profile: ReportProfile) -> ReportSource:
 
 
 class _PlainHTML(HTMLParser):
+    _BLOCKS = frozenset(("p", "div", "tr", "li", "h1", "h2", "h3", "h4", "h5", "h6",
+                         "blockquote", "pre", "dt", "dd", "table", "ul", "ol", "dl"))
+
     def __init__(self):
         super().__init__()
         self.parts, self.hidden = [], 0
     def handle_starttag(self, tag, attrs):
         if tag in ("script", "style"):
             self.hidden += 1
-        if tag in ("p", "br", "div", "tr"):
-            self.parts.append("\n")
+        if not self.hidden:
+            if tag in self._BLOCKS or tag in ("br", "hr"):
+                self.parts.append("\n")
+            elif tag in ("td", "th"):
+                # Cells must not concatenate numbers or source field labels.
+                # Start tags also cover HTML's optional closing cell tags.
+                self.parts.append("\t")
     def handle_endtag(self, tag):
         if tag in ("script", "style"):
             self.hidden = max(0, self.hidden - 1)
+        elif not self.hidden and tag in self._BLOCKS:
+            self.parts.append("\n")
     def handle_data(self, data):
         if not self.hidden:
             self.parts.append(data)
