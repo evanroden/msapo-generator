@@ -9,6 +9,7 @@ from app.monthly_report_content_policy import page_status
 from app.monthly_report_docx import ReportImage, normalize_report_image
 from app.monthly_report_sections import readable_label
 from app.monthly_report_word_pages import preserve_word_pages
+from app.monthly_report_picture_accessibility import review_image
 
 
 def chart_page_review(section, path, period, prefix, field, old, plan, blocking):
@@ -44,8 +45,9 @@ def chart_page_review(section, path, period, prefix, field, old, plan, blocking)
                 preview = normalize_report_image(page.data, ".png", line_art=True, dpi=96)
                 picture, controls = st.columns([3, 2])
                 with picture:
-                    st.image(preview.data, width=min(preview.width, 460),
-                             caption=f"Original chart/contact page {page.number} · Image-only")
+                    review_image(preview.data, width=min(preview.width, 460),
+                                 caption=f"Original chart/contact page {page.number} · Image-only",
+                                 key=page_key)
                     st.caption("Use the picture’s fullscreen button to check small text.")
                 status, reason = page_status(page.text, unreadable=not page.text.strip())
                 forbidden = page.blank or status in ("pricing", "legal", "signature") or bool(placeholder_matches(page.text))

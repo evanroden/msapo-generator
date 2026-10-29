@@ -6,6 +6,7 @@ from app.monthly_report_content_policy import page_status
 from app.monthly_report_import import read_import_image
 from app.monthly_report_sections import small_artwork
 from app.monthly_report_content_kind import image_review_caption, image_replacement_guidance
+from app.monthly_report_picture_accessibility import review_image
 
 
 def _turn_page(key, delta, last):
@@ -89,8 +90,9 @@ def review_cover_gallery(images, path, prefix, old, plan):
                 st.caption(f"Picture {index}")
                 try:
                     preview = read_import_image(path, item, preview=True)
-                    st.image(preview.data, width="stretch",
-                             caption=image_review_caption(item, index, "cover"))
+                    review_image(preview.data, width="stretch",
+                                 caption=image_review_caption(item, index, "cover"),
+                                 key=prefix + "_cover_" + item.id)
                     visible.add(item.id)
                 except (ValueError, OSError):
                     st.caption("This picture could not be displayed and will be left out.")
@@ -176,8 +178,9 @@ def review_pictures(images, section, path, prefix, scope, field, old, plan, bloc
             st.caption(f"Picture {index}")
             try:
                 preview = read_import_image(path, item, preview=True)
-                st.image(preview.data, width=min(preview.width, 650),
-                         caption=image_review_caption(item, index, section))
+                review_image(preview.data, width=min(preview.width, 650),
+                             caption=image_review_caption(item, index, section),
+                             key=prefix + "_" + item.id)
             except (ValueError, OSError):
                 st.warning("This picture could not be displayed. Check it in the original report before including it.")
                 if choices[item.id]:
