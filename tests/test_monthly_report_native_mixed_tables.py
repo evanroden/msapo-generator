@@ -10,7 +10,7 @@ from docx.oxml import OxmlElement
 from docx.shared import Inches
 from PIL import Image
 
-from app.monthly_report_import import inspect_docx, read_import_image
+from app.monthly_report_import import ImportError, ImportMapping, inspect_docx, map_items, read_import_image
 from app.monthly_report_model import ReportDraft, ReportProfile, ReportPeriod, Facility, ResolvedBlock, default_sections
 from app.monthly_report_native_layout import build_native_docx
 from app.monthly_report_sections import table_without_prices
@@ -50,6 +50,10 @@ def mixed_tables(tmp_path, *, unmapped_diagram=False):
     path = tmp_path / 'mixed.docx'
     doc.save(path)
     inspection = inspect_docx(path)
+    if unmapped_diagram:
+        # This table now correctly fails closed. Expose original review facts
+        # instead of assuming the unsafe table was mapped into an editable grid.
+        return path, inspection, path.read_bytes()
     items = [item for item in inspection.items if item.kind in ('table', 'image', 'text') and item.section == 'water' and item.kind != 'text']
     tables = []
     assets = {}
@@ -109,10 +113,35 @@ def test_mixed_table_does_not_keep_old_picture_without_current_asset_proof(tmp_p
 
 
 def test_unmapped_diagram_cannot_ride_current_mixed_table_images(tmp_path):
-    path, draft, assets = mixed_tables(tmp_path, unmapped_diagram=True)
-    assert any(item.note.startswith('Unmapped native SmartArt') for item in inspect_docx(path).items)
-    result = Document(BytesIO(build_native_docx(draft, path, asset_loader=assets.__getitem__)))
-    assert len(result.tables) == 2
-    assert not list(result.element.iter('{http://schemas.openxmlformats.org/drawingml/2006/diagram}relIds'))
-    assert len(list(result.element.iter(qn('a:blip')))) == 2
-    assert result.tables[1].cell(1, 1).text == '8.1'
+    path, inspection, original = mixed_tables(tmp_path, unmapped_diagram=True)
+    assert path.read_bytes() == original
+    assert inspection.sha256 == sha256(original).hexdigest()
+    # Preserve the original explicit SmartArt inventory, not just the table
+    # blocker. Both require review before any source-page replacement.
+    assert any(item.note.startswith('Unmapped native SmartArt')
+               for item in inspection.items)
+    # A diagram inside a source table makes that whole table unsafe to flatten.
+    # The image and neighboring healthy table may still be reviewed separately,
+    # but neither constitutes permission to reuse the original diagram canvas.
+    blocked = [item for item in inspection.items
+               if item.kind == 'unsupported' and item.section == 'water'
+               and 'Word table contains text boxes or unsupported drawings' in item.note]
+    assert len(blocked) == 1
+    assert blocked[0].part == 'word/document.xml' and blocked[0].position == 2
+    assert 'Synthetic sample 0' in blocked[0].text
+    assert 'Merged technical note' in blocked[0].text
+    assert not any(item.kind == 'table' and item.position == blocked[0].position
+                   for item in inspection.items)
+    # The unrelated second table and both original picture occurrences remain
+    # inspectable. No source cells are invented or silently discarded.
+    healthy = [item for item in inspection.items
+               if item.kind == 'table' and item.section == 'water']
+    assert len(healthy) == 1 and healthy[0].position > blocked[0].position
+    assert healthy[0].rows[0] == ('Measurement', 'Value', 'Diagram')
+    assert healthy[0].rows[1][:2] == ('Synthetic sample 1', '7.2')
+    images = [item for item in inspection.items
+              if item.kind == 'image' and item.section == 'water']
+    assert len(images) == 2 and all(item.image_part and item.image_digest for item in images)
+    with pytest.raises(ImportError, match='Unsupported items'):
+        map_items(path, inspection, (ImportMapping(blocked[0].id, 'water_reports'),))
+    assert path.read_bytes() == original
