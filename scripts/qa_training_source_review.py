@@ -22,7 +22,7 @@ RECEIPT_PREFIX = "QA Training review receipt: "
 def receipt(page, *, reviews=None, included=None, saved=None, previous_review=None):
     payload = {"prefix": RECEIPT_PREFIX, "wanted": {"reviews": reviews, "included": included,
         "saved": saved, "previous": previous_review}}
-    page.wait_for_function('''payload => {
+    predicate = '''payload => {
       for (const node of document.querySelectorAll('body *')) {
         const text=node.textContent||'';
         if(!text.startsWith(payload.prefix))continue;
@@ -37,7 +37,41 @@ def receipt(page, *, reviews=None, included=None, saved=None, previous_review=No
           return true;
       }
       return false;
-    }''', arg=payload, timeout=30000)
+    }'''
+    try:
+        page.wait_for_function(predicate, arg=payload, timeout=30000)
+    except Exception as exc:
+        probe = page.evaluate('''payload => {
+          const candidates=[];
+          for (const node of document.querySelectorAll('body *')) {
+            const text=node.textContent||'';
+            const at=text.indexOf(payload.prefix);
+            if(at<0)continue;
+            const raw=text.slice(at+payload.prefix.length);
+            let parsed=null, parse_error=null;
+            try{parsed=JSON.parse(raw)}catch(error){parse_error=String(error)}
+            candidates.push({
+              tag:node.tagName, testid:node.getAttribute('data-testid'),
+              raw:raw.slice(0,1000), parse_error,
+              parsed:parsed&&{
+                reviews:parsed.reviews, saved_revision:parsed.saved_revision,
+                review_revision:parsed.review_revision,
+                included:Array.isArray(parsed.tables)&&parsed.tables.some(
+                  table=>Array.isArray(table.rows)&&table.rows.some(row=>row[0]==='Synthetic drill')),
+                table_count:Array.isArray(parsed.tables)?parsed.tables.length:null
+              }
+            });
+            if(candidates.length>=8)break;
+          }
+          return {
+            script_state:document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')||null,
+            body_has_prefix:(document.body?.textContent||'').includes(payload.prefix),
+            candidates,
+            body_tail:(document.body?.innerText||'').slice(-2500)
+          };
+        }''', payload)
+        raise AssertionError("Training receipt readiness diagnostics: " +
+                             json.dumps(probe, sort_keys=True, ensure_ascii=False)) from exc
     return page.evaluate('''prefix => {
       for (const node of document.querySelectorAll('body *')) {
         const text=node.textContent||'';
