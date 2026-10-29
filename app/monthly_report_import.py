@@ -79,6 +79,9 @@ class ImportItem:
     # the photograph gallery without inventing a company/client role.
     # "header_artwork" records placement without asserting that it is a logo.
     image_role: str = ""
+    # Original rows stay intact for source identity and native geometry checks.
+    # Only a proved full-width service-call title may precede the real header.
+    table_header_row: int = 0
 
     @property
     def label(self) -> str:
@@ -466,6 +469,38 @@ def _is_native_divider_background(element, text=""):
     return False
 
 
+def _service_call_title_band(element, rows, section):
+    """Recognize one explicit title + canonical header, never infer from data."""
+    if section != "maintenance" or len(rows) < 2:
+        return False
+    compact = lambda value: re.sub(r"[^a-z0-9]", "", value.casefold())
+    if compact(rows[0][0]) not in ("servicecalls", "clientservicecalls"):
+        return False
+    headers = tuple(compact(value) for value in rows[1])
+    if headers[:5] != ("wo", "finishdate", "area", "taskcodedescription", "tag"):
+        return False
+    # Additional explicitly financial columns still go through the existing
+    # price gate. Unknown/custom schemas stay in their ordinary review path.
+    if any(value not in ("cost", "unitprice", "amount") for value in headers[5:]):
+        return False
+    width = len(headers)
+    native_rows = element.findall(W + "tr")
+    title_cells = native_rows[0].findall(W + "tc")
+    header_cells = native_rows[1].findall(W + "tc")
+    if len(title_cells) != 1 or len(header_cells) != width:
+        return False
+    span = title_cells[0].find(f"{W}tcPr/{W}gridSpan")
+    if span is None or span.get(W + "val") != str(width):
+        return False
+    for row in native_rows[:2]:
+        if any(node.tag in (W + "gridBefore", W + "gridAfter", W + "vMerge",
+                            W + "drawing", W + "pict", W + "txbxContent") for node in row.iter()):
+            return False
+        if any(node is not element for node in row.iter(W + "tbl")):
+            return False
+    return all(cell.find(f"{W}tcPr/{W}gridSpan") is None for cell in header_cells)
+
+
 def inspect_docx(path: Path) -> DocxInspection:
     """No python-docx object model or whole-archive extraction for large inputs."""
     digest = hashlib.sha256()
@@ -650,7 +685,11 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 content_slot = ""
                             compact_text = re.sub(r"[^a-z]", "", text.casefold())
                             if section == "activity":
-                                if compact_text in ("workorderstatus", "pmstatus"):
+                                if (compact_text in ("workorderstatus", "pmstatus")
+                                        or re.fullmatch(
+                                            r"\s*(?:work\s*order|pm)\s*status\s*[-–—:]?\s*"
+                                            r"(?:location|site)\s*#?\s*(?:\d+|[a-z])\s*[:.]?\s*",
+                                            text, re.I)):
                                     content_slot = "work_orders"
                                 elif compact_text == "activitysummary":
                                     content_slot = "activity_summary"
@@ -691,8 +730,18 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 if rows and not picture_table:
                                     width = max(map(len, rows))
                                     rows = tuple(row + ("",) * (width - len(row)) for row in rows)
-                                    add("table", part, position, rows=rows, suggested_slot=content_slot or _suggest("table", text, section),
+                                    title_band = _service_call_title_band(element, rows, section)
+                                    table_id = add("table", part, position, rows=rows,
+                                        table_header_row=1 if title_band else 0,
+                                        suggested_slot=content_slot or _suggest("table", text, section),
                                         note="Merged cells retain text in the first column of their span. Confirm headers and columns.")
+                                    if title_band:
+                                        # A derived ID avoids renumbering any later source item.
+                                        # Separate context survives edited/plain output as well as
+                                        # an unchanged native table, without becoming a data row.
+                                        add("text", part, position, item_id=table_id + "-title",
+                                            text=rows[0][0], suggested_slot="service_calls",
+                                            note="Native table title")
                             elif text:
                                 add("text", part, position, text=text, note=source_note, suggested_slot=(content_slot if content_slot and not detected else _suggest("text", text, section, heading=bool(detected), part=part)))
                                 if part == "word/document.xml" and not section and len(titles) < 12:
@@ -941,7 +990,8 @@ def _map_items(path, inspection, mappings, *, source_view=None, _operation=None)
             indices = mapping.columns or tuple(range(width))
             if len(set(indices)) != len(indices) or any(i < 0 or i >= width for i in indices):
                 raise ImportError("Invalid imported table column mapping.")
-            labels = item.rows[0] if mapping.first_row_header else tuple(f"Column {i+1}" for i in range(width))
+            header_row = item.table_header_row if mapping.first_row_header else 0
+            labels = item.rows[header_row] if mapping.first_row_header else tuple(f"Column {i+1}" for i in range(width))
             specs = tuple(ColumnSpec(f"imported_{j}", labels[i].strip() or f"Column {i+1}") for j, i in enumerate(indices))
             # Duplicate merged headers would overwrite values in the editor's dict.
             labels_seen = set()
@@ -953,8 +1003,10 @@ def _map_items(path, inspection, mappings, *, source_view=None, _operation=None)
                 labels_seen.add(title)
                 columns.append(replace(col, title=title))
             overrides[mapping.slot] = replace(spec, type="table", columns=tuple(columns))
-            rows = item.rows[1:] if mapping.first_row_header else item.rows
+            rows = item.rows[header_row + 1:] if mapping.first_row_header else item.rows
             block = replace(block, rows=tuple(tuple(row[i] for i in indices) for row in rows))
+            if header_row:
+                block = replace(block, text="\n\n".join(t for t in (block.text, item.rows[0][0]) if t))
         else:
             if spec.type not in ("rich_text", "stock_text") and not (mapping.slot == "org_chart" and item.note == "Validated native SmartArt text"):
                 raise ImportError("Text needs a narrative or footer destination.")

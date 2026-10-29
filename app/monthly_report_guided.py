@@ -662,8 +662,10 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
         for n, table in enumerate(block.extra_tables):
             from app.monthly_report_table_review_ui import review_table_headings
             table = review_table_headings(table, key + f"_imported_{n}", field)
-            if len(block.extra_tables) > 1:
-                st.write(f"Table {n+1}")
+            if spec.key == "work_orders" or len(block.extra_tables) > 1:
+                from app.monthly_report_source_table_labels import table_task_label
+                st.text(table_task_label(table, spec.key, position=n,
+                                         total=len(block.extra_tables)))
             seed = [dict(zip(table.columns, r)) for r in table.rows] or [dict.fromkeys(table.columns)]
             if optional_table:
                 seed = empty_text_seed(seed)
