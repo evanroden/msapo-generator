@@ -12,6 +12,8 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 [External-agent Render archive retrieval](EXTERNAL_RENDER_ARCHIVE_ACCESS_2026-10-14.md) — anonymous six-source and synthetic-evidence shelves on the existing Render persistent disk; exact-download checksum tool for external agents, plus explicit owner upload and two-served-build acceptance boundaries. Code availability is not confirmation that an archive has been uploaded.
 
+[Monthly deterministic assembly boundary](monthly_report_assembly_boundary.md) — accepted-source review versus reproducible Word/PDF assembly, semantic comparison limits and remaining served acceptance requirements.
+
 [Shared report templates for agents](SHARED_REPORT_TEMPLATES.md) — immutable original DOCX references, 512 MiB uploads, and verified UI/CLI downloads. Storage does not install a master or alter reports; verify shared access before claiming availability.
 
 [Shared authentic-report testing and read-only persistence witness](SHARED_FIXTURE_TESTING_2026-10-13.md) — merged shared no-login DOCX testing and the manual-only PR #214 hash verifier. Its tool is ready, but no specific existing original has been compared before and after two served Render builds. The fixture route is discoverable/not confidential; actual owner reports and Word/PDF acceptance remain open.
