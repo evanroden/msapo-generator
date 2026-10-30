@@ -104,6 +104,8 @@ def _columns(columns):
 
 
 def _capacity_file(prefix):
+    from app.monthly_report_native_loading import reserve_empty_uploader
+    reserve_empty_uploader(prefix + "_capacity_upload", "Thermal capacity file")
     return st.file_uploader(
         "Thermal capacity file",
         type=sorted(suffix.lstrip(".") for suffix in capacity.SUPPORTED),

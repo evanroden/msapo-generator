@@ -417,13 +417,23 @@ def _patch_bundle_locked(static_dir, installed_version, scalar_date):
 def main():
     import json
     import streamlit
+    try:
+        from scripts.streamlit_cover_upload_copy import patch_cover_upload_copy
+    except ModuleNotFoundError:  # Direct `python scripts/...` entrypoint.
+        from streamlit_cover_upload_copy import patch_cover_upload_copy
     parser = argparse.ArgumentParser()
     parser.add_argument("--static-dir", type=Path)
     parser.add_argument("--scalar-date", action="store_true")
     args = parser.parse_args()
-    print(json.dumps(patch_bundle(args.static_dir or Path(streamlit.__file__).parent / "static",
-                                  installed_version=version("streamlit"),
-                                  scalar_date=args.scalar_date), sort_keys=True))
+    cover_runtime = None
+    if args.static_dir is None:
+        cover_runtime = patch_cover_upload_copy(Path(streamlit.__file__).parent,
+                                                installed_version=version("streamlit"))
+    result = patch_bundle(args.static_dir or Path(streamlit.__file__).parent / "static",
+                          installed_version=version("streamlit"), scalar_date=args.scalar_date)
+    if cover_runtime is not None:
+        result["cover_upload_runtime"] = cover_runtime
+    print(json.dumps(result, sort_keys=True))
 
 
 if __name__ == "__main__":
