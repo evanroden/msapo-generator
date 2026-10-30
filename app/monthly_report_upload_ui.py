@@ -560,21 +560,44 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
     st.caption(f"{len(contents)} sources. {sum(len(c.source.selected_pages) for c in contents)} selected pages/items. "
                f"{sum(len(set(c.source.needs_vision) & set(c.source.selected_pages)) for c in contents)} selected pages need OCR/vision; no paid extraction runs automatically.")
     blocks, specs = {}, {}
+    # The ordinary destination is inferred from the source classification,
+    # and was previously hidden in an expander far above the Add action.
+    # Keep the same native selection keys, but display the *actual* selections
+    # beside the commit; a route is changed only by explicit user choice.
     destinations = []
-    with st.expander("Add reviewed pages to report sections"):
-        defaults = {"Vendor service": "improvements", "Water treatment": "water_reports", "MBCx": "mbcx_report", "Utility results": "utility_analysis", "Improvement / training photo": "improvements"}
-        for item in contents:
-            if not sources.image_numbers(item):
-                continue
-            labels = {"Do not embed": "Keep as reference only", "vendor_reports": "Maintenance — vendor service pages",
-                      "water_reports": "Water treatment — chemical/service pages", "mbcx_report": "MBCx — commissioning report pages",
-                      "utility_analysis": "Monthly scorecards — utility results and charts",
-                      "improvements": "Monthly activity — reviewed service pages and photos"}
-            slot = st.selectbox("Report section for " + item.source.filename, ["Do not embed", *sources.PAGE_DESTINATIONS], format_func=labels.get,
-                                key=field(key + "_destination_" + item.source.id + "_" + item.source.classification,
-                                          defaults.get(item.source.classification, "Do not embed")))
-            if slot != "Do not embed" and not (item.source.id in section_page_owners and slot == "water_reports"):
-                destinations.append((item.source.id, slot))
+    defaults = {"Vendor service": "improvements", "Water treatment": "water_reports",
+                "MBCx": "mbcx_report", "Utility results": "utility_analysis",
+                "Improvement / training photo": "improvements"}
+    labels = {"Do not embed": "Keep as reference only",
+              "vendor_reports": "Maintenance — ENFRA onsite work only",
+              "water_reports": "Water treatment — chemical/service pages",
+              "mbcx_report": "MBCx — commissioning report pages",
+              "utility_analysis": "Monthly scorecards — utility results and charts",
+              "improvements": "Monthly activity — vendor service reports and photos"}
+    route_controls = []
+    for item in contents:
+        if not sources.image_numbers(item):
+            continue
+        control = field(key + "_destination_" + item.source.id + "_" + item.source.classification,
+                        defaults.get(item.source.classification, "Do not embed"))
+        options = ("Do not embed", *sources.PAGE_DESTINATIONS)
+        if st.session_state[control] not in options:
+            st.session_state[control] = defaults.get(item.source.classification, "Do not embed")
+        route_controls.append((item.source.filename, item.source.id, control))
+    if route_controls:
+        with st.container(key=key + "_destination_review"):
+            st.text("Destination for reviewed pages")
+            for filename, identity, control in route_controls:
+                selected_slot = st.session_state[control]
+                st.text(filename + " → " + labels.get(selected_slot, selected_slot))
+            with st.expander("Change destination (optional)"):
+                for filename, identity, control in route_controls:
+                    slot = st.selectbox("Report section for " + filename,
+                                        ("Do not embed", *sources.PAGE_DESTINATIONS),
+                                        format_func=labels.get, key=control)
+                    if (slot != "Do not embed"
+                            and not (identity in section_page_owners and slot == "water_reports")):
+                        destinations.append((identity, slot))
     cmms_contents = [c for c in contents if (selected_source_id is None or c.source.id == selected_source_id)
                      and c.tables and c.source.classification == "CMMS export"
                      and any(i in c.source.selected_pages for i in range(1, len(c.tables)+1))]
@@ -1011,10 +1034,10 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
     # Water, Scorecards and MBCx already have section-level instructions. Keep one
     # labeled uploader without a duplicate title, while retaining the complete
     # canonical page-review flow and its safety checks.
-    upload_area = (st.container() if destination == "water_reports" else
-                   st.popover("Add files", key=local_key + "_add_files",
-                              help="Upload a file or reuse a file already saved in this draft."))
-    with upload_area:
+    # One directly visible section source task. Preserve the existing uploader
+    # and saved-source widget identities across ordinary report reruns.
+    with st.container(key=local_key + "_add_files"):
+        st.text("Upload new")
         upload = st.file_uploader(upload_label, type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
                                  accept_multiple_files=True, max_upload_size=128, key=local_key + "_upload")
         picked = tuple((u.name, u.getvalue()) for u in (upload or ()))
@@ -1051,18 +1074,18 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
         owners = source_destinations(contents, bindings, blocks)
         unassigned = [c for c in contents if not owners[c.source.id]]
         if unassigned:
-            with st.expander("Use an uploaded file"):
-                choices = {c.source.id: c for c in unassigned}
-                choice_key = field(local_key + "_saved_choice", next(iter(choices)))
-                if st.session_state[choice_key] not in choices:
-                    st.session_state[choice_key] = next(iter(choices))
-                # The native serializer retains this formatter after the
-                # function reuses `choices` for the section's own files.
-                filenames = {identity: item.source.filename for identity, item in choices.items()}
-                chosen = st.selectbox("Saved file", list(choices), format_func=filenames.get, key=choice_key)
-                if st.button("Use in " + title, key=local_key + "_use_saved"):
-                    bindings[chosen] = destination
-                    st.session_state[key + "_section_routes"] = bindings
+            st.text("Already uploaded")
+            choices = {c.source.id: c for c in unassigned}
+            choice_key = field(local_key + "_saved_choice", next(iter(choices)))
+            if st.session_state[choice_key] not in choices:
+                st.session_state[choice_key] = next(iter(choices))
+            # Exact source identities, never filenames, select reusable originals.
+            # Showing this chooser is not approval or an automatic route.
+            filenames = {identity: item.source.filename for identity, item in choices.items()}
+            chosen = st.selectbox("Saved file", list(choices), format_func=filenames.get, key=choice_key)
+            if st.button("Use in " + title, key=local_key + "_use_saved"):
+                bindings[chosen] = destination
+                st.session_state[key + "_section_routes"] = bindings
     for message in st.session_state.get(local_key + "_messages", ()):
         st.warning(message)
     scoped = section_contents(contents, destination, bindings, blocks)
@@ -1222,6 +1245,7 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
         st.caption(f"{sum(page_allowed(by_id[identity].source, n) for identity, n in pending)} of {len(pending)} selected new pages checked.")
     else:
         st.caption("No new pages selected. Previously added pages remain in your report.")
+    st.text("Add destination: " + title)
     if st.button("Add reviewed pages", key=local_key + "_apply", disabled=not ready, type="primary"):
         try:
             with st.spinner("Adding the reviewed pages…"):
