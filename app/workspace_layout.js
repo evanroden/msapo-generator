@@ -415,7 +415,11 @@ export default function(component) {
     resize.observe(app); resize.observe(scrollport);
     if (chrome) resize.observe(chrome);
     const mutation = new MutationObserver(schedule);
-    mutation.observe(root, {childList:true,subtree:true});
+    // A rerender can retain the exact request/field nodes and replace only
+    // the request nonce, or clear a stale owner after that nonce arrives.
+    // Wake the existing coalesced measurement for those resolver inputs too;
+    // layout-written style/class/disabled attributes must not feed it back.
+    mutation.observe(root, {childList:true,subtree:true,attributes:true,attributeFilter:['data-token','data-stale']});
     const rootClass = new MutationObserver(() => {
         if (disposed || !root.isConnected || root.classList.contains('epc-workspace')) return;
         if (!state.mode) {schedule(); return;}

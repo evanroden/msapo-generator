@@ -372,6 +372,33 @@ def enter_topic_and_participant(page, *, original_input=None):
         live.EVIDENCE.setdefault("participant_selection", []).append(observation)
 
 
+def reference_position_observation(original_input):
+    """Read only the original native control and its existing scroll ancestors."""
+    try:
+        return original_input.evaluate("""input=>{
+          const rect=input.getBoundingClientRect();
+          const ancestors=[];
+          for(let node=input.parentElement;node&&ancestors.length<12;node=node.parentElement) {
+            if(node.scrollHeight>node.clientHeight||node.scrollTop) {
+              ancestors.push({tag:node.tagName,testid:node.getAttribute('data-testid'),
+                scrollTop:node.scrollTop,scrollHeight:node.scrollHeight,clientHeight:node.clientHeight,
+                overflowY:getComputedStyle(node).overflowY});
+            }
+          }
+          const root=document.scrollingElement;
+          return {at:performance.now(),connected:input.isConnected,
+            rect:{x:rect.x,y:rect.y,width:rect.width,height:rect.height},
+            windowScrollY:window.scrollY,windowHeight:window.innerHeight,
+            rootScrollTop:root?.scrollTop,rootScrollHeight:root?.scrollHeight,
+            rootClientHeight:root?.clientHeight,fonts:document.fonts?.status||null,
+            script:document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')||null,
+            ancestors};
+        }""")
+    except Exception as error:
+        # A detached original handle is evidence, not permission to re-find it.
+        return {"observation_error": type(error).__name__}
+
+
 def exercise_participant_reference(browser_type, engine):
     """One independent production-widget reference, never an acceptance substitute."""
     live.ROOT = OUT / "native-participant-reference" / engine
@@ -432,10 +459,15 @@ def exercise_participant_reference(browser_type, engine):
         # (top~780 in the 1365x900 viewport). Geometry
         # at the native error itself was not independently recorded.
         # No spacer, viewport event, refinding after typing or rescue gesture.
-        page.mouse.move(before["x"] + before["width"] / 2, 400)
-        page.mouse.wheel(0, before["y"] - 780)
-        page.wait_for_function("""input=>Math.abs(input.getBoundingClientRect().top-780)<=1""",
-                               arg=original_input, timeout=5000)
+        live.EVIDENCE["reference_position_before_wheel"] = reference_position_observation(original_input)
+        live.EVIDENCE["reference_wheel_delta"] = before["y"] - 780
+        try:
+            page.mouse.move(before["x"] + before["width"] / 2, 400)
+            page.mouse.wheel(0, before["y"] - 780)
+            page.wait_for_function("""input=>Math.abs(input.getBoundingClientRect().top-780)<=1""",
+                                   arg=original_input, timeout=5000)
+        finally:
+            live.EVIDENCE["reference_position_after_wait"] = reference_position_observation(original_input)
         positioned = original_input.bounding_box()
         expected_input_width = OBSERVED_INPUT_CONTENT_WIDTH[engine] + NATIVE_INPUT_HORIZONTAL_PADDING
         live.EVIDENCE["reference_geometry"] = {"before_scroll": before, "positioned": positioned,

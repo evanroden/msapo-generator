@@ -19,6 +19,74 @@ URL = "http://127.0.0.1:8537"
 RECEIPT_PREFIX = "QA Training review receipt: "
 
 
+def observed_receipt_predicate(predicate):
+    """Observe the unchanged predicate; never change polling or its outcome."""
+    return """payload => {
+      const original = (""" + predicate + """);
+      let answer, originalError, didThrow = false;
+      try { answer = original(payload); } catch (error) { originalError = error; didThrow = true; }
+      try {
+        const key = '__qaTrainingReceiptObservation';
+        let slot = globalThis[key];
+        if (!slot || slot.payload !== payload) {
+          slot = globalThis[key] = {payload, started: performance.now(),
+            count: 0, dropped: 0, transitions: [], last: null};
+        }
+        const text = document.body?.innerText || '';
+        const at = text.lastIndexOf(payload.prefix);
+        let parsed = null, parseOK = false;
+        if (at >= 0) {
+          try { parsed = JSON.parse(text.slice(at + payload.prefix.length).trim()); parseOK = true; }
+          catch {}
+        }
+        const state = {
+          result: answer === true, threw: didThrow,
+          visible: document.visibilityState === 'visible',
+          ready: String(document.readyState).slice(0, 32),
+          script: String(document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state') || '').slice(0, 32),
+          prefix: at >= 0, parseOK,
+          reviewsMatch: parseOK && (payload.wanted.reviews === null || parsed?.reviews === payload.wanted.reviews),
+          savedMatch: parseOK && (payload.wanted.saved === null || parsed?.saved_revision === payload.wanted.saved),
+          previousMatch: parseOK && (payload.wanted.previous === null || parsed?.review_revision !== payload.wanted.previous),
+          includedMatch: parseOK && Array.isArray(parsed?.tables) &&
+            (payload.wanted.included === null || parsed.tables.some(
+              t => Array.isArray(t.rows) && t.rows.some(r => r[0] === 'Synthetic drill')) === payload.wanted.included)
+        };
+        slot.count = Math.min(slot.count + 1, 1000000);
+        const signature = JSON.stringify(state);
+        const observation = {ms: Math.max(0, performance.now() - slot.started), ...state};
+        if (signature !== slot.signature) {
+          if (slot.transitions.length < 64) slot.transitions.push(observation);
+          else slot.dropped = Math.min(slot.dropped + 1, 1000000);
+          slot.signature = signature;
+        }
+        slot.last = observation;
+      } catch {}
+      if (didThrow) throw originalError;
+      return answer;
+    }"""
+
+
+def stop_initial_trace(context, folder, evidence, *, failed):
+    """Retain only the first-entry trace, capped at 16 MiB, without hiding failure."""
+    try:
+        # Stage outside the uploaded artifact directory: a failed exporter may
+        # leave an arbitrarily large partial ZIP even when stop() raises.
+        with tempfile.TemporaryDirectory(prefix='training-initial-trace-', ignore_cleanup_errors=True) as temporary:
+            path = Path(temporary) / 'trace.zip'
+            context.tracing.stop(path=str(path))
+            size = path.stat().st_size
+            if size > 16 * 1024 * 1024:
+                evidence['initial_trace'] = {'retained': False, 'bytes': size, 'reason': 'size cap'}
+            else:
+                (folder / 'initial-receipt-trace.zip').write_bytes(path.read_bytes())
+                evidence['initial_trace'] = {'retained': True, 'bytes': size}
+    except Exception as error:
+        evidence['initial_trace'] = {'retained': False, 'error_type': type(error).__name__}
+        if not failed:
+            raise
+
+
 def receipt(page, *, reviews=None, included=None, saved=None, previous_review=None):
     payload = {"prefix": RECEIPT_PREFIX, "wanted": {"reviews": reviews, "included": included,
         "saved": saved, "previous": previous_review}}
@@ -36,7 +104,7 @@ def receipt(page, *, reviews=None, included=None, saved=None, previous_review=No
         document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')==='notRunning';
     }'''
     try:
-        page.wait_for_function(predicate, arg=payload, timeout=30000)
+        page.wait_for_function(observed_receipt_predicate(predicate), arg=payload, timeout=30000)
     except Exception as exc:
         probe = page.evaluate('''payload => {
           const candidates=[];
@@ -66,7 +134,13 @@ def receipt(page, *, reviews=None, included=None, saved=None, previous_review=No
           let parsedBodyReceipt=null, bodyReceiptError=null;
           try{parsedBodyReceipt=bodyReceipt===null?null:JSON.parse(bodyReceipt)}
           catch(error){bodyReceiptError=String(error)}
+          const observation = globalThis.__qaTrainingReceiptObservation;
           return {
+            polling_observation: observation ? {
+              count: observation.count, dropped: observation.dropped,
+              elapsed_ms: Math.max(0, performance.now() - observation.started),
+              transitions: observation.transitions, last: observation.last
+            } : null,
             script_state:document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')||null,
             body_has_prefix:bodyText.includes(payload.prefix),
             body_receipt:bodyReceipt?.slice(0,1200)||null,
@@ -114,15 +188,21 @@ def journey(engine, name):
     page.on('pageerror', lambda error: errors.append(str(error)))
     evidence = {"browser": name, "synthetic": True, "steps": [], "errors": errors, "external": external}
     try:
-        page.goto(URL + '/?case=' + name, wait_until='domcontentloaded')
-        # Hosted Chromium/WebKit both complete this first full Streamlit render
-        # just beyond the old 30s receipt budget. Keep every Training receipt
-        # predicate strict; only give the initial app script a bounded startup
-        # budget before checking the exact review state.
-        page.wait_for_function("""() =>
-          document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')==='notRunning'
-        """, timeout=45000)
-        evidence['steps'].append(receipt(page, reviews=0, included=False))
+        context.tracing.start(screenshots=True, snapshots=True, sources=False)
+        initial_failed = True
+        try:
+            page.goto(URL + '/?case=' + name, wait_until='domcontentloaded')
+            # Hosted Chromium/WebKit both complete this first full Streamlit render
+            # just beyond the old 30s receipt budget. Keep every Training receipt
+            # predicate strict; only give the initial app script a bounded startup
+            # budget before checking the exact review state.
+            page.wait_for_function("""() =>
+              document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')==='notRunning'
+            """, timeout=45000)
+            evidence['steps'].append(receipt(page, reviews=0, included=False))
+            initial_failed = False
+        finally:
+            stop_initial_trace(context, folder, evidence, failed=initial_failed)
         page.get_by_text('Import Training from a saved source', exact=True).click()
         page.get_by_role('button', name='Review this Training table', exact=True).click()
         reviewed = receipt(page, reviews=1, included=False)
