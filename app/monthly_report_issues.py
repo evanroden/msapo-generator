@@ -722,10 +722,14 @@ def _render_issue_evidence(item, draft, options, p, field, prefix, cycle):
                               p + "_note", note, field, identity=identity, cycle=cycle, height=90, max_chars=4000)
     _render_issue_period_confirmation(item, draft, p, identity, cycle)
     if options or references:
+        source_key = p + "_sources_" + _digest(list(options))
         selected = _issue_control(st.multiselect, "Supporting source pages",
-            p + "_sources_" + _digest(list(options)),
-            [ref for ref in references if ref in options], field,
-            identity=identity, cycle=cycle, options=list(options), format_func=options.get) if options else []
+            source_key, [ref for ref in references if ref in options], field,
+            identity=identity, cycle=cycle, options=list(options),
+            format_func=options.get) if options else []
+        if options:
+            from app.monthly_report_issue_page_gallery import render_page_gallery
+            render_page_gallery(draft, options, selected, p, source_key, identity, field)
         missing = tuple(ref for ref in references if ref not in options)
         if missing:
             notice = st.empty()
