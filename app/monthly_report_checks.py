@@ -299,6 +299,16 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
         key, text = item[:2]
         narrative = item[2] if len(item) >= 3 else None
         structural_month = len(item) == 4 and item[3]
+        # Narrative renderers split VT/FF and the Unicode line separators into
+        # paragraphs. Preserve those successful controls; reject characters
+        # that reach Word's XML writer unchanged instead of stripping content.
+        invalid = sorted(set(re.findall(r"[\x00-\x08\x0e-\x1b\x1f\ud800-\udfff\ufffe\uffff]", text)))
+        if invalid:
+            codes = ", ".join(f"U+{ord(character):04X}" for character in invalid)
+            checks.append(ReportCheck(
+                "text_character",
+                f"Remove unsupported text characters ({codes}) from {key.replace('_', ' ')} before creating the report.",
+                True, key))
         if contains_price(text):
             checks.append(ReportCheck("pricing", f"Remove pricing from {key.replace('_', ' ')}. Client reports cannot contain prices.", True, key))
         phrases = placeholder_matches(text)
