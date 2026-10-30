@@ -100,8 +100,19 @@ def native_action_lines(source: ReportSource, *, passage_pages=None):
         text = source.page_texts[number - 1]
         if page_status(text, unreadable=number in source.needs_vision)[0] != "technical":
             continue
-        lines = (tuple(p.text for p in passage_pages[number][0] if p.field == "actions")
-                 if number in passage_pages else text.splitlines())
+        if number in passage_pages:
+            # Validated native PDF action spans are already complete, exact
+            # source occurrences. Do not join unrelated labeled blocks.
+            lines = tuple(p.text for p in passage_pages[number][0]
+                          if p.field == "actions")
+        else:
+            # An unlabelled PDF often wraps "Inspected ... confirmed it" and
+            # "did not start" into separate physical text lines. The Activity
+            # editor already uses this conservative qualifier-aware grouping.
+            # Reuse it *per page* before claiming completed-action evidence;
+            # a truncated first line must not acquire a false positive cite.
+            from app.monthly_report_structured_uploads import _logical_activity_lines
+            lines = _logical_activity_lines(text.splitlines())
         for line in lines:
             line = line.strip()
             uncertain_work = re.search(
