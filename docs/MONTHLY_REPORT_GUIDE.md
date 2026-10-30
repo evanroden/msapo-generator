@@ -93,9 +93,25 @@ chilled-water tables keep their original meanings and headings. Unclear site
 matches or conflicting table structures need a decision; missing numbers are not
 invented. Existing reports retain their saved/manual values.
 
-Reviewed outage diagrams saved in the system supply shared ENFRA defaults across
-contracts. Procedure changes are under **ENFRA outage procedures**. A different
-site's later diagram does not silently overwrite an established standard.
+Outage diagrams belong to the selected contract, not to all ENFRA contracts.
+Open **Contract outage procedures**, then edit the applicable business-hours or
+after-hours procedure. Upload and review its pictures using the existing editor.
+Edits stay in this report unless you choose **Save as contract default** or
+**Replace contract default**. The saved version and source profile are shown
+beside these actions. **Use contract default in this report** replaces only that
+procedure's pictures; report notes, team charts and contacts stay unchanged.
+
+Opening a report never discovers other contracts' diagrams or writes shared
+defaults. Existing pages and deliberate omissions remain pinned on reopen and
+monthly rollover. A fresh optional slot marked omitted also requires the explicit
+**Use contract default in this report** action; saving a default does not override
+that choice. Team charts and contacts retain their existing report/site controls.
+
+Legacy global diagrams and history are retained without migration on open. A
+legacy diagram is offered only when its recorded origin matches this contract:
+choose **Preview legacy procedure**, inspect it, then **Adopt legacy procedure for
+this contract**. Adoption saves a contract default but does not replace current
+report pages. No other contract's source information or diagrams are suggested.
 
 ### New files and pictures
 

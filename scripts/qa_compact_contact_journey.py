@@ -292,12 +292,17 @@ def browser_task(browser_type, name, *, held_recovery=False):
             controls = page.get_by_test_id('stExpander').filter(has=page.locator('summary').get_by_text('Synthetic fault controls',exact=True))
             if not controls.evaluate("n => (n.matches('details') ? n : n.querySelector('details')).open"):
                 controls.locator('summary').click()
+            phone_start = page.evaluate('window.ENFRAContactObservation.phoneEvents.at(-1)?.sequence || 0')
+            previous_phone = state['working']['contacts']['rows'][0][3]
             if held_recovery and fault == 'after':
                 edit_contact_during_recovery_rerun(page, contacts, gate, state, record)
             else:
                 page.get_by_role('button',name=f'Fail next synthetic shared save {fault} commit',exact=True).click()
                 contacts.get_by_role('button',name='Edit contact',exact=True).first.click()
             contacts.get_by_role('textbox',name='Phone',exact=True).fill(phone)
+            entry = page.evaluate('(start)=>window.ENFRAContactObservation.phoneEvents.filter(e=>e.sequence>start)', phone_start)
+            record.setdefault('fault_phone_entries', {})[fault] = entry
+            validate_native_phone_entry(entry, previous_phone, phone)
             prior = state
             contacts.get_by_role('button',name='Remove contact',exact=True).click()
             expected_write = {'attempts':len(prior['attempts']) + 1,
