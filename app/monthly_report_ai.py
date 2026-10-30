@@ -476,6 +476,14 @@ def normalize_facts(value, source, pages, profile, period, vendors=()):
             raise ValueError(
                 "A fact's evidence quote was not found on its page. Review the source manually."
             )
+        # The evidence quote is retained in fact history and later serialized
+        # into model drafting prompts. Price-free suggested wording is not
+        # sufficient when the supporting verbatim quote still has an amount.
+        if contains_price(quote):
+            raise ValueError(
+                "A fact's evidence quote contains pricing. Choose a price-free excerpt; "
+                "no facts were accepted."
+            )
         if contains_price(text) or numbers(text) - numbers(quote):
             raise ValueError(
                 "A suggested fact included pricing or unsupported numbers. No facts were accepted."
@@ -564,10 +572,20 @@ def drafting_request(block_key, sources, period, vendors=(), tags=(), instructio
         raise ValueError(
             "Choose a supported narrative and keep redrafting notes under 2,000 characters."
         )
-    facts = tuple(
+    candidates = tuple(
         f for s in sources for f in s.facts if f.kind in BLOCK_KINDS[block_key]
     )
+    # Historical facts may have been accepted before evidence quotes were
+    # screened for price-bearing material. Keep those saved records intact,
+    # but never serialize them into an external drafting request.
+    facts = tuple(f for f in candidates if not (
+        contains_price(f.text) or contains_price(f.quote)))
     if not facts:
+        if candidates:
+            raise ValueError(
+                "All available facts for this section contain pricing in their "
+                "wording or source quotes. Read a price-free excerpt; saved facts were not changed."
+            )
         raise ValueError(
             "No extracted facts for this section yet. Read sources or add Copilot notes first."
         )
@@ -624,6 +642,15 @@ def normalize_draft(value, key, facts, sources):
             raise ValueError("A draft cited a missing source or page.")
         if problems := _unverified_fact_dates(cited, sources):
             raise ValueError(problems[0])
+        # Cached proposals can cite older facts that would now be removed
+        # from an outward drafting request. They may be inspected, but must
+        # not be accepted into a new reviewed paragraph without correction.
+        if any(contains_price(f.text) or contains_price(f.quote) for f in cited):
+            raise ValueError(
+                "A cited fact or source quote contains pricing. "
+                "Re-read price-free evidence before using this suggestion. "
+                "Your existing narrative was preserved."
+            )
         refs = tuple(
             dict.fromkeys(
                 source_reference(source_map[f.source_id], f.page) for f in cited
