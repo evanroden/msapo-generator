@@ -8,3 +8,10 @@
 /* Reserve the direct Review action from native render; no late toolbar mount. */
 .st-key-epc_workspace_monthly .epc-review-shortcut {font:inherit;color:inherit;background:var(--background-color,#fff);border:1px solid #557f7f;border-radius:.4rem;min-height:44px;flex:0 0 auto;padding:.4rem .6rem;cursor:pointer;}
 .st-key-epc_workspace_monthly .epc-review-shortcut:focus-visible {outline:3px solid #557f7f;outline-offset:2px;}
+
+/* Monthly follows report order; the controls never remount section editors. */
+.st-key-epc_workspace_monthly .epc-section-back,
+.st-key-epc_workspace_monthly .epc-section-next {font:inherit;color:inherit;background:var(--background-color,#fff);border:1px solid #557f7f;border-radius:.4rem;min-height:44px;flex:0 0 auto;padding:.4rem .6rem;cursor:pointer;}
+.st-key-epc_workspace_monthly .epc-section-back:focus-visible,
+.st-key-epc_workspace_monthly .epc-section-next:focus-visible {outline:3px solid #557f7f;outline-offset:2px;}
+.st-key-epc_workspace_monthly .epc-section-progress {flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.9rem;}

@@ -87,12 +87,16 @@ def _source_context_marker(source, number):
     text = source.page_texts[number - 1] if 1 <= number <= len(source.page_texts) else None
     values = (source.sha256, number, text, dict(source.captions).get(number, ""),
               source.vendor, source.facility, source.service_date, source.work_order)
+    from app.monthly_report_mbcx_financial_pages import has_financial_page_review
+    if has_financial_page_review(source, number):
+        values = (*values, source.financial_source_review.fingerprint if source.financial_source_review else "",
+                  tuple((p.fingerprint, p.source_review_fingerprint, p.semantics, p.version) for p in source.financial_page_reviews if p.number == number))
     digest = hashlib.sha256(json.dumps(values, ensure_ascii=False).encode()).hexdigest()
     return f"{_SOURCE_CONTEXT}{source.id}:{number}:{digest}"
 
 
 
-def current_source_page_review_matches(block, index, source, number):
+def current_source_page_review_matches(block, index, source, number, *, profile=None):
     """Read-only current per-page evidence, not source/site admission or consent.
 
     Whole-source fingerprints may change after a genuine caption review. The
@@ -123,7 +127,7 @@ def current_source_page_review_matches(block, index, source, number):
         return False
     markers = [ref for ref in references if ref.startswith(_SOURCE_CONTEXT)]
     return (markers == [_source_context_marker(source, number)]
-            and asset_reviewed(block, index) and page_allowed(source, number))
+            and asset_reviewed(block, index) and page_allowed(source, number, profile=profile, destination=block.key))
 
 
 def refresh_asset_source_context(block, sources):

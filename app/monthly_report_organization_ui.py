@@ -226,7 +226,9 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
             st.button(action, key=prefix + "_organization_open_" + key,
                       on_click=_change_part, args=(prefix, active_key, key))
             return
+        contract_inclusion = False
         def render_editor():
+            nonlocal contract_inclusion
             st.button("Done", key=prefix + "_organization_close_" + key,
                       on_click=_change_part, args=(prefix, active_key, ""))
             # The specialized editors retain the explicit Include of a left-out part.
@@ -237,18 +239,27 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
                                         show_preview=show_preview, directory_baseline=canonical_before)
                 return _edit_notes(changed, prefix, field, canonical_before=canonical_before)
             if key == "org_chart":
+                # Explicit saved-chart adoption remounts only this chart's
+                # registered fields; old same-node-key values must not replay.
+                epoch = st.session_state.get(prefix + "_chart_default_epoch", 0)
+                def chart_field(name, default):
+                    return field(name + ("_chart_default_" + str(epoch) if epoch else ""), default)
                 if block.org_nodes:
                     changed = _include_left_out(spec, block, prefix)
-                    changed = edit_org_chart(current_draft, changed, prefix, assets, field, show_preview=show_preview)
+                    changed = edit_org_chart(current_draft, changed, prefix, assets, chart_field, show_preview=show_preview)
                     return _edit_notes(changed, prefix, field, canonical_before=canonical_before)
                 changed = edit_content(spec, block)
                 with st.expander("Build an editable team chart (optional)"):
                     changed = edit_org_chart(
                         replace(current_draft, blocks=tuple(changed if b.key == key else b for b in current_draft.blocks)),
-                        changed, prefix, assets, field, show_preview=show_preview,
+                        changed, prefix, assets, chart_field, show_preview=show_preview,
                     )
                 return changed
-            return edit_content(spec, block)
+            from app.monthly_report_workflow_defaults_ui import render_contract_procedure
+            changed = edit_content(spec, block)
+            changed, contract_inclusion = render_contract_procedure(
+                current_draft, changed, assets, prefix)
+            return changed
 
         switch_key = prefix + "_deferred_contact_switch"
         settling = key == "contact_matrix" and isinstance(st.session_state.get(switch_key), dict)
@@ -258,10 +269,18 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
                 changed = render_editor()
         else:
             changed = render_editor()
+        chart_included = False
+        if key == "org_chart":
+            from app.monthly_report_org_chart_defaults_ui import render_chart_defaults
+            chart_draft = replace(current_draft, blocks=tuple(changed if b.key == key else b for b in current_draft.blocks))
+            changed, chart_included = render_chart_defaults(chart_draft, changed, assets, prefix)
+            if chart_included:
+                epoch_key = prefix + "_chart_default_epoch"
+                st.session_state[epoch_key] = st.session_state.get(epoch_key, 0) + 1
         # Opening and closing an unchanged part must not invalidate its saved
         # review; an explicit Include of a left-out part is a real change.
         from app.monthly_report_guided import included_left_out
-        updated[key] = (changed if included_left_out(prefix, key)
+        updated[key] = (changed if chart_included or contract_inclusion or included_left_out(prefix, key)
                         or replace(changed, source=block.source) != block else block)
         if settling:
             request = st.session_state[switch_key]
@@ -296,8 +315,8 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
     for key, title in parts:
         with slots[key]:
             render_part(key, title)
-    with st.expander("ENFRA outage procedures", expanded=False):
-        st.caption("Saved procedures are included when selected. Changes here affect this report.")
+    with st.expander("Contract outage procedures", expanded=False):
+        st.caption("Use this contract’s procedures. Changes affect this report unless you explicitly save a contract default.")
         for key, title in ORGANIZATION_PARTS:
             if key in WORKFLOW_KEYS:
                 render_part(key, title)

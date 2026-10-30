@@ -101,7 +101,7 @@ def test_first_report_general_template_and_named_group_can_be_resumed(monkeypatc
     assert next(w for w in app.text_input if w.label == "Name for this group (optional)").value == "Synthetic Region"
     assert not any(w.label == "Site / report" for w in app.selectbox)
     assert next(w for w in app.text_input if w.label == "Prepared by").value == "Synthetic Editor"
-    assert not any(w.label.startswith("Include ") for w in app.checkbox)
+    assert not any(w.label.startswith("Include ") and w.label != "Include thermal capacity" for w in app.checkbox)
     assert not any(w.label == "Report appearance" for w in app.expander)
     assert not any("logo" in w.label.lower() for w in app.get("file_uploader"))
     assert not any(w.label in ("Change logos", "Manage shared logos") for w in app.button)
@@ -154,7 +154,7 @@ def test_from_scratch_regional_report_generates_and_next_month_keeps_design(monk
     next(b for b in app.button if b.label == "Use ENFRA template").click().run()
     next(w for w in app.text_input if w.label == "Your name").set_value("Synthetic Editor").run()
     next(b for b in app.button if b.label == "Start this report").click().run()
-    assert not any(w.label.startswith("Include ") for w in app.checkbox)
+    assert not any(w.label.startswith("Include ") and w.label != "Include thermal capacity" for w in app.checkbox)
     assert any(w.label == "Activity summary" for w in app.text_area)
     next(w for w in app.text_area if w.label == "Activity summary").set_value("Synthetic team completed the September inspection.").run()
     step(app, 3)
@@ -186,7 +186,7 @@ def test_from_scratch_regional_report_generates_and_next_month_keeps_design(monk
     next(w for w in next_app.text_input if w.label == "Prepared by").set_value("Synthetic Returning Editor").run()
     assert next(w for w in next_app.text_input if w.label == "Name for this group (optional)").value == "Synthetic Lakes Region"
     assert next(w for w in next_app.checkbox if w.label == "This is a regional report").value
-    assert not any(w.label.startswith("Include ") for w in next_app.checkbox)
+    assert not any(w.label.startswith("Include ") and w.label != "Include thermal capacity" for w in next_app.checkbox)
     step(next_app, 2)
     assert next(w for w in next_app.text_area if w.label == "Activity summary").value == ""
     step(next_app, 3)

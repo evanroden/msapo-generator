@@ -336,7 +336,7 @@ def _contact_add_ready(draft, before, after, prefix):
                for row in after.rows[receipt[1]:])
 
 
-def _keep_contact_correction(draft, before, after, prefix):
+def _keep_contact_correction(draft, before, after, prefix, *, acknowledge=None):
     from app import monthly_report_directory as directory
     intent = f"directory-add-intent:{draft.profile.key}"
     if (before.key != "contact_matrix" or before.rows == after.rows or before.extra_tables
@@ -346,13 +346,24 @@ def _keep_contact_correction(draft, before, after, prefix):
     try:
         shared = directory.automatically_keep_directory_contact_edits(
             draft.profile, before, after, draft.prepared_by)
+        if acknowledge is not None:
+            acknowledge(shared, False)
         return shared, False
     except (ValueError, OSError):
+        # Definite storage failure is terminal for this explicit action. Record
+        # that fact before readback or any UI/session operation can yield.
+        if acknowledge is not None:
+            marker = _contact_pending_marker(draft)
+            pending = replace(after, references=tuple(dict.fromkeys((*after.references, marker))),
+                              reviewed_fingerprint="", client_reviewed_fingerprint="")
+            acknowledge(pending, True)
         try:
             shared = _readback_contact_correction(draft, before, after)
         except (ValueError, OSError):
             shared = None
         if shared is not None:
+            if acknowledge is not None:
+                acknowledge(shared, False)
             st.info("The contact correction is verified in the shared directory. The removal was not applied; review the contact before removing it.")
             return shared, True
         return _pending_contact_correction(draft, before, after, prefix), True
@@ -367,18 +378,50 @@ def _pending_contact_correction(draft, before, after, prefix):
     return pending
 
 
-def _queue_contact_recovery(prefix, expected, action):
-    st.session_state[prefix + "_standing_action"] = (expected, action)
+def _queue_contact_recovery(prefix, expected, action, control):
+    current = st.session_state.get(prefix + "_standing_action")
+    if current is not control or current['expected'] != expected or current['phase'] != 'offered':
+        return
+    # The displayed generation owns one delivered action. Repeated old native
+    # callbacks cannot re-arm it or overwrite a newer generation.
+    current.update(action=action, phase='queued')
+
+
+def _contact_retry_baseline_unchanged(draft, before):
+    """After an interrupted writer, require proof that no commit occurred."""
+    from app import monthly_report_directory as directory
+    import re
+    versions = [re.fullmatch(r"directory:([^:]+):([1-9][0-9]*)", ref)
+                for ref in before.references if ref.startswith('directory:')]
+    if len(versions) != 1 or versions[0] is None:
+        return False
+    try:
+        historical = directory.load_directory(draft.profile.contract, int(versions[0][2]))
+        latest = directory.load_directory(draft.profile.contract)
+        return (historical is not None and not historical.archived and latest == historical
+                and library._contract_directory(historical.contract) == versions[0][1])
+    except (ValueError, OSError):
+        return False
 
 
 def _recover_contact_correction(draft, block, prefix):
     """Pending intent survives report reload; retry is always an explicit action."""
     from app import monthly_report_directory as directory
     marker = _contact_pending_marker(draft)
-    action = st.session_state.pop(prefix + "_standing_action", None)
-    if action is not None and action[0] != block:
+    control = st.session_state.get(prefix + "_standing_action")
+    if (isinstance(control, dict) and control.get('expected') != block
+            and control.get('phase') in {'queued', 'interrupted'}):
         st.warning("Contacts changed after this recovery choice was shown. Review the current correction before choosing again.")
-        action = None
+    if not isinstance(control, dict) or control.get('expected') != block:
+        control = None
+    action = control.get('action') if control is not None else None
+
+    def acknowledge(result, failed):
+        # Mutate the already-owned receipt without a session-state access/yield.
+        # Its identity is retained until a new displayed control replaces it.
+        if control is not None:
+            control.update(phase='terminal', result=(result if result is not None else block,
+                                                     failed or result is None))
     if marker not in block.references:
         return block, False
     after = replace(block, references=tuple(ref for ref in block.references if ref != marker))
@@ -406,29 +449,67 @@ def _recover_contact_correction(draft, block, prefix):
         except (ValueError, OSError):
             shared = None
         if shared is not None:
+            acknowledge(shared, False)
             st.session_state.pop(key, None)
             return shared, False
     def pending_controls():
         st.warning("This shared contact correction is still pending; no automatic retry or removal has been performed.")
-        st.button("Retry shared contact correction", key=prefix + "_retry_standing", disabled=receipt is None,
-                  on_click=_queue_contact_recovery, args=(prefix, block, "retry"))
-        st.button("Keep correction in this report only", key=prefix + "_report_only_standing",
-                  on_click=_queue_contact_recovery, args=(prefix, block, "report_only"))
+        current = st.session_state.get(prefix + "_standing_action")
+        if (not isinstance(current, dict) or current.get('expected') != block
+                or current.get('phase') == 'terminal'):
+            current = dict(expected=block, generation=uuid4().hex, phase='offered', action=None)
+            st.session_state[prefix + "_standing_action"] = current
+        generation = current['generation']
+        st.button("Retry shared contact correction", key=prefix + "_retry_standing_" + generation,
+                  disabled=receipt is None, on_click=_queue_contact_recovery,
+                  args=(prefix, block, "retry", current))
+        st.button("Keep correction in this report only", key=prefix + "_report_only_standing_" + generation,
+                  on_click=_queue_contact_recovery, args=(prefix, block, "report_only", current))
+
+    if control is not None and control['phase'] == 'terminal':
+        result, failed = control['result']
+        if failed:
+            pending_controls()
+        return result, failed
+    if control is not None and control['phase'] == 'interrupted':
+        # No successful full-correction readback above. Resume the explicit
+        # intent only when the complete original directory is still current.
+        # Unknown/changed storage must never cause an automatic second write.
+        if receipt is None or not _contact_retry_baseline_unchanged(draft, receipt['before']):
+            acknowledge(block, True)
+            pending_controls()
+            return block, True
+        control['phase'] = 'queued'
 
     # Resolve a delivered recovery choice before mounting the next Edit controls.
     # Otherwise obsolete recovery siblings disappear on the next passive rerun,
     # changing the native editor's parent path during an unrelated press.
-    if action is not None and action[1] == "retry" and receipt is not None:
+    if action == "retry" and receipt is None:
+        acknowledge(block, True)
+        pending_controls()
+        return block, True
+    if action is not None and action == "retry" and receipt is not None:
         readiness = _contact_add_ready(draft, receipt['before'], after, prefix)
         if readiness is False:
+            acknowledge(after, False)
             st.session_state.pop(key, None)
             st.info("Finish the new contact's site, role and name before it can be kept for future reports. Your Add intent is retained.")
             return after, False
         if readiness is None:
+            acknowledge(block, True)
             pending_controls()
             st.warning("The saved contact baseline is still unavailable. No shared write was attempted; your correction remains pending.")
             return block, True
-        shared, failed = _keep_contact_correction(draft, receipt['before'], after, prefix)
+        from streamlit.runtime.scriptrunner_utils.exceptions import RerunException
+        try:
+            shared, failed = _keep_contact_correction(
+                draft, receipt['before'], after, prefix, acknowledge=acknowledge)
+        except RerunException:
+            if control['phase'] == 'queued':
+                control['phase'] = 'interrupted'
+            raise
+        if control['phase'] != 'terminal':
+            acknowledge(shared, failed)
         if shared is not None and (not failed or shared.source == "Library"):
             st.session_state.pop(key, None)
             return shared, False
@@ -436,10 +517,12 @@ def _recover_contact_correction(draft, block, prefix):
             pending_controls()
             return shared, True
         st.warning("The correction could not be applied to the current directory. It remains pending for comparison.")
-    if action is not None and action[1] == "report_only":
-        st.session_state.pop(key, None)
+    if action is not None and action == "report_only":
         intent = f"directory-add-intent:{draft.profile.key}"
-        return replace(after, references=tuple(ref for ref in after.references if ref != intent)), False
+        result = replace(after, references=tuple(ref for ref in after.references if ref != intent))
+        acknowledge(result, False)
+        st.session_state.pop(key, None)
+        return result, False
     pending_controls()
     return block, True
 
