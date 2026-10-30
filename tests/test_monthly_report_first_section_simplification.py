@@ -122,7 +122,8 @@ def test_no_redundant_cover_panel_and_cover_preview_stays_with_import():
     assert "render_cover(" not in source
     assert "monthly_cover_preview_sticky" in source
     assert "render_pending_cover_selection" in source
-    assert source.count('class="epc-section-selector"') == 1
+    assert 'class="epc-section-selector"' not in source
+    assert source.count('class="epc-section-next"') == 1
     assert 'navigation_key="monthly_report_navigation"' in source
     css = Path(guided.__file__).with_name("workspace_layout.css").read_text()
     selector = '.epc-workspace > [data-testid="stLayoutWrapper"]:has(> .st-key-monthly_report_navigation)'

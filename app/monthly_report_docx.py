@@ -30,6 +30,7 @@ from app.monthly_report_render_compat import rendering_docx
 from app import pdf_converter
 from app import monthly_report_render_jobs as monthly_render_jobs
 from app.ocr import SUPPORTED_IMAGE_SUFFIXES, _MAX_PIXELS_PER_FRAME
+from app.monthly_report_cover_images import image_byte_limit, image_size_error, check_cover_headroom, cover_codec_header
 from app.monthly_report_checks import preflight
 from app.monthly_report_model import ReportDraft, included_sections, report_filename, used_block_keys, used_asset_references
 
@@ -49,7 +50,7 @@ class ReportImage:
 
 def normalize_report_image(raw: bytes, suffix: str, *, line_art: bool = False,
                            frame: tuple[float, float] = (7, 9), dpi: int = 200,
-                           preserve_transparency: bool = False) -> ReportImage:
+                           preserve_transparency: bool = False, cover_photo: bool = False) -> ReportImage:
     """Print normalization; vision still uses the stricter OCR request budgets.
 
     Line art must stay lossless, so the JPEG-only vision encoder is unsuitable
@@ -57,10 +58,20 @@ def normalize_report_image(raw: bytes, suffix: str, *, line_art: bool = False,
     Logos opt into their original alpha channel. Never infer transparency by
     removing white or dark pixels: those can be intentional parts of a mark.
     """
-    if suffix.lower() not in SUPPORTED_IMAGE_SUFFIXES or len(raw) > 30 * 1024 * 1024:
-        raise ValueError("Choose a supported image no larger than 30 MB.")
+    if len(raw) > image_byte_limit(cover_photo=cover_photo):
+        raise ValueError(image_size_error(cover_photo=cover_photo))
+    if suffix.lower() not in SUPPORTED_IMAGE_SUFFIXES:
+        raise ValueError("Choose a supported image format, such as PNG or JPEG.")
     if dpi not in (96, 150, 200) or min(frame) <= 0 or max(frame) > 11:
         raise ValueError("Invalid report image frame.")
+    if cover_photo:
+        check_cover_headroom(len(raw))
+        header = cover_codec_header(raw)
+        if header is not None:
+            if header.width * header.height > _MAX_PIXELS_PER_FRAME:
+                raise ValueError("Image is too large to decode safely. Resize it before uploading.")
+            check_cover_headroom(len(raw), pixels=header.width * header.height,
+                                 image_format=header.format, coefficient_bytes=header.coefficient_bytes)
     if suffix.lower() in {".heic", ".heif", ".hif"}:
         from pillow_heif import register_heif_opener
         register_heif_opener(thumbnails=False)
@@ -77,8 +88,27 @@ def normalize_report_image(raw: bytes, suffix: str, *, line_art: bool = False,
             raise ValueError("Image frame information could not be read. Export a fresh single-image copy.") from exc
         if frame_count != 1:
             raise ValueError("Choose a single image; use a PDF for multiple pages.")
-        oriented = ImageOps.exif_transpose(image)
-        oriented.thumbnail((round(frame[0] * dpi), round(frame[1] * dpi)), Image.Resampling.LANCZOS)
+        if cover_photo:
+            if image.format not in ("PNG", "JPEG", "WEBP", "HEIF"):
+                raise ValueError("Choose a PNG, JPEG, WebP or HEIC/HEIF photograph.")
+            if header is not None and (image.format, image.width, image.height) != (header.format, header.width, header.height):
+                raise ValueError("Choose a fresh PNG or JPEG export; the photograph's dimensions are inconsistent.")
+            check_cover_headroom(len(raw), pixels=image.width * image.height, image_format=image.format,
+                                 coefficient_bytes=header.coefficient_bytes if header else 0)
+        target = (round(frame[0] * dpi), round(frame[1] * dpi))
+        if cover_photo:
+            # Decode bounds were checked on the ORIGINAL dimensions. Reduce
+            # before EXIF's copy/transpose so a 40 MP input does not create a
+            # second full-resolution raster. Account for rotated frame axes.
+            orientation = image.getexif().get(274, 1)
+            source_target = target[::-1] if orientation in (5, 6, 7, 8) else target
+            # thumbnail computes final geometry before its own JPEG draft,
+            # avoiding rounding drift from changing source dimensions first.
+            image.thumbnail(source_target, Image.Resampling.LANCZOS)
+            oriented = ImageOps.exif_transpose(image)
+        else:
+            oriented = ImageOps.exif_transpose(image)
+            oriented.thumbnail(target, Image.Resampling.LANCZOS)
         rgba = oriented.convert("RGBA")
         if preserve_transparency:
             normalized = rgba

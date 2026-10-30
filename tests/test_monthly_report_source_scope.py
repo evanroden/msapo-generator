@@ -115,17 +115,26 @@ def test_absent_scope_record_preserves_legacy_source_and_report_fingerprints(sam
         return sha256(json.dumps(record, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     source_record = asdict(draft.sources[0]); source_record.pop("scope_review")
     source_record.pop("pdf_text_blocks")  # Absent in the historical schema too.
+    source_record.pop("financial_source_review")
+    source_record.pop("financial_page_reviews")
     draft_record = asdict(draft)
+    draft_record.pop("cover_recovery_request")  # Private intent did not exist in old reports.
     # The historical report schema predates occurrence metadata as well as
     # source-scope receipts. Current asdict() otherwise invents a new empty
     # field in this independently reconstructed old-format record.
     for block in draft_record["blocks"]:
         block.pop("asset_instances")
+        block.pop("cover_original")
     for source in draft_record["sources"]:
         source.pop("scope_review")
         source.pop("pdf_text_blocks")
+        source.pop("financial_source_review")
+        source.pop("financial_page_reviews")
     assert draft.sources[0].fingerprint == old_hash(source_record)
     assert draft.fingerprint == old_hash(draft_record)
+    # Independently evaluated on immutable #635 tree3ef4dd54, before adding
+    # cover recovery. Do not derive this expected value from current asdict.
+    assert draft.fingerprint == "d527d3e4764a82d65db3da8ccdb51fa1d4ebc9b763a7c97aab2382d1f2246329"
     assert library.draft_from_dict(draft_record) == draft
 
 

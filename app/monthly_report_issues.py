@@ -30,6 +30,7 @@ def canonical_issues(draft):
     Explicit no-issue declarations stay statements, rather than false issues.
     A source-linked draft remains in its evidence editor until reviewed there.
     """
+    legacy_items = draft.follow_ups
     draft = unique_followup_keys(draft)
     block = next((b for b in draft.blocks if b.key == "equipment_issues"), None)
     if block is None or block.source == "Omit":
@@ -47,8 +48,17 @@ def canonical_issues(draft):
     spec = specs.get(block.key)
     tables = [(tuple(c.title for c in spec.columns) if spec else (), block.rows, "")]
     tables += [(table.columns, table.rows, table.reference) for table in block.extra_tables]
-    candidates = [(text, block.references) for text in texts]
+    # Accepted register rows have a source-row identity separate from their
+    # editable text. Reimporting that source must not recreate a changed card.
+    candidates = [(text, block.references, None, "ongoing", "", "", "") for text in texts]
     for columns, rows, reference in tables:
+        from app.monthly_report_issue_register import mapped_issue_register
+        mapped = mapped_issue_register(columns, rows, reference)
+        if mapped is not None:
+            for record in mapped:
+                candidates.append((record.text, (*block.references, *((reference,) if reference else ())),
+                                   record.key, record.status, record.update, record.legacy_text, reference))
+            continue
         width = max((len(row) for row in rows), default=len(columns))
         columns = (*columns, *(f"Detail {n + 1}" for n in range(len(columns), width)))
         prices = table_price_columns(columns, rows)
@@ -56,18 +66,30 @@ def canonical_issues(draft):
             text = "; ".join(f"{columns[n]}: {value}" for n, value in enumerate(row)
                              if n not in prices and value.strip())
             if text:
-                candidates.append((text, (*block.references, *((reference,) if reference else ()))))
+                candidates.append((text, (*block.references, *((reference,) if reference else ())),
+                                   None, "ongoing", "", "", ""))
     items = list(draft.follow_ups)
     keys = {item.key for item in items if item.category == "issue"}
     seen = {item.text.strip() for item in items if item.category == "issue"}
     statements = []
-    for text, references in candidates:
+    for text, references, register_key, status, update, legacy_text, table_reference in candidates:
         if _no_equipment_issues(text):
             if _REMOVED_STATEMENT + _digest(text) not in block.references:
                 statements.append(text)
             continue
-        key = issue_key(text)
-        if key in keys or text.strip() in seen:
+        key = register_key or issue_key(text)
+        # Two separate, identical source rows remain distinct. A repeated
+        # import of one accepted row is recognized by its original row ID;
+        # later card text/status edits do not change that identity.
+        if key in keys or (register_key is None and text.strip() in seen):
+            continue
+        if register_key and any(
+            item.category == "issue" and item.key == issue_key(legacy_text)
+            and (not table_reference or not item.references or table_reference in item.references)
+            for item in legacy_items
+        ):
+            # Preserve all operator edits/decisions, even when provenance is
+            # unavailable. Never guess-merge two explicitly different sources.
             continue
         keys.add(key)
         seen.add(text.strip())
@@ -76,6 +98,7 @@ def canonical_issues(draft):
         references = tuple(dict.fromkeys(ref for ref in references
                             if not ref.startswith(("report-period:", "report-origin:", "docx:", _REMOVED_STATEMENT))))
         items.append(ReportFollowUp(key, "issue", text, draft.period.key,
+                                    status=status, update=update,
                                     references=references))
     revised = replace(block, text="\n\n".join(dict.fromkeys(statements)), rows=(),
                       extra_tables=(), ai_paragraphs=(), ai_written=False,
