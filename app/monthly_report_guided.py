@@ -1583,7 +1583,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     history = st.expander("Shared report history", expanded=False,
                           key=prefix + "_history_open", on_change="rerun")
     with history:
-        st.caption("Saving a version adds it to shared report history. Browser draft recovery is separate.")
+        st.caption("Saving here adds a shared version; browser recovery is separate.")
         from app.monthly_report_history_ui import render_snapshot_history
         if history.open:
             render_snapshot_history(draft, prefix, assets, snapshot)
@@ -1778,7 +1778,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         empty_confirmation_key = prefix + "_empty_generation_confirmation"
         if st.session_state.get(empty_confirmation_key) not in (None, draft.fingerprint):
             st.session_state.pop(empty_confirmation_key, None)
-        st.caption("Creating files also saves a version in Shared report history.")
+        st.caption("Creating files also attempts to save a shared version.")
         pressed = st.button("Create Word and PDF", key=prefix + "_generate",
                             type="secondary" if blocked_reason else "primary", disabled=bool(blocked_reason))
         if pressed and not monthly_entry_sections:
@@ -1786,9 +1786,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         generate_anyway = False
         if not blocked_reason and not monthly_entry_sections and (
                 st.session_state.get(empty_confirmation_key) == draft.fingerprint):
-            st.warning("No new monthly information was entered in the section editors. "
-                       "This draft may contain mostly dividers and saved standing material. "
-                       "Check the report before sending it to a client.")
+            st.warning("No new monthly updates were entered. "
+                       "This report may contain saved details and dividers only. "
+                       "Review it before sharing.")
             generate_anyway = st.button("Create anyway", key=prefix + "_empty_generate_anyway")
         if (pressed and bool(monthly_entry_sections)) or generate_anyway:
             st.session_state.pop(empty_confirmation_key, None)
