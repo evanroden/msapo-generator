@@ -213,6 +213,7 @@ jobs:
         run: |
           docker logs msapo-cover-service > test-artifacts/cover-service/server.log 2>&1 || true
           docker inspect msapo-cover-service > test-artifacts/cover-service/container.json || true
+          set -o pipefail; sudo python3 scripts/workspace_cover_process_observations.py --emit test-artifacts/cover-service-data/cover-memory-phases.jsonl | python scripts/workspace_cover_process_observations.py --receive test-artifacts/cover-service/cover-memory-phases.jsonl
       - name: Upload measurements and synthetic output only (no originals)
         if: always()
         uses: actions/upload-artifact@v4

@@ -21,7 +21,7 @@ def _record(label):
     if active is None:
         return
     from scripts.workspace_cover_service_observations import require
-    require(*active)
+    namespace = require(*active)
     with _LOCK:
         if _COUNT >= _MAX_RECORDS:
             return
@@ -43,6 +43,16 @@ def _record(label):
                  'oom_kill':int(events.get('oom_kill',0))}
     except (OSError,ValueError,KeyError):
         receipt={'sequence':sequence,'phase':label,'counters':'unavailable'}
+    from scripts import workspace_cover_process_observations as process
+    try:
+        receipt.update(process.processes())
+        receipt.update(process.ownership(namespace[0]))
+    except (OSError, ValueError, TypeError):
+        receipt['process_counters'] = 'unavailable'
+    try:
+        process.append(active[0], receipt)
+    except (OSError, ValueError, TypeError):
+        receipt['durable_phase'] = 'unavailable'
     print('COVER_MEMORY_PHASE '+json.dumps(receipt,sort_keys=True),file=sys.stderr,flush=True)
 
 
@@ -51,7 +61,7 @@ def _safe_record(label):
     # result or original error. The ordinary application still owns all guards.
     try:
         _record(label)
-    except (ValueError, OSError):
+    except Exception:
         pass
 
 
