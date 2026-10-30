@@ -643,7 +643,7 @@ def _convert_report_pdf(draft, docx):
             input_path.write_bytes(converted_copy)
             del converted_copy
             release_transient_word_memory()
-            actual_pdf = monthly_render_jobs.convert_to_pdf(input_path, wait_seconds=130)
+            actual_pdf = monthly_render_jobs.convert_to_pdf(input_path, wait_seconds=130, lossless_images=True)
             pdf = actual_pdf.read_bytes()
             if not pdf.startswith(b"%PDF-"):
                 raise ValueError("The converter returned an invalid PDF.")

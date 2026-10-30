@@ -179,7 +179,8 @@ def test_pdf_failure_retains_docx_and_removes_partial_output(monkeypatch, tmp_pa
     from app import pdf_converter
     paths = []
 
-    def fail(path):
+    def fail(path, *, lossless_images):
+        assert lossless_images is True
         paths.append(path)
         (tmp_path / (path.stem + ".pdf")).write_bytes(b"partial")
         raise pdf_converter.PDFConversionError("Synthetic converter failure")

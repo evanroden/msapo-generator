@@ -66,8 +66,10 @@ def conversion_slot(*, wait_seconds=10):
         _SLOT.release()
 
 
-def convert_to_pdf(path, *, wait_seconds=10):
+def convert_to_pdf(path, *, wait_seconds=10, lossless_images=False):
     with conversion_slot(wait_seconds=wait_seconds):
+        if lossless_images is not False:
+            return pdf_converter.convert_to_pdf(path, lossless_images=lossless_images)
         return pdf_converter.convert_to_pdf(path)
 
 
