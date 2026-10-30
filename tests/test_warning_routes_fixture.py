@@ -48,15 +48,19 @@ def test_full_guarded_fixture_loads_actual_warning_buttons_without_approval(tmp_
     (tmp_path/'monthly-dom-synthetic-only.marker').write_text('synthetic-monthly-dom-v1')
     script=r'''
 from pathlib import Path
-import sys
+import json,sys
 from streamlit.testing.v1 import AppTest
 from app.monthly_report_checks import preflight
 app=AppTest.from_file(str(Path.cwd()/'tests/fixtures/workspaces/monthly_app.py'),default_timeout=60)
 app.session_state['_monthly_dom_app_test_token']='a'*32
+def landing():
+ return next(json.loads(component.proto.json)['landing'] for component in app.get('bidi_component') if component.proto.component_name=='enfra_workspace_layout')
 app.run();assert not app.exception,[e.message for e in app.exception]
 next(w for w in app.selectbox if w.label=='Synthetic historical scenario').set_value(sys.argv[1]).run()
 next(b for b in app.button if b.label=='Load synthetic historical report with unresolved warnings').click().run()
 assert not app.exception,[e.message for e in app.exception]
+nonce,section=landing()
+assert nonce and section=='monthly_cover'
 drafts=[v for k,v in app.session_state.filtered_state.items() if k.startswith('report_guided_') and k.endswith('_draft') and hasattr(v,'blocks')]
 assert len(drafts)==1
 codes={c.code for c in preflight(drafts[0])}
@@ -66,12 +70,36 @@ labels=[b.label for b in app.button]
 assert any(s in label for label in labels for s in {'source':['Correct site','Correct date'],'shared':['Open source page'],'ai':['Review evidence for paragraph'],'financial':['Review financial source page']}[sys.argv[1]]),labels
 assert next(b for b in app.button if b.label=='Create Word and PDF').disabled
 assert not any(k.endswith('_package') for k in app.session_state.filtered_state)
+assert not any(b.label=='Continue to this month’s updates' for b in app.button), 'A saved historical report has no setup review to continue'
+before=drafts[0]
+app.run();assert not app.exception,[e.message for e in app.exception]
+assert landing() is None, 'Ordinary reruns must not pull the reader back to Cover'
+after=next(v for k,v in app.session_state.filtered_state.items() if k.startswith('report_guided_') and k.endswith('_draft') and hasattr(v,'blocks'))
+assert after==before, 'The entry request is display-only, not a report correction or approval'
+fresh=AppTest.from_file(str(Path.cwd()/'tests/fixtures/workspaces/monthly_app.py'),default_timeout=60)
+fresh.session_state['_monthly_dom_app_test_token']='a'*32;fresh.run()
+assert not fresh.exception,[e.message for e in fresh.exception]
+assert next(json.loads(component.proto.json)['landing'] for component in fresh.get('bidi_component') if component.proto.component_name=='enfra_workspace_layout') is None, 'Reopening must not manufacture a new entry action'
 '''
     env={**os.environ,'EPC_DATA_DIR':str(tmp_path),'EPC_MONTHLY_DOM_FIXTURE':'1',
         'EPC_MONTHLY_WARNING_ROUTES_TASK':'1','EPC_MONTHLY_DOM_APPTEST':'1','ANTHROPIC_API_KEY':'','SMARTSHEET_API_MODE':'disabled'}
     result=subprocess.run([sys.executable,'-c',script,scenario],cwd=root,env=env,capture_output=True,text=True,timeout=100)
     assert result.returncode==0,result.stdout+result.stderr
     assert not (tmp_path/'monthly_reports').exists()
+
+
+def test_fixture_entry_matches_the_actual_production_continue_contract(monkeypatch,tmp_path):
+    """The same guided workspace emits Cover once after real setup Continue."""
+    from test_cover_import_task_ui import stage_source
+    from test_monthly_report_continue_landing import _landing
+    app,_,_=stage_source(monkeypatch,tmp_path)
+    assert _landing(app) is None
+    next(b for b in app.button if b.label=='Continue to this month’s updates').click().run()
+    assert not app.exception
+    nonce,section=_landing(app)
+    assert nonce and section=='monthly_cover'
+    app.run()
+    assert not app.exception and _landing(app) is None
 
 
 @pytest.mark.parametrize('scenario',('source','ai','financial','shared'))

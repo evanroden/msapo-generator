@@ -214,10 +214,12 @@ def test_existing_cli_installs_runtime_for_native_jobs_but_keeps_explicit_static
     import streamlit
     from scripts import patch_streamlit_frontend as frontend
     from scripts import streamlit_string_trigger_coalescing as repair
+    from scripts import streamlit_cover_upload_copy as cover_repair
     import sys
     calls=[]
     monkeypatch.setattr(frontend,'version',lambda _:'1.61.1')
     monkeypatch.setattr(repair,'patch_script_requests',lambda root,**kw:calls.append(('runtime',root,kw)) or {'string_trigger_coalescing':True})
+    monkeypatch.setattr(cover_repair,'patch_cover_upload_copy',lambda root,**kw:calls.append(('cover-runtime',root,kw)) or {'cover_return_copy_on_write':True})
     monkeypatch.setattr(frontend,'patch_bundle',lambda root,**kw:calls.append(('frontend',root,kw)) or {'entry':'unchanged-entry'})
     monkeypatch.setattr(sys,'argv',['patch_streamlit_frontend.py']+(['--static-dir',str(tmp_path)] if explicit_static else []))
     frontend.main()
@@ -226,10 +228,13 @@ def test_existing_cli_installs_runtime_for_native_jobs_but_keeps_explicit_static
     if explicit_static:
         assert [c[0] for c in calls]==['frontend']
         assert 'native_trigger_runtime' not in receipt
+        assert 'cover_upload_runtime' not in receipt
     else:
-        assert [c[0] for c in calls]==['runtime','frontend']
+        assert [c[0] for c in calls]==['runtime','cover-runtime','frontend']
         assert calls[0][1]==Path(streamlit.__file__).parent
+        assert calls[1][1]==Path(streamlit.__file__).parent
         assert receipt['native_trigger_runtime']['string_trigger_coalescing']
+        assert receipt['cover_upload_runtime']['cover_return_copy_on_write']
 
 
 def test_explicit_empty_string_is_newer_event_not_absent_trigger():

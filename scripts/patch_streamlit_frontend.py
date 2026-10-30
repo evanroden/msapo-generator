@@ -419,20 +419,26 @@ def main():
     import streamlit
     try:
         from scripts.streamlit_string_trigger_coalescing import patch_script_requests
+        from scripts.streamlit_cover_upload_copy import patch_cover_upload_copy
     except ModuleNotFoundError:  # Direct `python scripts/...` entrypoint.
         from streamlit_string_trigger_coalescing import patch_script_requests
+        from streamlit_cover_upload_copy import patch_cover_upload_copy
     parser = argparse.ArgumentParser()
     parser.add_argument("--static-dir", type=Path)
     parser.add_argument("--scalar-date", action="store_true")
     args = parser.parse_args()
     runtime = None
+    cover_runtime = None
     if args.static_dir is None:
         runtime = patch_script_requests(Path(streamlit.__file__).parent,
                                         installed_version=version("streamlit"))
+        cover_runtime = patch_cover_upload_copy(Path(streamlit.__file__).parent,
+                                                installed_version=version("streamlit"))
     result = patch_bundle(args.static_dir or Path(streamlit.__file__).parent / "static",
                           installed_version=version("streamlit"), scalar_date=args.scalar_date)
     if runtime is not None:
         result["native_trigger_runtime"] = runtime
+        result["cover_upload_runtime"] = cover_runtime
     print(json.dumps(result, sort_keys=True))
 
 

@@ -20,7 +20,7 @@ PENDING='Synthetic pending note retained through exact warning navigation.'
 
 
 def _pdf(text,*,financial=False):
-    import fitz
+    import pymupdf as fitz
     doc=fitz.open();page=doc.new_page()
     page.insert_text((40,60),'SYNTHETIC HISTORICAL SOURCE - NO CLIENT DATA\n'+text)
     page.draw_rect(fitz.Rect(40,180,120,230),color=(1,0,1) if financial else (0,0,1),fill=(1,0,1) if financial else (0,0,1))
@@ -128,7 +128,14 @@ def render(base,token,field,move):
         for n in range(len(org_groups(chart.org_nodes))):
             (inputs/f'baseline-org-{n}.png').write_bytes(org_page(chart.org_nodes,n))
         (target/'warning-scenario.json').write_text(json.dumps({'scenario':scenario,'synthetic_only':True}))
-        _select_fixture();st.rerun()
+        _select_fixture()
+        # This saved historical snapshot deliberately skips setup/import review.
+        # Its explicit native Load action is therefore the entry into the editor,
+        # just as production Continue is after a successful setup. Use that same
+        # one-shot landing request, not a browser scroll or a rerun/reload default.
+        prefix='report_guided_'+_signature((historical.profile.contract,historical.profile.key,historical.period.key))
+        st.session_state[prefix+'_land_on_editor']=True
+        st.rerun()
     if saved is None:
         st.caption('No report or approval exists until the explicit synthetic fixture action.');return
     installed=json.loads((target/'warning-scenario.json').read_text())['scenario']

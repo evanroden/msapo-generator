@@ -227,6 +227,14 @@ def exercise_text_edits(page):
         await_text(page, label, "")
         live.checkpoint(label + " deliberate clear survives reload", True)
         if label == "Issue description":
+            # Reload verifies saved content, not an automatic editor landing.
+            # Re-enter the existing empty editor through its ordinary control;
+            # the subsequent native Next viewport requirement remains strict.
+            field = page.get_by_role("textbox", name=label, exact=True)
+            field.click()
+            expect(field).to_be_focused()
+            expect(field).to_have_value("")
+            live.checkpoint(label + " first native focus after reload preserves empty value", True)
             correct_issue_warning(page)
         phase(label + ' reentry and save')
         commit_text(page, label, wording, expected_before="")

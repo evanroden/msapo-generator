@@ -47,7 +47,7 @@ def after(page,sequence):
 def verify_outputs(directory,scenario,state,*,original,baseline_images=()):
     """Actual generated Word text/image parts and real converted PDF text/paint."""
     from docx import Document
-    import fitz
+    import pymupdf as fitz
     from PIL import Image
     raw={name:(directory/name).read_bytes() for name in ('report.docx','report.pdf')}
     for name,value in raw.items():
@@ -210,6 +210,13 @@ def exercise(engine,name,mode,scenario,base):
         select(page.get_by_role('combobox',name='Synthetic historical scenario',exact=True),scenario)
         activate(page.get_by_role('button',name='Load synthetic historical report with unresolved warnings',exact=True))
         initial=capture('unresolved-historical-report');prefix=initial['editor_prefix'];old,target=initial['working']['sources']
+        # The explicit fixture Load enters through production's one-shot Cover
+        # landing. Prove that arrival before the first sequential action; merely
+        # mounting the full editor below report identity is not an entry receipt.
+        expect(page.locator('.epc-section-progress')).to_have_attribute('data-section','monthly_cover')
+        expect(page.locator('.epc-section-back')).to_be_disabled()
+        expect(page.locator('.epc-section-next')).to_be_in_viewport(ratio=1)
+        capture('native-cover-entry')
         directory,_,_=namespace(base,token)
         original=(directory/'warning-input/source-original').read_bytes()
         assert sha256(original).hexdigest()==target['sha256']==initial['originals'][target['id']]
