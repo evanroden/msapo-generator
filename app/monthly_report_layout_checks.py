@@ -13,6 +13,11 @@ def _label(key):
     return key.replace("_", " ")
 
 
+def _first_wide_row(rows, width):
+    return next(((number, len(row)) for number, row in enumerate(rows, 1)
+                 if len(row) > width), None)
+
+
 def _renders_photo_pages(profile):
     """Photo grid pages are drawn only by the generic layout, not native designs."""
     from app.monthly_report_designs import source_for
@@ -34,10 +39,14 @@ def layout_checks(draft):
             block = blocks.get(spec.key)
             if block is None or block.source == "Omit":
                 continue
-            from app.monthly_report_asset_layout import document_caption_problems
-            for index in document_caption_problems(block, draft.sources):
+            from app.monthly_report_asset_layout import document_page_indexes, document_caption_problems
+            # Keep the existing single source of renderer-limit checks. Plain
+            # photos need no standalone document-page caption measurement.
+            document_captions = (document_caption_problems(block, draft.sources)
+                                 if document_page_indexes(block, draft.sources) else ())
+            for index in document_captions:
                 checks.append(ReportCheck('document_caption',
-                    f'Shorten source-page caption {index + 1} in {_label(spec.key)} to at most three lines before generating.',
+                    f'Shorten the source-page caption for picture {index + 1} in {_label(spec.key)} to at most three lines before generating.',
                     True, block.key))
             if block.org_nodes:
                 problem = org_chart_problem(block.org_nodes)
@@ -56,18 +65,29 @@ def layout_checks(draft):
                             f"Shorten photo caption {index + 1} in {_label(spec.key)}, or choose fewer "
                             f"photos per page. At {block.photos_per_page} per page a caption can use "
                             "at most four lines.", True, block.key))
-            if spec.columns and any(len(row) > len(spec.columns) for row in block.rows):
+            too_wide = _first_wide_row(block.rows, len(spec.columns)) if spec.columns else None
+            if too_wide is not None:
+                row_number, cells = too_wide
                 checks.append(ReportCheck(
                     "table_columns",
-                    f"A row in {_label(spec.key)} has more cells than its {len(spec.columns)} columns. "
+                    f"Row {row_number} in {_label(spec.key)} has {cells} cells but only {len(spec.columns)} columns. "
                     "Remove the extra cells or move them into the right column.", True, block.key))
-            for table in block.extra_tables:
+            for table_number, table in enumerate(block.extra_tables, 1):
                 # Blank added tables are skipped by the renderer; never block them.
                 filled = any(cell is not None and str(cell).strip() for row in table.rows for cell in row)
-                if filled and table.columns and any(len(row) > len(table.columns) for row in table.rows):
+                if filled and not table.columns:
+                    checks.append(ReportCheck(
+                        "table_missing_columns",
+                        f"Imported table {table_number} in {_label(spec.key)} "
+                        "has source rows but no column headings. Add headings "
+                        "or leave this table out before creating the report.",
+                        True, block.key))
+                too_wide = _first_wide_row(table.rows, len(table.columns)) if filled and table.columns else None
+                if too_wide is not None:
+                    row_number, cells = too_wide
                     checks.append(ReportCheck(
                         "table_columns",
-                        f"A row in an added table in {_label(spec.key)} has more cells than its "
+                        f"Imported table {table_number}, row {row_number} in {_label(spec.key)} has {cells} cells but "
                         f"{len(table.columns)} columns. Remove the extra cells or add the missing column.",
                         True, block.key))
     return checks
