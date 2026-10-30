@@ -27,6 +27,12 @@ MONTHLY_EDIT_KEYS = MONTHLY_BLOCKS | {"equipment_issues", "utility_analysis", "c
 STEPS = ("1 · Report", "2 · This month’s work", "3 · Site information", "4 · Review & download")
 
 
+def _same_recoverable_draft(left, right):
+    """Output equality alone does not mean a private upload intent was saved."""
+    return (left.fingerprint == right.fingerprint
+            and left.cover_recovery_request == right.cover_recovery_request)
+
+
 def _monthly_specs(section):
     # Capacity is standing data but belongs beside utility results in the UI.
     # This routing must not change rollover or standing-review semantics.
@@ -402,7 +408,7 @@ def _standing_signature(blocks, included):
                              if b.key not in MONTHLY_EDIT_KEYS and b.key in keys))
 
 
-def _initial_draft(state, period, prepared):
+def _initial_draft(state, period, prepared, *, assets=None):
     blocks = []
     for spec in (*[b for s in profile_sections(state.profile) for b in s.blocks], *layout_blocks()):
         saved = state.block(spec.key)
@@ -412,8 +418,15 @@ def _initial_draft(state, period, prepared):
             # A missing input is not evidence of a transition, outage, or lack
             # of activity. Stock paragraphs remain explicit editor choices;
             # never inject them as facts into a new client-facing report.
-            blocks.append(ResolvedBlock(spec.key, "This month" if spec.required else "Omit"))
-    return ReportDraft(state.profile, period, prepared, profile_sections(state.profile), tuple(blocks))
+            # Fresh capacity must remain available for entry/first-fill. Saved
+            # omissions above remain pinned, whether empty or populated.
+            source = "This month" if spec.required or spec.key == "thermal_capacity" else "Omit"
+            blocks.append(ResolvedBlock(spec.key, source))
+    draft = ReportDraft(state.profile, period, prepared, profile_sections(state.profile), tuple(blocks))
+    if assets is not None:
+        from app.monthly_report_org_chart_defaults import apply_defaults as apply_chart_defaults
+        draft = apply_chart_defaults(draft, assets, initial_profile_state=state)
+    return draft
 
 
 def _retained_content(block):
@@ -977,8 +990,35 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
     if local_destination:
         from app.monthly_report_upload_ui import render_section_uploads
         sources, additions, incoming_specs = render_section_uploads(
-            profile, period, prefix, field, local_destination, blocks=blocks, assets=assets)
-        draft = replace(draft, sources=_keep_missing_sources(prefix, sources))
+            profile, period, prefix, field, local_destination, blocks=blocks, assets=assets, sections=draft.sections)
+        financial_batch = incoming_specs.get("financial_batch")
+        if financial_batch is not None:
+            from app.monthly_report_mbcx_financial_pages import apply_financial_batch
+            consumed_key = prefix + "_financial_page_batches"
+            consumed = tuple(st.session_state.get(consumed_key, ()))
+            try:
+                proposed_draft, proposed_blocks = apply_financial_batch(
+                    draft, blocks, sources, financial_batch, editor_scope=_rich_text_scope(prefix), consumed=consumed,
+                    retained_sources=tuple(st.session_state.get(prefix + "_unavailable_sources", ())))
+            except ValueError as exc:
+                st.warning(str(exc))
+            else:
+                evidence_key = incoming_specs["financial_evidence_key"]
+                contents = st.session_state.get(evidence_key, ())
+                source_index = {source.id: source for source in proposed_draft.sources}
+                proposed_contents = tuple(replace(content, source=source_index.get(content.source.id, content.source)) for content in contents)
+                _advance_rich_text_receipt(prefix, blocks.get("mbcx_report"), proposed_blocks["mbcx_report"])
+                # Do not clear existing picture/caption widget packets: an
+                # unblurred human edit delivered with this action still owns
+                # its established reconciliation path and must not disappear.
+                draft, blocks = proposed_draft, proposed_blocks
+                st.session_state[evidence_key] = proposed_contents
+                st.session_state[consumed_key] = (*consumed, financial_batch.token)
+                forms = st.session_state.get("_monthly_source_detail_forms")
+                if isinstance(forms, dict) and financial_batch.source_id in forms:
+                    forms[financial_batch.source_id] = financial_batch.revised_content.source
+        else:
+            draft = replace(draft, sources=_keep_missing_sources(prefix, sources))
         if additions:
             draft, blocks = _apply_prepared(draft, blocks, additions, incoming_specs, prefix)
             if local_destination == "water_reports":
@@ -1063,11 +1103,27 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
             st.markdown("**" + readable_label(spec.key) + "**")
         if spec.key == "thermal_capacity":
             from app.monthly_report_capacity_ui import render_capacity, render_capacity_scope
+            from app.monthly_report_capacity_inclusion import capacity_inclusion, inclusion_control
+            inclusion_prefix = prefix + "_" + _signature((draft.profile.contract,
+                draft.profile.key, draft.period.key, _rich_text_scope(prefix)))
+            included = inclusion_control(block, inclusion_prefix, field)
+            if not included and block.source == "Omit":
+                st.caption("Thermal capacity is left out; its values are kept.")
+                blocks[spec.key] = block
+                continue
+            if included:
+                block = capacity_inclusion(block, True)
             capacity_scope = st.container(key=prefix + "_capacity_scope")
             # Capture the delivered report-table edit before any source action
             # can refresh an unedited shared copy. Manual overrides stay local.
             with st.container(key=prefix + "_capacity_report_table"):
                 block = _edit_content(spec, block, state, prefix, assets, field, draft)
+            # Capture a table edit delivered with Exclude before retiring its
+            # controls; exclusion must not discard the last entered value.
+            if not included:
+                blocks[spec.key] = capacity_inclusion(block, False)
+                st.session_state[prefix + "_period_editor_refresh"] = True
+                continue
             before = block
             draft, block = render_capacity(draft, block, prefix, field, show_scope=False)
             if block != before:
@@ -1270,7 +1326,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         active_sequence = active.revision if active else 0
         current_head_revision = snapshot.revision if snapshot else 0
         if active and active.base_snapshot_revision != current_head_revision and not (resume or completed_setup == selected):
-            if snapshot and snapshot.draft.fingerprint == active.draft.fingerprint:
+            if snapshot and _same_recoverable_draft(snapshot.draft, active.draft):
                 # Already published as a completed version; no stale recovery.
                 active_generation = active_work.discard(browser_token, contract, selected, period,
                     expected_revision=active.revision, expected_generation=active_generation)
@@ -1309,7 +1365,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             draft = replace(new_month_draft(prior_draft, period), profile=profile)
             preserve_saved_defaults = True
         else:
-            draft = _initial_draft(state, period, prepared)
+            draft = _initial_draft(state, period, prepared, assets=assets)
         # A shared report's author is not the identity of a new visitor.
         # Only a setup/import just completed in this session can seed that name.
         current_actor = (draft.prepared_by if recovered_work else
@@ -1323,6 +1379,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             from app.monthly_report_capacity import resolve_capacity
             from app.monthly_report_workflow_standards import apply_defaults as apply_workflow_defaults
             draft = apply_workflow_defaults(resolve_capacity(draft), assets)
+            from app.monthly_report_org_chart_defaults import apply_defaults as apply_chart_defaults
+            draft = apply_chart_defaults(draft, assets)
         st.session_state[draft_key] = draft
         # A saved empty standing block is an intentional report choice, not a
         # first-use gap. Preserve it on reopen and next-month rollover alike.
@@ -1426,14 +1484,14 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 st.session_state[draft_key] = draft
                 st.rerun()
     from app.workspace_layout import workspace, workspace_section, workspace_columns
-    landing_section = "monthly_activity" if any(section.key == "activity" for section in draft.sections) else "monthly_cover"
+    landing_section = "monthly_cover"
     landing = landing_section if st.session_state.pop(prefix + "_land_on_editor", False) else ""
     with workspace("monthly", prefix, navigation_key="monthly_report_navigation", landing=landing):
         with st.container(key="monthly_report_navigation"):
-            st.markdown('<span class="epc-section-navigation"><label for="monthly-section-choice">Section</label>'
-                        '<select id="monthly-section-choice" class="epc-section-selector" aria-label="Jump to section" disabled>'
-                        '<option>Loading sections…</option></select>'
-                        '<button type="button" class="epc-review-shortcut" disabled>Review</button></span>', unsafe_allow_html=True)
+            st.markdown('<span class="epc-section-navigation">'
+                        '<button type="button" class="epc-section-back" disabled>Back</button>'
+                        '<span class="epc-section-progress" role="status" aria-live="polite">Cover</span>'
+                        '<button type="button" class="epc-section-next" disabled>Next</button></span>', unsafe_allow_html=True)
         with workspace_section("monthly_cover", "Cover"):
             editor_column, preview_column = workspace_columns("monthly_cover")
             with editor_column:
@@ -1451,7 +1509,11 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                         blocks, prefix, assets,
                         lambda ref: assets[ref] if ref in assets else library.read_asset(contract, selected, ref),
                         scope=_rich_text_scope(prefix),
+                        report=replace(draft, blocks=tuple(blocks.values())),
+                        revision=st.session_state[prefix + "_revision"],
                     )
+                    draft = replace(draft, cover_recovery_request=st.session_state.pop(
+                        prefix + "_cover_recovery_request_update", draft.cover_recovery_request))
                 with st.expander("About this report"):
                     from app.monthly_report_designs_ui import render_design_status, render_apply_master_design
                     render_design_status(draft)
@@ -1535,6 +1597,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 st.caption("Your draft remains on this page. Check its recovery status before leaving, then retry saving.")
             else:
                 st.session_state[prefix + "_revision"] = saved.revision
+                st.session_state[draft_key] = saved.draft
                 if recovery_available:
                     try:
                         st.session_state[prefix + "_active_generation"] = active_work.discard(
@@ -1601,9 +1664,12 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 # its recovery attempt below, never before delivered edits.
                 st.session_state[prefix + "_period_editor_refresh"] = True
         st.session_state[draft_key] = draft
-        if recovery_available and snapshot and snapshot.draft.fingerprint == draft.fingerprint:
+        if (recovery_available and snapshot and _same_recoverable_draft(snapshot.draft, draft)
+                and not st.session_state.get(prefix + "_active_sequence", 0)
+                and recovery_ack_error is None):
             # The complete current version already exists in immutable history;
             # no new browser journal is necessary after Generate/Save.
+            # Existing journals must still record reversions to that version.
             save_status.shared_saved(snapshot.revision)
         elif recovery_available:
             try:
@@ -1634,7 +1700,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 # persistence attempt above retries the current draft once.
                 st.button("Retry browser save", key=prefix + "_retry_browser_save")
         else:
-            if snapshot and snapshot.draft.fingerprint == draft.fingerprint:
+            if snapshot and _same_recoverable_draft(snapshot.draft, draft):
                 # A completed/saved version is still saved, even when cookies
                 # prevent separately retaining unfinished browser changes.
                 save_status.shared_saved(snapshot.revision)
@@ -1735,6 +1801,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                                               open_issues=snapshot.open_issues if snapshot else prior.open_issues if prior else (),
                                               pending_proposals=snapshot.pending_proposals if snapshot else prior.pending_proposals if prior else ())
                 st.session_state[prefix + "_revision"] = saved.revision
+                st.session_state[draft_key] = saved.draft
                 if recovery_available:
                     try:
                         st.session_state[prefix + "_active_generation"] = active_work.discard(
@@ -1769,6 +1836,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                             open_issues=snapshot.open_issues if snapshot else prior.open_issues if prior else (),
                             pending_proposals=snapshot.pending_proposals if snapshot else prior.pending_proposals if prior else ())
                         st.session_state[prefix + "_revision"] = saved.revision
+                        st.session_state[draft_key] = saved.draft
                         record_shared_save(prefix, package, saved=saved)
                     except (ValueError, OSError) as exc:
                         record_shared_save(prefix, package, error=str(exc))

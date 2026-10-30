@@ -79,6 +79,8 @@ class ImportItem:
     # the photograph gallery without inventing a company/client role.
     # "header_artwork" records placement without asserting that it is a logo.
     image_role: str = ""
+    # Original Word row indices with a single full-width horizontal merge.
+    merged_title_rows: tuple[int, ...] = ()
 
     @property
     def label(self) -> str:
@@ -676,11 +678,17 @@ def inspect_docx(path: Path) -> DocxInspection:
                                     mint_background_positions.add((position, word_section))
                             if element.tag == W + "tbl":
                                 rows = []
+                                full_width_bands = []
                                 for row in element.findall(W + "tr"):
                                     cells = []
                                     before = row.find(f"{W}trPr/{W}gridBefore")
                                     cells.extend([""] * min(100, int(before.get(W + "val", "0"))) if before is not None else [])
-                                    for cell in row.findall(W + "tc"):
+                                    row_cells = row.findall(W + "tc")
+                                    if len(row_cells) == 1 and before is None:
+                                        merged = row_cells[0].find(f"{W}tcPr/{W}gridSpan")
+                                        if merged is not None:
+                                            full_width_bands.append((len(rows), int(merged.get(W + "val", "1"))))
+                                    for cell in row_cells:
                                         cells.append(_text(cell))
                                         span = cell.find(f"{W}tcPr/{W}gridSpan")
                                         count = int(span.get(W + "val", "1")) if span is not None else 1
@@ -692,6 +700,8 @@ def inspect_docx(path: Path) -> DocxInspection:
                                     width = max(map(len, rows))
                                     rows = tuple(row + ("",) * (width - len(row)) for row in rows)
                                     add("table", part, position, rows=rows, suggested_slot=content_slot or _suggest("table", text, section),
+                                        merged_title_rows=tuple(index for index, count in full_width_bands
+                                                                if width >= 2 and count == width),
                                         note="Merged cells retain text in the first column of their span. Confirm headers and columns.")
                             elif text:
                                 add("text", part, position, text=text, note=source_note, suggested_slot=(content_slot if content_slot and not detected else _suggest("text", text, section, heading=bool(detected), part=part)))
@@ -942,6 +952,15 @@ def _map_items(path, inspection, mappings, *, source_view=None, _operation=None)
             if len(set(indices)) != len(indices) or any(i < 0 or i >= width for i in indices):
                 raise ImportError("Invalid imported table column mapping.")
             labels = item.rows[0] if mapping.first_row_header else tuple(f"Column {i+1}" for i in range(width))
+            rows = item.rows[1:] if mapping.first_row_header else item.rows
+            # Reconstruct only a fully recognized, geometry-proved vendor list.
+            # Explicit user column selections remain authoritative.
+            if mapping.slot == "subcontractor_matrix" and mapping.first_row_header and not mapping.columns:
+                from app.monthly_report_vendor_groups import grouped_vendor_contacts
+                grouped_vendor = grouped_vendor_contacts(item)
+                if grouped_vendor is not None:
+                    labels, rows = grouped_vendor.columns, grouped_vendor.rows
+                    indices = tuple(range(len(labels)))
             specs = tuple(ColumnSpec(f"imported_{j}", labels[i].strip() or f"Column {i+1}") for j, i in enumerate(indices))
             # Duplicate merged headers would overwrite values in the editor's dict.
             labels_seen = set()
@@ -953,7 +972,6 @@ def _map_items(path, inspection, mappings, *, source_view=None, _operation=None)
                 labels_seen.add(title)
                 columns.append(replace(col, title=title))
             overrides[mapping.slot] = replace(spec, type="table", columns=tuple(columns))
-            rows = item.rows[1:] if mapping.first_row_header else item.rows
             block = replace(block, rows=tuple(tuple(row[i] for i in indices) for row in rows))
         else:
             if spec.type not in ("rich_text", "stock_text") and not (mapping.slot == "org_chart" and item.note == "Validated native SmartArt text"):

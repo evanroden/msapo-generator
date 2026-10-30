@@ -26,6 +26,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+from scripts.monthly_sequential_navigation import navigate_sections, section_order
 OUT = ROOT / "test-artifacts" / "shared-fixture-testing"
 ORIGIN = "http://127.0.0.1:8521"
 URL = ORIGIN + "/?workflow=monthly&monthly_qa=fixtures"
@@ -34,7 +35,7 @@ GUARD_LOG = "blocked-external.jsonl"
 SOURCE_TEXT = "Inspected the synthetic pump in October 2026; follow-up is open."
 MANUAL_TEXT = "My manually corrected synthetic Activity; follow-up remains open."
 REENTRY_TEXT = "Synthetic re-entry after deliberate clearing; follow-up remains open."
-REVIEW_TEXT = "Synthetic unblurred Activity committed by one Review click."
+REVIEW_TEXT = "Synthetic unblurred Activity committed by one Next click."
 EXPECTATION_ONLY = "EXPECTATION_ONLY_CANARY_NOT_SOURCE_CONTENT"
 
 
@@ -295,48 +296,44 @@ def durable_activity(page, root, expected):
                          + json.dumps({"last_committed": summary, "browser": client}, sort_keys=True)[:1000])
 
 
-def direct_review_journey(page, root, browser):
-    """One native Review click must commit the still-focused Activity edit.
-
-    Do not pre-blur/apply, retry the click, or substitute a visible value for
-    its durable receipt. The return and keyboard pass use the same coordinator.
-    """
+def sequential_review_journey(page, root, browser):
+    """First native Next commits the focused edit; final Review stays sequential."""
     from playwright.sync_api import expect
 
     activity = page.get_by_role("textbox", name="Activity summary", exact=True)
-    selector = page.get_by_role("combobox", name="Jump to section", exact=True)
-    review = page.get_by_role("button", name="Review", exact=True)
-    expect(review).to_have_count(1)
-    expect(review).to_be_enabled()
+    progress = page.locator(".epc-section-progress")
+    next_button = page.locator(".epc-section-next")
+    navigate_sections(page, "monthly_activity")
+    entries = section_order(page)
+    activity_index = [entry['id'] for entry in entries].index('monthly_activity')
     idle(page)
     activity.fill(REVIEW_TEXT)
     expect(activity).to_be_focused()
-    review.click()
+    next_button.click()
     receipt = durable_activity(page, root, REVIEW_TEXT)
     idle(page)
+    expect(progress).to_have_attribute("data-section", entries[activity_index + 1]['id'])
+    check(browser, "one Next click commits the inflight Activity edit", True, receipt)
     heading = page.locator("#report-review")
-    expect(heading).to_be_in_viewport()
-    expect(heading).to_be_focused()
-    expect(selector).to_have_value("report_review")
-    check(browser, "one Review click commits the inflight Activity edit and focuses Review", True, receipt)
-    selector.select_option("monthly_activity")
-    expect(activity).to_be_in_viewport()
-    expect(activity).to_have_value(REVIEW_TEXT)
-    check(browser, "return from direct Review retains exact Activity text", True)
-
-    # The shortcut follows the native section selector in keyboard order.
-    selector.focus()
-    selector.press("Tab")
-    expect(review).to_be_focused()
-    review.press("Enter")
-    expect(heading).to_be_in_viewport()
-    expect(heading).to_be_focused()
-    expect(selector).to_have_value("report_review")
-    selector.select_option("monthly_activity")
-    expect(activity).to_be_in_viewport()
-    expect(activity).to_have_value(REVIEW_TEXT)
-    check(browser, "keyboard Review and return preserve the durable Activity edit", True,
-          durable_activity(page, root, REVIEW_TEXT))
+    for action in ("pointer", "keyboard"):
+        navigate_sections(page, entries[-2]['id'], keyboard=action == "keyboard")
+        expect(next_button).to_have_text("Review")
+        if action == "pointer":
+            next_button.click()
+        else:
+            back = page.locator(".epc-section-back")
+            back.focus()
+            back.press("Tab")
+            expect(next_button).to_be_focused()
+            next_button.press("Enter")
+        expect(heading).to_be_in_viewport()
+        expect(heading).to_be_focused()
+        expect(progress).to_have_attribute("data-section", "report_review")
+        navigate_sections(page, "monthly_activity", keyboard=action == "keyboard")
+        expect(activity).to_be_in_viewport()
+        expect(activity).to_have_value(REVIEW_TEXT)
+        check(browser, action + " sequential Review and return preserve durable Activity text", True,
+              durable_activity(page, root, REVIEW_TEXT))
 
 
 def idle(page):
@@ -543,30 +540,32 @@ def exercise(browser_type, name, base):
         proceed.click()
         activity = page.get_by_role("textbox", name="Activity summary", exact=True)
         expect(activity).to_be_visible(timeout=90000)
-        # Continue replaces the review with the editor, but the page keeps
-        # the review's scroll offset (#299). This deliberate entry starts at
-        # Activity with focus there, not wherever that offset lands.
-        landed = 'document.querySelector(".st-key-epc_pair_monthly_activity")'
+        # Continue must land at the first Cover section without retaining
+        # the setup screen's scroll offset. No scroll or navigation workaround.
+        landed = 'document.querySelector(".st-key-epc_pair_monthly_cover")'
         try:
-            page.wait_for_function("""() => {const activitySection = %s;
-                const top = activitySection?.getBoundingClientRect().top;
-                return top >= 0 && top <= 240 && activitySection.contains(document.activeElement);}""" % landed,
+            page.wait_for_function("""() => {const coverSection = %s;
+                const top = coverSection?.getBoundingClientRect().top;
+                return top >= 0 && top <= 240 && coverSection.contains(document.activeElement);}""" % landed,
                 timeout=15000)
             landing = None
         except Exception:
-            landing = page.evaluate("""() => {const activitySection = %s;
-                return {activityTop: activitySection && Math.round(activitySection.getBoundingClientRect().top),
+            landing = page.evaluate("""() => {const coverSection = %s;
+                return {coverTop: coverSection && Math.round(coverSection.getBoundingClientRect().top),
                         scrollTop: document.querySelector('[data-testid="stMain"]').scrollTop,
                         focus: document.activeElement?.tagName};}""" % landed)
-        check(name, "Continue starts directly at Activity with focus there", landing is None, landing)
+        check(name, "Continue starts directly at Cover with focus there", landing is None, landing)
+        expect(page.locator('.epc-section-progress')).to_have_attribute('data-section', 'monthly_cover')
+        expect(page.locator('.epc-section-back')).to_be_disabled()
+        navigate_sections(page, "monthly_activity")
         expect(activity).to_be_in_viewport()
         expect(activity).to_have_value(re.compile(re.escape(SOURCE_TEXT)), timeout=30000)
         check(name, "production Starting report imported source text rather than expectations",
               SOURCE_TEXT in activity.input_value() and EXPECTATION_ONLY not in activity.input_value())
         capture(page, name, "imported-current-report")
-        phase["name"] = "direct Review with inflight Activity edit"
-        direct_review_journey(page, root, name)
-        capture(page, name, "direct-review-return")
+        phase["name"] = "sequential Review with inflight Activity edit"
+        sequential_review_journey(page, root, name)
+        capture(page, name, "sequential-review-return")
 
         # The native Streamlit multiline control presents Ctrl+Enter as its
         # explicit apply gesture. Exercise keyboard clearing that way instead

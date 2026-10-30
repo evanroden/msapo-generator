@@ -380,6 +380,16 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
                 if table_has_pricing(table.columns, table.rows):
                     questions.append("Check this table's pricing or column headings.")
                     continue
+                if slot == "subcontractor_matrix" and item.merged_title_rows:
+                    from app.monthly_report_vendor_groups import grouped_vendor_contacts
+                    grouped_vendor = grouped_vendor_contacts(item)
+                    if grouped_vendor is None:
+                        questions.append("Review the vendor table's merged category labels and contact headings.")
+                        continue
+                    if table_has_pricing(grouped_vendor.columns, grouped_vendor.rows):
+                        questions.append("Check the vendor table for pricing before including it.")
+                        continue
+                    table = grouped_vendor
                 plan["tables"][item.id] = table
             if slot not in known:
                 slot = default_slot(section.key)

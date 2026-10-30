@@ -100,6 +100,59 @@ OBSERVER = r'''(() => {
  }
  requestAnimationFrame(sample);
 })();'''
+# Backend idle does not imply that lazy native controls have mounted. This
+# read-only predicate admits measurement only for the requested current owner;
+# the continuous first-visible observer above still checks every earlier frame.
+NATIVE_READINESS = r'''state => {
+ const all=s=>Array.from(document.querySelectorAll(s));
+ const mains=all('[data-testid="stMain"]'), shells=all('.block-container');
+ const owners=all('.st-key-workflow_mode');
+ const groups=all('.st-key-workflow_mode [role="radiogroup"]');
+ const apps=all('[data-testid="stApp"]');
+ const labels={'po':'Purchase order','expense':'Expense reimbursement',
+   'monthly-setup':'Monthly report','monthly-conflict':'Monthly report','monthly-ready':'Monthly report'};
+ const visible=n=>{const r=n.getBoundingClientRect();const c=getComputedStyle(n);
+   return r.width>0&&r.height>0&&c.visibility==='visible'&&c.display!=='none';};
+ const current=n=>!n.closest('[data-stale="true"]');
+ const result={ready:false,at:performance.now(),mainCount:mains.length,shellCount:shells.length,
+   ownerCount:owners.length,groupCount:groups.length,
+   skeletonCount:all('[data-testid="stSkeleton"]').length};
+ if(!labels[state]||mains.length!==1||shells.length!==1||owners.length!==1||groups.length!==1||apps.length!==1)return result;
+ const [main]=mains,[shell]=shells,[owner]=owners,[group]=groups;
+ if(!main.contains(shell)||!shell.contains(owner)||!owner.contains(group))return result;
+ if(![main,shell,owner,group].every(n=>current(n)&&visible(n)))return result;
+ if(apps[0].getAttribute('data-test-script-state')!=='notRunning')return result;
+ const radios=Array.from(group.querySelectorAll('[role="radio"]'));
+ const selected=radios.filter(n=>n.getAttribute('aria-checked')==='true');
+ if(radios.length!==3||!radios.every(n=>current(n)&&visible(n))||selected.length!==1||selected[0].textContent.trim()!==labels[state])return result;
+ const captions=Array.from(main.querySelectorAll('[data-testid="stCaptionContainer"]'))
+   .filter(n=>n.textContent.trim().startsWith('State: '));
+ result.ready=captions.length===1&&current(captions[0])&&visible(captions[0])&&captions[0].textContent.trim()==='State: '+state;
+ return result;
+}'''
+
+
+def wait_native_measurement(page, state, evidence, expect, clock=time.monotonic):
+    """Share the original 45s idle deadline; retain placeholder and mount timing."""
+    deadline=clock()+45
+    def remaining():
+        value=int((deadline-clock())*1000)
+        if value<=0:raise TimeoutError('Native shell measurement readiness exceeded 45s')
+        return value
+    expect(page.get_by_test_id('stApp')).to_have_attribute(
+        'data-test-script-state','notRunning',timeout=remaining())
+    evidence['initial_after_backend_idle']=page.evaluate(NATIVE_READINESS,state)
+    handle=page.wait_for_function('state => { const r=('+NATIVE_READINESS+')(state); return r.ready ? r : false; }',
+        arg=state,timeout=remaining())
+    try:evidence['native_ready']=handle.json_value()
+    finally:handle.dispose()
+    evidence['backend_idle_to_native_ready_ms']=evidence['native_ready']['at']-evidence['initial_after_backend_idle']['at']
+    page.evaluate('() => new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
+    remaining()
+    assert page.evaluate(NATIVE_READINESS,state)['ready'], 'Native measurement owner changed before geometry probe'
+    remaining()
+
+
 PROBE = r'''n => {
  const main=document.querySelector('[data-testid="stMain"]'),tabs=document.querySelector('.st-key-workflow_mode [role="radiogroup"]');
  const opener=document.querySelector('[data-testid="stExpandSidebarButton"]');
@@ -152,9 +205,10 @@ def run_case(browser,width,output):
     context.tracing.start(screenshots=True,snapshots=True,sources=False)
     page=context.new_page();page.on('pageerror',lambda e:errors.append(str(e)))
     expected={}
-    def snapshot(label,opened=False):
-        expect(page.get_by_test_id('stApp')).to_have_attribute('data-test-script-state','notRunning',timeout=45000)
-        page.evaluate('() => new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
+    def snapshot(label,state,opened=False):
+        readiness={'label':label,'expected_state':state,'sidebar_open':opened}
+        record.setdefault('measurement_readiness',[]).append(readiness)
+        wait_native_measurement(page,state,readiness,expect)
         value=page.locator('.block-container').evaluate(PROBE)
         record['states'].append({'label':label,'sidebar_open':opened,'geometry':value,
             'state':page.get_by_text(re.compile(r'^State: ')).inner_text().removeprefix('State: ')})
@@ -169,27 +223,27 @@ def run_case(browser,width,output):
         page.evaluate('(s)=>window.__shellEpoch(s)',state)
         page.get_by_role('radio',name=label,exact=True).click()
         expect(page.get_by_text('State: '+state,exact=True)).to_be_visible()
-        snapshot(state,opened)
+        snapshot(state,state,opened)
     try:
         page.goto(URL,wait_until='domcontentloaded')
         expect(page.get_by_text('State: monthly-setup',exact=True)).to_be_visible()
-        initial=snapshot('monthly-setup')
+        initial=snapshot('monthly-setup','monthly-setup')
         page.evaluate("window.__shellEpoch('setup-to-ready')")
         page.get_by_role('button',name='Finish synthetic setup',exact=True).click()
         page.wait_for_function('window.__shellAdapterWaiting===true')
         expect(page.locator('.epc-workspace')).to_have_count(0)
-        before=snapshot('ready-before-adapter')
+        before=snapshot('ready-before-adapter','monthly-ready')
         page.evaluate('window.__releaseShellAdapter()')
         expect(page.locator('.epc-workspace')).to_have_count(1)
         page.wait_for_function('document.querySelector(".epc-workspace")?.dataset.epcMode')
-        after=snapshot('ready-after-adapter')
+        after=snapshot('ready-after-adapter','monthly-ready')
         assert before['box']==after['box'] or all(abs(before['box'][k]-after['box'][k])<=1 for k in ('x','width')), (before,after)
         for label,state in [('Expense reimbursement','expense'),('Purchase order','po'),('Monthly report','monthly-ready')]:switch(label,state)
         page.evaluate("window.__shellEpoch('conflict')")
         page.get_by_role('button',name='Show synthetic conflict',exact=True).click()
-        expect(page.get_by_text('State: monthly-conflict',exact=True)).to_be_visible();snapshot('monthly-conflict')
+        expect(page.get_by_text('State: monthly-conflict',exact=True)).to_be_visible();snapshot('monthly-conflict','monthly-conflict')
         page.get_by_role('button',name='Resolve synthetic conflict',exact=True).click()
-        expect(page.get_by_text('State: monthly-ready',exact=True)).to_be_visible();snapshot('resolved-ready')
+        expect(page.get_by_text('State: monthly-ready',exact=True)).to_be_visible();snapshot('resolved-ready','monthly-ready')
         # Capture every visible frame before native sidebar animation intentionally changes width.
         evidence=page.evaluate('window.__shellEvidence');assert not evidence['overflow']
         record['first_visible_and_switch_frames']=evidence
@@ -197,7 +251,7 @@ def run_case(browser,width,output):
             'tabX':initial['tabs']['x'],'tabWidth':initial['tabs']['width']})
         page.get_by_test_id('stExpandSidebarButton').click()
         expect(page.get_by_test_id('stSidebar')).to_have_attribute('aria-expanded','true')
-        page.wait_for_timeout(400);snapshot('sidebar-open',True)
+        page.wait_for_timeout(400);snapshot('sidebar-open','monthly-ready',True)
         for label,state in [('Expense reimbursement','expense'),('Purchase order','po'),('Monthly report','monthly-ready')]:
             if width<576:
                 # Native mobile sidebar overlays workflow controls; close it before navigation.
@@ -206,26 +260,26 @@ def run_case(browser,width,output):
                 page.wait_for_timeout(400);switch(label,state)
                 page.get_by_test_id('stExpandSidebarButton').click()
                 expect(page.get_by_test_id('stSidebar')).to_have_attribute('aria-expanded','true')
-                page.wait_for_timeout(400);snapshot(state+'-sidebar-open',True)
+                page.wait_for_timeout(400);snapshot(state+'-sidebar-open',state,True)
             else:switch(label,state,True)
         page.get_by_test_id('stSidebar').hover()
         page.get_by_test_id('stSidebarCollapseButton').get_by_role('button').click()
         expect(page.get_by_test_id('stSidebar')).to_have_attribute('aria-expanded','false')
-        page.wait_for_timeout(400);snapshot('sidebar-closed-again')
+        page.wait_for_timeout(400);snapshot('sidebar-closed-again','monthly-ready')
         # Complete the early-return states with a real open/close journey too.
         for action,state in [('Show synthetic conflict','monthly-conflict'),
                              ('Resolve synthetic conflict','monthly-ready'),
                              ('Return to synthetic setup','monthly-setup')]:
             page.get_by_role('button',name=action,exact=True).click()
             expect(page.get_by_text('State: '+state,exact=True)).to_be_visible()
-            snapshot(state+'-repeat')
+            snapshot(state+'-repeat',state)
             page.get_by_test_id('stExpandSidebarButton').click()
             expect(page.get_by_test_id('stSidebar')).to_have_attribute('aria-expanded','true')
-            page.wait_for_timeout(400);snapshot(state+'-sidebar-open',True)
+            page.wait_for_timeout(400);snapshot(state+'-sidebar-open',state,True)
             page.get_by_test_id('stSidebar').hover()
             page.get_by_test_id('stSidebarCollapseButton').get_by_role('button').click()
             expect(page.get_by_test_id('stSidebar')).to_have_attribute('aria-expanded','false')
-            page.wait_for_timeout(400);snapshot(state+'-sidebar-closed')
+            page.wait_for_timeout(400);snapshot(state+'-sidebar-closed',state)
         validate_state_coverage(record['states'])
         assert not errors and not rejected,(errors,rejected)
         record['result']='pass'
