@@ -41,7 +41,8 @@ globalThis.ENFRAWorkspaceNavigation = {
             event.type === 'keydown' && ['Enter',' '].includes(event.key)) &&
             !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey &&
             button && [intent?.back,intent?.next].includes(button) && !button.disabled &&
-            button.isConnected && !button.closest?.('[data-stale="true"]');
+            button.isConnected && button.dataset?.stale !== 'true' &&
+            intent.owner === state.navigationController && intent.identity === state.identity;
         if (!command) {
             state.navigationInputSerial = (state.navigationInputSerial || 0) + 1;
             globalThis.ENFRAWorkspaceNavigation.cancelIntent(state);
@@ -152,18 +153,25 @@ globalThis.ENFRAWorkspaceNavigation = {
     create({root, app, scrollport, nav, state, geometry, schedule}) {
         if (!nav) return null;
         let select = null, reviewButton = null, backButton = null, nextButton = null, progress = null;
-        let entries = [], signature = '', established = null;
+        let entries = [], signature = '', established = null, establishedControls = null;
         let restore = null, correction = null, correctionSerial = 0, disposed = false;
         const identity = state.identity, lease = {};
         state.navigationController = lease;
         const current = node => node?.isConnected === true && !node.closest?.('[data-stale="true"]');
+        const connected = node => node?.isConnected === true;
         const owns = () => !disposed && state.navigationController === lease && state.identity === identity &&
             [root,app,scrollport,nav].every(current);
-        const connected = node => node?.isConnected === true;
+        // Inside these current owners, a transient native control wrapper is
+        // readiness, not replacement of an already established control. A
+        // directly stale control still cannot inherit that authorization.
+        const liveControl = node => connected(node) && node.dataset?.stale !== 'true';
+        const controls = () => [select,reviewButton,backButton,nextButton,progress];
+        const sameControls = () => establishedControls && controls().every((node,index)=>node===establishedControls[index]);
+        const readyOwners = () => owns() && controls().filter(Boolean).every(current);
         const sameNodes = (a,b) => Boolean(a && b && a.length === b.length &&
             a.every((item,index) => item.id === b[index].id && item.target === b[index].target && item.marker === b[index].marker));
         const ownedNodes = () => {
-            if (!owns() || !app.contains(root) || !app.contains(nav) || ![select,reviewButton,backButton,nextButton,progress].filter(Boolean).every(current) ||
+            if (!owns() || !app.contains(root) || !app.contains(nav) || !controls().filter(Boolean).every(liveControl) ||
                 nav.querySelector('.epc-section-selector') !== select ||
                 nav.querySelector('.epc-review-shortcut') !== reviewButton ||
                 nav.querySelector('.epc-section-back') !== backButton ||
@@ -185,22 +193,36 @@ globalThis.ENFRAWorkspaceNavigation = {
         };
         const canHandoff = next => Boolean(identity && next.identity === identity && next.root === root &&
             next.app === app && next.scrollport === scrollport && next.nav === nav &&
-            app.contains(root) && app.contains(nav) && sameNodes(established,ownedNodes()) &&
+            app.contains(root) && app.contains(nav) && sameControls() && sameNodes(established,ownedNodes()) &&
             established.some(item=>item.id===state.navigationActive));
         const cancelIntent = () => globalThis.ENFRAWorkspaceNavigation.cancelIntent(state);
         const pendingIntent = () => {
             const intent = state.navigationIntent;
             if (!intent) return null;
             if (intent.owner !== lease || intent.identity !== identity || intent.origin !== state.navigationActive ||
-                intent.back !== backButton || intent.next !== nextButton ||
+                intent.back !== backButton || intent.next !== nextButton || !sameControls() ||
                 intent.input !== (state.navigationInputSerial || 0) || state.navigationRequest !== intent.target ||
                 !sameNodes(intent.nodes,ownedNodes())) {cancelIntent();return null;}
             return intent;
         };
-        const fresh = node => Boolean(node && current(node.target) && (!node.marker || current(node.marker)) &&
-            !node.target.querySelector?.('[data-stale="true"]') &&
-            current(node.target.querySelector?.('h1,h2,h3,h4') || node.target));
-        const readyIntent = intent => Boolean(intent && fresh(intent.nodes.find(item=>item.id===intent.origin)) &&
+        // Streamlit retains stale replacement widgets in a native collapsed
+        // disclosure. Only its closed AND inert body is non-actionable; an
+        // open body, summary, stale section owner or focus owner still blocks.
+        const closedContent = (node,boundary) => {
+            for (let owner=node; owner && owner!==boundary; owner=owner.parentElement)
+                if (owner.dataset?.testid === 'stExpanderDetails' && owner.hasAttribute?.('inert') &&
+                    owner.parentElement?.tagName === 'DETAILS' && !owner.parentElement.open) return true;
+            return false;
+        };
+        const fresh = node => {
+            if (!node || !current(node.target) || node.marker && !current(node.marker)) return false;
+            const focus = node.target.querySelector?.('h1,h2,h3,h4') || node.target;
+            const stale = node.target.querySelectorAll?.('[data-stale="true"]') ||
+                [node.target.querySelector?.('[data-stale="true"]')].filter(Boolean);
+            return current(focus) && !closedContent(focus,node.target) &&
+                !Array.from(stale).some(item=>!closedContent(item,node.target));
+        };
+        const readyIntent = intent => Boolean(intent && readyOwners() && fresh(intent.nodes.find(item=>item.id===intent.origin)) &&
             fresh(intent.nodes.find(item=>item.id===intent.target)));
         const box = node => node.getBoundingClientRect();
         const owner = () => state.ownsScroll ? root : scrollport;
@@ -244,7 +266,7 @@ globalThis.ENFRAWorkspaceNavigation = {
             const nodes = ownedNodes();
             const index = entries.findIndex(item => item.id === state.navigationActive);
             const target = entries[index + delta];
-            if (!sameNodes(established,nodes) || !control || control.disabled || index < 0 || !target) return;
+            if (!sameControls() || !sameNodes(established,nodes) || !control || control.disabled || index < 0 || !target) return;
             // Origin remains the section actually reached. Repeated commands
             // coalesce; an opposite command replaces from that same origin.
             correction = null;correctionSerial++;
@@ -352,7 +374,7 @@ globalThis.ENFRAWorkspaceNavigation = {
             const nodes = ownedNodes();
             // Transient stale content is admissible only after this exact
             // report/controller has observed these same owners fully fresh.
-            if (nodes?.every(fresh)) established = nodes;
+            if (readyOwners() && nodes?.every(fresh)) {established = nodes;establishedControls = controls();}
             if (readyIntent(intent)) selectEntry(entries.find(item=>item.id===intent.target));
             // Normal page scrolling can reach Review without a menu action.
             // Keep the same selector reachable once that heading crosses its
@@ -443,7 +465,7 @@ globalThis.ENFRAWorkspaceNavigation = {
             // Never change a menu's highlighted option while it has focus.
             if (select && document.activeElement!==select && active && select.value!==active) select.value=active;
             const index = entries.findIndex(item => item.id === active);
-            const sequentialReady = sameNodes(established,ownedNodes());
+            const sequentialReady = sameControls() && sameNodes(established,ownedNodes());
             if (backButton) backButton.disabled = !sequentialReady || index <= 0;
             if (nextButton) {
                 nextButton.disabled = !sequentialReady || index < 0 || index >= entries.length - 1;

@@ -822,7 +822,7 @@ test(`handoff rejects ${kind} ownership changes`,()=>{
     if(kind==='section-order')h.pairs.reverse();
     if(kind==='section-node')h.pairs[1].pair={...h.pairs[1].pair};
     if(kind==='control')h.nav.querySelector=()=>null;
-    if(kind==='control-stale')h.nextButton.closest=()=>({});
+    if(kind==='control-stale'){h.nextButton.dataset={stale:'true'};h.nextButton.closest=()=>h.nextButton;}
     if(kind==='control-disconnected')h.nextButton.isConnected=false;
     if(kind==='ancestor-stale')h.root.closest=()=>({});
     if(kind==='disconnected')h.pairs[1].pair.isConnected=false;
