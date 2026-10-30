@@ -104,6 +104,90 @@ def select_source_caption(page,manager,prefix,source,*,keyboard=False):
     return caption,state
 
 
+
+def open_native_expander(expander,label,activate):
+    """Open only the owned outer summary; nested summaries are not siblings."""
+    from playwright.sync_api import expect
+    expect(expander).to_have_count(1)
+    details=expander.locator(':scope > details')
+    summary=details.locator(':scope > summary')
+    expect(details).to_have_count(1);expect(summary).to_have_count(1)
+    expect(summary.get_by_text(label,exact=True)).to_have_count(1)
+    if not details.evaluate('node=>node.open'):activate(summary)
+    expect(details).to_have_attribute('open','')
+    return expander
+
+
+def save_shared_version(page,prefix,commit):
+    from playwright.sync_api import expect
+    history=page.locator('.st-key-'+prefix+'_history_open')
+    expect(history).to_have_count(1)
+    # This tracked native disclosure reruns the app. Its ACK precedes looking
+    # for the child Save action; opening it is not itself a shared save.
+    open_native_expander(history.locator(':scope > [data-testid="stExpander"]'),
+                         'Shared report history',commit)
+    return commit(history.get_by_role('button',name='Save shared version',exact=True))
+
+
+def shared_picture_occurrences(state,source,*,reviewed):
+    """Read-only exact source/page and destination/occurrence review oracle."""
+    from app.monthly_report_library import block_from_dict
+    from app.monthly_report_asset_review import asset_fingerprint
+    from app.monthly_report_page_reference import page_identity
+    assert state['scenario']=='shared'
+    owners=[s for s in state['working']['sources'] if s['id']==source['id']]
+    assert len(owners)==1 and owners[0]['sha256']==source['sha256']
+    assert owners[0]['filename']==source['filename']
+    assert state['originals'][source['id']]==source['sha256']
+    occurrences=[]
+    for key,caption in zip(('improvements','vendor_reports'),CAPTIONS):
+        raw=state['working']['blocks'][key]
+        assert raw['key']==key and raw['source']=='This month'
+        assert len(raw['asset_hashes'])==len(raw['asset_instances'])==1
+        assert raw['asset_captions']==[caption]
+        instance,=raw['asset_instances']
+        assert instance['key'] and instance['asset']==raw['asset_hashes'][0]
+        pages=[page_identity(ref) for ref in instance['references'] if not ref.startswith('asset-source-context:')]
+        assert pages==[(source['id'],1)],'Picture occurrence belongs to another source/page'
+        fingerprint=asset_fingerprint(block_from_dict(raw),0)
+        assert raw['client_asset_reviews']==([fingerprint] if reviewed else []),'Each occurrence needs its own explicit current review'
+        occurrences.append((key,instance['key'],instance['asset'],caption,tuple(instance['references']),fingerprint))
+    assert len({(x[0],x[1]) for x in occurrences})==2
+    assert occurrences[0][2]==occurrences[1][2] and occurrences[0][-1]!=occurrences[1][-1]
+    return tuple(occurrences)
+
+
+def confirm_shared_pictures(page,prefix,source,before,commit):
+    """One explicit native consent for the two displayed independent pictures."""
+    from playwright.sync_api import expect
+    expected=shared_picture_occurrences(before,source,reviewed=False)
+    expect(page.locator('.epc-section-progress')).to_have_attribute('data-section','report_review')
+    owner=page.locator('[class*="st-key-'+prefix+'_picture_component_"]')
+    expect(owner).to_have_count(1)
+    expect(owner.locator('xpath=ancestor-or-self::*[@data-stale="true"]')).to_have_count(0)
+    form=owner.locator('.picture-review');expect(form).to_have_count(1)
+    expect(form.locator('figure')).to_have_count(2);expect(form.locator('img')).to_have_count(2)
+    urls=[]
+    for number,(title,caption) in enumerate(zip(('Progress photos','Vendor service reports'),CAPTIONS),1):
+        title=f'{number}. {title} · picture 1'
+        figure=form.locator('figure').filter(has=page.get_by_role('heading',name=title,exact=True))
+        expect(figure).to_have_count(1)
+        context=' · '.join((caption,source['filename'],source['facility'],source['service_date']))
+        expect(figure.get_by_text(context,exact=True)).to_have_count(1)
+        picture=figure.get_by_role('img',name=title,exact=True)
+        expect(picture).to_have_count(1);expect(picture).to_be_visible()
+        assert picture.evaluate('img=>img.complete&&img.naturalWidth>0')
+        urls.append(picture.get_attribute('src'))
+        expect(figure.get_by_role('checkbox',name='Leave '+title+' for correction',exact=True)).not_to_be_checked()
+    assert urls[0] and urls[0]==urls[1],'The two displayed occurrences must retain their shared picture'
+    confirm=form.get_by_role('button',name='Confirm these 2 pictures are ready (except those left for correction)',exact=True)
+    state=commit(confirm)
+    assert shared_picture_occurrences(state,source,reviewed=True)==expected
+    assert state['working']['sources']==before['working']['sources'] and state['originals']==before['originals']
+    assert state['durable']['fingerprint']==state['working']['fingerprint']
+    return state
+
+
 def after(page,sequence):
     page.wait_for_function('''old => {
       const node=document.querySelector('[data-warning-routes]');
@@ -328,7 +412,7 @@ def exercise(engine,name,mode,scenario,base):
             jump('ai_number',paragraph,'activity_summary')
             previous=receipt(page)['sequence'];paragraph.fill('Replaced 2 seals.');paragraph.press('Tab');after(page,previous)
             drafting=page.get_by_test_id('stExpander').filter(has=page.locator('summary').get_by_text('Help write this summary',exact=True))
-            if not drafting.evaluate("node=>node.matches('details')?node.open:node.querySelector('details').open"):activate(drafting.locator('summary'))
+            open_native_expander(drafting,'Help write this summary',activate)
             files=drafting.get_by_role('combobox',name='File to read for work performed',exact=True)
             for source in (target,old):
                 select(files,source['filename'])
@@ -353,16 +437,8 @@ def exercise(engine,name,mode,scenario,base):
             before=receipt(page)
             assert before['selected'][prefix+'_evidence_selected']==target['id']
             commit(manager.get_by_role('button',name='Include page',exact=True))
-            for section,key in (('monthly_activity','improvements'),('monthly_maintenance','vendor_reports')):
-                navigate_sections(page,section,keyboard=keyboard)
-                pair=page.locator('.st-key-epc_pair_'+section)
-                confirm=pair.get_by_role('button',name='Confirm this picture is ready (unless left for correction)',exact=True)
-                expect(confirm).to_have_count(1)
-                form=pair.locator('.picture-review').filter(has=confirm)
-                expect(form.locator('img')).to_have_count(1)
-                assert form.locator('img').evaluate('img=>img.complete&&img.naturalWidth>0')
-                commit(confirm)
-            state=receipt(page)
+            navigate_sections(page,'report_review',keyboard=keyboard)
+            state=confirm_shared_pictures(page,prefix,target,receipt(page),commit)
             for key,caption in zip(('improvements','vendor_reports'),CAPTIONS):
                 assert state['working']['blocks'][key]['asset_captions']==[caption]
                 assert state['working']['blocks'][key]['asset_hashes']==before['working']['blocks'][key]['asset_hashes']
@@ -397,7 +473,7 @@ def exercise(engine,name,mode,scenario,base):
         assert corrected['originals']==initial['originals']
         assert not [c for c in corrected['working']['checks'] if c['blocking']],corrected['working']['checks']
         navigate_sections(page,'report_review',keyboard=keyboard)
-        saved=commit(page.get_by_role('button',name='Save shared version',exact=True));assert saved['shared']['fingerprint']==saved['working']['fingerprint']
+        saved=save_shared_version(page,prefix,commit);assert saved['shared']['fingerprint']==saved['working']['fingerprint']
         page.reload(wait_until='domcontentloaded');reopened=receipt(page)
         assert reopened['working']==saved['working'];record['reopen_verified']=True
         navigate_sections(page,'report_review',keyboard=keyboard)
