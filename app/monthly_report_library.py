@@ -285,7 +285,7 @@ def draft_from_dict(value: dict) -> ReportDraft:
                 or sum(len(item) for item in reviews) > 16_000_000):
             raise ValueError("Invalid work-order review receipts.")
         if reviews:
-            from app.monthly_report_work_order_review_flow import decoded
+            from app.monthly_report_row_review_receipts import decoded
             for receipt in reviews:
                 decoded(receipt)  # Structural integrity only; preserve stale, intact receipts unchanged.
         sections = tuple(SectionSpec(

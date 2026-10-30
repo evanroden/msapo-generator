@@ -10,6 +10,8 @@ from dataclasses import asdict, replace
 from hashlib import sha256
 import json
 
+from app.monthly_report_row_review_receipts import decoded as saved_receipt
+
 from app.monthly_report_model import ReportTable, ResolvedBlock
 from app.monthly_report_work_order_normalized import (
     FIELDS, ColumnMapping, correct_row, exclude_row, restore_review, review_record,
@@ -105,7 +107,7 @@ def _validate(draft, value):
 def saved_bundle(draft, source_id, kind):
     source = next((s for s in draft.sources if s.id == source_id), None)
     for text in draft.source_row_reviews:
-        value = decoded(text)
+        value = saved_receipt(text)
         if (source and value.get("source_id") == source_id and value.get("kind") == kind
                 and value.get("scope") == scope(draft)
                 and value.get("source_fingerprint") == source.fingerprint):
@@ -117,9 +119,9 @@ def store_bundle(draft, value, *, expected_revision=""):
     _validate(draft, value)
     records = list(draft.source_row_reviews)
     match = next((i for i, text in enumerate(records)
-        if tuple(decoded(text).get(key) for key in ("source_id", "kind", "scope", "source_fingerprint"))
+        if tuple(saved_receipt(text).get(key) for key in ("source_id", "kind", "scope", "source_fingerprint"))
         == tuple(value[key] for key in ("source_id", "kind", "scope", "source_fingerprint"))), None)
-    existing = decoded(records[match]) if match is not None else None
+    existing = saved_receipt(records[match]) if match is not None else None
     if (revision(existing) if existing else "") != expected_revision:
         raise ValueError("The saved row review changed. Reopen it before applying this edit.")
     text = encoded(value)
@@ -152,7 +154,7 @@ def prepare_bundle(draft, content, *, kind="workorders", mapping=None, date_orde
     # identity. Re-review may replace only the last exact published tables;
     # it must not append a second copy or erase intervening manual edits.
     for text in draft.source_row_reviews:
-        prior = decoded(text)
+        prior = saved_receipt(text)
         if (prior.get("source_id") == source.id and prior.get("kind") == kind
                 and prior.get("scope") == value["scope"] and prior.get("published")):
             value["published"] = prior["published"]
@@ -322,7 +324,7 @@ def publish_bundle(draft, bundle, *, expected_revision, expected_block, include_
                 for group in bundle["groups"] if group["record"] and not group["omitted"]
                 for row in restored_group(bundle, group).rows if not row.excluded}
     for text in draft.source_row_reviews:
-        other = decoded(text)
+        other = saved_receipt(text)
         if (other.get("kind") != bundle["kind"] or other.get("source_id") == bundle["source_id"]
                 or other.get("scope") != bundle["scope"] or not other.get("published")):
             continue
