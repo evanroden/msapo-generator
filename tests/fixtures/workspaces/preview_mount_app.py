@@ -15,6 +15,7 @@ import streamlit as st
 
 from app import monthly_report_preview_view as preview_view
 from app import workspace_layout
+from app.monthly_report_native_loading import reserve_text_area
 from app.reference_preview import render_reference
 from app.workspace_layout import workspace, workspace_columns, workspace_section
 
@@ -103,10 +104,10 @@ st.set_page_config(layout='wide')
 st.title('Synthetic preview arrival')
 with workspace('monthly', 'synthetic-preview-mount', navigation_key='monthly_report_navigation'):
     with st.container(key='monthly_report_navigation'):
-        st.markdown('<span class="epc-section-navigation"><label for="monthly-section-choice">Section</label>'
-                    '<select id="monthly-section-choice" class="epc-section-selector" aria-label="Jump to section" disabled>'
-                    '<option>Loading sections…</option></select>'
-                    '<button type="button" class="epc-review-shortcut" disabled>Review</button></span>', unsafe_allow_html=True)
+        st.markdown('<span class="epc-section-navigation">'
+                    '<button type="button" class="epc-section-back" disabled>Back</button>'
+                    '<span class="epc-section-progress" role="status" aria-live="polite">Cover</span>'
+                    '<button type="button" class="epc-section-next" disabled>Next</button></span>', unsafe_allow_html=True)
     with workspace_section('monthly_cover', 'Cover'):
         st.subheader('Cover')
         editor, reference = workspace_columns('monthly_cover')
@@ -123,7 +124,9 @@ with workspace('monthly', 'synthetic-preview-mount', navigation_key='monthly_rep
             st.button('Clear Activity', key='clear_activity',
                       on_click=lambda: st.session_state.update(
                           cleared=st.session_state.get('cleared', 0) + 1))
-            st.text_area('Activity notes', key='activity_notes', value='Synthetic activity')
+            reserve_text_area('activity_notes', 122)
+            st.text_area('Activity notes', key='activity_notes',
+                         value='Synthetic activity', height=122)
             st.write(f'Activity clears: {st.session_state.get("cleared", 0)}')
             for index in range(8):
                 st.text_input(f'Synthetic detail {index}', key=f'detail_{index}')
