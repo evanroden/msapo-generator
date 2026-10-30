@@ -119,7 +119,9 @@ def test_absent_scope_record_preserves_legacy_source_and_report_fingerprints(sam
     source_record.pop("financial_page_reviews")
     draft_record = asdict(draft)
     draft_record.pop("cover_recovery_request")  # Private intent did not exist in old reports.
-    # The historical report schema predates occurrence metadata as well as
+    draft_record.pop("source_row_reviews", None)
+    # The historical report schema predates occurrence metadata, report-owned
+    # row-review receipts, as well as
     # source-scope receipts. Current asdict() otherwise invents a new empty
     # field in this independently reconstructed old-format record.
     for block in draft_record["blocks"]:

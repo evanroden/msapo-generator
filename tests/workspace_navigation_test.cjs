@@ -31,10 +31,10 @@ function harness(mode='wide', sequential=false) {
     const pairs=[['monthly_cover','Cover',0,400],['monthly_activity','Monthly Activity Summary',400,1600],
         ['monthly_short','Short section',2000,80],['monthly_training','Training Summary',2080,1200],
         ['monthly_empty','Empty section',3280,220]].map(([id,title,offset,height])=>({id,title,pair:target(offset,height)}));
-    let clickHandler=null;
+    let clickHandler=null;const listeners=new Map();
     const review=target(4000,60,true), app={querySelector:()=>review,contains:()=>true,
-        addEventListener(type,handler){if(type==='click')clickHandler=handler},
-        removeEventListener(type,handler){if(clickHandler===handler)clickHandler=null}};
+        addEventListener(type,handler){if(!listeners.has(type))listeners.set(type,new Set());listeners.get(type).add(handler);if(type==='click')clickHandler=handler},
+        removeEventListener(type,handler){listeners.get(type)?.delete(handler);if(clickHandler===handler)clickHandler=null}};
     document.createElement=()=>({});
     const context={document,getComputedStyle:node=>node.style||{overflowY:"auto",overscrollBehaviorY:"auto"}};vm.runInNewContext(fs.readFileSync('app/workspace_navigation.js','utf8'),context);
     const create=()=>context.ENFRAWorkspaceNavigation.create({root,app,scrollport,nav,state,geometry,schedule(){scheduled++}});
@@ -49,13 +49,14 @@ function harness(mode='wide', sequential=false) {
     }
     const choose=id=>{select.value=id;select.onchange();measure()};
     measure();
-    return {correct(href,options={}){let prevented=false; const link={getAttribute:()=>href};
+    return {correct(href,options={}){let prevented=false; const link={getAttribute:()=>href,classList:{contains:value=>(options.classes||[]).includes(value)}};
         clickHandler({button:0,target:{closest:()=>link},preventDefault(){prevented=true},...options});
         measure();return prevented;},state,root,scrollport,select,reviewButton,backButton,nextButton,progress,field,pairs,review,app,document,measure,choose,nav,label,controller:()=>controller,
         land:request=>context.ENFRAWorkspaceNavigation.land(state,request),
         cancelLanding:()=>context.ENFRAWorkspaceNavigation.cancelLanding(state),
         input:event=>context.ENFRAWorkspaceNavigation.noteInput(state,event),
         rerender(){controller.dispose();controller=create();measure()},dispose(){controller.dispose()},
+        listeners:()=>Object.fromEntries([...listeners].map(([type,handlers])=>[type,handlers.size])),
         counts:()=>({scheduled,replacements,nativeEvents})};
 }
 
@@ -754,4 +755,26 @@ test('pending explicit Next takes precedence over a mode anchor; removed anchor 
     assert.equal(h.state.navigationActive,saved.active);assert.equal(h.state.navigationJump,saved.jump);
     h.pairs[3].pair.isConnected=false;h.controller().reanchor('monthly_training');
     assert.equal(h.state.navigationActive,saved.active);assert.equal(h.state.navigationJump,saved.jump);
+});
+
+for(const mode of ['wide','tabletop','confined'])test(`${mode} warning ReturnReview preserves explicit guard, reanchor and single disposal`,()=>{
+    const h=harness(mode,true),original={...h.field};
+    for(let n=0;n<3;n++){
+        assert.deepEqual(h.listeners(),{pointerdown:1,keydown:1,click:1});
+        h.controller().reanchor('monthly_activity');h.measure();
+        assert.equal(h.progress.dataset.section,'monthly_activity');
+        assert.equal(h.correct('#report-review',{classes:['enfra-correction-return']}),true);
+        assert.equal(h.progress.dataset.section,'report_review');
+        assert.equal(h.state.explicitReview,true);
+        h.scrollport.scrollTop-=100;h.measure();
+        assert.equal(h.progress.dataset.section,'report_review','layout movement cannot consume explicit Review');
+        h.backButton.onclick();h.measure();
+        assert.equal(h.progress.dataset.section,'monthly_empty','Back preserves the latest sequential last-section contract');
+        assert.equal(h.correct('#report-section-activity'),true);
+        assert.equal(h.progress.dataset.section,'monthly_activity','An explicit correction returns to its exact section');
+        h.rerender();
+    }
+    assert.equal(h.field.value,original.value);assert.equal(h.field.selectionStart,3);assert.equal(h.field.selectionEnd,9);
+    assert.equal(h.counts().nativeEvents,0);
+    h.dispose();assert.deepEqual(h.listeners(),{pointerdown:0,keydown:0,click:0});
 });

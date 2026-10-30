@@ -444,4 +444,4 @@ def new_month_draft(draft: ReportDraft, period: ReportPeriod) -> ReportDraft:
                                                *(r for p in b.ai_paragraphs for r in p.references))}
     references.update(r for item in follow_ups for r in item.references)
     sources = tuple(s for s in draft.sources if any(r == s.id or r.startswith(s.id + ":") for r in references))
-    return replace(draft, period=period, sources=sources, follow_ups=follow_ups, blocks=blocks, cover_recovery_request=None)
+    return replace(draft, period=period, sources=sources, follow_ups=follow_ups, blocks=blocks, cover_recovery_request=None, source_row_reviews=())

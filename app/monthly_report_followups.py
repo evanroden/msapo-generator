@@ -1,7 +1,7 @@
 """Explicit carry-forward decisions; a new reporting month never resolves work."""
 
 from collections import Counter
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import hashlib
 import json
 import re
@@ -653,38 +653,49 @@ def _carried_update_period(item, period):
     return item.update_period or period.key
 
 
-def problems(item, draft):
+@dataclass(frozen=True)
+class FollowupProblem:
+    reason: str
+    message: str
+
+
+def problem_details(item, draft):
     messages = []
     if item.category not in ("issue", "proposal") or item.status not in (
         PROPOSAL_STATUSES if item.category == "proposal" else ISSUE_STATUSES
     ):
-        messages.append("Choose a valid item type and current status.")
+        messages.append(FollowupProblem("status", "Choose a valid item type and current status."))
     if not item.text.strip() and (item.category != "issue" or item.included):
-        messages.append("Enter a description for this item.")
+        messages.append(FollowupProblem("description", "Enter a description for this item."))
     if item.status in ("updated", "resolved") and not (
         item.evidence_note.strip() or item.references
     ):
-        messages.append(
+        messages.append(FollowupProblem("evidence",
             "Add evidence for the update or resolution: a source page or an entered explanation."
-        )
+        ))
     valid = {
         source_reference(s, n)
         for s in draft.sources
         for n in range(1, len(s.page_texts) + 1)
     }
     if (item.included or item.status in ("updated", "resolved")) and any(ref not in valid for ref in item.references):
-        messages.append(
+        messages.append(FollowupProblem("sources",
             "A follow-up source changed or is missing. Review its current page again."
-        )
+        ))
     if item.category == "proposal" and item.reviewed_fingerprint != confirmation(item, draft.period):
-        messages.append(
+        messages.append(FollowupProblem("decision",
             "Confirm this proposal's decision and whether it belongs in this report."
-        )
+        ))
     if needs_issue_period_confirmation(item, draft.period):
-        messages.append(
+        messages.append(FollowupProblem("period",
             f"Confirm this update is current for {draft.period.label}, or correct the update and status."
-        )
+        ))
     return tuple(messages)
+
+
+def problems(item, draft):
+    """Compatibility API: messages are unchanged; callers can opt into metadata."""
+    return tuple(problem.message for problem in problem_details(item, draft))
 
 
 def report_text(item):
@@ -733,6 +744,8 @@ def _render_section_followups(draft, prefix, field, category, *, initially_editi
         for n in range(1, len(s.page_texts) + 1)
     }
     draft = _capture_followup_controls(draft, prefix, category, options)
+    from app.monthly_report_followup_navigation import consume_after_capture, field_markup
+    consume_after_capture(draft, prefix, category)
     cycle = uuid4().hex
     message = followup_limit_message(draft)
     if message:
@@ -749,7 +762,9 @@ def _render_section_followups(draft, prefix, field, category, *, initially_editi
         edit_key = field(p + "_editing", initially_editing)
         confirmed = replace(item, reviewed_fingerprint=confirmation(item, draft.period))
         needs_correction = problems(confirmed, draft)
-        if needs_correction:
+        request = st.session_state.get(prefix + "_followup_navigation_open", {})
+        target = request.get("target")
+        if needs_correction or (getattr(target, "item_key", None) == item.key):
             st.session_state[edit_key] = True
         with st.container():
             st.write(item.text)
@@ -775,6 +790,10 @@ def _render_section_followups(draft, prefix, field, category, *, initially_editi
                         st.session_state[edit_key] = True
             if st.session_state[edit_key]:
                 identity = _followup_choice_identity(draft, prefix, item)
+                st.markdown(field_markup(prefix, item, "description", p + "_text"), unsafe_allow_html=True)
+                st.markdown(field_markup(prefix, item, "status", p + "_status", "radio"), unsafe_allow_html=True)
+                st.markdown(field_markup(prefix, item, "decision", p + "_status", "radio"), unsafe_allow_html=True)
+                st.markdown(field_markup(prefix, item, "evidence", p + "_note"), unsafe_allow_html=True)
                 text = _issue_control(st.text_area,
                     "Proposal scope" if proposal else "Issue description",
                     p + "_text", item.text, field, identity=identity, cycle=cycle, height=90, max_chars=4000,
@@ -802,6 +821,7 @@ def _render_section_followups(draft, prefix, field, category, *, initially_editi
                 missing = _followup_missing_links(draft, prefix, item, options)
                 if missing:
                     notice = st.empty()
+                    st.markdown(field_markup(prefix, item, "sources", p + "_remove_missing_" + _digest(missing), "checkbox"), unsafe_allow_html=True)
                     if _followup_choice(draft, prefix, item, p + "_remove_missing_" + _digest(missing),
                                         "Remove unavailable source links", False, field):
                         missing = ()

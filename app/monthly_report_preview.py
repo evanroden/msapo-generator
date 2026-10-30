@@ -40,6 +40,11 @@ def section_initial_page(pdf, section):
     """
     if section is None or len(pdf) < 2:
         return 0
+    # A matching title does not prove the page is otherwise empty. Retain the
+    # first page for unclassified artwork, including unfamiliar branding;
+    # neither its position nor its size establishes that it is a divider.
+    if pdf[0].get_image_info() or pdf[0].get_drawings():
+        return 0
     normalize = lambda value: ''.join(c.casefold() for c in value if c.isalnum())
     expected = normalize(('Appendix ' if section.appendix else 'Section ') + section.number + ' ' + section.title)
     return int(normalize(pdf[0].get_text()) == expected)

@@ -105,6 +105,17 @@ def upload_source_pdf(page, source):
     control.set_input_files(str(source))
 
 
+def select_individual_pages(page):
+    """Choose the native page-by-page route from the whole-PDF default."""
+    from playwright.sync_api import expect
+    control=page.get_by_label('Review individual pages',exact=True)
+    expect(control).to_have_count(1)
+    expect(control).to_be_visible()
+    expect(control).to_be_enabled()
+    control.check()
+    expect(control).to_be_checked()
+
+
 def source_date_widget(page, details):
     # `has` is evaluated relative to each candidate widget. Its inner locator
     # must start at the page, NOT include the ancestor details locator again.
@@ -223,13 +234,13 @@ def exercise(engine,name,source,base,scenario):
     try:
         record['date_selector_contract']=date_selector_contract(context)
         page.goto(URL);receipt(page)
-        page.get_by_role('button',name='Add files',exact=True).click()
         upload_source_pdf(page,source)
         initial=receipt(page,{'sources.0.sha256':sha256(source.read_bytes()).hexdigest()})
         assert len(initial['sources'])==1
         assert initial['sources'][0]['sha256']==sha256(source.read_bytes()).hexdigest()
         assert not initial['sources'][0]['financial_grants'] and not initial['assets']
         page.keyboard.press('Escape')
+        act(lambda:select_individual_pages(page))
         # Existing nonfinancial route: real Include then ordinary Add reviewed pages.
         act(lambda:page.get_by_role('button',name='Include page',exact=True).click())
         act(lambda:page.get_by_role('button',name='Add reviewed pages',exact=True).click())

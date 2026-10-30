@@ -250,7 +250,8 @@ def test_blank_sections_generate_without_empty_or_standing_confirmations_but_pri
     # monthly report. Respect the existing scoped empty-report confirmation
     # rather than silently reintroducing old library text just to generate.
     if not generated:
-        assert any("No new monthly information was entered" in w.value
+        assert any("No new monthly updates were entered. This report may contain saved details "
+                   "and dividers only. Review it before sharing." == w.value
                    for w in app.warning)
         next(b for b in app.button if b.label == "Create anyway").click().run()
     assert not app.exception

@@ -1,6 +1,6 @@
 """Evidence-only drafting. Files/cache/decoding stay on the caller thread."""
 
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import date
 from decimal import Decimal
 import hashlib
@@ -400,7 +400,15 @@ def _date_supported(text, event_date):
     return any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns)
 
 
-def _unverified_fact_dates(facts, sources):
+@dataclass(frozen=True)
+class FactDateProblem:
+    fact_id: str
+    source_id: str
+    page: int
+    message: str
+
+
+def fact_date_problems(facts, sources):
     """Revalidate persisted date claims without rewriting accepted evidence."""
     by_id = {source.id: source for source in sources}
     problems = []
@@ -413,11 +421,16 @@ def _unverified_fact_dates(facts, sources):
         if (type(fact.page) is int and 1 <= fact.page <= len(source.page_texts)
                 and _date_supported(source.page_texts[fact.page - 1], fact.date)):
             continue
-        problems.append(
+        problems.append(FactDateProblem(fact.id, source.id, fact.page,
             f"{source.filename} page {fact.page}: the saved date {fact.date} was not verified "
             "on the cited page. Read this page again and choose Use these facts, then "
-            "correct and review the linked wording. Your saved evidence is unchanged.")
+            "correct and review the linked wording. Your saved evidence is unchanged."))
     return tuple(dict.fromkeys(problems))
+
+
+def _unverified_fact_dates(facts, sources):
+    """Preserve the existing message API; structured owners need not parse it."""
+    return tuple(dict.fromkeys(problem.message for problem in fact_date_problems(facts,sources)))
 
 
 def block_date_problems(block, sources):

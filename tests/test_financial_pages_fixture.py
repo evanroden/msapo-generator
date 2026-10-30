@@ -55,6 +55,7 @@ def button(label):
  next(b for b in a.button if b.label==label).click().run();assert not a.exception,[e.message for e in a.exception]
 def check(starts,value=True):
  next(c for c in a.checkbox if c.label.startswith(starts)).set_value(value).run();assert not a.exception
+next(t for t in a.toggle if t.label=='Review individual pages').set_value(True).run();assert not a.exception
 button('Include page');button('Add reviewed pages')
 ordinary=a.session_state['financial_draft'];assert len(ordinary.blocks[-1].asset_hashes)==1
 check('Review client');a.multiselect[0].set_value([2]).run()
@@ -202,7 +203,46 @@ def test_source_upload_label_matches_production_owner_and_ui_call_is_preserved()
     assert 'first(' not in helper and 'nth(' not in helper and 'force=' not in helper
     assert "get_by_text('MBCx report files',exact=True)" in helper
     flow=inspect.getsource(exercise)
-    assert "name='Add files',exact=True" in flow and 'upload_source_pdf(page,source)' in flow
+    assert "name='Add files',exact=True" not in flow
+    assert flow.index('upload_source_pdf(page,source)') < flow.index('select_individual_pages(page)')
+    assert flow.index('select_individual_pages(page)') < flow.index("name='Include page',exact=True")
+
+
+@pytest.mark.parametrize('labels', [
+    ('Review individual pages',),
+    ('Other choice', 'Review individual pages'),
+    (),
+    ('Review individual pages extra',),
+    ('Review individual pages', 'Review individual pages'),
+])
+def test_individual_page_route_uses_one_exact_native_control(monkeypatch, labels):
+    """Offline locator contract; no browser execution or synthetic app bypass."""
+    import sys
+    from types import SimpleNamespace
+    from scripts.qa_financial_pages import select_individual_pages
+    checks = []
+    class Control:
+        def __init__(self, matched):self.matched=matched
+        def check(self):
+            assert len(self.matched)==1
+            checks.append(self.matched[0])
+    class Page:
+        def get_by_label(self, label, *, exact):
+            assert label=='Review individual pages' and exact is True
+            return Control([s for s in labels if s==label])
+    class Expect:
+        def __init__(self,control):self.control=control
+        def to_have_count(self,count):assert len(self.control.matched)==count
+        def to_be_visible(self):assert len(self.control.matched)==1
+        def to_be_enabled(self):assert len(self.control.matched)==1
+        def to_be_checked(self):assert checks==['Review individual pages']
+    monkeypatch.setitem(sys.modules,'playwright.sync_api',SimpleNamespace(expect=Expect))
+    if labels.count('Review individual pages')!=1:
+        with pytest.raises(AssertionError):select_individual_pages(Page())
+        assert checks==[]
+    else:
+        select_individual_pages(Page())
+        assert checks==['Review individual pages']
 
 
 @pytest.mark.parametrize('labels,expected',[

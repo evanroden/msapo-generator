@@ -290,10 +290,13 @@ def estimate_bytes(draft: ReportDraft, asset_loader: Callable[[str], bytes] | No
     )
 
 
-def _picture(document, raw: bytes, *, width: float = 7, height: float = 8, inset: float = 0) -> None:
+def _picture(document, raw: bytes, *, width: float = 7, height: float = 8,
+             inset: float = 0, page_break_before: bool = False) -> None:
     paragraph = document.add_paragraph()
     paragraph.paragraph_format.left_indent = Inches(inset)
     paragraph.paragraph_format.space_after = Pt(0)
+    if page_break_before:
+        paragraph.paragraph_format.page_break_before = True
     _fit_picture(paragraph.add_run(), raw, width, height)
 
 
@@ -492,9 +495,10 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
             for index, reference in enumerate(block.asset_hashes if not block.org_nodes and spec.type != "image_grid" else ()):
                 if asset_loader is None:
                     raise ValueError("Image and PDF-page assets require the library resolver.")
-                if index:
-                    document.add_page_break()
-                _picture(document, asset_loader(reference))
+                # The page break belongs to the next image paragraph. A
+                # standalone break paragraph can consume an unwanted page
+                # when a large preceding source page nearly fills the sheet.
+                _picture(document, asset_loader(reference), page_break_before=index > 0)
                 if index < len(block.asset_captions) and block.asset_captions[index]:
                     document.add_paragraph(block.asset_captions[index], style="Caption")
             if block.rows:

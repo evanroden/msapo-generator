@@ -1,0 +1,89 @@
+name: Monthly exact warning routes
+
+on:
+  pull_request:
+    paths:
+      - 'app/monthly_report_*.py'
+      - 'app/*navigation.js'
+      - 'app/workspace_layout*'
+      - 'scripts/qa_warning_routes.py'
+      - 'scripts/workspace_warning_routes.py'
+      - 'scripts/monthly_sequential_navigation.py'
+      - 'tests/test_warning_routes_fixture.py'
+      - 'tests/test_monthly_report_*navigation*.py'
+      - 'tests/fixtures/workspaces/monthly_app.py'
+      - '.github/workflows/monthly-warning-routes.yml'
+      - 'requirements*.lock'
+  push:
+    branches: [main]
+    paths:
+      - 'app/monthly_report_*.py'
+      - 'app/*navigation.js'
+      - 'app/workspace_layout*'
+      - 'scripts/qa_warning_routes.py'
+      - 'scripts/workspace_warning_routes.py'
+      - 'scripts/monthly_sequential_navigation.py'
+      - 'tests/test_warning_routes_fixture.py'
+      - 'tests/fixtures/workspaces/monthly_app.py'
+      - '.github/workflows/monthly-warning-routes.yml'
+      - 'requirements*.lock'
+
+permissions:
+  contents: read
+
+jobs:
+  exact-warning-routes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - name: Install locked app, real office rendering and both native browsers
+        timeout-minutes: 20
+        run: |
+          sudo python3 scripts/ci_ubuntu_mirror_priority.py
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-calc fonts-liberation
+          python -m pip install -r requirements-dev.lock playwright==1.58.0
+          python scripts/patch_streamlit_frontend.py
+          python scripts/patch_streamlit_date_input.py
+          python -m playwright install --with-deps chromium webkit
+      - name: Exact routes and financial output gates, with no skipped cases
+        timeout-minutes: 10
+        run: |
+          mkdir -p test-artifacts/warning-routes
+          python -m pytest tests/test_warning_routes_fixture.py tests/test_monthly_report_financial_policy.py tests/test_monthly_report_mbcx_financial_pages.py tests/test_financial_pages_fixture.py tests/test_monthly_report_source_detail_navigation.py tests/test_monthly_report_source_detail_navigation_guided.py tests/test_monthly_report_ai_navigation_receipts.py tests/test_monthly_report_ai_warning_ui.py tests/test_monthly_report_ai_warning_guided.py tests/test_monthly_report_financial_warning_navigation.py tests/test_monthly_report_financial_warning_guided.py tests/test_monthly_report_manager_page_navigation.py tests/test_monthly_report_manager_page_navigation_guided.py -q --junitxml=test-artifacts/warning-routes/contracts.xml
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          root = ET.parse('test-artifacts/warning-routes/contracts.xml').getroot()
+          assert not root.findall('.//skipped'), 'Required route/financial renderer tests must run, not skip'
+          assert len(root.findall('.//testcase')) >= 190, 'Missing warning acceptance cases'
+          PY
+          node --test tests/source_review_navigation_test.cjs tests/workspace_navigation_test.cjs tests/workspace_geometry_test.cjs tests/picture_correction_navigation_test.cjs tests/page_navigation_request_test.cjs
+      - name: Native wide-pointer and narrow-keyboard warning, persistence and output journeys
+        timeout-minutes: 35
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 33 <<'NATIVE_TEST'
+          python scripts/qa_warning_routes.py
+          NATIVE_TEST
+      - name: Preserve all original financial native admission and vendor-total gates
+        timeout-minutes: 9
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 8 <<'NATIVE_TEST'
+          python scripts/qa_financial_pages.py
+          NATIVE_TEST
+      - name: Retain failed first attempts, receipts, screenshots, traces and real outputs
+        if: always()
+        timeout-minutes: 3
+        uses: actions/upload-artifact@v4
+        with:
+          name: monthly-exact-warning-routes-${{ github.run_attempt }}
+          path: |
+            test-artifacts/warning-routes/
+            test-artifacts/financial-pages/
+          retention-days: 7
+          if-no-files-found: error

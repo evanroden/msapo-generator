@@ -82,6 +82,12 @@ if (os.environ.get("EPC_MONTHLY_TRAINING_TASK") == "1"
         render_reference(base, _field)
     st.stop()
 
+if os.environ.get("EPC_MONTHLY_WARNING_ROUTES_TASK") == "1":
+    from scripts.workspace_warning_routes import render as render_warning_routes
+    with isolated(token):
+        render_warning_routes(base, token, _field, _move)
+    st.stop()
+
 if os.environ.get("EPC_MONTHLY_FINANCIAL_PAGES_TASK") == "1":
     from scripts.workspace_financial_pages import render as render_financial
     with isolated(token):

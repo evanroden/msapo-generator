@@ -190,7 +190,7 @@ def test_retained_scope_pricing_is_still_blocked():
 def test_disambiguated_duplicate_status_columns_require_review(second):
     from types import SimpleNamespace
     from app.monthly_report_sections import table_without_prices
-    source = SimpleNamespace(rows=(("Scope", "Status", "Status"),
+    source = SimpleNamespace(table_header_row=0, rows=(("Scope", "Status", "Status"),
                                    ("Replace actuator", "Pending", second)))
     table, _ = table_without_prices(source)
     assert table.columns == ("Scope", "Status", "Status (3)")
@@ -199,6 +199,30 @@ def test_disambiguated_duplicate_status_columns_require_review(second):
     assert "Status: Pending" in item.text
     if second:
         assert "Status (3): " + second in item.text
+
+
+@pytest.mark.parametrize("serialized", [False, True])
+def test_real_legacy_import_item_defaults_to_first_header_and_retains_rows(serialized):
+    import json
+    from app.monthly_report_import import ImportItem
+    from app.monthly_report_sections import table_without_prices
+    rows = (("Scope", "Status", "Status"),
+            ("First actuator", "Pending", "Declined"),
+            ("Last actuator", "Pending", "Awaiting board"))
+    legacy = dict(id="legacy-table", kind="table", part="word/document.xml",
+                  position=1, word_section=0, rows=rows)
+    # Old constructor/decoded-record fields omit the newly added optional
+    # header offset. Exercise the actual dataclass, not a duck-typed stub.
+    if serialized:
+        legacy = json.loads(json.dumps(legacy))
+    source = ImportItem(**legacy)
+    assert source.table_header_row == 0
+    assert tuple(tuple(row) for row in source.rows) == rows
+    table, removed = table_without_prices(source)
+    assert not removed
+    assert table.columns == ("Scope", "Status", "Status (3)")
+    assert table.rows == rows[1:]
+    assert tuple(tuple(row) for row in source.rows) == rows
 
 
 def test_short_row_with_missing_decision_stays_unconfirmed():

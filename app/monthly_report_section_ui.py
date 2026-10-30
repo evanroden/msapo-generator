@@ -216,9 +216,12 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
         guide = section_help(section.key)
         st.write(guide.guidance)
         from app.monthly_report_content_kind import section_content_description
-        content_description = section_content_description(section.items)
+        content_description = section_content_description(section.items, section_key=section.key)
         if content_description:
             st.caption(content_description)
+        if any(item.kind == "unsupported" and item.position > 0 for item in section.items):
+            st.caption("Layout review is required; extracted labels do not make a drawing editable. "
+                       "Check its original page or use the existing replacement controls.")
         actions = ["Keep and review", "Edit text or change pictures", "Leave this section out"]
         labels = dict(zip(actions, (guide.keep, guide.edit, "Start this section blank")))
         if section.key == "cover":
@@ -376,7 +379,10 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 if removed:
                     st.caption("Pricing columns were removed from this client-facing table. The original table is retained in the uploaded report.")
                 if table:
-                    st.write(f"Table {n}")
+                    from app.monthly_report_source_table_labels import table_task_label
+                    st.text(table_task_label(table, item.suggested_slot or section.key,
+                                             position=n - 1,
+                                             total=sum(i.kind == "table" for i in items)))
                     rows = [dict(zip(table.columns, r)) for r in table.rows]
                     if action == actions[1]:
                         rows = _grid(p + "_table_" + item.id + "_" + _signature(table.columns), rows, num_rows="dynamic", hide_index=True)

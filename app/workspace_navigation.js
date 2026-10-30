@@ -135,7 +135,7 @@ globalThis.ENFRAWorkspaceNavigation = {
         if (!nav) return null;
         let select = null, reviewButton = null, backButton = null, nextButton = null, progress = null;
         let entries = [], signature = '';
-        let restore = null;
+        let restore = null, correction = null, correctionSerial = 0;
         const box = node => node.getBoundingClientRect();
         const owner = () => state.ownsScroll ? root : scrollport;
         // The container keeps one height whether or not its selector is
@@ -144,6 +144,7 @@ globalThis.ENFRAWorkspaceNavigation = {
         const capture = entry => entry ? {id:entry.id, scroll:owner().scrollTop,
             offset:box(entry.target).top-box(owner()).top} : null;
         const navigate = id => {
+            correction = null; correctionSerial++;
             const entry = entries.find(item => item.id === id);
             if (!entry?.target.isConnected) return;
             if (entry.outside) {
@@ -181,13 +182,31 @@ globalThis.ENFRAWorkspaceNavigation = {
             if (!backButton || event.defaultPrevented || event.button !== 0 ||
                 event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
             const link = event.target?.closest?.('a');
-            const match = /^#report-section-([a-z_]+)$/.exec(link?.getAttribute('href') || '');
+            const href = link?.getAttribute('href') || '';
+            if (href === '#report-review' && link?.classList?.contains('enfra-correction-return')) {
+                event.preventDefault();navigate('report_review');return;
+            }
+            if (link?.classList?.contains('enfra-picture-correction-link')) {
+                const adapter = globalThis.ENFRAPictureCorrections;
+                if (!adapter || !app.contains(link)) return;
+                event.preventDefault();
+                const target = adapter.resolve(app, link, state.identity);
+                const entry = target && entries.find(item => item.target.contains(target.marker));
+                if (!entry) {adapter.unavailable(link);return;}
+                navigate(entry.id);
+                correction = {link, serial:correctionSerial};
+                return;
+            }
+            const match = /^#report-section-([a-z_]+)$/.exec(href);
             if (!match || !app.contains(link)) return;
             const id = 'monthly_' + match[1];
             if (!entries.some(item => item.id === id && item.target.isConnected)) return;
             event.preventDefault();
             navigate(id);
         };
+        const cancelCorrection = () => {correction = null; correctionSerial++;};
+        app.addEventListener?.('pointerdown', cancelCorrection);
+        app.addEventListener?.('keydown', cancelCorrection);
         app.addEventListener?.('click', correctSection);
         const prepare = (context, sample, pairs) => {
             const current = nav.querySelector('.epc-section-selector');
@@ -220,6 +239,27 @@ globalThis.ENFRAWorkspaceNavigation = {
                 if (nextButton) nextButton.onclick = nextSection;
             }
             progress = nav.querySelector('.epc-section-progress');
+            // A validated server page request arrives only after the previous
+            // owner committed its delivered inputs. Reuse ordinary navigation;
+            // this marker never submits a field or selects a different source.
+            if (backButton && globalThis.ENFRAPictureCorrections) {
+                const requests = [...app.querySelectorAll('.enfra-page-correction-request')].filter(link =>
+                    link.isConnected && link.dataset.reportIdentity === state.identity &&
+                    !link.closest('[data-stale="true"]'));
+                const consumed = state.exactPageNavigationTokens || (state.exactPageNavigationTokens = new Set());
+                if (requests.length === 1) {
+                    const link = requests[0], token = link.dataset.token;
+                    const target = token && !consumed.has(token) &&
+                        globalThis.ENFRAPictureCorrections.resolve(app, link, state.identity);
+                    const entry = target && entries.find(item => item.target.contains(target.marker));
+                    if (entry) {
+                        consumed.add(token);
+                        navigate(entry.id);
+                        correction = {link, serial:correctionSerial};
+                    }
+                }
+            }
+
             const next = JSON.stringify(entries.map(({id,title}) => [id,title]));
             if (select && next !== signature) {
                 const selected = select.value;
@@ -306,6 +346,11 @@ globalThis.ENFRAWorkspaceNavigation = {
                 const visibleEntries=state.ownsScroll ? entries.filter(item=>!item.outside) : entries;
                 active=geometry.selectActiveSection(visibleEntries.map(item=>({id:item.id,top:box(item.target).top,bottom:box(item.target).bottom})),state.navigationActive,line,12);
             }
+            if (correction) {
+                const pending = correction;correction = null;
+                globalThis.ENFRAPictureCorrections.reveal(app, pending.link, state.identity,
+                    () => pending.serial === correctionSerial);
+            }
             state.navigationActive=active;
             // Never change a menu's highlighted option while it has focus.
             if (select && document.activeElement!==select && active && select.value!==active) select.value=active;
@@ -323,6 +368,9 @@ globalThis.ENFRAWorkspaceNavigation = {
             }
         };
         return {prepare,update,height,reanchor,dispose(){
+            cancelCorrection();
+            app.removeEventListener?.('pointerdown',cancelCorrection);
+            app.removeEventListener?.('keydown',cancelCorrection);
             app.removeEventListener?.('click',correctSection);
             if(select?.onchange===choose)select.onchange=null;
             if(reviewButton?.onclick===openReview)reviewButton.onclick=null;
