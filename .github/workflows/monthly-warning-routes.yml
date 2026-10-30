@@ -73,7 +73,7 @@ jobs:
       - name: Preserve all original financial native admission and vendor-total gates
         timeout-minutes: 9
         run: |
-          python scripts/ci_native_test_budget.py --minutes 8 <<'NATIVE_TEST'
+          python scripts/ci_native_test_budget.py --minutes 33 --command-minutes 8 <<'NATIVE_TEST'
           python scripts/qa_financial_pages.py
           NATIVE_TEST
       - name: Retain failed first attempts, receipts, screenshots, traces and real outputs

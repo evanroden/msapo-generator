@@ -118,6 +118,21 @@ def validate_fresh_water_relocation(text, jobs, original):
     uploads[0]['raw'] = uploads[0]['raw'].replace(artifact_path, '')
 
 
+def validate_water_row_relocation(text, jobs, original):
+    from test_water_row_workflow_partition import validate_partition
+    validate_partition(text)
+    commands = ('qa_water_page_journey.py', 'qa_report_row_cards.py')
+    moved = [step for step in original['synthetic-dom']
+             if any(command in step.get('commands', '') for command in commands)]
+    assert len(moved) == 2
+    original['synthetic-dom'] = [step for step in original['synthetic-dom'] if step not in moved]
+    for directory in ('water-page-journey', 'report-row-cards'):
+        path = '            test-artifacts/' + directory + '/\n'
+        uploads = [step for step in original['synthetic-dom'] if path in step['raw']]
+        assert len(uploads) == 1 and uploads[0]['raw'].count(path) == 1
+        uploads[0]['raw'] = uploads[0]['raw'].replace(path, '')
+
+
 def validate_workflow(text):
     jobs = parse_jobs(text)
     original = json.loads((ROOT / 'tests/fixtures/native_workflow_steps.json').read_text())
@@ -126,6 +141,7 @@ def validate_workflow(text):
     assert len(contact) == 1
     original['synthetic-dom'] = [step for step in original['synthetic-dom'] if step not in contact]
     validate_fresh_water_relocation(text, jobs, original)
+    validate_water_row_relocation(text, jobs, original)
     ceilings = {'literal-labels':10, 'synthetic-history':15, 'synthetic-progress-photos':15, 'synthetic-dom':25, 'training-date':15}
     for name, ceiling in ceilings.items():
         chunks = jobs[name]
@@ -185,7 +201,14 @@ def test_term_resistant_descendant_is_killed_when_shell_exits(tmp_path):
     # A killed orphan can remain as a zombie until its system reaper runs.
     for _ in range(100):
         path = Path(f'/proc/{pid}/stat')
-        if not path.exists() or path.read_text().split()[2] == 'Z':
+        if not path.exists():
+            break
+        try:
+            state = path.read_text().split()[2]
+        except FileNotFoundError:
+            # The kernel may reap it between exists() and this read.
+            break
+        if state == 'Z':
             break
         time.sleep(0.01)
     else:
