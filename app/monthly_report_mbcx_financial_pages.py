@@ -258,7 +258,10 @@ def render_reviewed_batch(profile,content,blocks,assets,prefix,*,period,editor_s
     if content.source.suffix!='.pdf':return False,content,{}
     from app.monthly_report_ui import _field
     key=prefix+'_financial_'+content.source.id
-    if not st.checkbox('Review client-facing ENFRA financial pages',key=_field(key+'_open',False)):
+    open_key=_field(key+'_open',False)
+    # A late native remount needs the exact owner's current disclosure default,
+    # not only a consumed set_value packet. This does not restore any consent.
+    if not st.checkbox('Review client-facing ENFRA financial pages',key=open_key,value=st.session_state[open_key]):
         return False,content,{}
     source=content.source
     try:

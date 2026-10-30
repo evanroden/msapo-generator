@@ -35,6 +35,75 @@ def all_cases_passed(report):
 def receipt(page,expected=None):return wait_receipt(page,'data-warning-routes',expected,timeout=120000)
 
 
+def source_date_control(page,owner):
+    """Resolve the exact source's labeled native date widget, never a sibling."""
+    from playwright.sync_api import expect
+    from scripts.qa_financial_pages import source_date_widget
+    expect(owner).to_have_count(1)
+    widget=source_date_widget(page,owner)
+    expect(widget).to_have_count(1)
+    control=widget.get_by_test_id('stDateInputField')
+    expect(control).to_have_count(1)
+    return control
+
+
+def select_native_option(page,control,label,*,keyboard=False):
+    """Choose one exact option through its native control, not option existence."""
+    from playwright.sync_api import expect
+    if keyboard:
+        expect(control).to_have_count(1);expect(control).to_be_enabled()
+        control.focus();expect(control).to_be_focused();control.press('ArrowDown')
+        expect(control).to_have_attribute('aria-expanded','true')
+        popup_id=control.get_attribute('aria-controls')
+        assert popup_id and not any(c.isspace() for c in popup_id),'The control must own one native listbox.'
+        popup=page.locator('[role="listbox"][id='+json.dumps(popup_id)+']')
+        expect(popup).to_have_count(1);expect(popup).to_be_visible()
+        option=popup.get_by_role('option',name=label,exact=True)
+        expect(option).to_have_count(1);expect(option).to_be_enabled()
+        target=option.get_attribute('id')
+        identities=popup.get_by_role('option').evaluate_all('nodes=>nodes.map(node=>node.id)')
+        active=control.get_attribute('aria-activedescendant')
+        assert identities and all(identities) and len(set(identities))==len(identities)
+        assert target in identities and active in identities,'The highlighted option must belong to this exact listbox.'
+        steps=identities.index(target)-identities.index(active)
+        # One finite route derived from the observed native list order. No
+        # search-value no-op, guessed extra ArrowDown, retry or pointer fallback.
+        for _ in range(abs(steps)):control.press('ArrowDown' if steps>0 else 'ArrowUp')
+        expect(control).to_have_attribute('aria-activedescendant',target)
+        control.press('Enter')
+    else:
+        control.click()
+        option=page.get_by_role('option',name=label,exact=True)
+        expect(option).to_have_count(1);option.click()
+    page.keyboard.press('Escape')
+
+
+
+def select_source_caption(page,manager,prefix,source,*,keyboard=False):
+    """A selection receipt alone cannot authorize typing into another owner."""
+    from playwright.sync_api import expect
+    selected_key=prefix+'_evidence_selected'
+    choose=manager.get_by_role('combobox',name='File to review',exact=True)
+    expect(choose).to_have_count(1);expect(choose).to_be_visible();expect(choose).to_be_enabled()
+    previous=receipt(page);previous_value=choose.input_value()
+    select_native_option(page,choose,source['filename'],keyboard=keyboard)
+    expect(choose).to_have_value(source['filename'])
+    owner=manager.locator('.st-key-'+prefix+'_evidence_'+source['id']+'_caption_1')
+    expect(owner).to_have_count(1)
+    caption=owner.get_by_role('textbox',name='Page caption',exact=True)
+    expect(caption).to_have_count(1);expect(caption).to_be_visible();expect(caption).to_be_enabled()
+    expect(owner.locator('xpath=ancestor-or-self::*[@data-stale="true"]')).to_have_count(0)
+    # A genuine same-owner selection can be a no-op. A changed native value or
+    # receipt owner, however, requires a newer settled receipt, never the old ACK.
+    changed=(previous_value!=source['filename'] or previous['selected'].get(selected_key)!=source['id'])
+    state=after(page,previous['sequence']) if changed else receipt(page)
+    assert state['sequence']>=previous['sequence']+(1 if changed else 0),'Stale source-selection receipt'
+    assert state['selected'].get(selected_key)==source['id'],'Caption receipt belongs to another source'
+    # Recheck the native owner after sampling; do not fill an unscoped caption.
+    expect(choose).to_have_value(source['filename']);expect(caption).to_be_visible()
+    return caption,state
+
+
 def after(page,sequence):
     page.wait_for_function('''old => {
       const node=document.querySelector('[data-warning-routes]');
@@ -158,14 +227,7 @@ def exercise(engine,name,mode,scenario,base):
     def commit(control):
         previous=receipt(page)['sequence'];activate(control);return after(page,previous)
     def select(control,label):
-        if keyboard:control.focus();control.press('ArrowDown')
-        else:control.click()
-        option=page.get_by_role('option',name=label,exact=True)
-        if keyboard:
-            control.fill(label);expect(option).to_have_count(1);control.press('ArrowDown');control.press('Enter')
-        else:
-            expect(option).to_have_count(1);option.click()
-        page.keyboard.press('Escape')
+        select_native_option(page,control,label,keyboard=keyboard)
     def enter_combobox(control):
         if keyboard:control.focus()
         else:control.click()
@@ -209,7 +271,9 @@ def exercise(engine,name,mode,scenario,base):
         page.goto(URL,wait_until='domcontentloaded')
         select(page.get_by_role('combobox',name='Synthetic historical scenario',exact=True),scenario)
         activate(page.get_by_role('button',name='Load synthetic historical report with unresolved warnings',exact=True))
-        initial=capture('unresolved-historical-report');prefix=initial['editor_prefix'];old,target=initial['working']['sources']
+        initial=capture('unresolved-historical-report')
+        assert initial['scenario']==scenario,'The installed fixture must match the requested scenario.'
+        prefix=initial['editor_prefix'];old,target=initial['working']['sources']
         # The explicit fixture Load enters through production's one-shot Cover
         # landing. Prove that arrival before the first sequential action; merely
         # mounting the full editor below report identity is not an entry receipt.
@@ -236,11 +300,9 @@ def exercise(engine,name,mode,scenario,base):
         manage=page.get_by_role('button',name='Manage source files',exact=True)
         if manage.count():commit(manage)
         manager=page.locator('.st-key-'+prefix+'_source_manager_panel')
-        choose=manager.get_by_role('combobox',name='File to review',exact=True)
-        select(choose,old['filename'])
-        receipt(page,{'selected.'+prefix+'_evidence_selected':old['id']})
-        pending_sequence=receipt(page)['sequence']
-        manager.get_by_role('textbox',name='Page caption',exact=True).fill('Synthetic pending old-source caption')
+        caption,selected=select_source_caption(page,manager,prefix,old,keyboard=keyboard)
+        pending_sequence=selected['sequence']
+        caption.fill('Synthetic pending old-source caption')
         navigate_sections(page,'report_review',keyboard=keyboard)
         pending=after(page,pending_sequence);assert dict(pending['working']['sources'][0]['captions'])[1]=='Synthetic pending old-source caption'
         assert pending['originals']==initial['originals'];capture('pending-inputs-retained')
@@ -250,7 +312,7 @@ def exercise(engine,name,mode,scenario,base):
             jump('source_facility',sites)
             select(sites,'Demo North')
             commit(owner.get_by_role('button',name='Use these source details',exact=True))
-            receipt(page);date_field=owner.get_by_role('textbox',name='Source date',exact=True)
+            receipt(page);date_field=source_date_control(page,owner)
             jump('source_date_unknown',date_field)
             date_field.fill('2026-09-03');date_field.press('Tab')
             commit(owner.get_by_role('button',name='Use these source details',exact=True))

@@ -80,7 +80,8 @@ def render_source_page_links(check, draft, prefix):
         with st.container(key='monthly_source_warning_' + target.token + '_' + check.code):
             st.markdown('<span class="enfra-source-warning" data-source-id="' +
                 escape(target.source_id, quote=True) + '" data-report-identity="' +
-                _identity(prefix) + '"></span>', unsafe_allow_html=True)
+                _identity(prefix) + '"' + (' data-navigation-owner="exact-manager-page"'
+                    if callback == _queue_manager_page else '') + '></span>', unsafe_allow_html=True)
             if callback == _queue_manager_page:
                 st.caption('Source-page selection and review are shared; each report caption and picture review stays separate.')
             st.button(f'{label} source page {target.page} · picture {index + 1}',

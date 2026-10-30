@@ -50,6 +50,11 @@ globalThis.ENFRAPictureCorrections = {
                 back = document.createElement('a');back.className = 'enfra-correction-return';
                 back.href = '#report-review';back.textContent = 'Return to Review';marker.parentElement.append(back);
             }
+            back.hidden = false;
+            // A server-accepted manager page and this still-current native
+            // field now own Return. A warning click alone is not acceptance.
+            if (marker.dataset.navigationOwner === 'exact-manager-page')
+                app.dispatchEvent(new CustomEvent('enfra-exact-correction-ready', {detail:{link,marker,field,back}}));
             field.focus({preventScroll:true});field.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});
         });
     }

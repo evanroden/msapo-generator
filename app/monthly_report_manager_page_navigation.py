@@ -183,6 +183,7 @@ def page_markup(state,prefix,source,page,field_key,scope,*,source_review=False):
     destination=marker_id(prefix,target)
     return ('<span class="enfra-picture-correction" id="'+destination+
         '" data-report-identity="'+identity+'" data-field-kind="'+('combobox' if source_review else 'input')+'" data-field-key="'+
-        escape(field_key,quote=True)+'" aria-hidden="true"></span>'+
+        escape(field_key,quote=True)+'"' + (' data-navigation-owner="exact-manager-page" data-navigation-token="'+
+            escape(request['nonce'],quote=True)+'"' if source_review else '') + ' aria-hidden="true"></span>'+
         '<a class="enfra-page-correction-request" data-report-identity="'+identity+
         '" data-token="'+escape(request['nonce'],quote=True)+'" href="#'+destination+'" hidden></a>')

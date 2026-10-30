@@ -92,6 +92,20 @@ def test_manager_warning_preserves_old_caption_and_independent_occurrences(monke
     markup='\n'.join(m.value for m in app.markdown)
     assert 'enfra-page-correction-request' in markup
     assert 'data-field-kind="combobox"' in markup
+    assert 'data-navigation-owner="exact-manager-page"' in markup
+    assert 'data-navigation-token=' in markup
+    if scenario=='shared':
+        # Feed the real accepted marker from the ordinary guided callback into
+        # both actual display adapters. Durable failure is not permission to
+        # drop the earlier task or to claim persistence succeeded.
+        import json,os,subprocess
+        from pathlib import Path
+        receipt={'markup':markup,'failure':failure,'saveFailed':('data-save-state="failed"' in markup)}
+        assert receipt['saveFailed'] is bool(failure)
+        result=subprocess.run(['node','--test','tests/source_review_navigation_test.cjs'],
+            cwd=Path(__file__).resolve().parents[1],capture_output=True,text=True,
+            env={**os.environ,'ENFRA_MANAGER_ACCEPTED_RECEIPT':json.dumps(receipt)})
+        assert result.returncode==0, result.stdout+result.stderr
     app.run()
     assert not app.exception
     assert not any('enfra-page-correction-request' in m.value for m in app.markdown)
