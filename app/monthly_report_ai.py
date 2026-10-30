@@ -440,6 +440,63 @@ def block_date_problems(block, sources):
         (fact for source in sources for fact in source.facts if fact.id in wanted), sources)
 
 
+def _quote_on_source_token_boundaries(native: str, quote: str) -> bool:
+    """Require a complete cited quote, not a prefix of an equipment ID/value.
+
+    The reader can quote a relevant excerpt rather than an entire sentence,
+    so remain case/whitespace tolerant. But a substring ending inside F-20,
+    400psi, 40.0 or 1,200,000 is NOT evidence for F-2, 40 or 1,200.
+    Examine every occurrence: an early prefix collision may precede an
+    independent, valid occurrence later on the same page.
+    """
+    value = " ".join(native.split()).casefold()
+    needle = " ".join(quote.split()).casefold()
+    if not needle:
+        return False
+
+    def word(c):
+        return bool(c) and (c.isalnum() or c == "_")
+
+    # Match the dash variants already recognized by _quantity_tokens,
+    # without normalizing the source or quoted punctuation itself.
+    signs = ("-", "+", "\u2010", "\u2011", "\u2012", "\u2013", "\u2212", "\ufe63", "\uff0d")
+    compound = signs + (".", ",", "/")
+    at = value.find(needle)
+    while at != -1:
+        end = at + len(needle)
+        left = value[at - 1] if at else ""
+        right = value[end] if end < len(value) else ""
+        left_extends = (
+            word(needle[0]) and (
+                word(left)
+                or left in signs
+                or (left in (".", ",", "/")
+                    and at > 1 and word(value[at - 2]))
+            )
+        ) or (
+            len(needle) > 1
+            and needle[0] in compound
+            and word(needle[1])
+            and word(left)
+        )
+        right_extends = (
+            word(needle[-1]) and (
+                word(right)
+                or (right in compound
+                    and end + 1 < len(value) and word(value[end + 1]))
+            )
+        ) or (
+            len(needle) > 1
+            and needle[-1] in compound
+            and word(needle[-2])
+            and word(right)
+        )
+        if not left_extends and not right_extends:
+            return True
+        at = value.find(needle, at + 1)
+    return False
+
+
 def normalize_facts(value, source, pages, profile, period, vendors=()):
     raw = value.get("facts")
     if not isinstance(raw, list) or len(raw) > 100:
@@ -485,7 +542,7 @@ def normalize_facts(value, source, pages, profile, period, vendors=()):
                 "A fact was incomplete or exceeded its bounds. No facts were accepted."
             )
         native = " ".join(source.page_texts[page - 1].split()).casefold()
-        if " ".join(quote.split()).casefold() not in native:
+        if not _quote_on_source_token_boundaries(native, quote):
             raise ValueError(
                 "A fact's evidence quote was not found on its page. Review the source manually."
             )
