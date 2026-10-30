@@ -1646,6 +1646,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     active_work.discard(browser_token, contract, selected, period,
                         expected_revision=st.session_state.get(prefix + "_active_sequence", 0),
                         expected_generation=st.session_state.get(prefix + "_active_generation", ""))
+                from app.monthly_report_review_preview_ui import discard_review_preview
+                discard_review_preview(prefix)
                 for key in list(st.session_state):
                     if key.startswith(prefix):
                         del st.session_state[key]
@@ -1724,6 +1726,11 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 st.caption("Automatic recovery for new edits is unavailable in this browser.")
             else:
                 st.warning("Automatic recovery is unavailable in this browser. Save a report version before leaving.")
+        # Every native editor, picture decision and recovery-save attempt has
+        # now reached the authoritative draft. A preview must not race an
+        # uncommitted image caption or a source-review choice in this render.
+        from app.monthly_report_review_preview_ui import render_review_preview
+        render_review_preview(draft, assets, prefix)
         if package and package.fingerprint != draft.fingerprint:
             from app.monthly_report_output_ui import discard_current_session_pdf_preview
             discard_current_session_pdf_preview(prefix, _rich_text_scope(prefix))
