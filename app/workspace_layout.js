@@ -105,12 +105,12 @@ export default function(component) {
     }
     function observeMutations() {
         mutation.disconnect();
-        mutation.observe(root, {childList:true,subtree:true,attributes:true,attributeFilter:['data-token','data-stale']});
+        mutation.observe(root, {childList:true,subtree:true,attributes:true,attributeFilter:['data-token','data-stale','open','inert']});
         if (data.navigationKey) mutation.observe(app, {childList:true,subtree:true});
         // Only the owned external Review's readiness attributes are watched.
         // Ancestors own Streamlit's stale flag; descendants affect fresh().
         for (const node of reviewChain)
-            mutation.observe(node, {attributes:true,subtree:node===reviewTarget,attributeFilter:['data-stale']});
+            mutation.observe(node, {attributes:true,subtree:node===reviewTarget,attributeFilter:node===reviewTarget ? ['data-stale','open','inert'] : ['data-stale']});
     }
     function discoverReview() {
         const target = externalReview(), chain = [];

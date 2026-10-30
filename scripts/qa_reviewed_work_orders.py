@@ -52,6 +52,18 @@ def settled(page, predicate):
     return receipt(page)
 
 
+
+def uploaded_source_ready(page):
+    """Finish this exact upload before a gesture on its final source form."""
+    source_id = sha256(CSV).hexdigest()
+    value = settled(page, "v=>v.working.sources.length===1 && v.working.sources[0].id==="
+        + json.dumps(source_id) + " && v.originals_unchanged===true && v.working.reviews===0")
+    assert len(value["working"]["sources"]) == 1
+    assert value["working"]["sources"][0]["id"] == source_id
+    assert value["originals_unchanged"] is True and value["working"]["reviews"] == 0
+    return value
+
+
 def select(page, label, option):
     # This journey deliberately uses the native keyboard opener. Pointer
     # dropdown/scroll behavior has its own repository-wide browser gate.
@@ -126,6 +138,9 @@ def exercise(browser, name):
         page.locator('input[type="file"]').set_input_files({"name": "synthetic-cmms.csv", "mimeType": "text/csv", "buffer": CSV})
         start = page.get_by_role("button", name="Review and correct imported rows", exact=True)
         expect(start).to_be_visible(timeout=25000)
+        # A streamed first form can be visible before upload settlement remounts
+        # it. Acknowledge the exact original before the single open gesture.
+        uploaded_source_ready(page)
         # Source scope is a real source-details action, not a fixture override.
         # Source details may be in a collapsed expander. A visible-only count
         # silently skipped this required native review in the WIP journey.
@@ -134,6 +149,8 @@ def exercise(browser, name):
         panel = page.get_by_test_id("stExpander").filter(has=facility)
         if not panel.evaluate("n=>(n.matches('details')?n:n.querySelector('details')).open"):
             panel.locator("summary").click()
+        expect(facility).to_be_visible()
+        expect(facility).to_be_enabled()
         select(page, "Source facility", "Demonstration North Facility")
         source_date = panel.get_by_test_id("stDateInput").get_by_role("textbox")
         source_date.fill("2026-09-04")

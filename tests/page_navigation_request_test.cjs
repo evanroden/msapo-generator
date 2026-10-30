@@ -236,7 +236,7 @@ for(const action of ['pointerdown','keydown','dispose'])test(`${action} cancels 
 test('only token/readiness attributes are observed; layout writes do not loop and disposed callbacks are inert',async()=>{
     const h=schedulerHarness();await h.drain();
     const observer=h.observers.find(o=>o.kind==='mutation'&&o.targets.get(h.root)?.subtree),options=observer.targets.get(h.root);
-    assert.equal(options.childList,true);assert.equal(options.attributes,true);assert.deepEqual([...options.attributeFilter],['data-token','data-stale']);
+    assert.equal(options.childList,true);assert.equal(options.attributes,true);assert.deepEqual([...options.attributeFilter],['data-token','data-stale','open','inert']);
     for(const attributeName of ['disabled','style','data-epc-mode','data-section','aria-expanded'])h.deliver({type:'attributes',target:h.root,attributeName});
     assert.equal(h.counts().pending,0);const before=h.counts().measurements;h.cleanup();
     observer.callback([{type:'attributes',target:h.link,attributeName:'data-token'}]);
@@ -477,6 +477,165 @@ test('a newly streamed unique external Review is discovered without root churn',
     const wrapper=h.element(),review=h.element();review.id='report-review';review.getBoundingClientRect=prior.getBoundingClientRect;
     h.app.append(wrapper);wrapper.append(review);await h.drain();assert.equal(h.next.disabled,false);
     h.command();await h.drain();assert.equal(h.state.navigationActive,'report_review');assert.equal(review.focusCount,1);h.cleanup();
+});
+
+
+function replacementDisclosure(h,section='monthly_activity') {
+    const marker=h.root.querySelectorAll('[data-epc-pair]').find(n=>n.dataset.epcPair===section),pair=marker.parentElement;
+    const details=h.element('DETAILS'),summary=h.element('SUMMARY'),body=h.element(),stale=h.element();
+    details.open=false;body.dataset.testid='stExpanderDetails';body.inert='';stale.dataset.stale='true';
+    details.append(summary);details.append(body);body.append(stale);pair.append(details);
+    return {marker,pair,details,summary,body,stale};
+}
+
+for(const kind of ['closed-inert','open-inert','closed-not-inert','inert-not-details','stale-summary','stale-marker','stale-pair','stale-focus','hidden-focus'])
+test(`native replacement disclosure readiness: ${kind}`,async()=>{
+    const h=schedulerHarness(),d=replacementDisclosure(h);
+    if(kind==='open-inert')d.details.open=true;
+    if(kind==='closed-not-inert')delete d.body.inert;
+    if(kind==='inert-not-details')d.details.tagName='DIV';
+    if(kind==='stale-summary')d.summary.dataset.stale='true';
+    if(kind==='stale-marker')d.marker.dataset.stale='true';
+    if(kind==='stale-pair')d.pair.dataset.stale='true';
+    if(kind==='stale-focus'||kind==='hidden-focus') {
+        const heading=h.element('H3');d.pair.queries.set('h1,h2,h3,h4',heading);
+        if(kind==='stale-focus'){heading.dataset.stale='true';d.pair.append(heading);}else d.body.append(heading);
+    }
+    await h.drain();assert.equal(h.next.disabled,kind!=='closed-inert');
+    if(kind==='closed-inert'){h.command();await h.drain();assert.equal(h.state.navigationActive,'monthly_activity');assert.equal(d.pair.focusCount,1);}
+    assert.equal(h.field.value,'Replaced 99 seals.');assert.equal(h.field.selectionStart,3);assert.equal(h.field.selectionEnd,8);h.cleanup();
+});
+
+for(const readiness of ['open','inert'])
+test(`one pending command leaves visible stale replacement content only after semantic ${readiness} delivery hides it`,async()=>{
+    const h=schedulerHarness();await h.drain();h.command();await h.drain();const d=replacementDisclosure(h);
+    if(readiness==='open')d.details.open=true;else delete d.body.inert;
+    await h.drain();h.command();await h.drain();assert.equal(h.state.navigationRequest,'monthly_scorecards');
+    assert.equal(h.state.navigationActive,'monthly_activity');const before=h.counts().measurements;
+    if(readiness==='open')d.details.open=false;else d.body.inert='';
+    h.deliver({type:'attributes',target:readiness==='open'?d.details:d.body,attributeName:readiness});await h.drain();
+    assert.ok(h.counts().measurements>before);assert.equal(h.state.navigationActive,'monthly_scorecards');assert.equal(h.state.navigationRequest,null);h.cleanup();
+});
+
+test('opening hidden stale content during a pending command prevents execution until visible content is fresh',async()=>{
+    const h=schedulerHarness();await h.drain();h.command();await h.drain();const d=replacementDisclosure(h);
+    const target=h.root.querySelectorAll('[data-epc-pair]').find(n=>n.dataset.epcPair==='monthly_scorecards');target.dataset.stale='true';
+    h.command();await h.drain();d.details.open=true;h.deliver({type:'attributes',target:d.details,attributeName:'open'});
+    target.dataset.stale='false';await h.drain();assert.equal(h.state.navigationActive,'monthly_activity');assert.equal(h.state.navigationRequest,'monthly_scorecards');
+    d.stale.dataset.stale='false';await h.drain();assert.equal(h.state.navigationActive,'monthly_scorecards');assert.equal(target.parentElement.focusCount,1);h.cleanup();
+});
+
+test('hidden replacement content never authorizes a foreign report intent or writes source caption',async()=>{
+    const h=schedulerHarness();await h.drain();h.command();await h.drain();replacementDisclosure(h);
+    const target=h.root.querySelectorAll('[data-epc-pair]').find(n=>n.dataset.epcPair==='monthly_scorecards');target.dataset.stale='true';
+    h.command();await h.drain();h.rerender('foreign');target.dataset.stale='false';await h.drain();
+    assert.equal(h.state.navigationIntent,null);assert.equal(h.state.navigationRequest,null);assert.equal(target.parentElement.focusCount||0,0);
+    assert.equal(h.field.value,'Replaced 99 seals.');h.cleanup();
+});
+
+function wrapNext(h) {
+    const wrapper=h.element();h.nav.append(wrapper);h.next.remove();h.next.isConnected=true;wrapper.append(h.next);return wrapper;
+}
+
+for(const accept of ['before-stale','during-stale'])
+test(`same established native wrapper retains one ${accept} command across full render but executes only fresh`,async()=>{
+    const h=schedulerHarness();await h.drain();h.command();await h.drain();const wrapper=wrapNext(h);await h.drain();
+    const button=h.next,handler=button.onclick,target=h.root.querySelectorAll('[data-epc-pair]').find(n=>n.dataset.epcPair==='monthly_scorecards');
+    target.dataset.stale='true';if(accept==='before-stale')h.command();wrapper.dataset.stale='true';await h.drain();
+    assert.equal(button.disabled,false);assert.equal(button.onclick,handler);if(accept==='during-stale')h.command();await h.drain();
+    assert.equal(h.state.navigationRequest,'monthly_scorecards');const oldCleanup=h.rerender();oldCleanup();await h.drain();
+    assert.equal(button.onclick,handler);assert.equal(h.state.navigationRequest,'monthly_scorecards');
+    target.dataset.stale='false';await h.drain();assert.equal(h.state.navigationActive,'monthly_activity');assert.equal(target.parentElement.focusCount||0,0);
+    wrapper.dataset.stale='false';await h.drain();assert.equal(h.state.navigationActive,'monthly_scorecards');assert.equal(h.state.navigationRequest,null);assert.equal(target.parentElement.focusCount,1);
+    h.rerender();await h.drain();assert.equal(target.parentElement.focusCount,1);h.cleanup();
+});
+
+for(const kind of ['cold','replacement'])
+test(`${kind} stale native button cannot inherit another control's established authorization`,async()=>{
+    const h=schedulerHarness();if(kind==='replacement')await h.drain();
+    const wrapper=wrapNext(h);let button=h.next;
+    if(kind==='replacement'){button.remove();button=h.element('BUTTON','epc-section-next');wrapper.append(button);}
+    wrapper.dataset.stale='true';await h.drain();assert.equal(button.disabled,true);button.onclick?.();await h.drain();
+    assert.equal(h.state.navigationRequest,null);assert.equal(h.state.navigationIntent,null);
+    wrapper.dataset.stale='false';await h.drain();assert.equal(button.disabled,false);button.onclick();await h.drain();
+    assert.equal(h.state.navigationActive,'monthly_activity');h.cleanup();
+});
+
+for(const invalid of ['report','disconnect','replacement','order','foreign-owner','outer-stale-owner','conflicting-input'])
+test(`transient wrapper continuity still cancels ${invalid}`,async()=>{
+    const h=schedulerHarness();await h.drain();h.command();await h.drain();const wrapper=wrapNext(h);await h.drain();
+    const target=h.root.querySelectorAll('[data-epc-pair]').find(n=>n.dataset.epcPair==='monthly_scorecards');target.dataset.stale='true';h.command();await h.drain();
+    wrapper.dataset.stale='true';await h.drain();
+    if(invalid==='report')h.rerender('other');
+    if(invalid==='foreign-owner'){h.next.remove();h.next.isConnected=true;h.app.append(h.next);}
+    if(invalid==='outer-stale-owner'){const outer=h.element();h.app.append(outer);h.root.remove();h.root.isConnected=true;outer.append(h.root);outer.dataset.stale='true';h.deliver({type:'childList',target:h.root});}
+    if(invalid==='disconnect')h.next.remove();
+    if(invalid==='replacement'){h.next.remove();wrapper.append(h.element('BUTTON','epc-section-next'));}
+    if(invalid==='order'){const p=target.parentElement;h.root.children=h.root.children.filter(n=>n!==p);h.root.children.unshift(p);h.deliver({type:'childList',target:h.root});}
+    if(invalid==='conflicting-input')h.input({type:'keydown',key:'Tab',target:h.field});
+    wrapper.dataset.stale='false';target.dataset.stale='false';await h.drain();
+    assert.equal(h.state.navigationRequest,null);assert.equal(h.state.navigationIntent,null);assert.equal(target.parentElement.focusCount||0,0);h.cleanup();
+});
+
+
+for(const location of ['origin','target'])
+test(`same-wrapper intent still waits for ${location} and fresh required owners`,async()=>{
+    const h=schedulerHarness();await h.drain();h.command();await h.drain();const wrapper=wrapNext(h);await h.drain();
+    const sections=h.root.querySelectorAll('[data-epc-pair]'),origin=sections.find(n=>n.dataset.epcPair==='monthly_activity'),target=sections.find(n=>n.dataset.epcPair==='monthly_scorecards');
+    const stale=location==='origin'?origin:target;stale.dataset.stale='true';h.command();wrapper.dataset.stale='true';await h.drain();
+    wrapper.dataset.stale='false';await h.drain();assert.equal(h.state.navigationActive,'monthly_activity');assert.equal(h.state.navigationRequest,'monthly_scorecards');
+    stale.dataset.stale='false';await h.drain();assert.equal(h.state.navigationActive,'monthly_scorecards');assert.equal(target.parentElement.focusCount,1);h.cleanup();
+});
+
+for(const input of ['repeat','opposite','foreign-pointer','source-return'])
+test(`same-wrapper pending command preserves ${input} input semantics`,async()=>{
+    const h=schedulerHarness(390,true);await h.drain();h.command();await h.drain();const wrapper=wrapNext(h);await h.drain();
+    const target=h.root.querySelectorAll('[data-epc-pair]').find(n=>n.dataset.epcPair==='monthly_scorecards');target.dataset.stale='true';h.command();wrapper.dataset.stale='true';await h.drain();
+    if(input==='repeat'){h.command();h.command();}
+    if(input==='opposite')h.command(h.back);
+    if(input==='foreign-pointer')h.input({type:'pointerdown',button:0,target:h.field});
+    if(input==='source-return')h.link.dataset.token='exact-new';
+    await h.drain();wrapper.dataset.stale='false';target.dataset.stale='false';await h.drain();
+    assert.equal(h.state.navigationRequest,null);assert.equal(h.state.navigationIntent,null);
+    if(input==='repeat'){assert.equal(h.state.navigationActive,'monthly_scorecards');assert.equal(target.parentElement.focusCount,1);}
+    if(input==='opposite')assert.equal(h.state.navigationActive,'monthly_cover');
+    if(input==='foreign-pointer'||input==='source-return')assert.equal(target.parentElement.focusCount||0,0);
+    if(input==='source-return'){assert.equal(h.active(),h.field);assert.deepEqual([...h.state.exactPageNavigationTokens],['exact-new']);}
+    h.cleanup();
+});
+
+test('terminal cleanup retires same-wrapper pending ownership without late replay',async()=>{
+    const h=schedulerHarness();await h.drain();h.command();await h.drain();const wrapper=wrapNext(h);await h.drain();
+    const target=h.root.querySelectorAll('[data-epc-pair]').find(n=>n.dataset.epcPair==='monthly_scorecards');target.dataset.stale='true';h.command();wrapper.dataset.stale='true';await h.drain();
+    const handler=h.next.onclick;h.cleanup();wrapper.dataset.stale='false';target.dataset.stale='false';handler();await h.drain();
+    assert.equal(h.state.navigationRequest,null);assert.equal(h.state.navigationIntent,null);assert.equal(h.next.onclick,null);assert.equal(target.parentElement.focusCount||0,0);assert.equal(h.counts().pending,0);
+});
+
+for(const readiness of ['open','inert'])
+test(`external Review native disclosure ${readiness} delivery uses only its owned coalesced observer`,async()=>{
+    const h=schedulerHarness();await h.drain();h.command();await h.drain();h.command();await h.drain();
+    const review=h.app.querySelector('#report-review'),d=replacementDisclosure(h);d.details.remove();d.details.isConnected=true;review.append(d.details);
+    if(readiness==='open')d.details.open=true;else delete d.body.inert;
+    h.command();await h.drain();assert.equal(h.state.navigationRequest,'report_review');const before=h.counts().measurements;
+    if(readiness==='open')d.details.open=false;else d.body.inert='';
+    h.deliver({type:'attributes',target:readiness==='open'?d.details:d.body,attributeName:readiness});await h.drain();
+    assert.ok(h.counts().measurements>before);assert.equal(h.state.navigationActive,'report_review');assert.equal(review.focusCount,1);assert.equal(h.counts().pending,0);
+    const final=h.counts().measurements;h.deliver({type:'attributes',target:h.unrelated,attributeName:'style'});await h.drain();assert.equal(h.counts().measurements,final);h.cleanup();
+});
+
+
+test('one caption-exit Enter survives the shared native toolbar wrapper across all-section streaming',async()=>{
+    const h=schedulerHarness();await h.drain();h.command();await h.drain();
+    const wrapper=h.element(),controls=[...h.nav.children];h.nav.append(wrapper);
+    for(const control of controls){control.remove();control.isConnected=true;wrapper.append(control);}await h.drain();
+    const button=h.next,handler=button.onclick,markers=h.root.querySelectorAll('[data-epc-pair]');
+    h.field.focus();h.next.focus();markers.forEach(marker=>marker.dataset.stale='true');
+    h.rerender();h.command();wrapper.dataset.stale='true';await h.drain();
+    assert.equal(h.next,button);assert.equal(button.onclick,handler);assert.equal(button.disabled,false);assert.equal(h.state.navigationRequest,'monthly_scorecards');
+    markers.forEach(marker=>marker.dataset.stale='false');await h.drain();assert.equal(h.state.navigationActive,'monthly_activity');
+    wrapper.dataset.stale='false';await h.drain();assert.equal(h.state.navigationActive,'monthly_scorecards');assert.equal(h.state.navigationIntent,null);
+    const target=markers.find(marker=>marker.dataset.epcPair==='monthly_scorecards').parentElement;assert.equal(target.focusCount,1);
+    assert.equal(h.field.value,'Replaced 99 seals.');assert.equal(h.field.selectionStart,3);assert.equal(h.field.selectionEnd,8);assert.equal(h.counts().pending,0);h.cleanup();
 });
 
 }
