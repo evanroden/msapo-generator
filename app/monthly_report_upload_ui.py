@@ -10,6 +10,7 @@ from app import monthly_report_sources as sources
 from app.monthly_report_cmms import CMMSMapping, map_cmms, month_window
 from app.monthly_report_model import ReportPeriod, ReportProfile
 from app.monthly_report_content_policy import page_status, page_fingerprint, page_allowed, contains_price
+from app.monthly_report_upload_guidance import evidence_limits_summary, evidence_upload_options
 
 
 def _signature(value) -> str:
@@ -317,7 +318,7 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
     st.caption("PDF, Word, Excel, photos and email files. Uploaded emails are read, not sent.")
     with st.expander("File formats and limits"):
         st.caption("Supported: PDF, DOCX, XLSX, CSV, EML, MSG, TXT, and image files including HEIC.")
-        st.caption("Limits: 50 sources / 180 MB per report, 30 MB per file (DOCX 128 MB), 800,000 extracted characters, 150 embedded PDF/image pages and 20 OCR/vision pages. The file chooser and review process still enforce these limits.")
+        st.caption(evidence_limits_summary())
     key = prefix + "_evidence"
     decision_key = key + "_page_decision"
     # Only this render's submitted native action can review an attached page.
@@ -330,7 +331,7 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
     accepted = st.session_state.get(accepted_key) if retain_accepted else None
     if show_intake:
         upload = st.file_uploader("Monthly source files", type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
-                                 accept_multiple_files=True, max_upload_size=128, key=prefix + "_source_upload")
+                                 accept_multiple_files=True, key=prefix + "_source_upload", **evidence_upload_options())
         if st.button("Read monthly files", disabled=not upload, key=prefix + "_read_sources"):
             with st.spinner("Reading local files and checking duplicates…"):
                 contents, messages = sources.ingest_batch(profile, tuple((u.name, u.getvalue()) for u in upload), contents)
@@ -1016,7 +1017,7 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
                               help="Upload a file or reuse a file already saved in this draft."))
     with upload_area:
         upload = st.file_uploader(upload_label, type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
-                                 accept_multiple_files=True, max_upload_size=128, key=local_key + "_upload")
+                                 accept_multiple_files=True, key=local_key + "_upload", **evidence_upload_options())
         picked = tuple((u.name, u.getvalue()) for u in (upload or ()))
         signature = _signature([(name, hashlib.sha256(raw).hexdigest()) for name, raw in picked])
         if picked and st.session_state.get(local_key + "_read") != signature:
@@ -1376,8 +1377,8 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
     intake_label = "Add source files" if managed else labels[destination]
     reserve_empty_uploader(local_key + "_upload_" + context, intake_label)
     uploaded = st.file_uploader(intake_label, type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
-                                accept_multiple_files=True, max_upload_size=128,
-                                key=local_key + "_upload_" + context)
+                                accept_multiple_files=True, key=local_key + "_upload_" + context,
+                                **evidence_upload_options())
     picked = tuple((u.name, u.getvalue()) for u in (uploaded or ()))
     selected_ids = {hashlib.sha256(raw).hexdigest() for _, raw in picked}
     # A native uploader retains removed bytes. Other uploads must not undo
