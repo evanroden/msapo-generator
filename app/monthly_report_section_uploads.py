@@ -4,6 +4,7 @@ from dataclasses import dataclass, replace
 import re
 
 from app import monthly_report_sources as sources
+from app.monthly_report_page_reference import page_identity
 
 
 SECTION_UPLOADS = {
@@ -31,12 +32,6 @@ def source_route(reference):
             or any(re.fullmatch(r"[0-9a-f]{64}", part) is None for part in parts[1:])):
         return None
     return tuple(parts)
-
-
-def page_identity(reference):
-    """Read the stable source/page identity, independent of mutable source facts."""
-    parts = reference.split(":")
-    return (parts[0], int(parts[1])) if len(parts) == 3 and parts[1].isdigit() else None
 
 
 def included_pages(blocks):
