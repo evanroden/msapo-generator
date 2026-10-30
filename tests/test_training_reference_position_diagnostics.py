@@ -36,19 +36,19 @@ def test_detached_handle_is_evidence_not_refind_or_exception_mask():
     assert helper()(types.SimpleNamespace(evaluate=evaluate)) == {"observation_error": "RuntimeError"}
 
 
-def test_same_single_wheel_and_strict_780_one_pixel_5000ms_contract():
+def test_same_single_wheel_and_strict_one_pixel_5000ms_original_handle_contract():
     tree = ast.parse(SOURCE.read_text())
     journey = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
                    and n.name == "exercise_participant_reference")
     wheels = [n for n in ast.walk(journey) if isinstance(n, ast.Call)
               and isinstance(n.func, ast.Attribute) and n.func.attr == "wheel"]
     assert len(wheels) == 1
-    assert ast.unparse(wheels[0]) == "page.mouse.wheel(0, before['y'] - 780)"
+    assert ast.unparse(wheels[0]) == "page.mouse.wheel(0, plan['wheel_delta'])"
     waits = [n for n in ast.walk(journey) if isinstance(n, ast.Call)
              and isinstance(n.func, ast.Attribute) and n.func.attr == "wait_for_function"
              and isinstance(n.args[0], ast.Constant)]
     positioning = [n for n in waits if "getBoundingClientRect().top" in str(n.args[0].value)]
     assert len(positioning) == 1
-    assert positioning[0].args[0].value == "input=>Math.abs(input.getBoundingClientRect().top-780)<=1"
-    assert ast.unparse(positioning[0]) == "page.wait_for_function('input=>Math.abs(input.getBoundingClientRect().top-780)<=1', arg=original_input, timeout=5000)"
+    assert positioning[0].args[0].value == "({input,target})=>input.isConnected&&Math.abs(input.getBoundingClientRect().top-target)<=1"
+    assert ast.unparse(positioning[0]) == "page.wait_for_function('({input,target})=>input.isConnected&&Math.abs(input.getBoundingClientRect().top-target)<=1', arg={'input': original_input, 'target': plan['target_top']}, timeout=5000)"
     assert any(isinstance(n, ast.Try) and n.finalbody for n in ast.walk(journey))

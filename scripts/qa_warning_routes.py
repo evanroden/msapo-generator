@@ -188,6 +188,51 @@ def confirm_shared_pictures(page,prefix,source,before,commit):
     return state
 
 
+
+def resume_reopened_workspace(page,saved,reopened):
+    """One deliberate native scroll to the cold-reopened Cover, never a repair
+    of an in-flow jump. Neutral reload is allowed to return to report identity.
+    """
+    from playwright.sync_api import expect
+    assert 0<reopened['sequence']<saved['sequence'],'This entry is only for a fresh reload receipt'
+    assert reopened['working']==saved['working'] and reopened['originals']==saved['originals']
+    assert reopened['shared']['fingerprint']==saved['shared']['fingerprint']==saved['working']['fingerprint']
+    assert (reopened['scope'],reopened['generation'])==(saved['scope'],saved['generation'])
+    current=receipt(page)
+    assert current['working']==reopened['working'] and current['originals']==reopened['originals']
+    assert (current['scope'],current['generation'])==(reopened['scope'],reopened['generation'])
+    workspace=page.locator('.st-key-epc_workspace_monthly');expect(workspace).to_have_count(1)
+    expect(workspace).to_have_attribute('data-test-scroll-behavior','normal')
+    expect(workspace).to_have_attribute('data-epc-confined','false')
+    nav=workspace.locator('.st-key-monthly_report_navigation');expect(nav).to_have_count(1)
+    progress=nav.locator('.epc-section-progress');expect(progress).to_have_count(1)
+    expect(progress).to_have_attribute('data-section','monthly_cover')
+    expect(progress).to_have_text('1 of 14 · Cover')
+    expect(nav.locator('.epc-section-back')).to_be_disabled()
+    viewport=page.viewport_size;box=nav.bounding_box()
+    assert viewport and box and box['width']>0 and box['height']>0
+    assert 0<=box['x'] and box['x']+box['width']<=viewport['width']
+    if box['y']<0 or box['y']+box['height']>viewport['height']:
+        port=workspace.locator('xpath=ancestor::*[@data-testid="stMain"]');expect(port).to_have_count(1)
+        bounds=port.bounding_box();assert bounds
+        left=max(0,bounds['x']);right=min(viewport['width'],bounds['x']+bounds['width'])
+        top=max(0,bounds['y']);bottom=min(viewport['height'],bounds['y']+bounds['height'])
+        assert right>left and bottom>top
+        point={'x':(left+right)/2,'y':(top+bottom)/2}
+        assert port.evaluate('(node,p)=>node.contains(document.elementFromPoint(p.x,p.y))',point),'The native scrollport is obscured'
+        # Use the observed existing nav position, not a saved scroll offset,
+        # guessed page count, focus trick, JS scroll or corrective retry loop.
+        page.mouse.move(point['x'],point['y'])
+        page.mouse.wheel(0,box['y']+box['height']/2-point['y'])
+    expect(progress).to_have_attribute('data-section','monthly_cover')
+    expect(progress).to_be_in_viewport(ratio=1)
+    expect(nav.locator('.epc-section-next')).to_be_in_viewport(ratio=1)
+    after_entry=receipt(page)
+    assert after_entry['working']==reopened['working'] and after_entry['originals']==reopened['originals']
+    assert after_entry['shared']['fingerprint']==reopened['shared']['fingerprint']
+    assert (after_entry['scope'],after_entry['generation'])==(reopened['scope'],reopened['generation'])
+
+
 def after(page,sequence):
     page.wait_for_function('''old => {
       const node=document.querySelector('[data-warning-routes]');
@@ -476,6 +521,7 @@ def exercise(engine,name,mode,scenario,base):
         saved=save_shared_version(page,prefix,commit);assert saved['shared']['fingerprint']==saved['working']['fingerprint']
         page.reload(wait_until='domcontentloaded');reopened=receipt(page)
         assert reopened['working']==saved['working'];record['reopen_verified']=True
+        resume_reopened_workspace(page,saved,reopened)
         navigate_sections(page,'report_review',keyboard=keyboard)
         # Optional advisories, if any, must be acknowledged through the normal
         # user control; mandatory checks above may not be bypassed.

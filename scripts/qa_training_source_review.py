@@ -45,11 +45,11 @@ def observed_receipt_predicate(predicate):
           ready: String(document.readyState).slice(0, 32),
           script: String(document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state') || '').slice(0, 32),
           prefix: at >= 0, parseOK,
-          reviewsMatch: parseOK && (payload.wanted.reviews === null || parsed?.reviews === payload.wanted.reviews),
-          savedMatch: parseOK && (payload.wanted.saved === null || parsed?.saved_revision === payload.wanted.saved),
-          previousMatch: parseOK && (payload.wanted.previous === null || parsed?.review_revision !== payload.wanted.previous),
+          reviewsMatch: parseOK && (payload.wanted.reviews == null || parsed?.reviews === payload.wanted.reviews),
+          savedMatch: parseOK && (payload.wanted.saved == null || parsed?.saved_revision === payload.wanted.saved),
+          previousMatch: parseOK && (payload.wanted.previous == null || parsed?.review_revision !== payload.wanted.previous),
           includedMatch: parseOK && Array.isArray(parsed?.tables) &&
-            (payload.wanted.included === null || parsed.tables.some(
+            (payload.wanted.included == null || parsed.tables.some(
               t => Array.isArray(t.rows) && t.rows.some(r => r[0] === 'Synthetic drill')) === payload.wanted.included)
         };
         slot.count = Math.min(slot.count + 1, 1000000);
@@ -90,6 +90,8 @@ def stop_initial_trace(context, folder, evidence, *, failed):
 def receipt(page, *, reviews=None, included=None, saved=None, previous_review=None):
     payload = {"prefix": RECEIPT_PREFIX, "wanted": {"reviews": reviews, "included": included,
         "saved": saved, "previous": previous_review}}
+    # Page.wait_for_function recursively omits None dictionary fields in pinned
+    # Playwright1.58; nullish absence is optional, explicit zero/false stay strict.
     predicate = '''payload => {
       const text=document.body?.innerText||'';
       const at=text.lastIndexOf(payload.prefix);
@@ -97,10 +99,10 @@ def receipt(page, *, reviews=None, included=None, saved=None, previous_review=No
       let v;
       try{v=JSON.parse(text.slice(at+payload.prefix.length).trim())}catch{return false}
       const wanted=payload.wanted;
-      return (wanted.reviews===null||v.reviews===wanted.reviews) &&
-        (wanted.included===null||v.tables.some(t=>t.rows.some(r=>r[0]==='Synthetic drill'))===wanted.included) &&
-        (wanted.saved===null||v.saved_revision===wanted.saved) &&
-        (wanted.previous===null||v.review_revision!==wanted.previous) &&
+      return (wanted.reviews==null||v.reviews===wanted.reviews) &&
+        (wanted.included==null||v.tables.some(t=>t.rows.some(r=>r[0]==='Synthetic drill'))===wanted.included) &&
+        (wanted.saved==null||v.saved_revision===wanted.saved) &&
+        (wanted.previous==null||v.review_revision!==wanted.previous) &&
         document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')==='notRunning';
     }'''
     try:
@@ -192,10 +194,9 @@ def journey(engine, name):
         initial_failed = True
         try:
             page.goto(URL + '/?case=' + name, wait_until='domcontentloaded')
-            # Hosted Chromium/WebKit both complete this first full Streamlit render
-            # just beyond the old 30s receipt budget. Keep every Training receipt
-            # predicate strict; only give the initial app script a bounded startup
-            # budget before checking the exact review state.
+            # Preserve the existing bounded initial app-script readiness step.
+            # It is separate from the strict30s receipt check; optional-argument
+            # transport, not late rendering, caused the reproduced first-receipt failure.
             page.wait_for_function("""() =>
               document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')==='notRunning'
             """, timeout=45000)

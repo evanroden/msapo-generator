@@ -125,7 +125,9 @@ def test_final_and_section_pdf_boundaries_resolve_profile_and_limit_cover_scope(
         calls.append((raw,profile));return conversion.getvalue()
     monkeypatch.setattr(output,'rendering_docx',render)
     monkeypatch.setattr(preview,'rendering_docx',render)
-    def convert(path):
+    conversion_options=[]
+    def convert(path, **kwargs):
+        conversion_options.append(kwargs)
         assert Document(path).paragraphs[0].text=='conversion-only'
         result=tmp_path/'converted.pdf'
         pdf=fitz.open();pdf.new_page();pdf.save(result);pdf.close()
@@ -139,6 +141,7 @@ def test_final_and_section_pdf_boundaries_resolve_profile_and_limit_cover_scope(
     if 'cover_metrics' in section_profile:
         section_profile['cover_metrics']=[]
     assert calls==[(b'native-download',profile),(b'native-preview',profile),(b'native-preview',section_profile)]
+    assert conversion_options==[{'lossless_images':True},{},{}]
 
 
 def test_oversized_cover_images_are_checked_before_any_pixel_decoding(monkeypatch):
