@@ -754,7 +754,6 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
         failed_hash = st.session_state.get(prefix + "_failed_digest")
         retry = False
         if failed_hash == digest:
-            st.warning("This starting report could not be analyzed. The previous draft remains unchanged.")
             retry = st.button("Retry report analysis", key=prefix + "_retry_analysis")
         # A committed upload still mounted after saving must not reopen itself.
         # Once another source is staged, however, reselecting that committed
@@ -770,14 +769,20 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                 st.session_state.pop(prefix + "_image_replacements", None)
                 st.session_state.pop(original_token_key, None)
                 st.session_state.pop(prefix + "_failed_digest", None)
+                st.session_state.pop(prefix + "_failed_notice", None)
                 if previous and previous[0]:
                     previous[0].cleanup()
                 st.rerun()
             except (ValueError, OSError) as exc:
+                # Retain only a vetted, operator-safe failure reason. An XML
+                # parser exception can contain filenames or source fragments.
+                # A neutral rerun must not erase the actual rejected budget.
+                from app.monthly_report_starting_errors import starting_docx_failure_notice
                 st.session_state[prefix + "_failed_digest"] = digest
-                st.warning("This report could not be analyzed. Choose a valid DOCX or retry; your existing work was preserved.")
+                st.session_state[prefix + "_failed_notice"] = starting_docx_failure_notice(exc)
     else:
         st.session_state.pop(prefix + "_failed_digest", None)
+        st.session_state.pop(prefix + "_failed_notice", None)
         # Removing then selecting the same file is an explicit new import.
         # An unchanged native uploader after a successful save is not.
         st.session_state.pop(prefix + "_committed_upload_digest", None)
@@ -789,6 +794,14 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             previous[0].cleanup()
             st.session_state.pop(prefix + "_stage", None)
     if upload is not None and st.session_state.get(prefix + "_failed_digest") == digest:
+        st.warning(st.session_state.get(prefix + "_failed_notice",
+                  "This report could not be analyzed. Choose a valid DOCX or retry; your existing work was preserved."))
+        if failed_hash != digest:
+            # On the first rejected upload, the earlier Retry control did not
+            # exist when the digest was checked. Show it *now* rather than
+            # requiring a neutral second click/rerun to reveal recovery.
+            # On later renders the same keyed button was already mounted above.
+            st.button("Retry report analysis", key=prefix + "_retry_analysis")
         st.info("The newly selected file has not been analyzed. Retry or choose another file before continuing.")
         return True
     if not optional_import:
