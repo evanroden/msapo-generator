@@ -83,12 +83,15 @@ def _pair(alternate):
 
 
 def fit_proposals_numeral(document, *, section_key=None) -> bool:
-    """Change both Word Choice/Fallback geometries only for one proved '10'.
+    """Fit the measured '10' in Proposals or Accounts Receivables derivatives.
 
-    If the recognized layout is absent or ambiguous, native output is untouched.
-    Source files, installed masters and immutable design profiles are unchanged.
+    The source-specific two-digit shape can belong to either logical section
+    in an approved custom design. A full-report pass also keeps its existing
+    single-match guard. Do not infer other numerals, fonts, positions or
+    headings from this measured pair; unknown layouts stay unchanged.
+    Original sources, installed masters and saved profiles are untouched.
     """
-    if section_key not in (None, "proposals"):
+    if section_key not in (None, "proposals", "accounts_receivable"):
         return False
     alternatives = list(document.element.body.iter(MC + "AlternateContent"))
     matches = [_pair(alt) for alt in alternatives]
