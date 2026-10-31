@@ -431,6 +431,11 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
         if pages:
             page = st.selectbox("Preview page / item", pages, key=field(p + "_page", pages[0]),
                                 format_func=lambda n: f"Page / item {n} · " + page_status(source.page_texts[n-1], unreadable=n in source.needs_vision)[0].replace("technical", "check before including").replace("review", "needs visual review"))
+            if scope_draft is not None:
+                from app.monthly_report_manager_page_navigation import page_markup
+                from app.monthly_report_guided import _rich_text_scope
+                st.markdown(page_markup(st.session_state,prefix,source,page,p + "_page",
+                    _rich_text_scope(prefix),source_review=True), unsafe_allow_html=True)
             st.caption(f"Page {page} of {len(pages)}. Check the page itself before including it.")
             with st.expander("Read extracted text"):
                 st.text(source.page_texts[page-1][:12000] or "No native text on this page/item.")
@@ -448,7 +453,13 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                             st.error(str(exc))
                 default_caption = captions.get(page, caption_defaults.get(page, f"{source.filename} · page/item {page}"))
                 caption = st.text_input("Page caption", key=field(p + f"_caption_{page}", default_caption))
-                if page in captions or page not in caption_defaults or caption != default_caption:
+                if scope_draft is not None:
+                    from app.monthly_report_manager_page_navigation import page_markup
+                    from app.monthly_report_guided import _rich_text_scope
+                    st.markdown(page_markup(st.session_state, prefix, source, page,
+                        p + f"_caption_{page}", _rich_text_scope(prefix)), unsafe_allow_html=True)
+                # Viewing a generated/inherited default is not a caption edit.
+                if page in captions or caption != default_caption:
                     captions[page] = caption
         changes["captions"] = tuple(sorted(captions.items()))
         updated_source = preserve_descriptive_scope(source, replace(source, **changes), profile)
@@ -487,7 +498,7 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                 chosen = set(source.selected_pages)
                 exclusions = dict(source.client_page_exclusions)
                 if action == "keep":
-                    if page not in dict(source.captions) and page in caption_defaults:
+                    if page not in dict(source.captions):
                         # Include confirms the caption shown, including one
                         # inherited from the attached page; record it so the
                         # page review and its attached occurrence agree.
@@ -560,21 +571,44 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
     st.caption(f"{len(contents)} sources. {sum(len(c.source.selected_pages) for c in contents)} selected pages/items. "
                f"{sum(len(set(c.source.needs_vision) & set(c.source.selected_pages)) for c in contents)} selected pages need OCR/vision; no paid extraction runs automatically.")
     blocks, specs = {}, {}
+    # The ordinary destination is inferred from the source classification,
+    # and was previously hidden in an expander far above the Add action.
+    # Keep the same native selection keys, but display the *actual* selections
+    # beside the commit; a route is changed only by explicit user choice.
     destinations = []
-    with st.expander("Add reviewed pages to report sections"):
-        defaults = {"Vendor service": "improvements", "Water treatment": "water_reports", "MBCx": "mbcx_report", "Utility results": "utility_analysis", "Improvement / training photo": "improvements"}
-        for item in contents:
-            if not sources.image_numbers(item):
-                continue
-            labels = {"Do not embed": "Keep as reference only", "vendor_reports": "Maintenance — vendor service pages",
-                      "water_reports": "Water treatment — chemical/service pages", "mbcx_report": "MBCx — commissioning report pages",
-                      "utility_analysis": "Monthly scorecards — utility results and charts",
-                      "improvements": "Monthly activity — reviewed service pages and photos"}
-            slot = st.selectbox("Report section for " + item.source.filename, ["Do not embed", *sources.PAGE_DESTINATIONS], format_func=labels.get,
-                                key=field(key + "_destination_" + item.source.id + "_" + item.source.classification,
-                                          defaults.get(item.source.classification, "Do not embed")))
-            if slot != "Do not embed" and not (item.source.id in section_page_owners and slot == "water_reports"):
-                destinations.append((item.source.id, slot))
+    defaults = {"Vendor service": "improvements", "Water treatment": "water_reports",
+                "MBCx": "mbcx_report", "Utility results": "utility_analysis",
+                "Improvement / training photo": "improvements"}
+    labels = {"Do not embed": "Keep as reference only",
+              "vendor_reports": "Maintenance — ENFRA onsite work only",
+              "water_reports": "Water treatment — chemical/service pages",
+              "mbcx_report": "MBCx — commissioning report pages",
+              "utility_analysis": "Monthly scorecards — utility results and charts",
+              "improvements": "Monthly activity — vendor service reports and photos"}
+    route_controls = []
+    for item in contents:
+        if not sources.image_numbers(item):
+            continue
+        control = field(key + "_destination_" + item.source.id + "_" + item.source.classification,
+                        defaults.get(item.source.classification, "Do not embed"))
+        options = ("Do not embed", *sources.PAGE_DESTINATIONS)
+        if st.session_state[control] not in options:
+            st.session_state[control] = defaults.get(item.source.classification, "Do not embed")
+        route_controls.append((item.source.filename, item.source.id, control))
+    if route_controls:
+        with st.container(key=key + "_destination_review"):
+            st.text("Destination for reviewed pages")
+            for filename, identity, control in route_controls:
+                selected_slot = st.session_state[control]
+                st.text(filename + " → " + labels.get(selected_slot, selected_slot))
+            with st.expander("Change destination (optional)"):
+                for filename, identity, control in route_controls:
+                    slot = st.selectbox("Report section for " + filename,
+                                        ("Do not embed", *sources.PAGE_DESTINATIONS),
+                                        format_func=labels.get, key=control)
+                    if (slot != "Do not embed"
+                            and not (identity in section_page_owners and slot == "water_reports")):
+                        destinations.append((identity, slot))
     cmms_contents = [c for c in contents if (selected_source_id is None or c.source.id == selected_source_id)
                      and c.tables and c.source.classification == "CMMS export"
                      and any(i in c.source.selected_pages for i in range(1, len(c.tables)+1))]
@@ -702,7 +736,7 @@ def _omitted_water_recovery(contents, blocks, local_key, prefix):
 
 
 def _included_page_controls(source, page, prefix, field, blocks, preview_ok, contents, *,
-                            scope="", caption_source=None):
+                            scope="", caption_source=None, navigation_prefix=None):
     """Edit the attached page beside its source, not in a second picture panel."""
     from app.monthly_report_page_controls import included_page_caption, page_asset_index, revise_included_page
     block = blocks.get("water_reports")
@@ -730,6 +764,17 @@ def _included_page_controls(source, page, prefix, field, blocks, preview_ok, con
         block, source = revise_included_page(block, source, page, "caption", caption=caption,
                                             all_sources=tuple(c.source for c in contents))
         blocks[block.key] = block
+    if navigation_prefix:
+        st.session_state[navigation_prefix + "_page_navigation_origin"] = {
+            "source_id": source.id, "source_fingerprint": source.fingerprint,
+            "block_key": block.key, "block_fingerprint": block.fingerprint,
+            "number": page, "scope": scope, "caption_key": caption_key, "caption": caption,
+        }
+        from app.monthly_report_page_navigation import ready_page_markup
+        marker = ready_page_markup(st.session_state, navigation_prefix, source, block,
+                                  page, caption_key, scope)
+        if marker:
+            st.markdown(marker, unsafe_allow_html=True)
     if not page_allowed(source, page):
         st.warning("This retained page changed since its review. Check the page and caption before including the section."
                    if block.source == "Omit" else
@@ -864,7 +909,7 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, peri
     if (source.id, page) in existing:
         if auto_include:
             source, handled = _included_page_controls(source, page, prefix, field, blocks, preview_ok, contents,
-                                                       scope=scope, caption_source=widget_source)
+                                                       scope=scope, caption_source=widget_source, navigation_prefix=refresh_prefix)
             if handled:
                 st.session_state[p + "_canonical_view"] = source
                 return finish(replace(content, source=source))
@@ -1011,10 +1056,14 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
     # Water, Scorecards and MBCx already have section-level instructions. Keep one
     # labeled uploader without a duplicate title, while retaining the complete
     # canonical page-review flow and its safety checks.
-    upload_area = (st.container() if destination == "water_reports" else
-                   st.popover("Add files", key=local_key + "_add_files",
-                              help="Upload a file or reuse a file already saved in this draft."))
-    with upload_area:
+    if destination in {"mbcx_report", "utility_analysis"}:
+        st.caption("Upload a PDF to include its complete report. Supporting files and existing page choices remain available.")
+    # One directly visible section source task. Preserve the existing uploader
+    # and saved-source widget identities across ordinary report reruns.
+    with st.container(key=local_key + "_add_files"):
+        st.text("Upload new")
+        from app.monthly_report_native_loading import reserve_empty_uploader
+        reserve_empty_uploader(local_key + "_upload", upload_label)
         upload = st.file_uploader(upload_label, type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
                                  accept_multiple_files=True, max_upload_size=128, key=local_key + "_upload")
         picked = tuple((u.name, u.getvalue()) for u in (upload or ()))
@@ -1051,18 +1100,18 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
         owners = source_destinations(contents, bindings, blocks)
         unassigned = [c for c in contents if not owners[c.source.id]]
         if unassigned:
-            with st.expander("Use an uploaded file"):
-                choices = {c.source.id: c for c in unassigned}
-                choice_key = field(local_key + "_saved_choice", next(iter(choices)))
-                if st.session_state[choice_key] not in choices:
-                    st.session_state[choice_key] = next(iter(choices))
-                # The native serializer retains this formatter after the
-                # function reuses `choices` for the section's own files.
-                filenames = {identity: item.source.filename for identity, item in choices.items()}
-                chosen = st.selectbox("Saved file", list(choices), format_func=filenames.get, key=choice_key)
-                if st.button("Use in " + title, key=local_key + "_use_saved"):
-                    bindings[chosen] = destination
-                    st.session_state[key + "_section_routes"] = bindings
+            st.text("Already uploaded")
+            choices = {c.source.id: c for c in unassigned}
+            choice_key = field(local_key + "_saved_choice", next(iter(choices)))
+            if st.session_state[choice_key] not in choices:
+                st.session_state[choice_key] = next(iter(choices))
+            # Exact source identities, never filenames, select reusable originals.
+            # Showing this chooser is not approval or an automatic route.
+            filenames = {identity: item.source.filename for identity, item in choices.items()}
+            chosen = st.selectbox("Saved file", list(choices), format_func=filenames.get, key=choice_key)
+            if st.button("Use in " + title, key=local_key + "_use_saved"):
+                bindings[chosen] = destination
+                st.session_state[key + "_section_routes"] = bindings
     for message in st.session_state.get(local_key + "_messages", ()):
         st.warning(message)
     scoped = section_contents(contents, destination, bindings, blocks)
@@ -1127,6 +1176,18 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
             # do not approve sources or renew old pictures ahead of that merge.
             return tuple(c.source for c in contents), {}, (
                 {"financial_batch": financial_batch, "financial_evidence_key": key} if financial_batch else {})
+    if destination in {"mbcx_report", "utility_analysis"} and choices[selected].source.suffix == ".pdf":
+        from app.monthly_report_mbcx_pdf import render_whole_pdf
+        batch = render_whole_pdf(profile, choices[selected], blocks, assets,
+                                 local_key, prefix, field, period=period, destination=destination)
+        if batch is not None:
+            revised, additions = batch
+            contents = tuple(revised if c.source.id == selected else c for c in contents)
+            st.session_state[key] = contents
+            forms = st.session_state.get("_monthly_source_detail_forms")
+            if isinstance(forms, dict) and selected in forms:
+                forms[selected] = revised.source
+            return tuple(c.source for c in contents), additions, {}
     revised = _render_section_page_review(
         profile, choices[selected], local_key, field, blocks,
         period=period,
@@ -1222,6 +1283,7 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
         st.caption(f"{sum(page_allowed(by_id[identity].source, n) for identity, n in pending)} of {len(pending)} selected new pages checked.")
     else:
         st.caption("No new pages selected. Previously added pages remain in your report.")
+    st.text("Add destination: " + title)
     if st.button("Add reviewed pages", key=local_key + "_apply", disabled=not ready, type="primary"):
         try:
             with st.spinner("Adding the reviewed pages…"):
@@ -1374,6 +1436,11 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                           _rich_text_scope(prefix), testing.scope(), testing.generation()))
     from app.monthly_report_native_loading import reserve_empty_uploader
     intake_label = "Add source files" if managed else labels[destination]
+    if managed:
+        # The same single native uploader owns both Activity jobs; describe
+        # their destinations rather than asking for a separate file-type step.
+        st.caption("Work-order export (CSV/XLSX): review rows and totals. "
+                   "Vendor service report (PDF/DOCX): review Activity text and evidence.")
     reserve_empty_uploader(local_key + "_upload_" + context, intake_label)
     uploaded = st.file_uploader(intake_label, type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
                                 accept_multiple_files=True, max_upload_size=128,

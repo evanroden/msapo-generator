@@ -2,19 +2,19 @@ const test=require('node:test'), assert=require('node:assert/strict'), fs=requir
 const geometry=require('../app/workspace_geometry.js');
 
 function harness(mode='wide', sequential=false) {
-    const state={mode,ownsScroll:mode==='tabletop'}, document={activeElement:null};
+    const state={identity:'one',mode,ownsScroll:mode==='tabletop'}, document={activeElement:null};
     let scheduled=0, replacements=0, nativeEvents=0;
     // Native DOMRect properties are prototype getters, not enumerable fields.
     const rect=(top,height)=>Object.create({get top(){return top},get bottom(){return top+height},get height(){return height}});
-    const scrollport={scrollTop:0,getBoundingClientRect:()=>rect(0,900)};
-    const root={dataset:{},scrollTop:0,getBoundingClientRect:()=>rect(state.ownsScroll?500:300-scrollport.scrollTop,state.ownsScroll?400:3500)};
+    const scrollport={isConnected:true,scrollTop:0,getBoundingClientRect:()=>rect(0,900)};
+    const root={isConnected:true,dataset:{},scrollTop:0,getBoundingClientRect:()=>rect(state.ownsScroll?500:300-scrollport.scrollTop,state.ownsScroll?400:3500)};
     const label={getBoundingClientRect:()=>rect(64,52)};
-    const select={value:'',children:[],closest:()=>label,
+    const select={isConnected:true,value:'',children:[],closest:selector=>selector==='[data-stale="true"]'?null:label,
         replaceChildren(...items){this.children=items;this.value=items[0]?.value||'';replacements++;}};
-    const reviewButton={disabled:true,onclick:null};
-    const backButton={disabled:true,onclick:null}, nextButton={disabled:true,onclick:null,textContent:'Next'};
-    const progress={textContent:'Cover',dataset:{}};
-    const nav={querySelector:selector=>({
+    const reviewButton={isConnected:true,disabled:true,onclick:null};
+    const backButton={isConnected:true,disabled:true,onclick:null}, nextButton={isConnected:true,disabled:true,onclick:null,textContent:'Next'};
+    const progress={isConnected:true,textContent:'Cover',dataset:{}};
+    const nav={isConnected:true,querySelector:selector=>({
         '.epc-review-shortcut':sequential?null:reviewButton,
         '.epc-section-selector':sequential?null:select,
         '.epc-section-back':sequential?backButton:null,
@@ -31,12 +31,15 @@ function harness(mode='wide', sequential=false) {
     const pairs=[['monthly_cover','Cover',0,400],['monthly_activity','Monthly Activity Summary',400,1600],
         ['monthly_short','Short section',2000,80],['monthly_training','Training Summary',2080,1200],
         ['monthly_empty','Empty section',3280,220]].map(([id,title,offset,height])=>({id,title,pair:target(offset,height)}));
-    let clickHandler=null;
-    const review=target(4000,60,true), app={querySelector:()=>review,contains:()=>true,
-        addEventListener(type,handler){if(type==='click')clickHandler=handler},
-        removeEventListener(type,handler){if(clickHandler===handler)clickHandler=null}};
+    const markers=new WeakMap();
+    root.querySelectorAll=()=>pairs.map(item=>{if(!markers.has(item))markers.set(item,{isConnected:true,dataset:{get epcPair(){return item.id}},closest:selector=>selector==='[data-stale="true"]'?null:item.pair});return markers.get(item)});
+    root.contains=node=>pairs.some(({pair})=>pair===node);
+    let clickHandler=null;const listeners=new Map();
+    const review=target(4000,60,true), app={isConnected:true,querySelector:()=>review,querySelectorAll:selector=>selector==='#report-review'?[review]:[],contains:()=>true,
+        addEventListener(type,handler){if(!listeners.has(type))listeners.set(type,new Set());listeners.get(type).add(handler);if(type==='click')clickHandler=handler},
+        removeEventListener(type,handler){listeners.get(type)?.delete(handler);if(clickHandler===handler)clickHandler=null}};
     document.createElement=()=>({});
-    const context={document,getComputedStyle:node=>node.style||{overflowY:"auto",overscrollBehaviorY:"auto"}};vm.runInNewContext(fs.readFileSync('app/workspace_navigation.js','utf8'),context);
+    const context={document,CSS:{escape:value=>value},getComputedStyle:node=>node.style||{overflowY:"auto",overscrollBehaviorY:"auto"}};vm.runInNewContext(fs.readFileSync('app/workspace_navigation.js','utf8'),context);
     const create=()=>context.ENFRAWorkspaceNavigation.create({root,app,scrollport,nav,state,geometry,schedule(){scheduled++}});
     let controller=create();
     const sample={chromeBottom:64,scrollport:{y:0},visual:{y:0}};
@@ -49,13 +52,17 @@ function harness(mode='wide', sequential=false) {
     }
     const choose=id=>{select.value=id;select.onchange();measure()};
     measure();
-    return {correct(href,options={}){let prevented=false; const link={getAttribute:()=>href};
+    return {correct(href,options={}){let prevented=false; const link={getAttribute:()=>href,classList:{contains:value=>(options.classes||[]).includes(value)}};
         clickHandler({button:0,target:{closest:()=>link},preventDefault(){prevented=true},...options});
         measure();return prevented;},state,root,scrollport,select,reviewButton,backButton,nextButton,progress,field,pairs,review,app,document,measure,choose,nav,label,controller:()=>controller,
         land:request=>context.ENFRAWorkspaceNavigation.land(state,request),
         cancelLanding:()=>context.ENFRAWorkspaceNavigation.cancelLanding(state),
         input:event=>context.ENFRAWorkspaceNavigation.noteInput(state,event),
         rerender(){controller.dispose();controller=create();measure()},dispose(){controller.dispose()},
+        handoff(overrides={}){return controller.canHandoff({identity:state.identity,root,app,scrollport,nav,...overrides})},
+        resume(callback){controller.resume(callback)},
+        dispatch(event){for(const handler of listeners.get(event.type)||[])handler(event)},
+        listeners:()=>Object.fromEntries([...listeners].map(([type,handlers])=>[type,handlers.size])),
         counts:()=>({scheduled,replacements,nativeEvents})};
 }
 
@@ -196,19 +203,20 @@ test('a streamed navigation container binds through existing discovery and later
         contains:value=>values.has(value),toggle:(value,on)=>on?values.add(value):values.delete(value)};};
     const element=()=>({isConnected:true,dataset:{},style:{setProperty(){}},classList:classes(),scrollTop:0,
         children:[],append(child){this.children.push(child)},remove(){},addEventListener(){},removeEventListener(){},
+        contains(node){return this===node || this.children.some(child=>child===node || child.contains?.(node))},
         querySelectorAll:()=>[],querySelector:()=>null,
         getBoundingClientRect:()=>({x:0,y:0,top:0,bottom:900,width:1180,height:900})});
-    const root=element(),app=element(),scrollport=element();
+    const root=element(),app=element(),scrollport=element();app.contains=()=>true;
     const field={value:'Pending native wording',selectionStart:5,selectionEnd:11};root.children.push(field);
-    root.closest=selector=>selector.includes('stMainBlockContainer')?app:scrollport;
+    root.closest=selector=>selector==='[data-stale="true"]'?null:selector.includes('stMainBlockContainer')?app:scrollport;
     root.dispatchEvent=()=>{};
     const review={isConnected:true,querySelector:()=>null,setAttribute(){},focus(){},
         getBoundingClientRect:()=>({top:4000-scrollport.scrollTop,bottom:4060-scrollport.scrollTop,height:60})};
-    app.querySelector=()=>review;
+    app.querySelector=()=>review;app.querySelectorAll=selector=>selector==='#report-review'?[review]:[];
     let mounted=null;
     const makeNav=()=>{
         const nav=element();nav.getBoundingClientRect=()=>({top:64,height:52});
-        nav.select={value:'',disabled:true,closest:()=>nav,replaceChildren(...children){this.children=children;this.value=children[0]?.value||'';}};
+        nav.select={isConnected:true,value:'',disabled:true,closest:selector=>selector==='[data-stale="true"]'?null:nav,replaceChildren(...children){this.children=children;this.value=children[0]?.value||'';}};
         nav.querySelector=selector=>selector==='.epc-section-selector'?nav.select:null;return nav;
     };
     const document={activeElement:field,hidden:false,documentElement:{clientWidth:1180},body:element(),
@@ -231,19 +239,30 @@ test('a streamed navigation container binds through existing discovery and later
     const observerCount=observers.length;
     const mutation=observers.find(observer=>observer.targets.has(root));
     assert.ok(mutation,'the existing root child observer admits streamed content');
-    mounted=makeNav();mutation.callback();flush();
+    mounted=makeNav();mutation.callback([{type:'childList',target:root}]);flush();
     const first=mounted;
     assert.equal(typeof first.select.onchange,'function','late-mounted native selector binds without a business rerun');
     assert.equal(first.select.disabled,false);assert.equal(first.select.children[0].value,'report_review');
     assert.ok(observers[0].targets.has(first),'the existing resize observer measures the admitted navigation');
-    mounted=makeNav();first.isConnected=false;mutation.callback();flush();
+    mounted=makeNav();first.isConnected=false;mutation.callback([{type:'childList',target:root}]);flush();
     assert.equal(first.select.onchange,null);assert.equal(typeof mounted.select.onchange,'function');
     assert.equal(observers[0].targets.has(first),false);assert.equal(observers[0].targets.has(mounted),true);
     assert.equal(root.children[0],field);assert.equal(document.activeElement,field);
     assert.equal(field.value,'Pending native wording');assert.equal(field.selectionStart,5);assert.equal(field.selectionEnd,11);
     assert.equal(scrollport.scrollTop,0);assert.equal(root.scrollTop,0);assert.equal(frames.size,0);
     assert.equal(observers.length,observerCount,'streaming/replacement reuses existing observers');
-    cleanup();assert.equal(mounted.select.onchange,null);assert.ok(observers.every(observer=>observer.targets.size===0));
+    // Data rerenders must not leave the same focused native control unbound
+    // until the next animation frame. This is one delivered activation.
+    mounted.select.value='report_review';mounted.select.onchange();flush();
+    document.activeElement=mounted.select;
+    const committed=mounted.select.onchange;
+    const nextCleanup=render({data:{workflow:'monthly',identity:'one',navigationKey:'monthly_report_navigation'}});
+    assert.equal(mounted.select.onchange,committed,'same-owner handler remains live before the next frame');
+    assert.equal(document.activeElement,mounted.select);
+    mounted.select.value='report_review';mounted.select.onchange();flush();
+    assert.equal(root._epcWorkspace.navigationActive,'report_review');
+    cleanup();assert.equal(mounted.select.onchange,committed,'superseded cleanup cannot dispose the new owner');
+    nextCleanup();assert.equal(mounted.select.onchange,null);assert.ok(observers.every(observer=>observer.targets.size===0));
 });
 
 test('the adapter reuses existing measurement and cleanup with no display submission',()=>{
@@ -754,4 +773,98 @@ test('pending explicit Next takes precedence over a mode anchor; removed anchor 
     assert.equal(h.state.navigationActive,saved.active);assert.equal(h.state.navigationJump,saved.jump);
     h.pairs[3].pair.isConnected=false;h.controller().reanchor('monthly_training');
     assert.equal(h.state.navigationActive,saved.active);assert.equal(h.state.navigationJump,saved.jump);
+});
+
+for(const mode of ['wide','tabletop','confined'])test(`${mode} warning ReturnReview preserves explicit guard, reanchor and single disposal`,()=>{
+    const h=harness(mode,true),original={...h.field};
+    for(let n=0;n<3;n++){
+        assert.deepEqual(h.listeners(),{pointerdown:1,keydown:1,click:1});
+        h.controller().reanchor('monthly_activity');h.measure();
+        assert.equal(h.progress.dataset.section,'monthly_activity');
+        assert.equal(h.correct('#report-review',{classes:['enfra-correction-return']}),true);
+        assert.equal(h.progress.dataset.section,'report_review');
+        assert.equal(h.state.explicitReview,true);
+        h.scrollport.scrollTop-=100;h.measure();
+        assert.equal(h.progress.dataset.section,'report_review','layout movement cannot consume explicit Review');
+        h.backButton.onclick();h.measure();
+        assert.equal(h.progress.dataset.section,'monthly_empty','Back preserves the latest sequential last-section contract');
+        assert.equal(h.correct('#report-section-activity'),true);
+        assert.equal(h.progress.dataset.section,'monthly_activity','An explicit correction returns to its exact section');
+        h.rerender();
+    }
+    assert.equal(h.field.value,original.value);assert.equal(h.field.selectionStart,3);assert.equal(h.field.selectionEnd,9);
+    assert.equal(h.counts().nativeEvents,0);
+    h.dispose();assert.deepEqual(h.listeners(),{pointerdown:0,keydown:0,click:0});
+});
+
+
+test('same-owner handoff keeps one focused enabled Next and schedules one delivered activation on the new owner',()=>{
+    const h=harness('compact',true);h.nextButton.onclick();h.measure();
+    const original=h.nextButton.onclick;h.document.activeElement=h.nextButton;
+    assert.equal(h.handoff(),true);let nextSchedules=0;h.resume(()=>nextSchedules++);
+    assert.equal(h.nextButton.onclick,original);assert.equal(h.nextButton.disabled,false);
+    assert.equal(h.document.activeElement,h.nextButton);
+    original();assert.equal(nextSchedules,1);h.measure();
+    assert.equal(h.progress.dataset.section,'monthly_short');
+    h.measure();assert.equal(nextSchedules,1,'measurement never replays an activation');
+    assert.equal(h.counts().scheduled,1,'the retired layout scheduler is never called');
+    assert.equal(h.counts().nativeEvents,0);assert.equal(h.field.value,'Unblurred human wording');
+    assert.deepEqual(h.listeners(),{pointerdown:1,keydown:1,click:1});
+});
+
+for(const kind of ['report','root','app','scrollport','toolbar','section-order','section-node','disconnected','control','control-stale','control-disconnected','ancestor-stale'])
+test(`handoff rejects ${kind} ownership changes`,()=>{
+    const h=harness('compact',true);h.nextButton.onclick();h.measure();
+    let overrides={};
+    if(kind==='report')overrides.identity='other';
+    if(['root','app','scrollport'].includes(kind))overrides[kind]={};
+    if(kind==='toolbar')overrides.nav={};
+    if(kind==='section-order')h.pairs.reverse();
+    if(kind==='section-node')h.pairs[1].pair={...h.pairs[1].pair};
+    if(kind==='control')h.nav.querySelector=()=>null;
+    if(kind==='control-stale'){h.nextButton.dataset={stale:'true'};h.nextButton.closest=()=>h.nextButton;}
+    if(kind==='control-disconnected')h.nextButton.isConnected=false;
+    if(kind==='ancestor-stale')h.root.closest=()=>({});
+    if(kind==='disconnected')h.pairs[1].pair.isConnected=false;
+    if(kind==='stale')h.pairs[1].pair.closest=()=>({});
+    assert.equal(h.handoff(overrides),false);
+    const old=h.nextButton.onclick;h.dispose();old();
+    assert.equal(h.state.navigationRequest,null);assert.equal(h.nextButton.onclick,null);
+});
+
+test('disposed or report-switched owners cannot act through captured callbacks; rapid repeats are not replayed',()=>{
+    const h=harness('compact',true);const old=h.nextButton.onclick;
+    h.state.identity='other';old();assert.equal(h.counts().scheduled,0);
+    h.state.identity='one';h.dispose();old();assert.equal(h.counts().scheduled,0);
+    const live=harness('compact',true);let nextSchedules=0;
+    assert.equal(live.handoff(),true);live.resume(()=>nextSchedules++);
+    live.nextButton.onclick();live.nextButton.onclick();
+    assert.equal(nextSchedules,2);live.measure();
+    assert.equal(live.progress.dataset.section,'monthly_activity','rapid unvisited commands coalesce at their visible origin');
+    live.measure();assert.equal(nextSchedules,2);
+    live.dispose();assert.deepEqual(live.listeners(),{pointerdown:0,keydown:0,click:0});
+});
+
+
+test('handoff preserves earlier source-review Return ownership without interrupting native Next',()=>{
+    const h=harness('compact',true);h.nextButton.onclick();h.measure();
+    let returned=0;const handler=h.nextButton.onclick;
+    h.app.addEventListener('click',event=>{returned++;event.preventDefault()});
+    h.resume(()=>{});assert.equal(h.nextButton.onclick,handler);
+    const link={getAttribute:()=> '#report-review',classList:{contains:()=>true}};
+    h.dispatch({type:'click',button:0,target:{closest:()=>link},defaultPrevented:false,
+        preventDefault(){this.defaultPrevented=true}});
+    assert.equal(returned,1);assert.equal(h.state.navigationActive,'monthly_activity');
+    assert.equal(h.state.navigationRequest,null,'one Return cannot also invoke workspace navigation');
+    h.dispose();
+});
+
+
+test('a fresh server landing replaces a pending same-target command without losing the new request',()=>{
+    const h=harness('compact',true);h.nextButton.onclick();
+    assert.equal(h.state.navigationRequest,'monthly_activity');assert.ok(h.state.navigationIntent);
+    h.land(['fresh-landing','monthly_activity']);
+    assert.equal(h.state.navigationIntent,null);assert.equal(h.state.navigationRequest,'monthly_activity');
+    assert.equal(h.state.landingRequest,'monthly_activity');h.measure();
+    assert.equal(h.progress.dataset.section,'monthly_activity');assert.equal(h.state.navigationRequest,null);
 });

@@ -195,6 +195,7 @@ def test_legacy_draft_fingerprint_and_saved_source_stay_unchanged(monkeypatch,tm
     draft=replace(synthetic_draft(synthetic_profiles()[0],ReportPeriod(2026,10)),sources=(s,))
     old=asdict(draft)
     assert old.pop('cover_recovery_request') is None
+    old.pop('source_row_reviews',None)
     for source in old['sources']:
         source.pop('pdf_text_blocks'); source.pop('scope_review')
         assert source.pop('financial_source_review') is None

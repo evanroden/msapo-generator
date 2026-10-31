@@ -7,6 +7,7 @@ globalThis.ENFRAWorkspaceNavigation = {
     land(state, request) {
         const [nonce, section] = request || [];
         if (!nonce || state.landing === nonce) return;
+        globalThis.ENFRAWorkspaceNavigation.cancelIntent(state);
         state.landing = nonce;
         state.landingRequest = section;
         state.navigationRequest = section;
@@ -21,6 +22,12 @@ globalThis.ENFRAWorkspaceNavigation = {
         if (state.landingRequest && state.navigationRequest === state.landingRequest) state.navigationRequest = null;
         state.landingRequest = null;
     },
+    // One accepted sequential intent, never a queue or a replayed DOM event.
+    cancelIntent(state) {
+        const intent = state.navigationIntent;
+        if (intent && state.navigationRequest === intent.target) state.navigationRequest = null;
+        state.navigationIntent = null;
+    },
     // The control the reader last activated, kept as the nearest keyed
     // native element's class at that moment; the element itself may be
     // re-rendered before a request arrives. Only a press, or Enter/Space on
@@ -28,6 +35,18 @@ globalThis.ENFRAWorkspaceNavigation = {
     // reader has moved on, even while that control still has focus.
     noteInput(state, event) {
         if (!event.isTrusted) return;
+        const intent = state.navigationIntent;
+        const button = event.target?.closest?.('button');
+        const command = (event.type === 'pointerdown' && event.button === 0 ||
+            event.type === 'keydown' && ['Enter',' '].includes(event.key)) &&
+            !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey &&
+            button && [intent?.back,intent?.next].includes(button) && !button.disabled &&
+            button.isConnected && button.dataset?.stale !== 'true' &&
+            intent.owner === state.navigationController && intent.identity === state.identity;
+        if (!command) {
+            state.navigationInputSerial = (state.navigationInputSerial || 0) + 1;
+            globalThis.ENFRAWorkspaceNavigation.cancelIntent(state);
+        }
         // Chromium may change scrollTop while late previews mount, without a
         // reader scrolling. That must not turn Review's first Back into a
         // second step. A real scroll gesture hands control back to geometry.
@@ -134,8 +153,77 @@ globalThis.ENFRAWorkspaceNavigation = {
     create({root, app, scrollport, nav, state, geometry, schedule}) {
         if (!nav) return null;
         let select = null, reviewButton = null, backButton = null, nextButton = null, progress = null;
-        let entries = [], signature = '';
-        let restore = null;
+        let entries = [], signature = '', established = null, establishedControls = null;
+        let restore = null, correction = null, correctionSerial = 0, disposed = false;
+        const identity = state.identity, lease = {};
+        state.navigationController = lease;
+        const current = node => node?.isConnected === true && !node.closest?.('[data-stale="true"]');
+        const connected = node => node?.isConnected === true;
+        const owns = () => !disposed && state.navigationController === lease && state.identity === identity &&
+            [root,app,scrollport,nav].every(current);
+        // Inside these current owners, a transient native control wrapper is
+        // readiness, not replacement of an already established control. A
+        // directly stale control still cannot inherit that authorization.
+        const liveControl = node => connected(node) && node.dataset?.stale !== 'true';
+        const controls = () => [select,reviewButton,backButton,nextButton,progress];
+        const sameControls = () => establishedControls && controls().every((node,index)=>node===establishedControls[index]);
+        const readyOwners = () => owns() && controls().filter(Boolean).every(current);
+        const sameNodes = (a,b) => Boolean(a && b && a.length === b.length &&
+            a.every((item,index) => item.id === b[index].id && item.target === b[index].target && item.marker === b[index].marker));
+        const ownedNodes = () => {
+            if (!owns() || !app.contains(root) || !app.contains(nav) || !controls().filter(Boolean).every(liveControl) ||
+                nav.querySelector('.epc-section-selector') !== select ||
+                nav.querySelector('.epc-review-shortcut') !== reviewButton ||
+                nav.querySelector('.epc-section-back') !== backButton ||
+                nav.querySelector('.epc-section-next') !== nextButton ||
+                nav.querySelector('.epc-section-progress') !== progress) return null;
+            const nodes = Array.from(root.querySelectorAll('[data-epc-pair]')).map(marker => ({
+                id:marker.dataset.epcPair,marker,
+                target:marker.closest('.st-key-epc_pair_' + CSS.escape(marker.dataset.epcPair))}));
+            const reviews = Array.from(app.querySelectorAll('#report-review'));
+            if (reviews.length > 1) return null;
+            if (reviews.length) nodes.push({id:'report_review',target:reviews[0],marker:null});
+            if (!nodes.length || new Set(nodes.map(item=>item.id)).size !== nodes.length ||
+                new Set(nodes.map(item=>item.target)).size !== nodes.length ||
+                nodes.length !== entries.length || nodes.some((item,index) =>
+                    item.id !== entries[index].id || item.target !== entries[index].target ||
+                    !connected(item.target) || item.marker && !connected(item.marker) ||
+                    (item.marker ? !root.contains(item.target) : !app.contains(item.target)))) return null;
+            return nodes;
+        };
+        const canHandoff = next => Boolean(identity && next.identity === identity && next.root === root &&
+            next.app === app && next.scrollport === scrollport && next.nav === nav &&
+            app.contains(root) && app.contains(nav) && sameControls() && sameNodes(established,ownedNodes()) &&
+            established.some(item=>item.id===state.navigationActive));
+        const cancelIntent = () => globalThis.ENFRAWorkspaceNavigation.cancelIntent(state);
+        const pendingIntent = () => {
+            const intent = state.navigationIntent;
+            if (!intent) return null;
+            if (intent.owner !== lease || intent.identity !== identity || intent.origin !== state.navigationActive ||
+                intent.back !== backButton || intent.next !== nextButton || !sameControls() ||
+                intent.input !== (state.navigationInputSerial || 0) || state.navigationRequest !== intent.target ||
+                !sameNodes(intent.nodes,ownedNodes())) {cancelIntent();return null;}
+            return intent;
+        };
+        // Streamlit retains stale replacement widgets in a native collapsed
+        // disclosure. Only its closed AND inert body is non-actionable; an
+        // open body, summary, stale section owner or focus owner still blocks.
+        const closedContent = (node,boundary) => {
+            for (let owner=node; owner && owner!==boundary; owner=owner.parentElement)
+                if (owner.dataset?.testid === 'stExpanderDetails' && owner.hasAttribute?.('inert') &&
+                    owner.parentElement?.tagName === 'DETAILS' && !owner.parentElement.open) return true;
+            return false;
+        };
+        const fresh = node => {
+            if (!node || !current(node.target) || node.marker && !current(node.marker)) return false;
+            const focus = node.target.querySelector?.('h1,h2,h3,h4') || node.target;
+            const stale = node.target.querySelectorAll?.('[data-stale="true"]') ||
+                [node.target.querySelector?.('[data-stale="true"]')].filter(Boolean);
+            return current(focus) && !closedContent(focus,node.target) &&
+                !Array.from(stale).some(item=>!closedContent(item,node.target));
+        };
+        const readyIntent = intent => Boolean(intent && readyOwners() && fresh(intent.nodes.find(item=>item.id===intent.origin)) &&
+            fresh(intent.nodes.find(item=>item.id===intent.target)));
         const box = node => node.getBoundingClientRect();
         const owner = () => state.ownsScroll ? root : scrollport;
         // The container keeps one height whether or not its selector is
@@ -143,16 +231,21 @@ globalThis.ENFRAWorkspaceNavigation = {
         const height = () => box(nav).height;
         const capture = entry => entry ? {id:entry.id, scroll:owner().scrollTop,
             offset:box(entry.target).top-box(owner()).top} : null;
-        const navigate = id => {
-            const entry = entries.find(item => item.id === id);
-            if (!entry?.target.isConnected) return;
+        const selectEntry = entry => {
             if (entry.outside) {
                 if (!state.reviewNavigation)
                     state.navigationReturn = capture(entries.find(item => item.id === state.navigationActive));
                 state.reviewNavigation = true;
-            } else if (!entry.outside) state.reviewNavigation = false;
+            } else state.reviewNavigation = false;
             state.explicitReview = Boolean(entry.outside);
-            state.navigationRequest = entry.id; state.navigationActive = entry.id;
+        };
+        const navigate = id => {
+            if (!owns()) return;
+            cancelIntent();correction = null;correctionSerial++;
+            const entry = entries.find(item => item.id === id);
+            if (!entry || !current(entry.target)) return;
+            selectEntry(entry);
+            state.navigationRequest = entry.id;state.navigationActive = entry.id;
             schedule();
         };
         // Layout has already translated this editor into its new scroll root.
@@ -169,9 +262,18 @@ globalThis.ENFRAWorkspaceNavigation = {
         const choose = () => navigate(select.value);
         const openReview = () => navigate('report_review');
         const step = delta => {
+            const control = delta < 0 ? backButton : nextButton;
+            const nodes = ownedNodes();
             const index = entries.findIndex(item => item.id === state.navigationActive);
             const target = entries[index + delta];
-            if (index >= 0 && target) navigate(target.id);
+            if (!sameControls() || !sameNodes(established,nodes) || !control || control.disabled || index < 0 || !target) return;
+            // Origin remains the section actually reached. Repeated commands
+            // coalesce; an opposite command replaces from that same origin.
+            correction = null;correctionSerial++;
+            state.navigationIntent = {owner:lease,identity,origin:state.navigationActive,target:target.id,
+                nodes,input:state.navigationInputSerial || 0,back:backButton,next:nextButton};
+            state.navigationRequest = target.id;
+            schedule();
         };
         const back = () => step(-1), nextSection = () => step(1);
         // Review corrections still reach their section directly, even when
@@ -181,13 +283,31 @@ globalThis.ENFRAWorkspaceNavigation = {
             if (!backButton || event.defaultPrevented || event.button !== 0 ||
                 event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
             const link = event.target?.closest?.('a');
-            const match = /^#report-section-([a-z_]+)$/.exec(link?.getAttribute('href') || '');
+            const href = link?.getAttribute('href') || '';
+            if (href === '#report-review' && link?.classList?.contains('enfra-correction-return')) {
+                event.preventDefault();navigate('report_review');return;
+            }
+            if (link?.classList?.contains('enfra-picture-correction-link')) {
+                const adapter = globalThis.ENFRAPictureCorrections;
+                if (!adapter || !app.contains(link)) return;
+                event.preventDefault();
+                const target = adapter.resolve(app, link, state.identity);
+                const entry = target && entries.find(item => item.target.contains(target.marker));
+                if (!entry) {adapter.unavailable(link);return;}
+                navigate(entry.id);
+                correction = {link, serial:correctionSerial};
+                return;
+            }
+            const match = /^#report-section-([a-z_]+)$/.exec(href);
             if (!match || !app.contains(link)) return;
             const id = 'monthly_' + match[1];
             if (!entries.some(item => item.id === id && item.target.isConnected)) return;
             event.preventDefault();
             navigate(id);
         };
+        const cancelCorrection = () => {correction = null; correctionSerial++;};
+        app.addEventListener?.('pointerdown', cancelCorrection);
+        app.addEventListener?.('keydown', cancelCorrection);
         app.addEventListener?.('click', correctSection);
         const prepare = (context, sample, pairs) => {
             const current = nav.querySelector('.epc-section-selector');
@@ -220,6 +340,27 @@ globalThis.ENFRAWorkspaceNavigation = {
                 if (nextButton) nextButton.onclick = nextSection;
             }
             progress = nav.querySelector('.epc-section-progress');
+            // A validated server page request arrives only after the previous
+            // owner committed its delivered inputs. Reuse ordinary navigation;
+            // this marker never submits a field or selects a different source.
+            if (backButton && globalThis.ENFRAPictureCorrections) {
+                const requests = [...app.querySelectorAll('.enfra-page-correction-request')].filter(link =>
+                    link.isConnected && link.dataset.reportIdentity === state.identity &&
+                    !link.closest('[data-stale="true"]'));
+                const consumed = state.exactPageNavigationTokens || (state.exactPageNavigationTokens = new Set());
+                if (requests.length === 1) {
+                    const link = requests[0], token = link.dataset.token;
+                    const target = token && !consumed.has(token) &&
+                        globalThis.ENFRAPictureCorrections.resolve(app, link, state.identity);
+                    const entry = target && entries.find(item => item.target.contains(target.marker));
+                    if (entry) {
+                        consumed.add(token);
+                        navigate(entry.id);
+                        correction = {link, serial:correctionSerial};
+                    }
+                }
+            }
+
             const next = JSON.stringify(entries.map(({id,title}) => [id,title]));
             if (select && next !== signature) {
                 const selected = select.value;
@@ -229,6 +370,12 @@ globalThis.ENFRAWorkspaceNavigation = {
                 if (entries.some(item => item.id === selected)) select.value=selected;
                 select.disabled = !entries.length; signature=next; select._epcNavigationSignature=next;
             }
+            const intent = pendingIntent();
+            const nodes = ownedNodes();
+            // Transient stale content is admissible only after this exact
+            // report/controller has observed these same owners fully fresh.
+            if (readyOwners() && nodes?.every(fresh)) {established = nodes;establishedControls = controls();}
+            if (readyIntent(intent)) selectEntry(entries.find(item=>item.id===intent.target));
             // Normal page scrolling can reach Review without a menu action.
             // Keep the same selector reachable once that heading crosses its
             // reading line, or once the editor ends above it: a short final
@@ -264,7 +411,9 @@ globalThis.ENFRAWorkspaceNavigation = {
         const update = (context, sample) => {
             if (!entries.length) return;
             const top=Math.max(sample.chromeBottom,sample.scrollport.y,sample.visual?.y||0)+height()+12;
+            const intent = pendingIntent();
             let request = entries.find(item => item.id === state.navigationRequest);
+            if (intent && !readyIntent(intent)) request = null;
             if (request && state.landingRequest === request.id) {
                 // The page may become interactive before this adapter mounts.
                 // A reader already in a control (an open menu, a field) keeps
@@ -277,6 +426,7 @@ globalThis.ENFRAWorkspaceNavigation = {
             }
             if (request) {
                 const entry=request; state.navigationRequest=null; state.landingRequest=null;
+                state.navigationIntent=null;
                 if (!entry.outside && state.navigationReturn?.id===entry.id) {
                     restore=state.navigationReturn; state.navigationReturn=null;
                 } else if (entry.target.isConnected) {
@@ -295,7 +445,7 @@ globalThis.ENFRAWorkspaceNavigation = {
                 restore=null;
             }
             const jump=state.navigationJump;
-            let active=jump && Math.abs(owner().scrollTop-jump.scroll)<=1 ? jump.id : null;
+            let active=state.navigationIntent?.origin || (jump && Math.abs(owner().scrollTop-jump.scroll)<=1 ? jump.id : null);
             if (!active && state.reviewNavigation && entries.some(item => item.outside)) active='report_review';
             if (!active) {
                 state.navigationJump=null;
@@ -306,13 +456,19 @@ globalThis.ENFRAWorkspaceNavigation = {
                 const visibleEntries=state.ownsScroll ? entries.filter(item=>!item.outside) : entries;
                 active=geometry.selectActiveSection(visibleEntries.map(item=>({id:item.id,top:box(item.target).top,bottom:box(item.target).bottom})),state.navigationActive,line,12);
             }
+            if (correction) {
+                const pending = correction;correction = null;
+                globalThis.ENFRAPictureCorrections.reveal(app, pending.link, state.identity,
+                    () => pending.serial === correctionSerial);
+            }
             state.navigationActive=active;
             // Never change a menu's highlighted option while it has focus.
             if (select && document.activeElement!==select && active && select.value!==active) select.value=active;
             const index = entries.findIndex(item => item.id === active);
-            if (backButton) backButton.disabled = index <= 0;
+            const sequentialReady = sameControls() && sameNodes(established,ownedNodes());
+            if (backButton) backButton.disabled = !sequentialReady || index <= 0;
             if (nextButton) {
-                nextButton.disabled = index < 0 || index >= entries.length - 1;
+                nextButton.disabled = !sequentialReady || index < 0 || index >= entries.length - 1;
                 const label = entries[index + 1]?.outside ? 'Review' : 'Next';
                 if (nextButton.textContent !== label) nextButton.textContent = label;
             }
@@ -322,7 +478,28 @@ globalThis.ENFRAWorkspaceNavigation = {
                 if (progress.dataset.section !== active) progress.dataset.section = active;
             }
         };
-        return {prepare,update,height,reanchor,dispose(){
+        return {prepare,update,height,reanchor,canHandoff,
+            resume(nextSchedule) {
+                if (!owns() || typeof nextSchedule !== 'function') return false;
+                cancelCorrection();schedule = nextSchedule;
+                // The new layout installed its source-review owner first,
+                // as on a cold mount. Preserve delegated Return precedence;
+                // the native toolbar handlers stay continuously attached.
+                app.removeEventListener?.('pointerdown',cancelCorrection);
+                app.removeEventListener?.('keydown',cancelCorrection);
+                app.removeEventListener?.('click',correctSection);
+                app.addEventListener?.('pointerdown',cancelCorrection);
+                app.addEventListener?.('keydown',cancelCorrection);
+                app.addEventListener?.('click',correctSection);
+                return true;
+            },
+            dispose(){
+            if (state.navigationIntent?.owner === lease) cancelIntent();
+            disposed = true;
+            if (state.navigationController === lease) delete state.navigationController;
+            cancelCorrection();
+            app.removeEventListener?.('pointerdown',cancelCorrection);
+            app.removeEventListener?.('keydown',cancelCorrection);
             app.removeEventListener?.('click',correctSection);
             if(select?.onchange===choose)select.onchange=null;
             if(reviewButton?.onclick===openReview)reviewButton.onclick=null;

@@ -214,6 +214,8 @@ def browser_task(browser_type, name, *, held_recovery=False):
     page.on('pageerror', lambda error: errors.append(str(error)))
     record = {'synthetic_only':True, 'held_recovery':held_recovery, 'steps':[], 'errors':errors, 'external':external}
     def capture(stage, previous=None, expected_contact=None, expected_write=None):
+        record['pending_capture'] = {'stage': stage, 'after': previous['sequence'] if previous else 0,
+                                     'expected_contact': expected_contact, 'expected_write': expected_write}
         state = receipt(page, after=previous['sequence'] if previous else 0, expected_contact=expected_contact, expected_write=expected_write)
         record['failed_capture'] = {'stage': stage, 'receipt': state}
         assert state['saved_unchanged'] and state['original_unchanged']
@@ -223,6 +225,7 @@ def browser_task(browser_type, name, *, held_recovery=False):
         assert not errors and not external
         record['steps'].append({'stage':stage,'receipt':state})
         record.pop('failed_capture', None)
+        record.pop('pending_capture', None)
         return state
     def outputs(stage, state):
         page.get_by_role('button',name='Render synthetic native contact outputs',exact=True).click()
@@ -308,6 +311,9 @@ def browser_task(browser_type, name, *, held_recovery=False):
             expected_write = {'attempts':len(prior['attempts']) + 1,
                               'revision':prior['directory']['revision'] + (fault == 'after'), 'phone':phone}
             state = capture('fault-' + fault,prior, expected_write=expected_write)
+            assert state['attempts'][-1]['mode'] == fault, state
+            assert state['fault'] == {'mode': '', 'armed': prior['fault']['armed'] + 1,
+                                      'consumed': prior['fault']['armed'] + 1}, state['fault']
             assert len(state['working']['contacts']['rows']) == len(prior['working']['contacts']['rows'])
             assert len(state['attempts']) == len(prior['attempts']) + 1
             if fault == 'before':
@@ -377,6 +383,10 @@ def browser_task(browser_type, name, *, held_recovery=False):
         raise
     finally:
         try:
+            record['last_receipt'] = page.evaluate('''() => {
+                const n=[...document.querySelectorAll('[data-enfra-contact-receipt]')].at(-1);
+                return n ? JSON.parse(n.dataset.enfraContactReceipt) : null;
+            }''')
             record['native_events'] = page.evaluate('window.ENFRAContactObservation.events')
             record['phone_events'] = page.evaluate('window.ENFRAContactObservation.phoneEvents')
         except Exception as observer_error:

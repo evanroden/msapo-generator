@@ -256,8 +256,12 @@ def render_reviewed_batch(profile,content,blocks,assets,prefix,*,period,editor_s
     from app.monthly_report_section_uploads import included_pages,prepare_section_pages
     from app.monthly_report_source_preview import source_thumbnail_uri
     if content.source.suffix!='.pdf':return False,content,{}
+    from app.monthly_report_ui import _field
     key=prefix+'_financial_'+content.source.id
-    if not st.checkbox('Review client-facing ENFRA financial pages',key=key+'_open'):
+    open_key=_field(key+'_open',False)
+    # A late native remount needs the exact owner's current disclosure default,
+    # not only a consumed set_value packet. This does not restore any consent.
+    if not st.checkbox('Review client-facing ENFRA financial pages',key=open_key,value=st.session_state[open_key]):
         return False,content,{}
     source=content.source
     try:
@@ -269,9 +273,14 @@ def render_reviewed_batch(profile,content,blocks,assets,prefix,*,period,editor_s
         return True,content,{}
     st.caption('Amounts in ENFRA client reports may be included. Vendor-invoice totals must stay out. This review does not approve editable financial text or tables.')
     expected=SourceFinancialReview(source.id,source.sha256,scope_for(profile),'enfra_client_report','client')
+    # Retain only explicit pending choices for this exact owner incarnation.
+    # No legacy truthy key is copied into a new source/content/scope receipt.
+    pending_scope=hashlib.sha256(json.dumps((section_digest,editor_scope,period.key,_state_digest(profile),
+        source.fingerprint,blocks.get('mbcx_report').fingerprint if blocks.get('mbcx_report') else ''),sort_keys=True).encode()).hexdigest()
+    source_choice_key=key+'_source_'+expected.fingerprint+'_'+pending_scope
     confirmed=(source.financial_source_review==expected)
     if not confirmed:
-        confirmed=st.checkbox('This is an ENFRA report intended for the client',key=key+'_source_'+expected.fingerprint)
+        confirmed=st.checkbox('This is an ENFRA report intended for the client',key=_field(source_choice_key,False))
     else:st.caption('Client-facing ENFRA source confirmed.')
     owners=included_pages(blocks)
     excluded=dict(source.client_page_exclusions)
@@ -291,6 +300,9 @@ def render_reviewed_batch(profile,content,blocks,assets,prefix,*,period,editor_s
     pending_pages=tuple(n for n in pending if n in available)
     pages=tuple(st.multiselect('Pages to review together',available,key=page_key,default=pending_pages,max_selections=4,
         format_func=lambda n:f'Page {n}' + (' · already included' if (source.id,n) in owners else ' · new')))
+    # Register the actual native value after mounting. Preserve current
+    # pending/default/explicit-clear hydration; navigation never selects pages.
+    _field(page_key,pages)
     st.session_state[choice_key]=pages
     receipts=[];failure=False;edited=[]
     for number in pages:
@@ -316,9 +328,15 @@ def render_reviewed_batch(profile,content,blocks,assets,prefix,*,period,editor_s
                 failure=True
         except (ValueError,OSError) as exc:
             st.error(str(exc));failure=True
-    stamp=hashlib.sha256(json.dumps((section_digest,editor_scope,period.key,_state_digest(profile),expected.fingerprint,receipts,blocks.get('mbcx_report').fingerprint if blocks.get('mbcx_report') else ''),sort_keys=True).encode()).hexdigest()
-    replacement_confirmed=(st.checkbox('Replace the edited pictures shown above with these reviewed original pages; keep their captions and positions',key=key+'_replace_'+stamp) if edited else False)
-    checked=st.checkbox('I reviewed these pages: their amounts are client-facing ENFRA content, with no vendor-invoice totals',key=key+'_visual_'+stamp,disabled=not pages or failure)
+    stamp=hashlib.sha256(json.dumps((section_digest,editor_scope,period.key,_state_digest(profile),source.fingerprint,expected.fingerprint,receipts,blocks.get('mbcx_report').fingerprint if blocks.get('mbcx_report') else ''),sort_keys=True).encode()).hexdigest()
+    replacement_confirmed=(st.checkbox('Replace the edited pictures shown above with these reviewed original pages; keep their captions and positions',key=_field(key+'_replace_'+stamp,False)) if edited else False)
+    checked=st.checkbox('I reviewed these pages: their amounts are client-facing ENFRA content, with no vendor-invoice totals',key=_field(key+'_visual_'+stamp,False),disabled=not pages or failure)
+    from app.monthly_report_financial_correction_ui import render_owner_context
+    focus_key=(source_choice_key if not confirmed else
+               key+'_pages' if not pages or failure else key+'_visual_'+stamp)
+    render_owner_context(profile,content,blocks,prefix,period=period,editor_scope=editor_scope,
+                         sections=sections,pages=pages,field_key=focus_key,
+                         kind='combobox' if focus_key==key+'_pages' else 'checkbox')
     if st.button('Include reviewed financial pages',key=key+'_include_'+stamp,disabled=not pages or not confirmed or not checked or failure or bool(edited and not replacement_confirmed)):
         try:
             batch=stage_financial_batch(profile,period,content,pages,blocks,assets,editor_scope=editor_scope,sections=sections,replace_edited=replacement_confirmed,source_confirmed=confirmed,

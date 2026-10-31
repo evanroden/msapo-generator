@@ -675,8 +675,10 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
         for n, table in enumerate(block.extra_tables):
             from app.monthly_report_table_review_ui import review_table_headings
             table = review_table_headings(table, key + f"_imported_{n}", field)
-            if len(block.extra_tables) > 1:
-                st.write(f"Table {n+1}")
+            if spec.key == "work_orders" or len(block.extra_tables) > 1:
+                from app.monthly_report_source_table_labels import table_task_label
+                st.text(table_task_label(table, spec.key, position=n,
+                                         total=len(block.extra_tables)))
             seed = [dict(zip(table.columns, r)) for r in table.rows] or [dict.fromkeys(table.columns)]
             if optional_table:
                 seed = empty_text_seed(seed)
@@ -1486,6 +1488,19 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     from app.workspace_layout import workspace, workspace_section, workspace_columns
     landing_section = "monthly_cover"
     landing = landing_section if st.session_state.pop(prefix + "_land_on_editor", False) else ""
+    from app.monthly_report_page_navigation import consume_navigation
+    consume_navigation(st.session_state, prefix, replace(draft, blocks=tuple(blocks.values())),
+        st.session_state.get(prefix + "_evidence", ()), _rich_text_scope(prefix))
+    st.session_state.pop(prefix + "_page_navigation_origin", None)
+    from app.monthly_report_manager_page_navigation import consume_navigation as consume_manager_page
+    consume_manager_page(st.session_state, prefix, replace(draft, blocks=tuple(blocks.values())),
+        st.session_state.get(prefix + "_evidence", ()), _rich_text_scope(prefix))
+    from app.monthly_report_ai_correction_ui import consume_navigation as consume_ai_correction
+    consume_ai_correction(prefix,replace(draft,blocks=tuple(blocks.values())),_rich_text_scope(prefix))
+    from app.monthly_report_financial_correction_ui import consume_navigation as consume_financial_correction
+    consume_financial_correction(prefix,replace(draft,blocks=tuple(blocks.values())),_rich_text_scope(prefix))
+    from app.monthly_report_source_detail_navigation import consume_navigation as consume_source_detail
+    consume_source_detail(prefix,replace(draft,blocks=tuple(blocks.values())),_rich_text_scope(prefix))
     with workspace("monthly", prefix, navigation_key="monthly_report_navigation", landing=landing):
         with st.container(key="monthly_report_navigation"):
             st.markdown('<span class="epc-section-navigation">'
@@ -1583,7 +1598,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     history = st.expander("Shared report history", expanded=False,
                           key=prefix + "_history_open", on_change="rerun")
     with history:
-        st.caption("Saving a version adds it to shared report history. Browser draft recovery is separate.")
+        st.caption("Saving here adds a shared version; browser recovery is separate.")
         from app.monthly_report_history_ui import render_snapshot_history
         if history.open:
             render_snapshot_history(draft, prefix, assets, snapshot)
@@ -1755,18 +1770,29 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             if source is not None and check.code in {"source_facility", "source_period", "source_date_unknown"}:
                 from html import escape
                 from hashlib import sha256
-                from app.monthly_report_source_manager_ui import open_source_review
+                from app.monthly_report_source_detail_navigation import render_link as render_source_detail_link
                 target = "site" if check.code == "source_facility" else "date"
                 with st.container(key="monthly_source_warning_" + source.id + "_" + check.code):
                     st.markdown('<span class="enfra-source-warning" data-source-id="' +
                         escape(source.id, quote=True) + '" data-report-identity="' +
                         sha256(prefix.encode()).hexdigest()[:24] + '"></span>', unsafe_allow_html=True)
                     (st.error if check.blocking else st.warning)(check.message)
-                    st.button("Correct site" if target == "site" else "Correct date",
-                        key=prefix + "_correct_source_" + source.id + "_" + check.code,
-                        on_click=open_source_review, args=(prefix, source.id, target))
+                    render_source_detail_link(check,draft,prefix)
             else:
                 (st.error if check.blocking else st.warning)(review_message(check, draft))
+                from app.monthly_report_correction_ui import render_picture_links
+                render_picture_links(check, draft, prefix)
+                from app.monthly_report_correction_ui import render_source_page_links
+                render_source_page_links(check, draft, prefix)
+                from app.monthly_report_followup_navigation import render_links
+                render_links(check, draft, prefix)
+                from app.monthly_report_financial_correction_ui import render_links as render_financial_links
+                render_financial_links(check,draft,prefix)
+                from app.monthly_report_ai_correction_ui import render_links as render_ai_links
+                render_ai_links(check,draft,prefix)
+        notice = st.session_state.pop(prefix + "_page_navigation_notice", None)
+        if notice:
+            st.warning(notice)
         warnings_ok = not any(not c.blocking for c in checks)
         if not warnings_ok:
             warnings_ok = st.checkbox("I checked these specific warnings", key=prefix + "_warnings_" + draft.fingerprint)
@@ -1778,7 +1804,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         empty_confirmation_key = prefix + "_empty_generation_confirmation"
         if st.session_state.get(empty_confirmation_key) not in (None, draft.fingerprint):
             st.session_state.pop(empty_confirmation_key, None)
-        st.caption("Creating files also saves a version in Shared report history.")
+        st.caption("Creating files also attempts to save a shared version.")
         pressed = st.button("Create Word and PDF", key=prefix + "_generate",
                             type="secondary" if blocked_reason else "primary", disabled=bool(blocked_reason))
         if pressed and not monthly_entry_sections:
@@ -1786,9 +1812,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         generate_anyway = False
         if not blocked_reason and not monthly_entry_sections and (
                 st.session_state.get(empty_confirmation_key) == draft.fingerprint):
-            st.warning("No new monthly information was entered in the section editors. "
-                       "This draft may contain mostly dividers and saved standing material. "
-                       "Check the report before sending it to a client.")
+            st.warning("No new monthly updates were entered. "
+                       "This report may contain saved details and dividers only. "
+                       "Review it before sharing.")
             generate_anyway = st.button("Create anyway", key=prefix + "_empty_generate_anyway")
         if (pressed and bool(monthly_entry_sections)) or generate_anyway:
             st.session_state.pop(empty_confirmation_key, None)
@@ -1879,4 +1905,49 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             if package.pdf_error:
                 st.warning(package.pdf_error)
 
+    from app.monthly_report_followup_navigation import NOTICE as FOLLOWUP_NOTICE
+    pending_followup = st.session_state.pop(prefix + "_followup_navigation_pending", None)
+    open_followup = st.session_state.pop(prefix + "_followup_navigation_open", None)
+    if pending_followup is not None or open_followup is not None:
+        st.session_state[prefix + "_followup_navigation_notice"] = FOLLOWUP_NOTICE
+    followup_notice = st.session_state.pop(prefix + "_followup_navigation_notice", None)
+    if followup_notice:
+        st.warning(followup_notice)
+    from app.monthly_report_page_navigation import finish_navigation
+    finish_navigation(st.session_state, prefix, draft,
+        st.session_state.get(prefix + "_evidence", ()), _rich_text_scope(prefix))
+    if st.session_state.pop(prefix + "_page_navigation_open", None) is not None:
+        from app.monthly_report_page_navigation import NOTICE
+        st.session_state[prefix + "_page_navigation_notice"] = NOTICE
+    notice = st.session_state.pop(prefix + "_page_navigation_notice", None)
+    if notice:
+        st.warning(notice)
+    from app.monthly_report_manager_page_navigation import finish_navigation as finish_manager_page, NOTICE as MANAGER_NOTICE
+    finish_manager_page(st.session_state, prefix, draft,
+        st.session_state.get(prefix + "_evidence", ()), _rich_text_scope(prefix))
+    if st.session_state.pop(prefix + "_manager_page_navigation_open", None) is not None:
+        st.session_state[prefix + "_manager_page_navigation_notice"] = MANAGER_NOTICE
+    manager_notice = st.session_state.pop(prefix + "_manager_page_navigation_notice", None)
+    if manager_notice:
+        st.warning(manager_notice)
+    from app.monthly_report_ai_correction_ui import finish_navigation as finish_ai_correction, NOTICE as AI_NOTICE
+    finish_ai_correction(prefix,draft,_rich_text_scope(prefix))
+    if st.session_state.pop(prefix + "_ai_correction_open",None) is not None:
+        st.session_state[prefix + "_ai_correction_notice"] = AI_NOTICE
+    ai_notice = st.session_state.pop(prefix + "_ai_correction_notice",None)
+    if ai_notice:
+        st.warning(ai_notice)
+    from app.monthly_report_financial_correction_ui import finish_navigation as finish_financial_correction, NOTICE as FINANCIAL_NOTICE
+    finish_financial_correction(prefix,draft,_rich_text_scope(prefix))
+    if st.session_state.pop(prefix + "_financial_correction_open",None) is not None:
+        st.session_state[prefix + "_financial_correction_notice"] = FINANCIAL_NOTICE
+    financial_notice = st.session_state.pop(prefix + "_financial_correction_notice",None)
+    if financial_notice:
+        st.warning(financial_notice)
+    from app.monthly_report_source_detail_navigation import finish_navigation as finish_source_detail, NOTICE as SOURCE_DETAIL_NOTICE
+    finish_source_detail(prefix,draft,_rich_text_scope(prefix))
+    if st.session_state.pop(prefix+'_source_detail_navigation_open',None) is not None:
+        st.session_state[prefix+'_source_detail_navigation_notice']=SOURCE_DETAIL_NOTICE
+    source_detail_notice=st.session_state.pop(prefix+'_source_detail_navigation_notice',None)
+    if source_detail_notice:st.warning(source_detail_notice)
     _refresh_period_editors_after_commit(prefix)

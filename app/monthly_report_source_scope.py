@@ -9,6 +9,7 @@ from collections import Counter
 from dataclasses import replace
 from hashlib import sha256
 import json
+import re
 
 from app.monthly_report_model import included_sections, used_block_keys
 
@@ -31,9 +32,17 @@ def _decode(value):
         return {}
 
 
+_PAGE_TOKEN = re.compile(r"[0-9]{1,6}\Z")
+
+
 def _source_id(reference):
+    """Recognize only bounded, positive ASCII source page references."""
     parts = reference.split(":") if isinstance(reference, str) else ()
-    return parts[0] if len(parts) == 3 and parts[1].isdigit() else None
+    if (len(parts) != 3 or not parts[0] or not parts[2]
+            or _PAGE_TOKEN.fullmatch(parts[1]) is None
+            or int(parts[1]) < 1):
+        return None
+    return parts[0]
 
 
 def revision(source):

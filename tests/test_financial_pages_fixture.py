@@ -25,7 +25,7 @@ def test_inputs_are_real_bounded_mixed_pdfs_and_no_auto_financial_grants(tmp_pat
 
 def test_native_gate_requires_both_complete_engines_and_scenarios():
     from scripts.qa_financial_pages import all_cases_passed,ENGINES,SCENARIOS
-    cases={e+'/'+s:{'result':'passed','date_selector_contract':'passed'} for e in ENGINES for s in SCENARIOS}
+    cases={e+'/'+s:{'result':'passed','date_selector_contract':'passed','individual_page_selector_contract':'passed'} for e in ENGINES for s in SCENARIOS}
     assert all_cases_passed({'cases':cases,'failures':[]})
     assert not all_cases_passed({'cases':{},'failures':[]})
     assert not all_cases_passed({'cases':cases,'failures':['failure']})
@@ -55,6 +55,7 @@ def button(label):
  next(b for b in a.button if b.label==label).click().run();assert not a.exception,[e.message for e in a.exception]
 def check(starts,value=True):
  next(c for c in a.checkbox if c.label.startswith(starts)).set_value(value).run();assert not a.exception
+next(t for t in a.toggle if t.label=='Review individual pages').set_value(True).run();assert not a.exception
 button('Include page');button('Add reviewed pages')
 ordinary=a.session_state['financial_draft'];assert len(ordinary.blocks[-1].asset_hashes)==1
 check('Review client');a.multiselect[0].set_value([2]).run()
@@ -202,7 +203,84 @@ def test_source_upload_label_matches_production_owner_and_ui_call_is_preserved()
     assert 'first(' not in helper and 'nth(' not in helper and 'force=' not in helper
     assert "get_by_text('MBCx report files',exact=True)" in helper
     flow=inspect.getsource(exercise)
-    assert "name='Add files',exact=True" in flow and 'upload_source_pdf(page,source)' in flow
+    assert "name='Add files',exact=True" not in flow
+    assert flow.index('upload_source_pdf(page,source)') < flow.index('select_individual_pages(page)')
+    assert flow.index('select_individual_pages(page)') < flow.index("name='Include page',exact=True")
+
+
+@pytest.mark.parametrize('labels,ancestor_count,switch_count,label_visible,enabled,checked,activates,passes', [
+    (('Review individual pages',),1,1,True,True,False,True,True),
+    (('Other choice','Review individual pages'),1,1,True,True,False,True,True),
+    (('Review individual pages','Review individual pages extra'),1,1,True,True,False,True,True),
+    ((),1,1,True,True,False,True,False),
+    (('Review individual pages extra',),1,1,True,True,False,True,False),
+    (('Review individual pages','Review individual pages'),1,1,True,True,False,True,False),
+    (('Review individual pages',),0,1,True,True,False,True,False),
+    (('Review individual pages',),2,1,True,True,False,True,False),
+    (('Review individual pages',),1,1,False,True,False,True,False),
+    (('Review individual pages',),1,1,True,False,False,True,False),
+    (('Review individual pages',),1,1,True,True,True,True,False),
+    (('Review individual pages',),1,1,True,True,False,False,False),
+    pytest.param(('Review individual pages',),1,2,True,True,False,True,False,id='two-switch-label'),
+])
+def test_individual_page_route_uses_one_exact_native_control(
+        monkeypatch,labels,ancestor_count,switch_count,label_visible,enabled,checked,activates,passes):
+    """Offline contract: clipped input is state oracle, visible label is target.
+
+    This deliberately rejects the old input .check() gesture. It is not native
+    browser proof; the hosted contract and actual application flow supply that.
+    """
+    import sys
+    from types import SimpleNamespace
+    from scripts.qa_financial_pages import select_individual_pages
+    clicks=[]
+    state={'checked':checked}
+    class Label:
+        matched=range(ancestor_count)
+        def get_by_role(self,role):
+            assert role=='switch'
+            return SimpleNamespace(matched=range(switch_count))
+        def click(self):
+            assert ancestor_count==1 and label_visible and enabled
+            clicks.append('visible label')
+            if activates:state['checked']=not state['checked']
+    class Control:
+        def __init__(self, matched):self.matched=matched
+        def check(self):raise AssertionError('Clipped switch input is not the visible pointer target')
+        def locator(self,selector):
+            assert selector=='xpath=ancestor::label'
+            return Label()
+    class Page:
+        def get_by_label(self, label, *, exact):
+            assert label=='Review individual pages' and exact is True
+            return Control([s for s in labels if s==label])
+    class Expect:
+        def __init__(self,control):self.control=control
+        def to_have_count(self,count):assert len(self.control.matched)==count
+        def to_be_visible(self):
+            assert len(self.control.matched)==1
+            if isinstance(self.control,Label):assert label_visible
+        def to_be_enabled(self):assert len(self.control.matched)==1 and enabled
+        def not_to_be_checked(self):assert not state['checked']
+        def to_be_checked(self):assert state['checked']
+    monkeypatch.setitem(sys.modules,'playwright.sync_api',SimpleNamespace(expect=Expect))
+    if not passes:
+        with pytest.raises(AssertionError):select_individual_pages(Page())
+        assert clicks==(['visible label'] if not activates else [])
+        assert state['checked']==checked
+    else:
+        select_individual_pages(Page())
+        assert clicks==['visible label'] and state['checked']
+
+
+def test_individual_page_route_preserves_default_and_one_native_label_click():
+    import inspect
+    from scripts.qa_financial_pages import select_individual_pages
+    helper=inspect.getsource(select_individual_pages)
+    assert helper.count('label.click()')==1
+    assert helper.index('not_to_be_checked()') < helper.index('label.click()') < helper.index('expect(control).to_be_checked()')
+    for bypass in ('.check()', 'force=', '.first', '.nth(', '.evaluate(', '.press(', 'sleep(', 'timeout='):
+        assert bypass not in helper
 
 
 @pytest.mark.parametrize('labels,expected',[
@@ -265,16 +343,33 @@ def test_date_control_keeps_form_submission_and_canonical_receipt_assertion():
 def test_hosted_selector_contract_is_required_for_case_acceptance():
     from scripts.qa_financial_pages import all_cases_passed,ENGINES,SCENARIOS,date_selector_contract,exercise
     import inspect
-    cases={e+'/'+s:{'result':'passed','date_selector_contract':'passed'} for e in ENGINES for s in SCENARIOS}
+    cases={e+'/'+s:{'result':'passed','date_selector_contract':'passed','individual_page_selector_contract':'passed'} for e in ENGINES for s in SCENARIOS}
     for key in cases:
         for status in (None,'running','failed'):
-            assert not all_cases_passed({'cases':{**cases,key:{'result':'passed','date_selector_contract':status}},'failures':[]})
+            assert not all_cases_passed({'cases':{**cases,key:{**cases[key],'date_selector_contract':status}},'failures':[]})
     contract=inspect.getsource(date_selector_contract)
     assert 'probe.set_content' in contract and 'expect(wrong).to_have_count(0)' in contract
     assert "fill_source_date(probe,owner,'2026-09-02')" in contract
     assert '.to_have_count(2)' in contract and '.to_have_count(0)' in contract
     assert 'date_selector_contract(context)' in inspect.getsource(exercise)
     assert 'force=' not in contract and '.first' not in contract
+
+
+def test_hosted_native_label_contract_is_required_for_every_case():
+    import inspect
+    from scripts.qa_financial_pages import all_cases_passed,ENGINES,SCENARIOS,individual_page_selector_contract,exercise
+    cases={e+'/'+s:{'result':'passed','date_selector_contract':'passed','individual_page_selector_contract':'passed'} for e in ENGINES for s in SCENARIOS}
+    for key in cases:
+        for status in (None,'running','failed'):
+            assert not all_cases_passed({'cases':{**cases,key:{**cases[key],'individual_page_selector_contract':status}},'failures':[]})
+    contract=inspect.getsource(individual_page_selector_contract)
+    assert 'probe.set_content' in contract and 'select_individual_pages(probe)' in contract
+    assert 'clip-path:inset(50%)' in contract and 'height:1px' in contract
+    assert "expect(probe.locator('#unrelated')).not_to_be_checked()" in contract
+    assert '.to_have_count(2)' in contract and '.to_have_count(0)' in contract
+    assert "record['individual_page_selector_contract']=individual_page_selector_contract(context)" in inspect.getsource(exercise)
+    for bypass in ('force=', '.first', '.evaluate(', '.check()', 'sleep(', 'timeout='):
+        assert bypass not in contract
 
 
 def test_native_page_actions_require_visible_choices_matching_server_receipt():

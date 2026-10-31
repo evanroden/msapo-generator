@@ -33,7 +33,8 @@ INCLUDE='Include reviewed financial pages'
 
 def all_cases_passed(report):
     return (set(report.get('cases',{}))=={e+'/'+s for e in ENGINES for s in SCENARIOS}
-        and not report.get('failures') and all(c.get('result')=='passed' and c.get('date_selector_contract')=='passed' for c in report['cases'].values()))
+        and not report.get('failures') and all(c.get('result')=='passed' and c.get('date_selector_contract')=='passed'
+            and c.get('individual_page_selector_contract')=='passed' for c in report['cases'].values()))
 
 
 def receipt(page,expected=None):return wait_receipt(page,'data-financial-pages',expected,timeout=120000)
@@ -103,6 +104,59 @@ def upload_source_pdf(page, source):
     control=uploader.locator('input[type=file]')
     expect(control).to_have_count(1)
     control.set_input_files(str(source))
+
+
+def select_individual_pages(page):
+    """Click the visible native label from the unchecked whole-PDF default.
+
+    Streamlit's switch input is inside a clipped 1px accessibility span. Its
+    enclosing label owns the pointer gesture; checking the input directly
+    targets the hidden span instead. Keep strict ownership and state checks.
+    """
+    from playwright.sync_api import expect
+    control=page.get_by_label('Review individual pages',exact=True)
+    expect(control).to_have_count(1)
+    expect(control).to_be_visible()
+    expect(control).to_be_enabled()
+    expect(control).not_to_be_checked()
+    label=control.locator('xpath=ancestor::label')
+    expect(label).to_have_count(1)
+    expect(label).to_be_visible()
+    expect(label.get_by_role('switch')).to_have_count(1)
+    label.click()
+    expect(control).to_be_checked()
+
+
+def individual_page_selector_contract(context):
+    """Hosted-only native label activation, isolated from report/session state.
+
+    Reproduce the observed clipped switch/label shape with ordinary HTML label
+    activation. No scripts prime a control or approve any financial content.
+    """
+    from playwright.sync_api import expect
+    probe=context.new_page()
+    def widget(name,identifier):
+        return ('<label style="display:flex;align-items:center;gap:8px;width:max-content">'
+                '<span style="border:0;clip:rect(0,0,0,0);clip-path:inset(50%);'
+                'height:1px;margin:-1px;overflow:hidden;padding:0;position:absolute;'
+                'width:1px;white-space:nowrap"><input id="'+identifier+'" '
+                'aria-label="'+name+'" type="checkbox" role="switch"></span>'
+                '<span style="width:32px;height:16px;background:#ccc"></span>'
+                '<span>'+name+'</span></label>')
+    try:
+        probe.set_content(widget('Review individual pages extra','unrelated')
+                          +widget('Review individual pages','target'))
+        select_individual_pages(probe)
+        expect(probe.locator('#target')).to_be_checked()
+        expect(probe.locator('#unrelated')).not_to_be_checked()
+        probe.set_content(widget('Review individual pages','target')
+                          +widget('Review individual pages','duplicate'))
+        expect(probe.get_by_label('Review individual pages',exact=True)).to_have_count(2)
+        probe.set_content(widget('Review individual pages extra','unrelated'))
+        expect(probe.get_by_label('Review individual pages',exact=True)).to_have_count(0)
+    finally:
+        probe.close()
+    return 'passed'
 
 
 def source_date_widget(page, details):
@@ -222,14 +276,15 @@ def exercise(engine,name,source,base,scenario):
             combo.click();act(lambda:page.get_by_role('option',name=__import__('re').compile(r'^Page '+str(number)+r' ·')).click());combo.press('Escape')
     try:
         record['date_selector_contract']=date_selector_contract(context)
+        record['individual_page_selector_contract']=individual_page_selector_contract(context)
         page.goto(URL);receipt(page)
-        page.get_by_role('button',name='Add files',exact=True).click()
         upload_source_pdf(page,source)
         initial=receipt(page,{'sources.0.sha256':sha256(source.read_bytes()).hexdigest()})
         assert len(initial['sources'])==1
         assert initial['sources'][0]['sha256']==sha256(source.read_bytes()).hexdigest()
         assert not initial['sources'][0]['financial_grants'] and not initial['assets']
         page.keyboard.press('Escape')
+        act(lambda:select_individual_pages(page))
         # Existing nonfinancial route: real Include then ordinary Add reviewed pages.
         act(lambda:page.get_by_role('button',name='Include page',exact=True).click())
         act(lambda:page.get_by_role('button',name='Add reviewed pages',exact=True).click())

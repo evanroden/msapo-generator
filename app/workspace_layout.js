@@ -8,7 +8,11 @@ export default function(component) {
     const app = root.closest('[data-testid="stMainBlockContainer"]');
     if (!scrollport || !app) return; // locked-version adapter fails to normal flow
     const state = root._epcWorkspace || (root._epcWorkspace = {});
-    if (state.cleanup) state.cleanup();
+    // A data rerender may retain the focused native toolbar. Transfer its
+    // controller synchronously; do not leave an enabled control unbound until
+    // the next measurement. Terminal/unmount cleanup never requests transfer.
+    const retained = state.cleanup?.({identity:data.identity,root,app,scrollport,
+        nav:data.navigationKey ? document.querySelector('.st-key-' + CSS.escape(data.navigationKey)) : null});
     if (state.identity !== data.identity) {
         state.identity = data.identity;
         state.active = null;
@@ -19,6 +23,7 @@ export default function(component) {
         state.navigationActive = null;
         state.navigationJump = null;
         state.navigationRequest = null;
+        state.navigationIntent = null;
         state.navigationReturn = null;
         state.sourceReviewReturn = null;
     }
@@ -48,7 +53,9 @@ export default function(component) {
     // Layout measurement, preview fragments and viewport changes do not change
     // it. The reference viewer uses this as an acknowledgment of native edits.
     root.dataset.epcFullRender = data.fullRender || '';
-    let nav = null, navigation = null;
+    let nav = retained?.nav || null, navigation = retained?.navigation || null;
+    let reviewTarget = null, reviewChain = [];
+    navigation?.resume(schedule);
     const chrome = document.querySelector('[data-testid="stHeader"]');
     // An empty span can change the hash without giving a keyboard user the
     // prerequisite field. Handle only this owned Monthly correction link and
@@ -90,6 +97,26 @@ export default function(component) {
     }
     function findNav() {
         return data.navigationKey ? document.querySelector('.st-key-' + CSS.escape(data.navigationKey)) : null;
+    }
+    function externalReview() {
+        if (!data.navigationKey) return null;
+        const matches = Array.from(app.querySelectorAll('#report-review'));
+        return matches.length === 1 && matches[0].isConnected && !root.contains(matches[0]) ? matches[0] : null;
+    }
+    function observeMutations() {
+        mutation.disconnect();
+        mutation.observe(root, {childList:true,subtree:true,attributes:true,attributeFilter:['data-token','data-stale','open','inert']});
+        if (data.navigationKey) mutation.observe(app, {childList:true,subtree:true});
+        // Only the owned external Review's readiness attributes are watched.
+        // Ancestors own Streamlit's stale flag; descendants affect fresh().
+        for (const node of reviewChain)
+            mutation.observe(node, {attributes:true,subtree:node===reviewTarget,attributeFilter:node===reviewTarget ? ['data-stale','open','inert'] : ['data-stale']});
+    }
+    function discoverReview() {
+        const target = externalReview(), chain = [];
+        for (let node=target; node && node!==app; node=node.parentElement) chain.push(node);
+        if (target===reviewTarget && chain.length===reviewChain.length && chain.every((node,index)=>node===reviewChain[index])) return;
+        reviewTarget=target;reviewChain=chain;observeMutations();
     }
     function addControls(pair, reference, title, row, editor) {
         // Keep the action under its own heading/errors, immediately before
@@ -205,6 +232,7 @@ export default function(component) {
         };
     }
     function discover() {
+        discoverReview();
         // The keyed navigation may arrive after this component in the native
         // stream. Rebind through the existing child/resize measurement path,
         // including replacement of its container on a later full render.
@@ -217,7 +245,11 @@ export default function(component) {
         }
         if (nav && !navigation)
             navigation = globalThis.ENFRAWorkspaceNavigation?.create({root,app,scrollport,nav,state,geometry,schedule});
-        pairs = Array.from(root.querySelectorAll('[data-epc-pair]')).map(marker => {
+        const markers = Array.from(root.querySelectorAll('[data-epc-pair]'));
+        const ids = markers.map(marker=>marker.dataset.epcPair);
+        // Ambiguous section owners cannot receive a deferred native command
+        // or repeatedly move one pair's controls during discovery.
+        pairs = markers.filter(marker=>ids.filter(id=>id===marker.dataset.epcPair).length===1).map(marker => {
             const id = marker.dataset.epcPair;
             const pair = marker.closest('.st-key-epc_pair_' + CSS.escape(id));
             const editor = pair?.querySelector('.st-key-epc_edit_' + CSS.escape(id));
@@ -413,9 +445,21 @@ export default function(component) {
     function schedule() {if (!disposed && frame === null) frame = requestAnimationFrame(measure);}
     const resize = new ResizeObserver(schedule);
     resize.observe(app); resize.observe(scrollport);
+    if (nav) resize.observe(nav);
     if (chrome) resize.observe(chrome);
-    const mutation = new MutationObserver(schedule);
-    mutation.observe(root, {childList:true,subtree:true});
+    const mutation = new MutationObserver(records => {
+        if (disposed) return;
+        // Root delivery is unchanged. Outside it, structural discovery only
+        // wakes for changed Review ownership or that owner's content/chain.
+        // Unrelated app churn and all unowned attributes are ignored.
+        if (externalReview()!==reviewTarget || records.some(record => root.contains(record.target) ||
+            reviewChain.includes(record.target) || reviewTarget?.contains(record.target))) schedule();
+    });
+    // A rerender can retain the exact request/field nodes and replace only
+    // the request nonce, or clear a stale owner after that nonce arrives.
+    // Wake the existing coalesced measurement for those resolver inputs too;
+    // layout-written style/class/disabled attributes must not feed it back.
+    observeMutations();
     const rootClass = new MutationObserver(() => {
         if (disposed || !root.isConnected || root.classList.contains('epc-workspace')) return;
         if (!state.mode) {schedule(); return;}
@@ -432,14 +476,16 @@ export default function(component) {
     ['(horizontal-viewport-segments: 2)','(vertical-viewport-segments: 2)','(prefers-reduced-motion: reduce)','(any-pointer: coarse)'].forEach(query => listen(window.matchMedia(query),'change'));
     listen(document,'visibilitychange'); listen(root,'scroll'); listen(scrollport,'scroll');
     schedule();
-    const cleanup = () => {
+    const cleanup = next => {
         if (disposed) return;
+        const transfer = next && navigation?.canHandoff(next);
         disposed = true;
         if (frame !== null) cancelAnimationFrame(frame);
         if (focusFrame !== null) cancelAnimationFrame(focusFrame);
         resize.disconnect(); mutation.disconnect(); rootClass.disconnect(); subscriptions.forEach(remove => remove());
-        navigation?.dispose();
+        if (!transfer) navigation?.dispose();
         safe.remove(); scrollport.classList.remove('epc-workspace-scroll-owner');
+        return transfer ? {nav,navigation} : null;
     };
     state.cleanup = cleanup;
     return cleanup;

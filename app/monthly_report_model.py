@@ -360,6 +360,9 @@ class ReportDraft:
     sources: tuple[ReportSource, ...] = ()
     follow_ups: tuple[ReportFollowUp, ...] = ()
     cover_recovery_request: CoverRecoveryRequest | None = None
+    # Report-owned, source-bound normalized row review receipts. JSON strings
+    # keep the frozen draft immutable and travel with snapshots/recovery.
+    source_row_reviews: tuple[str, ...] = ()
 
     @property
     def fingerprint(self) -> str:
@@ -392,6 +395,8 @@ def _digest(value: object) -> str:
         # Pending preparation is private workflow metadata, not report content
         # or an approval. Cover content changes remain bound by block hashes.
         record.pop("cover_recovery_request", None)
+        if not record.get("source_row_reviews"):
+            record.pop("source_row_reviews", None)
         for block in record["blocks"]:
             if block.get("cover_original") is None:
                 block.pop("cover_original", None)

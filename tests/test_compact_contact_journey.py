@@ -122,6 +122,24 @@ def test_guided_contact_fixture_receipts_and_real_native_outputs(monkeypatch,tmp
     assert final['directory']['revision'] == state['directory']['revision'] + 1
     assert len(final['attempts']) == len(state['attempts']) + 2
     assert final['working']['contacts']['source'] == 'Library'
+    # The after-commit fault is a separate native control, not a retry replay.
+    next(b for b in app.button if b.label=='Fail next synthetic shared save after commit').click().run()
+    next(b for b in app.button if b.label=='Edit contact').click().run()
+    next(w for w in app.text_input if w.label=='Phone').set_value('202-555-0176')
+    next(b for b in app.button if b.label=='Remove contact').click().run()
+    after_commit = receipt(app)
+    assert not app.exception
+    assert after_commit['working'] == after_commit['durable']
+    assert after_commit['attempts'] == [*final['attempts'], {'mode': 'after'}]
+    assert after_commit['fault'] == {'mode': '', 'armed': 2, 'consumed': 2}
+    assert after_commit['directory']['revision'] == final['directory']['revision'] + 1
+    assert after_commit['directory']['sites'][0]['contacts'][0]['phone'] == '202-555-0176'
+    assert after_commit['working']['contacts']['rows'][0][3] == '202-555-0176'
+    assert len(after_commit['working']['contacts']['rows']) == len(final['working']['contacts']['rows'])
+    assert after_commit['working']['contacts']['source'] == 'Library'
+    assert after_commit['working']['unrelated_payload'] == unrelated_payload
+    assert after_commit['working']['vendors'] == baseline['working']['vendors']
+    assert after_commit['saved_unchanged'] and after_commit['original_unchanged']
     next(b for b in app.button if b.label=='Render synthetic native contact outputs').click().run()
     assert not app.exception
     word,pdf = app.session_state['_contact_native_outputs']

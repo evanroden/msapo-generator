@@ -190,6 +190,34 @@ def export_and_check(page, stage):
         live.checkpoint(stage + " " + label + " present in actual Word/PDF", text in words and text in printed)
 
 
+def correct_issue_warning(page, *, keyboard=False):
+    """Actual warning -> existing description -> Review, with no injected values."""
+    from scripts.monthly_sequential_navigation import navigate_sections
+    navigate_sections(page, 'report_review', keyboard=keyboard)
+    action = page.get_by_role('button', name='Correct issue · description', exact=True)
+    expect(action).to_have_count(1)
+    if keyboard:
+        action.focus()
+        action.press('Enter')
+    else:
+        action.click()
+    field = page.get_by_role('textbox', name='Issue description', exact=True)
+    expect(field).to_have_value('')
+    expect(field).to_be_focused()
+    expect(field).to_be_in_viewport(ratio=1)
+    expect(page.locator('.epc-section-progress')).to_have_attribute('data-section', 'monthly_issues')
+    back = page.locator('.st-key-epc_pair_monthly_issues .enfra-correction-return')
+    expect(back).to_have_count(1)
+    if keyboard:
+        back.focus()
+        back.press('Enter')
+    else:
+        back.click()
+    expect(page.locator('.epc-section-progress')).to_have_attribute('data-section', 'report_review')
+    navigate_sections(page, 'monthly_issues', keyboard=keyboard)
+    live.checkpoint('exact issue warning native ' + ('keyboard' if keyboard else 'pointer') + ' and Return to Review', True)
+
+
 def exercise_text_edits(page):
     for label, wording in EXPECTED.items():
         phase(label + ' clear and save')
@@ -198,6 +226,16 @@ def exercise_text_edits(page):
         page.reload(wait_until="domcontentloaded")
         await_text(page, label, "")
         live.checkpoint(label + " deliberate clear survives reload", True)
+        if label == "Issue description":
+            # Reload verifies saved content, not an automatic editor landing.
+            # Re-enter the existing empty editor through its ordinary control;
+            # the subsequent native Next viewport requirement remains strict.
+            field = page.get_by_role("textbox", name=label, exact=True)
+            field.click()
+            expect(field).to_be_focused()
+            expect(field).to_have_value("")
+            live.checkpoint(label + " first native focus after reload preserves empty value", True)
+            correct_issue_warning(page)
         phase(label + ' reentry and save')
         commit_text(page, label, wording, expected_before="")
         if label == 'Issue description':
@@ -205,6 +243,9 @@ def exercise_text_edits(page):
             # baseline. Keep these native edits consecutive in one session.
             phase(label + ' consecutive clear and save')
             commit_text(page, label, "", expected_before=wording)
+            page.set_viewport_size({"width": 390, "height": 844})
+            correct_issue_warning(page, keyboard=True)
+            page.set_viewport_size({"width": 1365, "height": 900})
             phase(label + ' consecutive reentry and save')
             commit_text(page, label, wording, expected_before="")
             live.checkpoint(label + " consecutive clear and reentry without reload", True)

@@ -145,7 +145,9 @@ def render_import(state: library.LibraryState, field, browser_timezone: str = ""
                 destination = st.selectbox("Confirmed destination", allowed, key=destination_key)
                 columns, header, complete_vendor_table = (), True, False
                 if item.rows:
-                    header = st.checkbox("First row contains column headings", key=field(document_key + "_headers_" + item.id, True))
+                    header = st.checkbox("Row after the title contains column headings" if item.table_header_row else
+                                         "First row contains column headings", key=field(document_key + "_headers_" + item.id, True))
+                    labels = item.rows[item.table_header_row] if header else item.rows[0]
                     default_columns = list(range(len(item.rows[0])))
                     columns_key = field(document_key + "_columns_" + item.id, default_columns)
                     customized_key = document_key + "_columns_customized_" + item.id
@@ -154,7 +156,7 @@ def render_import(state: library.LibraryState, field, browser_timezone: str = ""
                     if list(st.session_state.get(columns_key, default_columns)) != default_columns:
                         st.session_state[customized_key] = True
                     columns = tuple(st.multiselect("Columns to keep in this order", default_columns,
-                                                    format_func=lambda i: f"{i+1}: {item.rows[0][i][:70] or 'blank'}",
+                                                    format_func=lambda i: f"{i+1}: {labels[i][:70] or 'blank'}",
                                                     key=columns_key, on_change=_mark_column_customization,
                                                     args=(customized_key,)))
                     complete_vendor_table = (destination == "subcontractor_matrix" and header

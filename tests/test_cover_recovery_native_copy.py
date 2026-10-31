@@ -319,7 +319,7 @@ def test_actual_installer_then_fresh_streamlit_bootstrap_needs_no_application_im
     receipt = json.loads(run.stdout)
     assert receipt['cover_upload_runtime']['source_sha256'] == repair.REPAIRED_SHA256
     assert not receipt['cover_upload_runtime']['already_patched']
-    assert 'native_trigger_runtime' not in receipt
+    assert receipt['native_trigger_runtime']['string_trigger_coalescing']
     assert sha256((cloned / repair.RELATIVE_PATH).read_bytes()).hexdigest() == repair.REPAIRED_SHA256
     code = r'''
 import json, sys
@@ -370,7 +370,9 @@ def test_cover_cli_installs_runtime_but_keeps_explicit_static_fixture_isolated(m
     import streamlit
     from scripts import patch_streamlit_frontend as frontend
     from scripts import streamlit_cover_upload_copy as repair
+    from scripts import streamlit_string_trigger_coalescing as triggers
     calls=[]
+    monkeypatch.setattr(triggers,'patch_script_requests',lambda root,**kw:calls.append(('trigger-runtime',root,kw)) or {'string_trigger_coalescing':True})
     monkeypatch.setattr(frontend,'version',lambda _:'1.61.1')
     monkeypatch.setattr(repair,'patch_cover_upload_copy',lambda root,**kw:calls.append(('cover-runtime',root,kw)) or {'cover_return_copy_on_write':True})
     monkeypatch.setattr(frontend,'patch_bundle',lambda root,**kw:calls.append(('frontend',root,kw)) or {'entry':'unchanged-entry'})
@@ -378,11 +380,12 @@ def test_cover_cli_installs_runtime_but_keeps_explicit_static_fixture_isolated(m
     frontend.main()
     receipt=json.loads(capsys.readouterr().out)
     assert receipt['entry']=='unchanged-entry'
-    assert 'native_trigger_runtime' not in receipt
     if explicit_static:
         assert [c[0] for c in calls]==['frontend']
         assert 'cover_upload_runtime' not in receipt
+        assert 'native_trigger_runtime' not in receipt
     else:
-        assert [c[0] for c in calls]==['cover-runtime','frontend']
-        assert calls[0][1]==Path(streamlit.__file__).parent
+        assert [c[0] for c in calls]==['trigger-runtime','cover-runtime','frontend']
+        assert calls[0][1]==calls[1][1]==Path(streamlit.__file__).parent
+        assert receipt['native_trigger_runtime']['string_trigger_coalescing']
         assert receipt['cover_upload_runtime']['cover_return_copy_on_write']

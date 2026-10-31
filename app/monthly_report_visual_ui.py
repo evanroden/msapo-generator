@@ -818,6 +818,7 @@ def edit_photos(draft, block, prefix, assets, field, *, show_preview=True):
     visible = tuple(range(len(block.asset_hashes))) if editing else pending_indexes
     left, right = st.columns([1, 1]) if show_preview else (st.container(), None)
     slots = []
+    correction_slots = []
     original = block
     with left:
         field_identity = photo_caption_identity(draft, block, scope=scope)
@@ -833,6 +834,7 @@ def edit_photos(draft, block, prefix, assets, field, *, show_preview=True):
                              key=p + "_panel_" + panel_identity):
                 captions[n] = st.text_area("Caption", key=field(p + f"_caption_{field_identity}_{n}", existing_captions[n]),
                                           max_chars=600, height=90)
+                correction_slots.append((n, st.empty(), p + f"_caption_{field_identity}_{n}"))
                 earlier, later = (st.empty(), st.empty()) if editing and len(block.asset_hashes) > 1 else (None, None)
                 slots.append((n, earlier, later, st.empty()))
         changed = None
@@ -880,6 +882,10 @@ def edit_photos(draft, block, prefix, assets, field, *, show_preview=True):
                     on_click=_queue_photo_action,
                     args=(request_key, {"kind": "remove", "identity": identity,
                         "action": {"identity": identity, "index": n, "asset": block.asset_hashes[n]}}))
+        if changed is None and not additions and kind != "done" and not edit_all:
+            from app.monthly_report_correction_ui import picture_marker
+            for n, marker, caption_key in correction_slots:
+                marker.markdown(picture_marker(draft, block, n, prefix, caption_key), unsafe_allow_html=True)
         render_add(block)
     if show_preview:
         with right:
