@@ -110,12 +110,17 @@ def exercise(engine, name):
     page = browser.new_page(viewport={"width":1440,"height":900})
     errors = []
     page.on("pageerror", lambda exc: errors.append(str(exc)))
+    from qa_po_diagnostics import PODiagnostics
+    diagnostics = PODiagnostics(OUT / "diagnostics", name)
     try:
+        diagnostics.start(page)
         exercise_page(page, name, errors)
     except Exception:
+        diagnostics.failure_snapshot(page)
         page.screenshot(path=str(OUT / (name + "-failure.png")))
         raise
     finally:
+        diagnostics.close()
         browser.close()
 
 

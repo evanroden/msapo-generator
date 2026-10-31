@@ -141,7 +141,7 @@ def test_vector_pdf_and_sharp_pages_keep_bounds_and_clean_temporary_outputs(monk
     assert not list(tmp_path.glob("section-preview-*.pdf"))
 
 
-def preview_app(monkeypatch, tmp_path):
+def preview_app(monkeypatch, tmp_path, *, visible=True):
     immediate_worker(monkeypatch)
     calls = fake_converter(monkeypatch, tmp_path)
     app = AppTest.from_string('''
@@ -161,7 +161,8 @@ st.session_state["preview"] = render_section_preview(draft, section, {}, "synthe
 ''', default_timeout=15).run()
     assert not app.exception
     assert not calls
-    enable_view(app, 'synthetic', 'activity')
+    if visible:
+        enable_view(app, 'synthetic', 'activity')
     return app, calls
 
 
@@ -206,6 +207,48 @@ def test_failed_rerender_labels_previous_page_not_ready_and_retry_preserves_edit
     app.button[0].click().run()
     assert not app.exception and payload(app)["pages"]
     assert app.text_area[0].value == "Still here after rendering failure"
+
+
+@pytest.mark.parametrize("previous", [False, True])
+def test_error_and_retry_keep_reserved_viewer_at_the_same_fragment_path(monkeypatch, tmp_path, previous):
+    """An error must not replace the reserved viewer while its fragment streams."""
+    app, _ = preview_app(monkeypatch, tmp_path, visible=previous)
+    def delta_path(element):
+        def find(node, path=()):
+            if node is element:
+                return path
+            for index, child in getattr(node, "children", {}).items():
+                found = find(child, (*path, index))
+                if found is not None:
+                    return found
+        path = find(element.root)
+        assert path is not None
+        return path
+
+    original = app.get("bidi_component")[0]
+    path, identity = delta_path(original), original.proto.id
+
+    def fail(*args, **kwargs):
+        raise ValueError("The source layout does not contain the activity section.")
+
+    monkeypatch.setattr(ui, "preview_section", fail)
+    app.text_area[0].set_value("Synthetic edit preserved across preview failure").run()
+    if not previous:
+        enable_view(app, "synthetic", "activity")
+    assert not app.exception
+    failed = app.get("bidi_component")[0]
+    assert delta_path(failed) == path, "Error notices must not shift the reserved viewer's delta path"
+    assert failed.proto.id == identity
+    assert not payload(app)["ready"]
+    assert payload(app)["stale"] is previous
+    assert bool(payload(app)["pages"]) is previous
+    assert app.warning and app.button[0].label == "Retry preview"
+    monkeypatch.setattr(ui, "preview_section", engine.preview_section)
+    app.button[0].click().run()
+    assert not app.exception and payload(app)["ready"]
+    restored = app.get("bidi_component")[0]
+    assert delta_path(restored) == path and restored.proto.id == identity
+    assert app.text_area[0].value == "Synthetic edit preserved across preview failure"
 
 
 

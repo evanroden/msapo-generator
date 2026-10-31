@@ -9,6 +9,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from scripts.qa_navigation_observations import INSTALL, STOP, observe_navigation
+
 SOURCE = Path(__file__).resolve().parents[1] / 'scripts/qa_monthly_text_hydration.py'
 
 
@@ -82,7 +84,7 @@ def test_replaced_input_event_node_still_fails_after_acknowledgment():
     assert 'continuity'in calls and 'acknowledged'in calls
 
 
-def native_edit_journey(*, fail_phase=None):
+def native_edit_journey(*, fail_phase=None, reentry_focus=True, reentry_value=''):
     """Check the real harness sequence, not the app's callback correctness.
 
     Product AppTests cover consecutive callbacks and browser CI must provide
@@ -92,6 +94,8 @@ def native_edit_journey(*, fail_phase=None):
     expected = {'Training notes': 'Saved training', 'Issue description': 'Saved issue'}
     values = dict(expected)
     current_phase = ''
+    navigation_calls = []
+    evidence = {}
 
     def phase(name):
         nonlocal current_phase
@@ -113,14 +117,70 @@ def native_edit_journey(*, fail_phase=None):
         assert passed is True
         calls.append(('check', name))
 
-    target = SimpleNamespace(reload=lambda **kwargs: calls.append(('reload', kwargs)))
+    class Field:
+        def click(self):
+            calls.append(('native reentry click',))
+
+    field = Field()
+
+    class Page:
+        def reload(self, **kwargs):
+            calls.append(('reload', kwargs))
+
+        def get_by_role(self, role, *, name, exact):
+            assert role == 'textbox' and name == 'Issue description' and exact is True
+            calls.append(('reentry locator', name))
+            return field
+
+        def set_viewport_size(self, size):
+            calls.append(('viewport', size))
+
+        def evaluate(self, script):
+            # Run the real Python context manager against bounded browser
+            # metadata without adding or replacing any native journey gesture.
+            navigation_calls.append(script)
+            if script == INSTALL:
+                return {'installed': True}
+            assert script == STOP
+            return {'schema': 1, 'limits': {'records': 256, 'bytes': 1048576},
+                    'dropped': 0, 'errors': 0, 'disposed': True, 'records': []}
+
+    def expect(locator):
+        assert locator is field
+
+        def to_be_focused():
+            calls.append(('reentry focused',))
+            assert reentry_focus, 'The native reentry click did not focus the editor.'
+
+        def to_have_value(value):
+            calls.append(('reentry value', value))
+            assert value == '' and values['Issue description'] == value
+            assert reentry_value == value, 'The reloaded native editor lost its empty value.'
+
+        return SimpleNamespace(to_be_focused=to_be_focused, to_have_value=to_have_value)
+
+    def correct_issue_warning(page, *, keyboard=False):
+        assert page is target and values['Issue description'] == ''
+        calls.append(('exact warning and Return', 'keyboard' if keyboard else 'pointer'))
+
+    target = Page()
     nodes = [node for node in ast.parse(SOURCE.read_text()).body
              if isinstance(node, ast.FunctionDef) and node.name == 'exercise_text_edits']
     assert len(nodes) == 1, 'The native edit journey must expose its exact action sequence.'
     ns = {'EXPECTED': expected, 'phase': phase, 'commit_text': commit_text,
-          'await_text': await_text, 'live': SimpleNamespace(checkpoint=checkpoint)}
+          'await_text': await_text, 'live': SimpleNamespace(checkpoint=checkpoint, EVIDENCE=evidence),
+          'expect': expect, 'correct_issue_warning': correct_issue_warning,
+          'observe_navigation': observe_navigation}
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(SOURCE), 'exec'), ns)
-    return lambda: ns['exercise_text_edits'](target), calls
+    def run():
+        ns['exercise_text_edits'](target)
+        assert navigation_calls == [INSTALL, STOP]
+        observation = evidence['navigation_observation']
+        assert observation['installation_completed'] is True
+        assert observation['disposed'] is True
+        assert observation['errors'] == 0
+
+    return run, calls
 
 
 def test_native_edit_journey_retains_reload_checks_and_adds_consecutive_issue_edits():
@@ -140,14 +200,35 @@ def test_native_edit_journey_retains_reload_checks_and_adds_consecutive_issue_ed
         reload,
         ('reload acknowledgment', 'Issue description', ''),
         ('check', 'Issue description deliberate clear survives reload'),
+        ('reentry locator', 'Issue description'),
+        ('native reentry click',),
+        ('reentry focused',),
+        ('reentry value', ''),
+        ('check', 'Issue description first native focus after reload preserves empty value'),
+        ('exact warning and Return', 'pointer'),
         ('edit', 'Issue description', '', 'Saved issue'),
         ('edit', 'Issue description', 'Saved issue', ''),
+        ('viewport', {'width': 390, 'height': 844}),
+        ('exact warning and Return', 'keyboard'),
+        ('viewport', {'width': 1365, 'height': 900}),
         ('edit', 'Issue description', '', 'Saved issue'),
         ('check', 'Issue description consecutive clear and reentry without reload'),
         reload,
         ('reload acknowledgment', 'Issue description', 'Saved issue'),
         ('check', 'Issue description reentry survives reload'),
     ]
+
+
+@pytest.mark.parametrize('failure', ['focus', 'value'])
+def test_native_reload_reentry_failure_stops_before_warning_or_further_edit(failure):
+    run, calls = native_edit_journey(
+        reentry_focus=failure != 'focus', reentry_value='Stale issue' if failure == 'value' else '')
+    with pytest.raises(AssertionError, match='did not focus|lost its empty value'):
+        run()
+    assert calls.count(('native reentry click',)) == 1
+    assert not any(call[0] == 'exact warning and Return' for call in calls)
+    assert sum(call[0] == 'reload' for call in calls) == 3
+    assert sum(call[0] == 'edit' for call in calls) == 3
 
 
 def test_unacknowledged_consecutive_edit_stops_without_retry_or_reload():

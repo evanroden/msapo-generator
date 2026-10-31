@@ -1,0 +1,57 @@
+{
+  "browser": "chromium",
+  "passed": false,
+  "errors": [],
+  "external": [],
+  "before_reload_events": [
+    {
+      "type": "input",
+      "key": "",
+      "trusted": false,
+      "label": "file upload"
+    },
+    {
+      "type": "input",
+      "key": "",
+      "trusted": true,
+      "label": "Recorded status"
+    },
+    {
+      "type": "keydown",
+      "key": "Tab",
+      "trusted": true,
+      "label": "Recorded status"
+    },
+    {
+      "type": "keydown",
+      "key": "ArrowDown",
+      "trusted": true,
+      "label": "Use these records for"
+    },
+    {
+      "type": "input",
+      "key": "",
+      "trusted": true,
+      "label": "Work performed"
+    },
+    {
+      "type": "input",
+      "key": "",
+      "trusted": true,
+      "label": "Work performed"
+    },
+    {
+      "type": "input",
+      "key": "",
+      "trusted": true,
+      "label": "Work performed"
+    },
+    {
+      "type": "input",
+      "key": "",
+      "trusted": true,
+      "label": "Recorded status"
+    }
+  ],
+  "first_failure": "Locator.click: Timeout 30000ms exceeded.\nCall log:\n  - waiting for get_by_role(\"option\", name=\"Completed in-house maintenance calls\", exact=True)\n    - locator resolved to <div data-rac=\"\" data-key=\"1\" role=\"option\" aria-setsize=\"2\" aria-posinset=\"2\" data-focused=\"true\" aria-selected=\"false\" data-focus-visible=\"true\" data-selection-mode=\"single\" data-react-aria-pressable=\"true\" id=\"react-aria2382491064-:rdr:-option-1\" class=\"st-emotion-cache-1hvrw15 e1fp86qc7\" data-collection=\"react-aria2382491064-:rlm:\">\u2026</div>\n  - attempting click action\n    - waiting for element to be visible, enabled and stable\n    - element is visible, enabled and stable\n    - scrolling into view if needed\n    - done scrolling\n  - element was detached from the DOM, retrying\n"
+}

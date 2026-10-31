@@ -10,6 +10,8 @@ import hashlib
 import json
 from dataclasses import replace
 
+from app.monthly_report_page_reference import page_identity
+
 
 _SOURCE_CONTEXT = "asset-source-context:v1:"
 
@@ -52,7 +54,7 @@ def asset_fingerprint(block, index):
     normalized_context = []
     for value in context:
         parts = value.split(":")
-        if len(parts) == 3 and parts[1].isdigit() and tuple(parts[:2]) in scoped_pages:
+        if page_identity(value) is not None and tuple(parts[:2]) in scoped_pages:
             # A historical full-source hash includes unrelated pages and review
             # toggles. Once a targeted marker exists, it supplies the relevant
             # source context and the raw reference supplies only page identity.
@@ -87,12 +89,16 @@ def _source_context_marker(source, number):
     text = source.page_texts[number - 1] if 1 <= number <= len(source.page_texts) else None
     values = (source.sha256, number, text, dict(source.captions).get(number, ""),
               source.vendor, source.facility, source.service_date, source.work_order)
+    from app.monthly_report_mbcx_financial_pages import has_financial_page_review
+    if has_financial_page_review(source, number):
+        values = (*values, source.financial_source_review.fingerprint if source.financial_source_review else "",
+                  tuple((p.fingerprint, p.source_review_fingerprint, p.semantics, p.version) for p in source.financial_page_reviews if p.number == number))
     digest = hashlib.sha256(json.dumps(values, ensure_ascii=False).encode()).hexdigest()
     return f"{_SOURCE_CONTEXT}{source.id}:{number}:{digest}"
 
 
 
-def current_source_page_review_matches(block, index, source, number):
+def current_source_page_review_matches(block, index, source, number, *, profile=None):
     """Read-only current per-page evidence, not source/site admission or consent.
 
     Whole-source fingerprints may change after a genuine caption review. The
@@ -117,13 +123,11 @@ def current_source_page_review_matches(block, index, source, number):
     plain = [ref for ref in references if not ref.startswith(_SOURCE_CONTEXT)]
     if len(plain) != 1 or plain[0] not in block.references:
         return False
-    parts = plain[0].split(':')
-    if (len(parts) != 3 or parts[0] != source.id or not parts[1].isdigit()
-            or int(parts[1]) != number):
+    if page_identity(plain[0]) != (source.id, number):
         return False
     markers = [ref for ref in references if ref.startswith(_SOURCE_CONTEXT)]
     return (markers == [_source_context_marker(source, number)]
-            and asset_reviewed(block, index) and page_allowed(source, number))
+            and asset_reviewed(block, index) and page_allowed(source, number, profile=profile, destination=block.key))
 
 
 def refresh_asset_source_context(block, sources):
@@ -149,19 +153,27 @@ def refresh_asset_source_context(block, sources):
         current_markers = []
         trusted = True
         for reference in plain:
-            parts = reference.split(":")
-            if len(parts) != 3 or not parts[1].isdigit():
+            identity = page_identity(reference)
+            if identity is None:
+                # An invalid source/page token must never inherit an old page
+                # approval. Keep its original bytes and mark this occurrence
+                # unavailable only when it names a known source.
+                pieces = reference.split(":")
+                if len(pieces) == 3 and pieces[0] in source_index:
+                    current_markers.append(f"{_SOURCE_CONTEXT}{pieces[0]}:invalid:missing")
+                    trusted = False
+                    unavailable.add(index)
                 continue
-            source = source_index.get(parts[0])
-            number = int(parts[1])
+            source_id, number = identity
+            source = source_index.get(source_id)
             if source is None or not 1 <= number <= len(source.page_texts):
-                current_markers.append(f"{_SOURCE_CONTEXT}{parts[0]}:{number}:missing")
+                current_markers.append(f"{_SOURCE_CONTEXT}{source_id}:{number}:missing")
                 trusted = False
                 unavailable.add(index)
                 continue
             marker = _source_context_marker(source, number)
             current_markers.append(marker)
-            if not markers and parts[2] != source.fingerprint:
+            if not markers and reference.split(":")[2] != source.fingerprint:
                 trusted = False
         context = tuple(sorted(set((*plain, *current_markers))))
         contexts[asset] = tuple(sorted(set((*contexts.get(asset, ()), *context))))
