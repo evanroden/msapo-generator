@@ -1,7 +1,11 @@
 """Prefer the runner's existing HTTPS Ubuntu archive, without changing trust.
 
-GitHub's Ubuntu image configures these three signed-archive mirrors:
+GitHub's Azure Ubuntu image configures three signed-archive mirrors:
 https://github.com/actions/runner-images/blob/main/images/ubuntu/scripts/build/configure-apt-sources.sh
+Only the observed AWS hostname plus the exact documented URI form below may
+match the additional profile; unobserved path/priority variants still fail.
+Canonical's documented EC2 primary URI form (not a wildcard allowlist here):
+https://github.com/canonical/cloud-init/blob/d5873d2e693cb3e83d7e50c97da3b8586faf8c2e/config/cloud.cfg.tmpl#L348-L358
 Only their documented priority metadata changes. No URI, key, suite, package,
 source declaration, signature requirement or TLS option is added or removed.
 Unknown image configuration fails closed instead of being overwritten.
@@ -21,6 +25,16 @@ ORIGINAL = {
 }
 PREFERRED = {**ORIGINAL, 'http://azure.archive.ubuntu.com/ubuntu/': '2',
              'https://archive.ubuntu.com/ubuntu/': '1'}
+EC2_PRIMARY = 'http://us-east-2.ec2.archive.ubuntu.com/ubuntu/'
+EC2_ORIGINAL = {
+    EC2_PRIMARY: '1',
+    'https://archive.ubuntu.com/ubuntu/': '2',
+    'https://security.ubuntu.com/ubuntu/': '3',
+}
+EC2_PREFERRED = {**EC2_ORIGINAL, EC2_PRIMARY: '2',
+                 'https://archive.ubuntu.com/ubuntu/': '1'}
+MIRROR_PROFILES = ((ORIGINAL, PREFERRED), (EC2_ORIGINAL, EC2_PREFERRED))
+KNOWN_MIRROR_URIS = frozenset(ORIGINAL) | frozenset(EC2_ORIGINAL)
 ENTRY = re.compile(r'(?P<uri>\S+)(?P<separator>\t+)priority:(?P<priority>[1-3])(?P<end>\r?\n|$)')
 DIAGNOSTIC_BYTES = 4096
 DIAGNOSTIC_LINES = 32
@@ -59,11 +73,11 @@ def mirror_failure_summary(source: bytes) -> dict:
         uri = line.split()[0]
         if ENTRY.fullmatch(line) is None:
             kinds['malformed'] += 1
-        elif uri in ORIGINAL:
+        elif uri in KNOWN_MIRROR_URIS:
             kinds['recognized'] += 1
         else:
             kinds['unknown'] += 1
-        if uri in ORIGINAL:
+        if uri in KNOWN_MIRROR_URIS:
             host = urlsplit(uri).hostname
             known_hosts[host] = known_hosts.get(host, 0) + 1
             duplicate_known += uri in seen_known
@@ -110,15 +124,17 @@ def prefer_official_archive(source: str) -> str:
         if match is None:
             raise ValueError('Unrecognized Ubuntu mirror entry; no change made')
         uri = match['uri']
-        if uri not in ORIGINAL or uri in seen:
+        if uri not in KNOWN_MIRROR_URIS or uri in seen:
             raise ValueError('Unexpected or duplicate Ubuntu mirror; no change made')
         seen[uri] = match['priority']
         entries.append((index, match))
-    if seen not in (ORIGINAL, PREFERRED):
+    preferred = next((preferred for original, preferred in MIRROR_PROFILES
+                      if seen in (original, preferred)), None)
+    if preferred is None:
         raise ValueError('Unexpected Ubuntu mirror priorities; no change made')
     for index, match in entries:
         start, end = match.span('priority')
-        lines[index] = lines[index][:start] + PREFERRED[match['uri']] + lines[index][end:]
+        lines[index] = lines[index][:start] + preferred[match['uri']] + lines[index][end:]
     return ''.join(lines)
 
 

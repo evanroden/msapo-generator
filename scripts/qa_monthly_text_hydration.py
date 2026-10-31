@@ -30,6 +30,7 @@ PORT = 8530
 URL = f"http://127.0.0.1:{PORT}"
 from scripts import qa_monthly_live as live
 from scripts.workspace_wire_observations import WireObservations
+from scripts.qa_navigation_observations import observe_navigation
 
 EXPECTED = {"Training notes": "Hospital staff completed a synthetic training exercise.",
             "Issue description": "Synthetic actuator feedback follow-up."}
@@ -243,8 +244,9 @@ def exercise_text_edits(page):
             # baseline. Keep these native edits consecutive in one session.
             phase(label + ' consecutive clear and save')
             commit_text(page, label, "", expected_before=wording)
-            page.set_viewport_size({"width": 390, "height": 844})
-            correct_issue_warning(page, keyboard=True)
+            with observe_navigation(page, live.EVIDENCE):
+                page.set_viewport_size({"width": 390, "height": 844})
+                correct_issue_warning(page, keyboard=True)
             page.set_viewport_size({"width": 1365, "height": 900})
             phase(label + ' consecutive reentry and save')
             commit_text(page, label, wording, expected_before="")
