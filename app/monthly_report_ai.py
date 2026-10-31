@@ -444,16 +444,19 @@ def _quote_on_source_token_boundaries(native: str, quote: str) -> bool:
     def word(c):
         return bool(c) and (c.isalnum() or c == "_")
 
+    # Match the dash variants already recognized by _quantity_tokens,
+    # without normalizing the source or quoted punctuation itself.
+    signs = ("-", "+", "\u2010", "\u2011", "\u2012", "\u2013", "\u2212", "\ufe63", "\uff0d")
+    compound = signs + (".", ",", "/")
     at = value.find(needle)
     while at != -1:
         end = at + len(needle)
         left = value[at - 1] if at else ""
         right = value[end] if end < len(value) else ""
-        compound = ("-", "+", "\u2212", ".", ",", "/")
         left_extends = (
             word(needle[0]) and (
                 word(left)
-                or left in ("-", "+", "\u2212")
+                or left in signs
                 or (left in (".", ",", "/")
                     and at > 1 and word(value[at - 2]))
             )

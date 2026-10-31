@@ -185,3 +185,38 @@ def test_synthetic_pdf_import_rejection_preserves_source_bytes_and_other_report_
     assert opened.draft.blocks[0] == manual
     assert opened.draft.sources[0].facts == valid
     assert sources.source_bytes(PROFILE, content.source) == raw
+
+
+# Exactly the minus/dash variants already recognized by _quantity_tokens.
+# Quote matching remains contiguous: these characters are boundary guards,
+# not a source/quote punctuation normalization or new semantic interpretation.
+_QUANTITY_DASHES = ("\u2010", "\u2011", "\u2012", "\u2013", "\u2212", "\ufe63", "\uff0d")
+
+
+@pytest.mark.parametrize("dash", _QUANTITY_DASHES)
+@pytest.mark.parametrize("form", ("sign", "range", "range_separator", "identifier"))
+def test_quantity_unicode_boundary_cannot_supply_a_truncated_quote(dash, form):
+    page, quote = {
+        "sign": (f"Measured {dash}40C at the outlet.", "40C"),
+        "range": (f"Pressure measured 40{dash}90 psi.", "Pressure measured 40"),
+        "range_separator": (f"Pressure measured 40{dash}90 psi.", f"Pressure measured 40{dash}"),
+        "identifier": (f"Inspected valve V{dash}4{dash}A.", f"Inspected valve V{dash}4"),
+    }[form]
+    original = source(page)
+    with pytest.raises(ValueError, match="evidence quote"):
+        read(original, quote)
+    assert original.page_texts == (page,) and original.facts == ()
+
+
+@pytest.mark.parametrize("dash", _QUANTITY_DASHES)
+def test_complete_quantity_unicode_quotes_remain_exact_and_accepted(dash):
+    for quote in (f"Measured {dash}40C", f"Pressure measured 40{dash}90 psi",
+                  f"Inspected valve V{dash}4{dash}A", f"Date 2026{dash}09{dash}18"):
+        original = source(quote + ".")
+        fact, = read(original, quote)
+        assert fact.quote == quote and fact.text == quote and fact.page == 1
+        assert original.page_texts == (quote + ".",) and original.facts == ()
+    with pytest.raises(ValueError, match="evidence quote"):
+        read(source(f"Measured {dash}40C."), "Measured -40C")
+    positive, = read(source("Measured +40C."), "Measured +40C")
+    assert positive.quote == "Measured +40C"
