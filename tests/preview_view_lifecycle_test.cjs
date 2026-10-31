@@ -176,7 +176,9 @@ test('framework root-class replacement restores only owned layout without scroll
     const render=vm.runInNewContext('('+source.replace('export default function','function')+')',context);
     const flush=()=>{const pending=[...frames];frames.clear();pending.forEach(([,callback])=>callback());};
     const previous=render({data:{workflow:'monthly',identity:'same-draft'}});flush();
-    const owned=observers.find(observer=>observer.target===root && observer.options?.attributes);
+    const owners=observers.filter(observer=>observer.target===root && observer.options?.attributes && !observer.options.subtree);
+    assert.equal(owners.length,1,'the root-only class observer has one exact owner');
+    const owned=owners[0];
     assert.ok(owned,'root-only class changes must be observed even without a child mutation');
     assert.deepEqual(Array.from(owned.options.attributeFilter),['class']);
     assert.ok(!owned.options.subtree,'native/grid subtree class changes do not trigger layout work');

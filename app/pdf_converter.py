@@ -52,16 +52,16 @@ class PDFConversionTimeout(PDFConversionError):
 
 # ── LibreOffice headless ──────────────────────────────────────────────
 
-def _convert_libreoffice(docx_path: Path) -> Path:
+def _convert_libreoffice(docx_path: Path, *, lossless_images: bool = False) -> Path:
     # All Writer callers, including purchase orders, share the same slot as
     # monthly reports and Calc. Multiple 300+ MB office processes cannot fit
     # inside the testing service's 512 MB instance.
     from app.monthly_report_render_jobs import conversion_slot
     with conversion_slot(wait_seconds=130):
-        return _convert_libreoffice_locked(docx_path)
+        return _convert_libreoffice_locked(docx_path, lossless_images=lossless_images)
 
 
-def _convert_libreoffice_locked(docx_path: Path) -> Path:
+def _convert_libreoffice_locked(docx_path: Path, *, lossless_images: bool = False) -> Path:
     lo_bin = shutil.which("libreoffice") or shutil.which("soffice")
     if lo_bin is None:
         raise PDFConversionError(
@@ -76,10 +76,17 @@ def _convert_libreoffice_locked(docx_path: Path) -> Path:
     with tempfile.TemporaryDirectory(prefix=".office-", dir=OUTPUT_DIR) as job_dir:
         job = Path(job_dir)
         profile_uri = prepare_profile(job / 'profile')
+        # Final Monthly reports preserve the already-prepared source pixels.
+        # Other callers retain the original Writer export defaults. Do not
+        # change page geometry or reapply an image-resolution budget here.
+        export_filter = 'pdf:writer_pdf_Export'
+        if lossless_images:
+            export_filter += (':{"UseLosslessCompression":{"type":"boolean","value":"true"},'
+                              '"ReduceImageResolution":{"type":"boolean","value":"false"}}')
         try:
             result = run_office([
                 lo_bin, "--headless", f"-env:UserInstallation={profile_uri}",
-                "--convert-to", "pdf:writer_pdf_Export", "--outdir", str(job),
+                "--convert-to", export_filter, "--outdir", str(job),
                 str(docx_path.resolve()),
             ], timeout=120)
         except subprocess.TimeoutExpired as exc:
@@ -188,10 +195,14 @@ _BACKENDS = {
 }
 
 
-def convert_to_pdf(docx_path: Path) -> Path:
+def convert_to_pdf(docx_path: Path, *, lossless_images: bool = False) -> Path:
     """
     Convert a .docx file to .pdf using the configured backend.
     Returns the Path to the generated PDF.
+
+    Final Monthly reports opt into lossless image encoding without resampling.
+    That guarantee requires LibreOffice; default callers keep their prior
+    backend behavior and export settings.
 
     The returned file is NOT the caller's to forget: see the module docstring.
     build_msapo_pdf unlinks it in a finally block.
@@ -201,6 +212,8 @@ def convert_to_pdf(docx_path: Path) -> Path:
     loudly -- a silent fallback would make the deployment work while reporting a
     configuration that is not what is running.
     """
+    if type(lossless_images) is not bool:
+        raise PDFConversionError("The lossless image option must be a boolean.")
     backend = PDF_BACKEND.lower()
     converter = _BACKENDS.get(backend)
     if converter is None:
@@ -208,4 +221,10 @@ def convert_to_pdf(docx_path: Path) -> Path:
             f"Unknown PDF_BACKEND '{backend}'. "
             f"Choose from: {', '.join(_BACKENDS)}"
         )
+    if lossless_images:
+        # Untested alternative backends cannot silently claim this guarantee.
+        # Monthly keeps the completed Word download on conversion failure.
+        if backend != 'libreoffice':
+            raise PDFConversionError("Requested lossless image export requires LibreOffice.")
+        return converter(docx_path, lossless_images=True)
     return converter(docx_path)

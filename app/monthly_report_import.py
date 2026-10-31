@@ -79,6 +79,11 @@ class ImportItem:
     # the photograph gallery without inventing a company/client role.
     # "header_artwork" records placement without asserting that it is a logo.
     image_role: str = ""
+    # Original Word row indices with a single full-width horizontal merge.
+    merged_title_rows: tuple[int, ...] = ()
+    # Original rows stay intact for source identity and native geometry checks.
+    # Only a proved full-width service-call title may precede the real header.
+    table_header_row: int = 0
 
     @property
     def label(self) -> str:
@@ -466,6 +471,38 @@ def _is_native_divider_background(element, text=""):
     return False
 
 
+def _service_call_title_band(element, rows, section):
+    """Recognize one explicit title + canonical header, never infer from data."""
+    if section != "maintenance" or len(rows) < 2:
+        return False
+    compact = lambda value: re.sub(r"[^a-z0-9]", "", value.casefold())
+    if compact(rows[0][0]) not in ("servicecalls", "clientservicecalls"):
+        return False
+    headers = tuple(compact(value) for value in rows[1])
+    if headers[:5] != ("wo", "finishdate", "area", "taskcodedescription", "tag"):
+        return False
+    # Additional explicitly financial columns still go through the existing
+    # price gate. Unknown/custom schemas stay in their ordinary review path.
+    if any(value not in ("cost", "unitprice", "amount") for value in headers[5:]):
+        return False
+    width = len(headers)
+    native_rows = element.findall(W + "tr")
+    title_cells = native_rows[0].findall(W + "tc")
+    header_cells = native_rows[1].findall(W + "tc")
+    if len(title_cells) != 1 or len(header_cells) != width:
+        return False
+    span = title_cells[0].find(f"{W}tcPr/{W}gridSpan")
+    if span is None or span.get(W + "val") != str(width):
+        return False
+    for row in native_rows[:2]:
+        if any(node.tag in (W + "gridBefore", W + "gridAfter", W + "vMerge",
+                            W + "drawing", W + "pict", W + "txbxContent") for node in row.iter()):
+            return False
+        if any(node is not element for node in row.iter(W + "tbl")):
+            return False
+    return all(cell.find(f"{W}tcPr/{W}gridSpan") is None for cell in header_cells)
+
+
 def inspect_docx(path: Path) -> DocxInspection:
     """No python-docx object model or whole-archive extraction for large inputs."""
     digest = hashlib.sha256()
@@ -585,6 +622,15 @@ def inspect_docx(path: Path) -> DocxInspection:
                             if part.startswith(("word/header", "word/footer")):
                                 _remove_page_field_results(element, page_fields)
                             text = _text(element)
+                            # Some Word producers emit text frames without the
+                            # DrawingML/VML wrappers inventoried below. Their labels
+                            # are layout evidence, not ordinary narrative or headings.
+                            standalone_frame = (element.tag != W + "tbl"
+                                and any(node.tag == W + "txbxContent" for node in element.iter())
+                                and not any(node.tag in (V + "group", V + "shape", V + "rect")
+                                    or (node.tag == A + "graphicData"
+                                        and not node.get("uri", "").endswith("/picture"))
+                                    for node in element.iter()))
                             # Generic captions may use only text outside native frame
                             # subtrees. Inner labels belong to their own occurrences.
                             frame_nodes = ({node for node in element.iter() if node.tag in _NATIVE_CAPTION_FRAMES}
@@ -604,7 +650,10 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 section, content_slot = note_owners.get((kind, identity), ("unmatched", ""))
                                 source_note = kind + ":" + identity
                             detected = None
-                            if part == "word/document.xml" and element.tag != W + "tbl":
+                            if standalone_frame:
+                                heading_fragments = []
+                                heading_positions = []
+                            if part == "word/document.xml" and element.tag != W + "tbl" and not standalone_frame:
                                 if "tableofcontents" in re.sub(r"[^a-z]", "", text.casefold()):
                                     toc_section, section, heading_fragments = word_section, "", []
                                     heading_positions = []
@@ -648,9 +697,13 @@ def inspect_docx(path: Path) -> DocxInspection:
                                     source_note = "Native section heading"
                                 section = detected
                                 content_slot = ""
-                            compact_text = re.sub(r"[^a-z]", "", text.casefold())
+                            compact_text = "" if standalone_frame else re.sub(r"[^a-z]", "", text.casefold())
                             if section == "activity":
-                                if compact_text in ("workorderstatus", "pmstatus"):
+                                if (compact_text in ("workorderstatus", "pmstatus")
+                                        or re.fullmatch(
+                                            r"\s*(?:work\s*order|pm)\s*status\s*[-–—:]?\s*"
+                                            r"(?:location|site)\s*#?\s*(?:\d+|[a-z])\s*[:.]?\s*",
+                                            text, re.I)):
                                     content_slot = "work_orders"
                                 elif compact_text == "activitysummary":
                                     content_slot = "activity_summary"
@@ -676,11 +729,17 @@ def inspect_docx(path: Path) -> DocxInspection:
                                     mint_background_positions.add((position, word_section))
                             if element.tag == W + "tbl":
                                 rows = []
+                                full_width_bands = []
                                 for row in element.findall(W + "tr"):
                                     cells = []
                                     before = row.find(f"{W}trPr/{W}gridBefore")
                                     cells.extend([""] * min(100, int(before.get(W + "val", "0"))) if before is not None else [])
-                                    for cell in row.findall(W + "tc"):
+                                    row_cells = row.findall(W + "tc")
+                                    if len(row_cells) == 1 and before is None:
+                                        merged = row_cells[0].find(f"{W}tcPr/{W}gridSpan")
+                                        if merged is not None:
+                                            full_width_bands.append((len(rows), int(merged.get(W + "val", "1"))))
+                                    for cell in row_cells:
                                         cells.append(_text(cell))
                                         span = cell.find(f"{W}tcPr/{W}gridSpan")
                                         count = int(span.get(W + "val", "1")) if span is not None else 1
@@ -688,15 +747,70 @@ def inspect_docx(path: Path) -> DocxInspection:
                                             raise ImportError("Table is too wide to review safely.")
                                         cells.extend([""] * (count - 1))
                                     rows.append(tuple(cells))
-                                if rows and not picture_table:
+                                # Cell text extraction cannot represent floating frames or
+                                # non-picture drawings. Keep this source occurrence in review
+                                # instead of offering a flattened, editable replacement.
+                                complex_table = any(
+                                    node.tag in (W + "txbxContent", V + "group")
+                                    or (node.tag == A + "graphicData"
+                                        and not node.get("uri", "").endswith("/picture"))
+                                    for node in element.iter())
+                                if complex_table:
+                                    add("unsupported", part, position, text=text,
+                                        note="Word table contains text boxes or unsupported drawings and needs manual layout review. "
+                                             "Retain its source page or add a reviewed replacement; extracted text does not preserve the layout.")
+                                elif rows and not picture_table:
                                     width = max(map(len, rows))
                                     rows = tuple(row + ("",) * (width - len(row)) for row in rows)
-                                    add("table", part, position, rows=rows, suggested_slot=content_slot or _suggest("table", text, section),
+                                    title_band = _service_call_title_band(element, rows, section)
+                                    table_id = add("table", part, position, rows=rows,
+                                        table_header_row=1 if title_band else 0,
+                                        suggested_slot=content_slot or _suggest("table", text, section),
+                                        merged_title_rows=tuple(index for index, count in full_width_bands
+                                                                if width >= 2 and count == width),
                                         note="Merged cells retain text in the first column of their span. Confirm headers and columns.")
+                                    if title_band:
+                                        # A derived ID avoids renumbering any later source item.
+                                        # Separate context survives edited/plain output as well as
+                                        # an unchanged native table, without becoming a data row.
+                                        add("text", part, position, item_id=table_id + "-title",
+                                            text=rows[0][0], suggested_slot="service_calls",
+                                            note="Native table title")
+                            elif standalone_frame:
+                                add("unsupported", part, position, text=text,
+                                    note="Word text frame needs manual layout review. Preserve and review its complete page "
+                                         "or add a reviewed replacement; extracted labels do not preserve the layout.")
                             elif text:
-                                add("text", part, position, text=text, note=source_note, suggested_slot=(content_slot if content_slot and not detected else _suggest("text", text, section, heading=bool(detected), part=part)))
-                                if part == "word/document.xml" and not section and len(titles) < 12:
-                                    titles.extend(line for line in text.splitlines() if 3 < len(line) < 180 and line not in titles)
+                                # A floating Word textbox has separate layout/review
+                                # ownership. Do not also offer its words as ordinary
+                                # editable paragraph text. Keep actual outside prose.
+                                # Native cover/title and header/footer handling has
+                                # its own source geometry and stays unchanged.
+                                ordinary_text = text
+                                if (element.tag == W + "p" and part == "word/document.xml"
+                                        and not cover_native_frame and not detected):
+                                    frames = {node for node in element.iter(W + "txbxContent")}
+                                    if frames:
+                                        from app.monthly_report_native_design import native_layout_role
+                                        # Reuse the existing closed-shape proof. A
+                                        # verified editable frame retains ordinary
+                                        # prose. Contents furniture retains its
+                                        # text in the native-layout occurrence,
+                                        # not a duplicate editable body item.
+                                        text_role = (native_layout_role(
+                                            element, text, part=part, section=section,
+                                            word_section=word_section
+                                        ) if alternatives_equivalent else "")
+                                        if text_role != "Editable native text frames":
+                                            ordinary_text = _text(element, exclude=frames)
+                                if ordinary_text:
+                                    add("text", part, position, text=ordinary_text, note=source_note,
+                                        suggested_slot=(content_slot if content_slot and not detected else
+                                                        _suggest("text", ordinary_text, section,
+                                                                 heading=bool(detected), part=part)))
+                                    if part == "word/document.xml" and not section and len(titles) < 12:
+                                        titles.extend(line for line in ordinary_text.splitlines()
+                                                      if 3 < len(line) < 180 and line not in titles)
                             image_nodes = [e for e in element.iter() if e.tag in (A + "blip", V + "imagedata")]
                             outside_images = [picture for picture in image_nodes if picture not in frame_image_nodes]
                             image_occurrences = {}
@@ -941,7 +1055,17 @@ def _map_items(path, inspection, mappings, *, source_view=None, _operation=None)
             indices = mapping.columns or tuple(range(width))
             if len(set(indices)) != len(indices) or any(i < 0 or i >= width for i in indices):
                 raise ImportError("Invalid imported table column mapping.")
-            labels = item.rows[0] if mapping.first_row_header else tuple(f"Column {i+1}" for i in range(width))
+            header_row = item.table_header_row if mapping.first_row_header else 0
+            labels = item.rows[header_row] if mapping.first_row_header else tuple(f"Column {i+1}" for i in range(width))
+            rows = item.rows[header_row + 1:] if mapping.first_row_header else item.rows
+            # Reconstruct only a fully recognized, geometry-proved vendor list.
+            # Explicit user column selections remain authoritative.
+            if mapping.slot == "subcontractor_matrix" and mapping.first_row_header and not mapping.columns:
+                from app.monthly_report_vendor_groups import grouped_vendor_contacts
+                grouped_vendor = grouped_vendor_contacts(item)
+                if grouped_vendor is not None:
+                    labels, rows = grouped_vendor.columns, grouped_vendor.rows
+                    indices = tuple(range(len(labels)))
             specs = tuple(ColumnSpec(f"imported_{j}", labels[i].strip() or f"Column {i+1}") for j, i in enumerate(indices))
             # Duplicate merged headers would overwrite values in the editor's dict.
             labels_seen = set()
@@ -953,8 +1077,9 @@ def _map_items(path, inspection, mappings, *, source_view=None, _operation=None)
                 labels_seen.add(title)
                 columns.append(replace(col, title=title))
             overrides[mapping.slot] = replace(spec, type="table", columns=tuple(columns))
-            rows = item.rows[1:] if mapping.first_row_header else item.rows
             block = replace(block, rows=tuple(tuple(row[i] for i in indices) for row in rows))
+            if header_row:
+                block = replace(block, text="\n\n".join(t for t in (block.text, item.rows[0][0]) if t))
         else:
             if spec.type not in ("rich_text", "stock_text") and not (mapping.slot == "org_chart" and item.note == "Validated native SmartArt text"):
                 raise ImportError("Text needs a narrative or footer destination.")

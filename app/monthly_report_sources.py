@@ -38,6 +38,7 @@ MAX_SOURCES = 50
 MAX_REPORT_TEXT = 800_000
 MAX_PAGES = 500
 MAX_EMBED_PAGES = 150
+MAX_CACHED_PAGE_IMAGE_BYTES = 60 * 1024 * 1024  # A single included page cannot exceed this report budget.
 MAX_VISION_PAGES = ocr._MAX_PDF_PAGES
 MAX_TABLE_CELLS = 200_000
 MAX_TABLE_ROWS = 20_000
@@ -99,8 +100,19 @@ def native_action_lines(source: ReportSource, *, passage_pages=None):
         text = source.page_texts[number - 1]
         if page_status(text, unreadable=number in source.needs_vision)[0] != "technical":
             continue
-        lines = (tuple(p.text for p in passage_pages[number][0] if p.field == "actions")
-                 if number in passage_pages else text.splitlines())
+        if number in passage_pages:
+            # Validated native PDF action spans are already complete, exact
+            # source occurrences. Do not join unrelated labeled blocks.
+            lines = tuple(p.text for p in passage_pages[number][0]
+                          if p.field == "actions")
+        else:
+            # An unlabelled PDF often wraps "Inspected ... confirmed it" and
+            # "did not start" into separate physical text lines. The Activity
+            # editor already uses this conservative qualifier-aware grouping.
+            # Reuse it *per page* before claiming completed-action evidence;
+            # a truncated first line must not acquire a false positive cite.
+            from app.monthly_report_structured_uploads import _logical_activity_lines
+            lines = _logical_activity_lines(text.splitlines())
         for line in lines:
             line = line.strip()
             uncertain_work = re.search(
@@ -575,13 +587,32 @@ def page_image(profile: ReportProfile, content: SourceContent, number: int, *, p
     purpose = "preview-docx-v2" if preview and source.suffix == ".docx" else "preview" if preview else "print"
     cache = directory / f"{number}-{purpose}.json"
     if cache.exists():
-        saved = library._read(cache)
-        if not re.fullmatch(r"[0-9a-f]{64}\.(?:jpg|png)", saved.get("asset", "")):
-            raise ValueError("Invalid prepared image reference.")
-        data = (directory / saved["asset"]).read_bytes()
-        if library.asset_reference(data, saved["extension"]) != saved["asset"]:
-            raise ValueError("A prepared source image failed its integrity check.")
-        return ReportImage(data, saved["extension"], saved["width"], saved["height"])
+        # Disposable page rasters can be lost or damaged independently of the
+        # retained source. A bad *cache* is never authority to reject the source:
+        # rederive it below, after the original's normal integrity checks.
+        # Bound the actual read too; stat-before-read cannot cap a replacement.
+        try:
+            saved = library._read(cache)
+            if not isinstance(saved, dict):
+                raise ValueError("Invalid prepared image metadata.")
+            ref, extension = saved.get("asset"), saved.get("extension")
+            if (not isinstance(ref, str)
+                    or not re.fullmatch(r"[0-9a-f]{64}\.(?:jpg|png)", ref)
+                    or extension not in ("jpg", "png") or not ref.endswith("." + extension)
+                    or any(type(saved.get(field)) is not int or saved[field] <= 0
+                           for field in ("width", "height"))):
+                raise ValueError("Invalid prepared image metadata.")
+            with (directory / ref).open("rb") as stream:
+                data = stream.read(MAX_CACHED_PAGE_IMAGE_BYTES + 1)
+            if (len(data) > MAX_CACHED_PAGE_IMAGE_BYTES
+                    or library.asset_reference(data, extension) != ref):
+                raise ValueError("A prepared source image failed its integrity check.")
+            return ReportImage(data, extension, saved["width"], saved["height"])
+        except (OSError, ValueError, KeyError, TypeError):
+            # Do not delete a bad cache or touch a report. The authenticated
+            # source is decoded and an atomic fresh derivative is published
+            # only after it has been prepared successfully.
+            pass
     raw = source_bytes(profile, source) if source.suffix != ".docx" else b""
     if source.suffix == ".pdf":
         with fitz.open(stream=raw, filetype="pdf") as pdf:
@@ -657,8 +688,8 @@ def prepare_pages(profile: ReportProfile, contents: tuple[SourceContent, ...],
         raise ValueError("The requested source pages changed. Review them again before inclusion.")
     if len(planned) > MAX_EMBED_PAGES:
         raise ValueError("Embedding limit is 150 selected image/PDF pages per report. Reduce the selection before preparing.")
-    for content, _, number in planned:
-        if not page_allowed(content.source, number):
+    for content, slot, number in planned:
+        if not page_allowed(content.source, number, profile=profile, destination=slot):
             raise ValueError(f"Check page {number} of {content.source.filename} before including it. Prices, legal-only and blank/signature-only pages cannot be included.")
     grouped, total = {}, 0
     for content, slot, number in planned:

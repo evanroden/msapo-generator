@@ -31,7 +31,7 @@ def include(app, *titles):
     step(app, 1)
     sections = working_state(app)[1].sections
     assert all(any(section.title == title and section.included for section in sections) for title in titles)
-    assert not any(value.label.startswith("Include ") for value in app.checkbox)
+    assert not any(value.label.startswith("Include ") and value.label != "Include thermal capacity" for value in app.checkbox)
 
 
 def test_first_template_has_every_section_visible_with_one_editing_home(monkeypatch, tmp_path):
@@ -212,7 +212,7 @@ def test_live_previews_receive_each_section_and_current_edits(monkeypatch, tmp_p
     assert all(options.get("deferred") for _, _, options in previews)
     assert not full_previews
     assert not any("parts have content" in item.value or "sections selected" in item.value for item in app.caption)
-    assert not any(item.label.startswith("Include ") for item in app.checkbox)
+    assert not any(item.label.startswith("Include ") and item.label != "Include thermal capacity" for item in app.checkbox)
     assert sum(item.label == "Starting report" for item in app.get("file_uploader")) == 1
     previews.clear()
     next(item for item in app.text_area if item.label == "Activity summary").set_value("Synthetic current repair.").run()
@@ -250,7 +250,8 @@ def test_blank_sections_generate_without_empty_or_standing_confirmations_but_pri
     # monthly report. Respect the existing scoped empty-report confirmation
     # rather than silently reintroducing old library text just to generate.
     if not generated:
-        assert any("No new monthly information was entered" in w.value
+        assert any("No new monthly updates were entered. This report may contain saved details "
+                   "and dividers only. Review it before sharing." == w.value
                    for w in app.warning)
         next(b for b in app.button if b.label == "Create anyway").click().run()
     assert not app.exception

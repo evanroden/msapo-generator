@@ -345,6 +345,35 @@ def upload(page, raw):
     page.keyboard.press("Escape")
 
 
+def correct_source_page(page, number, picture, expected_caption, *, keyboard=False):
+    """Native warning -> exact existing page caption -> Review, with no retry."""
+    from scripts.monthly_sequential_navigation import navigate_sections
+    navigate_sections(page, 'report_review', keyboard=keyboard)
+    action = page.get_by_role('button', name=f'Review source page {number} · picture {picture}', exact=True)
+    expect(action).to_have_count(1)
+    if keyboard:
+        action.focus()
+        action.press('Enter')
+    else:
+        action.click()
+    water = page.locator(WATER)
+    field = water.get_by_role('textbox', name='Page caption', exact=True)
+    expect(water.get_by_role('combobox', name='Page to review', exact=True)).to_have_value(
+        re.compile(r'^Page ' + str(number) + r'(?: ·|$)'))
+    expect(field).to_have_value(expected_caption)
+    expect(field).to_be_focused()
+    expect(field).to_be_in_viewport(ratio=1)
+    back = water.locator('.enfra-correction-return')
+    expect(back).to_have_count(1)
+    if keyboard:
+        back.focus()
+        back.press('Enter')
+    else:
+        back.click()
+    expect(page.locator('.epc-section-progress')).to_have_attribute('data-section', 'report_review')
+    navigate_sections(page, 'monthly_water', keyboard=keyboard)
+
+
 def exercise(page, name, qa):
     """One desktop task continued on narrow mobile, including real native output."""
     raw = source_pdf()
@@ -415,6 +444,10 @@ def exercise(page, name, qa):
         state = wait_pages(page, [1, 2], pending=[0])
         assert state["working"]["pages"][0]["caption_sha256"] == sha256(CAPTION.encode()).hexdigest()
         unchanged(state)
+        correct_source_page(page, 1, 1, CAPTION)
+        state = wait_pages(page, [1, 2], pending=[0])
+        unchanged(state)
+        record("desktop-exact-warning-return", state)
         water.get_by_role("button", name="Include page", exact=True).click()
         wait_pages(page, [1, 2], pending=[])
         water.get_by_role("button", name="Move page later", exact=True).click()
@@ -447,6 +480,18 @@ def exercise(page, name, qa):
         assert len(set(p["asset"] for p in state["working"]["pages"])) == 2
         assert page.evaluate("document.documentElement.scrollWidth<=document.documentElement.clientWidth+2")
         record("narrow-reincluded", state)
+        # A deliberate temporary caption produces a real current warning.
+        # Restore it through the same field and explicit review, never a reset.
+        pending_caption = CAPTION + " Native keyboard correction check."
+        water.get_by_role("textbox", name="Page caption", exact=True).fill(pending_caption)
+        water.get_by_role("textbox", name="Page caption", exact=True).press("Tab")
+        wait_pages(page, [2, 1], pending=[1])
+        correct_source_page(page, 1, 2, pending_caption, keyboard=True)
+        water.get_by_role("textbox", name="Page caption", exact=True).fill(CAPTION)
+        water.get_by_role("button", name="Include page", exact=True).click()
+        state = wait_pages(page, [2, 1], pending=[])
+        unchanged(state)
+        record("narrow-exact-warning-return", state)
         page.reload(wait_until="domcontentloaded")
         state = wait_pages(page, [2, 1], pending=[])
         unchanged(state)

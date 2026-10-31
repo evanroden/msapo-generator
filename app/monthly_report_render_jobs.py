@@ -66,8 +66,10 @@ def conversion_slot(*, wait_seconds=10):
         _SLOT.release()
 
 
-def convert_to_pdf(path, *, wait_seconds=10):
+def convert_to_pdf(path, *, wait_seconds=10, lossless_images=False):
     with conversion_slot(wait_seconds=wait_seconds):
+        if lossless_images is not False:
+            return pdf_converter.convert_to_pdf(path, lossless_images=lossless_images)
         return pdf_converter.convert_to_pdf(path)
 
 
@@ -81,21 +83,69 @@ _FOREGROUND_WAITING = 0
 PREVIEW_HEADROOM_BYTES = 160 * 1024 * 1024
 
 
-def memory_headroom():
-    """Use the container's actual limit, not host RAM or a guessed service plan."""
+def _memory_status():
+    """Distinguish absent/unlimited cgroups from a broken finite counter."""
     from pathlib import Path
+    unavailable = False
+    unlimited = False
     for folder, limit_name, used_name in (
         (Path('/sys/fs/cgroup'), 'memory.max', 'memory.current'),
         (Path('/sys/fs/cgroup/memory'), 'memory.limit_in_bytes', 'memory.usage_in_bytes'),
     ):
         try:
-            limit = int((folder / limit_name).read_text().strip())
+            raw_limit = (folder / limit_name).read_text().strip()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            unavailable = True
+            continue
+        try:
+            if raw_limit == 'max' and limit_name == 'memory.max':
+                unlimited = True
+                continue
+            limit = int(raw_limit)
+            if limit >= 1 << 60:
+                unlimited = True
+                continue
             used = int((folder / used_name).read_text().strip())
         except (OSError, ValueError):
+            unavailable = True
             continue
         if 0 < limit < 1 << 60 and used >= 0:
-            return max(0, limit - used)
-    return None
+            return 'finite', max(0, limit - used)
+        unavailable = True
+    return ('unavailable' if unavailable else 'unlimited' if unlimited else 'unsupported'), None
+
+
+def memory_headroom():
+    """Use the container's actual limit, not host RAM or a guessed service plan."""
+    return _memory_status()[1]
+
+
+class _PreviewMemoryGuard:
+    """One thread's active work lease, never an unrelated converter's cancel."""
+    def __init__(self, headroom):
+        self.owner = threading.get_ident()
+        self.finite = headroom is not None
+
+    def __call__(self):
+        if (threading.get_ident() != self.owner or not getattr(_WORK_LOCAL, 'active', False)
+                or getattr(_WORK_LOCAL, 'preview_guard', None) is not self):
+            raise RenderBusy('The preview work lease is no longer current. Your edits are still here.')
+        headroom = memory_headroom()
+        if headroom is None:
+            state, headroom = _memory_status()
+            if state == 'unavailable' or (state == 'unsupported' and self.finite):
+                raise RenderBusy('Preview memory could not be checked. Your edits are still here.')
+        if headroom is not None:
+            self.finite = True
+            if headroom < PREVIEW_HEADROOM_BYTES:
+                raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
+
+
+def preview_memory_guard():
+    """Inherited only by a nested operation inside this exact preview lease."""
+    return getattr(_WORK_LOCAL, 'preview_guard', None) if getattr(_WORK_LOCAL, 'active', False) else None
 
 
 @contextmanager
@@ -123,8 +173,12 @@ def work_slot(*, preview=False, wait_seconds=130):
     if not acquired:
         raise RenderBusy('Another report is being prepared. Your saved work is unchanged; retry generation shortly.')
     _WORK_LOCAL.active = True
+    _WORK_LOCAL.preview_guard = _PreviewMemoryGuard(headroom) if preview else None
     try:
+        if preview:
+            _WORK_LOCAL.preview_guard()
         yield
     finally:
+        _WORK_LOCAL.preview_guard = None
         _WORK_LOCAL.active = False
         _WORK_SLOT.release()
