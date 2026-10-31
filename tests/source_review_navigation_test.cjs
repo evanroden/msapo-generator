@@ -344,6 +344,163 @@ test('native warning action retains its callback and a new target focuses once a
     cleanup();
 });
 
+function exactManager(h) {
+    const parent={children:[],querySelector:s=>parent.children.find(n=>'.'+n.className===s)||null,append:n=>parent.children.push(n)};
+    const marker={id:'report-correction-'+'a'.repeat(64),isConnected:true,
+        dataset:{reportIdentity:h.state.identity,fieldKey:'exact',fieldKind:'combobox',navigationOwner:'exact-manager-page',navigationToken:'accepted-token'},
+        closest:()=>null,parentElement:parent};
+    const link={isConnected:true,dataset:{reportIdentity:h.state.identity,token:'accepted-token'},
+        classList:{contains:s=>s==='enfra-page-correction-request'},getAttribute:()=>'#'+marker.id,closest:()=>null,parentElement:parent};
+    const field=h.entries.second.field;field.parentElement=h.entries.second.details;field.getClientRects=()=>[{}];
+    const original=h.app.querySelectorAll;
+    h.app.querySelectorAll=s=>s==='.enfra-picture-correction'?[marker]:s==='.st-key-exact [role="combobox"]'?[field]:original(s);
+    h.app.dispatchEvent=e=>h.app.listeners.get(e.type)?.(e);
+    h.context.CustomEvent=class {constructor(type,options){this.type=type;this.detail=options.detail;}};
+    h.context.CSS={escape:x=>x};
+    vm.runInNewContext(fs.readFileSync('app/monthly_report_correction_navigation.js','utf8'),h.context);
+    return {parent,marker,link,field,reveal:current=>h.context.ENFRAPictureCorrections.reveal(h.app,link,h.state.identity,current||(()=>true))};
+}
+function clickExactManager(h) {
+    const warning={isConnected:true,dataset:{sourceId:'second',reportIdentity:h.state.identity,navigationOwner:'exact-manager-page'},closest:()=>null};
+    const wrapper={querySelector:s=>s==='.enfra-source-warning'?warning:null};
+    const button={closest:s=>s.includes('monthly_source_warning_')?wrapper:null,getBoundingClientRect:()=>({top:420})};
+    return h.click({closest:s=>s==='button'?button:null});
+}
+for (const prior of [false,true]) test(`accepted exact manager-page Return has sole ownership, prior legacy=${prior}`,async()=>{
+    const h=fixture(),cleanup=h.install();
+    if(prior){h.click(h.entries.first.link);await h.flush();assert.equal(h.entries.first.back.hidden,false);}
+    const previous=h.state.sourceReviewReturn, before=h.scroll.scrollTop;
+    assert.equal(clickExactManager(h).prevented,false,'the real exact-owner callback must run');
+    assert.equal(h.state.sourceReviewReturn,previous,'click is not acceptance');
+    assert.equal(h.entries.first.back.hidden,!prior);
+    const exact=exactManager(h);exact.reveal();await h.flush();
+    assert.equal(h.state.sourceReviewReturn,previous,'accepted display ownership must retain the prior task');
+    assert.equal(exact.parent.children.filter(n=>n.className==='enfra-correction-return').length,1);
+    assert.ok(Object.values(h.entries).every(entry=>entry.back.hidden));
+    assert.equal(h.scroll.scrollTop,before,'ownership transfer performs no scroll');
+    // A completed old receipt cannot erase a later ordinary source task.
+    h.click(h.entries.first.link);await h.flush();const next=h.state.sourceReviewReturn;
+    h.app.dispatchEvent({type:'enfra-exact-correction-ready',detail:{...exact,back:exact.parent.children[0]}});
+    assert.equal(h.state.sourceReviewReturn,next);assert.equal(h.entries.first.back.hidden,false);
+    cleanup();
+});
+
+for(const retirement of ['return','marker-removed','field-disabled','field-inert','request-retired','owner-changed','token-changed','new-legacy-task'])
+    test(`exact manager presentation retirement restores valid earlier legacy Return: ${retirement}`,async()=>{
+        const h=fixture(),cleanup=h.install();h.click(h.entries.first.link);await h.flush();
+        const prior=h.state.sourceReviewReturn,exact=exactManager(h);exact.reveal();await h.flush();
+        const back=exact.parent.children.find(n=>n.className==='enfra-correction-return');
+        assert.equal(h.entries.first.back.hidden,true);assert.equal(h.state.sourceReviewReturn,prior);
+        if(retirement==='return') {
+            back.closest=s=>s==='a'?back:null;
+            assert.equal(h.click(back).prevented,false,'ordinary workspace handler still owns navigation');
+        } else if(retirement==='new-legacy-task') h.click(h.entries.first.link);
+        else {
+            if(retirement==='marker-removed')exact.marker.isConnected=false;
+            if(retirement==='field-disabled')exact.field.disabled=true;
+            if(retirement==='field-inert')exact.field.closest=s=>s==='[inert]'?{}:null;
+            if(retirement==='request-retired')exact.link.isConnected=false;
+            if(retirement==='owner-changed')exact.marker.dataset.navigationOwner='foreign-owner';
+            if(retirement==='token-changed')exact.link.dataset.token='foreign-token';
+            h.changed(h.app);await h.flush();
+        }
+        assert.equal(back.hidden,true);assert.equal(h.entries.first.back.hidden,false);
+        if(retirement!=='new-legacy-task')assert.equal(h.state.sourceReviewReturn,prior);
+        cleanup();
+    });
+
+for(const action of ['Water','source-warning'])test(`native ${action} takeover replaces only exact presentation with the existing native legacy task`,async()=>{
+    const h=fixture(),cleanup=h.install();h.click(h.entries.first.link);await h.flush();
+    const exact=exactManager(h);exact.reveal();await h.flush();
+    const back=exact.parent.children.find(n=>n.className==='enfra-correction-return');
+    const marker={dataset:{sourceId:'second',...(action==='Water'?{returnTarget:'report-section-water'}:{})}};
+    const wrapper={querySelector:()=>marker};
+    const button={closest:s=>s.includes(action==='Water'?'monthly_source_page_correction_':'monthly_source_warning_')?wrapper:null,
+        getBoundingClientRect:()=>({top:400})};
+    assert.equal(h.click({closest:s=>s==='button'?button:null}).prevented,false);
+    assert.equal(h.state.sourceReviewReturn.source,'second');assert.equal(back.hidden,true);
+    assert.equal(h.entries.first.back.hidden,true);assert.equal(h.entries.second.back.hidden,false);
+    assert.equal(h.state.sourceReviewReturn.target,action==='Water'?'report-section-water':undefined);
+    cleanup();
+});
+
+test('consumed manager token cannot re-reveal a second Return after explicit legacy takeover',async()=>{
+    const h=fixture(),cleanup=h.install();h.click(h.entries.first.link);await h.flush();
+    const exact=exactManager(h);exact.reveal();await h.flush();
+    h.click(h.entries.first.link);await h.flush();const prior=h.state.sourceReviewReturn;
+    exact.reveal();await h.flush();
+    assert.equal(h.state.sourceReviewReturn,prior);assert.equal(h.entries.first.back.hidden,false);
+    assert.equal(exact.parent.children.find(n=>n.className==='enfra-correction-return').hidden,true);
+    cleanup();
+});
+
+test('same-report adapter reinstall retains the current exact presentation without losing prior task',async()=>{
+    const h=fixture();let cleanup=h.install();h.click(h.entries.first.link);await h.flush();
+    const prior=h.state.sourceReviewReturn,exact=exactManager(h);exact.reveal();await h.flush();
+    cleanup();cleanup=h.install();await h.flush();
+    assert.equal(h.state.sourceReviewReturn,prior);assert.equal(h.entries.first.back.hidden,true);
+    exact.link.isConnected=false;h.changed(h.app);await h.flush();
+    assert.equal(h.state.sourceReviewReturn,prior);assert.equal(h.entries.first.back.hidden,false);
+    cleanup();assert.equal(h.app.listeners.size,0);
+});
+
+test('unchanged Return presentation does not trigger another observed text mutation',async()=>{
+    const h=fixture(),cleanup=h.install();await h.flush();
+    for(const entry of Object.values(h.entries)) {
+        const text=entry.back.textContent;
+        Object.defineProperty(entry.back,'textContent',{get:()=>text,set:()=>{throw Error('unchanged display must not mutate');}});
+    }
+    h.changed(h.app);await h.flush();cleanup();
+});
+
+test('accepted manager presentation never restores legacy Return into a foreign report',async()=>{
+    const h=fixture(),cleanup=h.install();h.click(h.entries.first.link);await h.flush();
+    const exact=exactManager(h);exact.reveal();await h.flush();
+    h.state.identity='replacement-report';h.changed(h.app);await h.flush();
+    assert.ok(Object.values(h.entries).every(entry=>entry.back.hidden));
+    cleanup();
+});
+
+test('rejected native callback without accepted exact destination retains earlier Return',async()=>{
+    const h=fixture(),cleanup=h.install();h.click(h.entries.first.link);await h.flush();
+    const prior=h.state.sourceReviewReturn;
+    assert.equal(clickExactManager(h).prevented,false);await h.flush();
+    assert.equal(h.state.sourceReviewReturn,prior);assert.equal(h.entries.first.back.hidden,false);
+    cleanup();
+});
+for(const invalid of ['foreign','stale','retired','outside','duplicate','disabled','hidden','inert','cancelled','wrong-token','ordinary-link','ordinary-marker'])
+    test(`unaccepted exact manager landing retains prior Return: ${invalid}`,async()=>{
+        const h=fixture(),cleanup=h.install();h.click(h.entries.first.link);await h.flush();
+        const prior=h.state.sourceReviewReturn,exact=exactManager(h);
+        if(invalid==='foreign')exact.marker.dataset.reportIdentity='foreign';
+        if(invalid==='stale')exact.marker.closest=()=>({});
+        if(invalid==='retired')exact.marker.isConnected=false;
+        if(invalid==='outside')exact.marker.insideApp=false;
+        if(invalid==='duplicate'){const original=h.app.querySelectorAll;h.app.querySelectorAll=s=>s==='.enfra-picture-correction'?[exact.marker,exact.marker]:original(s);}
+        if(invalid==='disabled')exact.field.disabled=true;
+        if(invalid==='hidden')exact.field.getClientRects=()=>[];
+        if(invalid==='inert')exact.field.closest=s=>s==='[inert]'?{}:null;
+        if(invalid==='wrong-token')exact.link.dataset.token='different-token';
+        if(invalid==='ordinary-link')exact.link.classList.contains=()=>false;
+        if(invalid==='ordinary-marker')delete exact.marker.dataset.navigationOwner;
+        clickExactManager(h);exact.reveal(()=>invalid!=='cancelled');await h.flush();
+        assert.equal(h.state.sourceReviewReturn,prior);assert.equal(h.entries.first.back.hidden,false);
+        cleanup();
+    });
+
+for(const invalid of ['foreign','stale','retired','outside'])test(`invalid exact manager-page owner cannot retire or redirect legacy context: ${invalid}`,async()=>{
+    const h=fixture(),cleanup=h.install();h.click(h.entries.first.link);await h.flush();
+    const prior=h.state.sourceReviewReturn;
+    const warning={isConnected:invalid!=='retired',insideApp:invalid!=='outside',
+        dataset:{sourceId:'second',reportIdentity:invalid==='foreign'?'foreign':h.state.identity,navigationOwner:'exact-manager-page'},
+        closest:()=>invalid==='stale'?{}:null};
+    const wrapper={querySelector:()=>warning};
+    const button={closest:s=>s.includes('monthly_source_warning_')?wrapper:null};
+    assert.equal(h.click({closest:s=>s==='button'?button:null}).prevented,false);
+    assert.equal(h.state.sourceReviewReturn,prior);assert.equal(h.entries.first.back.hidden,false);assert.equal(h.entries.second.back.hidden,true);
+    cleanup();
+});
+
 test('page correction keeps its native callback and returns to the same page task',async()=>{
     const h=fixture(),a=h.entries.first;let cleanup=h.install();
     const context={dataset:{sourceId:'first',returnTarget:'report-section-water'}};
@@ -428,4 +585,29 @@ test('native page focus cancels foreign, stale or detached target ownership befo
         assert.equal(page.focuses,0,phase+' '+defect);assert.equal(page.scrolls,0);
         assert.equal(h.state.sourcePageFocusToken,undefined);cleanup();
     }
+});
+
+if(process.env.ENFRA_MANAGER_ACCEPTED_RECEIPT) test('actual server acceptance receipt keeps prior context and one visible Return, including failed durable save',async()=>{
+    const receipt=JSON.parse(process.env.ENFRA_MANAGER_ACCEPTED_RECEIPT);
+    assert.equal(receipt.saveFailed,Boolean(receipt.failure));
+    const attributes=tag=>Object.fromEntries([...tag.matchAll(/([\w-]+)="([^"]*)"/g)].map(m=>[m[1],m[2]]));
+    const markers=[...receipt.markup.matchAll(/<span[^>]+class="enfra-picture-correction"[^>]*>/g)].map(m=>attributes(m[0]));
+    const accepted=markers.filter(marker=>marker['data-navigation-owner']==='exact-manager-page');
+    const requests=[...receipt.markup.matchAll(/<a[^>]+class="enfra-page-correction-request"[^>]*>/g)].map(m=>attributes(m[0]));
+    assert.equal(accepted.length,1);assert.equal(requests.length,1);
+    const marker=accepted[0],request=requests[0];
+    assert.equal(marker['data-navigation-owner'],'exact-manager-page');
+    assert.ok(marker['data-navigation-token']);assert.equal(marker['data-navigation-token'],request['data-token']);
+    assert.equal(request.href,'#'+marker.id);assert.equal(marker['data-report-identity'],request['data-report-identity']);
+    const h=fixture();h.state.identity=marker['data-report-identity'];const cleanup=h.install();
+    h.click(h.entries.first.link);await h.flush();const prior=h.state.sourceReviewReturn;
+    const exact=exactManager(h);exact.marker.id=marker.id;
+    exact.marker.dataset.navigationToken=marker['data-navigation-token'];exact.link.dataset.token=request['data-token'];
+    clickExactManager(h);exact.reveal();await h.flush();
+    const back=exact.parent.children.find(n=>n.className==='enfra-correction-return');
+    assert.equal(h.state.sourceReviewReturn,prior);assert.equal(back.hidden,false);
+    assert.ok(Object.values(h.entries).every(entry=>entry.back.hidden));
+    exact.marker.isConnected=false;h.changed(h.app);await h.flush();
+    assert.equal(h.state.sourceReviewReturn,prior);assert.equal(h.entries.first.back.hidden,false);assert.equal(back.hidden,true);
+    cleanup();
 });

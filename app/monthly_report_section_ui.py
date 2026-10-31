@@ -11,6 +11,8 @@ import streamlit as st
 from app import monthly_report_library as library
 from app.monthly_report_content_policy import contains_price, table_has_pricing
 from app.monthly_report_docx import normalize_report_image
+from app.monthly_report_cover_images import image_byte_limit, read_picture_upload, normalize_cover_photo
+from app.monthly_report_upload_limits import uploader_limit_mib, byte_limit_label
 from app.monthly_report_editor import _grid, _key, _signature
 from app.monthly_report_import import imported_draft
 from app.monthly_report_import_ui import _stage
@@ -27,6 +29,19 @@ from app.monthly_report_sections import (
     table_without_prices,
 )
 from app.monthly_report_setup import design_profile, item_findings
+
+
+def _cover_action_key(prefix):
+    """Retire only the cover radio when an explicit template action replaces it."""
+    epoch = st.session_state.get(prefix + "_cover_action_epoch", "")
+    return prefix + ("_cover_choice_" + epoch if epoch else "") + "_section_cover_action"
+
+
+def _replace_cover_action(prefix, action):
+    # A browser can submit the old radio alongside the next button click.
+    # A new identity isolates that payload without overriding fresh choices.
+    st.session_state[prefix + "_cover_action_epoch"] = uuid4().hex
+    st.session_state[_cover_action_key(prefix)] = action
 
 
 def plan_signature(plan):
@@ -123,12 +138,25 @@ def _replacement_pictures(section, p, plan):
     use_key = p + "_new_cover_photo_use"
     pending_use = st.session_state.pop(use_key, "") if section.key == "cover" else ""
     for slot, label in labels.items():
-        upload = st.file_uploader(label, type=["png", "jpg", "jpeg", "heic", "heif", "webp"], key=p + "_replacement_" + slot, max_upload_size=30)
+        is_cover_photo = slot == "cover_photo"
+        upload = st.file_uploader(label, type=["png", "jpg", "jpeg", "heic", "heif", "webp"],
+                                  key=p + "_replacement_" + slot,
+                                  max_upload_size=uploader_limit_mib(image_byte_limit(cover_photo=is_cover_photo)),
+                                  help=f"Up to {byte_limit_label(image_byte_limit(cover_photo=True))} and 40 million pixels; large photos may need resizing when the service is busy."
+                                       if is_cover_photo else None)
         if upload:
             try:
-                replacements[slot] = normalize_report_image(upload.getvalue(), Path(upload.name).suffix, line_art=section.key == "organization" or slot.endswith("logo"))
-            except (ValueError, OSError):
-                st.error("This picture could not be read. Choose another image; your previous selection is retained.")
+                if is_cover_photo:
+                    raw = read_picture_upload(upload, cover_photo=True)
+                    replacements[slot] = normalize_cover_photo(raw, Path(upload.name).suffix)
+                else:
+                    replacements[slot] = normalize_report_image(upload.getvalue(), Path(upload.name).suffix, line_art=section.key == "organization" or slot.endswith("logo"))
+            except (ValueError, OSError) as exc:
+                if is_cover_photo:
+                    from app.monthly_report_cover_ui import _picture_error
+                    st.error(_picture_error(exc))
+                else:
+                    st.error("This picture could not be read. Choose another image; your previous selection is retained.")
         if slot in replacements:
             if slot == "cover_photo" and pending_use:
                 if hashlib.sha256(replacements[slot].data).hexdigest() == pending_use:
@@ -188,9 +216,12 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
         guide = section_help(section.key)
         st.write(guide.guidance)
         from app.monthly_report_content_kind import section_content_description
-        content_description = section_content_description(section.items)
+        content_description = section_content_description(section.items, section_key=section.key)
         if content_description:
             st.caption(content_description)
+        if any(item.kind == "unsupported" and item.position > 0 for item in section.items):
+            st.caption("Layout review is required; extracted labels do not make a drawing editable. "
+                       "Check its original page or use the existing replacement controls.")
         actions = ["Keep and review", "Edit text or change pictures", "Leave this section out"]
         labels = dict(zip(actions, (guide.keep, guide.edit, "Start this section blank")))
         if section.key == "cover":
@@ -200,7 +231,8 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
         if section.key != "other" and any(item.kind == "image" for item in section.items):
             st.caption("Picture text and cells are not directly editable. Choose “" +
                        labels[actions[1]] + "” to reach replacement uploads.")
-        action_key = field(p + "_action", old.get("action", actions[0]))
+        action_key = field(_cover_action_key(prefix) if section.key == "cover" else p + "_action",
+                           old.get("action", actions[0]))
         current_action = st.session_state.get(action_key)
         # Keep the cover's native remount default consistent with its staged
         # action. Unknown values still fall back to review, never approval.
@@ -347,7 +379,10 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 if removed:
                     st.caption("Pricing columns were removed from this client-facing table. The original table is retained in the uploaded report.")
                 if table:
-                    st.write(f"Table {n}")
+                    from app.monthly_report_source_table_labels import table_task_label
+                    st.text(table_task_label(table, item.suggested_slot or section.key,
+                                             position=n - 1,
+                                             total=sum(i.kind == "table" for i in items)))
                     rows = [dict(zip(table.columns, r)) for r in table.rows]
                     if action == actions[1]:
                         rows = _grid(p + "_table_" + item.id + "_" + _signature(table.columns), rows, num_rows="dynamic", hide_index=True)
@@ -1013,11 +1048,11 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                             "template": available_template, "scope": template_scope, "cover_plan": deepcopy(plans["cover"])}
                         plans["cover"] = dict(plans["cover"], action="Leave this section out", omit=True,
                                                approved=True, questions=[])
-                        st.session_state[p + "_section_cover_action"] = "Leave this section out"
+                        _replace_cover_action(p, "Leave this section out")
                         st.rerun()
                 elif st.button("Keep uploaded report design instead", key=p + "_cancel_template"):
                     plans["cover"] = template_choice["cover_plan"]
-                    st.session_state[p + "_section_cover_action"] = plans["cover"].get("action", "Keep and review")
+                    _replace_cover_action(p, plans["cover"].get("action", "Keep and review"))
                     st.session_state.pop(template_choice_key, None)
                     st.rerun()
     cover_photo_ids = ()

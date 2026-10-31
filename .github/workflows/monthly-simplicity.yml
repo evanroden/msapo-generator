@@ -8,6 +8,13 @@ on:
 permissions:
   contents: read
 
+# Avoid duplicating full browser and renderer work for superseded PR heads.
+# Every new PR revision still starts all applicable required checks.
+# Main/dispatch runs have distinct run IDs and are never canceled by PR activity.
+concurrency:
+  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   monthly-simplicity:
     runs-on: ubuntu-24.04

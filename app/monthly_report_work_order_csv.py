@@ -67,8 +67,15 @@ def work_order_evidence(content: SourceContent, period: ReportPeriod,
     if content.source.suffix not in (".csv", ".xlsx"):
         return ()
     output = []
-    sites = { _name(v): f.key for f in profile.facilities
-              for v in (f.key, f.title, *f.aliases) }
+    sites = {}
+    for facility_profile in profile.facilities:
+        for label in (facility_profile.key, facility_profile.title, *facility_profile.aliases):
+            # CSV normalization removes punctuation, unlike profile validation.
+            # Distinct valid aliases can therefore collide here. Do not choose
+            # whichever selected facility happened to be visited last.
+            normalized = _name(label)
+            if normalized:
+                sites.setdefault(normalized, set()).add(facility_profile.key)
     for number, table in enumerate(content.tables, 1):
         wo, status, dated = (_column(table.columns, kind)
                              for kind in ("identity", "status", "date"))
@@ -79,7 +86,7 @@ def work_order_evidence(content: SourceContent, period: ReportPeriod,
             continue  # existing upload limits should reject oversized tables
         observations, notices = {}, []
         conflicts = set()
-        unrecognized = outside_sites = undated = 0
+        unrecognized = outside_sites = ambiguous_sites = undated = 0
         for row in table.rows:
             def cell(index):
                 return str(row[index]).strip() if index is not None and index < len(row) else ""
@@ -94,14 +101,26 @@ def work_order_evidence(content: SourceContent, period: ReportPeriod,
                 continue
             if (when.year, when.month) != (period.year, period.month):
                 continue
-            if facility is not None and _name(cell(facility)) not in sites:
-                outside_sites += 1
-                continue
+            site_key = ""
+            if facility is not None:
+                matches = sites.get(_name(cell(facility)), set())
+                if not matches:
+                    outside_sites += 1
+                    continue
+                if len(matches) != 1:
+                    ambiguous_sites += 1
+                    continue
+                site_key = next(iter(matches))
+            # A CMMS may number orders independently at each site. Keep the
+            # same-site duplicate/conflict rules without collapsing siblings
+            # from another selected site. Missing site retains one unassigned
+            # cohort and still requires explicit site confirmation below.
+            scoped_identity = (site_key, identity)
             value = (identity, when.isoformat(), "Completed" if state in _COMPLETE else "Open")
-            if identity in observations and observations[identity] != value:
-                conflicts.add(identity)
+            if scoped_identity in observations and observations[scoped_identity] != value:
+                conflicts.add(scoped_identity)
             else:
-                observations[identity] = value
+                observations[scoped_identity] = value
         for identity in conflicts:
             observations.pop(identity, None)
         if unrecognized:
@@ -110,6 +129,8 @@ def work_order_evidence(content: SourceContent, period: ReportPeriod,
             notices.append(f"{undated} rows had an unrecognized or missing date.")
         if outside_sites:
             notices.append(f"{outside_sites} source rows did not match the selected sites and were excluded.")
+        if ambiguous_sites:
+            notices.append(f"{ambiguous_sites} source rows had an ambiguous site label and were excluded.")
         if conflicts:
             notices.append(f"{len(conflicts)} work-order identities conflicted and were excluded.")
         if not observations:
