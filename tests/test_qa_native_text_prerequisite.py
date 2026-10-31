@@ -9,6 +9,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from scripts.qa_navigation_observations import INSTALL, STOP, observe_navigation
+
 SOURCE = Path(__file__).resolve().parents[1] / 'scripts/qa_monthly_text_hydration.py'
 
 
@@ -92,6 +94,8 @@ def native_edit_journey(*, fail_phase=None, reentry_focus=True, reentry_value=''
     expected = {'Training notes': 'Saved training', 'Issue description': 'Saved issue'}
     values = dict(expected)
     current_phase = ''
+    navigation_calls = []
+    evidence = {}
 
     def phase(name):
         nonlocal current_phase
@@ -131,6 +135,16 @@ def native_edit_journey(*, fail_phase=None, reentry_focus=True, reentry_value=''
         def set_viewport_size(self, size):
             calls.append(('viewport', size))
 
+        def evaluate(self, script):
+            # Run the real Python context manager against bounded browser
+            # metadata without adding or replacing any native journey gesture.
+            navigation_calls.append(script)
+            if script == INSTALL:
+                return {'installed': True}
+            assert script == STOP
+            return {'schema': 1, 'limits': {'records': 256, 'bytes': 1048576},
+                    'dropped': 0, 'errors': 0, 'disposed': True, 'records': []}
+
     def expect(locator):
         assert locator is field
 
@@ -154,10 +168,19 @@ def native_edit_journey(*, fail_phase=None, reentry_focus=True, reentry_value=''
              if isinstance(node, ast.FunctionDef) and node.name == 'exercise_text_edits']
     assert len(nodes) == 1, 'The native edit journey must expose its exact action sequence.'
     ns = {'EXPECTED': expected, 'phase': phase, 'commit_text': commit_text,
-          'await_text': await_text, 'live': SimpleNamespace(checkpoint=checkpoint),
-          'expect': expect, 'correct_issue_warning': correct_issue_warning}
+          'await_text': await_text, 'live': SimpleNamespace(checkpoint=checkpoint, EVIDENCE=evidence),
+          'expect': expect, 'correct_issue_warning': correct_issue_warning,
+          'observe_navigation': observe_navigation}
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(SOURCE), 'exec'), ns)
-    return lambda: ns['exercise_text_edits'](target), calls
+    def run():
+        ns['exercise_text_edits'](target)
+        assert navigation_calls == [INSTALL, STOP]
+        observation = evidence['navigation_observation']
+        assert observation['installation_completed'] is True
+        assert observation['disposed'] is True
+        assert observation['errors'] == 0
+
+    return run, calls
 
 
 def test_native_edit_journey_retains_reload_checks_and_adds_consecutive_issue_edits():
