@@ -103,11 +103,19 @@ def set_history(page, opened, identity, activations):
           };
           const observation={before:snapshot(),click:null};
           window.__enfraHistoryDisclosureObservation=observation;
+          window.__enfraHistoryClickProbe?.start(node, observation);
           node.addEventListener('click',event=>{
             observation.click={trusted:event.isTrusted,...snapshot()};
           },{capture:true,once:true});
         }""")
-        summary.click()
+        try:
+            summary.click()
+        finally:
+            # Passive diagnostics must not mask the original native failure.
+            try:
+                page.evaluate("window.__enfraHistoryClickProbe?.stop()")
+            except Exception:
+                pass
         activation = page.evaluate("window.__enfraHistoryDisclosureObservation")
         activations.append({"opening": opened, "sequence_before": before, **activation})
         clicked = activation["click"]
@@ -237,6 +245,7 @@ def browser_task(engine, name, base):
     live.EVIDENCE = {"synthetic_only": True, "browser": name, "events": [], "checks": {}, "artifacts": {}}
     browser = engine.launch(headless=True)
     context = browser.new_context(viewport={"width": 1365, "height": 900})
+    context.add_init_script((ROOT / "scripts/history_click_diagnostics.js").read_text())
     context.add_cookies([{"name": "epc_device_id", "value": token, "url": URL}])
     attempts, errors = [], []
     def route(request):
@@ -348,6 +357,10 @@ def browser_task(engine, name, base):
             pass
         raise
     finally:
+        try:
+            evidence["history_click_probe"] = page.evaluate("window.__enfraHistoryClickProbe?.stop()")
+        except Exception:
+            pass
         evidence.update(browser_errors=errors, external_requests=attempts)
         (out / "results.json").write_text(json.dumps(evidence, indent=2) + "\n")
         (out / "wire.json").write_text(json.dumps(wire.snapshot(), indent=2) + "\n")
