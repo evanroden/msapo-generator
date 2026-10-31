@@ -115,7 +115,11 @@ def test_final_and_section_pdf_boundaries_resolve_profile_and_limit_cover_scope(
     from app.monthly_report_model import ReportPeriod, synthetic_draft
     draft=synthetic_draft(synthetic_profiles()[0],ReportPeriod(2026,9))
     monkeypatch.setattr(designs,'render_profile_for',lambda p:dict(profile))
-    monkeypatch.setattr(output,'assemble_docx',lambda *a,**kw:b'native-download')
+    # Match assembly's valid DOCX contract and omit the stock preview thumbnail.
+    native_document=Document()
+    native_document.add_paragraph('native-download')
+    native_download=output._save(native_document)
+    monkeypatch.setattr(output,'assemble_docx',lambda *a,**kw:native_download)
     monkeypatch.setattr(preview,'section_preview_docx',lambda *a,**kw:b'native-preview')
     calls=[]
     converted_document=Document()
@@ -134,13 +138,13 @@ def test_final_and_section_pdf_boundaries_resolve_profile_and_limit_cover_scope(
         return result
     monkeypatch.setattr(output.pdf_converter,'convert_to_pdf',convert)
     package=output.generate_report(draft)
-    assert package.docx==b'native-download' and package.pdf
+    assert package.docx==native_download and package.pdf
     preview.preview_section(draft,'cover')
     preview.preview_section(draft,'training')
     section_profile={**profile,'cover_zero_origin':False}
     if 'cover_metrics' in section_profile:
         section_profile['cover_metrics']=[]
-    assert calls==[(b'native-download',profile),(b'native-preview',profile),(b'native-preview',section_profile)]
+    assert calls==[(native_download,profile),(b'native-preview',profile),(b'native-preview',section_profile)]
     assert conversion_options==[{'lossless_images':True},{},{}]
 
 

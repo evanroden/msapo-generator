@@ -133,6 +133,8 @@ class ReportPackage:
     source_view_digest: str = ""
     source_view_docx_sha256: str = ""
     source_view_art_digest: str = ""
+    contents_notice: str = ""
+    generated_contents: bool = False
 
 
 def canonical_docx(raw: bytes) -> bytes:
@@ -439,8 +441,9 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
     configure_content(document.add_section(WD_SECTION_START.NEW_PAGE))
     document.add_heading("Table of contents", 0)
     sections = included_sections(draft.sections)
+    from app.monthly_report_contents_pagination import add_entry, mark_target
     for section in sections:
-        document.add_paragraph(f"{section.number}. {section.title}")
+        add_entry(document, section)
     document.add_paragraph("Confidential — intended for the report recipients. Do not distribute without permission.")
     document.add_paragraph("Create. Sustain. Empower.")
     for section in sections:
@@ -453,7 +456,8 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
             _divider_background(document, asset_loader(divider_asset))
         _display_page(document, label=f"Section {section.number}" if not section.appendix else f"Appendix {section.number}", title=section.title, light=bool(divider_asset))
         configure_content(document.add_section(WD_SECTION_START.NEW_PAGE))
-        document.add_heading(f"{section.number}. {section.title}", 1)
+        heading = document.add_heading(f"{section.number}. {section.title}", 1)
+        mark_target(heading, section.key, sections.index(section))
         chart_emitted = False
         for spec in section.blocks:
             block = blocks.get(spec.key)
@@ -561,6 +565,7 @@ def _generate_report(draft, *, acknowledged_fingerprint='', asset_loader=None, s
 
 def _generate_verified_report(draft, *, acknowledged_fingerprint, asset_loader, operation):
     source_view = operation.view
+    generated_contents = operation.original is None
     docx = assemble_docx(draft, acknowledged_fingerprint=acknowledged_fingerprint, asset_loader=asset_loader, source_view=source_view)
     # Retained native PNGs may still contain erased artwork under alpha zero.
     # This bounded derivative pass is separate from pixel-preserving metadata
@@ -569,14 +574,21 @@ def _generate_verified_report(draft, *, acknowledged_fingerprint, asset_loader, 
     docx = sanitize_package_transparency(docx)
     docx = sanitize_package_media(docx)
     pdf, error = _convert_report_pdf(draft, docx)
+    from app.monthly_report_contents_review import contents_notice_for
+    from app.monthly_report_contents_pagination import synchronize
+    notice = contents_notice_for(draft.profile)
+    if generated_contents:
+        updated, generated_notice = synchronize(docx, pdf, included_sections(draft.sections))
+        if generated_notice is not None:
+            docx, notice = canonical_docx(updated), generated_notice
     return ReportPackage(docx, pdf, report_filename(draft, "docx"), report_filename(draft, "pdf"), draft.fingerprint, error,
                          source_view.receipt_sha256 if source_view is not None else "",
                          hashlib.sha256(docx).hexdigest() if source_view is not None else "",
-                         operation.art_digest)
+                         operation.art_digest, notice, generated_contents)
 
 
 def retry_report_pdf(draft: ReportDraft, package: ReportPackage, *, source_view=None) -> ReportPackage:
-    """Retry only conversion of the same current native Word bytes. Never save."""
+    """Retry conversion without assembly/save; verify generated page caches."""
     if package.fingerprint != draft.fingerprint:
         raise ValueError("This Word file belongs to an earlier draft. Create files for the current report first.")
     from app.monthly_report_source_view_runtime import cache_identity, render_operation
@@ -613,6 +625,11 @@ def _retry_verified_report_pdf(draft, package, operation):
     if package.pdf:
         return package
     pdf, error = _convert_report_pdf(draft, package.docx)
+    from app.monthly_report_contents_pagination import synchronize
+    if package.generated_contents:
+        docx, notice = synchronize(package.docx, pdf, included_sections(draft.sections))
+        if notice is not None:
+            return replace(package, docx=canonical_docx(docx), pdf=pdf, pdf_error=error, contents_notice=notice)
     return replace(package, pdf=pdf, pdf_error=error)
 
 
