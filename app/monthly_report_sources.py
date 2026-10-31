@@ -12,6 +12,7 @@ from email import policy
 from email.parser import BytesParser
 from html.parser import HTMLParser
 from io import BytesIO, StringIO
+import codecs
 import csv
 import hashlib
 from pathlib import Path
@@ -340,12 +341,28 @@ def _table(name, records, *, strict_columns=False) -> SourceTable:
     return SourceTable(name, tuple(columns), tuple(r + ("",) * (width - len(r)) for r in rows[1:]))
 
 
+def _csv_unicode_encoding(raw: bytes) -> str | None:
+    """Honor only explicit signatures; UTF-32 LE shares UTF-16 LE's prefix."""
+    if raw.startswith((codecs.BOM_UTF32_LE, codecs.BOM_UTF32_BE)):
+        return "utf-32"
+    if raw.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        return "utf-16"
+    return None
+
+
 def _spreadsheet(raw: bytes, suffix: str) -> tuple[SourceTable, ...]:
     if suffix == ".csv":
-        try:
-            text = raw.decode("utf-8-sig")
-        except UnicodeDecodeError:
-            text = raw.decode("cp1252")
+        encoding = _csv_unicode_encoding(raw)
+        if encoding:
+            try:
+                text = raw.decode(encoding)
+            except UnicodeDecodeError as exc:
+                raise ValueError("CSV Unicode encoding could not be read. Export a fresh UTF-8 CSV copy.") from exc
+        else:
+            try:
+                text = raw.decode("utf-8-sig")
+            except UnicodeDecodeError:
+                text = raw.decode("cp1252")
         sample = text[:8192]
         try:
             dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
@@ -405,11 +422,15 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
     digest = hashlib.sha256(raw).hexdigest()
     path, cache = _path(profile, digest, suffix), _path(profile, digest, ".json")
     attachments = ()
+    unicode_csv = suffix == ".csv" and _csv_unicode_encoding(raw) is not None
     if cache.exists() and path.exists() and suffix not in (".eml", ".msg"):
         data = library._read(cache)
         source = library.source_from_dict(data["source"])
         tables = tuple(SourceTable(t["name"], tuple(t["columns"]), tuple(tuple(r) for r in t["rows"])) for t in data.get("tables", ()))
-        if source.suffix == suffix and (suffix != ".pdf" or data.get("vendor_passage_policy", 0) >= 7):
+        # Old signed-Unicode CSV caches contain CP1252/NUL cells. Re-extract
+        # only those originals; accepted report records/history stay untouched.
+        if (source.suffix == suffix and (not unicode_csv or data.get("csv_unicode_policy") == 1)
+                and (suffix != ".pdf" or data.get("vendor_passage_policy", 0) >= 7)):
             if data.get("client_page_policy", 0) < 1 and suffix not in (".csv", ".xlsx"):
                 source = replace(source, selected_pages=suggested_pages(source))
             if data.get("native_action_policy", 0) < 1:
@@ -481,7 +502,9 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
         source = replace(source, selected_pages=suggested_pages(source))
     source = suggest_facts(source, profile)
     content = SourceContent(source, tables, tuple(image_items))
-    library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1, "native_action_policy": 1, "vendor_passage_policy": 7, **asdict(content)}))
+    library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1,
+        "native_action_policy": 1, "vendor_passage_policy": 7,
+        **({"csv_unicode_policy": 1} if unicode_csv else {}), **asdict(content)}))
     return content, attachments
 
 
