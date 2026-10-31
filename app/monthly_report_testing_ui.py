@@ -115,6 +115,10 @@ def _hash_generation_part(value):
         # Keep the recorded pre-occurrence diagnostic comparable. Real
         # occurrence metadata still changes this digest and the report guards.
         structured.pop("asset_instances")
+    if isinstance(value, ResolvedBlock) and value.cover_original is None:
+        # Match screenshots recorded before optional original provenance existed.
+        # Populated provenance remains part of this synthetic diagnostic only.
+        structured.pop("cover_original")
 
     def text(item):
         # Likewise for follow-ups recorded before their month stamp existed.

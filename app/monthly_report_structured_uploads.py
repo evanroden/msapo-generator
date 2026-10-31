@@ -169,7 +169,7 @@ _ACTIVITY_CONTINUATION = re.compile(
     r"failed\b|locked\s+out\b|out\s+of\s+service\b|"
     r"under\s+(?:observation|repair)\b|"
     r"(?:and|but|because|although|while|with|without|at|after|before)\b)")
-_ACTIVITY_UNFINISHED = re.compile(r"(?i)\b(?:the|a|an|its|their|that|whether)\s*$")
+_ACTIVITY_UNFINISHED = re.compile(r"(?i)\b(?:the|a|an|its|their|that|whether|it|and|but)\s*$")
 _ACTIVITY_NEW_ACTION = re.compile(
     r"(?i)^\s*(?:inspected|checked|replaced|repaired|tested|completed|installed|"
     r"cleaned|calibrated|serviced|adjusted|verified|recorded|performed|"

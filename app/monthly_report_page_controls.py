@@ -184,10 +184,12 @@ def apply_page_request(contents, blocks, request):
     if (not isinstance(request, dict) or any(not isinstance(request.get(k), str) for k in fields)
             or type(request.get("number")) is not int
             or ("caption" in request and not isinstance(request["caption"], str))
-            or request["action"] not in {"omit", "review", "earlier", "later"}):
+            or request["action"] not in {"omit", "review", "earlier", "later", "caption"}
+            or (request.get("action") == "caption" and "caption" not in request)):
         raise ValueError("This page action could not be recovered. Your report is unchanged; choose the page action again.")
     source_id, key, number = request["source_id"], request["block_key"], request["number"]
-    content = next((c for c in contents if c.source.id == source_id), None)
+    matches = [c for c in contents if c.source.id == source_id]
+    content = matches[0] if len(matches) == 1 else None
     block = blocks.get(key)
     if (content is None or block is None
             or block.fingerprint != request["block_fingerprint"]

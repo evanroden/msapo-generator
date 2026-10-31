@@ -231,6 +231,7 @@ def block_from_dict(value: dict) -> ResolvedBlock:
     try:
         from app.monthly_report_asset_review import normalize_asset_reviews
         from app.monthly_report_model import AssetInstance
+        from app.monthly_report_cover_recovery import occurrence_from_dict
         instance_values = value.get("asset_instances", ())
         if (not isinstance(instance_values, (tuple, list)) or any(
                 not isinstance(item, dict) or not isinstance(item.get("key"), str) or not item["key"]
@@ -242,6 +243,7 @@ def block_from_dict(value: dict) -> ResolvedBlock:
             raise ValueError("Invalid saved picture occurrence.")
         block = ResolvedBlock(
             key=value["key"], source=value["source"], text=value.get("text", ""),
+            cover_original=occurrence_from_dict(value),
             rows=tuple(tuple(str(cell) for cell in row) for row in value.get("rows", ())),
             asset_hashes=tuple(value.get("asset_hashes", ())), references=tuple(value.get("references", ())),
             ai_written=value.get("ai_written", False), reviewed_fingerprint=value.get("reviewed_fingerprint", ""),
@@ -276,6 +278,16 @@ def spec_from_dict(value: dict) -> BlockSpec:
 
 def draft_from_dict(value: dict) -> ReportDraft:
     try:
+        from app.monthly_report_cover_recovery import request_from_dict
+        reviews = value.get("source_row_reviews", ())
+        if (not isinstance(reviews, (tuple, list)) or len(reviews) > 100
+                or any(not isinstance(item, str) for item in reviews)
+                or sum(len(item) for item in reviews) > 16_000_000):
+            raise ValueError("Invalid work-order review receipts.")
+        if reviews:
+            from app.monthly_report_row_review_receipts import decoded
+            for receipt in reviews:
+                decoded(receipt)  # Structural integrity only; preserve stale, intact receipts unchanged.
         sections = tuple(SectionSpec(
             key=s["key"], number=s["number"], title=s["title"],
             blocks=tuple(BlockSpec(
@@ -287,11 +299,13 @@ def draft_from_dict(value: dict) -> ReportDraft:
         ) for s in value["sections"])
         return ReportDraft(
             profile=profile_from_dict(value["profile"]), period=ReportPeriod(**value["period"]),
+            cover_recovery_request=request_from_dict(value.get("cover_recovery_request")),
             prepared_by=value["prepared_by"], sections=sections,
             blocks=tuple(block_from_dict(b) for b in value["blocks"]),
             address_line=value.get("address_line", ""), synthetic=value.get("synthetic", False),
             sources=tuple(source_from_dict(s) for s in value.get("sources", ())),
             follow_ups=tuple(ReportFollowUp(**{**item, "references":tuple(item.get("references",()))}) for item in value.get("follow_ups",())),
+            source_row_reviews=tuple(reviews),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise LibraryError("Invalid report snapshot.") from exc
@@ -299,6 +313,29 @@ def draft_from_dict(value: dict) -> ReportDraft:
 
 def source_from_dict(value: dict) -> ReportSource:
     fields = dict(value)
+    from app.monthly_report_financial_policy import FinancialScope, SourceFinancialReview, ReviewedFinancialPage
+    review = fields.get("financial_source_review")
+    if review is not None:
+        try:
+            if (not isinstance(review, dict) or type(review.get("version")) is not int or review["version"] != 1
+                    or any(not isinstance(review.get(k), str) for k in ("source_id", "source_sha256", "role", "audience"))
+                    or not isinstance(review.get("scope"), dict)
+                    or any(not isinstance(review["scope"].get(k), str) for k in ("contract_id", "site_id"))):
+                raise ValueError("Malformed financial review")
+            fields["financial_source_review"] = SourceFinancialReview(**{**review, "scope": FinancialScope(**review["scope"])})
+        except (KeyError, TypeError, ValueError) as exc:
+            raise LibraryError("Invalid saved financial source review.") from exc
+    try:
+        pages = fields.get("financial_page_reviews", ())
+        if (not isinstance(pages, (list, tuple)) or any(not isinstance(item, dict)
+                or type(item.get("number")) is not int or item["number"] < 1
+                or type(item.get("version")) is not int or item["version"] != 1
+                or any(not isinstance(item.get(k), str) for k in ("fingerprint", "source_review_fingerprint", "semantics"))
+                for item in pages) or len({item["number"] for item in pages}) != len(pages)):
+            raise ValueError("Malformed financial page review")
+        fields["financial_page_reviews"] = tuple(ReviewedFinancialPage(**item) for item in pages)
+    except (TypeError, ValueError) as exc:
+        raise LibraryError("Invalid saved financial page review.") from exc
     for key in ("tags", "page_texts", "selected_pages", "needs_vision", "notices"):
         fields[key] = tuple(fields.get(key, ()))
     fields["pdf_text_blocks"] = tuple(tuple(v) if isinstance(v, (tuple, list)) else v for v in fields.get("pdf_text_blocks", ()))
@@ -1157,6 +1194,9 @@ def restore_profile(contract: str, key: str, revision: int, *, expected_revision
 def save_snapshot(draft: ReportDraft, *, expected_revision: int, open_issues: tuple[str, ...] = (),
                   pending_proposals: tuple[str, ...] = (), assets: tuple[tuple[str, bytes], ...] = (),
                   entered_editor: str = "") -> SavedReport:
+    from app.monthly_report_cover_recovery import validate_cover_occurrence
+    for block in draft.blocks:
+        validate_cover_occurrence(draft.profile, block)
     path = _profile_path(draft.profile.contract, draft.profile.key, snapshots=True)
     # One-off assets are saved for this report's snapshot only, without adding
     # a current library slot. Future templates cannot accidentally inherit them.
@@ -1175,6 +1215,8 @@ def save_snapshot(draft: ReportDraft, *, expected_revision: int, open_issues: tu
         target = path / (draft.period.key + ".json")
         previous = _read(target) if target.exists() else {"revision": 0}
         _expected(previous, expected_revision)
+        from app.monthly_report_cover_recovery import stamp_saved_request
+        draft = stamp_saved_request(draft, expected_revision, expected_revision + 1)
         saved = SavedReport(draft, _now(), expected_revision + 1, open_issues, pending_proposals, entered_editor)
         raw = _json({"schema": 1, **asdict(saved)})
         _atomic_write(path / "history" / f"{draft.period.key}-{saved.revision:08d}.json", raw)

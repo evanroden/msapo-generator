@@ -399,6 +399,38 @@ def browser_task(engine, name, base):
             capture("review-photo-group-" + str(indexes[0] + 1), current, after=before)
         return current
 
+    def correct_photo(number, caption, *, keyboard=False):
+        from monthly_sequential_navigation import navigate_sections
+        target = panel(number)
+        if target.locator('details').count():
+            details = target.locator('details').first
+        else:
+            details = target
+        if details.evaluate('node => node.open'):
+            target.locator('summary').first.click()
+        navigate_sections(page, 'report_review', keyboard=keyboard)
+        link = page.locator('.enfra-picture-correction-link').filter(has_text=f'Edit photo {number}')
+        expect(link).to_have_count(1)
+        if keyboard:
+            link.focus()
+            link.press('Enter')
+        else:
+            link.click()
+        caption_field = photo_disclosure(number).get_by_role('textbox', name='Caption', exact=True)
+        expect(caption_field).to_be_visible()
+        expect(caption_field).to_be_in_viewport(ratio=1)
+        expect(caption_field).to_be_focused()
+        expect(caption_field).to_have_value(caption)
+        back = photo_disclosure(number).locator('.enfra-correction-return')
+        expect(back).to_have_text('Return to Review')
+        if keyboard:
+            back.focus()
+            back.press('Enter')
+        else:
+            back.click()
+        expect(page.locator('.epc-section-progress')).to_have_attribute('data-section', 'report_review')
+        navigate_sections(page, 'monthly_activity', keyboard=keyboard)
+
     try:
         observe_frontend_delivery(page, record)
         page.goto(URL, wait_until="domcontentloaded")
@@ -418,6 +450,8 @@ def browser_task(engine, name, base):
             control.press("Tab")
             block = preserve_asset_reviews(block, replace(block, asset_captions=tuple(CAPTIONS[n] if n <= index else "" for n in range(2))))
             capture("caption-" + str(index + 1), block)
+        correct_photo(1, CAPTIONS[0])
+        correct_photo(2, CAPTIONS[1])
         block = review(block)
         page.locator(PAIR).get_by_role("button", name="Edit photos or captions", exact=True).click()
         expect(panel(1).get_by_role("button", name="Move earlier", exact=True)).to_be_disabled()
@@ -428,6 +462,7 @@ def browser_task(engine, name, base):
         require_photo_disclosure(2, False, "deliberate-collapse")
         control = panel(1).get_by_role("textbox", name="Caption", exact=True)
         control.fill(MOVED)
+        correct_photo(1, MOVED)
         control.press("Tab")
         block = preserve_asset_reviews(block, replace(block, asset_captions=(MOVED, CAPTIONS[1])))
         capture("ordinary-caption-blur", block)
@@ -500,6 +535,7 @@ def browser_task(engine, name, base):
         capture("narrow-later-caption-delivered-with-remove", block)
         native_geometry("390-caption-with-remove")
         record["action_delivery"].append(action_delivery(delivery, start, "Remove photo", THIRD))
+        correct_photo(2, THIRD, keyboard=True)
         start = len(delivery)
         page.get_by_role("textbox", name="Activity summary", exact=True).fill(ACTIVITY)
         page.locator(PAIR).get_by_role("button", name="Done editing photos", exact=True).click()

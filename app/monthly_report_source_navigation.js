@@ -87,14 +87,60 @@ globalThis.ENFRASourceReviewNavigation = {
         }
         function controlsChanged() {
             if (disposed || controlsFrame !== null) return;
-            controlsFrame = requestAnimationFrame(() => {controlsFrame = null;syncControls();nativeRequests();});
+            controlsFrame = requestAnimationFrame(() => {controlsFrame = null;syncControls();nativeRequests();returnLinks();});
+        }
+        function validExactReturn({link,marker,field,back} = {}) {
+            if (state.identity !== reportIdentity ||
+                marker?.dataset.navigationOwner !== 'exact-manager-page' ||
+                !link?.classList?.contains('enfra-page-correction-request') ||
+                !link.dataset.token || marker.dataset.navigationToken !== link.dataset.token ||
+                !back?.isConnected || !app.contains(back) || back.hidden ||
+                marker.parentElement.querySelector('.enfra-correction-return') !== back) return false;
+            const exact = globalThis.ENFRAPictureCorrections?.resolve(app, link, reportIdentity);
+            return exact?.marker === marker && exact?.field === field &&
+                app.contains(marker) && !field.closest('[inert]') && Boolean(field.getClientRects().length);
+        }
+        function retireExactPresentation() {
+            const task = state.sourceReviewExactReturn;
+            if (task?.back.isConnected && app.contains(task.back)) task.back.hidden = true;
+            state.sourceReviewExactReturn = null;
+        }
+        function exactReturnOwner() {
+            const task = state.sourceReviewExactReturn;
+            if (!task) return null;
+            if (validExactReturn(task)) return task;
+            retireExactPresentation();
+            return null;
         }
         function returnLinks() {
+            const exact = exactReturnOwner();
             app.querySelectorAll('.enfra-source-review-return').forEach(link => {
-                link.hidden = link.dataset.sourceId !== state.sourceReviewReturn?.source;
-                link.textContent = state.sourceReviewReturn?.target === 'report-section-water'
+                const hidden = Boolean(exact) || state.identity !== reportIdentity ||
+                    link.dataset.sourceId !== state.sourceReviewReturn?.source;
+                const label = state.sourceReviewReturn?.target === 'report-section-water'
                     ? 'Return to report pages' : 'Return to review';
+                // This runs from the existing DOM lifecycle observer too;
+                // unchanged presentation must not schedule another mutation.
+                if (link.hidden !== hidden) link.hidden = hidden;
+                if (link.textContent !== label) link.textContent = label;
             });
+        }
+        function exactReady(event) {
+            if (disposed || !validExactReturn(event.detail)) return;
+            const {link, marker, field, back} = event.detail;
+            const consumed = state.managerReturnTokens || (state.managerReturnTokens = new Set());
+            if (consumed.has(link.dataset.token)) {
+                const active = state.sourceReviewExactReturn;
+                if (active?.link !== link || active?.marker !== marker ||
+                    active?.field !== field || active?.back !== back) back.hidden = true;
+                returnLinks();
+                return;
+            }
+            consumed.add(link.dataset.token);
+            // Navigation owns presentation, not persistence. Retain the old
+            // legacy task even if this working-state landing's save failed.
+            state.sourceReviewExactReturn = {link,marker,field,back};
+            returnLinks();
         }
         function owner(node) {
             for (let p = node.parentElement; p; p = p.parentElement)
@@ -227,6 +273,7 @@ globalThis.ENFRASourceReviewNavigation = {
             if(pageContext?.dataset?.returnTarget==='report-section-water') {
                 const section=app.querySelector('#report-section-water');
                 if(section) {
+                    retireExactPresentation();
                     state.sourceReviewReturn={source:pageContext.dataset.sourceId,target:'report-section-water',
                         anchor:'source-page-context-'+pageContext.dataset.sourceId,link:button,
                         linkTop:button.getBoundingClientRect().top,reviewTop:section.getBoundingClientRect().top};
@@ -235,15 +282,29 @@ globalThis.ENFRASourceReviewNavigation = {
             }
             const warning=button?.closest?.('[class*="st-key-monthly_source_warning_"]')?.querySelector?.('.enfra-source-warning');
             const reviewTarget=app.querySelector('#report-review');
+            if (warning?.dataset.navigationOwner === 'exact-manager-page') {
+                // This native callback may still be rejected. Do not create
+                // a second legacy task or retire an earlier valid Return.
+                // Only the accepted exact destination can hand ownership over.
+                return;
+            }
             if(warning&&reviewTarget) {
                 // Let the native callback select/open the source and commit
                 // any delivered edits. Only remember presentation context.
+                retireExactPresentation();
                 state.sourceReviewReturn={source:warning.dataset.sourceId,link:button,
                     linkTop:button.getBoundingClientRect().top,reviewTop:reviewTarget.getBoundingClientRect().top};
                 returnLinks();return;
             }
             const link = event.target?.closest?.('a');
             if (!link || !app.contains(link)) return;
+            if (link === state.sourceReviewExactReturn?.back) {
+                // The existing workspace handler performs the actual Return.
+                // Restore only our prior presentation, without scrolling.
+                retireExactPresentation();
+                returnLinks();
+                return;
+            }
             if (link.classList.contains('enfra-source-review-return')) {
                 const prior = state.sourceReviewReturn;
                 const review = app.querySelector('#'+(prior?.target || 'report-review'));
@@ -272,6 +333,7 @@ globalThis.ENFRASourceReviewNavigation = {
             if (!boundary || !review) return;
             const field = fieldFor(boundary, match[2]);
             if (field?.disabled || field?.closest('[data-stale="true"]')) return;
+            retireExactPresentation();
             state.sourceReviewReturn = {source:match[1], link,
                 linkTop:link.getBoundingClientRect().top, reviewTop:review.getBoundingClientRect().top};
             // Activate the native summary so Streamlit updates the body's
@@ -285,12 +347,13 @@ globalThis.ENFRASourceReviewNavigation = {
             focusWhenReady(boundary, match[2], match[1], workspace, link);
         }
         app.addEventListener('click', click);
+        app.addEventListener('enfra-exact-correction-ready', exactReady);
         // This display-only observer also sees newly streamed warnings and
         // lazy native controls. It does not wait for unrelated/offscreen
         // previews, read values, submit, or use a timer as readiness proof.
         const controlsObserver = new MutationObserver(controlsChanged);
         controlsObserver.observe(app, {subtree:true, childList:true, attributes:true,
-            attributeFilter:['disabled','data-stale','data-epc-mode','data-report-identity','data-source-id','data-kind','id']});
+            attributeFilter:['disabled','inert','data-stale','data-epc-mode','data-report-identity','data-source-id','data-kind','data-navigation-owner','data-navigation-token','data-token','id']});
         controlsChanged();
         // A valid correction can remove its warning and form. The keyed return
         // location stays mounted; reveal it again after that ordinary rerun.
@@ -302,6 +365,7 @@ globalThis.ENFRASourceReviewNavigation = {
             if (controlsFrame !== null) cancelAnimationFrame(controlsFrame);
             syncControls(true);
             app.removeEventListener('click',click);
+            app.removeEventListener('enfra-exact-correction-ready',exactReady);
         };
     },
 };
