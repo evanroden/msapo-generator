@@ -30,6 +30,7 @@ def canonical_issues(draft):
     Explicit no-issue declarations stay statements, rather than false issues.
     A source-linked draft remains in its evidence editor until reviewed there.
     """
+    legacy_items = draft.follow_ups
     draft = unique_followup_keys(draft)
     block = next((b for b in draft.blocks if b.key == "equipment_issues"), None)
     if block is None or block.source == "Omit":
@@ -47,8 +48,17 @@ def canonical_issues(draft):
     spec = specs.get(block.key)
     tables = [(tuple(c.title for c in spec.columns) if spec else (), block.rows, "")]
     tables += [(table.columns, table.rows, table.reference) for table in block.extra_tables]
-    candidates = [(text, block.references) for text in texts]
+    # Accepted register rows have a source-row identity separate from their
+    # editable text. Reimporting that source must not recreate a changed card.
+    candidates = [(text, block.references, None, "ongoing", "", "", "") for text in texts]
     for columns, rows, reference in tables:
+        from app.monthly_report_issue_register import mapped_issue_register
+        mapped = mapped_issue_register(columns, rows, reference)
+        if mapped is not None:
+            for record in mapped:
+                candidates.append((record.text, (*block.references, *((reference,) if reference else ())),
+                                   record.key, record.status, record.update, record.legacy_text, reference))
+            continue
         width = max((len(row) for row in rows), default=len(columns))
         columns = (*columns, *(f"Detail {n + 1}" for n in range(len(columns), width)))
         prices = table_price_columns(columns, rows)
@@ -56,18 +66,30 @@ def canonical_issues(draft):
             text = "; ".join(f"{columns[n]}: {value}" for n, value in enumerate(row)
                              if n not in prices and value.strip())
             if text:
-                candidates.append((text, (*block.references, *((reference,) if reference else ()))))
+                candidates.append((text, (*block.references, *((reference,) if reference else ())),
+                                   None, "ongoing", "", "", ""))
     items = list(draft.follow_ups)
     keys = {item.key for item in items if item.category == "issue"}
     seen = {item.text.strip() for item in items if item.category == "issue"}
     statements = []
-    for text, references in candidates:
+    for text, references, register_key, status, update, legacy_text, table_reference in candidates:
         if _no_equipment_issues(text):
             if _REMOVED_STATEMENT + _digest(text) not in block.references:
                 statements.append(text)
             continue
-        key = issue_key(text)
-        if key in keys or text.strip() in seen:
+        key = register_key or issue_key(text)
+        # Two separate, identical source rows remain distinct. A repeated
+        # import of one accepted row is recognized by its original row ID;
+        # later card text/status edits do not change that identity.
+        if key in keys or (register_key is None and text.strip() in seen):
+            continue
+        if register_key and any(
+            item.category == "issue" and item.key == issue_key(legacy_text)
+            and (not table_reference or not item.references or table_reference in item.references)
+            for item in legacy_items
+        ):
+            # Preserve all operator edits/decisions, even when provenance is
+            # unavailable. Never guess-merge two explicitly different sources.
             continue
         keys.add(key)
         seen.add(text.strip())
@@ -76,6 +98,7 @@ def canonical_issues(draft):
         references = tuple(dict.fromkeys(ref for ref in references
                             if not ref.startswith(("report-period:", "report-origin:", "docx:", _REMOVED_STATEMENT))))
         items.append(ReportFollowUp(key, "issue", text, draft.period.key,
+                                    status=status, update=update,
                                     references=references))
     revised = replace(block, text="\n\n".join(dict.fromkeys(statements)), rows=(),
                       extra_tables=(), ai_paragraphs=(), ai_written=False,
@@ -663,7 +686,7 @@ def _period_label(key):
         return key
 
 
-def _render_issue_period_confirmation(item, draft, p, identity, cycle):
+def _render_issue_period_confirmation(item, draft, p, identity, cycle, prefix):
     """One native action states that a carried update is current this month.
 
     The delivered confirmation is captured, journaled and acknowledged like
@@ -683,6 +706,9 @@ def _render_issue_period_confirmation(item, draft, p, identity, cycle):
                f"current for {draft.period.label}, or edit the update or status.")
     # The native ID names this row and report, as Clear/Undo's do: a held
     # click must not bind to a replacement row's newly registered callback.
+    from app.monthly_report_followup_navigation import field_markup
+    st.markdown(field_markup(prefix, item, "period", key + "_confirm_" + identity, "button"),
+                unsafe_allow_html=True)
     st.button("Confirm update for " + draft.period.label, key=key + "_confirm_" + identity,
               on_click=_issue_period_confirmed,
               args=(key, item.update_period, identity, token, draft.period.key))
@@ -691,13 +717,15 @@ def _render_issue_period_confirmation(item, draft, p, identity, cycle):
 def _render_issue_evidence(item, draft, options, p, field, prefix, cycle):
     import streamlit as st
     identity = _issue_identity(draft, prefix, item)
+    from app.monthly_report_followup_navigation import field_markup
     update = _issue_control(st.text_area, "Issue update", p + "_update", item.update,
                             field, identity=identity, cycle=cycle, height=90, max_chars=4000)
     note, references = item.evidence_note, item.references
     if item.status in ("updated", "resolved") or note:
+        st.markdown(field_markup(prefix, item, "evidence", p + "_note"), unsafe_allow_html=True)
         note = _issue_control(st.text_area, "Evidence or explanation for the status",
                               p + "_note", note, field, identity=identity, cycle=cycle, height=90, max_chars=4000)
-    _render_issue_period_confirmation(item, draft, p, identity, cycle)
+    _render_issue_period_confirmation(item, draft, p, identity, cycle, prefix)
     if options or references:
         selected = _issue_control(st.multiselect, "Supporting source pages",
             p + "_sources_" + _digest(list(options)),
@@ -707,6 +735,7 @@ def _render_issue_evidence(item, draft, options, p, field, prefix, cycle):
         if missing:
             notice = st.empty()
             unlink = p + "_remove_missing_" + _digest(missing)
+            st.markdown(field_markup(prefix, item, "sources", unlink, "checkbox"), unsafe_allow_html=True)
             if st.checkbox("Remove unavailable source links", key=field(unlink, False),
                            on_change=_record_issue_unlink, args=(unlink, identity)):
                 missing = ()
@@ -727,6 +756,8 @@ def render_issue_cards(draft, prefix, field, *, defer_actions=False, evidence_pa
     displayed_draft = draft
     displayed = {item.key: item for item in draft.follow_ups if item.category == "issue"}
     draft = _capture_issue_controls(draft, prefix, options)
+    from app.monthly_report_followup_navigation import consume_after_capture
+    consume_after_capture(draft, prefix, "issue")
     cycle = uuid4().hex
     message = followup_limit_message(draft)
     if message:
@@ -762,6 +793,9 @@ def render_issue_cards(draft, prefix, field, *, defer_actions=False, evidence_pa
         # A queue flush between those messages replaces the native input node,
         # even when its widget key and acknowledged text have not changed.
         with st.container(border=True, key=p + "_card"):
+            from app.monthly_report_followup_navigation import field_markup
+            st.markdown(field_markup(prefix, item, "description", p + "_text"), unsafe_allow_html=True)
+            st.markdown(field_markup(prefix, item, "status", p + "_status", "combobox"), unsafe_allow_html=True)
             text = _issue_control(st.text_area, "Issue description", p + "_text", item.text,
                                   field, identity=identity, cycle=cycle, height=90, max_chars=4000)
             status = _issue_control(st.selectbox, "Issue status", p + "_status", item.status,

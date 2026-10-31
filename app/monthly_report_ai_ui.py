@@ -283,24 +283,36 @@ def edit_linked_paragraphs(draft, blocks, prefix, field, allowed_keys=None):
             manual = _linked_text_input(prefix, field, "linked_" + block.key + "_manual",
                                         "Your other notes", _linked_manual_text(block))
             paragraphs = []
+            native_fields = []
+            from app.monthly_report_guided import _rich_text_editor_key
+            manual_key = _rich_text_editor_key(prefix, ResolvedBlock("linked_" + block.key + "_manual", "This month"))
             for n, paragraph in enumerate(block.ai_paragraphs):
                 identity = ai.digest((n, paragraph.fact_ids))
                 text = _linked_text_input(prefix, field, "linked_" + block.key + f"_paragraph_{n}",
                     f"Report paragraph {n + 1}", paragraph.text,
                     references=paragraph.fact_ids, height=90)
-                available = list(facts)
+                # A missing saved fact remains an explicit selected option.
+                # Browsing/navigation cannot silently erase its evidence link.
+                available = list(dict.fromkeys((*facts, *paragraph.fact_ids)))
+                evidence_key = p + "_facts_" + identity + ai.digest(available)
+                native_fields.append({"text": _rich_text_editor_key(prefix, ResolvedBlock(
+                    "linked_" + block.key + f"_paragraph_{n}", "This month")), "evidence": evidence_key})
                 selected = st.multiselect(
                     f"Evidence for paragraph {n + 1}",
                     available,
                     format_func=lambda k: (
                         f"{facts[k][0].filename} · page {facts[k][1].page} · {facts[k][1].text[:90]}"
+                        if k in facts else "Unavailable saved fact · " + k
                     ),
                     key=field(
-                        p + "_facts_" + identity + ai.digest(available),
-                        [i for i in paragraph.fact_ids if i in facts],
+                        evidence_key,
+                        list(paragraph.fact_ids),
                     ),
                 )
                 for identity in selected:
+                    if identity not in facts:
+                        st.caption("This saved fact is unavailable. Choose current evidence or explicitly remove its link.")
+                        continue
                     source, fact = facts[identity]
                     st.caption(f"{source.filename}, page {fact.page}: {fact.quote}")
                 paragraphs.append(
@@ -337,6 +349,10 @@ def edit_linked_paragraphs(draft, blocks, prefix, field, allowed_keys=None):
                 candidate = replace(candidate, reviewed_fingerprint="")
                 st.warning(str(exc))
             blocks[block.key] = candidate
+            st.session_state.setdefault(prefix + "_ai_linked_controls", {})[block.key] = {
+                "paragraphs": candidate.ai_paragraphs, "manual": manual_key, "fields": tuple(native_fields)}
+            from app.monthly_report_ai_correction_ui import render_paragraph_marker
+            render_paragraph_marker(prefix, replace(draft,blocks=tuple(blocks.values())), candidate, native_fields)
     return blocks
 
 
@@ -375,9 +391,12 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                 "Pages to read for facts",
                 list(range(1, len(source.page_texts) + 1)),
                 default=list(range(1, len(source.page_texts) + 1)),
-                key=prefix + "_ai_read_pages_" + source.id,
+                key=field(prefix + "_ai_read_pages_" + source.id,
+                          list(range(1, len(source.page_texts) + 1))),
                 help="Reading facts does not include the original pages in the client report. Pages containing prices stay excluded from output.",
             )
+            from app.monthly_report_ai_correction_ui import render_fact_page_context
+            render_fact_page_context(prefix,replace(draft,blocks=tuple(blocks.values())),source,by_id[chosen])
             if st.button(
                 "Find work, findings and follow-ups",
                 key=prefix + "_ai_extract",

@@ -26,6 +26,7 @@ from playwright.sync_api import expect, sync_playwright
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts.workspace_browser_observations import CLIENT_INIT, CLIENT_SNAPSHOT
+from scripts.monthly_sequential_navigation import navigate_sections, section_order
 OUT = ROOT / "test-artifacts" / "monthly-adaptive"
 URL = "http://127.0.0.1:8520"
 ACTIVITY = ".st-key-epc_pair_monthly_activity"
@@ -318,33 +319,30 @@ def editor_state(field):
 
 
 def exercise_section_navigation(page, browser, field):
-    """One native selector, including the otherwise confined Review boundary.
-
-    select_option exercises the real HTML select's change path. This is not a
-    physical device/native popup claim; the served keyboard check stays distinct.
-    """
-    selector = page.get_by_role("combobox", name="Jump to section", exact=True)
+    """Native sequential controls, including the confined Review boundary."""
+    selector = page.locator(".epc-section-progress")
     expect(selector).to_have_count(1)
-    expect(selector).to_be_enabled()
-    labels = page.locator(".epc-workspace-pair [data-epc-title]").evaluate_all(
-        "nodes=>nodes.map(n=>n.dataset.epcTitle)")
-    check(browser, "one selector uses every editor heading in report order",
-          selector.locator("option").all_text_contents() == labels + ["Review and download"])
+    expect(page.locator(".epc-section-selector, .epc-review-shortcut")).to_have_count(0)
+    entries = section_order(page)
+    navigate_sections(page, entries[0]['id'])
+    for entry in entries[1:]:
+        navigate_sections(page, entry['id'])
+    for entry in reversed(entries[:-1]):
+        navigate_sections(page, entry['id'], keyboard=True)
+    check(browser, "Back and Next visit every editor and Review in report order", True)
+    navigation_receipt(page, browser + " before tabletop mode entry")
     inject(page, [{"x": 0, "y": 0, "width": 1440, "height": 380},
                   {"x": 0, "y": 410, "width": 1440, "height": 490}])
     mode(page, "tabletop")
-    # Place the section marker across the selector's actual reading line.
-    # The former 110px inset left Activity below that line in the lower pane;
-    # its current-section assertion described a different visible section.
-    nav_height = selector.evaluate("n=>n.closest('.epc-section-navigation').getBoundingClientRect().height")
-    scroll_pair(page, ACTIVITY, inset=max(0, nav_height - 4))
+    navigate_sections(page, "monthly_activity")
     expect(selector).to_be_in_viewport(ratio=1)
-    expect(selector).to_have_value("monthly_activity")
+    expect(selector).to_have_attribute("data-section", "monthly_activity")
     field.evaluate("n=>{window.__monthlyNavigationNode=n;}")
     before_field = field.evaluate("n=>({value:n.value,start:n.selectionStart,end:n.selectionEnd})")
     before_offset = page.locator(ACTIVITY).evaluate("n=>n.getBoundingClientRect().top-n.closest('.epc-workspace').getBoundingClientRect().top")
     before_runtime = page.evaluate(CLIENT_SNAPSHOT)["server"]
-    selector.select_option("report_review")
+    navigation_receipt(page, browser + " first tabletop Activity reading line")
+    navigate_sections(page, "report_review")
     mode(page, "compact")
     expect(page.locator("#report-review")).to_be_in_viewport()
     check(browser, "Review exits only the confined display and stays reachable", page.evaluate("""() => {
@@ -353,13 +351,14 @@ def exercise_section_navigation(page, browser, field):
         root.dataset.epcConfined!=='true' && !main.classList.contains('epc-workspace-scroll-owner');
     }"""))
     expect(selector).to_be_in_viewport()
-    capture(page, browser, "selector-tabletop-review")
-    selector.select_option("monthly_activity")
+    capture(page, browser, "sequential-tabletop-review")
+    navigate_sections(page, "monthly_activity")
     mode(page, "tabletop")
     after_offset = page.locator(ACTIVITY).evaluate("n=>n.getBoundingClientRect().top-n.closest('.epc-workspace').getBoundingClientRect().top")
-    check(browser, "section selection restores actual lower-editor reading position", abs(after_offset-before_offset) <= TOLERANCE,
+    navigation_receipt(page, browser + " sequential tabletop Activity return")
+    check(browser, "sequential return restores actual lower-editor reading position", abs(after_offset-before_offset) <= TOLERANCE,
           {"before": before_offset, "after": after_offset})
-    check(browser, "selector preserves the same native Activity input and pending selection",
+    check(browser, "sequential navigation preserves the same native Activity input and pending selection",
           field.evaluate("n=>n===window.__monthlyNavigationNode") and
           field.evaluate("n=>({value:n.value,start:n.selectionStart,end:n.selectionEnd})") == before_field)
     after_runtime = page.evaluate(CLIENT_SNAPSHOT)["server"]
@@ -367,7 +366,7 @@ def exercise_section_navigation(page, browser, field):
           before_runtime["full_runs"] == after_runtime["full_runs"] and
           before_runtime["draft_hashes"] == after_runtime["draft_hashes"],
           {"before": before_runtime, "after": after_runtime})
-    capture(page, browser, "selector-tabletop-return")
+    capture(page, browser, "sequential-tabletop-return")
     inject(page, None)
     mode(page, "wide")
 
@@ -384,7 +383,8 @@ def navigation_receipt(page, label):
             root:rect('.epc-workspace'),dataset:{...root?.dataset},
             navSpace:getComputedStyle(root).getPropertyValue('--epc-nav-space'),
             navMinHeight:getComputedStyle(document.querySelector('.st-key-monthly_report_navigation')).minHeight,
-            selector:document.querySelector('.epc-section-selector')?.value,
+            section:document.querySelector('.epc-section-progress')?.dataset.section,
+            navigationActive:root?._epcWorkspace?.navigationActive,activePreview:root?._epcWorkspace?.active,
             focus:{tag:active?.tagName,id:active?.id,text:active?.textContent?.slice(0,100)},
             mainScroll:document.querySelector('[data-testid="stMain"]')?.scrollTop,rootScroll:root?.scrollTop};
     }""")
@@ -392,44 +392,50 @@ def navigation_receipt(page, label):
     return value
 
 
-def exercise_direct_review(page, browser, field, layout):
-    """Real pointer and keyboard activation of the same-row shortcut."""
-    selector = page.get_by_role("combobox", name="Jump to section", exact=True)
-    review = page.get_by_role("button", name="Review", exact=True)
+def exercise_sequential_review(page, browser, field, layout):
+    """Real pointer and keyboard activation of the final sequential Review."""
+    progress = page.locator(".epc-section-progress")
+    review = page.locator(".epc-section-next")
     for action in ("pointer", "keyboard"):
-        selector.select_option("monthly_activity")
+        entries = section_order(page)
+        navigate_sections(page, entries[-2]['id'])
+        expect(review).to_have_text("Review")
         expect(review).to_be_enabled()
         expect(review).to_be_in_viewport(ratio=1)
         boxes = page.evaluate("""() => {
             const rect = selector => document.querySelector(selector).getBoundingClientRect().toJSON();
-            return {select:rect('.epc-section-selector'),review:rect('.epc-review-shortcut'),
+            return {back:rect('.epc-section-back'),progress:rect('.epc-section-progress'),review:rect('.epc-section-next'),
                     viewport:document.documentElement.clientWidth};
         }""")
-        check(browser, layout + " Review has an uncropped separate touch target", 
-              boxes["review"]["height"] >= 44 and boxes["select"]["right"] <= boxes["review"]["left"]
+        check(browser, layout + " Review has an uncropped separate touch target",
+              boxes["review"]["height"] >= 44 and boxes["back"]["height"] >= 44
+              and boxes["back"]["right"] <= boxes["progress"]["left"]
+              and boxes["progress"]["right"] <= boxes["review"]["left"]
               and boxes["review"]["right"] <= boxes["viewport"] + 2, boxes)
         value = field.input_value()
         if action == "pointer":
             review.click()
         else:
-            selector.focus()
-            selector.press("Tab")
+            back = page.locator(".epc-section-back")
+            back.focus()
+            back.press("Tab")
             expect(review).to_be_focused()
             review.press("Enter")
+        expect(progress).to_have_attribute("data-section", "report_review")
         expect(page.locator("#report-review")).to_be_in_viewport()
         check(browser, layout + " " + action + " Review focuses its heading", page.evaluate(
             "document.querySelector('#report-review').contains(document.activeElement)"))
-        selector.select_option("monthly_activity")
+        navigate_sections(page, "monthly_activity", keyboard=action == "keyboard")
         expect(field).to_have_value(value)
         page.wait_for_function("document.querySelector('.st-key-epc_pair_monthly_activity').contains(document.activeElement)")
-        expect(selector).to_have_value("monthly_activity")
-        navigation_receipt(page, browser + " " + layout + " " + action + " direct return")
-    capture(page, browser, layout + "-direct-review-return")
+        expect(progress).to_have_attribute("data-section", "monthly_activity")
+        navigation_receipt(page, browser + " " + layout + " " + action + " sequential return")
+    capture(page, browser, layout + "-sequential-review-return")
 
 
 def exercise_natural_review_navigation(page, browser, field, layout):
-    """Observe ordinary page scrolling across Review, without choosing its option."""
-    selector = page.get_by_role("combobox", name="Jump to section", exact=True)
+    """Observe ordinary page scrolling across Review, without using the sequential controls."""
+    selector = page.locator(".epc-section-progress")
     field.evaluate("n=>{window.__monthlyNaturalNavigationNode=n;}")
     before_field = field.evaluate("n=>({value:n.value,start:n.selectionStart,end:n.selectionEnd})")
     before_runtime = page.evaluate(CLIENT_SNAPSHOT)["server"]
@@ -444,10 +450,10 @@ def exercise_natural_review_navigation(page, browser, field, layout):
     page.wait_for_function("document.querySelector('.epc-workspace')?.dataset.epcReviewOpen==='true'")
     frames(page)
     expect(selector).to_be_in_viewport()
-    expect(selector).to_have_value("report_review")
-    capture(page, browser, "selector-natural-review-" + layout)
-    # Return Activity to the selector's own reading line, as the tabletop
-    # check does; a fixed inset ignores the selector's measured height.
+    expect(selector).to_have_attribute("data-section", "report_review")
+    capture(page, browser, "sequential-natural-review-" + layout)
+    # Return Activity to the navigation's own reading line, as the tabletop
+    # check does; a fixed inset ignores the navigation's measured height.
     navigation_receipt(page, browser + " " + layout + " before natural reverse")
     reading_line = page.evaluate("""() => {
       const header=document.querySelector('[data-testid="stHeader"]');
@@ -458,7 +464,7 @@ def exercise_natural_review_navigation(page, browser, field, layout):
     page.wait_for_function("document.querySelector('.epc-workspace')?.dataset.epcReviewOpen==='false'")
     expect(selector).to_be_in_viewport()
     navigation_receipt(page, browser + " " + layout + " after natural reverse")
-    expect(selector).to_have_value("monthly_activity")
+    expect(selector).to_have_attribute("data-section", "monthly_activity")
     after_runtime = page.evaluate(CLIENT_SNAPSHOT)["server"]
     check(browser, layout + " natural Review and reverse scroll retain navigation and native input",
           field.evaluate("n=>n===window.__monthlyNaturalNavigationNode") and
@@ -522,6 +528,7 @@ def exercise(browser_type, name):
         exercise_site_selection(page, name)
 
         field = page.get_by_role("textbox", name="Activity summary", exact=True)
+        navigate_sections(page, "monthly_activity")
         original = field.input_value()
         # Edit the actual authoritative field, not an oracle or a mocked parser.
         # Repeated explicitly synthetic notes yield genuine multipage section PDF.
@@ -682,7 +689,7 @@ def exercise(browser_type, name):
         expect(page.get_by_text("QA durable Activity SHA256: " + hashlib.sha256(committed.encode()).hexdigest(), exact=True)).to_be_visible(timeout=60000)
         current_image(page, ACTIVITY)
         exercise_section_navigation(page, name, field)
-        exercise_direct_review(page, name, field, "wide")
+        exercise_sequential_review(page, name, field, "wide")
         exercise_natural_review_navigation(page, name, field, "wide")
 
         scroll_pair(page, EMPTY)
@@ -692,10 +699,10 @@ def exercise(browser_type, name):
         page.set_viewport_size({"width": 390, "height": 844})
         mode(page, "compact")
         scroll_pair(page, ACTIVITY, inset=80)
-        expect(page.get_by_role("combobox", name="Jump to section", exact=True)).to_be_in_viewport()
+        expect(page.locator(".epc-section-progress")).to_be_in_viewport()
         check(name, "compact still has one current Activity editor", field.count() == 1 and field.input_value() == committed)
         check(name, "compact contains whole-page horizontal overflow", page.evaluate("document.documentElement.scrollWidth<=document.documentElement.clientWidth+2"))
-        exercise_direct_review(page, name, field, "compact")
+        exercise_sequential_review(page, name, field, "compact")
         navigation_runs = page.evaluate(CLIENT_SNAPSHOT)['server']['full_runs']
         for action in ("pointer", "keyboard"):
             field.click()

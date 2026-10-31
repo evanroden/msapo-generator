@@ -35,9 +35,27 @@ def _values(fields):
                  for key, original, kind, default in fields)
 
 
-def _queue(key, expected, tokens, active, fields, action="edit", target=None, *, preserve_empty=False):
+def _queue(key, expected, tokens, active, fields, action="edit", target=None, *, preserve_empty=False, group=()):
     """One delivered native action includes the currently open row's text."""
     record = dict(st.session_state.get(key, {}))
+    if group and action == "edit" and record.get("group_closed"):
+        return  # A late field echo cannot reopen the row a sibling action closed.
+    if group and action in {"open", "add", "remove"}:
+        for other_key in group:
+            if other_key == key:
+                continue
+            other = st.session_state.get(other_key, {})
+            snapshot = other.get("group_args")
+            if snapshot and snapshot[2] and not other.get("group_closed"):
+                # Capture the delivered fields through the same pending-row
+                # protocol before changing which table owns the native editor.
+                switching = action in {"open", "add"}
+                _queue(other_key, *snapshot, "close" if switching else "edit",
+                       preserve_empty=preserve_empty)
+                if switching:
+                    other = dict(st.session_state[other_key])
+                    other["group_closed"] = True
+                    st.session_state[other_key] = other
     rows, identities = list(expected), list(tokens)
     draft_token = record.get("draft_token")
     draft_index = record.get("draft_index", len(rows))
@@ -94,6 +112,8 @@ def _queue(key, expected, tokens, active, fields, action="edit", target=None, *,
     baseline = previous["baseline"] if continues_pending else expected
     record["pending"] = {"baseline": baseline, "expected": expected, "result": tuple(rows), "tokens": tuple(identities),
                          "active": active, "draft_token": draft_token, "draft_index": draft_index}
+    if group:
+        record["group_closed"] = not bool(active)
     st.session_state[key] = record
 
 
@@ -229,7 +249,7 @@ def _onsite_projection(columns, rows):
     return (_ONSITE_COLUMNS if title_frame else columns), context, canonical
 
 
-def _edit_table(columns, rows, types, key, noun, add_label, field, *, onsite=False, prose=None):
+def _edit_table(columns, rows, types, key, noun, add_label, field, *, onsite=False, prose=None, group=()):
     record = dict(st.session_state.get(key, {}))
     # A focus request belongs only to the render that follows its Add.
     entry_focus = record.pop("entry_focus", None)
@@ -245,6 +265,11 @@ def _edit_table(columns, rows, types, key, noun, add_label, field, *, onsite=Fal
         if incoming == pending["result"]:
             record.pop("pending", None)
     elif pending:
+        if group:
+            # Conflict choices retain the pending version; a sibling must not
+            # recapture fields from this table's retired editor over it.
+            record.update(group_args=None, group_closed=True)
+            st.session_state[key] = record
         st.warning("This table changed after you edited a row. Both versions are kept below.")
         with st.expander("Compare row edits", expanded=True):
             st.caption("Current report")
@@ -268,7 +293,7 @@ def _edit_table(columns, rows, types, key, noun, add_label, field, *, onsite=Fal
     draft_token = record.get("draft_token")
     st.session_state[key] = record
 
-    queue = partial(_queue, preserve_empty=True) if onsite else _queue
+    queue = partial(_queue, preserve_empty=onsite, group=group)
     context = {}
     if onsite:
         columns, context, canonical = _onsite_projection(columns, rows)
@@ -300,6 +325,9 @@ def _edit_table(columns, rows, types, key, noun, add_label, field, *, onsite=Fal
                                    kinds[index]))
                    for index in range(len(columns))) if active else ()
     args = (key, rows, tokens, active, fields)
+    if group:
+        record.update(group_args=args[1:], group_closed=not bool(active))
+        st.session_state[key] = record
     entries = list(zip(tokens, rows))
     if active and active == draft_token:
         entries.insert(min(record.get("draft_index", len(entries)), len(entries)),
@@ -379,6 +407,10 @@ def edit_row_cards(spec, block, prefix, field, *, empty=None, notice=None):
     if spec.key == "service_calls":
         # Retire pre-projection callbacks that could have opened a header as a call.
         key += "_onsite_context_v1"
+    group = tuple(key + "_extra_" + str(index) + "_" + _signature(table.columns)
+                  for index, table in enumerate(block.extra_tables))
+    if block.rows or not block.extra_tables:
+        group += (key + "_rows",)
     tables, table_keys = [], []
     for index, table in enumerate(block.extra_tables):
         if len(block.extra_tables) > 1:
@@ -393,14 +425,14 @@ def edit_row_cards(spec, block, prefix, field, *, empty=None, notice=None):
             tables.append(review_table_headings(table, key + "_headings_" + str(index), field))
             continue
         edited = _edit_table(table.columns, table.rows, (), table_key, noun, add_label, field,
-                             onsite=spec.key == "service_calls", prose=prose)
+                             onsite=spec.key == "service_calls", prose=prose, group=group)
         table_keys.append(table_key)
         tables.append(replace(table, rows=edited) if edited != table.rows else table)
     rows = block.rows
     if rows or not block.extra_tables:
         columns = tuple(column.title for column in spec.columns) or ("Facility", "Item", "Status")
         rows = _edit_table(columns, rows, tuple(column.type for column in spec.columns), key + "_rows", noun, add_label, field,
-                           onsite=spec.key == "service_calls", prose=prose)
+                           onsite=spec.key == "service_calls", prose=prose, group=group)
         table_keys.append(key + "_rows")
     if empty and notice is not None:
         written = any(value is not None and str(value).strip()

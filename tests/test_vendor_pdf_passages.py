@@ -102,6 +102,11 @@ def test_legacy_fingerprints_and_serialization(monkeypatch,tmp_path):
     assert source_from_dict(json.loads(json.dumps(asdict(c.source)))) == c.source
     s=ReportSource('id','old.pdf','digest','.pdf')
     old=asdict(s); old.pop('pdf_text_blocks'); old.pop('scope_review')
+    # Reconstruct the historical schema, not current asdict with new defaults.
+    assert old.pop('financial_source_review') is None
+    assert old.pop('financial_page_reviews') == ()
+    # Independently reproduced on pre-financial/recovery tree780690056a9f.
+    assert s.fingerprint == '02c3e5d6abfd9d9eb6e64f68b675ed06c3d3e87a9c33c81caf6840a6f6fdcffe'
     assert s.fingerprint == sha256(json.dumps(old,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
     assert source_from_dict(old) == s
 
@@ -189,10 +194,17 @@ def test_legacy_draft_fingerprint_and_saved_source_stay_unchanged(monkeypatch,tm
     from app.monthly_report_model import ReportPeriod
     draft=replace(synthetic_draft(synthetic_profiles()[0],ReportPeriod(2026,10)),sources=(s,))
     old=asdict(draft)
+    assert old.pop('cover_recovery_request') is None
+    old.pop('source_row_reviews',None)
     for source in old['sources']:
         source.pop('pdf_text_blocks'); source.pop('scope_review')
+        assert source.pop('financial_source_review') is None
+        assert source.pop('financial_page_reviews') == ()
     for block in old['blocks']:
         block.pop('asset_instances')
+        assert block.pop('cover_original') is None
+    # Same immutable parent fixture independently produced this golden.
+    assert draft.fingerprint == '5d05b281dd7371faa5be889a6bb73778e37a5174dbbf971623e71aaf6926e4c0'
     assert draft.fingerprint == sha256(json.dumps(old,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
     saved=save_snapshot(draft,expected_revision=0,entered_editor=draft.prepared_by)
     before=load_snapshot(draft.profile.contract,draft.profile.key,draft.period)

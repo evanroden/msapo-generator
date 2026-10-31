@@ -36,7 +36,11 @@ def test_scanned_pages_advance_through_initially_unselected_pages(monkeypatch, t
     assert not any(x.label in ("Review source", "Classification confidence") for x in app.selectbox)
     assert sum(x.label == "File to review" for x in app.selectbox) == 1
     destination = next(x for x in app.selectbox if x.label == "Report section for synthetic-scanned.pdf")
-    assert "Maintenance — vendor service pages" in destination.options
+    # Vendor technical reports belong in Monthly Activity, not ENFRA onsite
+    # Maintenance. Distinguish the human labels from internal destination keys.
+    assert "Monthly activity — vendor service reports and photos" in destination.options
+    assert "Maintenance — ENFRA onsite work only" in destination.options
+    assert "Maintenance — vendor service pages" not in destination.options
     assert "vendor_reports" not in destination.options
     button(app, "Include page").click().run()
     assert select(app, "Preview page / item").value == 2
