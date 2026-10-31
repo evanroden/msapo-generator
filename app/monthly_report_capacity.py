@@ -682,6 +682,8 @@ def capacity_block(profile, state=None):
 def resolve_capacity(draft: ReportDraft) -> ReportDraft:
     """Fill an empty first-use report only; snapshots and manual edits stay pinned."""
     current = next((b for b in draft.blocks if b.key == "thermal_capacity"), None)
+    if current and current.source == "Omit":
+        return draft
     if current and (current.text.strip() or current.rows or any(t.rows for t in current.extra_tables) or current.asset_hashes or current.org_nodes):
         return draft
     shared = capacity_block(draft.profile)
@@ -695,6 +697,8 @@ def resolve_capacity(draft: ReportDraft) -> ReportDraft:
 
 def can_refresh_capacity(profile, block):
     """An explicit shared save can refresh an unedited shared copy, not manual work."""
+    if block.source == "Omit":
+        return False
     if not (block.text.strip() or block.rows or any(t.rows for t in block.extra_tables) or block.asset_hashes or block.org_nodes):
         return True
     revisions = {int(match[1]) for reference in block.references

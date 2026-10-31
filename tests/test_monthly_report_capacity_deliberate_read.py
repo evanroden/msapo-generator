@@ -95,7 +95,7 @@ def test_upload_display_and_reopen_make_zero_paid_calls(profile, monkeypatch):
 
 
 @pytest.mark.parametrize("value", ("0", "NR", "1200 qualified"))
-def test_populated_report_capacity_keeps_upload_secondary_and_values_exact(
+def test_populated_report_capacity_keeps_upload_open_and_values_exact(
         profile, monkeypatch, value):
     block = ResolvedBlock("thermal_capacity", "This month", extra_tables=(
         ReportTable(("Facility", "Service", "Capacity", "Units"),
@@ -106,7 +106,7 @@ def test_populated_report_capacity_keeps_upload_secondary_and_values_exact(
     app.run()
     assert not app.exception
     panel = next(x for x in app.expander if x.label == "Capacity source and reusable data")
-    assert panel.proto.expanded is False
+    assert panel.proto.expanded is True
     assert any("Capacity · this report only" in x.value
                for x in app.get("caption"))
     assert app.session_state["test_block"] == block

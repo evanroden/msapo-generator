@@ -6,6 +6,8 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 # Documentation index
 
+[Annual Training requirements](MONTHLY_TRAINING_YEARS.md) — explicit matrix year, legacy unknown-year preservation, deliberate annual transition, and unchanged separation from completed monthly sessions.
+
 [Native forward-message compatibility](native-forward-message-compatibility.md) — bounded native cache-advertisement repair, existing frontend generation retention, and independent browser acceptance requirements.
 
 [Isolated source-render diagnostic](ISOLATED_SOURCE_RENDER_DIAGNOSTIC.md) — explicit, browser-isolated full-resolution passive DOCX inspection on the deployed renderer, with immutable source/input/output receipts; not report approval or completed-report acceptance.
@@ -29,6 +31,8 @@ maintained: manually, pinned by tests/test_docs_index.py
 [Stage-one Monthly Report closure ledger](MONTHLY_REPORT_STAGE1_CLOSURE_2026-10-10.md) — statuses for F01–F16, #101 P1–P12, U01–U06 and explicit mapping of all 113 proposed acceptance checks. This tracks exact CI separately from deployed build, authentic exports and owner acceptance.
 
 [Monthly report resource budget](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_RESOURCE_BUDGET.md) — viewport-driven previews, shared cache/converter limits and a capped-container acceptance probe.
+
+[Monthly preview cache measurements](MONTHLY_PREVIEW_CACHE_MEASUREMENTS.md) — reproducible synthetic before/after PDF-page cache measurements for PR #548, including warm-load improvements, preserved raster hashes, and explicitly unverified browser/cold-render limits.
 
 Current next-LLM handoff and owner-requested testing release:
 [HANDOFF_MONTHLY_REPORT_2026-10-09.md](HANDOFF_MONTHLY_REPORT_2026-10-09.md).

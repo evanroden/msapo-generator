@@ -1,0 +1,77 @@
+name: Monthly financial pages
+
+on:
+  pull_request:
+    paths:
+      - 'app/monthly_report_*.py'
+      - 'scripts/qa_financial_pages.py'
+      - 'scripts/workspace_financial_pages.py'
+      - 'tests/test_monthly_report_financial_policy.py'
+      - 'tests/test_monthly_report_mbcx_financial_pages.py'
+      - 'tests/test_financial_pages_fixture.py'
+      - 'tests/fixtures/workspaces/monthly_app.py'
+      - '.github/workflows/monthly-financial-pages.yml'
+      - 'requirements*.lock'
+  push:
+    branches: [main]
+    paths:
+      - 'app/monthly_report_*.py'
+      - 'scripts/qa_financial_pages.py'
+      - 'scripts/workspace_financial_pages.py'
+      - 'tests/test_monthly_report_financial_policy.py'
+      - 'tests/test_monthly_report_mbcx_financial_pages.py'
+      - 'tests/test_financial_pages_fixture.py'
+      - 'tests/fixtures/workspaces/monthly_app.py'
+      - '.github/workflows/monthly-financial-pages.yml'
+      - 'requirements*.lock'
+
+permissions:
+  contents: read
+
+jobs:
+  monthly-financial-pages:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - name: Install locked app, actual office renderer and native browsers
+        timeout-minutes: 20
+        run: |
+          sudo python3 scripts/ci_ubuntu_mirror_priority.py
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-calc fonts-liberation
+          python -m pip install -r requirements-dev.lock playwright==1.58.0
+          python scripts/patch_streamlit_frontend.py
+          python scripts/patch_streamlit_date_input.py
+          python -m playwright install --with-deps chromium webkit
+      - name: Financial policy and real Word/PDF gates (no skipped tests)
+        timeout-minutes: 5
+        run: |
+          mkdir -p test-artifacts/financial-pages
+          python -m pytest tests/test_monthly_report_financial_policy.py tests/test_monthly_report_mbcx_financial_pages.py tests/test_financial_pages_fixture.py -q --junitxml=test-artifacts/financial-pages/policy.xml
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          root = ET.parse('test-artifacts/financial-pages/policy.xml').getroot()
+          assert not root.findall('.//skipped'), 'Financial renderer gates must run, not skip'
+          assert len(root.findall('.//testcase')) >= 87, 'Missing financial acceptance cases'
+          PY
+      - name: Real upload, visual review, atomic recovery and saved outputs in both browsers
+        timeout-minutes: 9
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 8 <<'NATIVE_TEST'
+          python scripts/qa_financial_pages.py
+          NATIVE_TEST
+      - name: Retain traces, exact receipts and synthetic rendered outputs
+        if: always()
+        timeout-minutes: 3
+        uses: actions/upload-artifact@v4
+        with:
+          name: monthly-financial-pages-${{ github.run_attempt }}
+          path: test-artifacts/financial-pages/
+          retention-days: 7
+          if-no-files-found: error

@@ -114,7 +114,7 @@ def test_cover_toc_dividers_filename_and_deterministic_bytes(draft):
     assert "Operations and Maintenance Monthly Review\nSeptember 2026" in texts
     assert report_filename(draft, "docx") == "Demonstration - Demonstration Individual Facility September 2026 Monthly Report.docx"
     assert [p.text for p in document.paragraphs if p.text.startswith(("1. ", "2. "))] == [
-        "1. Monthly Scorecards", "2. Organizational Chart", "1. Monthly Scorecards", "2. Organizational Chart",
+        "1. Monthly Scorecards\t", "2. Organizational Chart\t", "1. Monthly Scorecards", "2. Organizational Chart",
     ]
     assert len(document.sections) == 6  # Cover, contents, two divider/content pairs.
     for index, section in enumerate(document.sections):
@@ -179,7 +179,8 @@ def test_pdf_failure_retains_docx_and_removes_partial_output(monkeypatch, tmp_pa
     from app import pdf_converter
     paths = []
 
-    def fail(path):
+    def fail(path, *, lossless_images):
+        assert lossless_images is True
         paths.append(path)
         (tmp_path / (path.stem + ".pdf")).write_bytes(b"partial")
         raise pdf_converter.PDFConversionError("Synthetic converter failure")

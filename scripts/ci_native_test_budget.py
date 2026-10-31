@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 import signal
@@ -63,10 +64,18 @@ def run_command(command: str, remaining: float) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--minutes", type=int, required=True)
+    parser.add_argument("--command-minutes", type=float,
+                        help="Optional smaller command cap; never resets the shared job deadline")
     args = parser.parse_args()
+    if args.command_minutes is not None and (
+        not math.isfinite(args.command_minutes) or not 0 < args.command_minutes <= args.minutes
+    ):
+        parser.error("Command cap must be finite, positive and no larger than the aggregate budget")
     # RUNNER_TEMP is isolated by GitHub per job. Never silently use a shared cwd.
     path = Path(os.environ["RUNNER_TEMP"]) / "msapo-native-test-budget.json"
     remaining = remaining_budget(path, args.minutes * 60, time.monotonic())
+    if args.command_minutes is not None:
+        remaining = min(remaining, args.command_minutes * 60)
     return run_command(sys.stdin.read(), remaining)
 
 

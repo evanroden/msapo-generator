@@ -44,11 +44,25 @@ def test_empty_monthly_draft_asks_generate_anyway_before_creating_download(monke
     assert not app.exception
     assert counts == []
     assert not app.get("download_button")
-    assert any("No new monthly information" in w.value for w in app.warning)
+    assert [w.value for w in app.warning if "No new monthly updates" in w.value] == [
+        "No new monthly updates were entered. This report may contain saved details "
+        "and dividers only. Review it before sharing."
+    ]
+    assert any("Creating files also attempts to save a shared version." in c.value
+               for c in app.caption)
     next(w for w in app.button if w.label == "Create anyway").click().run()
     assert not app.exception
     assert len(counts) == 1
     assert [w.label for w in app.get("download_button")] == ["Download DOCX", "Download PDF"]
+
+
+def test_shared_save_guidance_keeps_browser_recovery_distinct(monkeypatch, tmp_path):
+    app = _prepared(monthly(monkeypatch, tmp_path))
+    captions = [item.value for item in app.caption]
+    assert "Saving here adds a shared version; browser recovery is separate." in captions
+    assert "Creating files also attempts to save a shared version." in captions
+    assert not any("No new monthly updates were entered." in warning.value for warning in app.warning)
+
 
 
 def test_one_substantive_monthly_section_remains_one_click_with_soft_advice(monkeypatch, tmp_path):

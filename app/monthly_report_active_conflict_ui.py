@@ -77,6 +77,8 @@ def _use_newer(prefix, newer):
         from app.monthly_report_guided import _rich_text_scope
         from app.monthly_report_output_ui import discard_current_session_pdf_preview
         discard_current_session_pdf_preview(prefix, _rich_text_scope(prefix))
+    from app.monthly_report_review_preview_ui import discard_review_preview
+    discard_review_preview(prefix)
     for key in list(st.session_state):
         if key.startswith(prefix):
             del st.session_state[key]
