@@ -822,6 +822,8 @@ def edit_photos(draft, block, prefix, assets, field, *, show_preview=True):
     original = block
     with left:
         field_identity = photo_caption_identity(draft, block, scope=scope)
+        from app.monthly_report_native_loading import reserve_photo_count_slider
+        reserve_photo_count_slider(p + "_count_" + field_identity)
         number = st.select_slider("Photos per page", options=list(range(1, 7)),
             key=field(p + "_count_" + field_identity, block.photos_per_page))
         existing_captions = tuple(block.asset_captions[n] if n < len(block.asset_captions) else ""
