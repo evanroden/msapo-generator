@@ -191,7 +191,7 @@ def test_training_and_capacity_nr_are_per_test_storage_and_old_snapshot_stays_pi
                                           reviewed_fingerprint=capacity.review_fingerprint((table,)))
         assert revision.revision == 1
         matrix = ReportTable(("Team member", "Site", "Lockout"),
-                             (("Synthetic Person North", "Demo North", "Pending"),))
+                             (("Synthetic Person North", "Demo North", "Pending"),), training.MATRIX_REF)
         training.save_training(profile, matrix, expected_revision=0, actor=fixtures.ACTOR)
         fresh = ReportDraft(profile, ReportPeriod(2026, 10), fixtures.ACTOR,
                             old.sections, old.blocks, synthetic=True)

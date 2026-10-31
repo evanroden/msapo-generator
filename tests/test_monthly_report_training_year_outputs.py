@@ -1,0 +1,86 @@
+"""Synthetic annual labels in actual generated and native Word/PDF output."""
+from dataclasses import replace
+from io import BytesIO
+import hashlib
+import json
+import os
+from pathlib import Path
+
+from docx import Document
+from docx.oxml.ns import qn
+import pymupdf
+import pytest
+
+from app import monthly_report_training as training, pdf_converter
+from app.monthly_report_docx import assemble_docx
+from app.monthly_report_native_layout import build_native_docx
+from tests.conftest import requires_libreoffice
+from test_monthly_report_training_years import profile, matrix, draft
+
+
+def source(tmp_path):
+    document = Document()
+    document.add_paragraph('Synthetic North')
+    document.add_paragraph('November 2026')
+    document.add_heading('TRAINING SUMMARY', 1)
+    document.add_paragraph('Synthetic old training note')
+    table = document.add_table(rows=2, cols=4)
+    for row, values in zip(table.rows, (matrix().columns, matrix().rows[0])):
+        for cell, value in zip(row.cells, values):
+            cell.text = value
+    path = tmp_path / 'annual-source.docx'
+    document.save(path)
+    return path
+
+
+def output_case(profile, tmp_path, native, year):
+    original = matrix(2026)
+    chosen = training.matrix_for_year(profile, original, {}, year)
+    report = replace(draft(profile, chosen), period=replace(draft(profile, chosen).period, year=year))
+    path = source(tmp_path)
+    before = path.read_bytes()
+    raw = (build_native_docx(report, path) if native else
+           assemble_docx(report, acknowledged_fingerprint=report.fingerprint))
+    assert path.read_bytes() == before
+    document = Document(BytesIO(raw))
+    text = '\n'.join(p.text for p in document.paragraphs)
+    assert text.count(f'Training requirements — {year}') == 1
+    assert len(document.tables) == 1
+    assert tuple(c.text for c in document.tables[0].rows[1].cells) == chosen.rows[0]
+    title = next(p for p in document.paragraphs if p.text == f'Training requirements — {year}')
+    assert title._p.getnext().tag == qn('w:tbl')
+    assert title.paragraph_format.keep_with_next is True
+    return raw
+
+
+@pytest.mark.parametrize('native', [False, True])
+@pytest.mark.parametrize('year', [2026, 2027])
+def test_annual_word_output_is_labeled_once_without_false_new_completion(profile, tmp_path, native, year):
+    output_case(profile, tmp_path, native, year)
+
+
+@requires_libreoffice
+@pytest.mark.parametrize('native', [False, True])
+@pytest.mark.parametrize('year', [2026, 2027])
+def test_annual_actual_pdf_retains_year_cells_and_original(profile, tmp_path, monkeypatch, native, year):
+    raw = output_case(profile, tmp_path, native, year)
+    monkeypatch.setattr(pdf_converter, 'OUTPUT_DIR', tmp_path)
+    path = tmp_path / f'annual-{year}-{"native" if native else "plain"}.docx'
+    path.write_bytes(raw)
+    pdf_path = pdf_converter.convert_to_pdf(path)
+    pdf_bytes = pdf_path.read_bytes()
+    with pymupdf.open(stream=pdf_bytes, filetype='pdf') as pdf:
+        text = '\n'.join(p.get_text() for p in pdf)
+        assert text.count(f'Training requirements — {year}') == 1
+        assert text.count('Synthetic Learner') == 1
+        assert ('Completed' in text) == (year == 2026)
+        assert ('Not recorded' in text) == (year == 2027)
+        pages = len(pdf)
+    target = Path(os.environ.get('INDEPENDENT_OUTPUT', str(tmp_path))) / 'training-years'
+    target.mkdir(parents=True, exist_ok=True)
+    stem = path.stem
+    (target / f'{stem}.docx').write_bytes(raw)
+    (target / f'{stem}.pdf').write_bytes(pdf_bytes)
+    (target / f'{stem}.json').write_text(json.dumps({'synthetic': True, 'year': year,
+        'native': native, 'pages': pages, 'docx_sha256': hashlib.sha256(raw).hexdigest(),
+        'pdf_sha256': hashlib.sha256(pdf_bytes).hexdigest()}, indent=2))
