@@ -137,7 +137,13 @@ def _sync_tokens(previous_rows, previous_tokens, rows):
 def _field_default(value, kind):
     try:
         if kind == "date":
-            return date.fromisoformat(value) if value else None
+            parsed = date.fromisoformat(value) if value else None
+            # The native calendar derives its default bounds ten years on
+            # either side. Keep extreme source dates correctable as text,
+            # rather than overflowing those bounds or inventing a new date.
+            if parsed is not None and not date.min.year + 10 <= parsed.year <= date.max.year - 10:
+                return value
+            return parsed
         if kind in {"number", "currency"}:
             return float(value) if value else None
     except (TypeError, ValueError):
