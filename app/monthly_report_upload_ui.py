@@ -1374,6 +1374,11 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                           _rich_text_scope(prefix), testing.scope(), testing.generation()))
     from app.monthly_report_native_loading import reserve_empty_uploader
     intake_label = "Add source files" if managed else labels[destination]
+    if managed:
+        # The same single native uploader owns both Activity jobs; describe
+        # their destinations rather than asking for a separate file-type step.
+        st.caption("Work-order export (CSV/XLSX): review rows and totals. "
+                   "Vendor service report (PDF/DOCX): review Activity text and evidence.")
     reserve_empty_uploader(local_key + "_upload_" + context, intake_label)
     uploaded = st.file_uploader(intake_label, type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
                                 accept_multiple_files=True, max_upload_size=128,
