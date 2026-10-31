@@ -47,7 +47,10 @@ def circle_geometry(path, roles, *, absent_roles=()):
         observed[role] = {'width': width, 'height': height}
     for role in absent_roles:
         color = COLORS[role]
-        assert not any(max(abs(a-b) for a,b in zip(pixel,color)) < 12 for pixel in image.getdata()), role + ' unexpectedly rendered'
+        # Pillow >= 12 deprecates getdata(); use the supported equivalent.
+        # Pixel order and the strict absence check are unchanged.
+        assert not any(max(abs(a-b) for a,b in zip(pixel,color)) < 12
+                       for pixel in image.get_flattened_data()), role + ' unexpectedly rendered'
     return observed
 
 

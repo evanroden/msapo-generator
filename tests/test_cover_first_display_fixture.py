@@ -122,3 +122,22 @@ def test_standing_master_actual_cover_docx_has_exact_roles_and_proportions(tmp_p
             assert effective==pytest.approx(int(extent.get('cx'))/int(extent.get('cy')),rel=.001)
         assert sorted(found)==sorted(expected.values())
         assert ('cover_photo' in found)==(mode!='absent-photo')
+
+
+def test_absent_cover_pixel_check_is_warning_free_and_still_rejects_visible_art(tmp_path):
+    """The pinned Pillow API must keep the strict first-paint absence proof."""
+    import warnings
+    from PIL import Image
+    from scripts.qa_cover_first_display import circle_geometry
+    from scripts.workspace_cover_first_display import COLORS
+
+    path = tmp_path / "synthetic-absence.png"
+    image = Image.new("RGB", (14, 12), "white")
+    image.save(path)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        assert circle_geometry(path, [], absent_roles=["cover_photo"]) == {}
+        image.putpixel((3, 5), COLORS["cover_photo"])
+        image.save(path)
+        with pytest.raises(AssertionError, match="unexpectedly rendered"):
+            circle_geometry(path, [], absent_roles=["cover_photo"])
