@@ -696,7 +696,19 @@ def inspect_docx(path: Path) -> DocxInspection:
                                             raise ImportError("Table is too wide to review safely.")
                                         cells.extend([""] * (count - 1))
                                     rows.append(tuple(cells))
-                                if rows and not picture_table:
+                                # Cell text extraction cannot represent floating frames or
+                                # non-picture drawings. Keep this source occurrence in review
+                                # instead of offering a flattened, editable replacement.
+                                complex_table = any(
+                                    node.tag in (W + "txbxContent", V + "group")
+                                    or (node.tag == A + "graphicData"
+                                        and not node.get("uri", "").endswith("/picture"))
+                                    for node in element.iter())
+                                if complex_table:
+                                    add("unsupported", part, position, text=text,
+                                        note="Word table contains text boxes or unsupported drawings and needs manual layout review. "
+                                             "Retain its source page or add a reviewed replacement; extracted text does not preserve the layout.")
+                                elif rows and not picture_table:
                                     width = max(map(len, rows))
                                     rows = tuple(row + ("",) * (width - len(row)) for row in rows)
                                     add("table", part, position, rows=rows, suggested_slot=content_slot or _suggest("table", text, section),

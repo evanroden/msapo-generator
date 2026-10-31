@@ -61,7 +61,15 @@ def mixed_tables(tmp_path, *, unmapped_diagram=False):
         elif item.kind == 'image':
             image = read_import_image(path, item, line_art=True)
             assets[sha256(image.data).hexdigest() + '.' + image.extension] = image.data
-    tables[1] = replace(tables[1], rows=(tables[1].rows[0][:1] + ('8.1',) + tables[1].rows[0][2:], *tables[1].rows[1:]))
+    # A table with an unmapped drawing is now correctly quarantined as
+    # unsupported. Only the intact neighboring table may be edited. In the
+    # normal, fully editable case both original table occurrences remain.
+    assert len(tables) == (1 if unmapped_diagram else 2)
+    index = len(tables) - 1
+    tables[index] = replace(tables[index], rows=(
+        tables[index].rows[0][:1] + ('8.1',) + tables[index].rows[0][2:],
+        *tables[index].rows[1:],
+    ))
     block = ResolvedBlock('water_reports', 'This month', extra_tables=tuple(tables), asset_hashes=tuple(assets),
                           references=tuple(f'docx:{inspection.sha256}:{item.id}' for item in items))
     draft = ReportDraft(ReportProfile('Synthetic', 'site', 'Current site', (Facility('site', 'Current site'),)),
@@ -108,11 +116,28 @@ def test_mixed_table_does_not_keep_old_picture_without_current_asset_proof(tmp_p
     assert len(visible) == (0 if change == 'unmapped' else 1)
 
 
-def test_unmapped_diagram_cannot_ride_current_mixed_table_images(tmp_path):
+def test_unmapped_diagram_stays_in_review_while_neighboring_table_remains_editable(tmp_path):
+    from app.monthly_report_import import ImportMapping, ImportError as SourceImportError, map_items
+
     path, draft, assets = mixed_tables(tmp_path, unmapped_diagram=True)
-    assert any(item.note.startswith('Unmapped native SmartArt') for item in inspect_docx(path).items)
-    result = Document(BytesIO(build_native_docx(draft, path, asset_loader=assets.__getitem__)))
-    assert len(result.tables) == 2
-    assert not list(result.element.iter('{http://schemas.openxmlformats.org/drawingml/2006/diagram}relIds'))
-    assert len(list(result.element.iter(qn('a:blip')))) == 2
-    assert result.tables[1].cell(1, 1).text == '8.1'
+    original = path.read_bytes()
+    inspection = inspect_docx(path)
+    blocked = [item for item in inspection.items
+               if item.section == 'water' and item.kind == 'unsupported'
+               and 'manual layout review' in item.note]
+    # The table with an unmapped diagram cannot be flattened into a seemingly
+    # complete editable table, even though it also contains a genuine image.
+    assert len(blocked) == 1
+    assert 'Synthetic sample 0' in blocked[0].text
+    assert any(item.note.startswith('Unmapped native SmartArt') for item in inspection.items)
+    editable = [item for item in inspection.items
+                if item.section == 'water' and item.kind == 'table']
+    assert len(editable) == 1
+    assert 'Synthetic sample 1' in str(editable[0].rows)
+    assert len(Document(path).tables) == 2
+    assert len(assets) == 2  # Real neighboring images do not approve drawings.
+    assert len(draft.blocks[0].extra_tables) == 1
+    assert draft.blocks[0].extra_tables[0].rows[0][1] == '8.1'
+    with pytest.raises(SourceImportError, match='Unsupported items'):
+        map_items(path, inspection, (ImportMapping(blocked[0].id, 'water_reports'),))
+    assert path.read_bytes() == original
