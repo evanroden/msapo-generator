@@ -22,11 +22,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts.workspace_history_observations import namespace, storage_state
 from scripts.workspace_logo_refresh_observations import MODES, artwork
+from scripts.workspace_logo_click_observations import native_click_geometry, click_ready_native_output
 
 OUT = ROOT / 'test-artifacts/about-logo-refresh'
 URL = 'http://127.0.0.1:8546'
 SELECTOR = '[data-enfra-logo-refresh]'
 REPORT = {'synthetic_only': True, 'physical_device': False, 'cases': {},
+    'native_output_helper_readiness': 'Disposable output oracle waits for exact current fixture receipt and main-flow placeholder hydration within its existing click deadline. About first-click action is unchanged; this does not establish production Generate click geometry.',
     'legacy_omit_output_contract': 'Passive legacy company Omit retains its native source furniture; only explicit Replace once changes the bound occurrence. No claim of native omission.',
     'stale_revision_browser_coverage': 'Not exercised: this journey never changes the shared catalog. Exact stale/revision rejection is covered separately by AppTest.'}
 
@@ -80,8 +82,9 @@ def about(page):
 def native_outputs(page, directory, expected):
     prior = receipt(page)
     sequence = prior['sequence']
-    page.get_by_role('button', name='Render synthetic native logo outputs', exact=True).click()
-    wait_state(page, after=sequence, scope=prior['scope'], generation=prior['generation'])
+    with native_click_geometry(page, directory):
+        click_ready_native_output(page, prior)
+        wait_state(page, after=sequence, scope=prior['scope'], generation=prior['generation'])
     for label, name in (('Download synthetic native Word', 'actual.docx'), ('Download synthetic native PDF', 'actual.pdf')):
         with page.expect_download(timeout=30000) as event:
             page.get_by_role('button', name=label, exact=True).click()

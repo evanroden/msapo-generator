@@ -10,7 +10,7 @@ def test_manual_report_save_has_unambiguous_shared_scope(monkeypatch, tmp_path):
     labels = [item.label for item in app.button]
     assert labels.count("Save shared version") == 1
     assert "Save progress" not in labels
-    assert any("Browser draft recovery is separate" in item.value
+    assert any("Saving here adds a shared version; browser recovery is separate." == item.value
                for item in app.get("caption"))
 
     before = next(w for w in app.text_area
