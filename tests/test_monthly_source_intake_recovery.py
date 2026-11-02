@@ -153,7 +153,8 @@ def test_adding_another_file_does_not_resurrect_a_removed_uploader_selection(mon
     assert {source.filename for source in current_draft(app).sources}=={a[0],b[0]}
 
 
-def test_fresh_pdf_read_starts_on_first_explicit_click_after_source_controls_settle(monkeypatch,tmp_path):
+@pytest.mark.parametrize('edit_page_caption', [False, True], ids=['untouched-pdf', 'explicit-page-caption'])
+def test_fresh_pdf_read_starts_on_first_explicit_click_after_source_controls_settle(monkeypatch,tmp_path,edit_page_caption):
     from test_monthly_report_ui import monthly
     from test_monthly_report_sources import pdf_bytes
     from test_monthly_report_upload_ui import button,current_draft
@@ -164,8 +165,24 @@ def test_fresh_pdf_read_starts_on_first_explicit_click_after_source_controls_set
     # Fresh intake is already visible; deliver the selected uploader values.
     app.run()
     assert not app.exception
-    assert starts==charges==[], 'Settling default captions is not paid-read consent.'
-    assert current_draft(app).sources[0].captions, 'The page owner has committed its initial caption.'
+    source=current_draft(app).sources[0]
+    original=ui.sources.source_bytes(current_draft(app).profile,source)
+    assert not source.captions, 'Whole-PDF intake does not invent an individual-page caption.'
+    assert starts==charges==[], 'Whole-PDF intake is not paid-read consent.'
+    if edit_page_caption:
+        # This generic source owner has no MBCx subset toggle. Its displayed
+        # suggestion stays local until the user actually edits the page caption.
+        controls=[w for w in app.text_input if w.label=='Page caption']
+        assert len(controls)==1
+        controls[0].set_value('Explicit maintenance page caption').run()
+        assert not app.exception
+        assert dict(current_draft(app).sources[0].captions)=={1:'Explicit maintenance page caption'}
+    else:
+        assert not current_draft(app).sources[0].captions
+    assert starts==charges==[], 'Settling source controls is not paid-read consent.'
+    settled=current_draft(app).sources[0]
+    assert settled.id==source.id and settled.sha256==source.sha256
+    assert ui.sources.source_bytes(current_draft(app).profile,settled)==original
     button(app,'Read selected files').click().run()
     assert not app.exception
     assert len(starts)==len(charges)==1, 'The first click must not target a pre-caption source fingerprint.'

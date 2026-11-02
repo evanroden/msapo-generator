@@ -377,9 +377,34 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
                 table, _ = table_without_prices(item)
                 if not table:
                     continue
+                if section.key == "activity":
+                    from app.monthly_report_annual_work_order_grid import (
+                        annual_site_month_table, annual_grid_candidate, annual_grid_matches_profile)
+                    annual = annual_site_month_table(item)
+                    if annual_grid_candidate(item):
+                        # Exact month headings do not prove the imported sites
+                        # belong to the target report or the bands are sound.
+                        if annual is None:
+                            questions.append("Review this annual work-order grid's category bands, site fields and month order.")
+                            continue
+                        if profile is None or not annual_grid_matches_profile(annual, profile):
+                            questions.append("Review this annual work-order grid's sites against the selected report group.")
+                            continue
+                        table = annual
+                        slot = "work_orders"
                 if table_has_pricing(table.columns, table.rows):
                     questions.append("Check this table's pricing or column headings.")
                     continue
+                if slot == "subcontractor_matrix" and item.merged_title_rows:
+                    from app.monthly_report_vendor_groups import grouped_vendor_contacts
+                    grouped_vendor = grouped_vendor_contacts(item)
+                    if grouped_vendor is None:
+                        questions.append("Review the vendor table's merged category labels and contact headings.")
+                        continue
+                    if table_has_pricing(grouped_vendor.columns, grouped_vendor.rows):
+                        questions.append("Check the vendor table for pricing before including it.")
+                        continue
+                    table = grouped_vendor
                 plan["tables"][item.id] = table
             if slot not in known:
                 slot = default_slot(section.key)

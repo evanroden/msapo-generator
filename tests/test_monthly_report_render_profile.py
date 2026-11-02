@@ -115,7 +115,11 @@ def test_final_and_section_pdf_boundaries_resolve_profile_and_limit_cover_scope(
     from app.monthly_report_model import ReportPeriod, synthetic_draft
     draft=synthetic_draft(synthetic_profiles()[0],ReportPeriod(2026,9))
     monkeypatch.setattr(designs,'render_profile_for',lambda p:dict(profile))
-    monkeypatch.setattr(output,'assemble_docx',lambda *a,**kw:b'native-download')
+    # Match assembly's valid DOCX contract and omit the stock preview thumbnail.
+    native_document=Document()
+    native_document.add_paragraph('native-download')
+    native_download=output._save(native_document)
+    monkeypatch.setattr(output,'assemble_docx',lambda *a,**kw:native_download)
     monkeypatch.setattr(preview,'section_preview_docx',lambda *a,**kw:b'native-preview')
     calls=[]
     converted_document=Document()
@@ -125,20 +129,23 @@ def test_final_and_section_pdf_boundaries_resolve_profile_and_limit_cover_scope(
         calls.append((raw,profile));return conversion.getvalue()
     monkeypatch.setattr(output,'rendering_docx',render)
     monkeypatch.setattr(preview,'rendering_docx',render)
-    def convert(path):
+    conversion_options=[]
+    def convert(path, **kwargs):
+        conversion_options.append(kwargs)
         assert Document(path).paragraphs[0].text=='conversion-only'
         result=tmp_path/'converted.pdf'
         pdf=fitz.open();pdf.new_page();pdf.save(result);pdf.close()
         return result
     monkeypatch.setattr(output.pdf_converter,'convert_to_pdf',convert)
     package=output.generate_report(draft)
-    assert package.docx==b'native-download' and package.pdf
+    assert package.docx==native_download and package.pdf
     preview.preview_section(draft,'cover')
     preview.preview_section(draft,'training')
     section_profile={**profile,'cover_zero_origin':False}
     if 'cover_metrics' in section_profile:
         section_profile['cover_metrics']=[]
-    assert calls==[(b'native-download',profile),(b'native-preview',profile),(b'native-preview',section_profile)]
+    assert calls==[(native_download,profile),(b'native-preview',profile),(b'native-preview',section_profile)]
+    assert conversion_options==[{'lossless_images':True},{},{}]
 
 
 def test_oversized_cover_images_are_checked_before_any_pixel_decoding(monkeypatch):
