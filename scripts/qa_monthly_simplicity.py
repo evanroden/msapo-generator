@@ -216,7 +216,16 @@ def exercise(engine, name, record):
         refresh(page)
         expect(page.locator(PANEL)).to_be_visible()
         capture("accepted-cmms-reopened")
+        # Finish this separate source task before targeting the distant Training
+        # disclosure. A completed pointer click is not a completed Python render.
+        before_close = receipt(page)
         page.get_by_role("button", name="Done with source files", exact=True).click()
+        wait_render(page, before_close["render_id"])
+        expect(page.locator(PANEL)).not_to_be_visible()
+        closed = receipt(page)
+        for key in ("fingerprint", "period", "events", "sources"):
+            assert closed[key] == before_close[key], "Closing source files changed " + key
+        capture("accepted-cmms-closed-before-training")
 
         record["phase"] = "three sequential native training additions"
         summary = disclosure(page)
