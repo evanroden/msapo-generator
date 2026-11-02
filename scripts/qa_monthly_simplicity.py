@@ -154,6 +154,7 @@ def fill_training(page, number):
 def exercise(engine, name, record):
     browser = engine.launch(headless=True)
     context = browser.new_context(viewport={"width": 1440, "height": 1000}, accept_downloads=False)
+    context.tracing.start(screenshots=True, snapshots=True, sources=True)
     context.add_cookies([{"name": "epc_device_id", "value": secrets.token_hex(24), "url": URL}])
     external, errors = [], []
     def route(request):
@@ -289,6 +290,7 @@ def exercise(engine, name, record):
         raise
     finally:
         record["external_requests"], record["browser_errors"] = external, errors
+        context.tracing.stop(path=str(OUT / f"{name}-trace.zip"))
         context.close()
         browser.close()
 
