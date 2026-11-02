@@ -14,6 +14,7 @@ import re
 from dataclasses import asdict, dataclass, replace
 from datetime import date
 from typing import Literal
+from app.monthly_report_financial_policy import SourceFinancialReview, ReviewedFinancialPage
 
 
 BlockType = Literal[
@@ -182,6 +183,16 @@ class AssetInstance:
 
 
 @dataclass(frozen=True)
+class CoverOriginalOccurrence:
+    occurrence_id: str
+    scope: str
+    sha256: str
+    byte_count: int
+    derivative: str
+    policy: str
+
+
+@dataclass(frozen=True)
 class ResolvedBlock:
     key: str
     source: str
@@ -204,6 +215,7 @@ class ResolvedBlock:
     client_asset_reviews: tuple[str, ...] = ()
     asset_provenance: tuple[tuple[str, tuple[str, ...]], ...] = ()
     asset_instances: tuple[AssetInstance, ...] = ()
+    cover_original: CoverOriginalOccurrence | None = None
 
     @property
     def fingerprint(self) -> str:
@@ -215,6 +227,8 @@ class ResolvedBlock:
         # map changes the content represented by the original fields.
         value.pop("client_asset_reviews")
         value.pop("asset_provenance")
+        if self.cover_original is None:
+            value.pop("cover_original")
         # A new occurrence is a structural edit even when bytes/caption match a
         # removed image. Bind native callbacks to its incarnation while keeping
         # unchanged pre-occurrence historical fingerprints exactly compatible.
@@ -285,6 +299,8 @@ class ReportSource:
     scope_review: str = ""
     # Exact native PDF text-block offsets plus span digest; never inferred wraps.
     pdf_text_blocks: tuple[tuple[int, int, int, str], ...] = ()
+    financial_source_review: SourceFinancialReview | None = None
+    financial_page_reviews: tuple[ReviewedFinancialPage, ...] = ()
 
     @property
     def fingerprint(self) -> str:
@@ -317,6 +333,22 @@ def followup_record(item: ReportFollowUp) -> dict:
 
 
 @dataclass(frozen=True)
+class CoverRecoveryRequest:
+    occurrence_id: str
+    report_identity: str
+    scope: str
+    sha256: str
+    byte_count: int
+    baseline: str
+    bound_revision: int
+    status: str = "pending"
+    events: tuple[str, ...] = ()
+    derivative: str = ""
+    policy: str = ""
+    reason: str = ""
+
+
+@dataclass(frozen=True)
 class ReportDraft:
     profile: ReportProfile
     period: ReportPeriod
@@ -327,6 +359,10 @@ class ReportDraft:
     synthetic: bool = False
     sources: tuple[ReportSource, ...] = ()
     follow_ups: tuple[ReportFollowUp, ...] = ()
+    cover_recovery_request: CoverRecoveryRequest | None = None
+    # Report-owned, source-bound normalized row review receipts. JSON strings
+    # keep the frozen draft immutable and travel with snapshots/recovery.
+    source_row_reviews: tuple[str, ...] = ()
 
     @property
     def fingerprint(self) -> str:
@@ -351,11 +387,25 @@ def _digest(value: object) -> str:
         record.pop("scope_review", None)
     if isinstance(value, ReportSource) and not value.pdf_text_blocks:
         record.pop("pdf_text_blocks", None)
+    if isinstance(value, ReportSource):
+        for field in ("financial_source_review", "financial_page_reviews"):
+            if not record.get(field):
+                record.pop(field, None)
     if isinstance(value, ReportDraft):
+        # Pending preparation is private workflow metadata, not report content
+        # or an approval. Cover content changes remain bound by block hashes.
+        record.pop("cover_recovery_request", None)
+        if not record.get("source_row_reviews"):
+            record.pop("source_row_reviews", None)
         for block in record["blocks"]:
+            if block.get("cover_original") is None:
+                block.pop("cover_original", None)
             if not block.get("asset_instances"):
                 block.pop("asset_instances", None)
         for source in record["sources"]:
+            for field in ("financial_source_review", "financial_page_reviews"):
+                if not source.get(field):
+                    source.pop(field, None)
             if not source.get("pdf_text_blocks"):
                 source.pop("pdf_text_blocks", None)
             if not source.get("scope_review"):
@@ -545,10 +595,28 @@ def used_source_ids(draft: ReportDraft) -> set[str]:
     return {p[0] for p in parts if len(p) == 3 and p[1].isdigit()}
 
 
+MAX_REPORT_FILENAME_BYTES = 240
+
+
 def report_filename(draft: ReportDraft, extension: Literal["docx", "pdf"]) -> str:
-    title = f"{draft.profile.contract} - {draft.profile.title} {draft.period.label} Monthly Report"
-    # A display name is never allowed to create a path or a response-header line.
-    title = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "-", title).strip(" .")
+    """Use a stable filesystem-safe basename for the paired Word/PDF exports."""
+    if extension not in ("docx", "pdf"):
+        raise ValueError("Only DOCX or PDF report filename extensions are supported.")
+    raw = f"{draft.profile.contract} - {draft.profile.title} {draft.period.label} Monthly Report"
+    # A display name must not create a path, response-header line or invalid UTF-8.
+    title = re.sub(r'[\\/:*?"<>|\x00-\x1f\x7f-\x9f\ud800-\udfff]', "-", raw).strip(" .")
+    # Reserve room for .docx for *both* outputs, so Word and PDF share a stem.
+    stem_bytes = MAX_REPORT_FILENAME_BYTES - len(".docx")
+    if len(title.encode("utf-8")) > stem_bytes:
+        digest = hashlib.sha256(raw.encode("utf-8", "backslashreplace")).hexdigest()[:12]
+        ending = f" [{digest}] {draft.period.label} Monthly Report"
+        budget = stem_bytes - len(ending.encode("utf-8"))
+        if budget <= 0:
+            raise ValueError("Report period is too long for a safe export filename.")
+        prefix = re.sub(r'[\\/:*?"<>|\x00-\x1f\x7f-\x9f\ud800-\udfff]', "-",
+                        f"{draft.profile.contract} - {draft.profile.title}").strip(" .")
+        prefix = prefix.encode("utf-8")[:budget].decode("utf-8", "ignore").rstrip(" .")
+        title = prefix + ending
     return f"{title}.{extension}"
 
 
