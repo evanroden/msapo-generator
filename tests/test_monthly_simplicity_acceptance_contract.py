@@ -114,3 +114,16 @@ def test_existing_adaptive_task_still_dismisses_and_reopens_native_source_tools(
     visible = source.index('Read source files, check their pages, or match spreadsheet columns.', reopen)
     assert done < close < reopen < visible
     assert 'native source-manager button opens the broad file tools' in source[visible:]
+
+
+def test_separate_training_task_begins_after_source_close_receipt():
+    source = HARNESS.read_text()
+    branch = source[source.index('capture("accepted-cmms-reopened")'):source.index('expected, source_baseline =')]
+    assert branch.count('name="Done with source files"') == 1
+    assert branch.index('before_close = receipt(page)') < branch.index('name="Done with source files"')
+    assert branch.index('name="Done with source files"') < branch.index('wait_render(page, before_close["render_id"])')
+    assert branch.index('wait_render(page, before_close["render_id"])') < branch.index('not_to_be_visible()') < branch.index('summary.click()')
+    assert 'for key in ("fingerprint", "period", "events", "sources")' in branch
+    assert 'assert closed[key] == before_close[key]' in branch
+    assert branch.count('summary.click()') == 1
+    assert 'sleep(' not in branch and 'force=' not in branch and 'timeout=' not in branch

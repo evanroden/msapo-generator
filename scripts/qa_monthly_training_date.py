@@ -372,6 +372,62 @@ def enter_topic_and_participant(page, *, original_input=None):
         live.EVIDENCE.setdefault("participant_selection", []).append(observation)
 
 
+def reference_position_observation(original_input):
+    """Read only the original native control and its existing scroll ancestors."""
+    try:
+        return original_input.evaluate("""input=>{
+          const rect=input.getBoundingClientRect();
+          const ancestors=[];
+          for(let node=input.parentElement;node&&ancestors.length<12;node=node.parentElement) {
+            if(node.scrollHeight>node.clientHeight||node.scrollTop) {
+              ancestors.push({tag:node.tagName,testid:node.getAttribute('data-testid'),
+                scrollTop:node.scrollTop,scrollHeight:node.scrollHeight,clientHeight:node.clientHeight,
+                overflowY:getComputedStyle(node).overflowY});
+            }
+          }
+          const root=document.scrollingElement;
+          return {at:performance.now(),connected:input.isConnected,
+            rect:{x:rect.x,y:rect.y,width:rect.width,height:rect.height},
+            windowScrollY:window.scrollY,windowHeight:window.innerHeight,
+            rootScrollTop:root?.scrollTop,rootScrollHeight:root?.scrollHeight,
+            rootClientHeight:root?.clientHeight,fonts:document.fonts?.status||null,
+            script:document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')||null,
+            ancestors};
+        }""")
+    except Exception as error:
+        # A detached original handle is evidence, not permission to re-find it.
+        return {"observation_error": type(error).__name__}
+
+
+def reference_scroll_plan(before, observed):
+    """Preserve780 where reachable; never manufacture negative native scroll."""
+    from math import isfinite
+    assert observed.get("connected") is True, "Original reference input detached"
+    rect = observed["rect"]
+    for key in ("x", "y", "width", "height"):
+        assert type(before[key]) in (int, float) and isfinite(before[key])
+        assert type(rect[key]) in (int, float) and isfinite(rect[key])
+        assert abs(before[key] - rect[key]) <= 1, "Original reference geometry changed before positioning"
+    scrolls = [row for row in observed["ancestors"]
+               if row["overflowY"] in ("auto", "scroll", "overlay")]
+    assert scrolls and scrolls[0]["testid"] == "stMain", "Unknown native reference scroll owner"
+    owner = scrolls[0]
+    for key in ("scrollTop", "scrollHeight", "clientHeight"):
+        assert type(owner[key]) in (int, float) and isfinite(owner[key])
+    maximum = owner["scrollHeight"] - owner["clientHeight"]
+    top = owner["scrollTop"]
+    assert owner["clientHeight"] > 0 and 0 <= top <= maximum, "Invalid native scroll bounds"
+    requested = before["y"] - 780
+    delta = min(max(requested, -top), maximum - top)
+    target = before["y"] - delta
+    assert 0 <= target and target + before["height"] <= observed["windowHeight"], "Reference target is not in the native viewport"
+    return {"desired_top": 780, "target_top": target, "wheel_delta": delta,
+            "requested_delta": requested, "tolerance": 1,
+            "reason": ("native-top-boundary" if requested < -top else
+                       "native-bottom-boundary" if requested > maximum - top else
+                       "desired-reachable")}
+
+
 def exercise_participant_reference(browser_type, engine):
     """One independent production-widget reference, never an acceptance substitute."""
     live.ROOT = OUT / "native-participant-reference" / engine
@@ -428,20 +484,29 @@ def exercise_participant_reference(browser_type, engine):
         assert live.EVIDENCE["reference_form_opening_finished"]
         before = field.bounding_box()
         assert before is not None
-        # One normal scroll uses the same run's later Training screenshot
-        # (top~780 in the 1365x900 viewport). Geometry
-        # at the native error itself was not independently recorded.
+        # Prefer the later screenshot's top~780 where native scroll bounds
+        # permit it. WebKit can already start above780 at scrollTop0: retain
+        # that reachable native origin, explicitly recorded rather than claiming780.
+        # Geometry at the native error itself was not independently recorded.
         # No spacer, viewport event, refinding after typing or rescue gesture.
-        page.mouse.move(before["x"] + before["width"] / 2, 400)
-        page.mouse.wheel(0, before["y"] - 780)
-        page.wait_for_function("""input=>Math.abs(input.getBoundingClientRect().top-780)<=1""",
-                               arg=original_input, timeout=5000)
+        live.EVIDENCE["reference_position_before_wheel"] = reference_position_observation(original_input)
+        plan = reference_scroll_plan(before, live.EVIDENCE["reference_position_before_wheel"])
+        live.EVIDENCE["reference_scroll_plan"] = plan
+        live.EVIDENCE["reference_wheel_delta"] = plan["wheel_delta"]
+        try:
+            page.mouse.move(before["x"] + before["width"] / 2, 400)
+            page.mouse.wheel(0, plan["wheel_delta"])
+            page.wait_for_function("""({input,target})=>input.isConnected&&Math.abs(input.getBoundingClientRect().top-target)<=1""",
+                                   arg={"input": original_input, "target": plan["target_top"]}, timeout=5000)
+        finally:
+            live.EVIDENCE["reference_position_after_wait"] = reference_position_observation(original_input)
         positioned = original_input.bounding_box()
         expected_input_width = OBSERVED_INPUT_CONTENT_WIDTH[engine] + NATIVE_INPUT_HORIZONTAL_PADDING
         live.EVIDENCE["reference_geometry"] = {"before_scroll": before, "positioned": positioned,
             "original_87_input_content_width": OBSERVED_INPUT_CONTENT_WIDTH[engine],
             "native_input_horizontal_padding": NATIVE_INPUT_HORIZONTAL_PADDING,
-            "expected_input_border_width": expected_input_width, "target_input_top": 780}
+            "expected_input_border_width": expected_input_width, "desired_input_top": 780,
+            "target_input_top": plan["target_top"], "position_reason": plan["reason"]}
         assert positioned is not None and abs(positioned["width"] - expected_input_width) <= 1
         live.EVIDENCE["phase"] = "reference-one-native-participant-pointer-selection"
         enter_topic_and_participant(page, original_input=original_input)

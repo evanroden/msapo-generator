@@ -108,3 +108,30 @@ def test_rendered_pdf_png_is_accepted_without_altering_bytes(tmp_path):
     assert cached_vector_png(file) == raw
 
 
+
+
+def test_valid_chunk_crc_does_not_hide_broken_compressed_pixels(tmp_path):
+    import struct
+    import zlib
+    raw = bytearray(png())
+    offset = 8
+    while offset < len(raw):
+        size = struct.unpack_from('>I', raw, offset)[0]
+        kind = bytes(raw[offset + 4:offset + 8])
+        if kind == b'IDAT':
+            raw[offset + 8:offset + 8 + size] = b'\x00' * size
+            struct.pack_into('>I', raw, offset + 8 + size,
+                             zlib.crc32(bytes(raw[offset + 4:offset + 8 + size])))
+            break
+        offset += size + 12
+    else:
+        pytest.fail('Synthetic PNG missing pixel chunk')
+    damaged = bytes(raw)
+    with Image.open(BytesIO(damaged)) as picture:
+        picture.verify()  # CRC alone is valid; pixel data is not.
+    with Image.open(BytesIO(damaged)) as picture, pytest.raises(OSError):
+        picture.load()
+    path = tmp_path / 'compressed-damage.png'
+    path.write_bytes(damaged)
+    assert cached_vector_png(path) is None
+    assert path.read_bytes() == damaged

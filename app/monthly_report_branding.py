@@ -159,7 +159,10 @@ def save_branding(logos, assets, *, expected_revision, actor, confirmed, action=
         for logo in logos:
             raw = assets.get(logo.asset)
             if raw is None:
-                raw = (path / "assets" / logo.asset).read_bytes()
+                # Restoring a saved collection must use the same bounded,
+                # integrity-checked read as normal report/logo reuse.
+                # Never allocate an unrestricted saved asset before _image.
+                raw = read_logo(logo)
             _image(raw, logo.asset)
             library._atomic_write(path / "assets" / logo.asset, raw)
         state = BrandingState(expected_revision + 1, logos, actor, library._now(), action)
@@ -192,7 +195,13 @@ def read_logo(logo):
     try:
         if path.stat().st_size > MAX_IMAGE_BYTES:
             raise LogoArtworkError("A saved logo exceeds the image size limit.")
-        raw = path.read_bytes()
+        # A saved image can grow or be replaced between stat() and open().
+        # Bound the allocation at the read itself, without modifying the
+        # retained artwork or silently accepting a truncated image.
+        with path.open("rb") as stream:
+            raw = stream.read(MAX_IMAGE_BYTES + 1)
+        if len(raw) > MAX_IMAGE_BYTES:
+            raise LogoArtworkError("A saved logo exceeds the image size limit.")
     except OSError as exc:
         library._qa_path_guard(path)
         raise LogoArtworkError("A saved logo image could not be read.") from exc

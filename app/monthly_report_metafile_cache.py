@@ -51,6 +51,9 @@ def cached_vector_png(path, *, limit=MAX_CACHED_VECTOR_PNG_BYTES):
                         or width * height > MAX_CACHED_VECTOR_PNG_PIXELS):
                     return None
                 picture.verify()
+            # Valid chunk CRCs do not guarantee a decodable compressed pixel stream.
+            with Image.open(BytesIO(data)) as picture:
+                picture.load()
     except (OSError, ValueError, SyntaxError, Image.DecompressionBombWarning,
             Image.DecompressionBombError):
         return None

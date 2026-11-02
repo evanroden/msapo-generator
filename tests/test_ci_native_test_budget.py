@@ -48,6 +48,91 @@ def parse_jobs(text):
     return jobs
 
 
+def validate_fresh_water_relocation(text, jobs, original):
+    """Recognize only the approved intact relocation, never a generic count waiver."""
+    command = 'python scripts/qa_water_fresh_page_journey.py'
+    moved = [step for step in original['synthetic-dom']
+             if command in step.get('commands', '')]
+    assert len(moved) == 1
+    assert moved[0]['commands'].strip() == command
+    assert text.count(command) == 1
+    assert 'fresh-water' in jobs
+    actual = ''.join(jobs['fresh-water'])
+    # Only comments/outer whitespace are immaterial; env, if, command, dependency,
+    # artifact and every timeout must match this bounded mandatory job exactly.
+    actual = ''.join(line for line in actual.splitlines(True)
+                     if not line.lstrip().startswith('#'))
+    expected = """  fresh-water:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install locked app and fresh Water browser harness
+        timeout-minutes: 5
+        run: |
+          sudo python3 scripts/ci_ubuntu_mirror_priority.py
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-calc
+          python -m pip install -r requirements-dev.lock
+          python scripts/patch_streamlit_frontend.py
+          python -m pip install playwright==1.58.0
+          python -m playwright install --with-deps chromium webkit
+      - name: Fresh ordinary Water in both native engines
+        timeout-minutes: 9
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 8 <<'NATIVE_TEST'
+          python scripts/patch_streamlit_date_input.py
+          python scripts/qa_water_fresh_page_journey.py
+          NATIVE_TEST
+      - name: Preserve fresh Water evidence including first failures
+        if: always()
+        timeout-minutes: 2
+        uses: actions/upload-artifact@v4
+        with:
+          name: fresh-water-browser-evidence-${{ github.run_attempt }}
+          path: test-artifacts/water-fresh-page-journey/
+          retention-days: 7
+          if-no-files-found: error
+
+"""
+    assert actual.strip() == expected.strip()
+    original['synthetic-dom'] = [step for step in original['synthetic-dom']
+                                 if step not in moved]
+    artifact_path = '            test-artifacts/water-fresh-page-journey/\n'
+    uploads = [step for step in original['synthetic-dom']
+               if artifact_path in step['raw']]
+    assert len(uploads) == 1
+    assert uploads[0]['raw'].count(artifact_path) == 1
+    # Its evidence moved to the exact always-upload job above; all other frozen
+    # artifact paths and all remaining DOM steps still compare byte-for-byte.
+    uploads[0]['raw'] = uploads[0]['raw'].replace(artifact_path, '')
+
+
+def validate_water_row_relocation(text, jobs, original):
+    from test_water_row_workflow_partition import validate_partition
+    validate_partition(text)
+    commands = ('qa_water_page_journey.py', 'qa_report_row_cards.py')
+    moved = [step for step in original['synthetic-dom']
+             if any(command in step.get('commands', '') for command in commands)]
+    assert len(moved) == 2
+    original['synthetic-dom'] = [step for step in original['synthetic-dom'] if step not in moved]
+    for directory in ('water-page-journey', 'report-row-cards'):
+        path = '            test-artifacts/' + directory + '/\n'
+        uploads = [step for step in original['synthetic-dom'] if path in step['raw']]
+        assert len(uploads) == 1 and uploads[0]['raw'].count(path) == 1
+        uploads[0]['raw'] = uploads[0]['raw'].replace(path, '')
+
+
 def validate_workflow(text):
     jobs = parse_jobs(text)
     original = json.loads((ROOT / 'tests/fixtures/native_workflow_steps.json').read_text())
@@ -55,6 +140,8 @@ def validate_workflow(text):
     contact = [step for step in original['synthetic-dom'] if 'qa_compact_contact_journey.py' in step.get('commands', '')]
     assert len(contact) == 1
     original['synthetic-dom'] = [step for step in original['synthetic-dom'] if step not in contact]
+    validate_fresh_water_relocation(text, jobs, original)
+    validate_water_row_relocation(text, jobs, original)
     ceilings = {'literal-labels':10, 'synthetic-history':15, 'synthetic-progress-photos':15, 'synthetic-dom':25, 'training-date':15}
     for name, ceiling in ceilings.items():
         chunks = jobs[name]
@@ -114,7 +201,14 @@ def test_term_resistant_descendant_is_killed_when_shell_exits(tmp_path):
     # A killed orphan can remain as a zombie until its system reaper runs.
     for _ in range(100):
         path = Path(f'/proc/{pid}/stat')
-        if not path.exists() or path.read_text().split()[2] == 'Z':
+        if not path.exists():
+            break
+        try:
+            state = path.read_text().split()[2]
+        except FileNotFoundError:
+            # The kernel may reap it between exists() and this read.
+            break
+        if state == 'Z':
             break
         time.sleep(0.01)
     else:
@@ -145,3 +239,39 @@ def test_contact_job_is_mandatory_bounded_and_preserves_the_full_journey():
     assert 'timeout-minutes: 3' in upload
     assert 'path: test-artifacts/compact-contact-journey/' in upload
     assert 'retention-days: 7' in upload
+
+
+@pytest.mark.parametrize(('old', 'new'), [
+    ('  fresh-water:\n', '  optional-water:\n'),
+    ('    steps:\n', '    if: false\n    steps:\n'),
+    ('    steps:\n', '    continue-on-error: true\n    steps:\n'),
+    ('    steps:\n', '    env:\n      SKIP_WEBKIT: 1\n    steps:\n'),
+    ('--minutes 8', '--minutes 9'),
+    ('timeout-minutes: 15', 'timeout-minutes: 10'),
+    ('timeout-minutes: 5', 'timeout-minutes: 20'),
+    ('timeout-minutes: 9', 'timeout-minutes: 26'),
+    ('timeout-minutes: 2', 'timeout-minutes: 9'),
+    ('chromium webkit', 'chromium'),
+    ('playwright==1.58.0', 'playwright'),
+    ('python scripts/patch_streamlit_date_input.py', 'true'),
+    ('python scripts/qa_water_fresh_page_journey.py', 'true'),
+    ('if: always()', 'if: success()'),
+    ('if-no-files-found: error', 'if-no-files-found: warn'),
+    ('test-artifacts/water-fresh-page-journey/', 'test-artifacts/other/'),
+])
+def test_fresh_water_relocation_weakening_is_rejected(old, new):
+    text = (ROOT / '.github/workflows/adaptive-workspaces.yml').read_text()
+    lane = ''.join(parse_jobs(text)['fresh-water'])
+    assert old in lane
+    changed = text.replace(lane, lane.replace(old, new, 1), 1)
+    assert changed != text
+    with pytest.raises(AssertionError):
+        validate_workflow(changed)
+
+
+def test_fresh_water_duplicate_or_missing_mandatory_job_is_rejected():
+    text = (ROOT / '.github/workflows/adaptive-workspaces.yml').read_text()
+    lane = ''.join(parse_jobs(text)['fresh-water'])
+    for changed in (text.replace(lane, ''), text + lane):
+        with pytest.raises(AssertionError):
+            validate_workflow(changed)

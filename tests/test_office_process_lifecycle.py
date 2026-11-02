@@ -204,7 +204,8 @@ def test_monthly_timeout_keeps_docx_and_specific_message(monkeypatch, tmp_path):
     from app.monthly_report_model import synthetic_draft, synthetic_profiles, ReportPeriod
     monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path / 'runtime'))
     monkeypatch.setattr(converter, 'OUTPUT_DIR', tmp_path)
-    def fail(_):
+    def fail(_, *, lossless_images):
+        assert lossless_images is True
         raise converter.PDFConversionTimeout('PDF conversion took too long. The conversion was stopped.')
     monkeypatch.setattr(converter, 'convert_to_pdf', fail)
     draft = synthetic_draft(synthetic_profiles()[0], ReportPeriod(2026, 9))

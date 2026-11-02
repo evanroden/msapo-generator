@@ -58,7 +58,8 @@ def test_monthly_conversion_uses_copy_and_final_download_stays_native(monkeypatc
     raw = package()
     seen = []
 
-    def convert(path):
+    def convert(path, **kwargs):
+        assert kwargs == ({'lossless_images': True} if operation == 'final' else {})
         seen.append(path.read_bytes())
         result = tmp_path / (path.stem + ".pdf")
         with fitz.open() as pdf:

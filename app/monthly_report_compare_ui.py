@@ -265,7 +265,7 @@ def recovery_time(value):
         if parsed.tzinfo is None:
             return "Time unavailable"
         return parsed.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return "Time unavailable"
 
 

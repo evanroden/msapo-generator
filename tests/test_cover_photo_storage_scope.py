@@ -105,7 +105,9 @@ from streamlit.testing.v1 import AppTest
 from app import monthly_report_section_preview_ui as preview, monthly_report_cover_ui as ui
 from app import monthly_report_qa_fixture as fixture, monthly_report_testing as testing
 from scripts.qa_cover_photo_controls import photograph,selected_asset,unchanged_shared
-from scripts.workspace_history_observations import storage_state,photograph_storage_paths
+from scripts.workspace_history_observations import storage_state,photograph_storage_paths,prepared_cover_storage
+from app import monthly_report_render_jobs as jobs
+jobs.memory_headroom=lambda:400*1024*1024 # Unit admission, not actual cgroup certification.
 base=Path(sys.argv[1]);token='d'*32;other='e'*32
 preview.render_section_preview=lambda *a,**kw: None
 incoming={};original=ui.st.file_uploader
@@ -136,13 +138,16 @@ run(next(x for x in app.text_area if x.label=='Activity summary').set_value('Cur
 before=capture();assert before['saved_revision']==3
 raw=photograph();item=BytesIO(raw);item.name='synthetic-current-report-cover.png';item.size=len(raw)
 incoming['New photograph for this report']=item
-run();assert capture()==before,'Upload alone changed report/storage'
+run();prepared=capture()
+prepared_asset,recovery_records=prepared_cover_storage(base,token,raw)
+paths=photograph_storage_paths(base,token,prepared_asset['reference'])
+unchanged_shared(before,prepared,asset=prepared_asset,storage_paths=paths,recovery_records=recovery_records,preparing=True)
 run(button('Use this photograph').click());used=capture()
 asset=selected_asset(used);paths=photograph_storage_paths(base,token,asset['reference'])
-unchanged_shared(before,used,asset=asset,storage_paths=paths)
+unchanged_shared(before,used,asset=asset,storage_paths=paths,recovery_records=recovery_records)
 run();assert capture()==used,'Display changed report/storage'
 run(button('No cover photograph').click());omitted=capture()
-unchanged_shared(before,omitted,asset=asset,storage_paths=paths)
+unchanged_shared(before,omitted,asset=asset,storage_paths=paths,recovery_records=recovery_records)
 assert selected_asset(omitted)==asset and omitted['working']['cover']['source']=='Omit'
 incoming.clear();run();assert capture()==omitted
 assert storage_state(base,other)==foreign,'Another namespace changed'
