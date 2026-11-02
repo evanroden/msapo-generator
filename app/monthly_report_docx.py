@@ -30,6 +30,7 @@ from app.monthly_report_render_compat import rendering_docx
 from app import pdf_converter
 from app import monthly_report_render_jobs as monthly_render_jobs
 from app.ocr import SUPPORTED_IMAGE_SUFFIXES, _MAX_PIXELS_PER_FRAME
+from app.monthly_report_cover_images import image_byte_limit, image_size_error, check_cover_headroom, cover_codec_header
 from app.monthly_report_checks import preflight
 from app.monthly_report_model import ReportDraft, included_sections, report_filename, used_block_keys, used_asset_references
 
@@ -49,7 +50,7 @@ class ReportImage:
 
 def normalize_report_image(raw: bytes, suffix: str, *, line_art: bool = False,
                            frame: tuple[float, float] = (7, 9), dpi: int = 200,
-                           preserve_transparency: bool = False) -> ReportImage:
+                           preserve_transparency: bool = False, cover_photo: bool = False) -> ReportImage:
     """Print normalization; vision still uses the stricter OCR request budgets.
 
     Line art must stay lossless, so the JPEG-only vision encoder is unsuitable
@@ -57,10 +58,20 @@ def normalize_report_image(raw: bytes, suffix: str, *, line_art: bool = False,
     Logos opt into their original alpha channel. Never infer transparency by
     removing white or dark pixels: those can be intentional parts of a mark.
     """
-    if suffix.lower() not in SUPPORTED_IMAGE_SUFFIXES or len(raw) > 30 * 1024 * 1024:
-        raise ValueError("Choose a supported image no larger than 30 MB.")
+    if len(raw) > image_byte_limit(cover_photo=cover_photo):
+        raise ValueError(image_size_error(cover_photo=cover_photo))
+    if suffix.lower() not in SUPPORTED_IMAGE_SUFFIXES:
+        raise ValueError("Choose a supported image format, such as PNG or JPEG.")
     if dpi not in (96, 150, 200) or min(frame) <= 0 or max(frame) > 11:
         raise ValueError("Invalid report image frame.")
+    if cover_photo:
+        check_cover_headroom(len(raw))
+        header = cover_codec_header(raw)
+        if header is not None:
+            if header.width * header.height > _MAX_PIXELS_PER_FRAME:
+                raise ValueError("Image is too large to decode safely. Resize it before uploading.")
+            check_cover_headroom(len(raw), pixels=header.width * header.height,
+                                 image_format=header.format, coefficient_bytes=header.coefficient_bytes)
     if suffix.lower() in {".heic", ".heif", ".hif"}:
         from pillow_heif import register_heif_opener
         register_heif_opener(thumbnails=False)
@@ -77,8 +88,27 @@ def normalize_report_image(raw: bytes, suffix: str, *, line_art: bool = False,
             raise ValueError("Image frame information could not be read. Export a fresh single-image copy.") from exc
         if frame_count != 1:
             raise ValueError("Choose a single image; use a PDF for multiple pages.")
-        oriented = ImageOps.exif_transpose(image)
-        oriented.thumbnail((round(frame[0] * dpi), round(frame[1] * dpi)), Image.Resampling.LANCZOS)
+        if cover_photo:
+            if image.format not in ("PNG", "JPEG", "WEBP", "HEIF"):
+                raise ValueError("Choose a PNG, JPEG, WebP or HEIC/HEIF photograph.")
+            if header is not None and (image.format, image.width, image.height) != (header.format, header.width, header.height):
+                raise ValueError("Choose a fresh PNG or JPEG export; the photograph's dimensions are inconsistent.")
+            check_cover_headroom(len(raw), pixels=image.width * image.height, image_format=image.format,
+                                 coefficient_bytes=header.coefficient_bytes if header else 0)
+        target = (round(frame[0] * dpi), round(frame[1] * dpi))
+        if cover_photo:
+            # Decode bounds were checked on the ORIGINAL dimensions. Reduce
+            # before EXIF's copy/transpose so a 40 MP input does not create a
+            # second full-resolution raster. Account for rotated frame axes.
+            orientation = image.getexif().get(274, 1)
+            source_target = target[::-1] if orientation in (5, 6, 7, 8) else target
+            # thumbnail computes final geometry before its own JPEG draft,
+            # avoiding rounding drift from changing source dimensions first.
+            image.thumbnail(source_target, Image.Resampling.LANCZOS)
+            oriented = ImageOps.exif_transpose(image)
+        else:
+            oriented = ImageOps.exif_transpose(image)
+            oriented.thumbnail(target, Image.Resampling.LANCZOS)
         rgba = oriented.convert("RGBA")
         if preserve_transparency:
             normalized = rgba
@@ -103,6 +133,8 @@ class ReportPackage:
     source_view_digest: str = ""
     source_view_docx_sha256: str = ""
     source_view_art_digest: str = ""
+    contents_notice: str = ""
+    generated_contents: bool = False
 
 
 def canonical_docx(raw: bytes) -> bytes:
@@ -260,10 +292,13 @@ def estimate_bytes(draft: ReportDraft, asset_loader: Callable[[str], bytes] | No
     )
 
 
-def _picture(document, raw: bytes, *, width: float = 7, height: float = 8, inset: float = 0) -> None:
+def _picture(document, raw: bytes, *, width: float = 7, height: float = 8,
+             inset: float = 0, page_break_before: bool = False) -> None:
     paragraph = document.add_paragraph()
     paragraph.paragraph_format.left_indent = Inches(inset)
     paragraph.paragraph_format.space_after = Pt(0)
+    if page_break_before:
+        paragraph.paragraph_format.page_break_before = True
     _fit_picture(paragraph.add_run(), raw, width, height)
 
 
@@ -406,8 +441,9 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
     configure_content(document.add_section(WD_SECTION_START.NEW_PAGE))
     document.add_heading("Table of contents", 0)
     sections = included_sections(draft.sections)
+    from app.monthly_report_contents_pagination import add_entry, mark_target
     for section in sections:
-        document.add_paragraph(f"{section.number}. {section.title}")
+        add_entry(document, section)
     document.add_paragraph("Confidential — intended for the report recipients. Do not distribute without permission.")
     document.add_paragraph("Create. Sustain. Empower.")
     for section in sections:
@@ -420,7 +456,8 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
             _divider_background(document, asset_loader(divider_asset))
         _display_page(document, label=f"Section {section.number}" if not section.appendix else f"Appendix {section.number}", title=section.title, light=bool(divider_asset))
         configure_content(document.add_section(WD_SECTION_START.NEW_PAGE))
-        document.add_heading(f"{section.number}. {section.title}", 1)
+        heading = document.add_heading(f"{section.number}. {section.title}", 1)
+        mark_target(heading, section.key, sections.index(section))
         chart_emitted = False
         for spec in section.blocks:
             block = blocks.get(spec.key)
@@ -462,9 +499,10 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
             for index, reference in enumerate(block.asset_hashes if not block.org_nodes and spec.type != "image_grid" else ()):
                 if asset_loader is None:
                     raise ValueError("Image and PDF-page assets require the library resolver.")
-                if index:
-                    document.add_page_break()
-                _picture(document, asset_loader(reference))
+                # The page break belongs to the next image paragraph. A
+                # standalone break paragraph can consume an unwanted page
+                # when a large preceding source page nearly fills the sheet.
+                _picture(document, asset_loader(reference), page_break_before=index > 0)
                 if index < len(block.asset_captions) and block.asset_captions[index]:
                     document.add_paragraph(block.asset_captions[index], style="Caption")
             if block.rows:
@@ -483,6 +521,10 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
             for imported in block.extra_tables:
                 if not imported.columns or not any(c is not None and str(c).strip() for row in imported.rows for c in row):
                     continue
+                from app.monthly_report_training import matrix_title
+                title = matrix_title(imported.reference)
+                if title:
+                    document.add_paragraph(title).paragraph_format.keep_with_next = True
                 table = document.add_table(rows=1, cols=len(imported.columns))
                 table.style = "Light Shading Accent 1"
                 for cell, title in zip(table.rows[0].cells, imported.columns):
@@ -523,6 +565,7 @@ def _generate_report(draft, *, acknowledged_fingerprint='', asset_loader=None, s
 
 def _generate_verified_report(draft, *, acknowledged_fingerprint, asset_loader, operation):
     source_view = operation.view
+    generated_contents = operation.original is None
     docx = assemble_docx(draft, acknowledged_fingerprint=acknowledged_fingerprint, asset_loader=asset_loader, source_view=source_view)
     # Retained native PNGs may still contain erased artwork under alpha zero.
     # This bounded derivative pass is separate from pixel-preserving metadata
@@ -531,14 +574,21 @@ def _generate_verified_report(draft, *, acknowledged_fingerprint, asset_loader, 
     docx = sanitize_package_transparency(docx)
     docx = sanitize_package_media(docx)
     pdf, error = _convert_report_pdf(draft, docx)
+    from app.monthly_report_contents_review import contents_notice_for
+    from app.monthly_report_contents_pagination import synchronize
+    notice = contents_notice_for(draft.profile)
+    if generated_contents:
+        updated, generated_notice = synchronize(docx, pdf, included_sections(draft.sections))
+        if generated_notice is not None:
+            docx, notice = canonical_docx(updated), generated_notice
     return ReportPackage(docx, pdf, report_filename(draft, "docx"), report_filename(draft, "pdf"), draft.fingerprint, error,
                          source_view.receipt_sha256 if source_view is not None else "",
                          hashlib.sha256(docx).hexdigest() if source_view is not None else "",
-                         operation.art_digest)
+                         operation.art_digest, notice, generated_contents)
 
 
 def retry_report_pdf(draft: ReportDraft, package: ReportPackage, *, source_view=None) -> ReportPackage:
-    """Retry only conversion of the same current native Word bytes. Never save."""
+    """Retry conversion without assembly/save; verify generated page caches."""
     if package.fingerprint != draft.fingerprint:
         raise ValueError("This Word file belongs to an earlier draft. Create files for the current report first.")
     from app.monthly_report_source_view_runtime import cache_identity, render_operation
@@ -575,6 +625,11 @@ def _retry_verified_report_pdf(draft, package, operation):
     if package.pdf:
         return package
     pdf, error = _convert_report_pdf(draft, package.docx)
+    from app.monthly_report_contents_pagination import synchronize
+    if package.generated_contents:
+        docx, notice = synchronize(package.docx, pdf, included_sections(draft.sections))
+        if notice is not None:
+            return replace(package, docx=canonical_docx(docx), pdf=pdf, pdf_error=error, contents_notice=notice)
     return replace(package, pdf=pdf, pdf_error=error)
 
 
@@ -609,7 +664,7 @@ def _convert_report_pdf(draft, docx):
             input_path.write_bytes(converted_copy)
             del converted_copy
             release_transient_word_memory()
-            actual_pdf = monthly_render_jobs.convert_to_pdf(input_path, wait_seconds=130)
+            actual_pdf = monthly_render_jobs.convert_to_pdf(input_path, wait_seconds=130, lossless_images=True)
             pdf = actual_pdf.read_bytes()
             if not pdf.startswith(b"%PDF-"):
                 raise ValueError("The converter returned an invalid PDF.")

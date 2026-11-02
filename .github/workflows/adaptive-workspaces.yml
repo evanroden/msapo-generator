@@ -28,6 +28,9 @@ on:
       - 'scripts/qa_po_adaptive.py'
       - 'scripts/qa_monthly_adaptive.py'
       - 'scripts/qa_monthly_literal_labels.py'
+      - 'scripts/qa_import_picture_alt.py'
+      - 'tests/test_import_picture_accessibility.py'
+      - 'tests/import_picture_accessibility_test.cjs'
       - 'scripts/qa_work_order_rows.py'
       - 'tests/test_work_order_row_browser_contract.py'
       - 'scripts/qa_browser_diagnostics.py'
@@ -60,6 +63,11 @@ on:
       - 'scripts/workspace_water_observations.py'
       - 'tests/test_workspace_water_observations.py'
       - 'scripts/patch_streamlit_frontend.py'
+      - 'scripts/streamlit_dataframe_action_owners.py'
+      - 'tests/test_streamlit_dataframe_action_owners.py'
+      - 'tests/dataframe_action_owners_test.cjs'
+      - 'scripts/streamlit_text_input_default.py'
+      - 'tests/test_streamlit_text_input_default.py'
       - 'scripts/streamlit_combobox_close.py'
       - 'tests/test_multiselect_tab_navigation.py'
       - 'tests/multiselect_tab_navigation_test.cjs'
@@ -68,6 +76,8 @@ on:
       - 'tests/expander_motion_test.cjs'
       - 'scripts/streamlit_forward_cache.py'
       - 'tests/test_streamlit_forward_cache.py'
+      - 'scripts/streamlit_string_trigger_coalescing.py'
+      - 'tests/test_streamlit_string_trigger_coalescing.py'
       - 'scripts/qa_wire_totals.py'
       - 'tests/test_qa_wire_totals.py'
       - 'tests/test_picture_group_media.py'
@@ -192,6 +202,9 @@ on:
       - 'scripts/qa_po_adaptive.py'
       - 'scripts/qa_monthly_adaptive.py'
       - 'scripts/qa_monthly_literal_labels.py'
+      - 'scripts/qa_import_picture_alt.py'
+      - 'tests/test_import_picture_accessibility.py'
+      - 'tests/import_picture_accessibility_test.cjs'
       - 'scripts/qa_work_order_rows.py'
       - 'tests/test_work_order_row_browser_contract.py'
       - 'scripts/qa_browser_diagnostics.py'
@@ -224,6 +237,11 @@ on:
       - 'scripts/workspace_water_observations.py'
       - 'tests/test_workspace_water_observations.py'
       - 'scripts/patch_streamlit_frontend.py'
+      - 'scripts/streamlit_dataframe_action_owners.py'
+      - 'tests/test_streamlit_dataframe_action_owners.py'
+      - 'tests/dataframe_action_owners_test.cjs'
+      - 'scripts/streamlit_text_input_default.py'
+      - 'tests/test_streamlit_text_input_default.py'
       - 'scripts/streamlit_combobox_close.py'
       - 'tests/test_multiselect_tab_navigation.py'
       - 'tests/multiselect_tab_navigation_test.cjs'
@@ -232,6 +250,8 @@ on:
       - 'tests/expander_motion_test.cjs'
       - 'scripts/streamlit_forward_cache.py'
       - 'tests/test_streamlit_forward_cache.py'
+      - 'scripts/streamlit_string_trigger_coalescing.py'
+      - 'tests/test_streamlit_string_trigger_coalescing.py'
       - 'scripts/qa_wire_totals.py'
       - 'tests/test_qa_wire_totals.py'
       - 'tests/test_picture_group_media.py'
@@ -439,6 +459,41 @@ jobs:
         with:
           name: monthly-literal-label-browser-evidence
           path: test-artifacts/monthly-literal-labels/
+          retention-days: 7
+          if-no-files-found: warn
+  import-picture-alt:
+    runs-on: ubuntu-24.04
+    # This five-minute journey has its own aggregate deadline. The frozen
+    # literal-label job keeps its original ten-minute budget and all evidence.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - name: Install locked app and imported-picture browser harness
+        timeout-minutes: 20
+        run: |
+          sudo python3 scripts/ci_ubuntu_mirror_priority.py
+          python -m pip install -r requirements-dev.lock
+          python scripts/patch_streamlit_frontend.py
+          python -m pip install playwright==1.58.0
+          python -m playwright install --with-deps chromium webkit
+      - name: Imported images have their own caption as accessible name
+        timeout-minutes: 6
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 5 <<'NATIVE_TEST'
+          python scripts/qa_import_picture_alt.py
+          NATIVE_TEST
+      - name: Retain imported-picture first failures and browser evidence
+        if: always()
+        timeout-minutes: 3
+        uses: actions/upload-artifact@v4
+        with:
+          name: imported-picture-alt-browser-evidence
+          path: test-artifacts/import-picture-alt/
           retention-days: 7
           if-no-files-found: warn
   synthetic-progress-photos:
@@ -709,31 +764,6 @@ jobs:
           path: test-artifacts/about-logo-refresh/
           retention-days: 7
           if-no-files-found: warn
-      - name: Water page management across desktop and narrow browser with actual output
-        if: ${{ !cancelled() }}
-        env:
-          EPC_MONTHLY_WATER_TASK: '1'
-        timeout-minutes: 26
-        run: |
-          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
-          python scripts/qa_water_page_journey.py
-          NATIVE_TEST
-      - name: Native proposal and onsite row editing with actual output
-        if: ${{ !cancelled() }}
-        env:
-          EPC_MONTHLY_ROW_TASK: '1'
-        timeout-minutes: 26
-        run: |
-          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
-          python scripts/qa_report_row_cards.py
-          NATIVE_TEST
-      - name: Fresh ordinary Water page review from empty omitted state
-        if: ${{ !cancelled() }}
-        timeout-minutes: 26
-        run: |
-          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
-          python scripts/qa_water_fresh_page_journey.py
-          NATIVE_TEST
       - name: Select explicitly requested one-shot native owner diagnostic
         id: native_owner_request
         if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.number == 249 && github.run_attempt == 1 }}
@@ -768,10 +798,7 @@ jobs:
             test-artifacts/shared-fixture-testing/
             test-artifacts/single-logo-admin/
             test-artifacts/about-logo-refresh/
-            test-artifacts/water-page-journey/
-            test-artifacts/report-row-cards/
             test-artifacts/compact-contact-journey/
-            test-artifacts/water-fresh-page-journey/
           retention-days: 7
           if-no-files-found: warn
       - name: Upload separate native owner diagnostic evidence
@@ -783,6 +810,113 @@ jobs:
           path: test-artifacts/fresh-native-owner-diagnostic/
           retention-days: 7
           if-no-files-found: warn
+
+  water-row-output:
+    runs-on: ubuntu-24.04
+    # Saved Water and row outputs have independent bounded workload.
+    # DOM25 + fresh Water8 + saved Water/rows8 = 41 native minutes total.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install locked app and saved Water/row browser harness
+        timeout-minutes: 5
+        run: |
+          sudo python3 scripts/ci_ubuntu_mirror_priority.py
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-calc
+          python -m pip install -r requirements-dev.lock
+          python scripts/patch_streamlit_frontend.py
+          python -m pip install playwright==1.58.0
+          python -m playwright install --with-deps chromium webkit
+      - name: Apply exact locked scalar date compatibility repair
+        timeout-minutes: 9
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 8 <<'NATIVE_TEST'
+          python scripts/patch_streamlit_date_input.py
+          NATIVE_TEST
+      - name: Water page management across desktop and narrow browser with actual output
+        if: ${{ !cancelled() }}
+        env:
+          EPC_MONTHLY_WATER_TASK: '1'
+        timeout-minutes: 9
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 8 <<'NATIVE_TEST'
+          python scripts/qa_water_page_journey.py
+          NATIVE_TEST
+      - name: Native proposal and onsite row editing with actual output
+        if: ${{ !cancelled() }}
+        env:
+          EPC_MONTHLY_ROW_TASK: '1'
+        timeout-minutes: 9
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 8 <<'NATIVE_TEST'
+          python scripts/qa_report_row_cards.py
+          NATIVE_TEST
+      - name: Preserve saved Water and row output evidence including first failures
+        if: always()
+        timeout-minutes: 2
+        uses: actions/upload-artifact@v4
+        with:
+          name: water-row-output-browser-evidence-${{ github.run_attempt }}
+          path: |
+            test-artifacts/water-page-journey/
+            test-artifacts/report-row-cards/
+          retention-days: 7
+          if-no-files-found: error
+
+  fresh-water:
+    runs-on: ubuntu-24.04
+    # Independent mandatory workload: no longer consumes the DOM lane's remainder.
+    # This lane retains its own 8-minute native ceiling; DOM remains25.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install locked app and fresh Water browser harness
+        timeout-minutes: 5
+        run: |
+          sudo python3 scripts/ci_ubuntu_mirror_priority.py
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-calc
+          python -m pip install -r requirements-dev.lock
+          python scripts/patch_streamlit_frontend.py
+          python -m pip install playwright==1.58.0
+          python -m playwright install --with-deps chromium webkit
+      - name: Fresh ordinary Water in both native engines
+        timeout-minutes: 9
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 8 <<'NATIVE_TEST'
+          python scripts/patch_streamlit_date_input.py
+          python scripts/qa_water_fresh_page_journey.py
+          NATIVE_TEST
+      - name: Preserve fresh Water evidence including first failures
+        if: always()
+        timeout-minutes: 2
+        uses: actions/upload-artifact@v4
+        with:
+          name: fresh-water-browser-evidence-${{ github.run_attempt }}
+          path: test-artifacts/water-fresh-page-journey/
+          retention-days: 7
+          if-no-files-found: error
 
   synthetic-contact:
     runs-on: ubuntu-24.04

@@ -1,4 +1,4 @@
-"""Continue into the editor asks the browser to start at its Activity once.
+"""Continue into the editor asks the browser to start at Cover once.
 
 The browser side is covered by tests/workspace_navigation_test.cjs and the
 Starting report journey in scripts/qa_shared_fixture_testing.py (#299).
@@ -14,19 +14,19 @@ def _landing(app):
                 if component.proto.component_name == "enfra_workspace_layout")
 
 
-def test_continue_lands_once_at_activity_and_later_reruns_stay_in_place(monkeypatch, tmp_path):
+def test_continue_lands_once_at_cover_and_later_reruns_stay_in_place(monkeypatch, tmp_path):
     app, _, _ = stage_source(monkeypatch, tmp_path)
     assert _landing(app) is None, "reviewing a source does not move the reader"
     next(b for b in app.button if b.label == "Continue to this month’s updates").click().run()
     assert not app.exception
     nonce, section = _landing(app)
-    assert nonce and section == "monthly_activity"
+    assert nonce and section == "monthly_cover"
     app.run()
     assert not app.exception
     assert _landing(app) is None, "an ordinary rerun after the entry keeps the reader in place"
 
 
-def test_landing_falls_back_to_cover_without_reordering_custom_sections(monkeypatch, tmp_path):
+def test_landing_starts_at_cover_without_reordering_custom_sections(monkeypatch, tmp_path):
     from dataclasses import replace
     from test_cover_import_task_ui import current
     from test_monthly_report_ui import monthly
