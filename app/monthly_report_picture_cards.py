@@ -5,6 +5,8 @@ import streamlit as st
 from app.monthly_report_content_policy import page_status
 from app.monthly_report_import import read_import_image
 from app.monthly_report_sections import small_artwork
+from app.monthly_report_content_kind import image_review_caption, image_replacement_guidance
+from app.monthly_report_picture_accessibility import review_image
 
 
 def _turn_page(key, delta, last):
@@ -88,10 +90,14 @@ def review_cover_gallery(images, path, prefix, old, plan):
                 st.caption(f"Picture {index}")
                 try:
                     preview = read_import_image(path, item, preview=True)
-                    st.image(preview.data, width="stretch")
+                    review_image(preview.data, width="stretch",
+                                 caption=image_review_caption(item, index, "cover"),
+                                 key=prefix + "_cover_" + item.id)
                     visible.add(item.id)
                 except (ValueError, OSError):
-                    st.caption("This picture could not be displayed and will be left out.")
+                    st.caption("This preview could not be displayed. Your selected photo is unchanged; "
+                               "its original will still be checked before import." if item.id == selected else
+                               "This preview could not be displayed. Retry before choosing this picture.")
                 if contains_price(item.text):
                     st.warning("This picture's caption mentions pricing and cannot be used as a cover photo.")
                     continue
@@ -106,10 +112,12 @@ def review_cover_gallery(images, path, prefix, old, plan):
     st.button("No cover photograph", key=prefix + "_omit_cover",
               type="secondary", width="stretch", on_click=_cover_choice,
               args=(key, omitted_key, ""))
-    # Never let an unavailable, priced or stale source picture survive the
-    # new selection. Existing logos/footer stay in the same approved plan.
+    # A failed thumbnail is not an omission decision. Keep an existing valid
+    # source identity; the import builder still reads and validates its original.
+    # Priced and stale selections remain excluded. Unpreviewed alternatives
+    # have no Choose button, so this does not authorize a new unseen selection.
     chosen = next((item for item in candidates if item.id == selected
-                   and item.id in visible and not contains_price(item.text)), None)
+                   and not contains_price(item.text)), None)
     destinations = {identity: slot for identity, slot in plan.get("destinations", {}).items()
                     if identity not in ids}
     selected_ids = [identity for identity in plan.get("selected", ()) if identity not in ids]
@@ -154,7 +162,7 @@ def review_pictures(images, section, path, prefix, scope, field, old, plan, bloc
             selected = "" if section == "cover" else "org_chart" if section == "organization" else "keep"
         choices[item.id] = selected if selected in options else ""
     st.write("Pictures found in your report")
-    st.caption("Look at each picture, then choose what to do directly underneath it. “Leave out” keeps it in the saved original only.")
+    st.caption(image_replacement_guidance(section))
     if section == "cover":
         st.caption("Choose one cover photo. Choosing another replaces your earlier choice." if not allow_branding else
                    "Choose one cover photo and the logos you want. Choosing another picture for the same role replaces your earlier choice.")
@@ -174,7 +182,9 @@ def review_pictures(images, section, path, prefix, scope, field, old, plan, bloc
             st.caption(f"Picture {index}")
             try:
                 preview = read_import_image(path, item, preview=True)
-                st.image(preview.data, width=min(preview.width, 650))
+                review_image(preview.data, width=min(preview.width, 650),
+                             caption=image_review_caption(item, index, section),
+                             key=prefix + "_" + item.id)
             except (ValueError, OSError):
                 st.warning("This picture could not be displayed. Check it in the original report before including it.")
                 if choices[item.id]:

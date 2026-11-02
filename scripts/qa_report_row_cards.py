@@ -65,6 +65,24 @@ def receipt(page, *, field=None, value=None):
     return json.loads(page.locator('[data-enfra-row-receipt]').last.get_attribute('data-enfra-row-receipt'))
 
 
+def close_proposal(page, proposal, expect):
+    # A Close with no changed values can leave the preceding idle/durable
+    # receipt valid until its rerun starts. Acknowledge this structural action
+    # before the next single native gesture can target moving content.
+    before = page.locator('.st-key-epc_workspace_monthly').get_attribute('data-epc-full-render')
+    assert before, 'The proposal Close requires an existing render identity.'
+    proposal.get_by_role('button', name='Close editing', exact=True).click()
+    page.wait_for_function('''before => {
+      const render=document.querySelector('.st-key-epc_workspace_monthly')?.dataset.epcFullRender;
+      return Boolean(render && render!==before &&
+        document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')==='notRunning');
+    }''', arg=before, timeout=30000)
+    expect(proposal.get_by_role('textbox', name='Status', exact=True)).to_have_count(0)
+    expect(proposal.get_by_role('textbox', name='Technical Notes', exact=True)).to_have_count(0)
+    expect(proposal.get_by_role('button', name='Close editing', exact=True)).to_have_count(0)
+    expect(proposal.get_by_role('button', name='Edit proposal', exact=True)).to_be_visible()
+
+
 def assert_outputs(word, pdf):
     from lxml import etree
     import pymupdf
@@ -138,12 +156,12 @@ def browser_task(browser_type, name):
         record['active_field_continuity']={'typed':typed,'acknowledged':acknowledged}
         assert typed['node']==acknowledged['node'] and acknowledged['visible'] and not acknowledged['disabled']
         proposal.get_by_role('textbox',name='Technical Notes',exact=True).fill(NOTE)
-        proposal.get_by_role('button',name='Close editing',exact=True).click()
+        close_proposal(page, proposal, expect)
         capture('pending-note-delivered-with-close',field='Technical Notes',value=NOTE)
         proposal.get_by_role('button',name='Edit proposal',exact=True).click()
         expect(proposal.get_by_role('textbox',name='Status',exact=True)).to_have_value(STATUS)
         expect(proposal.get_by_role('textbox',name='Technical Notes',exact=True)).to_have_value(NOTE)
-        proposal.get_by_role('button',name='Close editing',exact=True).click()
+        close_proposal(page, proposal, expect)
         capture('desktop-proposal-reentry')
         # Add request opens named fields, not an empty grid. Both typed fields
         # arrive with the one Close action, without a separate blur.
@@ -199,7 +217,7 @@ def browser_task(browser_type, name):
         activated=[event for event in transition if event['label']=='Edit proposal']
         assert [event['type'] for event in activated]==['pointerdown','pointerup','click']
         assert len({event['node'] for event in activated})==1
-        proposal.get_by_role('button',name='Close editing',exact=True).click()
+        close_proposal(page, proposal, expect)
         capture('narrow-proposal-and-onsite-reentry')
         qa.capture(page,name,'row-cards-narrow')
         live.ROOT=out;live.EVIDENCE={'checks':{},'events':[],'artifacts':{},'synthetic_only':True}

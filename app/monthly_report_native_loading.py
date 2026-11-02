@@ -37,6 +37,15 @@ def reserve_period_selector(key, label):
             + skeleton + '::after{content:"";display:block;height:2.5rem;}</style>')
 
 
+def reserve_photo_count_slider(key):
+    """The pinned photo slider has the same label + 2.5rem track footprint.
+
+    Reuse the version-checked, wrapping label reservation; change only the
+    aria-hidden skeleton, never the live slider, value or focus.
+    """
+    reserve_period_selector(key, "Photos per page")
+
+
 def reserve_empty_uploader(key, label, *, label_visibility="visible"):
     if (st.__version__ != "1.61.1" or st.session_state.get(key)
             or label_visibility not in {"visible", "collapsed"}):
