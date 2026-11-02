@@ -178,6 +178,23 @@ def await_initial_workspace(page):
     }''', timeout=30000)
 
 
+def await_synthetic_fault_armed(page, previous, mode):
+    """Confirm fixture setup before the ordinary edit; never used by held press."""
+    page.wait_for_function('''({after,mode,armed,consumed}) => {
+      const n=[...document.querySelectorAll('[data-enfra-contact-receipt]')].at(-1);
+      if(!n)return false;const s=JSON.parse(n.dataset.enfraContactReceipt);
+      return s.sequence>after && s.fault?.mode===mode && s.fault.armed===armed &&
+        s.fault.consumed===consumed && JSON.stringify(s.working)===JSON.stringify(s.durable) &&
+        document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')==='notRunning';
+    }''', arg={'after':previous['sequence'], 'mode':mode,
+              'armed':previous['fault']['armed'] + 1,
+              'consumed':previous['fault']['consumed']}, timeout=30000)
+    armed = json.loads(page.locator(SELECTOR).last.get_attribute('data-enfra-contact-receipt'))
+    for key in ('working', 'directory', 'attempts', 'scope', 'generation', 'saved_revision'):
+        assert armed[key] == previous[key], 'Fixture fault setup changed ' + key
+    return armed
+
+
 def validate_outputs(word, pdf, rows):
     from docx import Document
     import pymupdf
@@ -318,6 +335,7 @@ def browser_task(browser_type, name, *, held_recovery=False):
                 edit_contact_during_recovery_rerun(page, contacts, gate, state, record)
             else:
                 page.get_by_role('button',name=f'Fail next synthetic shared save {fault} commit',exact=True).click()
+                record.setdefault('fault_setup', {})[fault] = await_synthetic_fault_armed(page, state, fault)
                 contacts.get_by_role('button',name='Edit contact',exact=True).first.click()
             contacts.get_by_role('textbox',name='Phone',exact=True).fill(phone)
             entry = page.evaluate('(start)=>window.ENFRAContactObservation.phoneEvents.filter(e=>e.sequence>start)', phone_start)
