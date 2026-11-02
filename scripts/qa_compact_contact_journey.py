@@ -162,6 +162,22 @@ def receipt(page, *, after=0, expected_contact=None, expected_write=None):
     return json.loads(page.locator(SELECTOR).last.get_attribute('data-enfra-contact-receipt'))
 
 
+def await_initial_workspace(page):
+    # Like the adaptive fixture, complete initial display-module registration
+    # before operating the fixture-only output control. A fresh server receipt
+    # can precede Markdown markers and the workspace adapter on a cold load.
+    # This is not used by any contact edit or the deliberate held recovery press.
+    page.wait_for_function('''() => {
+      const root=document.querySelector('.st-key-epc_workspace_monthly');
+      if(!root?.classList.contains('epc-workspace') || root.dataset.epcMode!=='wide' ||
+         !root.dataset.epcFullRender)return false;
+      const pairs=[...root.querySelectorAll('[class*="st-key-epc_pair_"]')];
+      return pairs.length>0 && pairs.every(pair=>pair.classList.contains('epc-workspace-pair') &&
+        Boolean(pair.querySelector('[data-epc-pair]') && pair.querySelector('.epc-workspace-row') &&
+          pair.querySelector('.epc-workspace-editor') && pair.querySelector('.epc-workspace-reference')));
+    }''', timeout=30000)
+
+
 def validate_outputs(word, pdf, rows):
     from docx import Document
     import pymupdf
@@ -242,6 +258,7 @@ def browser_task(browser_type, name, *, held_recovery=False):
         page.goto(qa.URL, wait_until='domcontentloaded')
         page.get_by_role('button',name='Create synthetic compact contact report',exact=True).click()
         baseline = receipt(page)
+        await_initial_workspace(page)
         record['baseline'] = baseline
         assert len(baseline['working']['vendors']['extra_tables'][0]['rows']) == 3
         state, before_output = outputs('before', baseline)
