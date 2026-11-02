@@ -385,6 +385,29 @@ If no capacity table is visible return an empty tables list. This output will be
     return payload
 
 
+def _reader_title_sites_supported(title, text, facilities):
+    """Do not promote a reader-invented heading into a contract site binding.
+
+    A table's *title* is free-form model output, but _candidate may use it to
+    identify the site for every row without a site column. For readable pages
+    each known facility mentioned in that title must also be named by the
+    original source text. Only exact known names/aliases count; no substring
+    guessing or cross-page borrowing. Unrecognized names stay unmapped under
+    the existing review rules.
+    """
+    title, text = _normal(title), _normal(text)
+
+    def names_site(name, content):
+        return bool(re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", content))
+
+    for facility in facilities:
+        names = directory.facility_names(facility)
+        if any(names_site(name, title) for name in names):
+            if not any(names_site(name, text) for name in names):
+                return False
+    return True
+
+
 def reader_result(profile, inspection, value):
     source = inspection.content.source
     raw_tables = value.get("tables") if isinstance(value, dict) else None
@@ -397,6 +420,7 @@ def reader_result(profile, inspection, value):
         if (not isinstance(raw, dict) or type(raw.get("page")) is not int
                 or raw["page"] not in pages
                 or not isinstance(raw.get("title", ""), str)
+                or len(raw.get("title", "")) > 4000
                 or not isinstance(raw.get("columns"), list) or not isinstance(raw.get("rows"), list)
                 or not 1 <= len(raw["columns"]) <= 100 or len(raw["rows"]) > MAX_ROWS):
             raise ValueError("Capacity reader returned invalid table details; shared data is unchanged.")
@@ -415,6 +439,11 @@ def reader_result(profile, inspection, value):
             if any(cell.strip() and _normal(cell) not in native
                    for cell in (*columns, *(c for row in rows for c in row))):
                 raise ValueError("A suggested capacity label or unit was not in the source. Review the original file.")
+            # Unlike validated cells, a model-proposed title is not direct
+            # source evidence. Never use an unproved site name in that title
+            # to assign reusable capacity to a contract facility.
+            if not _reader_title_sites_supported(raw.get("title", ""), native, facilities):
+                raise ValueError("A suggested capacity title names a site not on the cited page. Review the site against the original file.")
         candidate = _candidate(SourceTable(raw.get("title") or f"Page {page}", tuple(columns), tuple(tuple(r) for r in rows)),
                                source, page, facilities, source.page_texts[page - 1])
         if candidate and not any(t.page == candidate.page and t.columns == candidate.columns and t.rows == candidate.rows for t in tables):
