@@ -60,12 +60,72 @@ def set_toggle(container,label,value,name):
     check(name+' normal label pointer toggles intended input',control.is_checked()==value,geometry)
 
 
+# One synchronous observation of the CURRENT image, not separate assertions
+# that can straddle a native component image replacement or JPEG decode.
+_LOADED_PAGE_READY = r"""expected => {
+ const deep=(root,selector)=>{
+   const nodes=[],pending=[root];let roots=0,elements=0;
+   while(pending.length){
+     if(++roots>64)return [];
+     const current=pending.pop();
+     nodes.push(...current.querySelectorAll(selector));
+     for(const element of current.querySelectorAll('*')){
+       if(++elements>8192)return [];
+       if(element.shadowRoot)pending.push(element.shadowRoot);
+     }
+   }
+   return nodes;
+ };
+ const markers=Array.from(document.querySelectorAll('[data-epc-pair]'))
+   .filter(node=>node.dataset.epcPair===expected.owner);
+ if(markers.length!==1)return false;
+ const pair=markers[0].closest('.epc-workspace-pair');
+ if(!pair || !pair.isConnected)return false;
+ const panels=deep(pair,'.report-preview');
+ if(panels.length!==1 || panels[0]._previewState?.scope!==expected.scope)return false;
+ const figures=deep(panels[0],'figure[data-index="'+expected.index+'"]');
+ if(figures.length!==1)return false;
+ const images=deep(figures[0],'img');
+ if(images.length!==1)return false;
+ const image=images[0],src=image.getAttribute('src'),style=getComputedStyle(image);
+ const rect=image.getBoundingClientRect();
+ return image.isConnected && image.getClientRects().length>0 && rect.width>0 && rect.height>0
+   && style.visibility!=='hidden' && style.visibility!=='collapse' && style.display!=='none'
+   && /^data:image\/jpeg;base64,.+/.test(src||'') && image.currentSrc===src
+   && image.complete===true && image.naturalWidth>0 && image.naturalHeight>0;
+}"""
+
+
 def loaded_page(pair,index):
-    image=pair.locator(f'figure[data-index="{index}"] img')
-    expect(image).to_be_visible()
-    expect(image).to_have_attribute('src',re.compile(r'^data:image/jpeg;base64,'))
-    expect(image).to_have_js_property('complete',True)
-    check(f'loaded preview page {index+1}',image.evaluate('(node)=>node.naturalWidth>0'))
+    deadline=time.monotonic()+5
+    expected=pair.evaluate("""pair => {
+ const deep=(root,selector)=>{
+   const nodes=[],pending=[root];let roots=0,elements=0;
+   while(pending.length){
+     if(++roots>64)return [];
+     const current=pending.pop();
+     nodes.push(...current.querySelectorAll(selector));
+     for(const element of current.querySelectorAll('*')){
+       if(++elements>8192)return [];
+       if(element.shadowRoot)pending.push(element.shadowRoot);
+     }
+   }
+   return nodes;
+ };
+      const markers=pair.querySelectorAll('[data-epc-pair]');
+      const panels=deep(pair,'.report-preview');
+      if(markers.length!==1 || panels.length!==1 || !panels[0]._previewState?.scope)
+        throw Error('Expected one current preview owner and scope');
+      return {owner:markers[0].dataset.epcPair,scope:panels[0]._previewState.scope};
+    }""",timeout=5000)
+    expected['index']=index
+    # Playwright expect's prior default was 5 seconds per assertion. This one
+    # combined wait uses the same 5-second bound, with no post-timeout retry.
+    remaining=(deadline-time.monotonic())*1000
+    if remaining<=0:
+        raise AssertionError('Current preview readiness deadline expired')
+    pair.page.wait_for_function(_LOADED_PAGE_READY,arg=expected,timeout=remaining)
+    check(f'loaded preview page {index+1}',True)
 
 
 def finalized_draft_match(page, key):

@@ -376,3 +376,49 @@ def test_namespace_change_during_original_comparison_stops_before_reparse(profil
         sources.ingest(profile, "synthetic.csv", CSV)
     assert cache.read_bytes() == cache_bytes and path.read_bytes() == CSV
     assert (path.stat().st_ino, path.stat().st_mtime_ns) == (original_stat.st_ino, original_stat.st_mtime_ns)
+
+
+@pytest.mark.parametrize("review_kind", ["omitted", "none", "valid", "malformed"])
+def test_current_optional_financial_record_does_not_break_cache_validation(profile, monkeypatch, review_kind):
+    from dataclasses import asdict
+    from app.monthly_report_financial_policy import FinancialScope, SourceFinancialReview
+    content, _ = sources.ingest(profile, "synthetic.txt", TXT)
+    path, cache = _paths(profile, content)
+    data = library._read(cache)
+    expected = content
+    if review_kind == "omitted":
+        data["source"].pop("financial_source_review", None)
+    elif review_kind == "valid":
+        review = SourceFinancialReview(content.source.id, content.source.sha256,
+            FinancialScope(profile.contract, profile.key), "reference", "internal")
+        data["source"]["financial_source_review"] = asdict(review)
+        expected = replace(content, source=replace(content.source, financial_source_review=review))
+    elif review_kind == "malformed":
+        data["source"]["financial_source_review"] = {"version": True}
+    cache.write_bytes(library._json(data))
+    before = cache.read_bytes()
+    if review_kind != "malformed":
+        monkeypatch.setattr(sources, "suggest_facts", lambda *a: pytest.fail("valid optional record reparsed"))
+    actual, _ = sources.ingest(profile, "synthetic.txt", TXT)
+    assert actual == expected
+    assert path.read_bytes() == TXT
+    if review_kind == "malformed":
+        assert cache.read_bytes() != before and actual.source.financial_source_review is None
+    else:
+        assert cache.read_bytes() == before
+
+
+@pytest.mark.parametrize("encoding", ["utf-16", "utf-32"])
+@pytest.mark.parametrize("damage", ["missing_source", "short_row"])
+def test_unicode_signature_and_structural_recovery_compose(profile, monkeypatch, encoding, damage):
+    raw = CSV.decode().encode(encoding)
+    content, _ = sources.ingest(profile, "synthetic.csv", raw)
+    path, cache = _paths(profile, content)
+    before = (path.read_bytes(), path.stat().st_ino, path.stat().st_mtime_ns)
+    _damage(cache, damage)
+    recovered, _ = sources.ingest(profile, "synthetic.csv", raw)
+    assert recovered == content
+    assert (path.read_bytes(), path.stat().st_ino, path.stat().st_mtime_ns) == before
+    assert library._read(cache)["csv_unicode_policy"] == 1
+    monkeypatch.setattr(sources, "_spreadsheet", lambda *a: pytest.fail("recovered Unicode cache reparsed"))
+    assert sources.ingest(profile, "synthetic.csv", raw) == (content, ())

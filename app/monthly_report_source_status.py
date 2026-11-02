@@ -93,7 +93,7 @@ def source_manager_status(draft, contents, *, unavailable=(), pending=False):
         # inventing a site-scope override. All admission checks below still apply.
         if (len(set(page_references)) != 1
                 or any(reference != expected_reference for reference in page_references)
-                and not (current_scoped_page or current_source_page_review_matches(block, index, source, number))):
+                and not (current_scoped_page or current_source_page_review_matches(block, index, source, number, profile=draft.profile))):
             return None, "Review the attached page against the current source details."
         if any(page_identity(reference) is None
                and not reference.startswith("asset-source-context:v1:")
@@ -198,9 +198,9 @@ def source_manager_status(draft, contents, *, unavailable=(), pending=False):
         exclusions = dict(source.client_page_exclusions)
         for number in numbers:
             if number in selected:
-                if number in exclusions or not page_allowed(source, number):
+                destination, reason = attached_page(source, number)
+                if number in exclusions or not page_allowed(source, number, profile=draft.profile, destination=destination):
                     return result("Review the selected page and its caption.")
-                _, reason = attached_page(source, number)
                 if reason:
                     return result(reason)
             elif (exclusions.get(number) != page_fingerprint(source, number)

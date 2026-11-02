@@ -17,6 +17,7 @@ from io import BytesIO
 import hashlib
 import math
 import re
+import zlib
 from zipfile import BadZipFile, ZipFile
 from xml.parsers import expat
 
@@ -660,7 +661,7 @@ def inspect_workbook(raw: bytes, *, number_formats=False) -> DirectoryWorkbook:
             if any(s.hidden for s in sheets):
                 notices.append("Hidden worksheets are marked and not selected automatically.")
             return DirectoryWorkbook(hashlib.sha256(raw).hexdigest(), tuple(sheets), tuple(notices), date1904)
-    except (BadZipFile, KeyError, ET.ParseError, DefusedXmlException) as exc:
+    except (BadZipFile, KeyError, ET.ParseError, DefusedXmlException, zlib.error) as exc:
         raise ValueError("Workbook is invalid or contains unsafe XML; nothing was saved.") from exc
 
 

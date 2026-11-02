@@ -313,3 +313,14 @@ def test_served_failure_hashes_identify_only_training_notes_and_issue_descriptio
     assert _hash_generation_part(replace(training, text="")).startswith("01619e358244")
     assert _hash_generation_part(draft.follow_ups).startswith("db5b9df3c0ca")
     assert _hash_generation_part(tuple(replace(item, text="") for item in draft.follow_ups)).startswith("54b322afba69")
+
+
+def test_synthetic_diagnostic_keeps_populated_original_provenance_bound():
+    from app.monthly_report_model import ResolvedBlock, CoverOriginalOccurrence
+    from app.monthly_report_testing_ui import _hash_generation_part
+    original = CoverOriginalOccurrence('a'*32, 'b'*64, 'c'*64, 12, 'd'*64+'.jpg', 'e'*64)
+    bare = ResolvedBlock('cover_photo', 'This month', asset_hashes=(original.derivative,))
+    chosen = replace(bare, cover_original=original)
+    assert _hash_generation_part(chosen) != _hash_generation_part(bare)
+    assert _hash_generation_part(chosen) != _hash_generation_part(
+        replace(chosen, cover_original=replace(original, sha256='f'*64)))
