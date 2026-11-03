@@ -96,7 +96,9 @@ def browser_task(browser_type, name):
     page = context.new_page()
     page.set_default_timeout(20000)
     page.on("pageerror", lambda error: errors.append(str(error)))
-    record = {"synthetic_only": True, "errors": errors, "external": external}
+    from scripts.qa_cold_source_gesture import prove_native_gesture
+    record = {"synthetic_only": True, "errors": errors, "external": external,
+              "isolated_native_geometry_control": prove_native_gesture(browser)}
     out = qa.OUT / name
     out.mkdir(parents=True, exist_ok=True)
     # Hold the unchanged local native v2 module so the initial warning is
