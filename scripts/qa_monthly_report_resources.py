@@ -154,9 +154,9 @@ def main():
     # This probe has only synthetic inputs. Keep the real converter in the
     # acceptance path and expose the exception hidden by the DOCX fallback.
     original_converter = pdf_converter._BACKENDS['libreoffice']
-    def observed_converter(path):
+    def observed_converter(path, **kwargs):
         try:
-            return original_converter(path)
+            return original_converter(path, **kwargs)
         except Exception:
             logging.exception('Synthetic resource probe converter failure')
             raise

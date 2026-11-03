@@ -52,7 +52,7 @@ def storage_state(base, token):
     """
     target, identity, generation = namespace(base, token)
     root = _durable_root(target)
-    groups = {name: [] for name in ("history", "assets", "standing", "journal")}
+    groups = {name: [] for name in ("history", "assets", "standing", "journal", "cover_recovery")}
     entries = {}
     total = 0
     if root.exists():
@@ -73,7 +73,9 @@ def storage_state(base, token):
                 raise ValueError("History storage inventory exceeded its byte bound.")
             if relative.as_posix() in CONVERSION_RUNTIME_PATHS:
                 continue
-            group = ("history" if relative.parts[0] == "snapshots" else
+            group = ("cover_recovery" if len(relative.parts) == 5 and relative.parts[0] == "library"
+                     and relative.parts[3] in ("cover-originals", "cover-recovery") else
+                     "history" if relative.parts[0] == "snapshots" else
                      "journal" if relative.parts[0] == "active_work" else
                      "assets" if relative.parts[0] == "objects" or "assets" in relative.parts else "standing")
             with path.open("rb") as stream:
@@ -183,3 +185,47 @@ def emit_history_snapshot(base, token):
         raise ValueError("The isolated namespace changed during the history observation.")
     st.html('<span hidden data-enfra-history-receipt="' +
             escape(json.dumps(receipt, sort_keys=True), quote=True) + '"></span>')
+
+
+def prepared_cover_storage(base, token, original):
+    """Verify exactly five newly authorized private files for the tiny fixture.
+
+    No wildcard allowance: other profiles, originals, cache entries, shared
+    artwork or history writes remain visible and fail unchanged_shared.
+    """
+    if not isinstance(original, bytes) or not 0 < len(original) <= 64*1024:
+        raise ValueError('Cover recovery receipt requires the bounded synthetic original.')
+    target, _, _ = namespace(base, token)
+    root = _durable_root(target)
+    from app import monthly_report_qa_fixture as fixture, monthly_report_library as library
+    profile = root / 'library' / library._contract_directory(fixture.CONTRACT) / library._valid_key(fixture.profile().key)
+    digest = sha256(original).hexdigest()
+    paths = [profile/'cover-originals'/'.write-lock', profile/'cover-originals'/(digest+'.original'),
+             profile/'cover-recovery'/'.write-lock', profile/'cover-recovery'/(digest+'.json'),
+             profile/'cover-recovery'/(digest+'.image')]
+    if any(path.is_symlink() or not path.is_file() or path.stat().st_size > 64*1024 for path in paths):
+        raise ValueError('Cover recovery receipt found missing, linked or oversized private evidence.')
+    if paths[0].read_bytes() or paths[2].read_bytes() or paths[1].read_bytes() != original:
+        raise ValueError('Cover recovery changed its immutable original or lock files.')
+    record = json.loads(paths[3].read_bytes())
+    normalized = paths[4].read_bytes()
+    if (record.get('source') != digest or record.get('status') != 'recovered'
+            or type(record.get('attempts')) is not int or not 0 <= record['attempts'] <= 2
+            or type(record.get('budget')) is not int or not 0 <= record['budget'] <= 256*1024*1024
+            or (record.get('method') == 'normal' and (record['attempts'] != 0 or record['budget'] != 0))
+            or record.get('method') not in ('normal','isolated')
+            or not re.fullmatch('[0-9a-f]{64}', record.get('policy', ''))
+            or record.get('derivative') != sha256(normalized).hexdigest()):
+        raise ValueError('Cover recovery receipt has inconsistent original/derivative provenance.')
+    from io import BytesIO
+    from PIL import Image
+    with Image.open(BytesIO(normalized)) as image:
+        if image.format != 'JPEG' or image.size != (420,250):
+            raise ValueError('Synthetic recovered cover geometry changed.')
+    entries = storage_state(base, token)['entries']
+    allowed = {sha256(str(path.relative_to(root)).encode()).hexdigest() for path in paths}
+    if any(entries[path]['group'] != 'cover_recovery' for path in allowed):
+        raise ValueError('Cover recovery receipt escaped its private storage group.')
+    asset = {'reference':sha256(normalized).hexdigest()+'.jpg', 'bytes':len(normalized),
+             'sha256':sha256(normalized).hexdigest()}
+    return asset, {path:entries[path] for path in allowed}

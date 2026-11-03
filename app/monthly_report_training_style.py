@@ -2,7 +2,7 @@
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
-from app.monthly_report_training import EVENT_REF, MATRIX_REF
+from app.monthly_report_training import EVENT_REF, is_matrix_reference
 
 STATUS_COLORS = {"Completed": "D8F3DC", "Pending": "FFF0B3", "Not required": "E5E7EB", "Not recorded": "F3F4F6"}
 
@@ -17,7 +17,7 @@ def _property(parent, name):
 
 def style_training_table(element, reference):
     """Touch generated training tables only; retain native grid, fonts and header."""
-    if reference not in (MATRIX_REF, EVENT_REF):
+    if reference != EVENT_REF and not is_matrix_reference(reference):
         return
     for index, row in enumerate(element.findall(qn("w:tr"))):
         properties = _property(row, "w:trPr")
@@ -33,7 +33,7 @@ def style_training_table(element, reference):
                 spacing = _property(_property(paragraph, "w:pPr"), "w:spacing")
                 spacing.set(qn("w:before"), "0")
                 spacing.set(qn("w:after"), "0")
-            if index and column >= 2 and reference == MATRIX_REF:
+            if index and column >= 2 and is_matrix_reference(reference):
                 text = "".join(t.text or "" for t in cell.iter(qn("w:t")))
                 if text in STATUS_COLORS:
                     shading = _property(_property(cell, "w:tcPr"), "w:shd")

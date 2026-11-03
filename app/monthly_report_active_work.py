@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import hashlib
+import json
 from pathlib import Path
 import re
 import uuid
@@ -134,6 +135,8 @@ def save(token: str, draft: ReportDraft, *, expected_revision: int,
         asset_names = tuple(sorted(pending))
         same = bool(previous and previous["kind"] == "browser_active_work_v1"
                     and previous.get("fingerprint") == draft.fingerprint
+                    and previous.get("draft", {}).get("cover_recovery_request") == (
+                        json.loads(json.dumps(asdict(draft.cover_recovery_request))) if draft.cover_recovery_request else None)
                     and previous.get("base_snapshot_revision") == base_snapshot_revision
                     and tuple(previous.get("assets", ())) == asset_names)
         operation = {"id": operation_id, "parent_revision": expected_revision,

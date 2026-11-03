@@ -1,7 +1,7 @@
 """Explicit carry-forward decisions; a new reporting month never resolves work."""
 
 from collections import Counter
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import hashlib
 import json
 import re
@@ -76,11 +76,40 @@ def _proposal_details(text):
     return "; ".join(p for p in keep if p.strip()), decisions[0]
 
 
+def _proposal_table_details(columns, row, prices):
+    """Read table decisions before formatting; cell prose is not a new field.
+
+    Blank, unknown or conflicting decision columns require review. The source
+    row's nonfinancial cells stay literal, including semicolons and newlines.
+    """
+    fields = [(n, f"{columns[n]}: {value}") for n, value in enumerate(row)
+              if n not in prices and value.strip()]
+    original = "; ".join(text for _, text in fields)
+    indexes = []
+    for n, title in enumerate(columns):
+        title = title.strip()
+        # The importer disambiguates repeated headings with their physical
+        # column number. A repeated decision remains a decision, not prose.
+        duplicate = re.fullmatch(r"(.+) \((\d+)\)", title)
+        if duplicate and int(duplicate[2]) == n + 1 and duplicate[1] in columns[:n]:
+            title = duplicate[1]
+        if n not in prices and re.fullmatch(
+                r"(?:(?:proposal|approval)\s+)?(?:status|decision)", title, re.I):
+            indexes.append(n)
+    decisions = tuple(_DECISIONS.get(" ".join(row[n].casefold().split()))
+                      if n < len(row) else None for n in indexes)
+    remaining = "; ".join(text for n, text in fields if n not in indexes)
+    if decisions and all(decisions) and len(set(decisions)) == 1 and remaining:
+        return original, remaining, decisions[0]
+    return original, original, "not_confirmed"
+
+
 def normalize_proposal(item):
-    if item.category != "proposal":
+    # A typed decision is already independent of the author's free text. Only
+    # legacy issue-style statuses need migration from embedded decision fields.
+    if item.category != "proposal" or item.status in PROPOSAL_STATUSES:
         return item
-    text, decision = _proposal_details(item.text)
-    status = item.status if item.status in PROPOSAL_STATUSES else decision
+    text, status = _proposal_details(item.text)
     if (text, status) == (item.text, item.status):
         return item
     return replace(item, text=text, status=status, reviewed_fingerprint="")
@@ -517,7 +546,7 @@ def seed_followups(draft):
         or (item.category != "issue" and item.included)
     ]
     keys = {item.key for item in result}
-    represented = Counter((item.category, item.text.strip()) for item in result)
+    represented = Counter((item.category, item.text.strip(), item.status) for item in result)
     occurrences, candidates = {}, []
     specs = {b.key: b for s in draft.sections for b in s.blocks}
     for block in draft.blocks:
@@ -531,6 +560,8 @@ def seed_followups(draft):
         texts = [text for text in _followup_text_items(block.text)
                  if text not in STOCK_TEXTS.values()
                  and not (category == "issue" and _no_equipment_issues(text))]
+        entries = [(text, *_proposal_details(text)) if category == "proposal"
+                   else (text, text, "ongoing") for text in texts]
         tables = (
             [(tuple(c.title for c in specs[block.key].columns), block.rows)]
             if block.key in specs and block.rows
@@ -541,37 +572,54 @@ def seed_followups(draft):
             width = max((len(row) for row in rows), default=len(columns))
             columns = (*columns, *(f"Detail {n+1}" for n in range(len(columns), width)))
             prices = table_price_columns(columns, rows)
-            texts += [
-                "; ".join(
-                    f"{columns[n]}: {value}"
-                    for n, value in enumerate(row)
-                    if n < len(columns) and n not in prices and value.strip()
-                )
-                for row in rows
-            ]
-        for text in texts:
-            original_text = text
-            text, status = _proposal_details(text) if category == "proposal" else (text, "ongoing")
+            for row in rows:
+                if category == "proposal":
+                    entries.append(_proposal_table_details(columns, row, prices))
+                else:
+                    text = "; ".join(f"{columns[n]}: {value}" for n, value in enumerate(row)
+                                     if n not in prices and value.strip())
+                    entries.append((text, text, "ongoing"))
+        for original_text, text, status in entries:
             identity = (category, original_text)
             occurrences[identity] = occurrences.get(identity, 0) + 1
             occurrence = occurrences[identity]
             key = "follow-" + _digest(identity if occurrence == 1 else (*identity, "occurrence", occurrence))[:20]
             if text:
-                candidates.append((key, category, text, status))
+                candidates.append((key, category, text, status,
+                                   _proposal_details(original_text)[0] if category == "proposal" else text))
     # A source row whose key is already saved represents itself first. Only
     # the remaining rows may be represented by an equal saved text whose key
     # was repaired, so one saved occurrence never stands for two source rows.
-    saved = {item.key: (item.category, item.text.strip()) for item in result}
-    for key, category, text, _ in candidates:
+    saved = {item.key: (item.category, item.text.strip(), item.status) for item in result}
+    for key, category, text, _, _ in candidates:
         if key in saved:
             # The saved row's own wording, which an edit may have changed.
             represented[saved[key]] -= 1
-    for key, category, text, status in candidates:
-        identity = (category, text.strip())
-        if key in keys:
-            continue
-        if represented[identity] > 0:
-            represented[identity] -= 1
+    # Reserve literal matches before legacy normalized aliases, and prefer
+    # equal decisions within each spelling. A manual decision remains saved;
+    # status is only a tie-breaker, never a reason to overwrite that decision.
+    # Every spelling consumes the same occurrence counter, so a saved row
+    # cannot stand for two physical rows. Exact source keys above win first.
+    saved_statuses = {}
+    for category, wording, status in represented:
+        saved_statuses.setdefault((category, wording), []).append(status)
+    matched = set()
+    for legacy, same_status in ((False, True), (False, False), (True, True), (True, False)):
+        for key, category, text, status, legacy_text in candidates:
+            if (key in keys or key in matched
+                    or ((legacy or same_status) and category != "proposal")):
+                continue
+            wording = (legacy_text if legacy else text).strip()
+            identity = (category, wording, status)
+            if not same_status:
+                identity = next(((category, wording, saved_status)
+                                 for saved_status in saved_statuses.get((category, wording), ())
+                                 if represented[(category, wording, saved_status)] > 0), identity)
+            if represented[identity] > 0:
+                represented[identity] -= 1
+                matched.add(key)
+    for key, category, text, status, _ in candidates:
+        if key in keys or key in matched:
             continue
         keys.add(key)
         result.append(ReportFollowUp(key, category, text, draft.period.key, status=status))
@@ -605,38 +653,49 @@ def _carried_update_period(item, period):
     return item.update_period or period.key
 
 
-def problems(item, draft):
+@dataclass(frozen=True)
+class FollowupProblem:
+    reason: str
+    message: str
+
+
+def problem_details(item, draft):
     messages = []
     if item.category not in ("issue", "proposal") or item.status not in (
         PROPOSAL_STATUSES if item.category == "proposal" else ISSUE_STATUSES
     ):
-        messages.append("Choose a valid item type and current status.")
+        messages.append(FollowupProblem("status", "Choose a valid item type and current status."))
     if not item.text.strip() and (item.category != "issue" or item.included):
-        messages.append("Enter a description for this item.")
+        messages.append(FollowupProblem("description", "Enter a description for this item."))
     if item.status in ("updated", "resolved") and not (
         item.evidence_note.strip() or item.references
     ):
-        messages.append(
+        messages.append(FollowupProblem("evidence",
             "Add evidence for the update or resolution: a source page or an entered explanation."
-        )
+        ))
     valid = {
         source_reference(s, n)
         for s in draft.sources
         for n in range(1, len(s.page_texts) + 1)
     }
     if (item.included or item.status in ("updated", "resolved")) and any(ref not in valid for ref in item.references):
-        messages.append(
+        messages.append(FollowupProblem("sources",
             "A follow-up source changed or is missing. Review its current page again."
-        )
+        ))
     if item.category == "proposal" and item.reviewed_fingerprint != confirmation(item, draft.period):
-        messages.append(
+        messages.append(FollowupProblem("decision",
             "Confirm this proposal's decision and whether it belongs in this report."
-        )
+        ))
     if needs_issue_period_confirmation(item, draft.period):
-        messages.append(
+        messages.append(FollowupProblem("period",
             f"Confirm this update is current for {draft.period.label}, or correct the update and status."
-        )
+        ))
     return tuple(messages)
+
+
+def problems(item, draft):
+    """Compatibility API: messages are unchanged; callers can opt into metadata."""
+    return tuple(problem.message for problem in problem_details(item, draft))
 
 
 def report_text(item):
@@ -685,6 +744,8 @@ def _render_section_followups(draft, prefix, field, category, *, initially_editi
         for n in range(1, len(s.page_texts) + 1)
     }
     draft = _capture_followup_controls(draft, prefix, category, options)
+    from app.monthly_report_followup_navigation import consume_after_capture, field_markup
+    consume_after_capture(draft, prefix, category)
     cycle = uuid4().hex
     message = followup_limit_message(draft)
     if message:
@@ -701,7 +762,9 @@ def _render_section_followups(draft, prefix, field, category, *, initially_editi
         edit_key = field(p + "_editing", initially_editing)
         confirmed = replace(item, reviewed_fingerprint=confirmation(item, draft.period))
         needs_correction = problems(confirmed, draft)
-        if needs_correction:
+        request = st.session_state.get(prefix + "_followup_navigation_open", {})
+        target = request.get("target")
+        if needs_correction or (getattr(target, "item_key", None) == item.key):
             st.session_state[edit_key] = True
         with st.container():
             st.write(item.text)
@@ -727,6 +790,10 @@ def _render_section_followups(draft, prefix, field, category, *, initially_editi
                         st.session_state[edit_key] = True
             if st.session_state[edit_key]:
                 identity = _followup_choice_identity(draft, prefix, item)
+                st.markdown(field_markup(prefix, item, "description", p + "_text"), unsafe_allow_html=True)
+                st.markdown(field_markup(prefix, item, "status", p + "_status", "radio"), unsafe_allow_html=True)
+                st.markdown(field_markup(prefix, item, "decision", p + "_status", "radio"), unsafe_allow_html=True)
+                st.markdown(field_markup(prefix, item, "evidence", p + "_note"), unsafe_allow_html=True)
                 text = _issue_control(st.text_area,
                     "Proposal scope" if proposal else "Issue description",
                     p + "_text", item.text, field, identity=identity, cycle=cycle, height=90, max_chars=4000,
@@ -754,6 +821,7 @@ def _render_section_followups(draft, prefix, field, category, *, initially_editi
                 missing = _followup_missing_links(draft, prefix, item, options)
                 if missing:
                     notice = st.empty()
+                    st.markdown(field_markup(prefix, item, "sources", p + "_remove_missing_" + _digest(missing), "checkbox"), unsafe_allow_html=True)
                     if _followup_choice(draft, prefix, item, p + "_remove_missing_" + _digest(missing),
                                         "Remove unavailable source links", False, field):
                         missing = ()
