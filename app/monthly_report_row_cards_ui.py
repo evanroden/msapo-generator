@@ -6,7 +6,9 @@ display changes alone cannot change the report.
 """
 from dataclasses import replace
 from datetime import date
+from decimal import Decimal, InvalidOperation
 from functools import partial
+import math
 import re
 from uuid import uuid4
 
@@ -139,8 +141,15 @@ def _field_default(value, kind):
         if kind == "date":
             return date.fromisoformat(value) if value else None
         if kind in {"number", "currency"}:
-            return float(value) if value else None
-    except (TypeError, ValueError):
+            if not value:
+                return None
+            number = float(value)
+            # Keep source precision when a browser number would round, underflow,
+            # or exceed its safe integer range. Text stays editable, never zeroed.
+            if (math.isfinite(number) and abs(number) <= (1 << 53) - 1
+                    and Decimal(str(number)) == Decimal(str(value))):
+                return number
+    except (TypeError, ValueError, OverflowError, InvalidOperation):
         pass  # Keep a recorded unknown value as editable text.
     return value
 
