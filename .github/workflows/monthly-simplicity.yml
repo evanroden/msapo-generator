@@ -28,6 +28,8 @@ jobs:
           python scripts/patch_streamlit_date_input.py
           python -m playwright install --with-deps chromium webkit
       - name: First intake and repeated Training without hidden disclosure clicks
+        env:
+          EPC_MONTHLY_SIMPLICITY_DIAGNOSTICS: '1'
         timeout-minutes: 11
         run: |
           python scripts/ci_native_test_budget.py --minutes 10 <<'NATIVE_TEST'
