@@ -13,11 +13,13 @@ import re
 
 import pymupdf as fitz
 
-from app import monthly_report_directory as directory, monthly_report_library as library
+from app import monthly_report_directory as directory, monthly_report_library as library, monthly_report_sources as sources
 from app.monthly_report_model import Facility, ReportDraft, ReportProfile, ReportSource, ReportTable, ResolvedBlock
 from app.monthly_report_sources import SourceContent, SourceTable, ingest, source_bytes
+from app.monthly_report_upload_limits import source_size_error
 
 
+MAX_INPUT_ITEMS = 100
 MAX_TABLES = 100
 MAX_ROWS = 5000
 MAX_CELLS = 50000
@@ -267,10 +269,22 @@ def _text_tables(text, name):
                  for n, rows in enumerate(groups, 1) if len(rows) > 1)
 
 
+def file_size_limit(suffix: str) -> int:
+    """Capacity originals must fit both their parser and shared stored reads."""
+    limit = sources.file_size_limit(suffix)
+    return min(directory.MAX_UPLOAD_BYTES, limit) if suffix.casefold() == ".xlsx" else limit
+
+
 def inspect_capacity(profile, filename, raw) -> CapacityInspection:
-    if Path(filename).suffix.casefold() not in SUPPORTED:
+    suffix = Path(filename).suffix.casefold()
+    if suffix not in SUPPORTED:
         raise ValueError("Upload a PDF, Word document, spreadsheet, CSV, text file or supported image.")
-    if Path(filename).suffix.casefold() == ".xlsx":
+    if not raw:
+        raise ValueError("This capacity file is empty. Choose a nonempty copy.")
+    limit = file_size_limit(suffix)
+    if len(raw) > limit:
+        raise ValueError(source_size_error(suffix, limit))
+    if suffix == ".xlsx":
         # The sparse SAX directory reader bounds XML tokens before allocating
         # them; openpyxl's object graph is unnecessary for capacity cells.
         workbook = directory.inspect_workbook(raw, number_formats=True)
@@ -304,8 +318,8 @@ def inspect_capacity(profile, filename, raw) -> CapacityInspection:
     else:
         content, _ = ingest(profile, filename, raw)
     source = content.source
-    if len(source.page_texts) > 100:
-        raise ValueError("This capacity file exceeds 100 pages. Upload its capacity pages only.")
+    if len(source.page_texts) > MAX_INPUT_ITEMS:
+        raise ValueError(f"This capacity file exceeds {MAX_INPUT_ITEMS:,} extracted pages/items. Upload its capacity content only.")
     facilities = contract_facilities(profile)
     found = []
     for number, table in enumerate(content.tables, 1):
