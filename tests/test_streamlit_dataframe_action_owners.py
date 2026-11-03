@@ -87,7 +87,7 @@ def test_exact_cleanup_only_changes_and_native_guards_batcher_and_consumption_ar
             repair.repair_dataframe_action_owners(unknown)
     for scalar_date in (False, True):
         old = compat._publication(sources, members, scalar_date, dataframe_action_owners=False)
-        new = compat._publication(sources, members, scalar_date)
+        new = compat._publication(sources, members, scalar_date, cold_source_gesture=False)
         # Compare normalized import edges to prove no other behavior changed.
         def normalized(publication, name):
             raw = publication.payloads[name]
