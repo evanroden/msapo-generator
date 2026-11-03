@@ -162,6 +162,39 @@ def receipt(page, *, after=0, expected_contact=None, expected_write=None):
     return json.loads(page.locator(SELECTOR).last.get_attribute('data-enfra-contact-receipt'))
 
 
+def await_initial_workspace(page):
+    # Like the adaptive fixture, complete initial display-module registration
+    # before operating the fixture-only output control. A fresh server receipt
+    # can precede Markdown markers and the workspace adapter on a cold load.
+    # This is not used by any contact edit or the deliberate held recovery press.
+    page.wait_for_function('''() => {
+      const root=document.querySelector('.st-key-epc_workspace_monthly');
+      if(!root?.classList.contains('epc-workspace') || root.dataset.epcMode!=='wide' ||
+         !root.dataset.epcFullRender)return false;
+      const pairs=[...root.querySelectorAll('[class*="st-key-epc_pair_"]')];
+      return pairs.length>0 && pairs.every(pair=>pair.classList.contains('epc-workspace-pair') &&
+        Boolean(pair.querySelector('[data-epc-pair]') && pair.querySelector('.epc-workspace-row') &&
+          pair.querySelector('.epc-workspace-editor') && pair.querySelector('.epc-workspace-reference')));
+    }''', timeout=30000)
+
+
+def await_synthetic_fault_armed(page, previous, mode):
+    """Confirm fixture setup before the ordinary edit; never used by held press."""
+    page.wait_for_function('''({after,mode,armed,consumed}) => {
+      const n=[...document.querySelectorAll('[data-enfra-contact-receipt]')].at(-1);
+      if(!n)return false;const s=JSON.parse(n.dataset.enfraContactReceipt);
+      return s.sequence>after && s.fault?.mode===mode && s.fault.armed===armed &&
+        s.fault.consumed===consumed && JSON.stringify(s.working)===JSON.stringify(s.durable) &&
+        document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')==='notRunning';
+    }''', arg={'after':previous['sequence'], 'mode':mode,
+              'armed':previous['fault']['armed'] + 1,
+              'consumed':previous['fault']['consumed']}, timeout=30000)
+    armed = json.loads(page.locator(SELECTOR).last.get_attribute('data-enfra-contact-receipt'))
+    for key in ('working', 'directory', 'attempts', 'scope', 'generation', 'saved_revision'):
+        assert armed[key] == previous[key], 'Fixture fault setup changed ' + key
+    return armed
+
+
 def validate_outputs(word, pdf, rows):
     from docx import Document
     import pymupdf
@@ -214,6 +247,8 @@ def browser_task(browser_type, name, *, held_recovery=False):
     page.on('pageerror', lambda error: errors.append(str(error)))
     record = {'synthetic_only':True, 'held_recovery':held_recovery, 'steps':[], 'errors':errors, 'external':external}
     def capture(stage, previous=None, expected_contact=None, expected_write=None):
+        record['pending_capture'] = {'stage': stage, 'after': previous['sequence'] if previous else 0,
+                                     'expected_contact': expected_contact, 'expected_write': expected_write}
         state = receipt(page, after=previous['sequence'] if previous else 0, expected_contact=expected_contact, expected_write=expected_write)
         record['failed_capture'] = {'stage': stage, 'receipt': state}
         assert state['saved_unchanged'] and state['original_unchanged']
@@ -223,6 +258,7 @@ def browser_task(browser_type, name, *, held_recovery=False):
         assert not errors and not external
         record['steps'].append({'stage':stage,'receipt':state})
         record.pop('failed_capture', None)
+        record.pop('pending_capture', None)
         return state
     def outputs(stage, state):
         page.get_by_role('button',name='Render synthetic native contact outputs',exact=True).click()
@@ -239,6 +275,7 @@ def browser_task(browser_type, name, *, held_recovery=False):
         page.goto(qa.URL, wait_until='domcontentloaded')
         page.get_by_role('button',name='Create synthetic compact contact report',exact=True).click()
         baseline = receipt(page)
+        await_initial_workspace(page)
         record['baseline'] = baseline
         assert len(baseline['working']['vendors']['extra_tables'][0]['rows']) == 3
         state, before_output = outputs('before', baseline)
@@ -292,17 +329,26 @@ def browser_task(browser_type, name, *, held_recovery=False):
             controls = page.get_by_test_id('stExpander').filter(has=page.locator('summary').get_by_text('Synthetic fault controls',exact=True))
             if not controls.evaluate("n => (n.matches('details') ? n : n.querySelector('details')).open"):
                 controls.locator('summary').click()
+            phone_start = page.evaluate('window.ENFRAContactObservation.phoneEvents.at(-1)?.sequence || 0')
+            previous_phone = state['working']['contacts']['rows'][0][3]
             if held_recovery and fault == 'after':
                 edit_contact_during_recovery_rerun(page, contacts, gate, state, record)
             else:
                 page.get_by_role('button',name=f'Fail next synthetic shared save {fault} commit',exact=True).click()
+                record.setdefault('fault_setup', {})[fault] = await_synthetic_fault_armed(page, state, fault)
                 contacts.get_by_role('button',name='Edit contact',exact=True).first.click()
             contacts.get_by_role('textbox',name='Phone',exact=True).fill(phone)
+            entry = page.evaluate('(start)=>window.ENFRAContactObservation.phoneEvents.filter(e=>e.sequence>start)', phone_start)
+            record.setdefault('fault_phone_entries', {})[fault] = entry
+            validate_native_phone_entry(entry, previous_phone, phone)
             prior = state
             contacts.get_by_role('button',name='Remove contact',exact=True).click()
             expected_write = {'attempts':len(prior['attempts']) + 1,
                               'revision':prior['directory']['revision'] + (fault == 'after'), 'phone':phone}
             state = capture('fault-' + fault,prior, expected_write=expected_write)
+            assert state['attempts'][-1]['mode'] == fault, state
+            assert state['fault'] == {'mode': '', 'armed': prior['fault']['armed'] + 1,
+                                      'consumed': prior['fault']['armed'] + 1}, state['fault']
             assert len(state['working']['contacts']['rows']) == len(prior['working']['contacts']['rows'])
             assert len(state['attempts']) == len(prior['attempts']) + 1
             if fault == 'before':
@@ -372,6 +418,10 @@ def browser_task(browser_type, name, *, held_recovery=False):
         raise
     finally:
         try:
+            record['last_receipt'] = page.evaluate('''() => {
+                const n=[...document.querySelectorAll('[data-enfra-contact-receipt]')].at(-1);
+                return n ? JSON.parse(n.dataset.enfraContactReceipt) : null;
+            }''')
             record['native_events'] = page.evaluate('window.ENFRAContactObservation.events')
             record['phone_events'] = page.evaluate('window.ENFRAContactObservation.phoneEvents')
         except Exception as observer_error:

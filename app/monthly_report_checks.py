@@ -28,6 +28,7 @@ class ReportCheck:
     message: str
     blocking: bool
     block_key: str = ""
+    targets: tuple = ()
 
 
 def placeholder_matches(text: str) -> tuple[str, ...]:
@@ -113,15 +114,17 @@ def stale_period_mentions(text: str, year: int, month: int) -> tuple[str, ...]:
 
 
 def _annual_work_order_month_cells(key, table):
-    """Coordinates of labels in the complete, two-measure annual grid only.
+    """Exempt only exact annual month-header cells, never operational dates.
 
-    Imported tables put repeated header bands in body rows. Preserve that
-    structure when classifying labels; never exempt a month by its text alone.
-    Row zero is the table's columns, followed by its unchanged body rows.
-    The legacy editor also saved a six-row form after removing both empty
-    first-half value rows. Recognize only these exact eight/six-row schemas;
-    unknown/partial/reordered shapes retain normal date review.
+    The source-bound site/month grid has twelve recognized headings. Original
+    half-year WO Received/Closed grids retain their own independent eight/six
+    row shape below. Other tables remain subject to ordinary date review.
     """
+    if key == "work_orders":
+        from app.monthly_report_annual_work_order_grid import annual_header_cells
+        cells = annual_header_cells(table)
+        if cells:
+            return cells
     rows = (table.columns, *table.rows)
     if key != "work_orders" or len(rows) not in (6, 8) or any(len(row) != 7 for row in rows):
         return frozenset()
@@ -172,9 +175,12 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
     followup_keys = [item.key for item in draft.follow_ups]
     if len(followup_keys) != len(set(followup_keys)):
         checks.append(ReportCheck("follow_up_identity", "Open the issue/proposal editor to repair colliding row identities before generating.", True))
+    from app.monthly_report_followups import problem_details
+    from app.monthly_report_followup_navigation import followup_target
     for item in draft.follow_ups:
-        for message in problems(item, draft):
-            checks.append(ReportCheck("follow_up", message, True, item.key))
+        for problem in problem_details(item, draft):
+            checks.append(ReportCheck("follow_up", problem.message, True, item.key,
+                                      (followup_target(draft, item, problem.reason),)))
         if item.included:
             section_key = "issues" if item.category == "issue" else "proposals"
             if section_key not in {s.key for s in sections}:
@@ -188,16 +194,28 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
             prior_period = carried_period(block, draft.period)
             if prior_period:
                 checks.append(ReportCheck("carried_period", f"This content was last confirmed for {prior_period.label}. Update it or confirm it is correct for {draft.period.label} before including it.", True, block.key))
+            from app.monthly_report_ai_correction_targets import paragraph_target, unsupported_number_indexes
             if block.ai_written and (block.ai_evidence_fingerprint or block.ai_paragraphs):
                 from app.monthly_report_ai import ai_references, evidence_fingerprint
                 if not block.ai_evidence_fingerprint or block.ai_evidence_fingerprint != evidence_fingerprint(draft.sources, ai_references(block)):
-                    checks.append(ReportCheck("ai_evidence", "Evidence changed or a source is missing. Refresh and review the AI draft before generating.", True, block.key))
+                    checks.append(ReportCheck("ai_evidence", "Evidence changed or a source is missing. Refresh and review the AI draft before generating.", True, block.key,
+                        tuple(paragraph_target(draft,block,n,"evidence") for n in range(len(block.ai_paragraphs)))))
             if any("Unsupported number" in flag for paragraph in block.ai_paragraphs for flag in paragraph.flags):
-                checks.append(ReportCheck("ai_number", "Correct unsupported numerical statements in the AI draft.", True, block.key))
+                checks.append(ReportCheck("ai_number", "Correct unsupported numerical statements in the AI draft.", True, block.key,
+                    tuple(paragraph_target(draft,block,n,"number") for n in unsupported_number_indexes(block,draft.sources))))
             if block.ai_paragraphs:
-                from app.monthly_report_ai import block_date_problems
-                checks.extend(ReportCheck("ai_date", message, True, block.key)
-                              for message in block_date_problems(block, draft.sources))
+                from app.monthly_report_ai import fact_date_problems
+                wanted={identity for paragraph in block.ai_paragraphs for identity in paragraph.fact_ids}
+                details=fact_date_problems((fact for source in draft.sources for fact in source.facts
+                                           if fact.id in wanted),draft.sources)
+                grouped={}
+                for detail in details:
+                    targets=grouped.setdefault(detail.message,[])
+                    targets.extend(paragraph_target(draft,block,n,"date",fact_id=detail.fact_id,
+                        source_id=detail.source_id,page=detail.page)
+                        for n,paragraph in enumerate(block.ai_paragraphs) if detail.fact_id in paragraph.fact_ids)
+                checks.extend(ReportCheck("ai_date",message,True,block.key,tuple(targets))
+                              for message,targets in grouped.items())
             if block.org_nodes:
                 if block.asset_hashes:
                     checks.append(ReportCheck("org_chart", "Choose the editable chart or the uploaded chart, not both in the same chart item.", True, block.key))
@@ -209,11 +227,13 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                 texts.extend((block.key, value) for node in block.org_nodes for value in (node.name, node.role, node.team))
             if type(block.photos_per_page) is not int or not 1 <= block.photos_per_page <= 6:
                 checks.append(ReportCheck("photo_layout", "Choose between 1 and 6 photos per page.", True, block.key))
+            from app.monthly_report_correction_targets import picture_target
             from app.monthly_report_asset_review import pending_asset_indexes
             pending_pictures = pending_asset_indexes(block, draft.sources)
             if pending_pictures:
                 count = len(pending_pictures)
-                checks.append(ReportCheck("client_pages", f"Check {count} new or changed picture{'s' if count != 1 else ''} in {block.key.replace('_', ' ')} for relevance and visible pricing before including them.", True, block.key))
+                checks.append(ReportCheck("client_pages", f"Check {count} new or changed picture{'s' if count != 1 else ''} in {block.key.replace('_', ' ')} for relevance and visible pricing before including them.", True, block.key,
+                    tuple(picture_target(draft, block, n) for n in pending_pictures)))
             if block.asset_hashes:
                 from app.monthly_report_asset_review import asset_context
                 from app.monthly_report_content_policy import page_allowed
@@ -223,11 +243,21 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                     parts = reference.split(":")
                     source = source_index.get(parts[0])
                     if source is None and reference in image_references and len(parts) == 3 and parts[1].isdigit():
-                        checks.append(ReportCheck("client_source_missing", "The original source for an included picture is missing. Restore its source file or replace/remove the picture before generating.", True, block.key))
+                        checks.append(ReportCheck("client_source_missing", "The original source for an included picture is missing. Restore its source file or replace/remove the picture before generating.", True, block.key,
+                            tuple(picture_target(draft, block, n)
+                                  for n in range(len(block.asset_hashes))
+                                  if reference in asset_context(block, n))))
                     if source and reference in image_references and len(parts) == 3 and parts[1].isdigit():
                         page = int(parts[1])
-                        if page not in source.selected_pages or not 1 <= page <= len(source.page_texts) or not page_allowed(source, page):
-                            checks.append(ReportCheck("client_source_page", f"Remove or review page {page} of {source.filename} in this section. Its current selection is not approved for the client report.", True, block.key))
+                        page_captions = tuple(block.asset_captions[index] if index < len(block.asset_captions) else ""
+                                              for index in range(len(block.asset_hashes))
+                                              if reference in asset_context(block, index))
+                        if page not in source.selected_pages or not 1 <= page <= len(source.page_texts) or not page_allowed(source, page, profile=draft.profile, destination=block.key, output_captions=page_captions):
+                            from app.monthly_report_mbcx_financial_pages import has_financial_page_review
+                            checks.append(ReportCheck("financial_page" if has_financial_page_review(source, page) else "client_source_page", f"Remove or review page {page} of {source.filename} in this section. Its current selection is not approved for the client report.", True, block.key,
+                                tuple(picture_target(draft, block, n, source=source, page=page)
+                                      for n in range(len(block.asset_hashes))
+                                      if reference in asset_context(block, n))))
             for table in block.extra_tables:
                 month_labels = _annual_work_order_month_cells(block.key, table)
                 texts.extend((block.key, cell, None, (r, c) in month_labels)
@@ -326,6 +356,7 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
         checks.append(ReportCheck("source_missing",
             "An included item refers to a source file that is no longer in this draft. "
             "Restore the original source file or remove its linked report content.", True, key))
+    from app.monthly_report_correction_targets import source_target
     for source in draft.sources:
         facility = source.facility.strip().casefold()
         foreign_included = bool(facility and facility not in names and source.id in included_sources)
@@ -335,11 +366,11 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
         if foreign_included:
             checks.append(ReportCheck("source_facility",
                 f"{source.filename} is marked for {source.facility}, outside this report's selected sites. "
-                "Correct its source details or remove the linked content.", True, source.id))
+                "Correct its source details or remove the linked content.", True, source.id,(source_target(draft,source),)))
         elif unknown_included:
             checks.append(ReportCheck("source_facility",
                 f"Establish the site scope of {source.filename} before including its content. "
-                "Choose the exact sites in its source details, or remove the linked content.", True, source.id))
+                "Choose the exact sites in its source details, or remove the linked content.", True, source.id,(source_target(draft,source),)))
         # Classification and intake selections do not remove already-included
         # text/tables. They must not bypass the required foreign-site check.
         if source.classification == "Reference only" or not source.selected_pages:
@@ -355,12 +386,12 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                 except ValueError:
                     valid_period = False
                 if not valid_period:
-                    checks.append(ReportCheck("source_period", f"Check uploaded source date: {source.filename} ({source.service_date}).", False, source.id))
+                    checks.append(ReportCheck("source_period", f"Check uploaded source date: {source.filename} ({source.service_date}).", False, source.id,(source_target(draft,source),)))
             else:
-                checks.append(ReportCheck("source_date_unknown", f"Confirm the reporting date for {source.filename}; no date has been established.", False, source.id))
+                checks.append(ReportCheck("source_date_unknown", f"Confirm the reporting date for {source.filename}; no date has been established.", False, source.id,(source_target(draft,source),)))
         if ((not facility or facility not in names) and not foreign_included and not unknown_included
                 and not (source.id in included_sources and included_scope_valid(draft, source))):
-            checks.append(ReportCheck("source_facility", f"Check uploaded source facility: {source.filename} ({source.facility or 'not established'}).", False, source.id))
+            checks.append(ReportCheck("source_facility", f"Check uploaded source facility: {source.filename} ({source.facility or 'not established'}).", False, source.id,(source_target(draft,source),)))
     from app.monthly_report_layout_checks import layout_checks
     checks.extend(layout_checks(draft))
     # Same issue can be reached through the cover and a repeated section
