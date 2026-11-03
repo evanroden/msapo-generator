@@ -160,7 +160,8 @@ globalThis.ENFRASourceReviewNavigation = {
         function keepFocusedVisible(field, boundary, source, workspace, currentWorkspace) {
             // Preview images can expand above an already focused native field.
             // Watch only the current layout, and stop at the first user gesture.
-            const layout = app.querySelector('[data-testid="stMainBlockContainer"]');
+            const layout = app.matches?.('[data-testid="stMainBlockContainer"]') ? app :
+                app.querySelector('[data-testid="stMainBlockContainer"]');
             if (typeof ResizeObserver !== 'function' || !layout) return;
             let active = true, frameId = null;
             function scheduleVisibilityCheck() {

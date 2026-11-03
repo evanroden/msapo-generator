@@ -614,8 +614,8 @@ if(process.env.ENFRA_MANAGER_ACCEPTED_RECEIPT) test('actual server acceptance re
 
 
 function enableLayoutProbe(h) {
-    const layout={}, observers=new Set(), native=h.app.querySelector;
-    h.app.querySelector=s=>s==='[data-testid="stMainBlockContainer"]'?layout:native(s);
+    const layout=h.app, observers=new Set();
+    h.app.matches=s=>s==='[data-testid="stMainBlockContainer"]';
     h.context.window={innerHeight:900};
     h.context.ResizeObserver=class {
         constructor(callback){this.callback=callback;}
@@ -676,5 +676,5 @@ test('disposing the navigation retires its pending visibility watcher',async()=>
 
 test('inserted content above the field triggers visibility correction',async()=>{
  const h=fixture(),p=enableLayoutProbe(h),cleanup=h.install();h.click(h.entries.first.link);await h.flush();
- p.field.rect={top:1100,bottom:1130}; const mutation=[...h.observers].find(o=>o.target===h.app.querySelector('[data-testid="stMainBlockContainer"]')); assert.ok(mutation); mutation.callback([]);await h.flush();assert.equal(p.field.scrolls,2);cleanup();
+ p.field.rect={top:1100,bottom:1130}; const mutation=[...h.observers].find(o=>o.target===h.app && o!==[...h.observers][0]); assert.ok(mutation); mutation.callback([]);await h.flush();assert.equal(p.field.scrolls,2);cleanup();
 });
