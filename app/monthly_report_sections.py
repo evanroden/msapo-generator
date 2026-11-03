@@ -152,6 +152,10 @@ def _build_section_import(path, inspection, plans, *, source_view=None, _operati
             raise ValueError("Review each included section before continuing.")
         if plan.get("omit"):
             continue
+        if (plan.get("key") == "other"
+                and any(plan.get(key) for key in ("selected", "new_assets", "preserved_assets"))
+                and plan.get("target") not in tuple(spec.key for spec in known_sections())):
+            raise ValueError("Choose a report section for the additional content, or leave it out, before continuing.")
         if any(items[identity].kind == "image" and is_header_artwork(items[identity])
                and plan.get("destinations", {}).get(identity) == "cover_photo"
                for identity in plan.get("selected", ())):
