@@ -391,7 +391,28 @@ def exercise(engine,name,mode,scenario,base):
     def jump(code,control,block=None,*,source_page=False,ordinal=None):
         navigate_sections(page,'report_review',keyboard=keyboard)
         commit(warning_action(code,block,source_page=source_page,ordinal=ordinal))
-        focus_proof(control);capture('focused-'+code+('-source' if source_page else ''))
+        focus_proof(control)
+        if scenario=='source' and code=='source_facility':
+            # Independent synthetic layout control: grow a temporary block above
+            # this exact form after focus, then remove it without changing data.
+            shifted=control.evaluate("""field => {
+                const form=field.closest('[class*="st-key-source_detail_editor_"]');
+                if (!form?.parentElement) throw Error('Exact source form is unavailable');
+                const spacer=document.createElement('div');
+                spacer.id='synthetic-warning-layout-shift';
+                spacer.style.height='1500px';
+                form.parentElement.insertBefore(spacer,form);
+                return {top:field.getBoundingClientRect().top, viewport:window.innerHeight};
+            }""")
+            assert shifted['top'] > shifted['viewport'], shifted
+            try:
+                expect(page.locator('#synthetic-warning-layout-shift')).to_have_count(1)
+                expect(control).to_be_focused()
+                expect(control).to_be_in_viewport(ratio=1)
+                expect(page.locator('#synthetic-warning-layout-shift')).to_have_count(1)
+            finally:
+                page.evaluate("document.getElementById('synthetic-warning-layout-shift')?.remove()")
+        capture('focused-'+code+('-source' if source_page else ''))
         return_review()
         # Deliberate second activation proves a new action remains usable; it is
         # not a retry of a failed click. The first focus assertion already passed.
