@@ -128,13 +128,34 @@ def run_office(command: Sequence[str], *, timeout: float = 120) -> subprocess.Co
     The caller owns the conversion lease and disposable output directory. A
     TimeoutExpired is raised only after the launched process tree has stopped.
     """
+    from app.monthly_report_render_jobs import preview_memory_guard
+    guard = preview_memory_guard()
+    if guard is not None:
+        guard()  # An upload may have arrived after background admission.
     with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+        deadline = time.monotonic() + timeout if guard is not None else None
         process = subprocess.Popen(list(command), stdin=subprocess.DEVNULL,
                                    stdout=stdout, stderr=stderr,
                                    start_new_session=os.name == 'posix')
         try:
             _record(process.pid)
-            process.wait(timeout=timeout)
+            if guard is None:
+                process.wait(timeout=timeout)
+            else:
+                # Same total deadline; only background previews yield under
+                # pressure. The finally block owns group cleanup before the
+                # existing RenderBusy can reach the last-good/requeue UI.
+                while True:
+                    guard()
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise subprocess.TimeoutExpired(command, timeout)
+                    try:
+                        process.wait(timeout=min(.05, remaining))
+                    except subprocess.TimeoutExpired:
+                        continue
+                    guard()  # Never quietly accept lost counters at completion.
+                    break
         finally:
             # If cleanup cannot finish, leave the marker. Other processes check
             # it under the shared lease instead of launching an overlapping job.

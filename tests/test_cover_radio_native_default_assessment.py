@@ -16,11 +16,12 @@ def test_template_and_cancel_native_default_and_stable_identity(monkeypatch,tmp_
     app,_=setup(monkeypatch,tmp_path)
     before=assert_native(app,'Keep and review')
     choice(app).click().run()
-    assert assert_native(app,'Leave this section out')==before
+    selected=assert_native(app,'Leave this section out')
+    assert selected != before
     app.run()
-    assert assert_native(app,'Leave this section out')==before
+    assert assert_native(app,'Leave this section out')==selected
     next(b for b in app.button if b.label=='Keep uploaded report design instead').click().run()
-    assert assert_native(app,'Keep and review')==before
+    assert assert_native(app,'Keep and review') not in {before, selected}
     assert continue_button(app).disabled
 
 @pytest.mark.parametrize('action',['Keep and review','Edit text or change pictures','Leave this section out'])

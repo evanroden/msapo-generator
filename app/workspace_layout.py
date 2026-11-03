@@ -34,6 +34,7 @@ def _adapter(runtime):
     # Register once, not once per section/fragment. No user data enters code.
     source = "\n".join((_ASSETS / name).read_text() for name in
                        ("workspace_geometry.js", "monthly_report_source_navigation.js",
+                        "monthly_report_correction_navigation.js",
                         "workspace_navigation.js", "workspace_layout.js"))
     return st.components.v2.component("enfra_workspace_layout", js=source,
                                       css=(_ASSETS / "workspace_layout.css").read_text(),
