@@ -678,3 +678,11 @@ test('inserted content above the field triggers visibility correction',async()=>
  const h=fixture(),p=enableLayoutProbe(h),cleanup=h.install();h.click(h.entries.first.link);await h.flush();
  p.field.rect={top:1100,bottom:1130}; const mutation=[...h.observers].find(o=>o.target===h.app && o!==[...h.observers][0]); assert.ok(mutation); mutation.callback([]);await h.flush();assert.equal(p.field.scrolls,2);cleanup();
 });
+test('scrollport scrollbar gesture cancels automatic repositioning',async()=>{
+    const h=fixture(),p=enableLayoutProbe(h),listeners=new Map();
+    const scrollport={addEventListener:(k,fn)=>listeners.set(k,fn),removeEventListener:(k,fn)=>{if(listeners.get(k)===fn)listeners.delete(k);}};
+    h.app.closest=s=>s==='[data-testid="stMain"]'?scrollport:null;
+    const cleanup=h.install();h.click(h.entries.first.link);await h.flush();
+    listeners.get('pointerdown')({});p.field.rect={top:1100,bottom:1130};p.resize();await h.flush();
+    assert.equal(p.field.scrolls,1);assert.equal(listeners.size,0);cleanup();
+});

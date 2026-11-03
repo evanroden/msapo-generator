@@ -163,6 +163,7 @@ globalThis.ENFRASourceReviewNavigation = {
             const layout = app.matches?.('[data-testid="stMainBlockContainer"]') ? app :
                 app.querySelector('[data-testid="stMainBlockContainer"]');
             if (typeof ResizeObserver !== 'function' || !layout) return;
+            const interactionRoot = app.closest?.('[data-testid="stMain"]') || app;
             let active = true, frameId = null;
             function scheduleVisibilityCheck() {
                 if (!active || frameId !== null) return;
@@ -185,11 +186,11 @@ globalThis.ENFRASourceReviewNavigation = {
                 active = false;observer.disconnect();mutations.disconnect();clearTimeout(deadline);
                 if (frameId !== null) cancelAnimationFrame(frameId);
                 for (const type of ['pointerdown','keydown','wheel','touchstart'])
-                    app.removeEventListener(type, stop, true);
+                    interactionRoot.removeEventListener(type, stop, true);
             }
             const deadline = setTimeout(stop, 5000);
             for (const type of ['pointerdown','keydown','wheel','touchstart'])
-                app.addEventListener(type, stop, true);
+                interactionRoot.addEventListener(type, stop, true);
             observer.observe(layout);
             for (let node = boundary; node && node !== layout; node = node.parentElement)
                 observer.observe(node);
