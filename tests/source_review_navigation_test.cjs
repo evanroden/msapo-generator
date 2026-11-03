@@ -619,7 +619,7 @@ function enableLayoutProbe(h) {
     h.context.window={innerHeight:900};
     h.context.ResizeObserver=class {
         constructor(callback){this.callback=callback;}
-        observe(target){assert.equal(target,layout);observers.add(this);}
+        observe(target){observers.add(this);}
         disconnect(){observers.delete(this);}
     };
     const field=h.entries.first.field;
@@ -672,4 +672,9 @@ test('disposing the navigation retires its pending visibility watcher',async()=>
     const h=fixture(),p=enableLayoutProbe(h),cleanup=h.install();h.click(h.entries.first.link);await h.flush();
     cleanup();assert.equal(p.observers.size,0);p.field.rect={top:1100,bottom:1130};p.resize();await h.flush();
     assert.equal(p.field.scrolls,1);
+});
+
+test('inserted content above the field triggers visibility correction',async()=>{
+ const h=fixture(),p=enableLayoutProbe(h),cleanup=h.install();h.click(h.entries.first.link);await h.flush();
+ p.field.rect={top:1100,bottom:1130}; const mutation=[...h.observers].find(o=>o.target===h.app.querySelector('[data-testid="stMainBlockContainer"]')); assert.ok(mutation); mutation.callback([]);await h.flush();assert.equal(p.field.scrolls,2);cleanup();
 });

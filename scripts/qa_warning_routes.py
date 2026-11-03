@@ -398,6 +398,8 @@ def exercise(engine,name,mode,scenario,base):
             shifted=control.evaluate("""field => {
                 const form=field.closest('[class*="st-key-source_detail_editor_"]');
                 if (!form?.parentElement) throw Error('Exact source form is unavailable');
+                const scrollport=field.closest('[data-testid=\"stMain\"]');
+                if (scrollport) { scrollport.dataset.syntheticOverflowAnchor=scrollport.style.overflowAnchor; scrollport.style.overflowAnchor='none'; }
                 const spacer=document.createElement('div');
                 spacer.id='synthetic-warning-layout-shift';
                 spacer.style.height='1500px';
@@ -411,7 +413,7 @@ def exercise(engine,name,mode,scenario,base):
                 expect(control).to_be_in_viewport(ratio=1)
                 expect(page.locator('#synthetic-warning-layout-shift')).to_have_count(1)
             finally:
-                page.evaluate("document.getElementById('synthetic-warning-layout-shift')?.remove()")
+                page.locator('#synthetic-warning-layout-shift').evaluate("node => { const root=node.closest('[data-testid=\"stMain\"]'); node.remove(); if(root){root.style.overflowAnchor=root.dataset.syntheticOverflowAnchor || ''; delete root.dataset.syntheticOverflowAnchor;} }")
         capture('focused-'+code+('-source' if source_page else ''))
         return_review()
         # Deliberate second activation proves a new action remains usable; it is
@@ -612,3 +614,4 @@ if __name__=='__main__':
     except Exception as exc:
         REPORT['result']='failed';REPORT['failures'].append(type(exc).__name__+': '+str(exc))
         OUT.mkdir(parents=True,exist_ok=True);(OUT/'results.json').write_text(json.dumps(REPORT,indent=2));raise
+

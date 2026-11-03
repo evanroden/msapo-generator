@@ -163,7 +163,7 @@ globalThis.ENFRASourceReviewNavigation = {
             const layout = app.querySelector('[data-testid="stMainBlockContainer"]');
             if (typeof ResizeObserver !== 'function' || !layout) return;
             let active = true, frameId = null;
-            const observer = new ResizeObserver(() => {
+            function scheduleVisibilityCheck() {
                 if (!active || frameId !== null) return;
                 frameId = requestAnimationFrame(() => {
                     frameId = null;
@@ -174,10 +174,14 @@ globalThis.ENFRASourceReviewNavigation = {
                     if (rect.top < 0 || rect.bottom > window.innerHeight)
                         field.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});
                 });
-            });
+            }
+            const observer = new ResizeObserver(scheduleVisibilityCheck);
+            // Some browsers keep the outer scrollport at a fixed height. Watch
+            // the source form's ancestors too, and detect newly inserted content.
+            const mutations = new MutationObserver(scheduleVisibilityCheck);
             function stop() {
                 if (!active) return;
-                active = false;observer.disconnect();clearTimeout(deadline);
+                active = false;observer.disconnect();mutations.disconnect();clearTimeout(deadline);
                 if (frameId !== null) cancelAnimationFrame(frameId);
                 for (const type of ['pointerdown','keydown','wheel','touchstart'])
                     app.removeEventListener(type, stop, true);
@@ -185,7 +189,11 @@ globalThis.ENFRASourceReviewNavigation = {
             const deadline = setTimeout(stop, 5000);
             for (const type of ['pointerdown','keydown','wheel','touchstart'])
                 app.addEventListener(type, stop, true);
-            observer.observe(layout);cancelPending = stop;
+            observer.observe(layout);
+            for (let node = boundary; node && node !== layout; node = node.parentElement)
+                observer.observe(node);
+            mutations.observe(layout, {childList:true, subtree:true});
+            cancelPending = stop;
         }
         function focusWhenReady(boundary, kind, source, workspace, link, focused = () => {},
                                 currentWorkspace = () => correctionWorkspace(link, source, kind)) {
