@@ -160,8 +160,6 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
     if len(set(keys)) != len(keys):
         checks.append(ReportCheck("duplicate_blocks", "Block identities must be unique.", True))
     blocks = {b.key: b for b in draft.blocks}
-    image_grid_keys = {spec.key for section in sections for spec in section.blocks
-                       if spec.type == "image_grid"}
     # Names and contract labels are identifiers, not evidence that work happened
     # on a date. Keep price/placeholder checks but omit month review for these.
     texts = [("report_identity", draft.profile.title), ("report_identity", draft.prepared_by),
@@ -230,23 +228,6 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
             if type(block.photos_per_page) is not int or not 1 <= block.photos_per_page <= 6:
                 checks.append(ReportCheck("photo_layout", "Choose between 1 and 6 photos per page.", True, block.key))
             from app.monthly_report_correction_targets import picture_target
-            # Both Word renderers already reject a source-backed PDF page caption
-            # exceeding three measured 10pt lines. Surface that same boundary
-            # before generation, without imposing it on ordinary photographs.
-            if block.key in image_grid_keys and block.asset_hashes:
-                from app.monthly_report_asset_layout import (
-                    document_page_indexes, document_caption_problems)
-                if document_page_indexes(block, draft.sources):
-                    long_captions = document_caption_problems(block, draft.sources)
-                    if long_captions:
-                        pictures = ", ".join(str(i + 1) for i in long_captions[:3])
-                        more = " and other pictures" if len(long_captions) > 3 else ""
-                        checks.append(ReportCheck(
-                            "document_caption",
-                            f"Shorten the source-page caption for picture {pictures}{more} "
-                            f"in {block.key.replace('_', ' ')} to at most three lines.",
-                            True, block.key,
-                            tuple(picture_target(draft, block, i) for i in long_captions)))
             from app.monthly_report_asset_review import pending_asset_indexes
             pending_pictures = pending_asset_indexes(block, draft.sources)
             if pending_pictures:
