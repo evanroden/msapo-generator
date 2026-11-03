@@ -49,6 +49,25 @@ def render_design_settings(actor, prefix):
     base_revision = st.session_state.setdefault(base_key, current["revision"])
     if current["revision"]:
         st.caption("Current master: version " + str(current["revision"]))
+    if current.get("default"):
+        with st.expander("Inspect installed master", expanded=False):
+            try:
+                snapshot = designs.installed_master_download()
+                if snapshot is not None:
+                    st.caption(
+                        f"Version {snapshot['revision']} · "
+                        f"{snapshot['size']:,} bytes · "
+                        f"SHA-256 {snapshot['source_hash']}"
+                    )
+                    st.download_button(
+                        "Download installed Word master",
+                        data=snapshot["bytes"],
+                        file_name=f"ENFRA-master-v{snapshot['revision']}.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        key=prefix + "_native_design_download_" + snapshot["hash"],
+                    )
+            except (ValueError, OSError) as exc:
+                st.error(str(exc))
     source = st.file_uploader("New ENFRA master design", type=["docx"], max_upload_size=128,
                               key=prefix + "_native_design_upload")
     companion_pdf = st.file_uploader("Finished PDF for this design (optional)", type=["pdf"],
