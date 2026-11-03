@@ -611,3 +611,70 @@ if(process.env.ENFRA_MANAGER_ACCEPTED_RECEIPT) test('actual server acceptance re
     assert.equal(h.state.sourceReviewReturn,prior);assert.equal(h.entries.first.back.hidden,false);assert.equal(back.hidden,true);
     cleanup();
 });
+
+
+function enableLayoutProbe(h) {
+    const layout=h.app, observers=new Set();
+    h.app.matches=s=>s==='[data-testid="stMainBlockContainer"]';
+    h.context.window={innerHeight:900};
+    h.context.ResizeObserver=class {
+        constructor(callback){this.callback=callback;}
+        observe(target){observers.add(this);}
+        disconnect(){observers.delete(this);}
+    };
+    const field=h.entries.first.field;
+    field.rect={top:300,bottom:330};field.getBoundingClientRect=()=>field.rect;
+    const focus=field.focus;field.focus=function(o){focus.call(this,o);h.context.document.activeElement=this;};
+    return {field,observers,resize(){for(const observer of [...observers])observer.callback([]);}};
+}
+
+test('late preview growth returns an untouched focused field to view once needed',async()=>{
+    const h=fixture(),p=enableLayoutProbe(h),cleanup=h.install();
+    h.click(h.entries.first.link);await h.flush();
+    assert.equal(p.field.focuses,1);assert.equal(p.field.scrolls,1);
+    p.resize();await h.flush();assert.equal(p.field.scrolls,1);
+    p.field.rect={top:1100,bottom:1130};p.resize();await h.flush();
+    assert.equal(p.field.scrolls,2);assert.equal(p.field.focuses,1);
+    h.expire();assert.equal(p.observers.size,0);p.resize();await h.flush();assert.equal(p.field.scrolls,2);
+    cleanup();
+});
+for(const gesture of ['wheel','pointerdown','touchstart','keydown']) {
+    test('user '+gesture+' cancels later automatic repositioning',async()=>{
+        const h=fixture(),p=enableLayoutProbe(h),cleanup=h.install();h.click(h.entries.first.link);await h.flush();
+        h.app.listeners.get(gesture)({});assert.equal(p.observers.size,0);
+        p.field.rect={top:1100,bottom:1130};p.resize();await h.flush();assert.equal(p.field.scrolls,1);cleanup();
+    });
+}
+for(const change of ['focus','ownership','stale','detached']) {
+    test('layout watcher stops after '+change+' changes',async()=>{
+        const h=fixture(),p=enableLayoutProbe(h),cleanup=h.install();h.click(h.entries.first.link);await h.flush();
+        if(change==='focus')h.context.document.activeElement={};
+        if(change==='ownership')h.workspace.stale=true;
+        if(change==='stale')p.field.stale=true;
+        if(change==='detached')p.field.isConnected=false;
+        p.field.rect={top:1100,bottom:1130};p.resize();await h.flush();
+        assert.equal(p.field.scrolls,1);assert.equal(p.observers.size,0);cleanup();
+    });
+}
+
+test('user gesture cancels a queued layout correction before its animation frame',async()=>{
+    const h=fixture(),p=enableLayoutProbe(h),cleanup=h.install();h.click(h.entries.first.link);await h.flush();
+    p.field.rect={top:1100,bottom:1130};p.resize();h.app.listeners.get('wheel')({});
+    await h.flush();assert.equal(p.field.scrolls,1);assert.equal(p.observers.size,0);cleanup();
+});
+test('a second source correction retires the earlier visibility watcher',async()=>{
+    const h=fixture(),p=enableLayoutProbe(h),cleanup=h.install();h.click(h.entries.first.link);await h.flush();
+    assert.equal(p.observers.size,1);h.click(h.entries.second.link);await h.flush();
+    assert.equal(p.observers.size,1);p.field.rect={top:1100,bottom:1130};p.resize();await h.flush();
+    assert.equal(p.field.scrolls,1);cleanup();
+});
+test('disposing the navigation retires its pending visibility watcher',async()=>{
+    const h=fixture(),p=enableLayoutProbe(h),cleanup=h.install();h.click(h.entries.first.link);await h.flush();
+    cleanup();assert.equal(p.observers.size,0);p.field.rect={top:1100,bottom:1130};p.resize();await h.flush();
+    assert.equal(p.field.scrolls,1);
+});
+
+test('inserted content above the field triggers visibility correction',async()=>{
+ const h=fixture(),p=enableLayoutProbe(h),cleanup=h.install();h.click(h.entries.first.link);await h.flush();
+ p.field.rect={top:1100,bottom:1130}; const mutation=[...h.observers].find(o=>o.target===h.app && o!==[...h.observers][0]); assert.ok(mutation); mutation.callback([]);await h.flush();assert.equal(p.field.scrolls,2);cleanup();
+});
