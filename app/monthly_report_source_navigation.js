@@ -157,6 +157,36 @@ globalThis.ENFRASourceReviewNavigation = {
                 node => node.querySelector('label')?.textContent.trim() === 'Source date');
             return widget?.querySelector('input');
         }
+        function keepFocusedVisible(field, boundary, source, workspace, currentWorkspace) {
+            // Preview images can expand above an already focused native field.
+            // Watch only the current layout, and stop at the first user gesture.
+            const layout = app.querySelector('[data-testid="stMainBlockContainer"]');
+            if (typeof ResizeObserver !== 'function' || !layout) return;
+            let active = true, frameId = null;
+            const observer = new ResizeObserver(() => {
+                if (!active || frameId !== null) return;
+                frameId = requestAnimationFrame(() => {
+                    frameId = null;
+                    if (!active || disposed || document.activeElement !== field ||
+                        currentWorkspace() !== workspace || sourceBoundary(source, workspace) !== boundary ||
+                        !field.isConnected || field.closest('[data-stale="true"]')) {stop();return;}
+                    const rect = field.getBoundingClientRect();
+                    if (rect.top < 0 || rect.bottom > window.innerHeight)
+                        field.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});
+                });
+            });
+            function stop() {
+                if (!active) return;
+                active = false;observer.disconnect();clearTimeout(deadline);
+                if (frameId !== null) cancelAnimationFrame(frameId);
+                for (const type of ['pointerdown','keydown','wheel','touchstart'])
+                    app.removeEventListener(type, stop, true);
+            }
+            const deadline = setTimeout(stop, 5000);
+            for (const type of ['pointerdown','keydown','wheel','touchstart'])
+                app.addEventListener(type, stop, true);
+            observer.observe(layout);cancelPending = stop;
+        }
         function focusWhenReady(boundary, kind, source, workspace, link, focused = () => {},
                                 currentWorkspace = () => correctionWorkspace(link, source, kind)) {
             cancelPending();
@@ -200,6 +230,7 @@ globalThis.ENFRASourceReviewNavigation = {
                 field.focus({preventScroll:true});
                 field.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});
                 focused();
+                keepFocusedVisible(field, boundary, source, workspace, currentWorkspace);
             }
             cancelPending = stop;
             observer.observe(boundary, {subtree:true, childList:true, attributes:true,
@@ -369,3 +400,4 @@ globalThis.ENFRASourceReviewNavigation = {
         };
     },
 };
+
