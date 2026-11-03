@@ -539,6 +539,12 @@ def exercise(engine,name,mode,scenario,base):
         record['result']='failed';record['error']=type(exc).__name__+': '+str(exc);record['traceback']=traceback.format_exc()
         try:page.screenshot(path=str(output/'failure.png'))
         except Exception as capture_error:record['screenshot_error']=str(capture_error)
+        # Log bounded synthetic focus state when the large trace artifact cannot be retrieved.
+        try:
+            focus=page.evaluate('''() => {const e=document.activeElement; return {tag:e?.tagName || null, role:e?.getAttribute('role') || null, id:e?.id || null, label:e?.getAttribute('aria-label') || null};}''')
+            print('WARNING_ROUTE_FAILURE_FOCUS '+json.dumps({'case':key,'focus':focus}),flush=True)
+        except Exception as focus_error:
+            print('WARNING_ROUTE_FAILURE_FOCUS_UNAVAILABLE '+str(focus_error)[:300],flush=True)
         raise
     finally:
         for action in (lambda:context.tracing.stop(path=str(output/'trace.zip')),context.close,browser.close):

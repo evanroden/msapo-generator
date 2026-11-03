@@ -161,6 +161,16 @@ def render_source_details(source, profile, prefix, field, *, applied_caption="Co
             st.session_state[site_key] = initial_facility
             st.session_state[sites_key] = initial_sites
             pending_sites = initial_sites
+        # Native calendar limits extend ten years on either side. Extreme
+        # years overflow; early years also produce non-four-digit wire dates.
+        # Keep the exact value editable without guessing or clamping a date.
+        pending_date = st.session_state[date_key]
+        text_date = pending_date is not None and not 1010 <= pending_date.year <= 9989
+        text_date_key = date_key + "_text"
+        text_date_default = (source.service_date if pending_date == initial_date
+                             else pending_date.isoformat() if pending_date else "")
+        if text_date and changed_elsewhere:
+            st.session_state[text_date_key] = text_date_default
         st.session_state[p + "_baseline"] = baseline
         missing = (initial_date is None or initial_facility in ("", KEEP_FACILITY)
                    or bool(source.scope_review and reviewed_scope(source, profile) is None))
@@ -200,8 +210,13 @@ def render_source_details(source, profile, prefix, field, *, applied_caption="Co
                 # Match the native first-mount default to the current form value.
                 # Python session state alone leaves saved dates visibly blank in
                 # the browser; a delivered deliberate clear remains None here.
-                chosen_date = st.date_input("Source date", value=st.session_state[date_key], key=date_key,
-                                            format="YYYY-MM-DD")
+                if text_date:
+                    chosen_date_text = st.text_input("Source date (YYYY-MM-DD)",
+                        value=text_date_default, key=field(text_date_key, text_date_default),
+                        help="Enter a date as YYYY-MM-DD, or clear it if unknown.")
+                else:
+                    chosen_date = st.date_input("Source date", value=st.session_state[date_key], key=date_key,
+                                                format="YYYY-MM-DD")
                 chosen_sites = ()
                 if len(sites) > 1:
                     multi_options = [v for v in options if v]
@@ -226,12 +241,20 @@ def render_source_details(source, profile, prefix, field, *, applied_caption="Co
                 submitted = st.form_submit_button("Use these source details")
             if submitted and not changed_elsewhere:
                 try:
+                    if text_date:
+                        chosen_date = source_date(chosen_date_text.strip())
+                        if chosen_date_text.strip() and chosen_date is None:
+                            raise ValueError("Enter a valid source date as YYYY-MM-DD, or leave it blank.")
                     source = correct_source_details(source, profile, chosen_date, chosen_facility,
                         chosen_facilities=chosen_sites if chosen_facility == MULTIPLE_FACILITIES else (),
                         artwork_keys=artwork_keys)
                 except ValueError as exc:
                     st.error(str(exc))
                 else:
+                    if text_date:
+                        # The calendar was not mounted in this render. Seed its
+                        # next mount from this explicit correction, not old input.
+                        st.session_state[date_key] = chosen_date
                     st.session_state[p + "_baseline"] = source.fingerprint
                     st.caption(applied_caption)
     if isinstance(rendered, dict):
