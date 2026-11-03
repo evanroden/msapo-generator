@@ -13,7 +13,10 @@ def review_table_headings(table, key, field):
     if not ambiguous_price_columns(table.columns, table.rows):
         return table
     st.warning("Some column headings ran together in the uploaded report. Check the table below and name each column. No equipment or recommendation has been removed.")
-    st.dataframe([dict(zip(table.columns, row)) for row in table.rows[:12]], hide_index=True)
+    # Distinguish source columns for display without changing the reviewed schema.
+    display_columns = (tuple(f"{index + 1}. {heading}" for index, heading in enumerate(table.columns))
+                       if len(set(table.columns)) != len(table.columns) else table.columns)
+    st.dataframe([dict(zip(display_columns, row)) for row in table.rows[:12]], hide_index=True)
     key += "_headings_" + _signature(table.columns)
     headings = tuple(st.text_input(f"Column {n + 1} heading", key=field(key + f"_{n}", title))
                      .strip() for n, title in enumerate(table.columns))

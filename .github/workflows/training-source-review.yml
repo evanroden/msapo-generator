@@ -1,0 +1,48 @@
+name: Training source review acceptance
+on:
+  pull_request:
+    paths:
+      - 'app/monthly_report_training*'
+      - 'app/monthly_report_guided.py'
+      - 'app/monthly_report_model.py'
+      - 'app/monthly_report_library.py'
+      - 'tests/test_training_review*'
+      - 'tests/fixtures/workspaces/training_import_app.py'
+      - 'scripts/qa_training_source_review.py'
+      - '.github/workflows/training-source-review.yml'
+permissions:
+  contents: read
+jobs:
+  native-training-review:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      FONTCONFIG_FILE: ${{ github.workspace }}/runtime/fonts.conf
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - name: Install locked application, renderers and browser engines
+        timeout-minutes: 20
+        run: |
+          sudo python3 scripts/ci_ubuntu_mirror_priority.py
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-calc fonts-dejavu-core fonts-crosextra-carlito fonts-crosextra-caladea
+          python -m pip install -r requirements-dev.lock
+          python scripts/patch_streamlit_frontend.py
+          python -m pip install playwright==1.58.0
+          python -m playwright install --with-deps chromium webkit
+      - name: Native correction, deliberate unknown, save, reload, repeat import and actual output
+        timeout-minutes: 12
+        run: python scripts/qa_training_source_review.py
+      - name: Retain exact first failures and successful synthetic output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: training-source-review-${{ github.run_attempt }}
+          path: test-artifacts/training-source-review/
+          retention-days: 7
+          if-no-files-found: warn
