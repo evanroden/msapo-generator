@@ -18,6 +18,7 @@ from pathlib import Path
 import re
 import stat
 import struct
+import zlib
 from uuid import uuid4
 from zipfile import BadZipFile, ZipFile
 
@@ -126,7 +127,7 @@ def validate_reference_archive(original: bytes, *, max_bytes: int = _MAX_ARCHIVE
             if set(names) != expected:
                 raise ValueError("The archive contains undeclared or extraneous members.")
             return tuple(files)
-    except (BadZipFile, KeyError, RuntimeError, UnicodeError, json.JSONDecodeError) as exc:
+    except (BadZipFile, zlib.error, KeyError, RuntimeError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError("Invalid immutable six-source reference archive.") from exc
 
 
@@ -368,7 +369,7 @@ def validate_synthetic_evidence_archive(original: bytes, *,
             if set(names) != expected:
                 raise ValueError("The synthetic evidence ZIP has undeclared members.")
             return tuple(verified)
-    except (BadZipFile, KeyError, RuntimeError, UnicodeError, json.JSONDecodeError) as exc:
+    except (BadZipFile, zlib.error, KeyError, RuntimeError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError("Invalid manifest-bound synthetic evidence ZIP.") from exc
 
 

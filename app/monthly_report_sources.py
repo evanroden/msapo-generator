@@ -12,6 +12,7 @@ from email import policy
 from email.parser import BytesParser
 from html.parser import HTMLParser
 from io import BytesIO, StringIO
+import codecs
 import csv
 import hashlib
 from pathlib import Path
@@ -38,6 +39,7 @@ MAX_SOURCES = 50
 MAX_REPORT_TEXT = 800_000
 MAX_PAGES = 500
 MAX_EMBED_PAGES = 150
+MAX_CACHED_PAGE_IMAGE_BYTES = 60 * 1024 * 1024  # A single included page cannot exceed this report budget.
 MAX_VISION_PAGES = ocr._MAX_PDF_PAGES
 MAX_TABLE_CELLS = 200_000
 MAX_TABLE_ROWS = 20_000
@@ -99,8 +101,19 @@ def native_action_lines(source: ReportSource, *, passage_pages=None):
         text = source.page_texts[number - 1]
         if page_status(text, unreadable=number in source.needs_vision)[0] != "technical":
             continue
-        lines = (tuple(p.text for p in passage_pages[number][0] if p.field == "actions")
-                 if number in passage_pages else text.splitlines())
+        if number in passage_pages:
+            # Validated native PDF action spans are already complete, exact
+            # source occurrences. Do not join unrelated labeled blocks.
+            lines = tuple(p.text for p in passage_pages[number][0]
+                          if p.field == "actions")
+        else:
+            # An unlabelled PDF often wraps "Inspected ... confirmed it" and
+            # "did not start" into separate physical text lines. The Activity
+            # editor already uses this conservative qualifier-aware grouping.
+            # Reuse it *per page* before claiming completed-action evidence;
+            # a truncated first line must not acquire a false positive cite.
+            from app.monthly_report_structured_uploads import _logical_activity_lines
+            lines = _logical_activity_lines(text.splitlines())
         for line in lines:
             line = line.strip()
             uncertain_work = re.search(
@@ -328,12 +341,28 @@ def _table(name, records, *, strict_columns=False) -> SourceTable:
     return SourceTable(name, tuple(columns), tuple(r + ("",) * (width - len(r)) for r in rows[1:]))
 
 
+def _csv_unicode_encoding(raw: bytes) -> str | None:
+    """Honor only explicit signatures; UTF-32 LE shares UTF-16 LE's prefix."""
+    if raw.startswith((codecs.BOM_UTF32_LE, codecs.BOM_UTF32_BE)):
+        return "utf-32"
+    if raw.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        return "utf-16"
+    return None
+
+
 def _spreadsheet(raw: bytes, suffix: str) -> tuple[SourceTable, ...]:
     if suffix == ".csv":
-        try:
-            text = raw.decode("utf-8-sig")
-        except UnicodeDecodeError:
-            text = raw.decode("cp1252")
+        encoding = _csv_unicode_encoding(raw)
+        if encoding:
+            try:
+                text = raw.decode(encoding)
+            except UnicodeDecodeError as exc:
+                raise ValueError("CSV Unicode encoding could not be read. Export a fresh UTF-8 CSV copy.") from exc
+        else:
+            try:
+                text = raw.decode("utf-8-sig")
+            except UnicodeDecodeError:
+                text = raw.decode("cp1252")
         sample = text[:8192]
         try:
             dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
@@ -382,6 +411,78 @@ def _spreadsheet(raw: bytes, suffix: str) -> tuple[SourceTable, ...]:
         workbook.close()
 
 
+def _cached_extraction(data, digest, suffix):
+    """Decode only disposable extraction records, without coercing bad JSON shapes."""
+    def sequence(value):
+        if not isinstance(value, list):
+            raise ValueError("Invalid source extraction cache sequence.")
+        return value
+
+    for name in ("client_page_policy", "native_action_policy", "vendor_passage_policy"):
+        if type(data.get(name, 0)) is not int or data.get(name, 0) < 0:
+            raise ValueError("Invalid source extraction cache policy.")
+    record = data["source"]
+    if not isinstance(record, dict):
+        raise ValueError("Invalid source extraction cache record.")
+    source = library.source_from_dict(record)
+    if (source.id, source.sha256, source.suffix) != (digest, digest, suffix):
+        raise ValueError("Source extraction cache identity changed.")
+    for name, value in asdict(source).items():
+        # The current serializer already validates this optional typed record.
+        # It is neither text nor a sequence; legacy caches may omit it.
+        if name == "financial_source_review":
+            continue
+        if isinstance(value, tuple):
+            sequence(record.get(name, []))
+        elif not isinstance(value, str):
+            raise ValueError("Invalid source extraction cache text.")
+    if any(not isinstance(text, str) for name in ("tags", "page_texts", "notices")
+           for text in getattr(source, name)):
+        raise ValueError("Invalid source extraction cache text.")
+    if any(type(page) is not int or not 1 <= page <= len(source.page_texts)
+           for name in ("selected_pages", "needs_vision") for page in getattr(source, name)):
+        raise ValueError("Invalid source extraction cache page.")
+    for name in ("captions", "client_page_reviews", "client_page_exclusions"):
+        if any(not isinstance(pair, list) or len(pair) != 2 or type(pair[0]) is not int
+               or not isinstance(pair[1], str) for pair in record.get(name, [])):
+            raise ValueError("Invalid source extraction cache page metadata.")
+    tables = []
+    for table in sequence(data.get("tables", [])):
+        columns = sequence(table["columns"])
+        rows = sequence(table["rows"])
+        if (not isinstance(table["name"], str) or any(not isinstance(title, str) for title in columns)
+                or any(len(sequence(row)) != len(columns) or any(not isinstance(cell, str) for cell in row)
+                       for row in rows)):
+            raise ValueError("Invalid source extraction cache table.")
+        tables.append(SourceTable(table["name"], tuple(columns), tuple(tuple(row) for row in rows)))
+    if suffix in (".csv", ".xlsx") and (not tables or any(not table.columns for table in tables)):
+        raise ValueError("Invalid source extraction cache table.")
+    images = sequence(data.get("image_items", []))
+    if any(not isinstance(pair, list) or len(pair) != 2 or type(pair[0]) is not int
+           or not 1 <= pair[0] <= len(source.page_texts) or not isinstance(pair[1], str) for pair in images):
+        raise ValueError("Invalid source extraction cache image.")
+    return SourceContent(source, tuple(tables), tuple(tuple(pair) for pair in images))
+
+
+def _same_source_bytes(path, raw):
+    """Verify a cached original with bounded reads before skipping its republish."""
+    library._qa_path_guard(path)
+    if path.is_symlink():
+        return False
+    try:
+        with path.open("rb") as stored:
+            for offset in range(0, len(raw), 1024 * 1024):
+                chunk = raw[offset:offset + 1024 * 1024]
+                if stored.read(len(chunk)) != chunk:
+                    return False
+            matches = not stored.read(1)
+    except FileNotFoundError:
+        return False
+    if matches:
+        library._qa_path_guard(path)
+    return matches
+
+
 def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceContent, tuple[tuple[str, bytes], ...]]:
     """Cache local extraction. Caller enforces aggregate count/byte/text budgets."""
     from app.monthly_report_content_policy import suggested_pages
@@ -393,18 +494,30 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
     digest = hashlib.sha256(raw).hexdigest()
     path, cache = _path(profile, digest, suffix), _path(profile, digest, ".json")
     attachments = ()
+    unicode_csv = suffix == ".csv" and _csv_unicode_encoding(raw) is not None
+    rebuild_cache = False
     if cache.exists() and path.exists() and suffix not in (".eml", ".msg"):
-        data = library._read(cache)
-        source = library.source_from_dict(data["source"])
-        tables = tuple(SourceTable(t["name"], tuple(t["columns"]), tuple(tuple(r) for r in t["rows"])) for t in data.get("tables", ()))
-        if source.suffix == suffix and (suffix != ".pdf" or data.get("vendor_passage_policy", 0) >= 7):
+        library._qa_path_guard(cache)
+        try:
+            data = library._read(cache)
+            content = _cached_extraction(data, digest, suffix)
+        except (ValueError, TypeError, LookupError, AttributeError):
+            # Cache damage is recoverable; a stale/foreign QA namespace is not.
+            library._qa_path_guard(cache)
+            content = None
+        # Keep signed-Unicode migration independent of structural cache validation.
+        if (content is not None and (not unicode_csv or data.get("csv_unicode_policy") == 1)
+                and (suffix != ".pdf" or data.get("vendor_passage_policy", 0) >= 7)):
+            source = content.source
             if data.get("client_page_policy", 0) < 1 and suffix not in (".csv", ".xlsx"):
                 source = replace(source, selected_pages=suggested_pages(source))
             if data.get("native_action_policy", 0) < 1:
                 # This is the original extraction cache, never a reviewed draft.
                 source = replace(source, actions="\n".join(line for line, _ in native_action_lines(source))[:6000])
-            return SourceContent(replace(source, filename=filename), tables, tuple(tuple(p) for p in data.get("image_items", ()))), ()
-    library._atomic_write(path, raw)
+            return replace(content, source=replace(source, filename=filename)), ()
+        rebuild_cache = True
+    if not rebuild_cache or not _same_source_bytes(path, raw):
+        library._atomic_write(path, raw)
     page_texts, needs_vision, tables, image_items, notices = [], [], (), [], []
     pdf_text_blocks = []
     span_budget_exceeded = False
@@ -475,7 +588,9 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
         source = replace(source, selected_pages=suggested_pages(source))
     source = suggest_facts(source, profile)
     content = SourceContent(source, tables, tuple(image_items))
-    library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1, "native_action_policy": 1, "vendor_passage_policy": 7, **asdict(content)}))
+    library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1,
+        "native_action_policy": 1, "vendor_passage_policy": 7,
+        **({"csv_unicode_policy": 1} if unicode_csv else {}), **asdict(content)}))
     return content, attachments
 
 
@@ -581,13 +696,32 @@ def page_image(profile: ReportProfile, content: SourceContent, number: int, *, p
     purpose = "preview-docx-v2" if preview and source.suffix == ".docx" else "preview" if preview else "print"
     cache = directory / f"{number}-{purpose}.json"
     if cache.exists():
-        saved = library._read(cache)
-        if not re.fullmatch(r"[0-9a-f]{64}\.(?:jpg|png)", saved.get("asset", "")):
-            raise ValueError("Invalid prepared image reference.")
-        data = (directory / saved["asset"]).read_bytes()
-        if library.asset_reference(data, saved["extension"]) != saved["asset"]:
-            raise ValueError("A prepared source image failed its integrity check.")
-        return ReportImage(data, saved["extension"], saved["width"], saved["height"])
+        # Disposable page rasters can be lost or damaged independently of the
+        # retained source. A bad *cache* is never authority to reject the source:
+        # rederive it below, after the original's normal integrity checks.
+        # Bound the actual read too; stat-before-read cannot cap a replacement.
+        try:
+            saved = library._read(cache)
+            if not isinstance(saved, dict):
+                raise ValueError("Invalid prepared image metadata.")
+            ref, extension = saved.get("asset"), saved.get("extension")
+            if (not isinstance(ref, str)
+                    or not re.fullmatch(r"[0-9a-f]{64}\.(?:jpg|png)", ref)
+                    or extension not in ("jpg", "png") or not ref.endswith("." + extension)
+                    or any(type(saved.get(field)) is not int or saved[field] <= 0
+                           for field in ("width", "height"))):
+                raise ValueError("Invalid prepared image metadata.")
+            with (directory / ref).open("rb") as stream:
+                data = stream.read(MAX_CACHED_PAGE_IMAGE_BYTES + 1)
+            if (len(data) > MAX_CACHED_PAGE_IMAGE_BYTES
+                    or library.asset_reference(data, extension) != ref):
+                raise ValueError("A prepared source image failed its integrity check.")
+            return ReportImage(data, extension, saved["width"], saved["height"])
+        except (OSError, ValueError, KeyError, TypeError):
+            # Do not delete a bad cache or touch a report. The authenticated
+            # source is decoded and an atomic fresh derivative is published
+            # only after it has been prepared successfully.
+            pass
     raw = source_bytes(profile, source) if source.suffix != ".docx" else b""
     if source.suffix == ".pdf":
         with fitz.open(stream=raw, filetype="pdf") as pdf:
@@ -663,8 +797,8 @@ def prepare_pages(profile: ReportProfile, contents: tuple[SourceContent, ...],
         raise ValueError("The requested source pages changed. Review them again before inclusion.")
     if len(planned) > MAX_EMBED_PAGES:
         raise ValueError("Embedding limit is 150 selected image/PDF pages per report. Reduce the selection before preparing.")
-    for content, _, number in planned:
-        if not page_allowed(content.source, number):
+    for content, slot, number in planned:
+        if not page_allowed(content.source, number, profile=profile, destination=slot):
             raise ValueError(f"Check page {number} of {content.source.filename} before including it. Prices, legal-only and blank/signature-only pages cannot be included.")
     grouped, total = {}, 0
     for content, slot, number in planned:

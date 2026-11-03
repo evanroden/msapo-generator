@@ -9,6 +9,7 @@ from collections import Counter
 from dataclasses import replace
 from hashlib import sha256
 import json
+import re
 
 from app.monthly_report_model import included_sections, used_block_keys
 
@@ -31,9 +32,17 @@ def _decode(value):
         return {}
 
 
+_PAGE_TOKEN = re.compile(r"[0-9]{1,6}\Z")
+
+
 def _source_id(reference):
+    """Recognize only bounded, positive ASCII source page references."""
     parts = reference.split(":") if isinstance(reference, str) else ()
-    return parts[0] if len(parts) == 3 and parts[1].isdigit() else None
+    if (len(parts) != 3 or not parts[0] or not parts[2]
+            or _PAGE_TOKEN.fullmatch(parts[1]) is None
+            or int(parts[1]) < 1):
+        return None
+    return parts[0]
 
 
 def revision(source):
@@ -42,7 +51,8 @@ def revision(source):
     # after every page Include/Exclude/caption review. Extracted content and
     # source metadata remain revision-bound; original bytes are bound below.
     return replace(source, scope_review="", selected_pages=(), captions=(),
-                   client_page_reviews=(), client_page_exclusions=()).fingerprint
+                   client_page_reviews=(), client_page_exclusions=(),
+                   financial_source_review=None, financial_page_reviews=()).fingerprint
 
 
 def _site_revision(source):
@@ -74,6 +84,28 @@ def reviewed_scope(source, profile):
     if record.get("kind") == "contract_artwork" and not sites:
         return record
     return None
+
+
+def visual_source_scope_valid(source, profile, *, artwork_keys=()):
+    """Source-site admission before publishing a reviewed reusable visual.
+
+    Match the report check's strict foreign-site refusal. An unknown or
+    explicitly corrected scope must retain its current source/hash/contract
+    receipt; image/page approval is not site approval. Only established shared
+    artwork roles may use a contract-artwork receipt (not organization charts).
+    """
+    names = {name.strip().casefold() for site in profile.facilities
+             for name in (site.key, site.title, *site.aliases)}
+    facility = source.facility.strip().casefold()
+    if facility and facility not in names:
+        return False
+    if not facility or source.scope_review:
+        scope = reviewed_scope(source, profile)
+        if not scope:
+            return False
+        return scope["kind"] == "sites" or bool(artwork_keys) and all(
+            is_artwork_key(key) for key in artwork_keys)
+    return True
 
 
 def correct_scope(source, profile, facilities=(), *, contract_artwork=False, artwork_keys=()):
