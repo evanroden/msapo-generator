@@ -19,10 +19,10 @@ concurrency:
 jobs:
   pytest:
     runs-on: ubuntu-24.04
-    # Full source-view lifecycle and rendering tests can exceed 45 minutes.
-    # Keep every test mandatory; allow headroom beyond recent 70–85 minute runs.
-    # A timeout marks CI failed and blocks release; it never cancels running production.
-    timeout-minutes: 120
+    # Keep the complete test suite mandatory. Two actual main runs reached 96%
+    # before the former 120-minute job limit; allow the suite and real exports
+    # to finish on slower runners. Timeouts still fail CI and block release.
+    timeout-minutes: 180
     env:
       FONTCONFIG_FILE: ${{ github.workspace }}/runtime/fonts.conf
     steps:
