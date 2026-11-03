@@ -1260,6 +1260,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             continue
         selected = [item for item in inspection.items if item.kind == "text"
                     and (item.section == destinations[block.key] or item.note == "Native divider artwork")
+                    and (item.note != "Native table title" or item.id in unchanged_items)
                     and source_ref(item) in block.references]
         expected = "\n\n".join(item.text.strip() for item in selected)
         if selected and block.text.strip() == expected.strip():
@@ -2068,6 +2069,19 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                     page_plan.support.add(label[0])
                 from app.monthly_report_training_style import style_training_table
                 style_training_table(anchor, table_reference)
+                from app.monthly_report_training import matrix_title
+                title = matrix_title(table_reference)
+                if title:
+                    caption = OxmlElement("w:p")
+                    properties = OxmlElement("w:pPr")
+                    properties.append(OxmlElement("w:keepNext"))
+                    caption.append(properties)
+                    run = OxmlElement("w:r")
+                    text = OxmlElement("w:t"); text.text = title
+                    run.append(text); caption.append(run)
+                    anchor.addprevious(caption)
+                    page_plan.assigned(caption, anchor)
+                    page_plan.emitted(caption, kind="table-title")
                 last = anchor
         images = []
         image_indexes = []

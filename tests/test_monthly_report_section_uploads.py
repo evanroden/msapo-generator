@@ -219,15 +219,18 @@ else:
 def test_scorecard_utility_upload_uses_one_labeled_control_without_extra_heading(
         monkeypatch, tmp_path):
     app = section_app(monkeypatch, tmp_path, pdf_bytes(1),
-                      label="Utility result files")
+                      label="Scorecard files")
     next(w for w in app.radio if w.label == "Section").set_value(
         "utility_analysis").run()
     assert not app.exception
     assert not any("Utility results and charts" in node.value
                    for node in app.markdown)
+    assert not any(w.label == "Page to review" for w in app.selectbox)
+    assert not button(app, "Include all 1 PDF pages").disabled
+    assert not app.session_state["test_blocks"]
+    next(w for w in app.toggle if w.label == "Review individual pages").set_value(True).run()
     assert any(w.label == "Page to review" for w in app.selectbox)
-    # Reusing the local source review still requires explicit price-safe page
-    # acceptance; a labeled uploader is not an automatic approval.
+    # The fallback still requires explicit price-safe page acceptance.
     assert button(app, "Add reviewed pages").disabled
 
 
@@ -304,3 +307,25 @@ def test_whole_pdf_fit_is_shown_before_page_approval(monkeypatch, tmp_path):
                for s in app.success)
     assert not app.session_state["test_blocks"]
     assert button(app, "Add reviewed pages").disabled
+
+
+@pytest.mark.parametrize("destination,label", [
+    ("mbcx_report", "MBCx report files"),
+    ("utility_analysis", "Scorecard files"),
+])
+def test_complete_pdf_action_keeps_main_budget_preflight(monkeypatch, tmp_path, destination, label):
+    app = section_app(monkeypatch, tmp_path, pdf_bytes(2), label=label)
+    app.radio[0].set_value(destination).run()
+    assert not app.exception
+    assert any("Whole PDF: 2 new pages" in c.value for c in app.caption)
+    assert not app.session_state["test_blocks"]
+    before = app.session_state["test_sources"]
+    button(app, "Check whole-PDF image size").click().run()
+    assert not app.exception
+    assert any("All 2 new pages fit the current image budget" in s.value
+               for s in app.success)
+    assert app.session_state["test_sources"] == before
+    assert not app.session_state["test_blocks"]
+    button(app, "Include all 2 PDF pages").click().run()
+    assert not app.exception
+    assert len(app.session_state["test_blocks"][destination].asset_hashes) == 2

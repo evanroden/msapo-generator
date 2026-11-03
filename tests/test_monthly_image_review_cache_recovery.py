@@ -54,6 +54,7 @@ def test_valid_cached_result_reused_without_another_request_or_quota_charge():
 
 @pytest.mark.parametrize("damaged", [
     b"{incomplete",
+    b"[" * 2000 + b"]" * 2000,
     b"[]",
     b'{"schema": 2}',
     b'{"schema": 1}',
@@ -162,4 +163,35 @@ def test_normal_completion_roundtrip_uses_same_cache_budget():
     _initial()
     review.complete_review(SCOPE, FIRST, "Synthetic monthly image finding")
     assert _reserve() == (FIRST, "Synthetic monthly image finding", None)
+    assert review.remaining_reviews(SCOPE) == 19
+
+
+def test_cache_replaced_by_symlink_at_open_never_reads_other_report(tmp_path, monkeypatch):
+    import os
+    _initial()
+    foreign = tmp_path / "foreign.json"
+    foreign.write_bytes(review.library._json({"schema": 1, "text": "Private other report"}))
+    _store(text="Local cached result")
+    real_guard = review.library._qa_path_guard
+    attempted = []
+
+    def swap_after_guard(path):
+        real_guard(path)
+        if path == _cache() and not attempted:
+            attempted.append(True)
+            path.unlink()
+            path.symlink_to(foreign)
+
+    monkeypatch.setattr(review.library, "_qa_path_guard", swap_after_guard)
+    assert _reserve() == (FIRST, "", CONTENT)
+    assert attempted and foreign.read_bytes() == review.library._json(
+        {"schema": 1, "text": "Private other report"})
+    assert review.remaining_reviews(SCOPE) == 19
+
+
+def test_nonregular_cache_is_a_bounded_miss():
+    import os
+    _initial()
+    os.mkfifo(_cache())
+    assert _reserve() == (FIRST, "", CONTENT)
     assert review.remaining_reviews(SCOPE) == 19

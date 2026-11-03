@@ -1,6 +1,9 @@
 """One-image-at-a-time visual reading; preparation never runs on the network worker."""
 
 import hashlib
+import json
+import os
+import stat
 
 from app.monthly_report_import import read_import_image
 from app.ocr import _ocr_request, image_blocks_for_vision
@@ -66,12 +69,31 @@ def _cached_review_text(cache):
 
     The report-wide usage ledger is separate and must never be reset on a miss.
     """
-    if not cache.exists() or cache.is_symlink():
-        return None
+    # Open the exact file without following a symlink, then inspect the opened
+    # descriptor before reading. A prior is_symlink() check alone can race a
+    # replacement and expose another report's cached result.
+    library._qa_path_guard(cache)
+    if not hasattr(os, "O_NOFOLLOW"):
+        return None  # Fail closed on platforms without atomic no-follow open.
+    descriptor = None
     try:
-        text = library._read(cache).get("text")
-    except (OSError, ValueError):
+        descriptor = os.open(cache, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            descriptor = None
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                return None
+            raw = stream.read(library.MAX_JSON_BYTES + 1)
+        if len(raw) > library.MAX_JSON_BYTES:
+            return None
+        value = json.loads(raw)
+        if not isinstance(value, dict) or value.get("schema") != 1:
+            return None
+        text = value.get("text")
+    except (OSError, ValueError, UnicodeError, RecursionError):
         return None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
     return text if isinstance(text, str) and text.strip() and len(text) <= 40000 else None
 
 

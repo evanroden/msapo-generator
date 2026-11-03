@@ -16,6 +16,31 @@ VENDOR_ROWS = (('Invented Vendor Alpha', 'Retain blank-heading value', 'Retain c
                ('', '', ''), ('Invented Vendor Alpha', 'Retain blank-heading value', 'Retain custom value'))
 
 
+def _fault_control():
+    import streamlit as st
+    key = '_contact_fault_control'
+    control = st.session_state.get(key)
+    if control is None:
+        control = {'mode': '', 'armed': 0, 'consumed': 0}
+        st.session_state[key] = control
+    return control
+
+
+def _arm_fault(control, mode):
+    # The native callback already owns this displayed fixture control. A
+    # SessionState write here yields before mutation: a rapid Edit click can
+    # retire that runner after its button trigger was consumed but before the
+    # fault was armed. Capture the synthetic intent without another yield.
+    control.update(mode=mode, armed=control['armed'] + 1)
+
+
+def _consume_fault():
+    control = _fault_control()  # Any rerun yield precedes consumption.
+    mode = control['mode']
+    control.update(mode='', consumed=control['armed'])
+    return mode
+
+
 def _folder(base, token):
     from app import monthly_report_library as library, monthly_report_testing as testing
     target, identity, generation = namespace(base, token)
@@ -64,7 +89,6 @@ def setup(base, token):
 
 
 def install_fault_seam(base, token):
-    import streamlit as st
     from app import monthly_report_directory as directory, monthly_report_library as library
     from app import monthly_report_testing as testing
     _folder(base, token)
@@ -82,7 +106,7 @@ def install_fault_seam(base, token):
         if (library._root().resolve() != (target / 'monthly_reports').resolve()
                 or testing._marker(target / '.enfra-qa-namespace', testing.scope()) != testing.generation()):
             raise AssertionError('Synthetic contact fault seam requires the current isolated generation.')
-        mode = st.session_state.pop('_contact_fault_once', '')
+        mode = _consume_fault()
         path = folder / 'attempts.json'
         attempts = json.loads(path.read_text())
         attempts.append({'mode': mode or 'ordinary'})
@@ -122,7 +146,8 @@ def snapshot(base, token):
             'saved_unchanged': saved.draft.fingerprint == setup_record['saved_fingerprint'],
             'original_unchanged': sha256((folder / 'source.docx').read_bytes()).hexdigest() == setup_record['source_sha256'],
             'working': state(working), 'durable': state(journal.draft if journal else saved.draft),
-            'directory': asdict(standing), 'attempts': json.loads((folder / 'attempts.json').read_text())}
+            'directory': asdict(standing), 'attempts': json.loads((folder / 'attempts.json').read_text()),
+            'fault': dict(_fault_control())}
 
 
 def render(base, token, field, move):
@@ -144,11 +169,12 @@ def render(base, token, field, move):
     install_fault_seam(base, token)
     if 'report_contract' not in st.session_state:
         _select_fixture()
+    fault_control = _fault_control()
     with st.expander('Synthetic fault controls'):
         st.button('Fail next synthetic shared save before commit',
-                  on_click=st.session_state.__setitem__, args=('_contact_fault_once','before'))
+                  on_click=_arm_fault, args=(fault_control, 'before'))
         st.button('Fail next synthetic shared save after commit',
-                  on_click=st.session_state.__setitem__, args=('_contact_fault_once','after'))
+                  on_click=_arm_fault, args=(fault_control, 'after'))
     st.button('Observe synthetic passive rerun')
     render_guided_workflow(token, 'UTC', field, move)
     if st.button('Render synthetic native contact outputs'):
