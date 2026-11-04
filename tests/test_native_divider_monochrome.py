@@ -109,3 +109,33 @@ def test_alternate_choice_changes_only_with_an_already_gray_fallback(fallback_gr
     assert image.get(qn('r:id'))==fallback_rid
     assert (selected.get(R+'embed')!=old) == fallback_gray
     assert (len(set(pixel(document,selected)))==1) == fallback_gray
+
+
+def test_gray_fallback_screen_checks_every_pixel():
+    from app.monthly_report_divider_monochrome import _has_already_gray_fallback
+    document=Document();root,selected=picture(document,jpeg())
+    drawing=selected.getparent().getparent().getparent().getparent().getparent(); anchor=next(root.iter(qn('wp:anchor')))
+    parent=drawing.getparent();parent.remove(drawing)
+    alternate=etree.SubElement(parent,MC+'AlternateContent');choice=etree.SubElement(alternate,MC+'Choice');choice.append(drawing)
+    fallback=etree.SubElement(alternate,MC+'Fallback');pict=etree.SubElement(fallback,qn('w:pict'))
+    shape=etree.SubElement(pict,'{urn:schemas-microsoft-com:vml}shape');image=etree.SubElement(shape,'{urn:schemas-microsoft-com:vml}imagedata')
+    pixels=Image.new('RGB',(1200,800),(90,90,90));pixels.putpixel((1,1),(255,0,0));out=BytesIO();pixels.save(out,'PNG')
+    rid,_=document.part.get_or_add_image(BytesIO(out.getvalue()));image.set(qn('r:id'),rid)
+    assert not _has_already_gray_fallback(document,anchor,alternate)
+
+
+def test_edit_layer_is_updated_only_when_it_matches_selected_photo():
+    d=Document();root,selected=picture(d,jpeg())
+    layer=etree.SubElement(selected,'{http://schemas.microsoft.com/office/drawing/2010/main}imgLayer')
+    layer.set(R+'embed',selected.get(R+'embed'))
+    monochrome_divider_photos(d,[root])
+    assert layer.get(R+'embed') == selected.get(R+'embed')
+    assert len(set(pixel(d,selected)))==1
+
+
+def test_different_edit_layer_causes_safe_skip():
+    d=Document();root,selected=picture(d,jpeg()); old=selected.get(R+'embed')
+    other=BytesIO();Image.new('RGB',(1200,800),'green').save(other,'JPEG');rid,_=d.part.get_or_add_image(BytesIO(other.getvalue()))
+    layer=etree.SubElement(selected,'{http://schemas.microsoft.com/office/drawing/2010/main}imgLayer');layer.set(R+'embed',rid)
+    monochrome_divider_photos(d,[root])
+    assert selected.get(R+'embed')==old and layer.get(R+'embed')==rid

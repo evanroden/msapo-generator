@@ -7,7 +7,7 @@ original source assets are deliberately left alone.
 from io import BytesIO
 
 from docx.oxml.ns import qn
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageOps, ImageChops, UnidentifiedImageError
 
 from app.ocr import _MAX_PIXELS_PER_FRAME
 
@@ -52,8 +52,9 @@ def _has_already_gray_fallback(document, anchor, wrapper):
         with Image.open(BytesIO(rel.target_part.blob)) as image:
             if image.width*image.height>_MAX_PIXELS_PER_FRAME:
                 return False
-            sample=image.convert('RGB').resize((64,64))
-            return all(max(pixel)-min(pixel)<=3 for pixel in sample.getdata())
+            red, green, blue = image.convert('RGB').split()
+            return (ImageChops.difference(red, green).getextrema()[1] <= 3
+                    and ImageChops.difference(green, blue).getextrema()[1] <= 3)
     except (OSError,ValueError,Image.DecompressionBombError,UnidentifiedImageError):
         return False
 
