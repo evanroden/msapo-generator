@@ -94,7 +94,8 @@ def test_rendered_chart_and_contacts_occupy_distinct_pages(tmp_path, monkeypatch
     monkeypatch.setattr(pdf_converter,'OUTPUT_DIR',tmp_path)
     pdf=pdf_converter.convert_to_pdf(generated)
     with fitz.open(pdf) as doc:
-        contact_page=next(i for i,p in enumerate(doc) if 'Synthetic Person' in p.get_text())
+        import re
+        contact_page=next(i for i,p in enumerate(doc) if 'Synthetic Person' in re.sub(r'\s+', ' ', p.get_text()))
         chart_pages=[i for i,p in enumerate(doc) if p.get_image_info()]
         assert chart_pages and max(i for i in chart_pages if i<contact_page)<contact_page
         assert not doc[contact_page].get_image_info()
