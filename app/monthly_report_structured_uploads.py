@@ -203,12 +203,33 @@ def _logical_activity_lines(lines):
     return tuple(result)
 
 
+
+def _docx_site_table(text):
+    """Recognize explicit tabular site evidence without inventing row scope."""
+    lines = [line for line in text.splitlines() if line.strip()]
+    if len(lines) < 2:
+        return False
+    # Reconstruct only heading fragments before the first tab; do not alter rows.
+    first_tab = next((n for n, line in enumerate(lines) if "\t" in line), None)
+    if first_tab is None:
+        return False
+    headings = " ".join(lines[:first_tab + 1]).split("\t")
+    if sum(bool(value.strip()) for value in headings) < 2:
+        return False
+    if not any(re.fullmatch(r"(?:site|facility|building|location|client|customer|hospital)(?:id|name|key|code)?",
+                           re.sub(r"[^a-z0-9]", "", value.casefold())) for value in headings):
+        return False
+    return any(len(line.split("\t")) == len(headings) for line in lines[first_tab + 1:])
+
+
 def _activity_lines(text, suffix, *, with_dates=False):
     """Select Activity passages; optionally retain their exact event header date.
 
     The default string-only result remains compatible with existing callers.
     Source dates are evidence, not proof that work is complete or current.
     """
+    if suffix == ".docx" and _docx_site_table(text):
+        return ()
     if suffix != ".txt" or not any(_EVENT_START.match(line) for line in text.splitlines()):
         lines = _logical_activity_lines(text.splitlines())
         return tuple((line, "") for line in lines) if with_dates else lines
@@ -318,6 +339,10 @@ def _activity_reader_notice(content):
     if is_work_order_source(content):
         return (content.source.filename + ": work-order records use Review counted work-order rows "
                 "and Add totals to summary; this file is not sent to the Activity reader.")
+    if content.source.suffix == ".docx" and any(_docx_site_table(text) for text in content.source.page_texts):
+        return (content.source.filename + ": site-specific rows in this Word table need an explicit target-site mapping. "
+                "This file is not sent to the Activity reader. Other native narrative remains available; "
+                "review the original and add only verified work directly in Activity. The uploaded file is retained.")
     if _spreadsheet_has_site_scope_column(content):
         return (content.source.filename + ": site-specific rows in this spreadsheet need an explicit target-site mapping. "
                 "This file is not sent to the Activity reader. Review the original and add only verified "
