@@ -243,11 +243,20 @@ def _email(raw: bytes) -> tuple[str, tuple[tuple[str, bytes], ...], tuple[str, .
         text = _plain_html(text)
     headers = "\n".join(f"{'Message date' if key == 'Date' else key}: {message.get(key, '')}" for key in ("Subject", "Date", "From"))
     attachments, notices = [], []
-    for item in message.walk():
-        if item.is_multipart():
-            if item.get_content_type() == "message/rfc822":
-                notices.append("Nested email retained in the original; save its attachments separately.")
-            continue
+    def direct_parts(part):
+        # walk() descends through message/rfc822 attachments even when its
+        # wrapper was skipped. Files in a forwarded email belong to that
+        # forwarded original and require deliberate, separate import.
+        if part.get_content_type() == "message/rfc822":
+            notices.append("Nested email retained in the original; save its attachments separately.")
+            return
+        if part.is_multipart():
+            for child in part.iter_parts():
+                yield from direct_parts(child)
+            return
+        yield part
+
+    for item in direct_parts(message):
         filename = item.get_filename()
         if filename:
             if len(attachments) >= MAX_SOURCES:
