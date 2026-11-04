@@ -111,3 +111,30 @@ def test_native_other_divider_is_not_recolored(tmp_path):
     draft=ReportDraft(profile,ReportPeriod(2026,10),'Tester',default_sections(),(ResolvedBlock('service_calls','This month',rows=(('1','2026-10-01','Plant','Checked','T1'),)),),synthetic=True)
     result=Document(BytesIO(build_native_docx(draft,source,section_key='maintenance',master=True)))
     assert not any(x.get('descr')==MARKER for x in result.element.iter(qn('wp:docPr')))
+
+
+def test_compatibility_source_view_with_scorecard_underlay(tmp_path,monkeypatch):
+    from dataclasses import replace
+    from app.monthly_report_compatibility_view import derive_compatibility_view
+    from app.monthly_report_native_art_scope import expected_header_scope, verify_header_routing
+    from app.monthly_report_model import Facility,ReportPeriod,synthetic_profiles
+    from app.monthly_report_native_layout import build_native_docx
+    from test_monthly_report_source_frame_logo_role import source
+    from test_monthly_report_native_art_lifecycle import save_sample
+    monkeypatch.setenv('EPC_DATA_DIR',str(tmp_path/'store'))
+    path=source(tmp_path,divergent=True)
+    document=Document(path);_,divider,_,_=fixture();divider=deepcopy(divider)
+    title=OxmlElement('w:r');text=OxmlElement('w:t');text.text='MONTHLY SCORECARDS';title.append(text);divider.insert(0,title)
+    img=BytesIO();Image.new('RGB',(850,770),(150,150,150)).save(img,'PNG')
+    rid,_=document.part.get_or_add_image(BytesIO(img.getvalue()))
+    next(divider.iter(qn('a:blip'))).set(qn('r:embed'),rid)
+    document.element.body.insert(len(document.element.body)-1,divider)
+    document.add_paragraph('Synthetic utility note')
+    document.save(path);view=derive_compatibility_view(path.read_bytes())
+    profile=replace(synthetic_profiles()[0],imported_from=view.original_inspection.sha256,
+        title='Synthetic Regional Community Health Hospital',facilities=(Facility('synthetic','Synthetic Regional Community Health Hospital'),))
+    draft,loader=save_sample((path,view,profile,ReportPeriod(2026,9),None,None))
+    output=build_native_docx(draft,path,asset_loader=loader,source_view=view,section_key='scorecards')
+    verify_header_routing(output,expected_header_scope(view,'scorecards'))
+    result=Document(BytesIO(output))
+    assert any(x.get('descr')==MARKER for x in result.element.iter(qn('wp:docPr')))
