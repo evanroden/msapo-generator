@@ -2372,12 +2372,19 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                 target = previous
             table_index = nodes.index(target)
             intervening = nodes[chart_index + 1:table_index]
-            target_break = (target.tag == qn("w:p") and target.find(
-                qn("w:pPr") + "/" + qn("w:pageBreakBefore")) is not None)
+            def active_page_break(node):
+                return any(item.get(qn("w:val"), "1").lower() not in {"0", "false", "off"}
+                           for item in node.iter(qn("w:pageBreakBefore")))
+            def page_section_break(node):
+                for section in node.iter(qn("w:sectPr")):
+                    kind = section.find(qn("w:type"))
+                    if kind is None or kind.get(qn("w:val"), "nextPage") in {"nextPage", "oddPage", "evenPage"}:
+                        return True
+                return False
+            target_break = target.tag == qn("w:p") and active_page_break(target)
             existing_break = target_break or any(
                 any(br.get(qn("w:type")) == "page" for br in node.iter(qn("w:br")))
-                or any(True for _ in node.iter(qn("w:pageBreakBefore")))
-                or any(True for _ in node.iter(qn("w:sectPr")))
+                or active_page_break(node) or page_section_break(node)
                 for node in intervening)
             if not existing_break:
                 paragraph = OxmlElement("w:p")
