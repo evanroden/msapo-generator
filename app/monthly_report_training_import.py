@@ -281,6 +281,24 @@ def _event_issues(row, period):
     return tuple(errors)
 
 
+def review_training_event_sites(review, profile):
+    """Keep explicit source sites authoritative, including in retained reviews."""
+    if review.kind != "events":
+        return review
+    rows = []
+    for row in review.rows:
+        positions = _column_positions(row.origin.columns, SITE)
+        issue = ""
+        if len(positions) > 1:
+            issue = "Multiple source Training site columns need review. Omit this row or correct the original source."
+        elif positions and not _normalize_site(row.origin.cells[positions[0]], profile):
+            issue = "Source Training site is missing, ambiguous or outside selected sites. Omit this row or correct the original source."
+        if issue and issue not in row.issues:
+            row = replace(row, issues=(*row.issues, issue))
+        rows.append(row)
+    return replace(review, rows=tuple(rows))
+
+
 def _matrix_issues(row, source_year, profile):
     values = row.values
     issues = []
@@ -387,10 +405,10 @@ def review_training_table(source: TrainingTableSource, profile: ReportProfile,
         questions.append("Confirm which calendar year the original requirements belong to.")
     if source.native_word:
         questions.append("Confirm the native Word table's merged cells and layout before import.")
-    return TrainingImportReview(
+    return review_training_event_sites(TrainingImportReview(
         source, period.key, kind, source_year, tuple(columns), tuple(physical),
         tuple(normalized_cols), tuple(candidates), tuple(questions),
-        tuple(unresolved), native_layout_confirmed=not source.native_word)
+        tuple(unresolved), native_layout_confirmed=not source.native_word), profile)
 
 
 def correct_training_row(review: TrainingImportReview, key: str, changes: dict[str, str],
@@ -428,7 +446,8 @@ def correct_training_row(review: TrainingImportReview, key: str, changes: dict[s
                       else _matrix_issues(updated, review.source_year, profile))
     rows = list(review.rows)
     rows[index] = updated
-    return replace(review, rows=_mark_training_duplicates(rows, review.kind))
+    return review_training_event_sites(
+        replace(review, rows=_mark_training_duplicates(rows, review.kind)), profile)
 
 
 def exclude_training_row(review: TrainingImportReview, key: str, *,

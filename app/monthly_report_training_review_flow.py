@@ -12,6 +12,7 @@ from app.monthly_report_training import is_matrix_reference
 from app.monthly_report_training_import import (
     training_tables, review_training_table, training_review_record, restore_training_review,
     correct_training_row, exclude_training_row, accepted_training_block,
+    review_training_event_sites,
 )
 
 
@@ -212,7 +213,9 @@ def change_row(draft, value, key, changes, *, excluded=False, historical=False):
 
 
 def _selected_review(draft, value):
-    review = restore_training_review(value["record"])
+    # Older intact receipts predate explicit event-site checks; publication
+    # must still respect the source cells and this report's selected sites.
+    review = review_training_event_sites(restore_training_review(value["record"]), draft.profile)
     history = []
     keys = set(value["history"])
     for row in review.rows:
