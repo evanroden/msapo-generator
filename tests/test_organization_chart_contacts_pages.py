@@ -202,3 +202,32 @@ def test_source_chart_after_table_is_moved_before_new_contacts(tmp_path, monkeyp
             chart_pages=[i for i,p in enumerate(pdf) if p.get_image_info()]
             assert chart_pages and max(chart_pages)<contact_page
             assert not pdf[contact_page].get_image_info()
+
+
+def test_duplicate_break_removed_only_at_proven_divider_boundary(monkeypatch):
+    from docx.oxml import OxmlElement
+    from app import monthly_report_native_layout as native
+    d=Document(); divider=d.add_paragraph('recognized divider')._p
+    section=OxmlElement('w:sectPr'); divider.get_or_add_pPr().append(section)
+    d.add_paragraph(); break_p=d.add_paragraph(); break_p.add_run().add_break(__import__('docx').enum.text.WD_BREAK.PAGE)
+    chart=d.add_paragraph('chart')._p
+    monkeypatch.setattr(native,'_is_native_divider_background',lambda node,text: node is divider)
+    native._remove_duplicate_divider_chart_break(chart,d.element.body)
+    assert not list(break_p._p.iter(qn('w:br')))
+    assert divider.find('.//' + qn('w:sectPr')) is not None
+
+
+def test_duplicate_break_preserved_for_odd_page_or_intervening_content(monkeypatch):
+    from docx.oxml import OxmlElement
+    from app import monthly_report_native_layout as native
+    for reason in ('odd', 'content', 'unrecognized'):
+        d=Document(); divider=d.add_paragraph('divider')._p
+        section=OxmlElement('w:sectPr'); divider.get_or_add_pPr().append(section)
+        if reason=='odd':
+            kind=OxmlElement('w:type');kind.set(qn('w:val'),'oddPage');section.append(kind)
+        d.add_paragraph('important' if reason=='content' else '')
+        break_p=d.add_paragraph();break_p.add_run().add_break(__import__('docx').enum.text.WD_BREAK.PAGE)
+        chart=d.add_paragraph('chart')._p
+        monkeypatch.setattr(native,'_is_native_divider_background',lambda node,text: reason!='unrecognized' and node is divider)
+        native._remove_duplicate_divider_chart_break(chart,d.element.body)
+        assert len(list(break_p._p.iter(qn('w:br')))) == 1

@@ -28,6 +28,31 @@ from app.monthly_report_import import (
 )
 
 
+def _remove_duplicate_divider_chart_break(chart, body):
+    """Remove a redundant page break only at a proven divider/chart boundary."""
+    allowed = {qn('w:' + name) for name in ('p', 'pPr', 'r', 'rPr', 'rFonts', 'sz',
+               'szCs', 'noProof', 'spacing', 'lang', 'b', 'bCs', 'i', 'iCs', 'color', 'br')}
+    preceding = chart.getprevious()
+    if preceding is None or preceding.tag != qn('w:p'):
+        return
+    breaks = list(preceding.iter(qn('w:br')))
+    if len(breaks) != 1 or breaks[0].get(qn('w:type')) != 'page':
+        return
+    if any(n.tag not in allowed or (n.text and n.text.strip()) for n in preceding.iter()):
+        return
+    cursor = preceding.getprevious()
+    while cursor is not None and cursor.tag == qn('w:p'):
+        section = cursor.find('./' + qn('w:pPr') + '/' + qn('w:sectPr'))
+        if section is not None:
+            kind = section.find(qn('w:type'))
+            if (kind is None or kind.get(qn('w:val'), 'nextPage') == 'nextPage') and _is_native_divider_background(cursor, _text(cursor)):
+                breaks[0].getparent().remove(breaks[0])
+            return
+        if any(n.tag not in allowed - {qn('w:br')} or (n.text and n.text.strip()) for n in cursor.iter()):
+            return
+        cursor = cursor.getprevious()
+
+
 class NativeLayoutError(ValueError):
     """The source layout cannot represent the current content safely."""
 
@@ -2373,6 +2398,8 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             if (table.getnext() is chart and
                     not any(node.find(".//" + qn("w:sectPr")) is not None for node in (chart, table))):
                 chart.addnext(table)
+        for chart in chart_nodes:
+            _remove_duplicate_divider_chart_break(chart, body)
         nodes = list(body)
         first_table = min(contact_nodes, key=nodes.index)
         earlier_charts = [node for node in chart_nodes if nodes.index(node) < nodes.index(first_table)]
