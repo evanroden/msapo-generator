@@ -173,6 +173,49 @@ def test_accepted_unchanged_plain_footer_is_not_silently_erased(tmp_path):
     assert [visible_text(p) for p in parts(output).values()] == [OLD]
 
 
+@pytest.mark.parametrize('marker', ['bookmark', 'proof'])
+@pytest.mark.parametrize('fields', ['', 'before'])
+def test_ordinary_word_markers_survive_reviewed_footer_replacement(tmp_path, marker, fields):
+    path = source(tmp_path, fields=fields)
+    document = Document(path)
+    paragraph = document.sections[0].footer.paragraphs[0]._p
+    if marker == 'bookmark':
+        start, end = OxmlElement('w:bookmarkStart'), OxmlElement('w:bookmarkEnd')
+        start.set(qn('w:id'), '12'); start.set(qn('w:name'), 'SyntheticFooter')
+        end.set(qn('w:id'), '12')
+    else:
+        start, end = OxmlElement('w:proofErr'), OxmlElement('w:proofErr')
+        start.set(qn('w:type'), 'spellStart'); end.set(qn('w:type'), 'spellEnd')
+    paragraph.insert(1, start)
+    paragraph.append(end)
+    document.save(path)
+    original = path.read_bytes()
+    draft = accept_footer(imported(path, normal_review=True))
+    footer = next(iter(parts(_build_native_docx(draft, path)).values()))
+    assert visible_text(footer) == CURRENT
+    selected = [node for node in footer.find(qn('w:p')) if node.tag in (start.tag, end.tag)]
+    assert [(node.tag, dict(node.attrib)) for node in selected] == [(start.tag, dict(start.attrib)), (end.tag, dict(end.attrib))]
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize('marker', ['bookmarkStart', 'proofErr'])
+def test_marker_with_nested_words_keeps_existing_privacy_clearing(tmp_path, marker):
+    path = source(tmp_path)
+    document = Document(path)
+    paragraph = document.sections[0].footer.paragraphs[0]._p
+    node = OxmlElement('w:' + marker)
+    run = OxmlElement('w:r'); text = OxmlElement('w:t'); text.text = CANARY
+    run.append(text); node.append(run); paragraph.append(node)
+    document.save(path)
+    original = path.read_bytes()
+    draft = accept_footer(imported(path, normal_review=True))
+    footer = next(iter(parts(_build_native_docx(draft, path)).values()))
+    # A text-bearing malformed marker is not a harmless positional boundary.
+    # Keep the existing privacy treatment rather than authorizing its words.
+    assert CANARY not in footer.xml and CURRENT not in footer.xml
+    assert path.read_bytes() == original
+
+
 @pytest.mark.parametrize('corporate', [False, True])
 @pytest.mark.parametrize('position', ['before', 'after'])
 def test_page_fields_keep_instructions_and_cache_separate_from_current_address(tmp_path, corporate, position):

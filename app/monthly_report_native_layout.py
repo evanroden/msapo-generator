@@ -168,7 +168,10 @@ def _set_text(element, value):
 
 def _set_reviewed_footer_text(paragraph, value):
     """Replace ordinary footer words without writing into retained field caches."""
-    if any(child.tag not in (qn('w:pPr'), qn('w:r'), qn('w:fldSimple')) for child in paragraph):
+    markers = {qn('w:bookmarkStart'), qn('w:bookmarkEnd'), qn('w:proofErr')}
+    if any(child.tag not in (qn('w:pPr'), qn('w:r'), qn('w:fldSimple'))
+           and not (child.tag in markers and not len(child) and not (child.text or '').strip())
+           for child in paragraph):
         return False
     texts, controls, cached, depth = [], [], [], 0
     for node in paragraph.iter():
