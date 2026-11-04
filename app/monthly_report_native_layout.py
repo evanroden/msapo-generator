@@ -1937,7 +1937,17 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
         and image_proofs[item.id][0] == "org_chart"
         and 0 < item.position <= len(original)
     ]
-    organization_contact_tables = []
+    # Bind only exact, preserved current contact-table references. An unrelated
+    # nearby source table cannot acquire a chart-page break.
+    organization_contact_tables = [
+        original[item.position - 1]
+        for block in render_blocks if block.key == "contact_matrix" and block.source != "Omit"
+        for table in block.extra_tables
+        if table.reference in preserved_table_refs
+        for item in [native_tables.get(table.reference)]
+        if item is not None and item.section == "organization" and item.part == "word/document.xml"
+        and 0 < item.position <= len(original) and original[item.position - 1].tag == qn("w:tbl")
+    ]
     for block in render_blocks:
         if block.source == "Omit" or block.key not in specs or block.key in unchanged:
             continue

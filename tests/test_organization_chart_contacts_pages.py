@@ -128,3 +128,29 @@ def test_rendered_retained_chart_and_contacts_are_separate(tmp_path, monkeypatch
         chart_pages=[i for i,p in enumerate(pdf) if p.get_image_info()]
         assert chart_pages and max(chart_pages)<contact_page
         assert not pdf[contact_page].get_image_info()
+
+
+def test_bound_unchanged_contact_table_also_moves_after_chart(tmp_path):
+    from hashlib import sha256
+    from app.monthly_report_import import inspect_docx, read_import_image
+    from app.monthly_report_sections import table_without_prices
+    d=Document();d.add_heading('ORGANIZATIONAL CHART',1)
+    image=BytesIO();Image.new('RGB',(1200,600),'blue').save(image,format='PNG')
+    d.add_picture(BytesIO(image.getvalue()),width=Inches(6))
+    table=d.add_table(rows=2,cols=5)
+    for i,s in enumerate(('Site','Role','Name','Telephone','Email')): table.cell(0,i).text=s
+    for i,s in enumerate(('North','Lead','Synthetic Person','555','x@invalid')): table.cell(1,i).text=s
+    source=tmp_path/'retained.docx';d.save(source)
+    inspection=inspect_docx(source); chart_item=next(i for i in inspection.items if i.kind=='image')
+    table_item=next(i for i in inspection.items if i.kind=='table')
+    image=read_import_image(source,chart_item); identity=sha256(image.data).hexdigest()+'.'+image.extension
+    chart=ResolvedBlock('org_chart','This month',asset_hashes=(identity,),asset_captions=('',),references=(f'docx:{inspection.sha256}:{chart_item.id}',))
+    filtered,_=table_without_prices(table_item)
+    contacts=ResolvedBlock('contact_matrix','This month',extra_tables=(ReportTable(filtered.columns,filtered.rows,f'docx:{inspection.sha256}:{table_item.id}'),))
+    profile=ReportProfile('Synthetic','north','North',(Facility('north','North'),))
+    draft=ReportDraft(profile,ReportPeriod(2026,9),'Tester',default_sections(),(chart,contacts),synthetic=True)
+    result=Document(BytesIO(build_native_docx(draft,source,section_key='organization',master=True,asset_loader={identity:image.data}.__getitem__)))
+    body=list(result.element.body); chart_i=next(i for i,e in enumerate(body) if e.xpath('.//*[local-name()="blip"]'))
+    table_i=next(i for i,e in enumerate(body) if e.tag==qn('w:tbl') and 'Synthetic Person' in ''.join(e.itertext()))
+    assert chart_i<table_i
+    assert any(e.xpath('.//*[local-name()="pageBreakBefore"]') for e in body[chart_i+1:table_i+1])
