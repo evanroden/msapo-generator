@@ -28,7 +28,7 @@ def _decode(value):
     try:
         record = json.loads(urlsafe_b64decode(value))
         return record if isinstance(record, dict) else {}
-    except (ValueError, TypeError, UnicodeError):
+    except (ValueError, TypeError, UnicodeError, RecursionError):
         return {}
 
 

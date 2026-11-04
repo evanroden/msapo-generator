@@ -304,11 +304,11 @@ def _non_table_activity_identity(source):
                    vendor="" if len(vendors) > 1 else source.vendor)
 
 
-def _csv_has_site_scope_column(content):
+def _spreadsheet_has_site_scope_column(content):
     """A row-specific site/client needs target mapping before auto-Activity."""
     site_tokens = {"facility", "site", "client", "customer",
                    "hospital", "building", "location"}
-    return content.source.suffix == ".csv" and any(
+    return content.source.suffix in {".csv", ".xlsx"} and any(
         site_tokens.intersection(re.findall(r"[a-z0-9]+", title.casefold()))
         for table in content.tables for title in table.columns)
 
@@ -318,8 +318,8 @@ def _activity_reader_notice(content):
     if is_work_order_source(content):
         return (content.source.filename + ": work-order records use Review counted work-order rows "
                 "and Add totals to summary; this file is not sent to the Activity reader.")
-    if _csv_has_site_scope_column(content):
-        return (content.source.filename + ": site-specific rows in this CSV need an explicit target-site mapping. "
+    if _spreadsheet_has_site_scope_column(content):
+        return (content.source.filename + ": site-specific rows in this spreadsheet need an explicit target-site mapping. "
                 "This file is not sent to the Activity reader. Review the original and add only verified "
                 "work directly in Activity; the uploaded file is retained.")
     return ""
@@ -414,6 +414,30 @@ def reader_page_notices(contents, destination, value):
         if (content.source.id, number) in blocked & requested)
 
 
+def _activity_source_pages(content):
+    """Keep spreadsheet column meaning while preparing native Activity text.
+
+    A flattened bare amount loses its financial heading. Filter each table
+    before prose selection, retaining nonprice cells and original page numbers.
+    Original source text, tables, fingerprints and stored bytes stay intact.
+    """
+    if content.source.suffix not in {".csv", ".xlsx"} or not content.tables:
+        yield from enumerate(content.source.page_texts, 1)
+        return
+    for number, table in enumerate(content.tables, 1):
+        # The spreadsheet extractor has already selected the column headings.
+        # A data row mentioning a pending estimate is not another header row.
+        excluded = (set(table_price_columns(table.columns, ())) |
+                    set(ambiguous_price_columns(table.columns)))
+        if not any(value.strip() for row in table.rows
+                   for index, value in enumerate(row) if index not in excluded):
+            continue  # Financial-only data must not turn a heading into work.
+        text = "\n".join("\t".join(value for index, value in enumerate(row)
+                                  if index not in excluded)
+                         for row in (table.columns, *table.rows))
+        yield number, text
+
+
 def _csv_activity_entries(content):
     """Recognized vendor-work CSV columns only; never guess site or date scope.
 
@@ -426,7 +450,7 @@ def _csv_activity_entries(content):
     result = []
     for number, table in enumerate(content.tables, 1):
         names = tuple(re.sub(r"[^a-z0-9]", "", name.casefold()) for name in table.columns)
-        if _csv_has_site_scope_column(content):
+        if _spreadsheet_has_site_scope_column(content):
             # The source may mix target and foreign sites. Without target
             # profile mapping, show the file for manual review instead.
             return ()
@@ -471,6 +495,9 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
             if is_work_order_source(content):
                 # CMMS/counting sources use their own reviewed metrics path.
                 continue
+            if _spreadsheet_has_site_scope_column(content):
+                # Row-specific sites need the same review as the reader route.
+                continue
             csv_rows = _csv_activity_entries(content)
             if csv_rows is not None:
                 for number, line in csv_rows:
@@ -483,7 +510,7 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
             output_identity = _non_table_activity_identity(content.source)
             from app.monthly_report_vendor_passages import read_vendor_document
             passage_pages = read_vendor_document(content.source)
-            for number, text in enumerate(content.source.page_texts, 1):
+            for number, text in _activity_source_pages(content):
                 reference = sources.source_reference(content.source, number)
                 # Source-referenced manual corrections and deliberate deletions
                 # must not be reinserted when the same file is read again.
