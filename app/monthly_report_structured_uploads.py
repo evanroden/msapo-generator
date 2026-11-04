@@ -308,6 +308,10 @@ def _spreadsheet_has_site_scope_column(content):
     """A row-specific site/client needs target mapping before auto-Activity."""
     site_tokens = {"facility", "site", "client", "customer",
                    "hospital", "building", "location"}
+    # Exported identity headings may join their words (SiteID, FacilityName).
+    # Match only exact identities; unrelated words such as Website stay ordinary.
+    site_tokens |= {site + field for site in site_tokens
+                    for field in ("id", "name", "key", "code")}
     return content.source.suffix in {".csv", ".xlsx"} and any(
         site_tokens.intersection(re.findall(r"[a-z0-9]+", title.casefold()))
         for table in content.tables for title in table.columns)
