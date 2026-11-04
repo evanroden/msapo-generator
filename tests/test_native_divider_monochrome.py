@@ -182,3 +182,11 @@ def test_grayscale_native_photo_in_compatibility_source_view(tmp_path,monkeypatc
             except OSError: pass
     assert matching and all(len(set(p))==1 for p in matching)
     assert path.read_bytes()==before
+
+
+@pytest.mark.parametrize('brand_color',[(214,239,75),(84,126,126)])
+def test_single_flattened_brand_band_is_not_desaturated(brand_color):
+    from PIL import ImageDraw
+    d=Document();img=Image.new('RGB',(1200,800),(130,80,50));ImageDraw.Draw(img).rectangle((0,0,1199,100),fill=brand_color)
+    raw=BytesIO();img.save(raw,'JPEG',quality=95);root,selected=picture(d,raw.getvalue());old=selected.get(R+'embed')
+    monochrome_divider_photos(d,[root]);assert selected.get(R+'embed')==old

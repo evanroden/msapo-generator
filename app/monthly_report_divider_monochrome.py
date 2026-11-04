@@ -18,19 +18,30 @@ R = '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}'
 
 
 def _may_include_flattened_brand(image):
-    """Leave obvious two-color branded composites untouched.
+    """Skip obvious flat brand-colored bands and two-color composites.
 
-    This is a conservative screen, not proof an image has no branding.
+    This conservative screen is not proof that an image has no branding.
     """
     sample = image.convert('RGB').resize((128, 128))
     palette = ((214, 239, 75), (84, 126, 126))
-    counts = [0, 0]
-    for pixel in sample.getdata():
-        for index, color in enumerate(palette):
-            if max(abs(channel - target) for channel, target in zip(pixel, color)) <= 20:
-                counts[index] += 1
-    return all(count >= 164 for count in counts)
-
+    pixels=sample.load(); totals=[]
+    for color in palette:
+        mask={(x,y) for y in range(128) for x in range(128)
+              if max(abs(channel-target) for channel,target in zip(pixels[x,y],color)) <= 20}
+        totals.append(len(mask))
+        while mask:
+            first=mask.pop();stack=[first];points=[first]
+            while stack:
+                x,y=stack.pop()
+                for point in ((x-1,y),(x+1,y),(x,y-1),(x,y+1)):
+                    if point in mask:
+                        mask.remove(point);stack.append(point);points.append(point)
+            if len(points)>=64:
+                width=max(x for x,y in points)-min(x for x,y in points)+1
+                height=max(y for x,y in points)-min(y for x,y in points)+1
+                if max(width/height,height/width)>=4:
+                    return True
+    return all(total>=164 for total in totals)
 
 
 def _has_already_gray_fallback(document, anchor, wrapper):
