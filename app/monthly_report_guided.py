@@ -679,10 +679,16 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
                 from app.monthly_report_source_table_labels import table_task_label
                 st.text(table_task_label(table, spec.key, position=n,
                                          total=len(block.extra_tables)))
-            seed = [dict(zip(table.columns, r)) for r in table.rows] or [dict.fromkeys(table.columns)]
+            display_columns = table.columns
+            grid_identity = table.columns
+            if len(set(display_columns)) != len(display_columns):
+                display_columns = tuple(f"{index + 1}. {title}" for index, title in enumerate(display_columns))
+                # Retire old collapsed seeds without renaming canonical headings.
+                grid_identity = ("physical-columns-v1", table.columns)
+            seed = [dict(zip(display_columns, r)) for r in table.rows] or [dict.fromkeys(display_columns)]
             if optional_table:
                 seed = empty_text_seed(seed)
-            grid_key = key + f"_imported_{n}_" + _signature(table.columns)
+            grid_key = key + f"_imported_{n}_" + _signature(grid_identity)
             if spec.key == "work_orders":
                 from app.monthly_report_work_order_rows_ui import edit_imported_work_order_table
                 report_scope = ((draft.profile.contract, draft.profile.key, draft.period.key)
@@ -695,7 +701,7 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
             rows_edited = rows_edited or rows != seed
             # Opening a blank imported frame must retain its original
             # structure/reference without pretending its editor slot is data.
-            edited_rows = tuple(tuple(_cell_text(r.get(c)) for c in table.columns) for r in rows
+            edited_rows = tuple(tuple(_cell_text(r.get(c)) for c in display_columns) for r in rows
                                 if any(v is not None and (str(v).strip() if optional_table else v != "") for v in r.values()))
             tables.append(table if optional_table and (rows == seed or not edited_rows and not has_values(table.rows))
                           else replace(table, rows=edited_rows))
