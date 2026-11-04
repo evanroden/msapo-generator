@@ -275,6 +275,13 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                           if cover_design_available else
                           "Open an existing report if you want to use its saved cover design.")
         if plan["omit"]:
+            # Hiding the editors must not discard delivered corrections. These
+            # values stay dormant while omitted; selection and approval are
+            # rebuilt by the normal review path when the section is restored.
+            plan["texts"] = dict(old.get("texts", {}))
+            plan["tables"] = dict(old.get("tables", {}))
+            if "combined_text_ids" in old:
+                plan["combined_text_ids"] = list(old["combined_text_ids"])
             if section.key == "cover":
                 from app.monthly_report_start_import import unresolved_cover_artwork
                 unread = any(i.kind == "unsupported" for i in section.items)
@@ -383,10 +390,19 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                     st.text(table_task_label(table, item.suggested_slot or section.key,
                                              position=n - 1,
                                              total=sum(i.kind == "table" for i in items)))
-                    rows = [dict(zip(table.columns, r)) for r in table.rows]
+                    # Headings are source content, not unique cell identities.
+                    # Number only colliding display labels; keep the saved schema
+                    # and each physical column separate through native grid edits.
+                    display_columns = table.columns
+                    grid_identity = table.columns
+                    if len(set(display_columns)) != len(display_columns):
+                        display_columns = tuple(f"{index + 1}. {title}" for index, title in enumerate(display_columns))
+                        # Retire any older grid seed that already collapsed cells.
+                        grid_identity = (table.columns, display_columns)
+                    rows = [dict(zip(display_columns, r)) for r in table.rows]
                     if action == actions[1]:
-                        rows = _grid(p + "_table_" + item.id + "_" + _signature(table.columns), rows, num_rows="dynamic", hide_index=True)
-                        table = ReportTable(table.columns, tuple(tuple("" if r.get(c) is None else str(r[c]) for c in table.columns) for r in rows))
+                        rows = _grid(p + "_table_" + item.id + "_" + _signature(grid_identity), rows, num_rows="dynamic", hide_index=True)
+                        table = replace(table, rows=tuple(tuple("" if r.get(c) is None else str(r[c]) for c in display_columns) for r in rows))
                     else:
                         st.dataframe(rows[:300], hide_index=True)
                         if len(rows) > 300:
