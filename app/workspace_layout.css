@@ -10,11 +10,12 @@
 .epc-workspace-reference {position:sticky; top:var(--epc-preview-top); align-self:start; flex:0 0 auto !important; height:fit-content !important; z-index:3;}
 .epc-workspace [data-testid="stDataFrame"] {max-width:100%;}
 .epc-workspace button:focus-visible {outline:3px solid #557f7f; outline-offset:3px;}
-/* Keep section controls in normal flow so they do not cover the editor or
-   preview as the reader scrolls. The document remains one continuous workspace. */
-.epc-workspace > [data-testid="stLayoutWrapper"]:has(> .st-key-monthly_report_navigation) {position:relative;}
+/* Keep the small controls reachable while allowing clicks through the empty
+   wrapper, rather than painting a full-width bar over the report. */
+.epc-workspace > [data-testid="stLayoutWrapper"]:has(> .st-key-monthly_report_navigation) {position:sticky;top:var(--epc-nav-top,3rem);z-index:15;pointer-events:none;}
 .epc-section-selector:focus-visible {outline:3px solid #557f7f;outline-offset:2px;}
 .epc-workspace[data-epc-review-open="true"] .st-key-monthly_report_navigation {min-height:var(--epc-nav-space,0px);box-sizing:border-box;}
+.epc-workspace[data-epc-review-open="true"] .epc-section-navigation {position:fixed;top:var(--epc-nav-top);left:var(--epc-nav-left);width:min(var(--epc-nav-width),25rem);box-sizing:border-box;z-index:15;pointer-events:auto;}
 .epc-preview-controls {display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; margin:.35rem 0;}
 .epc-preview-controls button {font:inherit; min-height:44px; padding:.5rem .75rem; border:1px solid #557f7f; border-radius:.4rem; background:var(--background-color,#fff); color:inherit; cursor:pointer;}
 .epc-context-title {font-weight:600; margin-bottom:.5rem;}
