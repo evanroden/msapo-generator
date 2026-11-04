@@ -10,6 +10,7 @@ import re
 from app import monthly_report_library as library
 from app.monthly_report_asset_review import approve_all_assets, asset_context, pending_asset_indexes, refresh_asset_source_context
 from app.monthly_report_model import ResolvedBlock, profile_sections
+from app.monthly_report_page_reference import page_identity
 
 WORKFLOW_KEYS = ("business_hours_workflow", "after_hours_workflow")
 
@@ -155,10 +156,11 @@ def source_pages_allowed(block, sources, profile):
         if reference.startswith(("docx:", "contract-workflow-standard:v1:", "asset-source-context:v1:")):
             continue
         parts = reference.split(":")
-        if (len(parts) != 3 or not parts[1].isdigit()
+        identity = page_identity(reference)
+        if (identity is None
                 or not re.fullmatch(r"[a-f0-9]{64}", parts[2])):
             return False
-        source, page = source_index.get(parts[0]), int(parts[1])
+        source, page = source_index.get(identity[0]), identity[1]
         if (source is None or page not in source.selected_pages
                 or not 1 <= page <= len(source.page_texts) or not page_allowed(source, page)
                 or not visual_source_scope_valid(source, profile, artwork_keys=(block.key,))):
