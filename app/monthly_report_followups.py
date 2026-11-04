@@ -533,6 +533,13 @@ def _capture_followup_controls(draft, prefix, category, options):
 
 def seed_followups(draft):
     from app.monthly_report_issues import canonical_issues
+    from app.monthly_report_page_reference import page_identity
+
+    def source_pages(references):
+        # Supporting pages, not period/Starting Report/workflow bookkeeping.
+        # Keep stale or missing page evidence so its existing review gate applies.
+        return tuple(dict.fromkeys(ref for ref in references if page_identity(ref) is not None))
+
     draft = canonical_issues(draft)
     result = [
         replace(
@@ -557,41 +564,45 @@ def seed_followups(draft):
             # they cannot become plain, implicitly approved carry-forward text.
             continue
         category = "issue" if block.key == "equipment_issues" else "proposal"
+        references = source_pages(block.references) if category == "proposal" else ()
         texts = [text for text in _followup_text_items(block.text)
                  if text not in STOCK_TEXTS.values()
                  and not (category == "issue" and _no_equipment_issues(text))]
-        entries = [(text, *_proposal_details(text)) if category == "proposal"
-                   else (text, text, "ongoing") for text in texts]
+        entries = [(text, *_proposal_details(text), references) if category == "proposal"
+                   else (text, text, "ongoing", ()) for text in texts]
         tables = (
-            [(tuple(c.title for c in specs[block.key].columns), block.rows)]
+            [(tuple(c.title for c in specs[block.key].columns), block.rows, references)]
             if block.key in specs and block.rows
             else []
         )
-        tables += [(t.columns, t.rows) for t in block.extra_tables]
-        for columns, rows in tables:
+        # A precise table origin must not borrow another table's block-wide source.
+        tables += [(t.columns, t.rows, source_pages((t.reference,)) if t.reference else references)
+                   for t in block.extra_tables]
+        for columns, rows, table_references in tables:
             width = max((len(row) for row in rows), default=len(columns))
             columns = (*columns, *(f"Detail {n+1}" for n in range(len(columns), width)))
             prices = table_price_columns(columns, rows)
             for row in rows:
                 if category == "proposal":
-                    entries.append(_proposal_table_details(columns, row, prices))
+                    entries.append((*_proposal_table_details(columns, row, prices), table_references))
                 else:
                     text = "; ".join(f"{columns[n]}: {value}" for n, value in enumerate(row)
                                      if n not in prices and value.strip())
-                    entries.append((text, text, "ongoing"))
-        for original_text, text, status in entries:
+                    entries.append((text, text, "ongoing", ()))
+        for original_text, text, status, references in entries:
             identity = (category, original_text)
             occurrences[identity] = occurrences.get(identity, 0) + 1
             occurrence = occurrences[identity]
             key = "follow-" + _digest(identity if occurrence == 1 else (*identity, "occurrence", occurrence))[:20]
             if text:
                 candidates.append((key, category, text, status,
-                                   _proposal_details(original_text)[0] if category == "proposal" else text))
+                                   _proposal_details(original_text)[0] if category == "proposal" else text,
+                                   references))
     # A source row whose key is already saved represents itself first. Only
     # the remaining rows may be represented by an equal saved text whose key
     # was repaired, so one saved occurrence never stands for two source rows.
     saved = {item.key: (item.category, item.text.strip(), item.status) for item in result}
-    for key, category, text, _, _ in candidates:
+    for key, category, text, _, _, _ in candidates:
         if key in saved:
             # The saved row's own wording, which an edit may have changed.
             represented[saved[key]] -= 1
@@ -605,7 +616,7 @@ def seed_followups(draft):
         saved_statuses.setdefault((category, wording), []).append(status)
     matched = set()
     for legacy, same_status in ((False, True), (False, False), (True, True), (True, False)):
-        for key, category, text, status, legacy_text in candidates:
+        for key, category, text, status, legacy_text, _ in candidates:
             if (key in keys or key in matched
                     or ((legacy or same_status) and category != "proposal")):
                 continue
@@ -618,11 +629,12 @@ def seed_followups(draft):
             if represented[identity] > 0:
                 represented[identity] -= 1
                 matched.add(key)
-    for key, category, text, status, _ in candidates:
+    for key, category, text, status, _, references in candidates:
         if key in keys or key in matched:
             continue
         keys.add(key)
-        result.append(ReportFollowUp(key, category, text, draft.period.key, status=status))
+        result.append(ReportFollowUp(key, category, text, draft.period.key, status=status,
+                                    references=references))
     return tuple(result)
 
 
