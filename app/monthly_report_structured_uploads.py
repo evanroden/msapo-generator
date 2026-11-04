@@ -213,13 +213,19 @@ def _docx_site_table(text):
     lines = [line for line in text.splitlines() if line.strip()]
     if len(lines) < 2:
         return False
-    headings = lines[0].split("\t")
+    # A native Word cell can contain line breaks before the first tab separator
+    # ("Site\nName" or a neighboring "Work\nperformed" heading). Reconstruct
+    # only this initial heading fragment; data rows and narrative stay literal.
+    first_tab = next((n for n, line in enumerate(lines) if "\t" in line), None)
+    if first_tab is None:
+        return False
+    headings = " ".join(lines[:first_tab + 1]).split("\t")
     if sum(bool(value.strip()) for value in headings) < 2:
         return False
     if not any(re.fullmatch(r"(?:site|facility|building|location|client|customer|hospital)(?:id|name|key|code)?",
                            re.sub(r"[^a-z0-9]", "", value.casefold())) for value in headings):
         return False
-    return any(len(line.split("\t")) == len(headings) for line in lines[1:])
+    return any(len(line.split("\t")) == len(headings) for line in lines[first_tab + 1:])
 
 
 def _activity_lines(text, suffix, *, with_dates=False):

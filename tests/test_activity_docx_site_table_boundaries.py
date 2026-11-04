@@ -32,17 +32,21 @@ SAFE = "Calibrated independent panel S-4."
 MANUAL = "Operator retained previously verified wording."
 
 
-def original(heading="Site", *, rows=None, narrative=SAFE, header_only=False):
+def original(heading="Site", *, rows=None, narrative=SAFE, header_only=False,
+             site_last=False, action_heading="Work performed"):
     doc = Document()
     doc.add_paragraph("Service report\nService date: 2026-09-04")
     if narrative:
         doc.add_paragraph(narrative)
     table = doc.add_table(rows=1, cols=2)
-    for cell, value in zip(table.rows[0].cells, (heading, "Work performed")):
+    headings = (action_heading, heading) if site_last else (heading, action_heading)
+    for cell, value in zip(table.rows[0].cells, headings):
         cell.text = value
     if not header_only:
         values = rows if rows is not None else ((PROFILE.facilities[0].title, LOCAL), ("Foreign South", FOREIGN))
         for values in values:
+            if site_last:
+                values = values[::-1]
             for cell, value in zip(table.add_row().cells, values):
                 cell.text = value
     stream = BytesIO()
@@ -235,6 +239,38 @@ def test_real_header_only_table_does_not_create_a_new_hold(ingest):
     item, _ = ingest(header_only=True)
     assert not structured.reader_notices((item,), "activity_summary")
     assert SAFE in structured.native_update((item,), "activity_summary").text
+
+
+@pytest.mark.parametrize("heading", ["Site\nName", "Facility\nName", "Location\nCode"])
+@pytest.mark.parametrize("site_last", [False, True])
+def test_multiline_site_identity_heading_in_either_physical_column_is_held(ingest, heading, site_last, tmp_path):
+    item, raw = ingest(heading=heading, site_last=site_last)
+    before = asdict(item)
+    result = structured.native_update((item,), "activity_summary")
+    assert SAFE in result.text and FOREIGN not in result.text and LOCAL not in result.text
+    assert result.references == (sources.source_reference(item.source, 2),)
+    assert structured.reader_sources((item,), "activity_summary") == ()
+    output = Document(BytesIO(_build_native_docx(draft_for(result, (item,)), template(tmp_path), section_key="activity")))
+    assert FOREIGN not in "\n".join(p.text for p in output.paragraphs)
+    assert asdict(item) == before and sources.source_bytes(PROFILE, item.source) == raw
+
+
+@pytest.mark.parametrize("site_last", [False, True])
+@pytest.mark.parametrize("heading", ["Site", "Site\nName"])
+def test_line_break_in_neighboring_work_heading_does_not_hide_site_table(ingest, site_last, heading):
+    item, _ = ingest(heading=heading, action_heading="Work\nperformed", site_last=site_last)
+    result = structured.native_update((item,), "activity_summary")
+    assert SAFE in result.text and FOREIGN not in result.text
+    assert "site-specific" in structured.reader_notices((item,), "activity_summary")[0]
+
+
+def test_multiline_header_only_and_unrelated_tabbed_prose_still_do_not_establish_table(ingest):
+    item, _ = ingest(heading="Site\nName", header_only=True)
+    assert not structured.reader_notices((item,), "activity_summary")
+    for text in ("Inspected site\ncontrols\tVerified local operation.\nCompleted synthetic inspection.",
+                 "Site inspection\nnotes\tWork performed\nNorth\t" + LOCAL):
+        ordinary = content(text)
+        assert not structured.reader_notices((ordinary,), "activity_summary")
 
 
 @pytest.mark.parametrize("suffix", [".txt", ".pdf", ".eml"])
