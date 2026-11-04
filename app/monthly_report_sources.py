@@ -379,6 +379,7 @@ def _spreadsheet(raw: bytes, suffix: str) -> tuple[SourceTable, ...]:
             dialect = csv.excel
         return (_table("CSV", csv.reader(StringIO(text), dialect, strict=True),
                        strict_columns=True),)
+    from app.monthly_report_xlsx_currency import currency_evidence_value, preserve_currency_number_types
     # Bound ZIP/XML before openpyxl reads shared strings or worksheet dimensions.
     from zipfile import ZipFile
     with ZipFile(BytesIO(raw)) as z:
@@ -394,12 +395,15 @@ def _spreadsheet(raw: bytes, suffix: str) -> tuple[SourceTable, ...]:
     try:
         if len(workbook.worksheets) > 30:
             raise ValueError("Workbook exceeds 30 worksheets; upload the required sheets separately.")
+        preserve_currency_number_types(workbook)
         tables, total = [], 0
         for sheet in workbook.worksheets:
             if sheet.max_row and sheet.max_row > MAX_TABLE_ROWS or sheet.max_column and sheet.max_column > 200:
                 raise ValueError("Worksheet dimensions exceed the review budget.")
             try:
-                table = _table(sheet.title, sheet.iter_rows(values_only=True))
+                table = _table(sheet.title, (
+                    tuple(currency_evidence_value(cell.value, cell.number_format) for cell in row)
+                    for row in sheet.iter_rows()))
             except ValueError as exc:
                 if str(exc) == "Spreadsheet has no nonempty rows.":
                     continue
@@ -516,6 +520,8 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
             content = None
         # Keep signed-Unicode migration independent of structural cache validation.
         if (content is not None and (not unicode_csv or data.get("csv_unicode_policy") == 1)
+                and (suffix != ".xlsx" or (type(data.get("xlsx_currency_policy")) is int
+                                          and data["xlsx_currency_policy"] == 1))
                 and (suffix != ".pdf" or data.get("vendor_passage_policy", 0) >= 7)):
             source = content.source
             if data.get("client_page_policy", 0) < 1 and suffix not in (".csv", ".xlsx"):
@@ -593,6 +599,7 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
     content = SourceContent(source, tables, tuple(image_items))
     library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1,
         "native_action_policy": 1, "vendor_passage_policy": 7,
+        **({"xlsx_currency_policy": 1} if suffix == ".xlsx" else {}),
         **({"csv_unicode_policy": 1} if unicode_csv else {}), **asdict(content)}))
     return content, attachments
 
