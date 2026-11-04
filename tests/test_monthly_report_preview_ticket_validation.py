@@ -98,7 +98,7 @@ def test_valid_cold_and_warm_cache_with_page_dedup_and_other_owner(cache):
     with patch.object(store.fitz, "open", wraps=store.fitz.open) as opened:
         initial = cache.pages("alice", first, (0, 1), dpi=120)
         assert opened.call_count == 1
-        assert len(initial) == 2 and all(raw.startswith(b"\\xff\\xd8") for _, raw in initial)
+        assert len(initial) == 2 and all(raw.startswith(b"\xff\xd8") for _, raw in initial)
         opened.reset_mock()
         assert cache.pages("alice", first, (1, 0), dpi=120) == tuple(reversed(initial))
         assert cache.pages("alice", first, (0, 0), dpi=120) == (initial[0],)
