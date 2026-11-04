@@ -83,3 +83,31 @@ def test_physical_pdf_gap_is_filled_without_losing_photo(tmp_path,monkeypatch):
     assert min(pixel(before,(500,590))) > 240
     r,g,b=pixel(after,(500,590));assert abs(r-84)<8 and abs(g-126)<8 and abs(b-126)<8
     r,g,b=pixel(after,(500,300));assert max(r,g,b)-min(r,g,b)<5 and 130<r<170
+
+
+def test_native_scorecard_build_applies_underlay_only_to_scorecard(tmp_path):
+    from app.monthly_report_model import Facility,ReportDraft,ReportPeriod,ReportProfile,ResolvedBlock,default_sections
+    from app.monthly_report_native_layout import build_native_docx
+    d,root,_,_=fixture()
+    title=OxmlElement('w:r');text=OxmlElement('w:t');text.text='MONTHLY SCORECARDS';title.append(text);root.insert(0,title)
+    d.add_paragraph('previous utility data')
+    source=tmp_path/'source.docx';d.save(source);before=source.read_bytes()
+    profile=ReportProfile('Synthetic','north','North',(Facility('north','North'),))
+    draft=ReportDraft(profile,ReportPeriod(2026,10),'Tester',default_sections(),(ResolvedBlock('utility_analysis','This month',text='Synthetic note'),),synthetic=True)
+    result=Document(BytesIO(build_native_docx(draft,source,section_key='scorecards',master=True)))
+    assert sum(x.get('descr')==MARKER for x in result.element.iter(qn('wp:docPr')))==1
+    assert source.read_bytes()==before
+
+
+def test_native_other_divider_is_not_recolored(tmp_path):
+    from app.monthly_report_model import Facility,ReportDraft,ReportPeriod,ReportProfile,ResolvedBlock,default_sections
+    from app.monthly_report_native_layout import build_native_docx
+    d,root,_,_=fixture()
+    title=OxmlElement('w:r');text=OxmlElement('w:t');text.text='MAINTENANCE SCHEDULE';title.append(text);root.insert(0,title)
+    d.add_paragraph('previous maintenance data')
+    d.add_table(rows=2,cols=5)
+    source=tmp_path/'other.docx';d.save(source)
+    profile=ReportProfile('Synthetic','north','North',(Facility('north','North'),))
+    draft=ReportDraft(profile,ReportPeriod(2026,10),'Tester',default_sections(),(ResolvedBlock('service_calls','This month',rows=(('1','2026-10-01','Plant','Checked','T1'),)),),synthetic=True)
+    result=Document(BytesIO(build_native_docx(draft,source,section_key='maintenance',master=True)))
+    assert not any(x.get('descr')==MARKER for x in result.element.iter(qn('wp:docPr')))
