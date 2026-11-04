@@ -170,7 +170,7 @@ def test_verified_shared_brand_identifies_source_logo_without_overwriting_saved_
     assert not reuse_identical_saved_cover(plan,section,inspection,source,blocks,trusted_brand_refs=('wrong.png',)).get('automatic_identical_cover_reuse')
 
 
-@pytest.mark.parametrize("action", ("save", "save_default", "catalog_change"))
+@pytest.mark.parametrize("action", ("save", "save_default", "catalog_change", "catalog_corrupt"))
 def test_existing_report_reuses_cover_with_verified_shared_brand_and_rechecks_revision(monkeypatch,tmp_path,action):
     from io import BytesIO
     from docx import Document
@@ -247,8 +247,11 @@ def test_existing_report_reuses_cover_with_verified_shared_brand_and_rechecks_re
             assert actual==next(b for b in working.blocks if b.key=='brand_logo')
         return
     activity=deepcopy(plans['activity'])
-    other=BytesIO();Image.new('RGB',(500,80),'orange').save(other,'PNG');raw=other.getvalue();other_ref=library.asset_reference(raw,'png')
-    branding.save_branding((replace(item,asset=other_ref),),{other_ref:raw},expected_revision=1,actor='Synthetic',confirmed=True)
+    if action=='catalog_change':
+        other=BytesIO();Image.new('RGB',(500,80),'orange').save(other,'PNG');raw=other.getvalue();other_ref=library.asset_reference(raw,'png')
+        branding.save_branding((replace(item,asset=other_ref),),{other_ref:raw},expected_revision=1,actor='Synthetic',confirmed=True)
+    else:
+        target=branding._path()/'assets'/logo_ref;target.unlink();target.write_bytes(b'damaged synthetic artwork')
     app.run();assert not app.exception
     revised=next(v for k,v in app.session_state.filtered_state.items() if k.endswith('_section_plans'))
     assert not revised['cover'].get('automatic_identical_cover_reuse')
