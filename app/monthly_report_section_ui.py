@@ -275,6 +275,13 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                           if cover_design_available else
                           "Open an existing report if you want to use its saved cover design.")
         if plan["omit"]:
+            # Hiding the editors must not discard delivered corrections. These
+            # values stay dormant while omitted; selection and approval are
+            # rebuilt by the normal review path when the section is restored.
+            plan["texts"] = dict(old.get("texts", {}))
+            plan["tables"] = dict(old.get("tables", {}))
+            if "combined_text_ids" in old:
+                plan["combined_text_ids"] = list(old["combined_text_ids"])
             if section.key == "cover":
                 from app.monthly_report_start_import import unresolved_cover_artwork
                 unread = any(i.kind == "unsupported" for i in section.items)

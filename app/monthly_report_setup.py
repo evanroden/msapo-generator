@@ -428,7 +428,7 @@ def new_month_draft(draft: ReportDraft, period: ReportPeriod) -> ReportDraft:
         _carry_period_content(b, draft.period)
         if b.key == "equipment_issues" and (b.ai_written or b.ai_paragraphs) else
         _carry_period_content(preserve_asset_reviews(b, ResolvedBlock(
-                      b.key, "Omit" if b.key == "equipment_issues" and b.source == "Omit" else "This month",
+                      b.key, "Omit" if b.key in carried_keys and b.source == "Omit" else "This month",
                       photos_per_page=b.photos_per_page,
                       asset_hashes=b.asset_hashes if b.key in carried_keys else (),
                       asset_captions=b.asset_captions if b.key in carried_keys else (),

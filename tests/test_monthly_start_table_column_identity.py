@@ -211,3 +211,19 @@ def test_real_docx_collision_correction_save_reopen_and_output(monkeypatch, tmp_
     exported = [[tuple(cell.text for cell in row.cells) for row in t.rows] for t in output.tables]
     assert [actual.columns, *actual.rows] in exported
     assert path.read_bytes() == original
+
+
+def test_duplicate_column_edits_survive_omission_and_restoration():
+    table = ReportTable(('Reading', 'Reading', 'Status'), (('pump', '0', 'pending'),),
+                        'synthetic:source-table')
+    app = edit(app_for(table))
+    wire(app, {'edited_rows': {'0': {'2. Reading': '17'}}, 'added_rows': [], 'deleted_rows': []})
+    assert current(app).rows == (('pump', '17', 'pending'),)
+    app.radio[0].set_value('Leave this section out').run()
+    app.run()
+    assert not app.exception
+    app.radio[0].set_value('Edit text or change pictures').run()
+    assert not app.exception
+    assert current(app).columns == table.columns
+    assert current(app).rows == (('pump', '17', 'pending'),)
+    assert current(app).reference == table.reference
