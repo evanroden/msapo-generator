@@ -615,7 +615,8 @@ def _starting_review_sections(sections, plans, diagram_failures):
         plan = plans.get(section.key, {})
         questions = plan.get("questions", ())
         if (plan.get("approved") and not questions
-                and not (section.key == "cover" and plan.get("omit"))
+                and not (section.key == "cover" and plan.get("omit")
+                         and not plan.get("automatic_identical_cover_reuse"))
                 and not plan.get("period_review_items")):
             continue
         if (section.key in diagram_failures and questions
@@ -967,6 +968,24 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                                 (analysis, preferred_logos, native_design, native_art_review,
                                  source_view.receipt_sha256))
     if st.session_state.get(p + "_analysis_signature") != seed_signature:
+        # A saved, open report may already contain the exact cover contribution.
+        # In that narrow case retain its current design and the untouched source
+        # rather than asking the operator to classify unrelated header artwork.
+        if (state is not None and working_draft is not None and source_view is None
+                and (working_draft.profile.contract, working_draft.profile.key, working_draft.period)
+                    == (contract, candidate.key, period) and "cover" in seed):
+            from app.monthly_report_start_import import reuse_identical_saved_cover
+            cover_section = next((section for section in section_reviews(inspection)
+                                  if section.key == "cover"), None)
+            if cover_section is not None:
+                original_cover_plan = seed["cover"]
+                seed["cover"] = reuse_identical_saved_cover(
+                    original_cover_plan, cover_section, inspection, path,
+                    {block.key: block for block in working_draft.blocks})
+                if seed["cover"].get("automatic_identical_cover_reuse"):
+                    st.session_state[p + "_cover_before_identical_reuse"] = original_cover_plan
+                else:
+                    st.session_state.pop(p + "_cover_before_identical_reuse", None)
         st.session_state[p + "_section_plans"] = seed
         st.session_state[p + "_analysis_signature"] = seed_signature
     intent = "Automatic starting report"
@@ -1072,6 +1091,14 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                     st.session_state.pop(template_choice_key, None)
                     st.rerun()
     cover_photo_ids = ()
+    if plans.get("cover", {}).get("automatic_identical_cover_reuse"):
+        st.caption("Your matching cover design is kept. The uploaded original stays available.")
+        if st.button("Review uploaded cover instead", key=p + "_review_uploaded_cover"):
+            previous = st.session_state.pop(p + "_cover_before_identical_reuse", None)
+            if previous is not None:
+                plans["cover"] = previous
+                _replace_cover_action(p, previous.get("action", "Keep and review"))
+                st.rerun()
     cover_section = next((section for section in sections if section.key == "cover"), None)
     if cover_section and analysis.site_relation == "same":
         from app.monthly_report_start_import import cover_photo_candidates

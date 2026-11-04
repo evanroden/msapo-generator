@@ -251,6 +251,78 @@ def suggested_cover_photo(items, *, native_furniture_ids=()):
     return first if area > 40000 and area >= 1.6 * max(1, runner_up) else None
 
 
+def reuse_identical_saved_cover(plan, section, inspection, path, existing_blocks, *, source_view=None):
+    """Keep the existing cover only when each selected contribution matches.
+
+    Unknown header art remains in the source and is not assigned or approved.
+    No saved photo, logo, footer, source or prior user choice is overwritten.
+    """
+    import hashlib
+    if (source_view is not None or not plan.get("automatic") or plan.get("omit")
+            or plan.get("source_sha256") != inspection.sha256
+            or plan.get("source_site_relation") != "same"
+            or any(item.kind == "unsupported" for item in section.items)):
+        return plan
+    unknown = unresolved_cover_artwork(section.items)
+    if not unknown or any(not is_header_artwork(item) for item in unknown):
+        return plan
+    if set(plan.get("questions", ())) != {"Other cover artwork has no confirmed photograph or logo role."}:
+        return plan
+    items = {item.id: item for item in section.items}
+    selected = tuple(plan.get("selected", ()))
+    if not selected or any(identity not in items for identity in selected):
+        return plan
+    destinations = plan.get("destinations", {})
+    if sum(destinations.get(identity) == "cover_photo" for identity in selected) != 1:
+        return plan
+    try:
+        with path.open("rb") as stream:
+            if hashlib.file_digest(stream, "sha256").hexdigest() != inspection.sha256:
+                return plan
+        from app.monthly_report_import import read_import_image
+        # Another large body image might be an alternate photo, not decorative
+        # furniture. Ignore it only when its normalized bytes exactly match an
+        # already-selected current brand/client logo; otherwise keep review.
+        chosen_photo = next(identity for identity in selected
+                            if destinations.get(identity) == "cover_photo")
+        candidates = cover_photo_candidates(section.items)
+        if chosen_photo not in {item.id for item in candidates}:
+            return plan
+        logo_refs = {reference for key in ("brand_logo", "client_logo")
+                     for block in (existing_blocks.get(key),)
+                     if block is not None and block.source != "Omit"
+                     for reference in block.asset_hashes[:1]}
+        for candidate in candidates:
+            if candidate.id == chosen_photo:
+                continue
+            image = read_import_image(path, candidate, line_art=True, preserve_transparency=True)
+            if hashlib.sha256(image.data).hexdigest() + "." + image.extension not in logo_refs:
+                return plan
+        for identity in selected:
+            item, slot = items[identity], destinations.get(identity)
+            current = existing_blocks.get(slot)
+            if current is None or current.source == "Omit":
+                return plan
+            if item.kind == "image" and slot in {"cover_photo", "brand_logo", "client_logo"}:
+                if not current.asset_hashes:
+                    return plan
+                image = read_import_image(path, item, line_art=slot != "cover_photo",
+                                          preserve_transparency=slot in {"brand_logo", "client_logo"})
+                reference = hashlib.sha256(image.data).hexdigest() + "." + image.extension
+                if reference != current.asset_hashes[0]:
+                    return plan
+            elif item.kind == "text" and slot == "footer_text":
+                if plan.get("texts", {}).get(identity, "").strip() != current.text.strip():
+                    return plan
+            else:
+                return plan
+    except (ValueError, OSError):
+        return plan
+    return {**plan, "action": "Leave this section out", "omit": True,
+            "selected": [], "destinations": {}, "questions": (), "approved": True,
+            "automatic_identical_cover_reuse": True}
+
+
 def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_design=False, source_view=None,
                             native_art_review=None, source_path=None, profile=None, period=None):
     """Pre-fill recognizable content; ask only about unresolved source content.
