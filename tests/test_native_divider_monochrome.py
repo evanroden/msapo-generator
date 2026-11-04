@@ -3,6 +3,7 @@ from copy import deepcopy
 from io import BytesIO
 
 from docx import Document
+from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches
 from lxml import etree
@@ -139,3 +140,45 @@ def test_different_edit_layer_causes_safe_skip():
     layer=etree.SubElement(selected,'{http://schemas.microsoft.com/office/drawing/2010/main}imgLayer');layer.set(R+'embed',rid)
     monochrome_divider_photos(d,[root])
     assert selected.get(R+'embed')==old and layer.get(R+'embed')==rid
+
+
+def test_grayscale_native_photo_in_compatibility_source_view(tmp_path,monkeypatch):
+    from dataclasses import replace
+    from app.monthly_report_compatibility_view import derive_compatibility_view
+    from app.monthly_report_native_art_scope import expected_header_scope, verify_header_routing
+    from app.monthly_report_model import Facility,ReportPeriod,synthetic_profiles
+    from app.monthly_report_native_layout import build_native_docx
+    from test_monthly_report_source_frame_logo_role import source
+    from test_monthly_report_native_art_lifecycle import save_sample
+    monkeypatch.setenv('EPC_DATA_DIR',str(tmp_path/'store'))
+    path=source(tmp_path,divergent=True); document=Document(path)
+    fixture_document=Document()
+    divider,fixture_blip=picture(fixture_document,jpeg())
+    # Synthetic palette/geometry marks this independent picture as a divider.
+    photo_anchor=next(divider.iter(qn('wp:anchor')))
+    for axis in ('H','V'):
+        pos=OxmlElement('wp:position'+axis);pos.set('relativeFrom','page')
+        offset=OxmlElement('wp:posOffset');offset.text='0';pos.append(offset);photo_anchor.insert(0,pos)
+    synthetic_band=OxmlElement('w:r');drawing=OxmlElement('w:drawing');synthetic_band.append(drawing)
+    for color in ('D6EF4B','547E7E'):
+        fill=OxmlElement('a:solidFill');color_node=OxmlElement('a:srgbClr');color_node.set('val',color);fill.append(color_node);drawing.append(fill)
+    divider.append(synthetic_band)
+    divider=deepcopy(divider)
+    title=OxmlElement('w:r');text=OxmlElement('w:t');text.text='MONTHLY SCORECARDS';title.append(text);divider.insert(0,title)
+    rid,_=document.part.get_or_add_image(BytesIO(jpeg()));next(divider.iter(A+'blip')).set(R+'embed',rid)
+    document.element.body.insert(len(document.element.body)-1,divider);document.add_paragraph('Synthetic utility note');document.save(path)
+    before=path.read_bytes();view=derive_compatibility_view(before)
+    profile=replace(synthetic_profiles()[0],imported_from=view.original_inspection.sha256,title='Synthetic Regional Community Health Hospital',facilities=(Facility('synthetic','Synthetic Regional Community Health Hospital'),))
+    draft,loader=save_sample((path,view,profile,ReportPeriod(2026,9),None,None))
+    output=build_native_docx(draft,path,asset_loader=loader,source_view=view,section_key='scorecards')
+    verify_header_routing(output,expected_header_scope(view,'scorecards'))
+    result=Document(BytesIO(output));matching=[]
+    for blip in result.element.iter(A+'blip'):
+        rel=result.part.rels.get(blip.get(R+'embed'))
+        if rel and not rel.is_external:
+            try:
+                with Image.open(BytesIO(rel.target_part.blob)) as decoded:
+                    if decoded.size==(1200,800): matching.append(decoded.convert('RGB').getpixel((10,10)))
+            except OSError: pass
+    assert matching and all(len(set(p))==1 for p in matching)
+    assert path.read_bytes()==before
