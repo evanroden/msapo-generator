@@ -1,3 +1,4 @@
+import pytest
 from copy import deepcopy
 from io import BytesIO
 
@@ -76,3 +77,35 @@ def test_imported_native_divider_render_is_gray_and_original_is_retained(tmp_pat
     selected_output = next(output.element.iter(A + 'blip'))
     assert len(set(pixel(output, selected_output))) == 1
     assert source.read_bytes() == before
+
+
+def test_obvious_flattened_brand_bands_are_not_desaturated():
+    document = Document()
+    image = Image.new('RGB', (1200, 800), (214, 239, 75))
+    from PIL import ImageDraw
+    ImageDraw.Draw(image).rectangle((0, 400, 1199, 799), fill=(84, 126, 126))
+    stream = BytesIO(); image.save(stream, 'JPEG', quality=95)
+    root, selected = picture(document, stream.getvalue())
+    old = selected.get(R + 'embed')
+    monochrome_divider_photos(document, [root])
+    assert selected.get(R + 'embed') == old
+
+
+@pytest.mark.parametrize('fallback_gray', [True, False])
+def test_alternate_choice_changes_only_with_an_already_gray_fallback(fallback_gray):
+    from docx.oxml import OxmlElement
+    document=Document();root,selected=picture(document,jpeg())
+    drawing=selected.getparent().getparent().getparent().getparent().getparent()
+    parent=drawing.getparent();parent.remove(drawing)
+    alternate=etree.SubElement(parent,MC+'AlternateContent')
+    choice=etree.SubElement(alternate,MC+'Choice');choice.append(drawing)
+    fallback=etree.SubElement(alternate,MC+'Fallback')
+    pict=OxmlElement('w:pict');fallback.append(pict)
+    shape=etree.SubElement(pict,'{urn:schemas-microsoft-com:vml}shape')
+    image=etree.SubElement(shape,'{urn:schemas-microsoft-com:vml}imagedata')
+    out=BytesIO();Image.new('RGB',(1200,800),(90,90,90) if fallback_gray else (180,20,10)).save(out,'PNG')
+    fallback_rid,_=document.part.get_or_add_image(BytesIO(out.getvalue()));image.set(qn('r:id'),fallback_rid)
+    old=selected.get(R+'embed');monochrome_divider_photos(document,[root])
+    assert image.get(qn('r:id'))==fallback_rid
+    assert (selected.get(R+'embed')!=old) == fallback_gray
+    assert (len(set(pixel(document,selected)))==1) == fallback_gray

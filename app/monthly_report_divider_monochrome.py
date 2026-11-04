@@ -17,6 +17,47 @@ MC = '{http://schemas.openxmlformats.org/markup-compatibility/2006}'
 R = '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}'
 
 
+def _may_include_flattened_brand(image):
+    """Leave obvious two-color branded composites untouched.
+
+    This is a conservative screen, not proof an image has no branding.
+    """
+    sample = image.convert('RGB').resize((128, 128))
+    palette = ((214, 239, 75), (84, 126, 126))
+    counts = [0, 0]
+    for pixel in sample.getdata():
+        for index, color in enumerate(palette):
+            if max(abs(channel - target) for channel, target in zip(pixel, color)) <= 20:
+                counts[index] += 1
+    return all(count >= 164 for count in counts)
+
+
+
+def _has_already_gray_fallback(document, anchor, wrapper):
+    """Leave the fallback untouched; act only when its sole image is gray."""
+    choice=next((x for x in wrapper if x.tag==MC+'Choice'),None)
+    fallback=next((x for x in wrapper if x.tag==MC+'Fallback'),None)
+    if choice is None or fallback is None or anchor not in choice.iter():
+        return False
+    if len(list(choice.iter(A+'blip'))) != 1:
+        return False
+    vml='{urn:schemas-microsoft-com:vml}imagedata'
+    images=list(fallback.iter(vml))
+    if len(images)!=1 or list(fallback.iter(A+'blip')):
+        return False
+    rel=document.part.rels.get(images[0].get(R+'id'))
+    if rel is None or rel.is_external:
+        return False
+    try:
+        with Image.open(BytesIO(rel.target_part.blob)) as image:
+            if image.width*image.height>_MAX_PIXELS_PER_FRAME:
+                return False
+            sample=image.convert('RGB').resize((64,64))
+            return all(max(pixel)-min(pixel)<=3 for pixel in sample.getdata())
+    except (OSError,ValueError,Image.DecompressionBombError,UnidentifiedImageError):
+        return False
+
+
 def monochrome_divider_photos(document, roots):
     """Update eligible live occurrences, never the shared source image part."""
     for root in roots:
@@ -26,11 +67,14 @@ def monochrome_divider_photos(document, roots):
             # Paired choice/fallback drawings must be handled together. Until
             # equivalent fallbacks are proven, leave both untouched.
             parent = anchor.getparent()
-            alternate = False
+            wrappers = []
             while parent is not None and parent is not root:
-                alternate |= parent.tag == MC + 'AlternateContent'
+                if parent.tag == MC + 'AlternateContent':
+                    wrappers.append(parent)
                 parent = parent.getparent()
-            if alternate or any(n.tag == MC + 'AlternateContent' for n in anchor.iter()):
+            if any(n.tag == MC + 'AlternateContent' for n in anchor.iter()) or len(wrappers)>1:
+                continue
+            if wrappers and not _has_already_gray_fallback(document, anchor, wrappers[0]):
                 continue
             extent = anchor.find(WP + 'extent')
             try:
@@ -50,6 +94,8 @@ def monochrome_divider_photos(document, roots):
                 with Image.open(BytesIO(rel.target_part.blob)) as source:
                     if (source.format != 'JPEG' or source.width * source.height > _MAX_PIXELS_PER_FRAME
                             or min(source.size) < 800 or source.getexif().get(274, 1) != 1):
+                        continue
+                    if _may_include_flattened_brand(source):
                         continue
                     image = ImageOps.grayscale(source).convert('RGB')
                     output = BytesIO()
