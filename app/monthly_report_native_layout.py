@@ -2366,6 +2366,13 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     chart_nodes = [node for node in organization_chart_roots if node.getparent() is body]
     contact_nodes = [node for node in organization_contact_tables if node.getparent() is body]
     if chart_nodes and contact_nodes:
+        # Move only an exact adjacent current contact table and chart, never
+        # crossing unrelated material or an explicit section boundary.
+        if len(chart_nodes) == len(contact_nodes) == 1:
+            chart, table = chart_nodes[0], contact_nodes[0]
+            if (table.getnext() is chart and
+                    not any(node.find(".//" + qn("w:sectPr")) is not None for node in (chart, table))):
+                chart.addnext(table)
         nodes = list(body)
         first_table = min(contact_nodes, key=nodes.index)
         earlier_charts = [node for node in chart_nodes if nodes.index(node) < nodes.index(first_table)]

@@ -168,3 +168,37 @@ def test_bound_unchanged_contact_table_also_moves_after_chart(tmp_path, monkeypa
             image_pages=[i for i,p in enumerate(pdf) if p.get_image_info()]
             assert image_pages and max(image_pages)<contact_page
             assert not pdf[contact_page].get_image_info()
+
+
+def test_source_chart_after_table_is_moved_before_new_contacts(tmp_path, monkeypatch):
+    from hashlib import sha256
+    from app.monthly_report_import import inspect_docx, read_import_image
+    d=Document();d.add_heading('ORGANIZATIONAL CHART',1)
+    table=d.add_table(rows=2,cols=5)
+    for i,s in enumerate(('Site','Role','Name','Telephone','Email')): table.cell(0,i).text=s;table.cell(1,i).text='obsolete'
+    image=BytesIO();Image.new('RGB',(1200,600),'blue').save(image,format='PNG')
+    d.add_picture(BytesIO(image.getvalue()),width=Inches(6))
+    source=tmp_path/'source-reversed.docx';d.save(source)
+    inspection=inspect_docx(source); item=next(i for i in inspection.items if i.kind=='image')
+    image=read_import_image(source,item); key=sha256(image.data).hexdigest()+'.'+image.extension
+    chart=ResolvedBlock('org_chart','This month',asset_hashes=(key,),asset_captions=('',),references=(f'docx:{inspection.sha256}:{item.id}',))
+    contacts=ResolvedBlock('contact_matrix','This month',extra_tables=(ReportTable(('Site','Role','Name','Telephone','Email'),(('North','Lead','Synthetic Person','555','x@invalid'),),'synthetic:contacts'),))
+    profile=ReportProfile('Synthetic','north','North',(Facility('north','North'),))
+    draft=ReportDraft(profile,ReportPeriod(2026,9),'Tester',default_sections(),(chart,contacts),synthetic=True)
+    result=Document(BytesIO(build_native_docx(draft,source,section_key='organization',master=True,asset_loader={key:image.data}.__getitem__)))
+    body=list(result.element.body);chart_i=next(i for i,e in enumerate(body) if e.xpath('.//*[local-name()="blip"]'))
+    table_i=next(i for i,e in enumerate(body) if e.tag==qn('w:tbl') and 'Synthetic Person' in ''.join(e.itertext()))
+    assert chart_i<table_i
+    assert any(e.xpath('.//*[local-name()="pageBreakBefore"]') for e in body[chart_i+1:table_i+1])
+    from conftest import libreoffice_can_convert
+    if libreoffice_can_convert():
+        import fitz
+        import re
+        from app import pdf_converter
+        generated=tmp_path/'reversed-output.docx';result.save(generated)
+        monkeypatch.setattr(pdf_converter, 'OUTPUT_DIR', tmp_path)
+        with fitz.open(pdf_converter.convert_to_pdf(generated)) as pdf:
+            contact_page=next(i for i,p in enumerate(pdf) if 'Synthetic Person' in re.sub(r'\s+',' ',p.get_text()))
+            chart_pages=[i for i,p in enumerate(pdf) if p.get_image_info()]
+            assert chart_pages and max(chart_pages)<contact_page
+            assert not pdf[contact_page].get_image_info()
