@@ -686,6 +686,11 @@ def selected_site_keys(profile):
     """Stable report identities win; legacy names may identify only one site."""
     known = contract_facilities(profile)
     known_keys = {f.key for f in known}
+    state = directory.load_directory(profile.contract)
+    if state is not None:
+        # A retired saved identity is still known. Its old name cannot turn
+        # this report into a different active site's report.
+        known_keys.update(site.key for site in state.sites)
     wanted = {f.key for f in profile.facilities}
     for facility in profile.facilities:
         if facility.key in known_keys:

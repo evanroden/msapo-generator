@@ -97,6 +97,19 @@ def test_unambiguous_legacy_and_known_sites_can_be_selected_together(shared):
     assert values(capacity.capacity_block(profile)) == ("111", "999")
 
 
+def test_retired_known_key_keeps_its_saved_rows_without_retargeting_a_reused_name(shared, monkeypatch):
+    current = directory.load_directory(CONTRACT)
+    retired = replace(current, sites=(replace(SITES[0], active=False), *SITES[1:]))
+    monkeypatch.setattr(directory, "load_directory", lambda contract: retired)
+    assert directory.suggest_contact_bindings(retired, PROFILE.facilities) == {"north": ""}
+    assert values(capacity.capacity_block(PROFILE)) == ("111",)
+    from app.monthly_report_capacity_ui import _saved_capacity_caption
+    caption = _saved_capacity_caption(PROFILE, shared)
+    assert "1 saved row for these sites" in caption
+    assert "south" not in caption
+    assert capacity.load_capacity(CONTRACT) == shared
+
+
 def test_first_fill_and_native_word_table_exclude_the_other_site(shared):
     initial = report()
     resolved = capacity.resolve_capacity(initial)
