@@ -71,6 +71,13 @@ manifest. Databases are copied with SQLite's backup API (consistent even if
 someone is using the app) as single self-contained files. Nothing is replaced
 on the target until every file and database has been checked.
 
+0. **Check the new host first.** In the Azure container (`az containerapp exec
+   ... --command bash`, from `/app`), run `python scripts/host_check.py`. It
+   tests the real share: owner-only folders, file locks between processes,
+   SQLite in the mode the app will use, every setting (present or missing,
+   never the value), the expense director map, the build commit and free
+   space. Fix every FAIL before moving data. Run it again after step 5.
+
 1. **Announce a quiet window.** Anything written on Render after the export is
    not moved. Ask people to save open Monthly drafts as report versions first
    (section 5).
