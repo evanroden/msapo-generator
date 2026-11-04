@@ -168,6 +168,7 @@ Not tied to one change; expected to stay true.
 | [`JOB_NUMBER_CATALOG_AND_UNITY_DISAMBIGUATION_2026-08-10.md`](JOB_NUMBER_CATALOG_AND_UNITY_DISAMBIGUATION_2026-08-10.md) | The verified 87-value job catalog and the Arkansas-versus-RRH Unity rule. |
 | [`RRH_UNIFIED_REVIEW_BRAND_BROWSER_HARDENING_2026-08-09.md`](RRH_UNIFIED_REVIEW_BRAND_BROWSER_HARDENING_2026-08-09.md) | The three-step UI, brand-aligned theme, browser matrix, release hardening. |
 | [`LINK_PREVIEW_METADATA_2026-08-11.md`](LINK_PREVIEW_METADATA_2026-08-11.md) | Page title, favicon, Open Graph/Twitter card, the build-time patch, and the production verification contract. |
+| [`AZURE_MIGRATION.md`](AZURE_MIGRATION.md) | Moving off Render: every setting and build argument, the one-instance rule, SQLite on a network share, the checked data move (`scripts/migrate_data.py`), and what people and QA notice. |
 
 ## 5. Historical — read for reasoning, not for current behaviour
 
