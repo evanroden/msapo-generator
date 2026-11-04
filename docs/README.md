@@ -6,6 +6,8 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 # Documentation index
 
+[Monthly Report ownership and carryover decisions](monthly_report_ownership_matrix.md) — audited contract, site and report behavior; explicit requirements, proposals and unresolved choices; synthetic scope examples and a migration proposal that preserves originals and history. This decision record does not approve policy changes or a production migration.
+
 [Annual Training requirements](MONTHLY_TRAINING_YEARS.md) — explicit matrix year, legacy unknown-year preservation, deliberate annual transition, and unchanged separation from completed monthly sessions.
 
 [Native forward-message compatibility](native-forward-message-compatibility.md) — bounded native cache-advertisement repair, existing frontend generation retention, and independent browser acceptance requirements.

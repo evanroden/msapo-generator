@@ -1,0 +1,1491 @@
+{
+  "schema_version": 2,
+  "title": "Monthly Report ownership and carryover: current mechanisms and decision record",
+  "audited_main": "0239052dd0afd25fb7134ad0338d36c7947d2b2a",
+  "purpose": "Review artifact only, not runtime configuration: it does not authorize policy changes, migration, data promotion or deployment.",
+  "status_definitions": {
+    "explicit_requirement": "A cited owner intake explicitly requires the narrow rule described by decision_sources.supports; other row details are not thereby approved.",
+    "meeting_intent": "The intake requests reuse, but does not settle every authority, identity, status or promotion choice.",
+    "existing_implementation": "A current-code mechanism at audited_main. This is not blanket business-policy approval or served acceptance.",
+    "proposed_policy": "A proposed boundary for owner review; not an implemented action or authorization to write shared data.",
+    "open_decision": "A broader business choice remains unresolved. Preserve the separately described current mechanism."
+  },
+  "scope_definitions": {
+    "organization": "The existing shared ENFRA branding catalog; this does not make contract workflows or client data universal.",
+    "contract": "One canonical contract identity; client-logo reuse additionally requires its explicit catalog mapping.",
+    "site": "One confirmed site identity.",
+    "contract_site": "One contract with explicit site membership, site rows or single-site overrides; no inferred cross-contract membership.",
+    "report": "One working report and its separately saved contract/profile/month revisions; a snapshot is not approval.",
+    "report_month": "Facts and output belonging to a report period; original evidence may remain as historical context.",
+    "source_archive": "Retained original bytes and receipts, distinct from report inclusion or approval; existing shared-reference audiences are unchanged.",
+    "unresolved": "No broader ownership rule has been approved by this record; the current selected-site mechanism remains in force."
+  },
+  "inheritance_values": [
+    "explicit_reuse",
+    "review_before_reuse",
+    "carry_context_only",
+    "never_automatic",
+    "eligible_standing_defaults"
+  ],
+  "promotion_values": [
+    "approved_shared_save",
+    "review_and_adopt",
+    "decision_required",
+    "not_applicable",
+    "qualified_automatic_keep",
+    "explicit_matrix_edit"
+  ],
+  "next_month_values": [
+    "reuse_standing",
+    "confirm_current",
+    "carry_context",
+    "reset",
+    "review_source",
+    "retain_pinned",
+    "refresh_eligible_copy"
+  ],
+  "global_safety_invariants": [
+    "This JSON is review data, not runtime configuration, policy signoff, a migration command or release approval.",
+    "Saving a report snapshot preserves work, including unreviewed work; it does not establish source, artwork or output approval.",
+    "Standing revisions and report revisions are separate. Existing locks, expected-revision checks and historical versions remain applicable.",
+    "Current qualified directory edits, safe capacity first fill and explicit Training matrix edits can write shared records; do not invent a universal extra Save shared version gate.",
+    "Contract A workflow and site data do not become contract B defaults. Client-logo reuse requires an explicit mapping for the target contract: an A-only mapping does not authorize B, while one catalog entry may explicitly list both. The shared ENFRA logo is a separate organization-level mechanism.",
+    "Report omission is not deletion of original bytes or published history. Do not represent unmerged Starting Report Omit-reversal repair #687 as current behavior.",
+    "Clearing current-month output during rollover does not imply deleting stored originals, retained source context or earlier saved reports.",
+    "Legacy workflow artifact adoption does not reconstruct missing historical source-page approval; preserve that limitation.",
+    "Source storage, reference-shelf download and content approval are different acts; existing privacy and audience controls remain unchanged.",
+    "Document/schema tests and synthetic mechanism tests are not native-browser, genuine Word/PDF, deployment or owner acceptance."
+  ],
+  "items": [
+    {
+      "id": "enfra_branding",
+      "label": "ENFRA brand logo / approved company identity",
+      "scope": "organization",
+      "decision": "existing_implementation",
+      "default": "eligible_standing_defaults",
+      "promotion": "approved_shared_save",
+      "next_month": "retain_pinned",
+      "source": "Reviewed ENFRA entry in the shared logo catalog; report copies are pinned.",
+      "notes": "The existing organization-level ENFRA logo is distinct from contract workflow diagrams and contract-mapped client logos.",
+      "report_override": "A report's custom or omitted logo is not replaced by ordinary defaults; changing it does not edit the catalog.",
+      "version_conflict": "standing_cas",
+      "current_mechanism": {
+        "summary": "The versioned branding catalog is shared. find_logo selects the explicit enfra entry for the company logo, while apply_defaults fills only an eligible empty brand_logo slot and preserves populated, omitted and caller-protected slots. Saving the catalog requires a named, confirmed actor and its current revision. Reports keep selected image bytes/references; catalog replacement does not rewrite their saved history.",
+        "anchors": [
+          {
+            "path": "app/monthly_report_branding.py",
+            "symbols": [
+              "find_logo",
+              "apply_defaults",
+              "save_branding",
+              "restore_branding"
+            ]
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/test_monthly_report_branding.py",
+            "symbols": [
+              "test_versioned_branding_pins_saved_report_and_restores_without_erasing_history",
+              "test_empty_brand_and_client_defaults_and_explicit_omit"
+            ]
+          }
+        ],
+        "limitations": [
+          "The meeting intake does not define a new publishing-role model. This record neither expands catalog access nor generalizes its global scope to report content."
+        ]
+      },
+      "decision_sources": [
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/470",
+          "kind": "owner_intake",
+          "supports": "Requests an ownership/carryover decision record; does not approve every proposed rule or authorize migration."
+        }
+      ],
+      "open_choices": [
+        "Any new organizational publishing authority or cross-organization branding policy needs a separate decision; current named/confirmed writes remain unchanged."
+      ]
+    },
+    {
+      "id": "client_branding",
+      "label": "Client logo and contract terminology",
+      "scope": "contract",
+      "decision": "existing_implementation",
+      "default": "eligible_standing_defaults",
+      "promotion": "approved_shared_save",
+      "next_month": "retain_pinned",
+      "source": "Explicit client-contract mapping in the shared logo catalog, copied into the report.",
+      "notes": "Catalog storage is shared, but client-logo selection requires explicit membership for the target contract. One entry may list several contracts; an A-only mapping does not authorize B. Matching names or images do not create a mapping.",
+      "report_override": "A populated or omitted report logo remains pinned; an explicit report replacement does not publish a new catalog mapping.",
+      "version_conflict": "standing_cas",
+      "current_mechanism": {
+        "summary": "find_logo selects a client logo only when the report contract is listed in that catalog entry. apply_defaults fills an eligible empty client_logo slot, verifies its bytes and reuses the saved artwork review; it does not approve an already pinned custom image. Catalog changes use a separate confirmed revisioned save, and old report snapshots retain their selected copies.",
+        "anchors": [
+          {
+            "path": "app/monthly_report_branding.py",
+            "symbols": [
+              "_logos",
+              "find_logo",
+              "apply_defaults",
+              "save_branding"
+            ]
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/test_monthly_report_branding_reuse.py",
+            "symbols": [
+              "test_shared_defaults_do_not_review_pinned_custom_artwork_or_new_cover_photo",
+              "test_explicit_shared_logo_choice_reuses_review_but_later_custom_replacement_needs_review"
+            ]
+          }
+        ],
+        "limitations": [
+          "An existing code mapping is not evidence that a different client or contract has authorized that artwork."
+        ]
+      },
+      "decision_sources": [
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/470",
+          "kind": "owner_intake",
+          "supports": "Requests an ownership/carryover decision record; does not approve every proposed rule or authorize migration."
+        }
+      ],
+      "open_choices": []
+    },
+    {
+      "id": "cover_photo",
+      "label": "Report cover photograph",
+      "scope": "report",
+      "decision": "existing_implementation",
+      "default": "explicit_reuse",
+      "promotion": "not_applicable",
+      "next_month": "retain_pinned",
+      "source": "Selected cover_photo block and retained original/asset reference in the report.",
+      "notes": "A photograph is not a logo. Retaining a prior photo does not establish that it depicts newly completed work.",
+      "report_override": "Use or omit a photograph for this report; leave catalog logos, installed design and historical versions unchanged.",
+      "version_conflict": "report_cas",
+      "current_mechanism": {
+        "summary": "The ordinary Change cover photograph flow changes the report's photo slot. Replacement preserves review only when the exact selected artwork remains unchanged; a new choice receives its own review state. No cover photograph sets source to Omit while retaining its asset references. Rollover retains the non-monthly photo block; it does not publish a shared photo master or rewrite earlier report versions.",
+        "anchors": [
+          {
+            "path": "app/monthly_report_cover_ui.py",
+            "symbols": [
+              "replace_cover_picture",
+              "render_cover_photograph"
+            ]
+          },
+          {
+            "path": "app/monthly_report_setup.py",
+            "symbols": [
+              "new_month_draft"
+            ]
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/test_monthly_report_cover_photo_omission.py",
+            "symbols": [
+              "test_no_photo_preserves_already_omitted_retained_assets_or_genuinely_cleared_photo",
+              "test_same_source_photo_reselection_cannot_resurrect_report_omission"
+            ]
+          }
+        ],
+        "limitations": [
+          "The separate Starting Report Omit/reinclude text-table repair in #687 is unmerged at this baseline; this photo behavior does not prove that broader repair."
+        ]
+      },
+      "decision_sources": [
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/470",
+          "kind": "owner_intake",
+          "supports": "Requests an ownership/carryover decision record; does not approve every proposed rule or authorize migration."
+        }
+      ],
+      "open_choices": []
+    },
+    {
+      "id": "workflow_business_hours",
+      "label": "Business-hours outage workflow diagram",
+      "scope": "contract",
+      "decision": "explicit_requirement",
+      "default": "eligible_standing_defaults",
+      "promotion": "review_and_adopt",
+      "next_month": "retain_pinned",
+      "source": "Versioned procedure pictures explicitly published for the canonical contract.",
+      "notes": "Contract isolation is an explicit requirement. Current code implements it; legacy global records are read-only adoption candidates, not active global defaults.",
+      "report_override": "Keep populated or omitted report pages; explicit Use replaces procedure pictures while retaining adjacent notes and tables.",
+      "version_conflict": "standing_cas",
+      "current_mechanism": {
+        "summary": "Current workflow standards are contract-scoped. Publishing checks the current report block, its fingerprint, reviewed pictures, source-page/site admission and the expected standing revision. Defaults fill only eligible blank included slots; the guided loader suppresses this default path for saved, recovered and rolled-forward reports. Explicit Use replaces pictures while preserving adjacent notes/tables. Legacy adoption requires matching recorded origin contract, an exact review receipt and a recheck under lock; adoption alone does not replace current report pages.",
+        "anchors": [
+          {
+            "path": "app/monthly_report_workflow_standards.py",
+            "symbols": [
+              "load_standards",
+              "save_standard",
+              "apply_defaults",
+              "use_standard",
+              "legacy_candidate",
+              "legacy_review_receipt",
+              "adopt_legacy"
+            ]
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/test_monthly_report_contract_workflows.py",
+            "symbols": [
+              "test_foreign_legacy_default_is_not_applied",
+              "test_own_legacy_default_requires_explicit_adoption",
+              "test_explicit_empty_omission_is_never_refilled"
+            ]
+          },
+          {
+            "path": "tests/test_monthly_report_workflow_source_guards.py",
+            "symbols": [
+              "test_publication_rechecks_source_page_consent"
+            ]
+          }
+        ],
+        "limitations": [
+          "The narrow independent-artifact legacy route does not recover missing original source-page history or validate that lost approval. Current UI states this limitation.",
+          "Default availability for a new report is different from automatically replacing the pinned procedure of a carried or reopened report."
+        ]
+      },
+      "decision_sources": [
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/470",
+          "kind": "owner_intake",
+          "supports": "Requests an ownership/carryover decision record; does not approve every proposed rule or authorize migration."
+        },
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/474",
+          "kind": "owner_intake",
+          "supports": "Requires contract-specific diagrams, deliberate legacy adoption and preservation of report/site content."
+        }
+      ],
+      "open_choices": []
+    },
+    {
+      "id": "workflow_after_hours",
+      "label": "After-hours outage workflow diagram",
+      "scope": "contract",
+      "decision": "explicit_requirement",
+      "default": "eligible_standing_defaults",
+      "promotion": "review_and_adopt",
+      "next_month": "retain_pinned",
+      "source": "Versioned procedure pictures explicitly published for the canonical contract.",
+      "notes": "Contract isolation is an explicit requirement. Current code implements it; legacy global records are read-only adoption candidates, not active global defaults.",
+      "report_override": "Keep populated or omitted report pages; explicit Use replaces procedure pictures while retaining adjacent notes and tables.",
+      "version_conflict": "standing_cas",
+      "current_mechanism": {
+        "summary": "Current workflow standards are contract-scoped. Publishing checks the current report block, its fingerprint, reviewed pictures, source-page/site admission and the expected standing revision. Defaults fill only eligible blank included slots; the guided loader suppresses this default path for saved, recovered and rolled-forward reports. Explicit Use replaces pictures while preserving adjacent notes/tables. Legacy adoption requires matching recorded origin contract, an exact review receipt and a recheck under lock; adoption alone does not replace current report pages.",
+        "anchors": [
+          {
+            "path": "app/monthly_report_workflow_standards.py",
+            "symbols": [
+              "load_standards",
+              "save_standard",
+              "apply_defaults",
+              "use_standard",
+              "legacy_candidate",
+              "legacy_review_receipt",
+              "adopt_legacy"
+            ]
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/test_monthly_report_contract_workflows.py",
+            "symbols": [
+              "test_foreign_legacy_default_is_not_applied",
+              "test_own_legacy_default_requires_explicit_adoption",
+              "test_explicit_empty_omission_is_never_refilled"
+            ]
+          },
+          {
+            "path": "tests/test_monthly_report_workflow_source_guards.py",
+            "symbols": [
+              "test_publication_rechecks_source_page_consent"
+            ]
+          }
+        ],
+        "limitations": [
+          "The narrow independent-artifact legacy route does not recover missing original source-page history or validate that lost approval. Current UI states this limitation.",
+          "Default availability for a new report is different from automatically replacing the pinned procedure of a carried or reopened report."
+        ]
+      },
+      "decision_sources": [
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/470",
+          "kind": "owner_intake",
+          "supports": "Requests an ownership/carryover decision record; does not approve every proposed rule or authorize migration."
+        },
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/474",
+          "kind": "owner_intake",
+          "supports": "Requires contract-specific diagrams, deliberate legacy adoption and preservation of report/site content."
+        }
+      ],
+      "open_choices": []
+    },
+    {
+      "id": "org_chart",
+      "label": "Organizational chart / site structure",
+      "scope": "contract_site",
+      "decision": "existing_implementation",
+      "default": "eligible_standing_defaults",
+      "promotion": "approved_shared_save",
+      "next_month": "retain_pinned",
+      "source": "Versioned contract chart default with optional explicitly published single-site overrides.",
+      "notes": "Current implementation already supports contract defaults and single-site overrides. A combined-site report does not guess one site's chart.",
+      "report_override": "Explicit report use preserves adjacent notes/tables; report edits do not publish a chart until the separate confirmed action.",
+      "version_conflict": "standing_cas",
+      "current_mechanism": {
+        "summary": "Chart defaults already have a contract store, immutable revisions and optional single-site overrides. selected_default prefers the selected site's override, then the contract default; a multi-site report uses only the contract fallback. Publication requires an exact current chart, confirmed actor, scope, source-page/artwork review and expected revision. Defaulting preserves authored, omitted and excluded copies, with a narrow exception for a just-copied profile fallback. The guided loader suppresses defaults for saved, recovered and carried reports; an eligible empty imported block can still receive a default, but an imported populated chart does not receive the profile-fallback exception.",
+        "anchors": [
+          {
+            "path": "app/monthly_report_org_chart_defaults.py",
+            "symbols": [
+              "selected_default",
+              "save_default",
+              "use_default",
+              "apply_defaults"
+            ]
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/test_monthly_report_org_chart_defaults.py",
+            "symbols": [
+              "test_contract_site_precedence_and_no_cross_contract",
+              "test_explicit_refresh_preserves_notes_and_rollover_snapshot",
+              "test_legacy_profile_seed_precedence_preserves_explicit_report_choices"
+            ]
+          }
+        ],
+        "limitations": [
+          "This is an implemented scope mechanism, not permission to infer a particular chart's contract-wide suitability from its filename or appearance."
+        ]
+      },
+      "decision_sources": [
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/470",
+          "kind": "owner_intake",
+          "supports": "Requests an ownership/carryover decision record; does not approve every proposed rule or authorize migration."
+        },
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/474",
+          "kind": "owner_intake",
+          "supports": "Requires organization/workflow uploads to retain their intended contract/site scope."
+        }
+      ],
+      "open_choices": []
+    },
+    {
+      "id": "facility_contacts",
+      "label": "Facility contacts and contract contact directory",
+      "scope": "contract_site",
+      "decision": "existing_implementation",
+      "default": "eligible_standing_defaults",
+      "promotion": "qualified_automatic_keep",
+      "next_month": "refresh_eligible_copy",
+      "source": "Contract directory with contract-wide contacts and explicit site records; separate report copies.",
+      "notes": "Do not apply subcontractor promotion rules to this existing facility-directory mechanism. Saved report history stays distinct from refreshed working copies.",
+      "report_override": "Manual/unproved tables and removals stay report-only; qualifying verified Library edits may also update only their bound directory sites.",
+      "version_conflict": "standing_cas",
+      "current_mechanism": {
+        "summary": "Directory defaults reuse known contacts for exact selected-site bindings when the named editor and empty-copy guards allow it. automatically_keep_directory_contact_edits can persist a narrowly verified Library-copy edit without another shared-save button: it checks historical rows/bindings, excludes contract-wide rewrites and ordinary additions/removals/reorders, and rejects same-site conflicts while preserving other sites. Explicit add intent has separate checks. refresh_directory_contacts can update an unchanged working copy from newer standing records; it does not rewrite historical snapshot bytes.",
+        "anchors": [
+          {
+            "path": "app/monthly_report_directory.py",
+            "symbols": [
+              "contact_block",
+              "apply_defaults",
+              "automatically_keep_directory_contact_edits",
+              "refresh_directory_contacts",
+              "save_directory"
+            ]
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/test_monthly_report_contact_auto_scope.py",
+            "symbols": [
+              "test_auto_contact_edit_updates_only_intended_site_and_preserves_old_report",
+              "test_report_only_or_unmatched_contact_is_not_promoted",
+              "test_same_site_conflict_rejects_old_write_without_changing_history"
+            ]
+          },
+          {
+            "path": "tests/test_monthly_report_contact_refresh.py",
+            "symbols": [
+              "test_refresh_never_rewrites_historical_snapshot_bytes"
+            ]
+          }
+        ],
+        "limitations": [
+          "Not every contact edit is report-only, and not every edit qualifies for automatic keeping. Contract-wide contact administration remains a separate directory action.",
+          "Current direct-contact shortcut #693 and literal-label rendering #691 are separate unmerged changes; neither is required to describe these existing persistence rules."
+        ]
+      },
+      "decision_sources": [
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/470",
+          "kind": "owner_intake",
+          "supports": "Requests an ownership/carryover decision record; does not approve every proposed rule or authorize migration."
+        }
+      ],
+      "open_choices": []
+    },
+    {
+      "id": "thermal_capacity",
+      "label": "Thermal capacity: site, plant and service values",
+      "scope": "unresolved",
+      "decision": "open_decision",
+      "default": "review_before_reuse",
+      "promotion": "decision_required",
+      "next_month": "retain_pinned",
+      "source": "Current contract capacity history contains source-bound rows with explicit site_keys.",
+      "notes": "The unresolved decision concerns broader capacity-sharing authority, not a new prohibition on existing safe first fill. Preserve site, plant/service, units, NR, blanks and zero.",
+      "report_override": "Existing manual/Omit report blocks stay pinned; an empty non-Omit block or unchanged pinned copy can refresh after a shared update.",
+      "version_conflict": "standing_cas",
+      "current_mechanism": {
+        "summary": "Capacity already uses contract storage with explicit row-level site_keys and revisioned history. Safe first-fill rows can be persisted automatically when the existing UI has resolved site matches, a named actor, no unverified image and no duplicate identity; browsing alone is not a save. Corrections to existing reusable values require the existing reviewed update action. capacity_block filters rows to selected sites, resolve_capacity fills only empty non-Omit content, and can_refresh_capacity permits an empty non-Omit block or an unchanged pinned copy.",
+        "anchors": [
+          {
+            "path": "app/monthly_report_capacity.py",
+            "symbols": [
+              "first_fill_tables",
+              "save_capacity",
+              "capacity_block",
+              "resolve_capacity",
+              "can_refresh_capacity"
+            ]
+          },
+          {
+            "path": "app/monthly_report_capacity_ui.py",
+            "symbols": [
+              "render_capacity",
+              "_render_capacity_source"
+            ]
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/test_monthly_report_capacity.py",
+            "symbols": [
+              "test_existing_snapshot_and_manual_content_never_autofollow_shared_updates",
+              "test_unknown_or_ambiguous_site_cannot_be_shared"
+            ]
+          },
+          {
+            "path": "tests/test_monthly_report_capacity_first_fill.py",
+            "symbols": [
+              "test_first_fill_accepts_only_missing_sites_and_preserves_nr"
+            ]
+          }
+        ],
+        "limitations": [
+          "This record does not authorize copying A1 numerical assumptions to A2 or changing current first-fill/correction behavior.",
+          "The default/promotion policy cells describe the unresolved broader sharing decision; the current-mechanism paragraph states what the existing UI actually does."
+        ]
+      },
+      "decision_sources": [
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/470",
+          "kind": "owner_intake",
+          "supports": "Requests an ownership/carryover decision record; does not approve every proposed rule or authorize migration."
+        },
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/287",
+          "kind": "owner_intake",
+          "supports": "Explicitly permits unambiguous first fill at its proper scope, with conflict-aware updates and zero browsing/layout writes."
+        }
+      ],
+      "open_choices": [
+        "For each contract, decide whether any capacity assumption may apply to multiple sites and who can approve that applicability; retain current exact site partitions until resolved."
+      ]
+    },
+    {
+      "id": "subcontractor_contacts",
+      "label": "Subcontractor contacts, trade bands and contact instructions",
+      "scope": "contract",
+      "decision": "meeting_intent",
+      "default": "explicit_reuse",
+      "promotion": "approved_shared_save",
+      "next_month": "carry_context",
+      "source": "Proposed approved contract roster; current main retains report/profile contact tables.",
+      "notes": "The reuse request is real, but a vendor table import is not approval to create a standing roster. Facility-directory automatic keeping is a different mechanism.",
+      "report_override": "Keep report-only edits and omissions distinct from a future explicitly approved contract-roster update.",
+      "version_conflict": "proposed_standing_cas",
+      "current_mechanism": {
+        "summary": "Current main imports and edits subcontractor tables in report content, preserving grouped trades, contact records, unknown values and report evidence. It has no independently versioned approved subcontractor roster or its proposed shared-save/reuse panel. Existing profile/report persistence and month carryover are not that contract-master feature. The separately owned #686 candidate restores #562's explicit roster UI/store; #563 is an incompatible alternative and must not be silently combined with it.",
+        "anchors": [
+          {
+            "path": "app/monthly_report_vendor_groups.py",
+            "symbols": [
+              "grouped_vendor_contacts"
+            ]
+          },
+          {
+            "path": "app/monthly_report_visual_ui.py",
+            "symbols": [
+              "edit_contacts"
+            ]
+          },
+          {
+            "path": "app/monthly_report_library.py",
+            "symbols": [
+              "save_snapshot"
+            ]
+          },
+          {
+            "path": "app/monthly_report_setup.py",
+            "symbols": [
+              "new_month_draft"
+            ]
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/test_monthly_report_vendor_group_bands.py",
+            "symbols": [
+              "test_auto_import_and_generic_word_output_preserve_exact_contacts",
+              "test_manual_ui_grouped_save_reopens_without_changing_adjacent_edits"
+            ]
+          }
+        ],
+        "limitations": [
+          "The proposed contract-master actions are not available on audited main; schema, UI and served acceptance remain with the #488 implementation owner."
+        ]
+      },
+      "decision_sources": [
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/470",
+          "kind": "owner_intake",
+          "supports": "Requests an ownership/carryover decision record; does not approve every proposed rule or authorize migration."
+        },
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/488",
+          "kind": "owner_intake",
+          "supports": "Requests contract-level subcontractor reuse while separating report-only changes from explicit master updates."
+        },
+        {
+          "url": "https://github.com/evanroden/msapo-generator/pull/686",
+          "kind": "implementation_record",
+          "supports": "Unmerged roster implementation; records the incompatible #563 alternative and remaining integration/acceptance."
+        }
+      ],
+      "open_choices": [
+        "Confirm contract-wide versus site-specific publisher authority and candidate-schema compatibility before integration; this record selects neither competing schema."
+      ]
+    },
+    {
+      "id": "subcontractor_status",
+      "label": "Subcontractor status / when to contact",
+      "scope": "contract_site",
+      "decision": "proposed_policy",
+      "default": "carry_context_only",
+      "promotion": "approved_shared_save",
+      "next_month": "confirm_current",
+      "source": "Current report's recorded agreement/status cells; proposed scoped roster status with effective context.",
+      "notes": "Preserve unknown, blank, false and explicit agreement states. A retained contact or old status is not evidence of current service completion.",
+      "report_override": "A local status correction does not establish a contract-wide decision or a newly completed monthly action.",
+      "version_conflict": "proposed_standing_cas",
+      "current_mechanism": {
+        "summary": "The current subcontractor editor keeps agreement/status fields in the report table and preserves unknown versus recorded values; it does not publish an effective-dated contract-status master. new_month_draft can carry the subcontractor block as context. That retention does not establish a fresh monthly service event or broader approval. Any status reuse through #686 remains an unmerged implementation to review with the contact roster scope.",
+        "anchors": [
+          {
+            "path": "app/monthly_report_visual_ui.py",
+            "symbols": [
+              "edit_contacts"
+            ]
+          },
+          {
+            "path": "app/monthly_report_editor.py",
+            "symbols": [
+              "_cell_text",
+              "_typed_table"
+            ]
+          },
+          {
+            "path": "app/monthly_report_setup.py",
+            "symbols": [
+              "new_month_draft"
+            ]
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/test_monthly_report_vendor_contacts.py",
+            "symbols": [
+              "test_vendor_agreement_edit_preserves_unknown_and_invalidates_only_changed_content",
+              "test_legacy_boolean_column_preserves_every_value_when_agreement_is_unknown"
+            ]
+          }
+        ],
+        "limitations": [
+          "There is no current general rule that automatically dates or reconfirms every carried vendor status; confirm_current is the proposed decision boundary, not a claim about deployed UI."
+        ]
+      },
+      "decision_sources": [
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/470",
+          "kind": "owner_intake",
+          "supports": "Requests an ownership/carryover decision record; does not approve every proposed rule or authorize migration."
+        },
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/488",
+          "kind": "owner_intake",
+          "supports": "Requests scoped reuse of subcontractor contacts/status without conflating report edits and master changes."
+        },
+        {
+          "url": "https://github.com/evanroden/msapo-generator/pull/686",
+          "kind": "implementation_record",
+          "supports": "Pending explicit roster integration; does not approve every effective-status policy."
+        }
+      ],
+      "open_choices": [
+        "Specify which statuses are standing agreement facts, their applicable sites and effective/last-confirmed dates, and which are monthly service facts."
+      ]
+    },
+    {
+      "id": "capital_renewal",
+      "label": "Priority capital renewal recommendations",
+      "scope": "contract_site",
+      "decision": "meeting_intent",
+      "default": "explicit_reuse",
+      "promotion": "approved_shared_save",
+      "next_month": "carry_context",
+      "source": "Current report/profile Capital recommendations and source occurrences; proposed approved contract master.",
+      "notes": "The existing Capital replay guard is implemented. The reusable contract master is a separate unmerged proposal, not a second copy of that repair.",
+      "report_override": "Current carried-source replay guards retain corrected/omitted Capital content; future master use must not overwrite authored report choices.",
+      "version_conflict": "proposed_standing_cas",
+      "current_mechanism": {
+        "summary": "Capital recommendations currently remain in report/profile content. merge_starting_drafts applies the implemented exact-source Capital replay guard so carried corrections and omissions are not revived by the same consumed source; new_month_draft retains the standing recommendation context. There is no capital_master API or approval/reuse UI on audited main. #684 separately proposes a versioned, explicitly approved master API and does not itself provide the future editor workflow.",
+        "anchors": [
+          {
+            "path": "app/monthly_report_start_replay.py",
+            "symbols": [
+              "_guard_carried_capital_tables",
+              "merge_starting_drafts"
+            ]
+          },
+          {
+            "path": "app/monthly_report_setup.py",
+            "symbols": [
+              "new_month_draft"
+            ]
+          },
+          {
+            "path": "app/monthly_report_library.py",
+            "symbols": [
+              "save_snapshot"
+            ]
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/test_monthly_report_capital_source_replay.py",
+            "symbols": [
+              "test_reimport_keeps_explicit_report_omission",
+              "test_first_import_snapshot_reopen_and_two_rollovers_keep_current_values"
+            ]
+          }
+        ],
+        "limitations": [
+          "The implemented Capital replay guard does not prove the unmerged #687 general Starting Report Omit/reinclude text-table repair.",
+          "Financial/content review and source/date gates remain unchanged; no pricing exception or master promotion is approved here."
+        ]
+      },
+      "decision_sources": [
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/470",
+          "kind": "owner_intake",
+          "supports": "Requests an ownership/carryover decision record; does not approve every proposed rule or authorize migration."
+        },
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/492",
+          "kind": "owner_intake",
+          "supports": "Requests contract/site reuse of Capital recommendations."
+        },
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/492#issuecomment-6476804503",
+          "kind": "implementation_record",
+          "supports": "Confirms #544's narrow replay repair was merged while contract-wide reuse remained open."
+        },
+        {
+          "url": "https://github.com/evanroden/msapo-generator/pull/684",
+          "kind": "implementation_record",
+          "supports": "Unmerged master API; user-facing approval/reuse and served output acceptance remain separate."
+        }
+      ],
+      "open_choices": [
+        "Decide approval authority, exact row/site identity and the future explicit promotion/replacement UI with the #492 owner before exposing master use."
+      ]
+    },
+    {
+      "id": "proposals",
+      "label": "Pending and declined proposal items",
+      "scope": "report",
+      "decision": "existing_implementation",
+      "default": "carry_context_only",
+      "promotion": "not_applicable",
+      "next_month": "carry_context",
+      "source": "Report proposal cards/tables with source occurrence, recorded decision and carried period.",
+      "notes": "Pending, Declined, unknown and deliberately omitted are different states. Source or scope wording alone does not decide status.",
+      "report_override": "Saved explicit decisions and report omissions remain attributable to that report; they do not publish a shared contract status.",
+      "version_conflict": "report_cas",
+      "current_mechanism": {
+        "summary": "Proposal normalization and carryover use source table decisions, existing row identities and saved manual choices. seed_followups retains included proposal context, distinguishes Pending from Declined and avoids treating a manually edited scope phrase as a new status. Report saves use their own revision/history. There is no separate standing proposal-status master in this path; a carried proposal remains historical context rather than a new-month event.",
+        "anchors": [
+          {
+            "path": "app/monthly_report_followups.py",
+            "symbols": [
+              "normalize_proposal",
+              "seed_followups",
+              "output_followups"
+            ]
+          },
+          {
+            "path": "app/monthly_report_library.py",
+            "symbols": [
+              "save_snapshot"
+            ]
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/test_monthly_report_proposal_table_carryover.py",
+            "symbols": [
+              "test_missing_or_unresolved_decision_is_not_inferred_from_other_fields",
+              "test_actual_import_reopen_manual_edit_reimport_and_two_rollovers"
+            ]
+          }
+        ],
+        "limitations": [
+          "Omission from one report is not a contract decision to decline or permanently delete the proposal. Existing pricing and source-review gates still apply."
+        ]
+      },
+      "decision_sources": [
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/470",
+          "kind": "owner_intake",
+          "supports": "Requests an ownership/carryover decision record; does not approve every proposed rule or authorize migration."
+        }
+      ],
+      "open_choices": []
+    },
+    {
+      "id": "issues",
+      "label": "Open equipment issues and evidence/update status",
+      "scope": "report",
+      "decision": "existing_implementation",
+      "default": "carry_context_only",
+      "promotion": "not_applicable",
+      "next_month": "carry_context",
+      "source": "Canonical report issues/followups and their source/evidence references.",
+      "notes": "Unresolved issues and evidence can persist as history. Neither old evidence nor a carried status proves new work this month.",
+      "report_override": "Report visibility/Clear and resolution are distinct; a fresh Updated claim requires the existing current-period confirmation.",
+      "version_conflict": "report_cas",
+      "current_mechanism": {
+        "summary": "canonical_issues reconciles report issue cards and followups; rollover retains unresolved issue context and its backing evidence. seed_followups applies its existing next-month inclusion rules and clears review state, while current-period confirmation gates a carried Updated claim. Therefore an issue omitted in one report is not necessarily permanently suppressed in future months, and report-only Clear is not resolution. Earlier saved report versions remain unchanged.",
+        "anchors": [
+          {
+            "path": "app/monthly_report_issues.py",
+            "symbols": [
+              "canonical_issues",
+              "issue_visibility",
+              "clear_issues"
+            ]
+          },
+          {
+            "path": "app/monthly_report_followups.py",
+            "symbols": [
+              "seed_followups",
+              "needs_issue_period_confirmation"
+            ]
+          },
+          {
+            "path": "app/monthly_report_setup.py",
+            "symbols": [
+              "new_month_draft"
+            ]
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/test_monthly_report_issue_carry.py",
+            "symbols": [
+              "test_rollover_keeps_evidence_but_requires_current_confirmation_for_an_updated_claim",
+              "test_explicit_no_issue_declaration_does_not_become_a_followup"
+            ]
+          }
+        ],
+        "limitations": [
+          "Do not promise that every omission persists identically through every future issue rollover; the documented current seed rules and resolution state determine that behavior."
+        ]
+      },
+      "decision_sources": [
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/470",
+          "kind": "owner_intake",
+          "supports": "Requests an ownership/carryover decision record; does not approve every proposed rule or authorize migration."
+        },
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/281",
+          "kind": "owner_intake",
+          "supports": "Requires truthful historical issue evidence and current-period claims across rollover."
+        }
+      ],
+      "open_choices": []
+    },
+    {
+      "id": "training_requirements",
+      "label": "Standing staff training requirements / annual status matrix",
+      "scope": "contract_site",
+      "decision": "existing_implementation",
+      "default": "eligible_standing_defaults",
+      "promotion": "explicit_matrix_edit",
+      "next_month": "retain_pinned",
+      "source": "Versioned contract/year/site requirements registry, plus each report's pinned matrix reference.",
+      "notes": "Annual references and deliberate year transitions are implemented. A prior or unknown-year completion must not be relabeled as current-year completion.",
+      "report_override": "A pinned matrix survives rollover; requirements-grid edits/Add requirement/Start YEAR write shared requirements, unlike report-only notes and sessions.",
+      "version_conflict": "standing_cas",
+      "current_mechanism": {
+        "summary": "Annual matrices use training:matrix:v2:YYYY; legacy training:matrix:v1 stays year-unrecorded. Fresh reports can seed exact-year selected-site rows, or earlier roster/columns with nonblank statuses reset to Not recorded, without a passive save. A pinned matrix survives same- and cross-year rollover with its original year. The requirements grid, Add requirement and explicit Start YEAR actions save shared selected-site/year data with revision checks; there is no separate universal Save shared version button. Other years, legacy records and saved report history remain distinct.",
+        "anchors": [
+          {
+            "path": "app/monthly_report_training.py",
+            "symbols": [
+              "matrix_for_year",
+              "save_training",
+              "seed_matrix",
+              "new_month_training"
+            ]
+          },
+          {
+            "path": "app/monthly_report_training_ui.py",
+            "symbols": [
+              "_requirements_year",
+              "render_training"
+            ]
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/test_monthly_report_training_years.py",
+            "symbols": [
+              "test_shared_year_save_retains_legacy_and_other_years",
+              "test_explicit_new_year_resets_recorded_status_but_keeps_blank",
+              "test_annual_snapshot_omission_and_double_rollover_remain_truthful"
+            ]
+          }
+        ],
+        "limitations": [
+          "Arbitrary imported annual-table mapping and genuine/served acceptance remain separate; the implemented year mechanism is not evidence that every imported matrix has been correctly normalized."
+        ]
+      },
+      "decision_sources": [
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/470",
+          "kind": "owner_intake",
+          "supports": "Requests an ownership/carryover decision record; does not approve every proposed rule or authorize migration."
+        },
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/459",
+          "kind": "owner_intake",
+          "supports": "Requires annual requirements/year identity distinct from completed monthly sessions."
+        }
+      ],
+      "open_choices": []
+    },
+    {
+      "id": "training_events",
+      "label": "Completed training sessions (date, topic, participants, hours)",
+      "scope": "report_month",
+      "decision": "existing_implementation",
+      "default": "never_automatic",
+      "promotion": "not_applicable",
+      "next_month": "reset",
+      "source": "Report-bound training:events:v1 rows with dates, participants and hours.",
+      "notes": "A completed requirement status never creates a session, date, participant count or hours.",
+      "report_override": "Session edits/clear affect report content, not standing requirements or previously saved monthly sessions.",
+      "version_conflict": "report_cas",
+      "current_mechanism": {
+        "summary": "Completed sessions are separate EVENT_REF report tables. add_event validates the submitted session against the selected period; events_for_period selects dated report events. new_month_training drops the old EVENT_REF table, retains the requirements matrix/year and preserves Omit, while other unowned table schemas can remain with emptied rows. Prior sessions remain in earlier saved snapshots; these actions do not publish a shared session registry.",
+        "anchors": [
+          {
+            "path": "app/monthly_report_training.py",
+            "symbols": [
+              "add_event",
+              "events_for_period",
+              "new_month_training"
+            ]
+          },
+          {
+            "path": "app/monthly_report_library.py",
+            "symbols": [
+              "save_snapshot"
+            ]
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/test_training_rollover_regressions.py",
+            "symbols": [
+              "test_old_completion_table_is_absent_instead_of_an_anonymous_header",
+              "test_two_saved_rollovers_do_not_grow_tables_or_rewrite_prior_history"
+            ]
+          }
+        ],
+        "limitations": [
+          "Reset means absence of old completion output in the new draft, not deletion of original evidence or historical reports."
+        ]
+      },
+      "decision_sources": [
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/470",
+          "kind": "owner_intake",
+          "supports": "Requests an ownership/carryover decision record; does not approve every proposed rule or authorize migration."
+        },
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/459",
+          "kind": "owner_intake",
+          "supports": "Separates annual requirements from completed sessions."
+        },
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/281",
+          "kind": "owner_intake",
+          "supports": "Requires retained standing Training without carrying old monthly completion as new work."
+        }
+      ],
+      "open_choices": []
+    },
+    {
+      "id": "activity_work_orders",
+      "label": "Current-month work orders, service calls and operational narrative",
+      "scope": "report_month",
+      "decision": "existing_implementation",
+      "default": "never_automatic",
+      "promotion": "not_applicable",
+      "next_month": "reset",
+      "source": "Accepted report source rows/manual work with selected-site and period context.",
+      "notes": "Current-month completion, PM/non-PM counts and zero require their existing evidence/coverage rules, not merely a repeated table.",
+      "report_override": "Corrections and source selections belong to the working report and its saved versions; no automatic standing work-order publication.",
+      "version_conflict": "report_cas",
+      "current_mechanism": {
+        "summary": "CMMS mapping uses explicit selected sites, date/status interpretation and declared coverage; it retains evidence rather than inventing completion or zero counts. Source contribution receipts bind accepted uses to report/site/period facts. new_month_draft clears period-specific output rows while retaining source records still referenced by carried content. It does not publish a reusable current-work master or erase prior snapshots.",
+        "anchors": [
+          {
+            "path": "app/monthly_report_cmms.py",
+            "symbols": [
+              "map_cmms"
+            ]
+          },
+          {
+            "path": "app/monthly_report_source_scope.py",
+            "symbols": [
+              "contribution_receipt",
+              "included_scope_valid"
+            ]
+          },
+          {
+            "path": "app/monthly_report_setup.py",
+            "symbols": [
+              "new_month_draft"
+            ]
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/test_monthly_report_cmms.py",
+            "symbols": [
+              "test_monthly_service_calls_filter_month_and_status_but_keep_evidence",
+              "test_zero_only_for_confirmed_complete_history"
+            ]
+          }
+        ],
+        "limitations": [
+          "Planned target-month interpretation remains separately owned by #664; this matrix does not claim that unmerged source-role repair.",
+          "Generic output reset is not source-byte deletion or permission to relabel retained evidence."
+        ]
+      },
+      "decision_sources": [
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/470",
+          "kind": "owner_intake",
+          "supports": "Requests an ownership/carryover decision record; does not approve every proposed rule or authorize migration."
+        },
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/281",
+          "kind": "owner_intake",
+          "supports": "Requires period provenance and separation of retained history from newly completed work."
+        }
+      ],
+      "open_choices": []
+    },
+    {
+      "id": "monthly_attachments",
+      "label": "Scorecards, commissioning, water, vendor, progress photos and other attachments",
+      "scope": "report_month",
+      "decision": "existing_implementation",
+      "default": "never_automatic",
+      "promotion": "not_applicable",
+      "next_month": "review_source",
+      "source": "Selected section/source-page occurrences and reviewed report asset copies.",
+      "notes": "A page belongs to its reviewed source occurrence and destination. Current review, scope, privacy and resource gates remain applicable.",
+      "report_override": "Page inclusion/caption/Omit changes report output; it does not delete an original or publish it as standing content.",
+      "version_conflict": "report_cas",
+      "current_mechanism": {
+        "summary": "prepare_section_pages validates explicit selected pages and destination ownership against current report content, preserves page provenance and applies the existing page-review and size limits. new_month_draft removes period-specific attachment output; issue/proposal evidence and other referenced source context can remain under their own carry rules. Saved report versions and source originals are separate from the new month's selected pages.",
+        "anchors": [
+          {
+            "path": "app/monthly_report_section_uploads.py",
+            "symbols": [
+              "prepare_section_pages",
+              "included_pages"
+            ]
+          },
+          {
+            "path": "app/monthly_report_sources.py",
+            "symbols": [
+              "prepare_pages"
+            ]
+          },
+          {
+            "path": "app/monthly_report_setup.py",
+            "symbols": [
+              "new_month_draft"
+            ]
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/test_monthly_report_section_uploads.py",
+            "symbols": [
+              "test_append_only_new_page_preserves_exact_source_provenance",
+              "test_section_upload_does_not_embed_same_file_elsewhere",
+              "test_review_and_total_report_limits_remain_enforced"
+            ]
+          }
+        ],
+        "limitations": [
+          "The separately owned equipment gallery #690 and PDF preparation #669 are not claimed as merged by this record.",
+          "Blank or cleared monthly output does not imply that all source metadata or archived bytes disappeared."
+        ]
+      },
+      "decision_sources": [
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/470",
+          "kind": "owner_intake",
+          "supports": "Requests an ownership/carryover decision record; does not approve every proposed rule or authorize migration."
+        }
+      ],
+      "open_choices": []
+    },
+    {
+      "id": "source_originals",
+      "label": "Imported report, uploaded source file and shared reference shelf",
+      "scope": "source_archive",
+      "decision": "existing_implementation",
+      "default": "never_automatic",
+      "promotion": "review_and_adopt",
+      "next_month": "review_source",
+      "source": "Hash-verified stored originals and receipts; separate report references and shared reference shelves.",
+      "notes": "Reference storage is not report approval, tenant ownership assignment or authorization to promote/import content.",
+      "report_override": "A new replacement has its own identity/review; a report reference or omission never edits bytes under an old source identity.",
+      "version_conflict": "immutable_sha256",
+      "current_mechanism": {
+        "summary": "ingest stores source bytes under the existing profile/contract namespace and records their digest; source_bytes verifies the selected original before use. Saved report references and reviews are separate from those bytes. The shared reference-bundle shelf is a distinct immutable, discoverable no-login testing facility with its existing audience; its user-supplied manifest is not approval to import, adopt a standing default or assign an acceptance scenario. Rollover retains only source records still referenced by carried content and does not perform an archive migration.",
+        "anchors": [
+          {
+            "path": "app/monthly_report_sources.py",
+            "symbols": [
+              "ingest",
+              "source_bytes"
+            ]
+          },
+          {
+            "path": "app/monthly_report_shared_source_bundles.py",
+            "symbols": [
+              "validate_reference_archive",
+              "SharedSourceBundles.upload",
+              "SharedSourceBundles.download"
+            ]
+          },
+          {
+            "path": "app/monthly_report_setup.py",
+            "symbols": [
+              "new_month_draft"
+            ]
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/test_monthly_report_sources.py",
+            "symbols": [
+              "test_integrity_and_unsafe_reference_rejected"
+            ]
+          },
+          {
+            "path": "tests/test_monthly_report_shared_source_bundles.py",
+            "symbols": [
+              "test_reference_bundle_roundtrip_dedup_and_new_reader_preserve_immutable_bytes",
+              "test_changed_disk_bytes_fail_closed_instead_of_being_called_downloaded"
+            ]
+          }
+        ],
+        "limitations": [
+          "The source shelf is not a newly permissioned private vault; this document adds no authentication or access policy.",
+          "Original preservation does not imply every temporary QA lease is permanent; existing fixture retention and quotas remain unchanged."
+        ]
+      },
+      "decision_sources": [
+        {
+          "url": "https://github.com/evanroden/msapo-generator/issues/470",
+          "kind": "owner_intake",
+          "supports": "Requests an ownership/carryover decision record; does not approve every proposed rule or authorize migration."
+        }
+      ],
+      "open_choices": []
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "workflows_between_contracts",
+      "contracts": [
+        "A",
+        "B"
+      ],
+      "sites": [
+        "A1",
+        "A2",
+        "B1",
+        "B2"
+      ],
+      "months": [
+        "2026-09",
+        "2026-10"
+      ],
+      "steps": [
+        "Publish reviewed business-hours and after-hours pictures explicitly for Contract A, then create a fresh eligible October A2 report.",
+        "Replace A's approved diagram with a new standing revision; reopen saved September A1 and October A2 reports.",
+        "Open October B1 and B2 without B-approved diagrams, and compare A1/A2 against those two controls."
+      ],
+      "expected": [
+        "A2 may consume only an approved A version; a fresh eligible report may default without a second per-report publication.",
+        "Existing A1/A2 saved copies retain their selected version until a distinct permitted report action changes the working copy.",
+        "B1 and B2 do not acquire A diagrams. Any legacy candidate needs same-contract review/adoption; adoption is separate from Use."
+      ],
+      "current_expected": [
+        "These contract-scoping, omission and revision mechanisms are implemented on audited main.",
+        "Saved/recovered/rolled-forward reports do not automatically adopt the newest workflow standing version."
+      ],
+      "pending_or_decisions": [
+        "Real native/served and genuine output acceptance is separate from these code/test anchors."
+      ],
+      "anchors": [
+        {
+          "path": "app/monthly_report_workflow_standards.py",
+          "symbols": [
+            "save_standard",
+            "apply_defaults",
+            "use_standard",
+            "adopt_legacy"
+          ]
+        },
+        {
+          "path": "tests/test_monthly_report_contract_workflows.py",
+          "symbols": [
+            "test_foreign_legacy_default_is_not_applied"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "report_only_contact_correction",
+      "contracts": [
+        "A",
+        "B"
+      ],
+      "sites": [
+        "A1",
+        "A2",
+        "B1",
+        "B2"
+      ],
+      "months": [
+        "2026-09",
+        "2026-10"
+      ],
+      "steps": [
+        "Save September reports for A1, A2, B1 and B2; create October working copies using their own directory scopes.",
+        "Edit A1's manually authored or unproved report contact table; separately edit an exact verified Library-backed A2 site contact.",
+        "Reload A1/A2 working copies and all four September snapshots; inspect B1 and B2 directories and October reports."
+      ],
+      "expected": [
+        "The unproved A1 edit remains report-only; it is not authority to reassign or delete standing people.",
+        "The qualifying A2 edit can update only its verified shared site, without a separate shared-save button; a same-site intervening edit conflicts.",
+        "All September snapshots and both B sites remain unchanged; an unchanged eligible A working copy may refresh, while an authored override remains intact."
+      ],
+      "current_expected": [
+        "Current directory behavior deliberately distinguishes report-only edits from narrowly qualified automatic keeping.",
+        "Historical snapshot bytes are not rewritten by working-copy refresh."
+      ],
+      "pending_or_decisions": [],
+      "anchors": [
+        {
+          "path": "app/monthly_report_directory.py",
+          "symbols": [
+            "automatically_keep_directory_contact_edits",
+            "refresh_directory_contacts"
+          ]
+        },
+        {
+          "path": "tests/test_monthly_report_contact_auto_scope.py",
+          "symbols": [
+            "test_report_only_or_unmatched_contact_is_not_promoted",
+            "test_same_site_conflict_rejects_old_write_without_changing_history"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vendor_master_promotion",
+      "contracts": [
+        "A",
+        "B"
+      ],
+      "sites": [
+        "A1",
+        "A2",
+        "B1",
+        "B2"
+      ],
+      "months": [
+        "2026-09",
+        "2026-10"
+      ],
+      "steps": [
+        "Import grouped vendor contacts into October A1 and correct a contact/status in that report; retain its September snapshot.",
+        "Inspect a separate A2 report and both B1/B2 reports; distinguish retained report/profile copies from a contract roster.",
+        "Review the proposed explicit A roster publication and site-scoped reuse as a pending design, not a button available on current main."
+      ],
+      "expected": [
+        "Importing a vendor table or editing A1 does not itself approve a contract master.",
+        "If a separately approved roster implementation is integrated, A2 reuse must preserve its deliberate report edits and verify its selected sites; B1/B2 must not inherit A records.",
+        "September A1/A2/B1/B2 versions and their original pages remain retained."
+      ],
+      "current_expected": [
+        "Audited main provides report-table editing and saved copies, but no independent contract-roster store/panel.",
+        "The desired shared publication/reuse part of this example cannot be executed on current main."
+      ],
+      "pending_or_decisions": [
+        "#686 owns the pending #562-based integration; #563 is an incompatible alternative. This record approves neither schema nor release.",
+        "Publisher authority, site applicability and status-effective context still need the #488 decision/integration record."
+      ],
+      "anchors": [
+        {
+          "path": "app/monthly_report_visual_ui.py",
+          "symbols": [
+            "edit_contacts"
+          ]
+        },
+        {
+          "path": "app/monthly_report_vendor_groups.py",
+          "symbols": [
+            "grouped_vendor_contacts"
+          ]
+        },
+        {
+          "path": "tests/test_monthly_report_vendor_group_bands.py",
+          "symbols": [
+            "test_manual_ui_grouped_save_reopens_without_changing_adjacent_edits"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capacity_site_partition",
+      "contracts": [
+        "A",
+        "B"
+      ],
+      "sites": [
+        "A1",
+        "A2",
+        "B1",
+        "B2"
+      ],
+      "months": [
+        "2026-09",
+        "2026-10"
+      ],
+      "steps": [
+        "Read a synthetic A1 capacity table with exact site identity and known plant/service/units; allow only the existing qualified first-fill path.",
+        "Open fresh October A2, B1 and B2 reports; compare them with A1 and the four saved September snapshots.",
+        "Review a later A1 correction and an intervening A2 shared revision, using the existing explicit correction/conflict path."
+      ],
+      "expected": [
+        "Safe A1 first fill may persist automatically at its proper scope; it does not assign A1 numbers to A2.",
+        "A1 corrections must preserve other sites and fail on stale/shared conflicts; manual or omitted report copies remain distinct.",
+        "B1/B2 cannot receive A capacity. Historical snapshots and original source values/units remain unchanged."
+      ],
+      "current_expected": [
+        "The current store, first-fill guards, selected-site filtering and revision checks implement the narrow mechanism.",
+        "Broader shared assumptions across sites remain an open business decision; this example does not implement one."
+      ],
+      "pending_or_decisions": [
+        "Define any allowed cross-site capacity assumption and its approval authority per contract before broadening current scope."
+      ],
+      "anchors": [
+        {
+          "path": "app/monthly_report_capacity.py",
+          "symbols": [
+            "first_fill_tables",
+            "save_capacity",
+            "capacity_block"
+          ]
+        },
+        {
+          "path": "tests/test_monthly_report_capacity.py",
+          "symbols": [
+            "test_updated_steam_preserves_chilled_water_and_other_sites",
+            "test_existing_snapshot_and_manual_content_never_autofollow_shared_updates"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "history_and_monthly_facts",
+      "contracts": [
+        "A",
+        "B"
+      ],
+      "sites": [
+        "A1",
+        "A2",
+        "B1",
+        "B2"
+      ],
+      "months": [
+        "2026-09",
+        "2026-10"
+      ],
+      "steps": [
+        "Save September A1/A2/B1/B2 reports with their own annual requirements, monthly sessions and dated work-order evidence.",
+        "Create October for all four sites; inspect requirements references separately from completed-session and work-order output.",
+        "Edit an A1 October requirements cell, then inspect the selected shared year/site, A2/B1/B2 standing rows and all September snapshots."
+      ],
+      "expected": [
+        "October does not present September sessions/work-order rows as new completion; original historical reports remain available.",
+        "The exact annual matrix/year can remain pinned, including an older year; an explicit year transition is required to relabel/reset annual requirements.",
+        "The requirements edit is a shared selected-site/year action, not a report-only note; unrelated sites/contracts and prior snapshots remain unchanged."
+      ],
+      "current_expected": [
+        "Annual references, year-aware storage, monthly EVENT_REF removal and report-history CAS are implemented.",
+        "Clearing monthly output rows does not delete the stored original files or referenced historical context."
+      ],
+      "pending_or_decisions": [
+        "Imported arbitrary annual tables and genuine/served output still require their own acceptance; matrix status does not create a session."
+      ],
+      "anchors": [
+        {
+          "path": "app/monthly_report_training.py",
+          "symbols": [
+            "save_training",
+            "new_month_training"
+          ]
+        },
+        {
+          "path": "app/monthly_report_setup.py",
+          "symbols": [
+            "new_month_draft"
+          ]
+        },
+        {
+          "path": "tests/test_monthly_report_training_years.py",
+          "symbols": [
+            "test_year_change_reuses_exact_year_and_keeps_other_sites"
+          ]
+        },
+        {
+          "path": "tests/test_training_rollover_regressions.py",
+          "symbols": [
+            "test_two_saved_rollovers_do_not_grow_tables_or_rewrite_prior_history"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "capital_proposal_revision",
+      "contracts": [
+        "A",
+        "B"
+      ],
+      "sites": [
+        "A1",
+        "A2",
+        "B1",
+        "B2"
+      ],
+      "months": [
+        "2026-09",
+        "2026-10"
+      ],
+      "steps": [
+        "Save September A1/A2/B1/B2 reports, then correct or omit a carried Capital row in October A1.",
+        "Reimport its same consumed physical source; separately inspect Pending and Declined proposal rows with source dates.",
+        "Inspect October A2/B1/B2 and all September snapshots; identify a proposed contract-master action separately from these existing report operations."
+      ],
+      "expected": [
+        "The implemented Capital replay guard does not silently revive that consumed corrected/omitted row or append a duplicate.",
+        "Pending, Declined and unknown remain distinct; the report's source history is not a new monthly event.",
+        "Other reports and prior snapshots remain unchanged; no shared Capital master is created by the report correction."
+      ],
+      "current_expected": [
+        "The #544 Capital replay guard and proposal decision handling are already implemented.",
+        "This scenario does not claim every Starting Report Omit/reinclude path is repaired; #687 remains unmerged."
+      ],
+      "pending_or_decisions": [
+        "#684 is a separately owned unmerged master API proposal; its future approval/reuse UI and scope decisions are not installed here."
+      ],
+      "anchors": [
+        {
+          "path": "app/monthly_report_start_replay.py",
+          "symbols": [
+            "_guard_carried_capital_tables",
+            "merge_starting_drafts"
+          ]
+        },
+        {
+          "path": "app/monthly_report_followups.py",
+          "symbols": [
+            "seed_followups"
+          ]
+        },
+        {
+          "path": "tests/test_monthly_report_capital_source_replay.py",
+          "symbols": [
+            "test_reimport_keeps_explicit_report_omission"
+          ]
+        },
+        {
+          "path": "tests/test_monthly_report_proposal_table_carryover.py",
+          "symbols": [
+            "test_actual_import_reopen_manual_edit_reimport_and_two_rollovers"
+          ]
+        }
+      ]
+    }
+  ],
+  "override_conflict_values": [
+    "report_cas",
+    "standing_cas",
+    "proposed_standing_cas",
+    "immutable_sha256"
+  ]
+}
