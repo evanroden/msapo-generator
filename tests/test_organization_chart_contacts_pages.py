@@ -99,3 +99,32 @@ def test_rendered_chart_and_contacts_occupy_distinct_pages(tmp_path, monkeypatch
         chart_pages=[i for i,p in enumerate(doc) if p.get_image_info()]
         assert chart_pages and max(i for i in chart_pages if i<contact_page)<contact_page
         assert not doc[contact_page].get_image_info()
+
+
+@requires_libreoffice
+def test_rendered_retained_chart_and_contacts_are_separate(tmp_path, monkeypatch):
+    import re
+    import fitz
+    from hashlib import sha256
+    from app import pdf_converter
+    from app.monthly_report_import import inspect_docx, read_import_image
+    d=Document();d.add_heading('ORGANIZATIONAL CHART',1)
+    image=BytesIO();Image.new('RGB',(1200,600),'blue').save(image,format='PNG')
+    d.add_picture(BytesIO(image.getvalue()),width=Inches(6))
+    t=d.add_table(rows=2,cols=5)
+    for i,s in enumerate(('Site','Role','Name','Telephone','Email')):
+        t.cell(0,i).text=s;t.cell(1,i).text='obsolete'
+    source=tmp_path/'source.docx';d.save(source)
+    inspection=inspect_docx(source);item=next(i for i in inspection.items if i.kind=='image')
+    image=read_import_image(source,item); identity=sha256(image.data).hexdigest()+'.'+image.extension
+    chart=ResolvedBlock('org_chart','This month',asset_hashes=(identity,),asset_captions=('',),references=(f'docx:{inspection.sha256}:{item.id}',))
+    contacts=ResolvedBlock('contact_matrix','This month',extra_tables=(ReportTable(('Site','Role','Name','Telephone','Email'),(('North','Lead','Synthetic Person','555','x@invalid'),),'synthetic:contacts'),))
+    profile=ReportProfile('Synthetic','north','North',(Facility('north','North'),))
+    draft=ReportDraft(profile,ReportPeriod(2026,9),'Tester',default_sections(),(chart,contacts),synthetic=True)
+    generated=tmp_path/'retained.docx';generated.write_bytes(build_native_docx(draft,source,section_key='organization',master=True,asset_loader={identity:image.data}.__getitem__))
+    monkeypatch.setattr(pdf_converter,'OUTPUT_DIR',tmp_path)
+    with fitz.open(pdf_converter.convert_to_pdf(generated)) as pdf:
+        contact_page=next(i for i,p in enumerate(pdf) if 'Synthetic Person' in re.sub(r'\s+',' ',p.get_text()))
+        chart_pages=[i for i,p in enumerate(pdf) if p.get_image_info()]
+        assert chart_pages and max(chart_pages)<contact_page
+        assert not pdf[contact_page].get_image_info()
