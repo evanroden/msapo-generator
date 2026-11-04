@@ -72,7 +72,13 @@ def _ignored_in_target(name: str) -> bool:
 def _walk(source: Path):
     """Yield (relative POSIX path, absolute path, kind) in a stable order."""
     problems = []
-    for root, directories, files in os.walk(source, followlinks=False):
+
+    def unreadable(error: OSError) -> None:
+        # os.walk otherwise skips a folder it cannot list, silently leaving its
+        # files out of an archive that would still verify.
+        problems.append(f"cannot read: {error.filename}: {error.strerror}")
+
+    for root, directories, files in os.walk(source, followlinks=False, onerror=unreadable):
         root_path = Path(root)
         if root_path == source:
             directories[:] = [d for d in directories if d not in SKIPPED_ROOT_ENTRIES]
@@ -85,7 +91,10 @@ def _walk(source: Path):
             yield absolute.relative_to(source).as_posix(), absolute, "directory"
         for name in sorted(files):
             absolute = root_path / name
-            mode = absolute.lstat().st_mode
+            try:
+                mode = absolute.lstat().st_mode
+            except FileNotFoundError:
+                continue  # removed by the app while the folder was being listed
             if stat.S_ISLNK(mode):
                 problems.append(f"symbolic link: {absolute}")
             elif not stat.S_ISREG(mode):
@@ -190,6 +199,8 @@ def export(source: Path, output: Path) -> dict:
                         # Removed by the app (retention, temporary output) after the walk.
                         manifest["skipped"].append({"path": rel, "reason": "removed during export"})
                         continue
+                    except OSError as error:
+                        raise MigrationError(f"Cannot read {absolute}: {error.strerror}") from None
                     with stream:
                         _add_bytes(archive, f"{DATA}/{rel}", stream, record["mode"], info.st_mtime, record)
                 manifest["files"].append(record)
@@ -212,11 +223,20 @@ def export(source: Path, output: Path) -> dict:
     return manifest
 
 
+def _safe_relative(rel: str) -> str:
+    """A path inside the data folder: relative, no '..', not empty."""
+    path = PurePosixPath(rel)
+    if not isinstance(rel, str) or path.is_absolute() or ".." in path.parts or not path.parts \
+            or path.as_posix() != rel:
+        raise MigrationError(f"Unsafe or unexpected path in the archive: {rel!r}")
+    return rel
+
+
 def _safe_member(name: str) -> str:
     path = PurePosixPath(name)
-    if path.is_absolute() or ".." in path.parts or not path.parts or path.parts[0] != DATA or len(path.parts) < 2:
+    if not path.parts or path.parts[0] != DATA or len(path.parts) < 2:
         raise MigrationError(f"Unsafe or unexpected archive entry: {name!r}")
-    return PurePosixPath(*path.parts[1:]).as_posix()
+    return _safe_relative(PurePosixPath(*path.parts[1:]).as_posix())
 
 
 def _read_manifest(archive: tarfile.TarFile) -> dict:
@@ -234,7 +254,11 @@ def _members(archive_path: Path, write_into: Path | None = None) -> dict:
     """Check every member against the manifest; optionally write files under ``write_into``."""
     with tarfile.open(archive_path, "r:gz") as archive:
         manifest = _read_manifest(archive)
-        expected = {item["path"]: item for item in manifest["files"]}
+        # Every path the manifest names is checked before anything is written:
+        # restore creates the listed folders, so they must stay inside.
+        for rel in manifest["directories"]:
+            _safe_relative(rel)
+        expected = {_safe_relative(item["path"]): item for item in manifest["files"]}
         seen = set()
         for member in archive:
             if member.name == MANIFEST:

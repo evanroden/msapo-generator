@@ -193,3 +193,39 @@ def test_command_line_reports_and_exits_nonzero_on_a_stop(data, tmp_path, capsys
     assert migrate_data.main(["restore", "--archive", str(archive), "--target", str(data)]) == 2
     assert "not empty" in capsys.readouterr().err
     assert gzip.open(archive).read(1)  # a readable gzip stream
+
+
+def test_a_folder_the_export_cannot_read_stops_it(data, tmp_path, monkeypatch):
+    real_walk = os.walk
+
+    def walk(top, **options):
+        # What os.walk reports for a subfolder it may not list (mode 0700,
+        # another owner); without a handler it would be silently skipped.
+        options["onerror"](PermissionError(13, "Permission denied", str(Path(top) / "locked")))
+        yield from real_walk(top, **options)
+    monkeypatch.setattr(migrate_data.os, "walk", walk)
+    with pytest.raises(MigrationError, match="cannot read: .*locked: Permission denied"):
+        export(data, tmp_path / "a.tar.gz")
+    assert not (tmp_path / "a.tar.gz").exists()
+
+
+@pytest.mark.parametrize("bad", ["../../outside-target", "/abs-outside", "a/../../x", "./a", ""])
+def test_manifest_folders_outside_the_target_are_refused_before_anything_is_made(data, tmp_path, bad):
+    archive = tmp_path / "a.tar.gz"
+    export(data, archive)
+
+    def change(name, payload):
+        if name == "MANIFEST.json":
+            manifest = json.loads(payload)
+            manifest["directories"].append(bad)
+            return name, json.dumps(manifest).encode()
+        return name, payload
+    _rewrite(archive, change)
+    with pytest.raises(MigrationError, match="Unsafe"):
+        verify(archive)
+    target = tmp_path / "share" / "test1"
+    target.mkdir(parents=True)
+    with pytest.raises(MigrationError, match="Unsafe"):
+        restore(archive, target)
+    assert list(target.iterdir()) == []
+    assert not (tmp_path / "outside-target").exists() and not Path("/abs-outside").exists()

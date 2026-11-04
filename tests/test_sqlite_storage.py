@@ -84,6 +84,26 @@ def test_the_learning_database_follows_the_storage_it_lives_on(monkeypatch, tmp_
     assert remembered_device_account_manager("browser-b", "ENFRA RRH") == "Synthetic Manager"
 
 
+def test_the_smartsheet_store_follows_the_storage_and_never_fails_on_a_refused_switch(monkeypatch, tmp_path):
+    from app.smartsheet_store import SubmissionStore
+    path = tmp_path / "smartsheet_submissions.db"
+    monkeypatch.delenv("EPC_SQLITE_JOURNAL_MODE", raising=False)
+    SubmissionStore(path).claim("synthetic-1")
+    assert _journal(path) == "wal"
+    monkeypatch.setenv("EPC_SQLITE_JOURNAL_MODE", "delete")
+    holder = sqlite3.connect(path)
+    holder.execute("SELECT count(*) FROM submissions").fetchone()
+    try:
+        # Fail-closed: an error here would block the submission, so a refused
+        # switch must not be one.
+        assert SubmissionStore(path).get("synthetic-1") is not None
+        assert _journal(path) == "wal"
+    finally:
+        holder.close()
+    assert SubmissionStore(path).get("synthetic-1") is not None
+    assert _journal(path) == "delete"
+
+
 def test_a_refused_switch_is_retried_instead_of_remembered(monkeypatch, tmp_path):
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(memory, "_INITIALIZED_DATABASES", {})

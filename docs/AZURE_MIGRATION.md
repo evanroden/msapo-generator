@@ -59,9 +59,10 @@ SQLite databases: `epc_memory.db` (learning and preferences) and
 - **Avoid overlapping revisions.** An update normally runs the new revision
   beside the old one for a short time. Deploy in a quiet window.
 - **SQLite on a network share:** SQLite's WAL mode does not work over a network
-  filesystem. The app now detects an NFS or SMB mount under the data folder and
-  uses SQLite's rollback journal there, keeping WAL on a local disk such as
-  Render's. `EPC_SQLITE_JOURNAL_MODE` overrides the detection.
+  filesystem, and both databases used it. Both now detect an NFS or SMB mount
+  under the data folder and use SQLite's rollback journal there, keeping WAL on
+  a local disk such as Render's. `EPC_SQLITE_JOURNAL_MODE` overrides the
+  detection.
 
 ## 4. Moving the data
 
