@@ -217,7 +217,7 @@ def test_manifest_folders_outside_the_target_are_refused_before_anything_is_made
     def change(name, payload):
         if name == "MANIFEST.json":
             manifest = json.loads(payload)
-            manifest["directories"].append(bad)
+            manifest["directories"].append({"path": bad, "mode": 0o755})
             return name, json.dumps(manifest).encode()
         return name, payload
     _rewrite(archive, change)
@@ -229,3 +229,49 @@ def test_manifest_folders_outside_the_target_are_refused_before_anything_is_made
         restore(archive, target)
     assert list(target.iterdir()) == []
     assert not (tmp_path / "outside-target").exists() and not Path("/abs-outside").exists()
+
+
+def test_owner_only_folders_stay_owner_only(data, tmp_path):
+    # Shared fixtures, source bundles and cover storage refuse a folder with
+    # any group/other bit ("Private fixture directories must be owner-only").
+    private = data / "monthly_reports" / "shared_fixtures"
+    (private / "vault" / "bundle").mkdir(parents=True)
+    (private / "vault" / "bundle" / "receipt.json").write_text("{}")
+    os.chmod(private / "vault" / "bundle" / "receipt.json", 0o600)
+    for folder in (private / "vault" / "bundle", private / "vault", private):
+        os.chmod(folder, 0o700)
+    archive = tmp_path / "a.tar.gz"
+    export(data, archive)
+    target = tmp_path / "share"
+    target.mkdir()
+    old_umask = os.umask(0o022)  # an ordinary umask would make new folders 0755
+    try:
+        restore(archive, target)
+    finally:
+        os.umask(old_umask)
+    restored = target / "monthly_reports" / "shared_fixtures"
+    for folder in (restored, restored / "vault", restored / "vault" / "bundle"):
+        assert folder.stat().st_mode & 0o777 == 0o700, folder
+    assert (restored / "vault" / "bundle" / "receipt.json").stat().st_mode & 0o777 == 0o600
+    assert (target / "monthly_reports").stat().st_mode & 0o777 == (data / "monthly_reports").stat().st_mode & 0o777
+
+
+def test_a_real_private_store_still_opens_after_the_move(tmp_path):
+    from app.monthly_report_shared_source_bundles import SharedSourceBundles
+    from test_monthly_report_shared_source_bundles import portable_bundle
+    source = tmp_path / "render-disk"
+    source.mkdir()
+    original = portable_bundle()
+    receipt = SharedSourceBundles(source).upload(original)
+    archive = tmp_path / "a.tar.gz"
+    export(source, archive)
+    target = tmp_path / "azure-share"
+    target.mkdir()
+    old_umask = os.umask(0o022)
+    try:
+        restore(archive, target)
+    finally:
+        os.umask(old_umask)
+    moved = SharedSourceBundles(target)
+    assert moved.list() == (receipt,)
+    assert moved.download(receipt.bundle_id) == original

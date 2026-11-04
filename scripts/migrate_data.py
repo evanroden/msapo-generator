@@ -180,7 +180,9 @@ def export(source: Path, output: Path) -> dict:
         with tempfile.TemporaryDirectory() as workdir, tarfile.open(partial, "w:gz") as archive:
             for rel, absolute, kind in entries:
                 if kind == "directory":
-                    manifest["directories"].append(rel)
+                    # Private stores refuse folders that are not owner-only,
+                    # so each folder's permissions travel with it.
+                    manifest["directories"].append({"path": rel, "mode": stat.S_IMODE(absolute.stat().st_mode)})
                     continue
                 if rel in companions:
                     manifest["skipped"].append({"path": rel, "reason": "SQLite companion; the database copy is self-contained"})
@@ -256,8 +258,8 @@ def _members(archive_path: Path, write_into: Path | None = None) -> dict:
         manifest = _read_manifest(archive)
         # Every path the manifest names is checked before anything is written:
         # restore creates the listed folders, so they must stay inside.
-        for rel in manifest["directories"]:
-            _safe_relative(rel)
+        for item in manifest["directories"]:
+            _safe_relative(item["path"])
         expected = {_safe_relative(item["path"]): item for item in manifest["files"]}
         seen = set()
         for member in archive:
@@ -314,8 +316,12 @@ def restore(archive_path: Path, target: Path, *, replace_existing: bool = False)
     staging.mkdir()
     try:
         manifest = _members(archive_path, write_into=staging)
-        for rel in manifest["directories"]:
-            (staging / rel).mkdir(parents=True, exist_ok=True)
+        for item in manifest["directories"]:
+            (staging / item["path"]).mkdir(parents=True, exist_ok=True)
+        # After every file is written (a read-only folder could not take
+        # them), so folders created on the way get their recorded modes too.
+        for item in manifest["directories"]:
+            os.chmod(staging / item["path"], item["mode"] & 0o777)
         for item in manifest["files"]:
             if item["kind"] != "sqlite":
                 continue
