@@ -128,7 +128,9 @@ def save(token: str, draft: ReportDraft, *, expected_revision: int,
         path = folder / "working.json"
         previous = library._read(path) if path.exists() else None
         if previous and (previous.get("kind") not in ("browser_active_work_v1", "browser_active_work_discarded_v1")
-                         or type(previous.get("revision")) is not int or previous["revision"] < 1):
+                         or type(previous.get("revision")) is not int or previous["revision"] < 1
+                         or (previous["kind"] == "browser_active_work_v1"
+                             and not isinstance(previous.get("draft"), dict))):
             raise library.LibraryError("The unfinished browser journal could not be read safely.")
         generation = _generation(previous) if previous else ""
         revision = previous["revision"] if previous and previous["kind"] == "browser_active_work_v1" else 0
