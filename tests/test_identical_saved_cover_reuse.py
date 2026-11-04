@@ -170,7 +170,7 @@ def test_verified_shared_brand_identifies_source_logo_without_overwriting_saved_
     assert not reuse_identical_saved_cover(plan,section,inspection,source,blocks,trusted_brand_refs=('wrong.png',)).get('automatic_identical_cover_reuse')
 
 
-@pytest.mark.parametrize("action", ("save", "catalog_change"))
+@pytest.mark.parametrize("action", ("save", "save_default", "catalog_change"))
 def test_existing_report_reuses_cover_with_verified_shared_brand_and_rechecks_revision(monkeypatch,tmp_path,action):
     from io import BytesIO
     from docx import Document
@@ -199,7 +199,15 @@ def test_existing_report_reuses_cover_with_verified_shared_brand_and_rechecks_re
     source_brand=next(x for x in candidates if x.id!=selected_photo.id)
     logo=read_import_image(source,source_brand,line_art=True,preserve_transparency=True);logo_ref=library.asset_reference(logo.data,logo.extension)
     item=branding.BrandLogo('enfra','ENFRA',(),logo_ref,'https://example.com','https://example.com/logo.png','2026-10-22')
-    branding.save_branding((item,),{logo_ref:logo.data},expected_revision=0,actor='Synthetic',confirmed=True)
+    if action=='save_default':
+        from app.monthly_report_asset_review import approve_all_assets
+        old_ref=next(b for b in working.blocks if b.key=='brand_logo').asset_hashes[0]
+        old=replace(item,asset=old_ref)
+        branding.save_branding((old,),{old_ref:assets[old_ref]},expected_revision=0,actor='Synthetic',confirmed=True)
+        branding.save_branding((item,),{logo_ref:logo.data},expected_revision=1,actor='Synthetic',confirmed=True)
+        working=replace(working,blocks=tuple(approve_all_assets(ResolvedBlock('brand_logo','Library',asset_hashes=(old_ref,))) if b.key=='brand_logo' else b for b in working.blocks))
+    else:
+        branding.save_branding((item,),{logo_ref:logo.data},expected_revision=0,actor='Synthetic',confirmed=True)
     cover=read_import_image(source,selected_photo,line_art=False,preserve_transparency=False);ref=library.asset_reference(cover.data,cover.extension);assets[ref]=cover.data
     working=replace(working,blocks=tuple(replace(b,asset_hashes=(ref,)) if b.key=='cover_photo' else b for b in working.blocks))
     app.session_state['working']=working;app.session_state['assets']=assets
@@ -209,7 +217,7 @@ def test_existing_report_reuses_cover_with_verified_shared_brand_and_rechecks_re
     plans=next(v for k,v in app.session_state.filtered_state.items() if k.endswith('_section_plans'))
     assert plans['cover'].get('automatic_identical_cover_reuse')
     assert plans['cover']['automatic_brand_identity_refs']==(logo_ref,)
-    if action=='save':
+    if action in ('save','save_default'):
         from test_monthly_report_cover_art_recovery import continue_button
         assert not continue_button(app).disabled
         continue_button(app).click().run()
@@ -217,7 +225,26 @@ def test_existing_report_reuses_cover_with_verified_shared_brand_and_rechecks_re
         imported=library.load_imported_draft(working.profile.contract,working.profile.key)
         vendor_block=next(b for b in imported.blocks if b.key=='subcontractor_matrix')
         assert any('Active' in row for table in vendor_block.extra_tables for row in table.rows)
-        assert next(b for b in imported.blocks if b.key=='brand_logo')==next(b for b in working.blocks if b.key=='brand_logo')
+        actual=next(b for b in imported.blocks if b.key=='brand_logo')
+        if action=='save_default':
+            assert actual.asset_hashes==(logo_ref,) and actual.source=='Library'
+            assert next(b for b in working.blocks if b.key=='brand_logo').asset_hashes==(old_ref,)
+            assert library.load_profile(working.profile.contract,working.profile.key).block('brand_logo').asset_hashes==(old_ref,)
+            from app.monthly_report_native_layout import build_native_docx
+            output=Document(BytesIO(build_native_docx(imported,source,section_key='cover',master=True,
+                asset_loader=lambda key: library.read_asset(working.profile.contract,working.profile.key,key))))
+            from docx.oxml.ns import qn
+            pixels=[]
+            for blip in output.element.iter(qn('a:blip')):
+                relation=output.part.rels.get(blip.get(qn('r:embed')))
+                if relation and not relation.is_external:
+                    try:
+                        with Image.open(BytesIO(relation.target_part.blob)) as picture:
+                            if picture.size==(500,80): pixels.append(picture.convert('RGB').getpixel((10,10)))
+                    except OSError: pass
+            assert (0,128,0) in pixels and (255,0,0) not in pixels
+        else:
+            assert actual==next(b for b in working.blocks if b.key=='brand_logo')
         return
     activity=deepcopy(plans['activity'])
     other=BytesIO();Image.new('RGB',(500,80),'orange').save(other,'PNG');raw=other.getvalue();other_ref=library.asset_reference(raw,'png')

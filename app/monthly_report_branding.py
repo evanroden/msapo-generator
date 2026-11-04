@@ -255,3 +255,45 @@ def apply_defaults(draft, assets, *, skip_slots=()):
             from app.monthly_report_asset_review import approve_all_assets
             blocks[key] = approve_all_assets(block)
     return replace(draft, blocks=tuple(blocks.values()))
+
+
+def refresh_proven_prior_default_brand(block, trusted_source_refs, assets):
+    """Upgrade only an exact former shared default proved by this source.
+
+    User-selected/replaced, omitted, annotated, or otherwise changed blocks are
+    never upgraded. The caller must supply source-specific, current catalog
+    identity evidence; this helper changes only the new draft, not history.
+    """
+    from app.monthly_report_asset_review import approve_all_assets
+    from app.monthly_report_model import ResolvedBlock
+    if block is None or block.key != 'brand_logo' or block.source != 'Library' or len(block.asset_hashes) != 1:
+        return block
+    expected = approve_all_assets(ResolvedBlock('brand_logo', 'Library', asset_hashes=block.asset_hashes))
+    if block != expected:
+        return block
+    current = load_branding()
+    latest = find_logo(brand=True, state=current) if current else None
+    if latest is None or latest.asset not in trusted_source_refs or latest.asset == block.asset_hashes[0]:
+        return block
+    # Bound history reads. Missing/damaged historical artwork cannot authorize
+    # an update; storage/lease errors still propagate rather than being hidden.
+    for revision in range(current.revision - 1, max(0, current.revision - 33), -1):
+        try:
+            prior = load_branding(revision)
+        except library.LibraryError as exc:
+            if isinstance(exc.__cause__, FileNotFoundError):
+                return block  # Missing history cannot prove a prior default.
+            raise  # Never hide corrupt storage or a namespace/lease failure.
+        old = find_logo(brand=True, state=prior) if prior else None
+        if old is None or old.asset != block.asset_hashes[0]:
+            continue
+        try:
+            read_logo(old)
+            raw = read_logo(latest)
+        except LogoArtworkError:
+            return block
+        if load_branding() != current:
+            raise ValueError('Shared branding changed while importing. Review the cover again.')
+        assets[latest.asset] = raw
+        return approve_all_assets(ResolvedBlock('brand_logo', 'Library', asset_hashes=(latest.asset,)))
+    return block

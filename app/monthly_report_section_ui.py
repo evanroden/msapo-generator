@@ -572,6 +572,15 @@ def render_pending_cover_selection(draft, assets, contract, period, state):
     plans = st.session_state.get(active[1] + "_section_plans", {})
     plan = plans.get("cover", {})
     if plan.get("omit"):
+        if plan.get("automatic_identical_cover_reuse") and plan.get("automatic_brand_identity_refs"):
+            from app.monthly_report_branding import refresh_proven_prior_default_brand
+            current = next((block for block in draft.blocks if block.key == "brand_logo"), None)
+            preview_assets = dict(assets)
+            refreshed = refresh_proven_prior_default_brand(current, plan["automatic_brand_identity_refs"], preview_assets)
+            if refreshed is not None and refreshed != current:
+                blocks = tuple(refreshed if block.key == "brand_logo" else block for block in draft.blocks)
+                st.caption("Cover preview uses the approved shared logo. It is not saved until you continue.")
+                return replace(draft, blocks=blocks), preview_assets
         return draft, assets
     if plan.get("cover_photo_omitted"):
         current = next((block for block in draft.blocks if block.key == "cover_photo"), None)
@@ -1420,7 +1429,26 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                         blocks[key] = saved
                         for reference in saved.asset_hashes:
                             assets[reference] = library.read_asset(contract, profile.key, reference)
-                from app.monthly_report_branding import apply_defaults
+                # A source-proved current shared brand may replace only the
+                # exact unedited prior shared default in this new report version.
+                from app.monthly_report_branding import apply_defaults, refresh_proven_prior_default_brand
+                cover_proof = plans.get("cover", {})
+                brand_identity_refs = tuple(cover_proof.get("automatic_brand_identity_refs", ()))
+                if cover_proof.get("automatic_identical_cover_reuse") and brand_identity_refs:
+                    from app.monthly_report_start_import import reuse_identical_saved_cover
+                    prior_cover = st.session_state.get(p + "_cover_before_identical_reuse")
+                    cover_section = next((section for section in sections if section.key == "cover"), None)
+                    rechecked = (reuse_identical_saved_cover(prior_cover, cover_section, inspection, path,
+                                 {block.key: block for block in base.blocks}, trusted_brand_refs=trusted_brand_refs)
+                                 if prior_cover and cover_section is not None and base is not None else {})
+                    if (not rechecked.get("automatic_identical_cover_reuse") or
+                            tuple(rechecked.get("automatic_brand_identity_refs", ())) != brand_identity_refs):
+                        raise ValueError("The source or current cover changed. Review its artwork before continuing.")
+                if cover_proof.get("automatic_identical_cover_reuse"):
+                    blocks["brand_logo"] = refresh_proven_prior_default_brand(
+                        blocks.get("brand_logo"), cover_proof.get("automatic_brand_identity_refs", ()), assets)
+                    if blocks["brand_logo"] is None:
+                        blocks.pop("brand_logo")
                 draft = apply_defaults(replace(draft, blocks=tuple(blocks.values()),
                                                sections=tuple(replace(s, included=True) for s in draft.sections)),
                                        assets, skip_slots=consumed_logo_slots)
