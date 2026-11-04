@@ -935,6 +935,17 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     preferred_logos = tuple(key for key in ("brand_logo", "client_logo")
                             if (state and state.block(key) and state.block(key).asset_hashes)
                             or (branding and find_logo(contract, brand=key == "brand_logo", state=branding)))
+    trusted_brand_refs = ()
+    if branding is not None and state is not None and working_draft is not None and source_view is None:
+        from app.monthly_report_branding import read_logo, LogoArtworkError
+        try:
+            shared_brand = find_logo(contract, brand=True, state=branding)
+            if shared_brand is not None:
+                raw_brand = read_logo(shared_brand)  # Revalidates the stored fingerprint.
+                trusted_brand_refs = (library.asset_reference(raw_brand, "png"),)
+        except LogoArtworkError:
+            # A damaged catalog never grants automatic artwork classification.
+            trusted_brand_refs = ()
     from app.monthly_report_designs import source_for
     native_design = source_for(candidate) is not None
     native_art_review = None
@@ -981,7 +992,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                 original_cover_plan = seed["cover"]
                 seed["cover"] = reuse_identical_saved_cover(
                     original_cover_plan, cover_section, inspection, path,
-                    {block.key: block for block in working_draft.blocks})
+                    {block.key: block for block in working_draft.blocks}, trusted_brand_refs=trusted_brand_refs)
                 if seed["cover"].get("automatic_identical_cover_reuse"):
                     st.session_state[p + "_cover_before_identical_reuse"] = original_cover_plan
                 else:
@@ -991,6 +1002,13 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     intent = "Automatic starting report"
     sections = section_reviews(inspection, source_view=source_view)
     plans = st.session_state.setdefault(p + "_section_plans", {})
+    cover_plan = plans.get("cover", {})
+    required_brand_refs = set(cover_plan.get("automatic_brand_identity_refs", ()))
+    if (cover_plan.get("automatic_identical_cover_reuse") and required_brand_refs
+            and not required_brand_refs.issubset(trusted_brand_refs)):
+        # Only the cover decision loses its proof. Keep all other staged choices.
+        plans["cover"] = st.session_state.get(p + "_cover_before_identical_reuse", seed.get("cover", {}))
+        st.warning("The shared logo changed while the starting report was open. Review its cover again; other section choices are preserved.")
     st.session_state[prefix + "_active_section_review"] = (inspection.sha256, p)
     # Preserve native diagrams at their evidenced Word/ENFRA section before
     # asking the operator about anything. Ordinary image parts already follow

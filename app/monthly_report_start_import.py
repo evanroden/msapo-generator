@@ -251,7 +251,7 @@ def suggested_cover_photo(items, *, native_furniture_ids=()):
     return first if area > 40000 and area >= 1.6 * max(1, runner_up) else None
 
 
-def reuse_identical_saved_cover(plan, section, inspection, path, existing_blocks, *, source_view=None):
+def reuse_identical_saved_cover(plan, section, inspection, path, existing_blocks, *, source_view=None, trusted_brand_refs=()):
     """Keep the existing cover only when each selected contribution matches.
 
     Unknown header art remains in the source and is not assigned or approved.
@@ -292,12 +292,19 @@ def reuse_identical_saved_cover(plan, section, inspection, path, existing_blocks
                      for block in (existing_blocks.get(key),)
                      if block is not None and block.source != "Omit"
                      for reference in block.asset_hashes[:1]}
+        # Verified shared brand assets can identify an additional source logo,
+        # even when the current report still contains an older logo. They never
+        # replace or mutate that current report's saved branding here.
+        trusted_used = set()
         for candidate in candidates:
             if candidate.id == chosen_photo:
                 continue
             image = read_import_image(path, candidate, line_art=True, preserve_transparency=True)
-            if hashlib.sha256(image.data).hexdigest() + "." + image.extension not in logo_refs:
-                return plan
+            candidate_ref = hashlib.sha256(image.data).hexdigest() + "." + image.extension
+            if candidate_ref not in logo_refs:
+                if candidate_ref not in trusted_brand_refs:
+                    return plan
+                trusted_used.add(candidate_ref)
         for identity in selected:
             item, slot = items[identity], destinations.get(identity)
             current = existing_blocks.get(slot)
@@ -320,7 +327,8 @@ def reuse_identical_saved_cover(plan, section, inspection, path, existing_blocks
         return plan
     return {**plan, "action": "Leave this section out", "omit": True,
             "selected": [], "destinations": {}, "questions": (), "approved": True,
-            "automatic_identical_cover_reuse": True}
+            "automatic_identical_cover_reuse": True,
+            "automatic_brand_identity_refs": tuple(sorted(trusted_used))}
 
 
 def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_design=False, source_view=None,

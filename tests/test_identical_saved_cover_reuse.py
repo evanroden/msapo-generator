@@ -156,3 +156,73 @@ def test_actual_reentry_auto_reuses_identical_cover_and_offers_restore(monkeypat
     state=next(v for k,v in app.session_state.filtered_state.items() if k.endswith('_section_plans'))
     assert not state['cover'].get('automatic_identical_cover_reuse') and not state['cover']['approved']
     assert source.read_bytes()==raw and library.load_profile(working.profile.contract,working.profile.key)==saved
+
+
+def test_verified_shared_brand_identifies_source_logo_without_overwriting_saved_brand(tmp_path,monkeypatch):
+    source,section,inspection,blocks,plan=fixture(tmp_path,monkeypatch)
+    body=ImportItem('body-unknown','image','word/document.xml',1,1,section='cover',suggested_slot='cover_photo',image_part='word/media/company.png',image_width=497,image_height=80)
+    section=replace(section,items=section.items+(body,))
+    saved=deepcopy(blocks);trusted=sha256(b'unclassified').hexdigest()+'.png'
+    assert not reuse_identical_saved_cover(plan,section,inspection,source,blocks).get('automatic_identical_cover_reuse')
+    result=reuse_identical_saved_cover(plan,section,inspection,source,blocks,trusted_brand_refs=(trusted,))
+    assert result.get('automatic_identical_cover_reuse') and result['omit']
+    assert blocks==saved
+    assert not reuse_identical_saved_cover(plan,section,inspection,source,blocks,trusted_brand_refs=('wrong.png',)).get('automatic_identical_cover_reuse')
+
+
+@pytest.mark.parametrize("action", ("save", "catalog_change"))
+def test_existing_report_reuses_cover_with_verified_shared_brand_and_rechecks_revision(monkeypatch,tmp_path,action):
+    from io import BytesIO
+    from docx import Document
+    from docx.shared import Inches
+    from PIL import Image
+    from app import monthly_report_library as library
+    from app import monthly_report_branding as branding
+    from app.monthly_report_import import inspect_docx,read_import_image
+    from app.monthly_report_start_import import cover_photo_candidates
+    from app.monthly_report_sections import section_reviews
+    from app.monthly_report_model import synthetic_profiles
+    from test_monthly_report_cover_art_recovery import existing_app
+    d=Document();d.add_heading(synthetic_profiles()[0].facilities[0].title,0);d.add_paragraph('September 2026')
+    brand=BytesIO();Image.new('RGB',(500,80),'green').save(brand,'PNG');d.add_picture(BytesIO(brand.getvalue()),width=Inches(3))
+    photo=BytesIO();Image.new('RGB',(600,400),'purple').save(photo,'PNG');d.add_picture(BytesIO(photo.getvalue()),width=Inches(5))
+    header=BytesIO();Image.new('RGB',(200,200),'blue').save(header,'PNG');d.sections[0].header.paragraphs[0].add_run().add_picture(BytesIO(header.getvalue()),width=Inches(1))
+    d.add_heading('Monthly Activity Summary',1);d.add_paragraph('Synthetic service completed.')
+    d.add_heading('Sub-Contractor Status',1)
+    vendor=d.add_table(rows=2,cols=3)
+    for index,value in enumerate(('Discipline','Synthetic Site','MSA')):vendor.cell(0,index).text=value
+    for index,value in enumerate(('Synthetic trade','Synthetic vendor','Active')):vendor.cell(1,index).text=value
+    source=tmp_path/'invented-source.docx';d.save(source)
+    app,working,saved,_,assets=existing_app(monkeypatch,tmp_path,source)
+    inspection=inspect_docx(source);section=next(s for s in section_reviews(inspection) if s.key=='cover');candidates=cover_photo_candidates(section.items)
+    selected_photo=max(candidates,key=lambda x:x.image_width*x.image_height)
+    source_brand=next(x for x in candidates if x.id!=selected_photo.id)
+    logo=read_import_image(source,source_brand,line_art=True,preserve_transparency=True);logo_ref=library.asset_reference(logo.data,logo.extension)
+    item=branding.BrandLogo('enfra','ENFRA',(),logo_ref,'https://example.com','https://example.com/logo.png','2026-10-22')
+    branding.save_branding((item,),{logo_ref:logo.data},expected_revision=0,actor='Synthetic',confirmed=True)
+    cover=read_import_image(source,selected_photo,line_art=False,preserve_transparency=False);ref=library.asset_reference(cover.data,cover.extension);assets[ref]=cover.data
+    working=replace(working,blocks=tuple(replace(b,asset_hashes=(ref,)) if b.key=='cover_photo' else b for b in working.blocks))
+    app.session_state['working']=working;app.session_state['assets']=assets
+    for k in list(app.session_state.filtered_state):
+        if k.endswith(('_analysis_signature','_section_plans')):del app.session_state[k]
+    app.run();assert not app.exception
+    plans=next(v for k,v in app.session_state.filtered_state.items() if k.endswith('_section_plans'))
+    assert plans['cover'].get('automatic_identical_cover_reuse')
+    assert plans['cover']['automatic_brand_identity_refs']==(logo_ref,)
+    if action=='save':
+        from test_monthly_report_cover_art_recovery import continue_button
+        assert not continue_button(app).disabled
+        continue_button(app).click().run()
+        assert not app.exception and not app.error
+        imported=library.load_imported_draft(working.profile.contract,working.profile.key)
+        vendor_block=next(b for b in imported.blocks if b.key=='subcontractor_matrix')
+        assert any('Active' in row for table in vendor_block.extra_tables for row in table.rows)
+        assert next(b for b in imported.blocks if b.key=='brand_logo')==next(b for b in working.blocks if b.key=='brand_logo')
+        return
+    activity=deepcopy(plans['activity'])
+    other=BytesIO();Image.new('RGB',(500,80),'orange').save(other,'PNG');raw=other.getvalue();other_ref=library.asset_reference(raw,'png')
+    branding.save_branding((replace(item,asset=other_ref),),{other_ref:raw},expected_revision=1,actor='Synthetic',confirmed=True)
+    app.run();assert not app.exception
+    revised=next(v for k,v in app.session_state.filtered_state.items() if k.endswith('_section_plans'))
+    assert not revised['cover'].get('automatic_identical_cover_reuse')
+    assert revised['activity']==activity
