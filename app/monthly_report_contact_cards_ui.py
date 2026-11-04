@@ -215,7 +215,9 @@ def edit_contact_tables(tables, key, field, label, *, vendor=False, prepare=None
     for ti, table in enumerate(tables):
         if len(tables) > 1:
             st.write(f'Contact table {ti + 1}')
-        entries = [(ri, row) for ri, row in enumerate(table.rows) if active != (ti, ri)]
+        # Preserve source spacer rows without presenting invented vendor cards.
+        entries = [(ri, row) for ri, row in enumerate(table.rows)
+                   if active != (ti, ri) and (not vendor or any(str('' if value is None else value).strip() for value in row))]
         if active is not None and active[0] == ti:
             ri = active[1]
             row = table.rows[ri] if ri < len(table.rows) else tuple('' for _ in table.columns)
