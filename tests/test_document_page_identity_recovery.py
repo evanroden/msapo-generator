@@ -155,14 +155,19 @@ def test_storage_generic_and_native_word_keep_original_pictures_and_captions(tmp
 
 def test_saved_reopened_bad_identity_keeps_evidence_and_historical_snapshot(tmp_path, monkeypatch):
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
-    draft, _ = sample("²", approved=True)
-    before = library.save_snapshot(draft, expected_revision=0, entered_editor=draft.prepared_by)
+    draft, assets = sample("²", approved=True)
+    before = library.save_snapshot(draft, expected_revision=0, entered_editor=draft.prepared_by,
+                                   assets=tuple(assets.items()))
     reopened = library.load_snapshot(draft.profile.contract, draft.profile.key, draft.period)
     assert reopened == before
+    assert {asset: library.read_asset(draft.profile.contract, draft.profile.key, asset)
+            for asset in assets} == assets
     assert any(check.code == "client_pages" and check.blocking for check in preflight(reopened.draft))
     assert section_preview_fingerprint(reopened.draft, "activity")
     corrected, _ = sample("1")
     library.save_snapshot(corrected, expected_revision=1, entered_editor=draft.prepared_by)
     assert library.load_snapshot_version(draft.profile.contract, draft.profile.key, draft.period, 1) == before
     assert library.load_snapshot(draft.profile.contract, draft.profile.key, draft.period).draft == corrected
+    assert {asset: library.read_asset(draft.profile.contract, draft.profile.key, asset)
+            for asset in assets} == assets
 
