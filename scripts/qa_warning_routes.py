@@ -390,8 +390,47 @@ def exercise(engine,name,mode,scenario,base):
         return page.locator('.st-key-'+prefix+suffix+' button')
     def jump(code,control,block=None,*,source_page=False,ordinal=None):
         navigate_sections(page,'report_review',keyboard=keyboard)
+        if code in ('source_facility', 'client_source_page'):
+            # Passive synthetic-only geometry samples diagnose late scroll/resize.
+            page.evaluate('''() => {
+                const samples=[]; window.__warningGeometry=samples;
+                const start=performance.now(); let last='';
+                function sample() {
+                    const e=document.activeElement, r=e?.getBoundingClientRect?.();
+                    const sc=document.querySelector('[data-testid="stMain"]');
+                    const x={t:Math.round(performance.now()-start),role:e?.getAttribute?.('role')||null,
+                        label:e?.getAttribute?.('aria-label')||null,top:r?Math.round(r.top):null,
+                        bottom:r?Math.round(r.bottom):null,scroll:sc?Math.round(sc.scrollTop):null};
+                    const key=JSON.stringify([x.role,x.label,x.top,x.bottom,x.scroll]);
+                    if(key!==last && samples.length<100){samples.push(x);last=key;}
+                    if(performance.now()-start<7000) requestAnimationFrame(sample);
+                } requestAnimationFrame(sample);
+            }''')
         commit(warning_action(code,block,source_page=source_page,ordinal=ordinal))
-        focus_proof(control);capture('focused-'+code+('-source' if source_page else ''))
+        focus_proof(control)
+        if scenario=='source' and code=='source_facility':
+            # Independent synthetic layout control: grow a temporary block above
+            # this exact form after focus, then remove it without changing data.
+            shifted=control.evaluate("""field => {
+                const form=field.closest('[class*="st-key-source_detail_editor_"]');
+                if (!form?.parentElement) throw Error('Exact source form is unavailable');
+                const scrollport=field.closest('[data-testid=\"stMain\"]');
+                if (scrollport) { scrollport.dataset.syntheticOverflowAnchor=scrollport.style.overflowAnchor; scrollport.style.overflowAnchor='none'; }
+                const spacer=document.createElement('div');
+                spacer.id='synthetic-warning-layout-shift';
+                spacer.style.height='1500px';
+                form.parentElement.insertBefore(spacer,form);
+                return {top:field.getBoundingClientRect().top, viewport:window.innerHeight};
+            }""")
+            assert shifted['top'] > shifted['viewport'], shifted
+            try:
+                expect(page.locator('#synthetic-warning-layout-shift')).to_have_count(1)
+                expect(control).to_be_focused()
+                expect(control).to_be_in_viewport(ratio=1)
+                expect(page.locator('#synthetic-warning-layout-shift')).to_have_count(1)
+            finally:
+                page.locator('#synthetic-warning-layout-shift').evaluate("node => { const root=node.closest('[data-testid=\"stMain\"]'); node.remove(); if(root){root.style.overflowAnchor=root.dataset.syntheticOverflowAnchor || ''; delete root.dataset.syntheticOverflowAnchor;} }")
+        capture('focused-'+code+('-source' if source_page else ''))
         return_review()
         # Deliberate second activation proves a new action remains usable; it is
         # not a retry of a failed click. The first focus assertion already passed.
@@ -545,6 +584,10 @@ def exercise(engine,name,mode,scenario,base):
             print('WARNING_ROUTE_FAILURE_FOCUS '+json.dumps({'case':key,'focus':focus}),flush=True)
         except Exception as focus_error:
             print('WARNING_ROUTE_FAILURE_FOCUS_UNAVAILABLE '+str(focus_error)[:300],flush=True)
+        try:
+            print('WARNING_ROUTE_GEOMETRY '+json.dumps({'case':key,'samples':page.evaluate('window.__warningGeometry || []')}),flush=True)
+        except Exception as geometry_error:
+            print('WARNING_ROUTE_GEOMETRY_UNAVAILABLE '+str(geometry_error)[:300],flush=True)
         raise
     finally:
         for action in (lambda:context.tracing.stop(path=str(output/'trace.zip')),context.close,browser.close):
@@ -597,3 +640,4 @@ if __name__=='__main__':
     except Exception as exc:
         REPORT['result']='failed';REPORT['failures'].append(type(exc).__name__+': '+str(exc))
         OUT.mkdir(parents=True,exist_ok=True);(OUT/'results.json').write_text(json.dumps(REPORT,indent=2));raise
+
