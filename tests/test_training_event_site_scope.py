@@ -152,18 +152,22 @@ def draft_for(content):
         (ResolvedBlock("training_summary", "This month", text="Manual notes"),), sources=(content.source,), synthetic=True)
 
 
-@pytest.fixture
-def read_only_source(monkeypatch):
-    """Real CSV parsing; only persisted byte lookup/reingest is supplied in memory."""
-    digest = sha256(CSV).hexdigest()
-    tables = sources._spreadsheet(CSV, ".csv")
-    source = ReportSource(digest, "training.csv", digest, ".csv",
+def parsed_draft(monkeypatch, raw=CSV, suffix=".csv"):
+    """Real parsing; only persisted byte lookup/reingest is supplied in memory."""
+    digest = sha256(raw).hexdigest()
+    tables = sources._spreadsheet(raw, suffix)
+    source = ReportSource(digest, "training" + suffix, digest, suffix,
         page_texts=tuple("\n".join(["\t".join(t.columns), *("\t".join(r) for r in t.rows)]) for t in tables))
     source = correct_scope(source, PROFILE, ("north",))
     content = sources.SourceContent(source, tables)
     monkeypatch.setattr(flow, "source_content", lambda draft, original: content)
-    monkeypatch.setattr(sources, "source_bytes", lambda profile, original: CSV)
+    monkeypatch.setattr(sources, "source_bytes", lambda profile, original: raw)
     return draft_for(content)
+
+
+@pytest.fixture
+def read_only_source(monkeypatch):
+    return parsed_draft(monkeypatch)
 
 
 def prepare(draft):
@@ -350,3 +354,80 @@ def test_public_storage_saved_review_reopen_history_and_word(tmp_path, monkeypat
     output = Document(BytesIO(build_native_docx(accepted, path, section_key="training")))
     rows = [tuple(c.text for c in row.cells) for table in output.tables for row in table.rows]
     assert EVENT[:5] in rows and not any("Foreign South drill" in row for row in rows)
+
+
+def spreadsheet_bytes(suffix, headers, rows):
+    if suffix == ".csv":
+        import csv
+        from io import StringIO
+        buffer = StringIO(newline="")
+        writer = csv.writer(buffer)
+        writer.writerows((headers, *rows))
+        return buffer.getvalue().encode()
+    workbook = Workbook()
+    for row in (headers, *rows):
+        workbook.active.append(row)
+    buffer = BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
+@pytest.mark.parametrize("suffix", [".csv", ".xlsx"])
+@pytest.mark.parametrize("heading", ["Site", "Facility", "Hospital", "Location"])
+def test_adapter_numbered_duplicate_sites_require_review(monkeypatch, suffix, heading):
+    raw = spreadsheet_bytes(suffix, (*COLUMNS, heading, heading), ((*EVENT, "North", "Site South"),))
+    draft, value, request = prepare(parsed_draft(monkeypatch, raw, suffix))
+    current = restore_training_review(value["record"])
+    assert current.original_columns[-2:] == (heading, heading + " (2)")
+    assert not current.ready_for_import
+    assert any("site" in message.casefold() for message in current.rows[0].issues)
+    assert current.rows[0].origin.cells[-2:] == ("North", "Site South")
+    with pytest.raises(ValueError, match="Review"):
+        publish(draft, value, request)
+    assert not draft.blocks[0].extra_tables
+
+
+@pytest.mark.parametrize("heading", ["Site (2)", "Site (10)", "Site (2) (2)"])
+def test_authored_heading_identical_to_adapter_suffix_stays_ambiguous(heading):
+    # The adapter cannot distinguish a literal heading from its generated name.
+    # Even a selected site's value must not invent that missing column authority.
+    current = review((*COLUMNS, heading), ((*EVENT, "North"),))
+    assert not current.ready_for_import
+    assert current.original_columns[-1] == heading
+    assert current.rows[0].origin.cells[-1] == "North"
+
+
+@pytest.mark.parametrize("heading", ["Site Notes (2)", "Site (1)", "Site(2)", "Site (02)", "Site 2"])
+def test_unrelated_or_non_adapter_numbered_headings_are_unchanged(heading):
+    current = review((*COLUMNS, "Site", heading), ((*EVENT, "North", "Unmapped source note"),))
+    assert current.ready_for_import
+    assert current.unmapped_cells(current.rows[0].key)[-1] == (7, heading, "Unmapped source note")
+
+
+@pytest.mark.parametrize("suffix", [".csv", ".xlsx"])
+@pytest.mark.parametrize("retained", [False, True])
+def test_adapter_duplicate_site_review_widgets_block_new_and_old_receipts(monkeypatch, suffix, retained):
+    raw = spreadsheet_bytes(suffix, (*COLUMNS, "Site", "Site"),
+        ((*EVENT, "North", "North"), (*FOREIGN, "North", "Site South")))
+    draft = parsed_draft(monkeypatch, raw, suffix)
+    if retained:
+        draft, value, _ = prepare(draft)
+        current = restore_training_review(value["record"])
+        old = replace(current, rows=tuple(replace(row, issues=()) for row in current.rows))
+        draft = flow.store_review(draft, {**value, "record": training_review_record(old)}, flow.revision(value))
+    app = AppTest.from_string(APP, default_timeout=30)
+    app.session_state["draft"] = draft
+    app.run()
+    assert not app.exception
+    if not retained:
+        click(app, "Review this Training table")
+    before = app.session_state["draft"]
+    assert "site" in app.dataframe[0].value.iloc[1]["Review needed"].casefold()
+    click(app, "Include reviewed Training rows")
+    assert app.session_state["draft"] == before and not before.blocks[0].extra_tables
+    widget(app, "selectbox", "Training row to review").select(1).run()
+    assert any("Site South" in item.value for item in app.text)
+    widget(app, "text_input", "Hours").set_value("1.5")
+    click(app, "Save Training row review")
+    click(app, "Include reviewed Training rows")
+    assert not app.session_state["draft"].blocks[0].extra_tables

@@ -287,10 +287,16 @@ def review_training_event_sites(review, profile):
         return review
     rows = []
     for row in review.rows:
-        positions = _column_positions(row.origin.columns, SITE)
+        # The spreadsheet adapter disambiguates duplicate headings with " (2)"
+        # onward. A literal heading with that exact shape is indistinguishable:
+        # retain its cells and require review rather than invent site authority.
+        headings = tuple(re.sub(r"(?: \((?:[2-9]|[1-9][0-9]+)\))+$", "", heading)
+                         for heading in row.origin.columns)
+        positions = _column_positions(headings, SITE)
+        numbered = any(headings[index] != row.origin.columns[index] for index in positions)
         issue = ""
-        if len(positions) > 1:
-            issue = "Multiple source Training site columns need review. Omit this row or correct the original source."
+        if len(positions) > 1 or numbered:
+            issue = "Ambiguous source Training site columns need review. Omit this row or correct the original source."
         elif positions and not _normalize_site(row.origin.cells[positions[0]], profile):
             issue = "Source Training site is missing, ambiguous or outside selected sites. Omit this row or correct the original source."
         if issue and issue not in row.issues:
