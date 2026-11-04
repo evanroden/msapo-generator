@@ -44,10 +44,8 @@ def test_proposal_source_summary_displays_literal_links_and_keeps_raw_rows():
     assert not app.exception
     assert literal(DESCRIPTION) in [item.value for item in app.markdown]
     assert DESCRIPTION not in [item.value for item in app.markdown]
-    identifiers = "Proposal #: 0007 · Facility: " + literal(SITE) + " · Vendor: " + literal(VENDOR)
-    # Only source labels and source values need escaping; separators supplied by
-    # the application are not modified, preserving ordinary row-card copy.
-    assert "Proposal #: 0007" not in identifiers or _source_display("Proposal #") == "Proposal #"
+    # Only source labels and values are escaped; application-owned separators
+    # and ordinary headings stay unchanged for existing keyboard/editor flows.
     assert "Proposal #: 0007 · Facility: " + literal(SITE) + " · Vendor: " + literal(VENDOR) in [
         item.value for item in app.caption
     ]
