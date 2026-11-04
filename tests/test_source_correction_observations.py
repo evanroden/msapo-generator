@@ -30,7 +30,7 @@ def observer_source(tmp_path_factory):
     "admission", "input-flags", "intermediate-geometry", "unrelated-pointer", "before-gesture",
     "pointerup", "pointercancel", "wheel", "keydown", "blur", "pagehide",
     "visibilitychange", "identity-changes", "sample-limit", "reinstall",
-    "passive-traps",
+    "passive-traps", "descendant-blur-outside", "descendant-blur-button",
 ])
 def test_cold_gesture_observer_contract(observer_source, case):
     run = subprocess.run(
@@ -134,8 +134,10 @@ def test_first_gesture_is_collected_before_reload_and_from_finally():
     assert call_line(journey.finalbody, "_capture_cold_gesture_observations")
 
 
-@pytest.mark.parametrize("valid", [True, False])
-def test_success_path_requires_collected_evidence_before_reload(valid):
+@pytest.mark.parametrize("outcome", [
+    "complete", "missing", "descendant-blur", "unfinished", "sample-limit", "different-pointer",
+])
+def test_success_path_requires_collected_evidence_before_reload(outcome):
     """Execute the real pre-reload collection/assertion statements in isolation."""
     function = ast.parse(inspect.getsource(qa.browser_task)).body[0]
     journey = next(node for node in function.body if isinstance(node, ast.Try))
@@ -146,7 +148,7 @@ def test_success_path_requires_collected_evidence_before_reload(valid):
                 and statement.value.func.id == "_capture_cold_gesture_observations"):
             selected.append(statement)
             for following in journey.body[position + 1:]:
-                if not isinstance(following, ast.Assert):
+                if not isinstance(following, (ast.Assign, ast.Assert)):
                     break
                 selected.append(following)
             break
@@ -154,15 +156,33 @@ def test_success_path_requires_collected_evidence_before_reload(valid):
 
     class Page:
         def evaluate(self, expression):
-            return {"sampleLimit": 128, "samples": [{"type": "pointerdown"}]} if valid else None
+            if outcome == "missing":
+                return None
+            samples = [{"type": "pointerdown", "event": {"pointerId": 7}}]
+            reason, truncated = "pointerup", False
+            if outcome in {"complete", "different-pointer"}:
+                samples.append({"type": "pointerup", "event": {
+                    "pointerId": 9 if outcome == "different-pointer" else 7}})
+            elif outcome == "descendant-blur":
+                samples.append({"type": "blur", "event": {"targetTag": "BUTTON", "pointerId": None}})
+                reason = "blur"
+            elif outcome == "unfinished":
+                reason = None
+            elif outcome == "sample-limit":
+                samples.extend([{"type": "animation-frame", "event": None}] * 127)
+                reason, truncated = "sample-limit", True
+            return {"sampleLimit": 128, "samples": samples, "stopReason": reason, "truncated": truncated}
 
     record = {}
     code = compile(ast.Module(body=selected, type_ignores=[]), "source-observation-success-gate", "exec")
     namespace = {"page": Page(), "record": record, "_capture_cold_gesture_observations": collector()}
-    if valid:
+    if outcome == "complete":
         exec(code, namespace)
         assert record["cold_gesture_observations"]["samples"][0]["type"] == "pointerdown"
     else:
         with pytest.raises(AssertionError):
             exec(code, namespace)
-        assert "cold_gesture_observation_failure" in record
+        if outcome == "missing":
+            assert "cold_gesture_observation_failure" in record
+        else:
+            assert "cold_gesture_observations" in record, "Keep incomplete evidence for diagnosis"

@@ -161,7 +161,12 @@ def observe_correction_navigation(page):
             });
         for (const type of ['blur', 'pagehide'])
             listen(window, type, event => {
-                if (watched) {sample(type, event); stop(type);}
+                if (watched) {
+                    sample(type, event);
+                    // Capture also sees ordinary descendant focus changes.
+                    // Only the window itself losing focus ends this gesture.
+                    if (type !== 'blur' || event.target === window) stop(type);
+                }
             });
     }""")
 
@@ -346,6 +351,14 @@ def browser_task(browser_type, name):
         _capture_cold_gesture_observations(page, record)
         assert ("cold_gesture_observations" in record
                 and "cold_gesture_observation_failure" not in record), record.get("cold_gesture_observation_failure")
+        cold_gesture = record["cold_gesture_observations"]
+        assert (cold_gesture.get("stopReason") == "pointerup"
+                and cold_gesture.get("truncated") is False
+                and cold_gesture["samples"][-1].get("type") == "pointerup"
+                and cold_gesture["samples"][0].get("event", {}).get("pointerId") is not None
+                and cold_gesture["samples"][-1].get("event", {}).get("pointerId")
+                == cold_gesture["samples"][0].get("event", {}).get("pointerId")), (
+                    "Successful cold navigation requires observations through its matching pointerup.", cold_gesture)
         page.set_viewport_size({"width": 390, "height": 844})
         record["stage"] = "narrow reload and keyboard date re-entry"
         page.reload(wait_until="domcontentloaded")

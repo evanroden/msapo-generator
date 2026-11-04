@@ -113,13 +113,23 @@ function fixture() {
     const fire = (type, fields = {}, surface = 'document') => {
         config.time++;
         const pointer = type.startsWith('pointer') || type === 'click';
-        const event = {type, isTrusted: true,
+        const event = {type, isTrusted: true, bubbles: type !== 'blur',
             target: surface === 'window' ? window : type === 'visibilitychange' ? document : nodes.span,
             ...(pointer ? {isPrimary: true, button: 0, pointerType: 'mouse', pointerId: 7, clientX: 40, clientY: 320} : {}),
             preventDefault: () => deny('prevent event'), stopPropagation: () => deny('stop event'),
             stopImmediatePropagation: () => deny('stop event'), ...fields};
-        for (const callback of [...(buses[surface].get(type) || [])])
-            if (buses[surface].get(type).has(callback)) callback(event);
+        // All installed listeners use capture. Even non-bubbling descendant
+        // blur reaches window before document; direct-window-only delivery
+        // concealed the premature stop seen in both hosted browser engines.
+        const deliver = name => {
+            event.currentTarget = name === 'window' ? window : name === 'document' ? document : nodes[name];
+            event.eventPhase = event.target === event.currentTarget ? 2 : 1;
+            for (const callback of [...(buses[name].get(type) || [])])
+                if (buses[name].get(type).has(callback)) callback(event);
+        };
+        if (surface !== 'window') deliver('window');
+        if (!['window', 'document'].includes(surface)) deliver('document');
+        deliver(surface);
     };
     const frame = () => {config.time += 16; for (const [id, callback] of [...frames]) {frames.delete(id); callback(config.time);}};
     const resize = () => {config.time++; for (const observer of observers) if (observer.live)
@@ -199,6 +209,24 @@ cases['before-gesture'] = () => {
         assert.equal(h.live(), 1);
     }
 };
+for (const target of ['outside', 'button']) {
+    cases['descendant-blur-' + target] = () => {
+        const h = fixture(); h.fire('pointerdown');
+        h.fire('blur', {target: h.nodes[target]});
+        assert.equal(h.last().type, 'blur');
+        assert.equal(h.last().event.targetTag, 'BUTTON');
+        assert.equal(h.last().event.targetInButton, target === 'button');
+        assert.equal(h.record().stopReason, null, 'descendant focus changes must not end pointer evidence');
+        assert.equal(h.live(), 1); assert.equal(h.frames.size, 1);
+        h.config.offset += 218; h.config.main.scrollHeight += 218; h.resize(); h.frame();
+        h.fire('pointerup');
+        assert.equal(h.last().type, 'pointerup'); assert.equal(h.last().button.rect.y, 518);
+        assert.equal(h.record().stopReason, 'pointerup'); assert.equal(h.record().truncated, false);
+        assert.equal(h.live(), 0); assert.equal(h.frames.size, 0);
+        assert.equal(h.listenerCount('window'), 0); assert.equal(h.listenerCount('main'), 0);
+        assert.equal(h.listenerCount('document'), 6);
+    };
+}
 for (const type of ['pointerup', 'pointercancel', 'wheel', 'keydown', 'blur', 'pagehide', 'visibilitychange']) {
     cases[type] = () => {
         const h = fixture(); h.fire('pointerdown');
