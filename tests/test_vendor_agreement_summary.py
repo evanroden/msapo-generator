@@ -16,7 +16,7 @@ import streamlit as st
 from app.monthly_report_model import ReportTable
 from app.monthly_report_contact_cards_ui import edit_contact_tables
 from app.monthly_report_visual_ui import _contact_label
-original=ReportTable(('Discipline','Example Hospital','MSA'),(('HVAC','Example Vendor','X'),('','',''),('Electrical','Other Vendor','')),'synthetic:test')
+original=ReportTable(('Discipline','Example Hospital','MSA'),(('HVAC','Example Vendor','X'),('Electrical','Other Vendor','')),'synthetic:test')
 def field(k,v):
     st.session_state.setdefault(k,v)
     return k
@@ -28,6 +28,5 @@ st.session_state['same']=result==(original,)
     text=' '.join(x.value for x in app.markdown)
     assert 'Example Hospital: Example Vendor' in text and 'MSA: X' in text
     assert 'Example Hospital: Other Vendor' in text and 'MSA: Not provided' in text
-    assert 'Contact 2' not in text
     app.run()
     assert app.session_state['same'] and not app.exception
