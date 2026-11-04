@@ -275,3 +275,47 @@ def test_a_real_private_store_still_opens_after_the_move(tmp_path):
     moved = SharedSourceBundles(target)
     assert moved.list() == (receipt,)
     assert moved.download(receipt.bundle_id) == original
+
+
+def test_pooled_report_objects_keep_their_hard_links(tmp_path, monkeypatch):
+    # The report object pool stores one file and hard-links every report path
+    # to it; retention deletes a pooled object whose link count drops to 1.
+    from app.monthly_report_objects import object_path, store_bytes
+    source = tmp_path / "render-disk"
+    monkeypatch.setenv("EPC_DATA_DIR", str(source))
+    raw = os.urandom(1 << 20)
+    name = hashlib.sha256(raw).hexdigest() + ".png"
+    paths = [source / "monthly_reports" / "library" / f"contract-{n}" / name for n in range(10)]
+    for path in paths:
+        store_bytes(path, raw)
+    pooled = object_path(paths[0])
+    assert pooled.stat().st_nlink == 11
+    archive = tmp_path / "a.tar.gz"
+    result = export(source, archive)
+    assert result["totals"]["links"] == 10 and result["totals"]["bytes"] < 2 * len(raw)
+    target = tmp_path / "azure-share"
+    target.mkdir()
+    restore(archive, target)
+    monkeypatch.setenv("EPC_DATA_DIR", str(target))
+    restored = [target / path.relative_to(source) for path in paths]
+    assert object_path(restored[0]).stat().st_nlink == 11
+    assert all(os.path.samefile(path, object_path(restored[0])) for path in restored)
+    assert restored[3].read_bytes() == raw
+    # Files that were never linked stay single (private stores require it).
+    assert all(path.stat().st_nlink == 1 for path in target.rglob("*")
+               if path.is_file() and not os.path.samefile(path, object_path(restored[0])))
+
+
+def test_hard_links_in_a_manifest_must_point_at_an_archived_file(data, tmp_path):
+    archive = tmp_path / "a.tar.gz"
+    export(data, archive)
+
+    def change(name, payload):
+        if name == "MANIFEST.json":
+            manifest = json.loads(payload)
+            manifest["links"].append({"path": "copy.db", "target": "epc_memory.db"})
+            return name, json.dumps(manifest).encode()
+        return name, payload
+    _rewrite(archive, change)
+    with pytest.raises(MigrationError, match="Unexpected hard link"):
+        verify(archive)

@@ -174,7 +174,8 @@ def export(source: Path, output: Path) -> dict:
     databases = {rel for rel, absolute, kind in entries if kind == "file" and _is_sqlite(absolute)}
     companions = {db + suffix for db in databases for suffix in SQLITE_COMPANIONS}
     manifest = {"format": FORMAT, "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                "source": str(source), "directories": [], "files": [], "skipped": []}
+                "source": str(source), "directories": [], "files": [], "links": [], "skipped": []}
+    linked = {}  # (device, inode) -> the first archived path of a hard-link group
     partial = output.with_name(output.name + ".partial")
     try:
         with tempfile.TemporaryDirectory() as workdir, tarfile.open(partial, "w:gz") as archive:
@@ -187,7 +188,20 @@ def export(source: Path, output: Path) -> dict:
                 if rel in companions:
                     manifest["skipped"].append({"path": rel, "reason": "SQLite companion; the database copy is self-contained"})
                     continue
-                info = absolute.stat()
+                try:
+                    info = absolute.stat()
+                except FileNotFoundError:
+                    manifest["skipped"].append({"path": rel, "reason": "removed during export"})
+                    continue
+                identity = (info.st_dev, info.st_ino)
+                if rel not in databases and info.st_nlink > 1:
+                    # The report object pool keeps one file and hard-links each
+                    # report path to it, and the app counts those links. Record
+                    # the same links instead of turning each into its own copy.
+                    first = linked.setdefault(identity, rel)
+                    if first != rel:
+                        manifest["links"].append({"path": rel, "target": first})
+                        continue
                 record = {"path": rel, "mode": stat.S_IMODE(info.st_mode), "mtime": info.st_mtime,
                           "kind": "sqlite" if rel in databases else "file"}
                 if rel in databases:
@@ -200,6 +214,8 @@ def export(source: Path, output: Path) -> dict:
                     except FileNotFoundError:
                         # Removed by the app (retention, temporary output) after the walk.
                         manifest["skipped"].append({"path": rel, "reason": "removed during export"})
+                        if linked.get(identity) == rel:
+                            del linked[identity]  # the next path of the group carries the content
                         continue
                     except OSError as error:
                         raise MigrationError(f"Cannot read {absolute}: {error.strerror}") from None
@@ -207,7 +223,7 @@ def export(source: Path, output: Path) -> dict:
                         _add_bytes(archive, f"{DATA}/{rel}", stream, record["mode"], info.st_mtime, record)
                 manifest["files"].append(record)
             manifest["totals"] = {"files": len(manifest["files"]), "databases": len(databases),
-                                  "directories": len(manifest["directories"]),
+                                  "directories": len(manifest["directories"]), "links": len(manifest["links"]),
                                   "bytes": sum(item["size"] for item in manifest["files"])}
             encoded = json.dumps(manifest, indent=2, sort_keys=True).encode("utf-8")
             info = tarfile.TarInfo(MANIFEST)
@@ -261,6 +277,12 @@ def _members(archive_path: Path, write_into: Path | None = None) -> dict:
         for item in manifest["directories"]:
             _safe_relative(item["path"])
         expected = {_safe_relative(item["path"]): item for item in manifest["files"]}
+        link_paths = set()
+        for item in manifest.get("links", []):
+            path, target = _safe_relative(item["path"]), _safe_relative(item["target"])
+            if path in expected or path in link_paths or expected.get(target, {}).get("kind") != "file":
+                raise MigrationError(f"Unexpected hard link in the archive: {path!r} -> {target!r}")
+            link_paths.add(path)
         seen = set()
         for member in archive:
             if member.name == MANIFEST:
@@ -318,6 +340,9 @@ def restore(archive_path: Path, target: Path, *, replace_existing: bool = False)
         manifest = _members(archive_path, write_into=staging)
         for item in manifest["directories"]:
             (staging / item["path"]).mkdir(parents=True, exist_ok=True)
+        for item in manifest.get("links", []):
+            (staging / item["path"]).parent.mkdir(parents=True, exist_ok=True)
+            os.link(staging / item["target"], staging / item["path"])
         # After every file is written (a read-only folder could not take
         # them), so folders created on the way get their recorded modes too.
         for item in manifest["directories"]:
@@ -364,7 +389,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "export":
             result = export(args.source, args.output)
             print(f"Exported {result['totals']['files']} files ({result['totals']['databases']} SQLite databases, "
-                  f"{result['totals']['bytes']:,} bytes) to {args.output.resolve()}")
+                  f"{result['totals']['links']} hard links, {result['totals']['bytes']:,} bytes) to {args.output.resolve()}")
             print(f"Archive SHA-256: {result['archive_sha256']} (also in {args.output.resolve()}.sha256)")
             if result["skipped"]:
                 print(f"Not copied: {len(result['skipped'])} entries (SQLite companions, or files removed during export).")
