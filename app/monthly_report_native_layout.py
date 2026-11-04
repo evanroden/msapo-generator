@@ -1928,6 +1928,16 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                 key = "native_followups_" + sec
                 specs[key] = (sec, type("TextSpec", (), {"type": "rich_text", "columns": ()})())
                 render_blocks.append(ResolvedBlock(key, "This month", text="\n".join(texts)))
+    # Bound original chart occurrences are already proved against the exact
+    # image bytes and source reference. Their body nodes may be retained rather
+    # than emitted again; never infer chart ownership from visual appearance.
+    organization_chart_roots = [
+        original[item.position - 1] for item in inspection.items
+        if item.part == "word/document.xml" and item.id in image_proofs
+        and image_proofs[item.id][0] == "org_chart"
+        and 0 < item.position <= len(original)
+    ]
+    organization_contact_tables = []
     for block in render_blocks:
         if block.source == "Omit" or block.key not in specs or block.key in unchanged:
             continue
@@ -2061,6 +2071,8 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                        continuation=bool(shape and shape.continuation),
                        keep_all_rows_intact=(block.key == "contact_matrix"), template=prototype)
                 page_plan.emitted(anchor, kind="table")
+                if block.key == "contact_matrix":
+                    organization_contact_tables.append(anchor)
                 label = work_order_labels.get(anchor)
                 if label is not None and table_reference == source_ref_by_id[label[1]]:
                     # Empty-row normalization can re-emit an otherwise unchanged
@@ -2176,6 +2188,8 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                     last.addnext(clone)
                     page_plan.emitted(clone, last, kind="picture")
                 last = clone
+                if block.key == "org_chart":
+                    organization_chart_roots.append(clone)
                 if not source_page:
                     emitted_photo_roots.add(page_plan._root(clone))
                     unused_document_anchors.discard(anchor)
@@ -2336,6 +2350,41 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     for panel in empty_panels:
         panel.remove_if_empty(body, page_plan, cleared_activity_paragraphs)
     page_plan.finish(document=document)
+    # Newly rendered chart pages and contact tables are separate content.
+    # Only act on exact output nodes from these two blocks, after page-plan
+    # cleanup, so no source page, omitted chart or unrelated table is moved.
+    chart_nodes = [node for node in organization_chart_roots if node.getparent() is body]
+    contact_nodes = [node for node in organization_contact_tables if node.getparent() is body]
+    if chart_nodes and contact_nodes:
+        nodes = list(body)
+        first_table = min(contact_nodes, key=nodes.index)
+        earlier_charts = [node for node in chart_nodes if nodes.index(node) < nodes.index(first_table)]
+        if earlier_charts:
+            chart_index = max(nodes.index(node) for node in earlier_charts)
+            # Keep an immediately preceding, unambiguous contacts heading on
+            # the same page as the table. Do not move unrelated text.
+            target = first_table
+            previous = first_table.getprevious()
+            if (previous is not None and previous.tag == qn("w:p")
+                    and nodes.index(previous) > chart_index
+                    and _text(previous).strip().casefold() in
+                        {"facility contacts", "site contacts", "contacts"}):
+                target = previous
+            table_index = nodes.index(target)
+            intervening = nodes[chart_index + 1:table_index]
+            target_break = (target.tag == qn("w:p") and target.find(
+                qn("w:pPr") + "/" + qn("w:pageBreakBefore")) is not None)
+            existing_break = target_break or any(
+                any(br.get(qn("w:type")) == "page" for br in node.iter(qn("w:br")))
+                or any(True for _ in node.iter(qn("w:pageBreakBefore")))
+                or any(True for _ in node.iter(qn("w:sectPr")))
+                for node in intervening)
+            if not existing_break:
+                paragraph = OxmlElement("w:p")
+                properties = OxmlElement("w:pPr")
+                properties.append(OxmlElement("w:pageBreakBefore"))
+                paragraph.append(properties)
+                target.addprevious(paragraph)
     from app.monthly_report_divider_numerals import fit_proposals_numeral
     fit_proposals_numeral(document, section_key=section_key)
     from app.monthly_report_native_design import name_report_in_contents_notice
