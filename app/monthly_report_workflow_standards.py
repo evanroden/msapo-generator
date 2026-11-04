@@ -67,8 +67,9 @@ def load_standards(contract=None):
         if (type(value["revision"]) is not int or value["revision"] < 1
                 or len(workflows) > 2 or len({item.key for item in workflows}) != len(workflows)
                 or any(item.key not in WORKFLOW_KEYS or item.block.key != item.key
-                       or not _eligible(item.block) or not item.origin_profile
-                       or not item.origin_fingerprint or not item.saved_at
+                       or not _eligible(item.block)
+                       or any(not isinstance(text, str) or not text for text in (
+                           item.origin_contract, item.origin_profile, item.origin_fingerprint, item.saved_at))
                        or (contract is not None and _contract(item.origin_contract) != _contract(contract))
                        for item in workflows)):
             raise ValueError("Invalid procedure manifest")
