@@ -130,7 +130,7 @@ def test_rendered_retained_chart_and_contacts_are_separate(tmp_path, monkeypatch
         assert not pdf[contact_page].get_image_info()
 
 
-def test_bound_unchanged_contact_table_also_moves_after_chart(tmp_path):
+def test_bound_unchanged_contact_table_also_moves_after_chart(tmp_path, monkeypatch):
     from hashlib import sha256
     from app.monthly_report_import import inspect_docx, read_import_image
     from app.monthly_report_sections import table_without_prices
@@ -154,3 +154,17 @@ def test_bound_unchanged_contact_table_also_moves_after_chart(tmp_path):
     table_i=next(i for i,e in enumerate(body) if e.tag==qn('w:tbl') and 'Synthetic Person' in ''.join(e.itertext()))
     assert chart_i<table_i
     assert any(e.xpath('.//*[local-name()="pageBreakBefore"]') for e in body[chart_i+1:table_i+1])
+    # Exercise actual pagination where the writer is available, including the
+    # preserved table path (the text may wrap within a PDF table cell).
+    from conftest import libreoffice_can_convert
+    if libreoffice_can_convert():
+        import fitz
+        import re
+        from app import pdf_converter
+        rendered=tmp_path/'retained-both.docx'; result.save(rendered)
+        monkeypatch.setattr(pdf_converter, 'OUTPUT_DIR', tmp_path)
+        with fitz.open(pdf_converter.convert_to_pdf(rendered)) as pdf:
+            contact_page=next(i for i,p in enumerate(pdf) if 'Synthetic Person' in re.sub(r'\s+',' ',p.get_text()))
+            image_pages=[i for i,p in enumerate(pdf) if p.get_image_info()]
+            assert image_pages and max(image_pages)<contact_page
+            assert not pdf[contact_page].get_image_info()
