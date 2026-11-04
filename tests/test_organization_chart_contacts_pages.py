@@ -69,3 +69,32 @@ def test_contacts_without_chart_do_not_acquire_new_page_break(tmp_path):
     table=next(e for e in result.element.body if e.tag==qn('w:tbl') and 'Synthetic Person' in ''.join(e.itertext()))
     previous=table.getprevious()
     assert previous is not None and not previous.xpath('.//*[local-name()="pageBreakBefore"]')
+
+
+from conftest import requires_libreoffice
+
+
+@requires_libreoffice
+def test_rendered_chart_and_contacts_occupy_distinct_pages(tmp_path, monkeypatch):
+    """Actual PDF output must place current contact text after the chart page."""
+    import fitz
+    from app import pdf_converter
+    d=Document();d.add_heading('ORGANIZATIONAL CHART',1)
+    image=BytesIO();Image.new('RGB',(1200,600),'blue').save(image,format='PNG')
+    d.add_picture(BytesIO(image.getvalue()),width=Inches(6))
+    table=d.add_table(rows=2,cols=5)
+    for i,value in enumerate(('Site','Role','Name','Telephone','Email')):
+        table.cell(0,i).text=value;table.cell(1,i).text='obsolete'
+    source=tmp_path/'synthetic-original.docx';d.save(source)
+    chart=ResolvedBlock('org_chart','This month',org_nodes=(OrgChartNode('mgr','Synthetic Manager','Manager'),OrgChartNode('staff','Synthetic Staff','Engineer','mgr')))
+    contacts=ResolvedBlock('contact_matrix','This month',extra_tables=(ReportTable(('Site','Role','Name','Telephone','Email'),(('North','Lead','Synthetic Person','555','x@invalid'),),'synthetic:contacts'),))
+    profile=ReportProfile('Synthetic','north','North',(Facility('north','North'),))
+    draft=ReportDraft(profile,ReportPeriod(2026,9),'Tester',default_sections(),(chart,contacts),synthetic=True)
+    generated=tmp_path/'result.docx';generated.write_bytes(build_native_docx(draft,source,section_key='organization',master=True))
+    monkeypatch.setattr(pdf_converter,'OUTPUT_DIR',tmp_path)
+    pdf=pdf_converter.convert_to_pdf(generated)
+    with fitz.open(pdf) as doc:
+        contact_page=next(i for i,p in enumerate(doc) if 'Synthetic Person' in p.get_text())
+        chart_pages=[i for i,p in enumerate(doc) if p.get_image_info()]
+        assert chart_pages and max(i for i in chart_pages if i<contact_page)<contact_page
+        assert not doc[contact_page].get_image_info()
