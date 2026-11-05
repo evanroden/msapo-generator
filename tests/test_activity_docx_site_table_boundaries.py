@@ -329,3 +329,24 @@ def test_public_storage_guided_upload_shows_notice_keeps_native_narrative_and_ma
     assert MANUAL in activity(app).text and SAFE in activity(app).text and FOREIGN not in activity(app).text
     assert editor(app).value == activity(app).text
     assert sources.source_bytes(profile, draft(app).sources[0]) == raw
+
+
+def test_three_column_multiline_site_row_is_held_at_ingest_and_activity(ingest):
+    doc = Document()
+    doc.add_paragraph(SAFE)
+    table = doc.add_table(rows=1, cols=3)
+    for cell, value in zip(table.rows[0].cells, ("Site", "Work performed", "Status")):
+        cell.text = value
+    for cell, value in zip(table.add_row().cells,
+                           ("Foreign South", "Repaired foreign pump\nF-9.", "Complete")):
+        cell.text = value
+    stream = BytesIO()
+    doc.save(stream)
+    raw = stream.getvalue()
+    item, attachments = sources.ingest(PROFILE, "synthetic-multiline.docx", raw)
+    assert not attachments and sources.source_bytes(PROFILE, item.source) == raw
+    result = structured.native_update((item,), "activity_summary")
+    assert SAFE in result.text
+    assert "Repaired foreign pump" not in result.text and "F-9." not in result.text
+    assert "site-specific" in structured.reader_notices((item,), "activity_summary")[0]
+    assert structured.reader_sources((item,), "activity_summary") == ()

@@ -219,7 +219,10 @@ def _docx_site_table(text):
     if not any(re.fullmatch(r"(?:site|facility|building|location|client|customer|hospital)(?:id|name|key|code)?",
                            re.sub(r"[^a-z0-9]", "", value.casefold())) for value in headings):
         return False
-    return any(len(line.split("\t")) == len(headings) for line in lines[first_tab + 1:])
+    # Cell line breaks split a physical table row across text lines. Once a
+    # site heading and subsequent content are present, hold it for mapping
+    # rather than treating mismatched fragments as site-safe narrative.
+    return bool(lines[first_tab + 1:])
 
 
 def _activity_lines(text, suffix, *, with_dates=False):
