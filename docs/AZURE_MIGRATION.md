@@ -51,6 +51,10 @@ Tag every build with its commit, not `latest`, so a rollback is unambiguous.
   **off** ("No Root Squash"), or the app cannot write its data.
 - Streamlit holds each person's session in memory and uses a WebSocket at
   `/_stcore/stream`; check that it connects behind the sign-in during testing.
+  It pings the browser every 30 seconds, so idle sessions stay connected.
+- Uploads go up to 512 MB (`maxUploadSize` in `.streamlit/config.toml`).
+  During testing, upload the largest shared template or source archive in use,
+  through the sign-in, to confirm nothing in front of the app limits it.
 - Render runs the `starter` plan. LibreOffice conversion is the heaviest work;
   give the container at least as much CPU and memory as Render does.
 
