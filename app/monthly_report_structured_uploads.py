@@ -216,13 +216,17 @@ def _docx_site_table(text):
     headings = " ".join(lines[:first_tab + 1]).split("\t")
     if sum(bool(value.strip()) for value in headings) < 2:
         return False
-    if not any(re.fullmatch(r"(?:site|facility|building|location|client|customer|hospital)(?:id|name|key|code)?",
-                           re.sub(r"[^a-z0-9]", "", value.casefold())) for value in headings):
-        return False
-    # Cell line breaks split a physical table row across text lines. Once a
-    # site heading and subsequent content are present, hold it for mapping
-    # rather than treating mismatched fragments as site-safe narrative.
-    return bool(lines[first_tab + 1:])
+    def site_label(value):
+        return bool(re.fullmatch(
+            r"(?:site|facility|building|location|client|customer|hospital)(?:id|name|key|code)?",
+            re.sub(r"[^a-z0-9]", "", value.casefold())))
+    # Cell line breaks can split both headers and rows across physical lines.
+    # If the site label is in a later header fragment, conservatively hold the
+    # item too. Original source bytes and unrelated source items are retained.
+    if any(site_label(value) for value in headings):
+        return bool(lines[first_tab + 1:])
+    return any(i + 1 < len(lines) and any(site_label(value) for value in line.split("\t"))
+               for i, line in enumerate(lines[first_tab + 1:], first_tab + 1))
 
 
 def _activity_lines(text, suffix, *, with_dates=False):

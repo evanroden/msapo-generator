@@ -350,3 +350,23 @@ def test_three_column_multiline_site_row_is_held_at_ingest_and_activity(ingest):
     assert "Repaired foreign pump" not in result.text and "F-9." not in result.text
     assert "site-specific" in structured.reader_notices((item,), "activity_summary")[0]
     assert structured.reader_sources((item,), "activity_summary") == ()
+
+
+def test_multiline_header_before_site_column_is_held(ingest):
+    doc = Document()
+    doc.add_paragraph(SAFE)
+    table = doc.add_table(rows=1, cols=3)
+    for cell, value in zip(table.rows[0].cells, ("Asset", "Work\nperformed", "Site")):
+        cell.text = value
+    for cell, value in zip(table.add_row().cells,
+                           ("P-1", "Repaired foreign pump.", "Foreign South")):
+        cell.text = value
+    stream = BytesIO()
+    doc.save(stream)
+    raw = stream.getvalue()
+    item, attachments = sources.ingest(PROFILE, "synthetic-multiline-header.docx", raw)
+    assert not attachments and sources.source_bytes(PROFILE, item.source) == raw
+    result = structured.native_update((item,), "activity_summary")
+    assert SAFE in result.text and "Repaired foreign pump" not in result.text
+    assert "site-specific" in structured.reader_notices((item,), "activity_summary")[0]
+    assert structured.reader_sources((item,), "activity_summary") == ()
