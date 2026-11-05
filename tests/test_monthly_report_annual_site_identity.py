@@ -60,27 +60,37 @@ def test_multiple_rows_must_each_have_one_unambiguous_owner():
 def test_repeated_labels_within_same_facility_are_not_a_collision():
     p = profile()
     first, second = p.facilities
-    changed = replace(first, aliases=(*first.aliases, "West Plant", "west plant", "north"))
+    changed = replace(first, aliases=(*first.aliases, "West Plant", "west plant", "WEST PLANT"))
     revised = replace(p, facilities=(changed, second))
     assert annual_grid_matches_profile(table("West Plant", "east"), revised)
     assert not annual_grid_matches_profile(table("North"), revised)
 
 
-def test_shared_aliases_are_ambiguous_even_when_each_site_is_in_the_profile():
+def test_site_key_vs_other_sites_alias_is_ambiguous_even_in_a_valid_profile():
     p = profile()
     first, second = p.facilities
-    p = replace(p, facilities=(
-        replace(first, aliases=(*first.aliases, "Shared Machinery")),
-        replace(second, aliases=(*second.aliases, "shared machinery")),
-    ))
-    assert not annual_grid_matches_profile(table("Shared Machinery", "West Plant"), p)
+    second = replace(second, title="East Plant", aliases=("NORTH", "Eastern Campus"))
+    p = replace(p, facilities=(first, second))
+    # The model enforces collisions among titles and aliases, but site keys
+    # are separate. This otherwise valid profile still has two owners for NORTH.
+    assert not annual_grid_matches_profile(table("North", "West Plant"), p)
     assert annual_grid_matches_profile(table("West Plant", "Eastern Campus"), p)
 
 
-def test_blank_and_nonstring_aliases_never_establish_membership():
+def test_model_already_rejects_two_sites_sharing_the_same_alias():
     p = profile()
     first, second = p.facilities
-    p = replace(p, facilities=(replace(first, aliases=("", "  ", None, 42)), second))
+    with pytest.raises(ValueError, match="alias"):
+        replace(p, facilities=(
+            replace(first, aliases=(*first.aliases, "Shared Machinery")),
+            replace(second, aliases=(*second.aliases, "shared machinery")),
+        ))
+
+
+def test_blank_aliases_never_establish_membership():
+    p = profile()
+    first, second = p.facilities
+    p = replace(p, facilities=(replace(first, aliases=(*first.aliases, "", "  ")), second))
     assert not annual_grid_matches_profile(table("42"), p)
     assert not annual_grid_matches_profile(table("none"), p)
     assert annual_grid_matches_profile(table("West Plant", "east"), p)
