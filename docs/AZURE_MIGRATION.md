@@ -93,8 +93,9 @@ on the target until every file and database has been checked.
      ```
      It compares the app with `render.yaml` and this guide: one revision, one
      replica, port 8501, health probes, the NFS share at `/test1`, every
-     setting, each secret coming from Key Vault, and the Microsoft sign-in.
-     It prints names, never values, and changes nothing.
+     setting, each secret coming from Key Vault, and who can get past the
+     Microsoft sign-in (only the company's tenant: no skipped paths, no other
+     sign-in providers). It prints names, never values, and changes nothing.
    - **Host,** in the Azure container (`az containerapp exec ... --command
      bash`, from `/app`): `python scripts/host_check.py`. It tests the real
      share: owner-only folders, file locks between processes, SQLite in the

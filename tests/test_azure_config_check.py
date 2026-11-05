@@ -191,6 +191,10 @@ DEFECTS = {
                    "FAIL  EPC_SQLITE_JOURNAL_MODE must be delete on a network share"),
     "commit as a setting": (_env_set("APP_GIT_COMMIT", {"value": "0" * 40}),
                             "WARN  APP_GIT_COMMIT is an app setting: it goes stale"),
+    "journal from a secret": (_env_set("EPC_SQLITE_JOURNAL_MODE", {"secretRef": "anthropic-api-key"}),
+                              "WARN  EPC_SQLITE_JOURNAL_MODE comes from a secret, so its value cannot be checked"),
+    "journal value ignored": (_env_set("EPC_SQLITE_JOURNAL_MODE", {"value": "truncate"}),
+                              "WARN  EPC_SQLITE_JOURNAL_MODE has a value the app ignores (it reads only wal or delete)"),
 }
 
 
@@ -226,8 +230,26 @@ def test_tolerated_differences_pass(tmp_path, capsys):
     assert PLAIN_SECRET not in out
 
 
+def _entra(issuer=f"https://login.microsoftonline.com/{ZERO_ID}/v2.0", **providers):
+    registration = {"clientId": ZERO_ID, **({"openIdIssuer": issuer} if issuer else {})}
+    return {"identityProviders": {"azureActiveDirectory": {"enabled": True, "registration": registration},
+                                  **providers}}
+
+
 SIGN_IN = {
     "sign-in off": ({"platform": {"enabled": False}}, "FAIL  built-in sign-in is off"),
+    "app paths skip sign-in": ({"globalValidation": {"unauthenticatedClientAction": "RedirectToLoginPage",
+                                                     "excludedPaths": ["/", "/_stcore/stream"]}},
+                               "FAIL  sign-in is skipped for /, /_stcore/stream"),
+    "any organisation": (_entra("https://login.microsoftonline.com/common/v2.0"),
+                         "FAIL  Entra accepts accounts from any organisation (/common/)"),
+    "issuer unset": (_entra(issuer=None), "WARN  the Entra issuer is not set"),
+    "Entra switched off": ({"identityProviders": {"azureActiveDirectory": {
+        "enabled": False, "registration": {"clientId": ZERO_ID}}}}, "FAIL  Microsoft Entra ID sign-in is not configured"),
+    "another provider": (_entra(gitHub={"registration": {"clientId": "synthetic"}}),
+                         "FAIL  other sign-in providers are on (gitHub)"),
+    "custom provider": (_entra(customOpenIdConnectProviders={"partner": {"registration": {"clientId": "synthetic"}}}),
+                        "FAIL  other sign-in providers are on (customOpenIdConnectProviders.partner)"),
     "anonymous visitors": ({"globalValidation": {"unauthenticatedClientAction": "AllowAnonymous"}},
                            "FAIL  signed-out visitors reach the app (AllowAnonymous)"),
     "action unset": ({"globalValidation": {}}, "WARN  what signed-out visitors get is not set"),
@@ -244,6 +266,24 @@ def test_sign_in_gaps_are_reported(tmp_path, capsys, override, expected):
     assert expected in out
     assert ZERO_ID not in out
     assert code == (1 if expected.startswith("FAIL") else 0)
+
+
+def test_safe_sign_in_shapes_pass(tmp_path, capsys):
+    auth = copy.deepcopy(PLANNED_AUTH)
+    auth["properties"]["globalValidation"]["excludedPaths"] = ["/_stcore/health"]
+    auth["properties"].update(_entra(issuer=f"https://sts.windows.net/{ZERO_ID}/",
+                                     gitHub=None, google={"enabled": None, "registration": None},
+                                     customOpenIdConnectProviders={}))
+    code, out = check(tmp_path, capsys, planned_app(), auth)
+    assert code == 0, out
+    assert "skipped" not in out and "other sign-in providers" not in out
+    assert "PASS  Entra accepts only the accounts of one tenant" in out
+    assert ZERO_ID not in out
+
+
+def test_journal_modes_are_the_ones_the_app_reads():
+    from app.sqlite_storage import _MODES
+    assert set(azure_config_check.JOURNAL_MODES) == set(_MODES)
 
 
 def test_sign_in_never_configured_fails(tmp_path, capsys):

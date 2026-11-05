@@ -23,6 +23,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -36,6 +37,9 @@ HEALTH_PATH = "/_stcore/health"
 # Render's starter plan, which the export tests cap themselves to.
 MIN_CPU, MIN_MEMORY_GIB = 0.5, 0.5
 STALE_WHEN_SET = ("APP_GIT_COMMIT", "RENDER_GIT_COMMIT")
+JOURNAL_MODES = ("wal", "delete")  # what app/sqlite_storage.py honours; anything else is ignored
+# Microsoft's issuers that accept accounts from more than one organisation.
+ANY_TENANT = ("common", "organizations", "consumers")
 
 
 class InputError(Exception):
@@ -233,14 +237,21 @@ def check_environment(report: Report, config: dict, container: dict,
             report.line("FAIL", f"setting {name} differs from render.yaml{shown}")
         else:
             report.line("PASS", f"setting {name} matches render.yaml")
-    journal = by_name.get("EPC_SQLITE_JOURNAL_MODE", {}).get("value")
+    journal = by_name.get("EPC_SQLITE_JOURNAL_MODE")
+    mode = str(journal.get("value") or "").strip().lower() if journal else ""
     if journal is None:
         report.line("INFO", "EPC_SQLITE_JOURNAL_MODE is not set: the app detects the NFS share and uses "
                     "SQLite's rollback journal (host_check.py confirms it)")
-    elif str(journal).strip().lower() == "delete":
+    elif "value" not in journal:
+        report.line("WARN", "EPC_SQLITE_JOURNAL_MODE comes from a secret, so its value cannot be checked "
+                    "here; set it as a plain value (delete), and check the mode with host_check.py")
+    elif mode == "delete":
         report.line("PASS", "EPC_SQLITE_JOURNAL_MODE pins SQLite's rollback journal")
-    else:
+    elif mode == "wal":
         report.line("FAIL", "EPC_SQLITE_JOURNAL_MODE must be delete on a network share")
+    else:
+        report.line("WARN", f"EPC_SQLITE_JOURNAL_MODE has a value the app ignores (it reads only "
+                    f"{' or '.join(JOURNAL_MODES)}); it detects the share instead")
     for name in STALE_WHEN_SET:
         if name in by_name:
             report.line("WARN", f"{name} is an app setting: it goes stale when the image changes; "
@@ -283,20 +294,50 @@ def check_sign_in(report: Report, auth: dict | None) -> None:
     enabled = (auth.get("platform") or {}).get("enabled") is True
     report.line("PASS" if enabled else "FAIL", "built-in sign-in is " + ("on" if enabled else
                 "off: the app has no sign-in of its own, so anyone with the address could use it"))
-    action = (auth.get("globalValidation") or {}).get("unauthenticatedClientAction")
+    validation = auth.get("globalValidation") or {}
+    action = validation.get("unauthenticatedClientAction")
     if action in ("RedirectToLoginPage", "Return401", "Return403"):
         report.line("PASS", f"signed-out visitors are refused ({action})")
     elif action == "AllowAnonymous":
         report.line("FAIL", "signed-out visitors reach the app (AllowAnonymous); use RedirectToLoginPage")
     else:
         report.line("WARN", "what signed-out visitors get is not set; use RedirectToLoginPage")
-    entra = (auth.get("identityProviders") or {}).get("azureActiveDirectory")
-    entra_on = isinstance(entra, dict) and entra.get("enabled", True) is not False and entra.get("registration")
-    report.line("PASS" if entra_on else "FAIL", "Microsoft Entra ID sign-in is "
-                + ("configured" if entra_on else "not configured"))
+    skipped = [str(path) for path in validation.get("excludedPaths") or [] if str(path).rstrip("/") != HEALTH_PATH]
+    if skipped:
+        report.line("FAIL", "sign-in is skipped for " + ", ".join(skipped)
+                    + f": the app has no sign-in of its own; exclude nothing but {HEALTH_PATH}")
+    providers = auth.get("identityProviders") or {}
+    entra = providers.get("azureActiveDirectory")
+    report.line("PASS" if _provider_on(entra) else "FAIL", "Microsoft Entra ID sign-in is "
+                + ("configured" if _provider_on(entra) else "not configured"))
+    if _provider_on(entra):
+        issuer = str(entra["registration"].get("openIdIssuer") or "")
+        tenant = urlparse(issuer).path.strip("/").split("/")[0].lower()
+        if not tenant:
+            report.line("WARN", "the Entra issuer is not set: check that only the company's tenant can sign in")
+        elif tenant in ANY_TENANT:
+            report.line("FAIL", f"Entra accepts accounts from any organisation (/{tenant}/); "
+                        "use the company tenant's issuer")
+        else:
+            report.line("PASS", "Entra accepts only the accounts of one tenant")
+    others = []
+    for name, provider in providers.items():
+        if name == "customOpenIdConnectProviders" and isinstance(provider, dict):
+            others += [f"{name}.{key}" for key, custom in provider.items() if _provider_on(custom)]
+        elif name != "azureActiveDirectory" and _provider_on(provider):
+            others.append(name)
+    if others:
+        report.line("FAIL", "other sign-in providers are on (" + ", ".join(sorted(others))
+                    + "): people outside the company could sign in")
     https = (auth.get("httpSettings") or {}).get("requireHttps", True)
     report.line("PASS" if https is not False else "WARN", "sign-in requires https" if https is not False
                 else "sign-in allows plain http")
+
+
+def _provider_on(provider) -> bool:
+    """Configured (it has a registration) and not switched off."""
+    return (isinstance(provider, dict) and isinstance(provider.get("registration"), dict)
+            and bool(provider["registration"]) and provider.get("enabled") is not False)
 
 
 def run(app_path: str, auth_path: str | None = None) -> int:
