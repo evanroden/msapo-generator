@@ -164,7 +164,16 @@ def save(token: str, draft: ReportDraft, *, expected_revision: int,
                 raise ActiveWorkConflict("The pending browser save no longer matches its committed report.")
             for name, raw in pending.items():
                 target = folder / "assets" / name
-                if not target.is_file() or target.stat().st_size > library.MAX_ASSET_BYTES or target.read_bytes() != raw:
+                if target.is_symlink() or not target.is_file():
+                    raise library.LibraryError("A committed browser-save picture failed its integrity check.")
+                try:
+                    if target.stat().st_size > library.MAX_ASSET_BYTES:
+                        raise library.LibraryError("A committed browser-save picture failed its integrity check.")
+                    with target.open("rb") as source:
+                        retained = source.read(library.MAX_ASSET_BYTES + 1)
+                except OSError as exc:
+                    raise library.LibraryError("A committed browser-save picture failed its integrity check.") from exc
+                if len(retained) > library.MAX_ASSET_BYTES or retained != raw:
                     raise library.LibraryError("A committed browser-save picture failed its integrity check.")
             return ActiveWork(draft, revision, base_snapshot_revision, generation=generation,
                               updated_at=previous.get("updated_at", ""))
