@@ -1,5 +1,4 @@
 """Explicit correction of source membership, separate from target report sites."""
-from dataclasses import asdict
 import hashlib
 import json
 
@@ -16,7 +15,7 @@ def correction_scope(inspection, target, period, source_view=None):
 
 
 def correction_receipt(scope, sites):
-    return hashlib.sha256(json.dumps((scope, [asdict(s) for s in sites]),
+    return hashlib.sha256(json.dumps((scope, [(s.key, s.title, sorted(s.aliases)) for s in sites]),
                                     sort_keys=True).encode()).hexdigest()
 
 
@@ -28,7 +27,7 @@ def correct_detected_sites(inspection, target, period, detected, known_sites, pr
     """
     scope = (*correction_scope(inspection, target, period, source_view),
              tuple(sorted((f.key, f.title, tuple(f.aliases)) for f in known_sites)),
-             tuple(sorted(f.key for f in detected)))
+             tuple(sorted((f.key, f.title, tuple(sorted(f.aliases))) for f in detected)))
     active_scope_key = "monthly_source_membership_scope"
     if st.session_state.get(active_scope_key) != scope:
         st.session_state.pop("monthly_source_membership_confirmation", None)
@@ -38,7 +37,14 @@ def correct_detected_sites(inspection, target, period, detected, known_sites, pr
         return None  # Unknown-source UI still owns its ordinary confirmation.
     scope_key = hashlib.sha256(repr(scope).encode()).hexdigest()[:20]
     p = prefix + "_source_membership_" + scope_key
-    options = {f.key: f for f in (*known_sites, *detected)}
+    options = {}
+    conflicting_keys = set()
+    for site in (*known_sites, *detected):
+        known = options.get(site.key)
+        if known is not None and (known.title, set(known.aliases)) != (site.title, set(site.aliases)):
+            conflicting_keys.add(site.key)
+        else:
+            options[site.key] = site
     with st.expander("Correct source sites"):
         st.caption("This report: " + "; ".join(f.title for f in target.facilities))
         st.caption("Detected in upload: " + "; ".join(f.title for f in detected))
@@ -50,7 +56,7 @@ def correct_detected_sites(inspection, target, period, detected, known_sites, pr
                                help="Separate multiple source sites with semicolons.")
         sites = [options[k] for k in selected]
         from app.monthly_report_editor import _key
-        invalid = False
+        invalid = bool(conflicting_keys)
         for name in (s.strip() for s in custom.split(";")):
             if not name:
                 continue
@@ -75,7 +81,9 @@ def correct_detected_sites(inspection, target, period, detected, known_sites, pr
         receipt_key = "monthly_source_membership_confirmation"
         if invalid or st.session_state.get(receipt_key) not in (None, receipt):
             st.session_state.pop(receipt_key, None)
-        if invalid:
+        if conflicting_keys:
+            st.warning("Detected source site conflicts with a known site identifier. Correct the source-site names and reimport before confirming; no site is assigned automatically.")
+        elif invalid:
             st.warning("Enter an unambiguous source site name using letters or numbers.")
         if st.button("Confirm source sites", key=p + "_confirm", disabled=invalid or not sites):
             st.session_state[receipt_key] = receipt
