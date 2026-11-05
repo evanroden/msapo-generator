@@ -1310,6 +1310,12 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
         _remove_unapproved_master_watermark_text(document)
     body = document.element.body
     original = list(body)
+    # Capture only recognized native divider roots, before any body edits.
+    divider_positions = {item.position for item in inspection.items
+                         if item.kind == "image" and item.part == "word/document.xml"
+                         and item.note == "Native divider artwork"}
+    divider_photo_roots = [node for index, node in enumerate(original, 1)
+                           if index in divider_positions and _is_native_divider_background(node, _text(node))]
     # A merged technical cell may cross a removed price column. Preserve its
     # geometry only when its text is explicitly present in the supplied filtered
     # table. A cell beginning in a removed column is redacted in full.
@@ -2336,6 +2342,8 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     for panel in empty_panels:
         panel.remove_if_empty(body, page_plan, cleared_activity_paragraphs)
     page_plan.finish(document=document)
+    from app.monthly_report_divider_monochrome import monochrome_divider_photos
+    monochrome_divider_photos(document, divider_photo_roots)
     from app.monthly_report_divider_numerals import fit_proposals_numeral
     fit_proposals_numeral(document, section_key=section_key)
     from app.monthly_report_native_design import name_report_in_contents_notice
