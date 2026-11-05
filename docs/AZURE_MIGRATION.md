@@ -31,11 +31,18 @@ Build arguments (no effect on Render, which supplies its own):
 - `PUBLIC_SITE_ORIGIN=https://<public address>`: the address used in link
   previews (Teams, Slack). A bare `https://host` only.
 
+Build from a clone (Cloud Shell has git), not from the GitHub URL, so the
+commit is known; CI builds the image the same way and checks that it reports
+the commit:
+
 ```
+git clone https://github.com/evanroden/msapo-generator.git && cd msapo-generator
 az acr build -r <registry> -t msapo-generator:$(git rev-parse --short HEAD) \
   --build-arg APP_GIT_COMMIT=$(git rev-parse HEAD) \
   --build-arg PUBLIC_SITE_ORIGIN=https://<public address> .
 ```
+
+Tag every build with its commit, not `latest`, so a rollback is unambiguous.
 
 ## 2. Container
 
@@ -71,12 +78,27 @@ manifest. Databases are copied with SQLite's backup API (consistent even if
 someone is using the app) as single self-contained files. Nothing is replaced
 on the target until every file and database has been checked.
 
-0. **Check the new host first.** In the Azure container (`az containerapp exec
-   ... --command bash`, from `/app`), run `python scripts/host_check.py`. It
-   tests the real share: owner-only folders, file locks between processes,
-   SQLite in the mode the app will use, every setting (present or missing,
-   never the value), the expense director map, the build commit and free
-   space. Fix every FAIL before moving data. Run it again after step 5.
+0. **Check the Azure app and the new host first.** Fix every FAIL before
+   moving data.
+   - **Settings,** from the clone in Cloud Shell:
+     ```
+     az containerapp show -g <group> -n <app> -o json > app.json
+     az containerapp auth show -g <group> -n <app> -o json > auth.json
+     python3 scripts/azure_config_check.py app.json --auth auth.json
+     rm app.json auth.json
+     ```
+     It compares the app with `render.yaml` and this guide: one revision, one
+     replica, port 8501, health probes, the NFS share at `/test1`, every
+     setting, each secret coming from Key Vault, and the Microsoft sign-in.
+     It prints names, never values, and changes nothing.
+   - **Host,** in the Azure container (`az containerapp exec ... --command
+     bash`, from `/app`): `python scripts/host_check.py`. It tests the real
+     share: owner-only folders, file locks between processes, SQLite in the
+     mode the app will use, every setting (present or missing, never the
+     value), the expense director map, the build commit and free space. It
+     also asks Anthropic's API about the configured model (a free call):
+     that proves the key, the outbound network path and the model.
+     `--offline` skips that call. Run it again after step 5.
 
 1. **Announce a quiet window.** Anything written on Render after the export is
    not moved. Ask people to save open Monthly drafts as report versions first
@@ -130,11 +152,16 @@ on the target until every file and database has been checked.
 ## 6. QA and process
 
 - `monthly-live-qa.yml` reads the served address from the repository variable
-  `MONTHLY_QA_PUBLIC_URL` (default: the Render address). Set it when cutting
-  over.
-- The live QA runs a browser from GitHub Actions. Behind the Microsoft sign-in
-  it cannot reach the app unless a test identity or an exception is arranged.
-  That is a decision for the owner and IT; until then served-build QA is manual.
+  `MONTHLY_QA_PUBLIC_URL` (default: the Render address).
+- The live QA runs a browser from GitHub Actions after every merge to main and
+  waits for the served site to show that commit. Behind the Microsoft sign-in
+  it cannot reach the app unless a test identity or an exception is arranged,
+  and with manual deploys the new commit is not served anyway. That is a
+  decision for the owner and IT; until then served-build QA is manual.
+- **At cutover, turn the live QA off** (Actions → Monthly Isolated Live
+  Acceptance → ⋯ → Disable workflow), or every merge to main shows a failed
+  run once Render is suspended. Turn it back on, with `MONTHLY_QA_PUBLIC_URL`
+  set, when the browser can sign in and deploys follow main.
 - `qa_render_archive_redeploy_readonly.py` and
   `qa_shared_fixture_redeploy_readonly.py` check Render redeploys specifically
   and stay Render-only.

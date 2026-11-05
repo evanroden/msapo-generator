@@ -11,10 +11,15 @@ will choose, and the settings the app reads. It prints whether each setting is
 present, never a value. The only writes are a temporary probe folder inside
 the data folder, removed at the end; the app's own files are only read.
 
+It also asks Anthropic's Models API about the configured model, a free call
+that uses no tokens: it proves the key, the outbound network path and the
+model in one go. --offline skips it.
+
 Exit status: 0 when nothing failed (warnings allowed), 1 otherwise.
 """
 from __future__ import annotations
 
+import argparse
 import os
 import shutil
 import sqlite3
@@ -32,7 +37,8 @@ from app.sqlite_storage import filesystem_type, journal_mode  # noqa: E402
 SECRETS = ("ANTHROPIC_API_KEY", "SMARTSHEET_FORM_URL", "EXPENSE_ACCOUNT_DIRECTORS_JSON")
 OPTIONAL_SECRETS = ("SMARTSHEET_API_TOKEN", "SMARTSHEET_SHEET_ID")
 FIXED = ("EPC_DATA_DIR", "PDF_BACKEND", "ANTHROPIC_MODEL", "SMARTSHEET_FORM_FIELD_MAP_JSON",
-         "SMARTSHEET_URL_PREFILL_ENABLED", "SMARTSHEET_API_MODE")
+         "SMARTSHEET_URL_PREFILL_ENABLED", "SMARTSHEET_PREFILL_MAX_URL_LENGTH", "SMARTSHEET_API_MODE",
+         "SMARTSHEET_ALLOW_CUSTOM_API_BASE")
 DATABASES = ("epc_memory.db", "smartsheet_submissions.db")
 _HOLDER = """
 import fcntl, sys
@@ -182,11 +188,47 @@ def check_settings(report: Report) -> None:
     accounts = contracts.contract_names()
     configured = sum(account_director(account) is not None for account in accounts)
     problems = director_config_problems(accounts)
-    report.line("PASS" if not problems else "WARN",
+    report.line("PASS" if configured and not problems else "WARN",
                 f"expense directors configured for {configured} of {len(accounts)} account(s)"
+                + ("" if configured else ": expense forms will name no director")
                 + ("" if not problems else f"; {len(problems)} problem(s):"))
     for problem in problems:
         report.line("", "  " + problem)
+
+
+def check_anthropic(report: Report, http_client=None) -> None:
+    key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+    if not key:
+        return  # check_settings has already failed it
+    from app import config
+    model = os.getenv("ANTHROPIC_MODEL", config.ANTHROPIC_MODEL).strip()
+    if not model:
+        report.line("FAIL", "ANTHROPIC_MODEL is empty: every AI feature would fail")
+        return
+    import anthropic
+    # Only status codes and error class names are printed: an error's own
+    # message could echo request details.
+    try:
+        with anthropic.Anthropic(api_key=key, max_retries=0, timeout=30, http_client=http_client) as client:
+            found = client.models.retrieve(model)
+    except anthropic.AuthenticationError:
+        report.line("FAIL", "Anthropic rejected ANTHROPIC_API_KEY (401): copy the key again")
+    except anthropic.PermissionDeniedError:
+        report.line("FAIL", f"the API key may not use model {model} (403)")
+    except anthropic.NotFoundError:
+        report.line("FAIL", f"model {model} is not available to this key (404): check ANTHROPIC_MODEL")
+    except anthropic.RateLimitError:
+        report.line("WARN", "Anthropic answered 429 (rate limited); the key and the network path work")
+    except anthropic.APIStatusError as error:
+        report.line("WARN" if error.status_code >= 500 else "FAIL",
+                    f"Anthropic answered {error.status_code}"
+                    + ("; a problem on Anthropic's side, try again" if error.status_code >= 500 else ""))
+    except anthropic.APIConnectionError as error:
+        cause = type(error.__cause__ or error).__name__
+        report.line("FAIL", f"cannot reach the Anthropic API from this host ({cause}): allow outbound "
+                    "https to api.anthropic.com, or set HTTPS_PROXY if the network needs a proxy")
+    else:
+        report.line("PASS", f"Anthropic API reachable from this host, key accepted, model {found.id} available")
 
 
 def check_build(report: Report) -> None:
@@ -206,17 +248,24 @@ def check_build(report: Report) -> None:
                     " (keep exactly one replica)")
 
 
-def main() -> int:
+def main(argv=()) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
+    parser.add_argument("--offline", action="store_true", help="skip the call to Anthropic's API")
+    args = parser.parse_args(list(argv))
     report = Report()
     data = _data_dir()
     print(f"Host check for {data}", flush=True)
     check_storage(report, data)
     check_databases(report, data)
     check_settings(report)
+    if args.offline:
+        report.line("INFO", "Anthropic API not checked (--offline)")
+    else:
+        check_anthropic(report)
     check_build(report)
     print(f"\n{report.failures} failure(s), {report.warnings} warning(s).")
     return 1 if report.failures else 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))
