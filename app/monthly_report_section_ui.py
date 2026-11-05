@@ -572,6 +572,15 @@ def render_pending_cover_selection(draft, assets, contract, period, state):
     plans = st.session_state.get(active[1] + "_section_plans", {})
     plan = plans.get("cover", {})
     if plan.get("omit"):
+        if plan.get("automatic_identical_cover_reuse") and plan.get("automatic_brand_identity_refs"):
+            from app.monthly_report_branding import refresh_proven_prior_default_brand
+            current = next((block for block in draft.blocks if block.key == "brand_logo"), None)
+            preview_assets = dict(assets)
+            refreshed = refresh_proven_prior_default_brand(current, plan["automatic_brand_identity_refs"], preview_assets)
+            if refreshed is not None and refreshed != current:
+                blocks = tuple(refreshed if block.key == "brand_logo" else block for block in draft.blocks)
+                st.caption("Cover preview uses the approved shared logo. It is not saved until you continue.")
+                return replace(draft, blocks=blocks), preview_assets
         return draft, assets
     if plan.get("cover_photo_omitted"):
         current = next((block for block in draft.blocks if block.key == "cover_photo"), None)
@@ -615,7 +624,8 @@ def _starting_review_sections(sections, plans, diagram_failures):
         plan = plans.get(section.key, {})
         questions = plan.get("questions", ())
         if (plan.get("approved") and not questions
-                and not (section.key == "cover" and plan.get("omit"))
+                and not (section.key == "cover" and plan.get("omit")
+                         and not plan.get("automatic_identical_cover_reuse"))
                 and not plan.get("period_review_items")):
             continue
         if (section.key in diagram_failures and questions
@@ -934,6 +944,17 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     preferred_logos = tuple(key for key in ("brand_logo", "client_logo")
                             if (state and state.block(key) and state.block(key).asset_hashes)
                             or (branding and find_logo(contract, brand=key == "brand_logo", state=branding)))
+    trusted_brand_refs = ()
+    if branding is not None and state is not None and working_draft is not None and source_view is None:
+        from app.monthly_report_branding import read_logo, LogoArtworkError
+        try:
+            shared_brand = find_logo(contract, brand=True, state=branding)
+            if shared_brand is not None:
+                raw_brand = read_logo(shared_brand)  # Revalidates the stored fingerprint.
+                trusted_brand_refs = (library.asset_reference(raw_brand, "png"),)
+        except LogoArtworkError:
+            # A damaged catalog never grants automatic artwork classification.
+            trusted_brand_refs = ()
     from app.monthly_report_designs import source_for
     native_design = source_for(candidate) is not None
     native_art_review = None
@@ -967,11 +988,36 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                                 (analysis, preferred_logos, native_design, native_art_review,
                                  source_view.receipt_sha256))
     if st.session_state.get(p + "_analysis_signature") != seed_signature:
+        # A saved, open report may already contain the exact cover contribution.
+        # In that narrow case retain its current design and the untouched source
+        # rather than asking the operator to classify unrelated header artwork.
+        if (state is not None and working_draft is not None and source_view is None
+                and (working_draft.profile.contract, working_draft.profile.key, working_draft.period)
+                    == (contract, candidate.key, period) and "cover" in seed):
+            from app.monthly_report_start_import import reuse_identical_saved_cover
+            cover_section = next((section for section in section_reviews(inspection)
+                                  if section.key == "cover"), None)
+            if cover_section is not None:
+                original_cover_plan = seed["cover"]
+                seed["cover"] = reuse_identical_saved_cover(
+                    original_cover_plan, cover_section, inspection, path,
+                    {block.key: block for block in working_draft.blocks}, trusted_brand_refs=trusted_brand_refs)
+                if seed["cover"].get("automatic_identical_cover_reuse"):
+                    st.session_state[p + "_cover_before_identical_reuse"] = original_cover_plan
+                else:
+                    st.session_state.pop(p + "_cover_before_identical_reuse", None)
         st.session_state[p + "_section_plans"] = seed
         st.session_state[p + "_analysis_signature"] = seed_signature
     intent = "Automatic starting report"
     sections = section_reviews(inspection, source_view=source_view)
     plans = st.session_state.setdefault(p + "_section_plans", {})
+    cover_plan = plans.get("cover", {})
+    required_brand_refs = set(cover_plan.get("automatic_brand_identity_refs", ()))
+    if (cover_plan.get("automatic_identical_cover_reuse") and required_brand_refs
+            and not required_brand_refs.issubset(trusted_brand_refs)):
+        # Only the cover decision loses its proof. Keep all other staged choices.
+        plans["cover"] = st.session_state.get(p + "_cover_before_identical_reuse", seed.get("cover", {}))
+        st.warning("The shared logo changed while the starting report was open. Review its cover again; other section choices are preserved.")
     st.session_state[prefix + "_active_section_review"] = (inspection.sha256, p)
     # Preserve native diagrams at their evidenced Word/ENFRA section before
     # asking the operator about anything. Ordinary image parts already follow
@@ -1072,6 +1118,14 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                     st.session_state.pop(template_choice_key, None)
                     st.rerun()
     cover_photo_ids = ()
+    if plans.get("cover", {}).get("automatic_identical_cover_reuse"):
+        st.caption("Your matching cover design is kept. The uploaded original stays available.")
+        if st.button("Review uploaded cover instead", key=p + "_review_uploaded_cover"):
+            previous = st.session_state.pop(p + "_cover_before_identical_reuse", None)
+            if previous is not None:
+                plans["cover"] = previous
+                _replace_cover_action(p, previous.get("action", "Keep and review"))
+                st.rerun()
     cover_section = next((section for section in sections if section.key == "cover"), None)
     if cover_section and analysis.site_relation == "same":
         from app.monthly_report_start_import import cover_photo_candidates
@@ -1375,7 +1429,26 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                         blocks[key] = saved
                         for reference in saved.asset_hashes:
                             assets[reference] = library.read_asset(contract, profile.key, reference)
-                from app.monthly_report_branding import apply_defaults
+                # A source-proved current shared brand may replace only the
+                # exact unedited prior shared default in this new report version.
+                from app.monthly_report_branding import apply_defaults, refresh_proven_prior_default_brand
+                cover_proof = plans.get("cover", {})
+                brand_identity_refs = tuple(cover_proof.get("automatic_brand_identity_refs", ()))
+                if cover_proof.get("automatic_identical_cover_reuse") and brand_identity_refs:
+                    from app.monthly_report_start_import import reuse_identical_saved_cover
+                    prior_cover = st.session_state.get(p + "_cover_before_identical_reuse")
+                    cover_section = next((section for section in sections if section.key == "cover"), None)
+                    rechecked = (reuse_identical_saved_cover(prior_cover, cover_section, inspection, path,
+                                 {block.key: block for block in base.blocks}, trusted_brand_refs=trusted_brand_refs)
+                                 if prior_cover and cover_section is not None and base is not None else {})
+                    if (not rechecked.get("automatic_identical_cover_reuse") or
+                            tuple(rechecked.get("automatic_brand_identity_refs", ())) != brand_identity_refs):
+                        raise ValueError("The source or current cover changed. Review its artwork before continuing.")
+                if cover_proof.get("automatic_identical_cover_reuse"):
+                    blocks["brand_logo"] = refresh_proven_prior_default_brand(
+                        blocks.get("brand_logo"), cover_proof.get("automatic_brand_identity_refs", ()), assets)
+                    if blocks["brand_logo"] is None:
+                        blocks.pop("brand_logo")
                 draft = apply_defaults(replace(draft, blocks=tuple(blocks.values()),
                                                sections=tuple(replace(s, included=True) for s in draft.sections)),
                                        assets, skip_slots=consumed_logo_slots)
