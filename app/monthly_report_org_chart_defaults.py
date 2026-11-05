@@ -152,7 +152,8 @@ def save_default(draft, block, assets, *, scope, expected_revision, expected_fin
         for ref,raw in prepared.items():
             target=path/'assets'/ref
             if target.exists():
-                _verify(ref,target.read_bytes())
+                with target.open('rb') as source:
+                    _verify(ref,source.read(library.MAX_ASSET_BYTES + 1))
             else:
                 library._atomic_write(target,raw)
         raw=library._json({'schema':1,'contract':_contract(draft.profile.contract),'actor':actor,**asdict(state)})
