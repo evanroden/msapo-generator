@@ -433,6 +433,139 @@ def exercise_sequential_review(page, browser, field, layout):
     capture(page, browser, layout + "-sequential-review-return")
 
 
+def navigation_hit_is_valid(sample, review):
+    """Require the visible navigation band and native target, outside capsule."""
+    x, y = sample['point']
+    band, target, capsule = (sample[key] for key in ('band', 'target', 'capsule'))
+    return bool(sample['connected'] and sample['owns_hit']
+                and sample['mode'] == 'wide' and sample['review_open'] == review
+                and sample['wrapper_position'] == 'sticky'
+                and (sample['capsule_position'] == 'fixed') == review
+                and band['left'] < x < band['right']
+                and band['top'] < y < band['bottom']
+                and target['left'] < x < target['right']
+                and target['top'] < y < target['bottom']
+                and x >= capsule['right'] + 8
+                and 0 < x < sample['viewport']['width']
+                and 0 < y < sample['viewport']['height'])
+
+
+def navigation_hit_activated(receipt, kind, before_open=None):
+    """One native gesture must reach the original control and change its UI."""
+    events = receipt['events']
+    return bool(receipt['same_node'] and receipt['connected']
+                and [event['type'] for event in events] == ['pointerdown', 'pointerup', 'click']
+                and all(event['trusted'] and event['owned'] for event in events)
+                and (receipt['focused'] if kind == 'textarea'
+                     else kind == 'summary' and isinstance(before_open, bool)
+                     and isinstance(receipt['details_open'], bool)
+                     and receipt['details_open'] != before_open))
+
+
+def exercise_navigation_click_through(page, browser, field):
+    """Actual controls beneath unused sticky/fixed navigation, never forced clicks.
+
+    Use a short wide viewport so the existing Review expander can naturally
+    scroll under the navigation without adding filler or changing any styles.
+    This verifies Chromium/WebKit, not physical touch or Safari hardware.
+    """
+    viewport = page.viewport_size
+    page.set_viewport_size({'width': 1440, 'height': 480})
+    mode(page, 'wide')
+    original_value = field.input_value()
+    original_hashes = page.evaluate(CLIENT_SNAPSHOT)['server']['draft_hashes']
+    receipts = REPORT['browsers'].setdefault(browser, {}).setdefault('navigation_hit_through', [])
+
+    def probe(control, phase, *, review, kind):
+        expect(control).to_have_count(1)
+        # One setup scroll, not a click rescue. The fresh sample below must
+        # prove the target is genuinely behind the existing navigation row.
+        setup = control.evaluate("""node => {
+          const main=document.querySelector('[data-testid="stMain"]');
+          const row=document.querySelector('.epc-section-navigation').getBoundingClientRect();
+          const target=node.getBoundingClientRect();
+          const before=main.scrollTop,requested=target.top+target.height/2-(row.top+row.height/2);
+          main.scrollTop += requested;
+          return {before,requested,applied:main.scrollTop-before,after:main.scrollTop,
+            maximum:main.scrollHeight-main.clientHeight};
+        }""")
+        frames(page)
+        before = control.evaluate("""node => {
+          const root=document.querySelector('.epc-workspace');
+          const nav=document.querySelector('.st-key-monthly_report_navigation');
+          const outer=nav.closest('[data-testid="stLayoutWrapper"]');
+          const row=nav.querySelector('.epc-section-navigation');
+          const target=node.getBoundingClientRect(), wrapper=outer.getBoundingClientRect();
+          const capsule=row.getBoundingClientRect();
+          const reviewOpen=root.dataset.epcReviewOpen==='true',rootBox=root.getBoundingClientRect();
+          // Review's fixed child escapes the editor; its sticky parent may
+          // correctly be offscreen. Use the actual report width and fixed
+          // capsule height for the formerly full-width Review strip.
+          const band=reviewOpen ? {left:rootBox.left,right:rootBox.right,top:capsule.top,bottom:capsule.bottom}
+            : wrapper.toJSON();
+          const left=Math.max(target.left+8,band.left+8,capsule.right+8);
+          const right=Math.min(target.right-8,band.right-8,innerWidth-8);
+          const top=Math.max(target.top+4,band.top+4,0);
+          const bottom=Math.min(target.bottom-4,band.bottom-4,innerHeight);
+          const x=(left+right)/2,y=(top+bottom)/2,hit=document.elementFromPoint(x,y);
+          return {point:[x,y],target:target.toJSON(),wrapper:wrapper.toJSON(),capsule:capsule.toJSON(),band,
+            intersection:{left,right,top,bottom},scroll_top:document.querySelector('[data-testid="stMain"]').scrollTop,
+            viewport:{width:innerWidth,height:innerHeight},connected:node.isConnected,
+            owns_hit:Boolean(hit&&node.contains(hit)),hit_tag:hit?.tagName,
+            mode:root.dataset.epcMode,review_open:reviewOpen,
+            wrapper_position:getComputedStyle(outer).position,capsule_position:getComputedStyle(row).position,
+            wrapper_pointer_events:getComputedStyle(outer).pointerEvents,
+            capsule_pointer_events:getComputedStyle(row).pointerEvents,
+            details_open:node.closest('details')?.open??null};
+        }""")
+        evidence = {'phase': phase, 'setup_scroll': setup, 'before': before}
+        receipts.append(evidence)
+        check(browser, phase+' has an actual target beneath the unused navigation area',
+              navigation_hit_is_valid(before, review), before)
+        control.evaluate("""node => {
+          const events=[],types=['pointerdown','pointerup','click'];
+          const observe=event=>events.push({type:event.type,trusted:event.isTrusted,
+            owned:node.contains(event.target),target_tag:event.target?.tagName});
+          for(const type of types)document.addEventListener(type,observe,true);
+          window.__monthlyNavigationHit={node,events,
+            stop:()=>{for(const type of types)document.removeEventListener(type,observe,true);}};
+        }""")
+        # Coordinate input cannot auto-scroll the target out from under the
+        # overlay as locator.click() could. Exactly one gesture per action.
+        page.mouse.click(*before['point'])
+        frames(page)
+        after = control.evaluate("""node => {
+          const probe=window.__monthlyNavigationHit;
+          const result={events:probe.events,same_node:probe.node===node,connected:probe.node.isConnected,
+            focused:document.activeElement===node,details_open:node.closest('details')?.open??null};
+          probe.stop();delete window.__monthlyNavigationHit;return result;
+        }""")
+        evidence['after'] = after
+        check(browser, phase+' delivers one trusted native activation',
+              navigation_hit_activated(after, kind, before['details_open']), after)
+        capture(page, browser, 'navigation-hit-through-'+phase)
+
+    navigate_sections(page, 'monthly_activity')
+    probe(field, 'editor-before-review', review=False, kind='textarea')
+    expect(field).to_have_value(original_value)
+    navigate_sections(page, 'report_review')
+    summary = page.locator('summary').filter(has_text='Sections without new updates (optional)')
+    # The second gesture deliberately restores the original disclosure state;
+    # it is not a retry and only runs after the first activation is proven.
+    probe(summary, 'review-disclosure-toggle', review=True, kind='summary')
+    probe(summary, 'review-disclosure-restore', review=True, kind='summary')
+    navigate_sections(page, 'monthly_activity')  # Real Back controls, every arrival checked.
+    probe(field, 'editor-after-back', review=False, kind='textarea')
+    expect(field).to_have_value(original_value)
+    check(browser, 'navigation hit-through leaves report content unchanged',
+          page.evaluate(CLIENT_SNAPSHOT)['server']['draft_hashes'] == original_hashes)
+    # Restore only after success. A failure retains the failing viewport for
+    # the existing harness's screenshot/DOM capture; no retry or fallback.
+    page.set_viewport_size(viewport)
+    mode(page, 'wide')
+    navigate_sections(page, 'monthly_activity')
+
+
 def exercise_natural_review_navigation(page, browser, field, layout):
     """Observe ordinary page scrolling across Review, without using the sequential controls."""
     selector = page.locator(".epc-section-progress")
@@ -691,6 +824,7 @@ def exercise(browser_type, name):
         exercise_section_navigation(page, name, field)
         exercise_sequential_review(page, name, field, "wide")
         exercise_natural_review_navigation(page, name, field, "wide")
+        exercise_navigation_click_through(page, name, field)
 
         scroll_pair(page, EMPTY)
         frames(page)
