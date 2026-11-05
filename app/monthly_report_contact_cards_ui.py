@@ -9,6 +9,8 @@ from uuid import uuid4
 
 import streamlit as st
 
+from app.monthly_report_ui_text import literal
+
 
 def _category_index(table):
     return next((index for index, title in enumerate(table.columns)
@@ -220,7 +222,7 @@ def edit_contact_tables(tables, key, field, label, *, vendor=False, prepare=None
                     st.write('Edit ' + noun)
                     _fields(table, fields, field, args, vendor)
                 else:
-                    st.write(label(table.columns, row, ri))
+                    st.write(literal(label(table.columns, row, ri)))
                     st.button('Edit ' + noun, key=key + f'_open_{ti}_{ri}',
                               on_click=_queue, args=(*args, 'open', (ti, ri)))
         if category_index is not None:
@@ -230,7 +232,7 @@ def edit_contact_tables(tables, key, field, label, *, vendor=False, prepare=None
                 if category and category not in seen_categories:
                     seen_categories.append(category)
             for group_index, category in enumerate(seen_categories):
-                st.button('Add vendor contact to ' + category,
+                st.button(literal('Add vendor contact to ' + category),
                           key=key + f'_add_group_{ti}_{group_index}',
                           on_click=_queue, args=(*args, 'add', (ti, category)))
         st.button('Add ' + noun, key=key + f'_add_{ti}',
@@ -253,7 +255,7 @@ def _fields(table, fields, field, args, vendor):
         initial = st.session_state.get(native_key, original)
         if native_key not in existing_keys:
             st.session_state.pop(native_key, None)
-        st.text_input(label, value=initial, key=native_key, max_chars=500,
+        st.text_input(literal(label), value=initial, key=native_key, max_chars=500,
                       on_change=_queue, args=(*args, 'edit'))
     st.button('Close editing', key=args[0] + '_close', on_click=_queue, args=(*args, 'close'))
     st.button('Remove contact', key=args[0] + '_remove', on_click=_queue,
