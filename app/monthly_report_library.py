@@ -139,7 +139,12 @@ def _read_with_bytes(path: Path) -> tuple[dict, bytes]:
     try:
         if path.stat().st_size > MAX_JSON_BYTES:
             raise LibraryError("Saved report metadata exceeds the storage limit.")
-        raw = path.read_bytes()
+        # The path can grow or be replaced after stat; bound the actual read
+        # and refuse excess before decoding, without truncating saved metadata.
+        with path.open("rb") as source:
+            raw = source.read(MAX_JSON_BYTES + 1)
+        if len(raw) > MAX_JSON_BYTES:
+            raise LibraryError("Saved report metadata exceeds the storage limit.")
         value = json.loads(raw)
         if not isinstance(value, dict) or value.get("schema") != 1:
             raise LibraryError("Unsupported report storage schema; existing data was preserved.")
