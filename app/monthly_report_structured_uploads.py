@@ -460,6 +460,10 @@ _DOCX_INVOICE_CELL = re.compile(
     rf"invoice[^\S\t]+(?:total|amount)(?:[^\S\t]*[:=]?[^\S\t]*"
     rf"(?:\({_INVOICE_UNIT}\)|\[{_INVOICE_UNIT}\]|{_INVOICE_UNIT}))?"
     rf"[^\S\r\n\t]*[:=]?[^\S\r\n\t]*(?=\t|$)", re.I | re.M)
+_DOCX_WORK_CELL = re.compile(
+    r"(?:^|(?<=\t))[^\S\r\n\t]*(?:activity|actions|findings|"
+    r"work[^\S\t]*(?:performed|description)|service[^\S\t]*(?:notes|details))"
+    r"[^\S\r\n\t]*(?=\t|$)", re.I | re.M)
 
 
 class _InvoiceActivityView(NamedTuple):
@@ -494,32 +498,31 @@ def _docx_invoice_activity_view(text):
     prefix, lines, rows = lines[:start], lines[start:], rows[start:]
     headings = rows[0]
     table_text = "\n".join(lines)
-    width = max(len(row) for row in rows)
-    if any(len(row) != width for row in rows):
-        # Word cell breaks and row breaks share the same flattened newline.
-        # An invoice declaration starting in the initial heading fragments
-        # cannot safely be mapped to columns when physical widths disagree.
-        first_full = next(i for i, row in enumerate(rows) if len(row) == width)
-        match = _DOCX_INVOICE_CELL.search(table_text)
-        if match and table_text.count("\n", 0, match.start()) <= first_full:
-            return _InvoiceActivityView("", _docx_site_table(table_text))
-        return None
     excluded = {i for i, title in enumerate(headings) if _DOCX_INVOICE_CELL.fullmatch(title)}
     # A later genuine work/invoice schema can introduce or move a financial
     # column. A literal invoice label in an ordinary data cell is not a schema.
     def heading_key(value):
         return re.sub(r"[^a-z0-9]", "", value.casefold())
-    work_fields = {"workperformed", "workdescription", "activity", "actions",
-                   "servicenotes", "servicedetails", "findings"}
+    other_fields = set()
     if excluded:
-        work_fields.update(heading_key(title) for i, title in enumerate(headings)
-                           if i not in excluded and title.strip())
-        work_fields.discard("")
+        other_fields = {heading_key(title) for i, title in enumerate(headings) if i not in excluded} - {""}
     for i, row in enumerate(rows[1:-1], 1):
         later = {j for j, title in enumerate(row) if _DOCX_INVOICE_CELL.fullmatch(title)}
-        if later and later != excluded and any(heading_key(value) in work_fields for value in row):
+        if later and later != excluded and any(
+                _DOCX_WORK_CELL.fullmatch(value) or heading_key(value) in other_fields for value in row):
             needs_site = _docx_site_table(table_text) or _docx_site_table("\n".join(lines[i:]))
             return _InvoiceActivityView("", needs_site)
+    width = max(len(row) for row in rows)
+    if any(len(row) != width for row in rows):
+        # Word cell breaks and row breaks share the same flattened newline.
+        # A work/invoice header can itself wrap after a competing preamble.
+        # The original cells cannot then be assigned by physical position.
+        first_full = next(i for i, row in enumerate(rows) if len(row) == width)
+        match = _DOCX_INVOICE_CELL.search(table_text)
+        if match and (table_text.count("\n", 0, match.start()) <= first_full
+                      or _DOCX_WORK_CELL.search("\n".join(lines[1:]))):
+            return _InvoiceActivityView("", _docx_site_table(table_text))
+        return None
     if not excluded:
         return None
     if _docx_site_table(table_text):

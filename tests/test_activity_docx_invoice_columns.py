@@ -140,6 +140,33 @@ def test_competing_preamble_before_a_financial_work_schema_is_held_without_treat
     assert list(activity._activity_source_pages(item(ordinary))) == [(1, ordinary)]
 
 
+@pytest.mark.parametrize("work_label,invoice_label", [
+    ("Work performed", "Invoice total"), ("Work performed", "Invoice\nTotal"),
+    ("Work\nperformed", "Invoice total"), ("Work\nperformed", "Invoice\nTotal"),
+])
+def test_actual_later_financial_heading_with_multiline_data_cells(tmp_path, monkeypatch, work_label, invoice_label):
+    monkeypatch.setattr(sources, "_path", lambda p, digest, suffix: tmp_path / (digest + suffix))
+    monkeypatch.setattr(library, "_atomic_write", lambda path, raw: path.write_bytes(raw))
+    raw = original(headings=("Service summary", "Revision B", ""),
+                   rows=((work_label, invoice_label, "Reading"),
+                         (ACTION, INVOICE, TECHNICAL + "\nConfirmed the reading.")))
+    source, _ = sources.ingest(PROFILE, "maintenance.docx", raw)
+    n = next(n for n, p in enumerate(source.source.page_texts, 1) if INVOICE in p)
+    manual = ResolvedBlock("activity_summary", "This month", text=MANUAL)
+    block = activity.native_update((source,), "activity_summary", manual)
+    doc = Document(BytesIO(_build_native_docx(draft_for(block, (source,)), template(tmp_path), section_key="activity")))
+    text = "\n".join(p.text for p in doc.paragraphs)
+    assert INVOICE not in text and MANUAL in text and NARRATIVE in text
+    supplied = {"items": [{"source": source.source.id, "page": n, "text": ACTION + "\t" + INVOICE, "row": []}]}
+    old, _ = activity.reader_update((source,), "activity_summary", supplied, manual)
+    assert old.text == MANUAL and sources.source_bytes(PROFILE, source.source) == raw
+
+
+def test_ragged_note_with_a_literal_invoice_label_but_no_later_schema_remains_ordinary():
+    text = "Work performed\tTechnician note\n" + ACTION + "\tInvoice total\n" + NARRATIVE
+    assert list(activity._activity_source_pages(item(text))) == [(1, text)]
+
+
 @pytest.mark.parametrize("mode", ["moved", "moved_compact", "same", "site", "literal"])
 def test_actual_word_table_with_a_second_heading_or_literal_data_cell(tmp_path, monkeypatch, mode):
     monkeypatch.setattr(sources, "_path", lambda p, digest, suffix: tmp_path / (digest + suffix))
