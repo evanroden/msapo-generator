@@ -128,6 +128,9 @@ def _publish(contract, block, assets, *, origin_profile, origin_fingerprint,
         previous = next((item for item in current.workflows if item.key == block.key), None)
         if (previous and previous.block == pinned and previous.origin_profile == origin_profile
                 and previous.origin_fingerprint == origin_fingerprint):
+            # An unchanged manifest can still have missing or damaged picture links.
+            for ref, raw in prepared.items():
+                library._atomic_write(path / "assets" / ref, raw)
             return current
         item = WorkflowStandard(block.key, pinned, _contract(contract), origin_profile,
                                 origin_fingerprint, library._now())
