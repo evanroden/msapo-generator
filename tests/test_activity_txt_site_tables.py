@@ -198,6 +198,14 @@ def test_public_storage_guided_upload_shows_mapping_notice_and_keeps_manual(monk
     monkeypatch.setattr(ai, "request_json", lambda *args: pytest.fail("Blocked TXT reached external reading"))
     app.run()
     assert not app.exception and app.get("file_uploader")
+    # A generic TXT is Reference only until the operator chooses an Activity
+    # classification. Preserve that isolation before exercising the site guard.
+    assert draft(app).sources[0].classification == "Reference only"
+    assert not any("site-specific" in warning.value for warning in app.warning)
+    assert activity(app).text == MANUAL and editor(app).value == MANUAL
+    assert sources.source_bytes(profile, draft(app).sources[0]) == raw
+    next(w for w in app.selectbox if w.label == "Classification").set_value("Vendor service").run()
+    assert not app.exception and draft(app).sources[0].classification == "Vendor service"
     assert any("site-specific" in warning.value for warning in app.warning)
     assert activity(app).text == MANUAL and editor(app).value == MANUAL
     assert sources.source_bytes(profile, draft(app).sources[0]) == raw
