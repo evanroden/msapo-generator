@@ -455,11 +455,13 @@ def reader_page_notices(contents, destination, value):
 
 
 _INVOICE_UNIT = rf"(?:{_CURRENCIES}|{_CURRENCY_SYMBOLS})"
+# Whitespace never belongs to a label word, unit or separator. Consume each
+# run once so a padded nonmatching saved header cannot repartition the spaces.
 _DOCX_INVOICE_CELL = re.compile(
-    rf"(?:^|(?<=\t))[^\S\r\n\t]*(?:(?:vendor|supplier|subcontractor)[^\S\t]+)?"
-    rf"invoice[^\S\t]+(?:total|amount)(?:[^\S\t]*[:=]?[^\S\t]*"
+    rf"(?:^|(?<=\t))[^\S\r\n\t]*+(?:(?:vendor|supplier|subcontractor)[^\S\t]++)?"
+    rf"invoice[^\S\t]++(?:total|amount)(?:[^\S\t]*+(?:[:=][^\S\t]*+)?"
     rf"(?:\({_INVOICE_UNIT}\)|\[{_INVOICE_UNIT}\]|{_INVOICE_UNIT}))?"
-    rf"[^\S\r\n\t]*[:=]?[^\S\r\n\t]*(?=\t|$)", re.I | re.M)
+    rf"[^\S\r\n\t]*+(?:[:=][^\S\r\n\t]*+)?(?=\t|$)", re.I | re.M)
 _DOCX_WORK_CELL = re.compile(
     r"(?:^|(?<=\t))[^\S\r\n\t]*(?:activity|actions|findings|"
     r"work[^\S\t]*(?:performed|description)|service[^\S\t]*(?:notes|details))"

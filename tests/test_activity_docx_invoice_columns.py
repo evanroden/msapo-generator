@@ -3,6 +3,9 @@ from dataclasses import replace
 from datetime import date
 from hashlib import sha256
 from io import BytesIO
+from pathlib import Path
+import subprocess
+import sys
 
 from docx import Document
 import pytest
@@ -76,6 +79,26 @@ def test_prose_mentions_of_invoice_total_do_not_become_table_headers():
 def test_empty_invoice_cells_keep_the_ordinary_view():
     text = "Work performed\tInvoice total\n" + ACTION + "\t"
     assert list(activity._activity_source_pages(item(text))) == [(1, text)]
+
+
+def test_stored_heavily_padded_invoice_lookalike_and_currency_header_finish_within_budget():
+    # Isolate the deadline so a regressed matcher cannot hang the suite.
+    code = """
+from app.monthly_report_structured_uploads import native_update
+from app.monthly_report_sources import SourceContent
+from app.monthly_report_model import ReportSource
+pad = ' ' * 16384
+for title, recognized in [('Invoice total' + pad + 'X', False), ('Invoice total' + pad + '(USD)', True)]:
+    page = 'Work performed\\t' + title + '\\tReading\\nInspected synthetic pump.\\t18675.50\\tOperating pressure was 74 psi.'
+    record = ReportSource('a' * 64, 'stored.docx', 'a' * 64, '.docx', page_texts=(page,))
+    text = native_update((SourceContent(record),), 'activity_summary').text
+    assert 'Inspected synthetic pump.' in text and 'Operating pressure was 74 psi.' in text
+    assert record.page_texts == (page,)
+    if recognized:
+        assert '18675.50' not in text
+"""
+    subprocess.run([sys.executable, "-c", code], cwd=Path(__file__).resolve().parents[1],
+                   timeout=15, check=True, capture_output=True, text=True)
 
 
 @pytest.mark.parametrize("bands", [1, 2])
