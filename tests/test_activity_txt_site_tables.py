@@ -67,8 +67,15 @@ def test_prose_ragged_rows_unrelated_headings_and_other_delimiters_keep_their_ro
     item = txt(text)
     assert structured.reader_sources((item,), "activity_summary") == (item,)
     assert not structured.reader_notices((item,), "activity_summary")
-    if FOREIGN in text:
-        assert FOREIGN in structured.native_update((item,), "activity_summary").text
+
+
+@pytest.mark.parametrize("text,expected", [
+    (SAFE, SAFE),
+    ("Asset\tWork performed\nP-1\t" + LOCAL, LOCAL),
+    ("2026-09-04 | WO-01 | Vendor service\n" + LOCAL, LOCAL),
+])
+def test_ordinary_narrative_asset_table_and_dated_entry_keep_legitimate_work(text, expected):
+    assert expected in structured.native_update((txt(text),), "activity_summary").text
 
 
 def test_legacy_multiple_text_items_do_not_invent_a_whole_file_table():
