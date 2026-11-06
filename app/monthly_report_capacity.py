@@ -249,13 +249,19 @@ def _text_tables(text, name):
     """Only delimiters with an observable column structure qualify as a table."""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     groups, current = [], []
-    for line in lines:
+    for index, line in enumerate(lines):
         if "\t" in line:
             row = tuple(line.split("\t"))
         elif "|" in line:
             row = tuple(part.strip() for part in line.strip("|").split("|"))
         else:
             row = tuple(re.split(r"\s{2,}", line))
+        # A Markdown pipe alignment rule belongs to its header, not a new table.
+        if (len(current) == 1 and len(row) == len(current[0]) and index > 0
+                and "|" in line and "\t" not in line
+                and "|" in lines[index - 1] and "\t" not in lines[index - 1].strip()
+                and all(re.fullmatch(r":?-{3,}:?", cell.strip()) for cell in row)):
+            continue
         if len(row) > 1 and not all(re.fullmatch(r"[:\- ]*", c) for c in row):
             current.append(row)
         elif current:
