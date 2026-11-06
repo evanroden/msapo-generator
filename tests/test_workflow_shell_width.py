@@ -1,6 +1,7 @@
 """Source regression only; hosted shell geometry remains required."""
 import re
 from pathlib import Path
+import pytest
 from app.web_ui import CUSTOM_CSS
 
 ROOT = Path(__file__).parents[1]
@@ -249,3 +250,154 @@ def test_measurement_late_final_owner_evaluation_cannot_admit_geometry():
     times=iter([0,1,2,3,46])
     with pytest.raises(TimeoutError):
         wait_native_measurement(Page(),'monthly-ready',{},lambda x:x,clock=lambda:next(times))
+
+
+def _run_case_until_delayed_geometry(monkeypatch, tmp_path, delayed_action, occurrence, delay):
+    """Exercise the real driver and deadline with synthetic page responses.
+
+    Stop at the requested geometry probe: this does not emulate layout, execute
+    the browser predicate, or claim completion of the native acceptance matrix.
+    """
+    import json
+    import sys
+    from types import ModuleType
+    from unittest.mock import Mock
+    from scripts import qa_workflow_shell_width as qa
+
+    class GeometryReached(BaseException):
+        pass
+
+    clock = [0.0]
+    state = {'name': 'monthly-setup', 'ready_at': 0.0, 'delayed': False}
+    actions = {}
+    waits = []
+    geometry = {
+        'maxWidth': '1680px', 'overflow': False, 'openerOverlap': 0,
+        'box': {'x': 0, 'width': 1024}, 'main': {'width': 1024},
+        'tabs': {'x': 16, 'width': 992}, 'paddingTop': '60px',
+    }
+    sample = {'x': 0, 'width': 1024, 'tabX': 16, 'tabWidth': 992,
+              'maxWidth': '1680px', 'openerOverlap': 0}
+
+    def action(name):
+        actions[name] = actions.get(name, 0) + 1
+        next_state = {
+            'goto': 'monthly-setup', 'Finish synthetic setup': 'monthly-ready',
+            'Expense reimbursement': 'expense', 'Purchase order': 'po',
+            'Monthly report': 'monthly-ready', 'Show synthetic conflict': 'monthly-conflict',
+            'Resolve synthetic conflict': 'monthly-ready', 'Return to synthetic setup': 'monthly-setup',
+        }.get(name)
+        if next_state is not None:
+            state['name'] = next_state
+        if (name, actions[name]) == (delayed_action, occurrence):
+            state.update(ready_at=clock[0] + delay, delayed=True)
+
+    def wait_until_ready(timeout, kind):
+        waits.append((kind, timeout))
+        deadline = clock[0] + timeout / 1000
+        if state['ready_at'] > deadline:
+            clock[0] = deadline
+            raise TimeoutError(f'{kind} exhausted {timeout}ms before synthetic content was ready')
+        clock[0] = max(clock[0], state['ready_at'])
+
+    def readiness(expected_state):
+        return {'ready': clock[0] >= state['ready_at'] and state['name'] == expected_state,
+                'at': clock[0] * 1000}
+
+    def evaluate(js, *args):
+        if js == qa.NATIVE_READINESS:
+            return readiness(args[0])
+        if js == 'window.__shellEvidence':
+            return {'samples': [sample], 'overflow': False, 'epoch': 'synthetic'}
+        # Epoch, adapter-release, and two-frame callbacks have no clock cost in
+        # this synthetic control; native frame behavior has separate coverage.
+        return None
+
+    def wait_for_function(js, **kwargs):
+        if 'arg' in kwargs:
+            wait_until_ready(kwargs['timeout'], 'native')
+            result = readiness(kwargs['arg'])
+            assert result['ready']
+            return Mock(json_value=lambda: result, dispose=lambda: None)
+        return None  # adapter mounting is outside this readiness-order control
+
+    def probe(js):
+        assert js == qa.PROBE
+        if state['delayed']:
+            raise GeometryReached
+        return geometry
+
+    def locator(kind, name):
+        value = Mock()
+        value.click.side_effect = lambda: action(name)
+        value.inner_text.side_effect = lambda: 'State: ' + state['name']
+        value.evaluate.side_effect = probe
+        value.get_by_role.side_effect = lambda role, **kwargs: locator(role, kwargs.get('name', name))
+
+        def to_be_visible(**kwargs):
+            assert kind == 'text' and name.startswith('State: ')
+            wait_until_ready(kwargs.get('timeout', 5000), 'caption')
+            assert name == 'State: ' + state['name']
+
+        def to_have_attribute(attribute, expected, **kwargs):
+            if name == 'stApp':
+                assert (attribute, expected) == ('data-test-script-state', 'notRunning')
+                wait_until_ready(kwargs['timeout'], 'idle')
+            else:
+                assert name == 'stSidebar' and attribute == 'aria-expanded'
+
+        value.to_be_visible.side_effect = to_be_visible
+        value.to_have_attribute.side_effect = to_have_attribute
+        return value
+
+    page = Mock()
+    page.goto.side_effect = lambda *args, **kwargs: action('goto')
+    page.get_by_text.side_effect = lambda text, **kwargs: locator('text', text)
+    page.get_by_test_id.side_effect = lambda name: locator('test_id', name)
+    page.get_by_role.side_effect = lambda role, **kwargs: locator(role, kwargs.get('name'))
+    page.locator.side_effect = lambda selector: locator('selector', selector)
+    page.evaluate.side_effect = evaluate
+    page.wait_for_function.side_effect = wait_for_function
+    context = Mock(new_page=lambda: page)
+    browser = Mock(new_context=lambda **kwargs: context)
+    playwright = ModuleType('playwright')
+    sync_api = ModuleType('playwright.sync_api')
+    sync_api.expect = lambda value: value
+    playwright.sync_api = sync_api
+    monkeypatch.setitem(sys.modules, 'playwright', playwright)
+    monkeypatch.setitem(sys.modules, 'playwright.sync_api', sync_api)
+    original_wait = qa.wait_native_measurement
+    monkeypatch.setattr(qa, 'wait_native_measurement',
+                        lambda page, state, evidence, expect:
+                        original_wait(page, state, evidence, expect, clock=lambda: clock[0]))
+    expected_exception = GeometryReached if delay < 45 else TimeoutError
+    with pytest.raises(expected_exception):
+        qa.run_case(browser, 1024, tmp_path)
+    record = json.loads((tmp_path / 'results.json').read_text())
+    assert state['delayed'], 'The requested action was not reached'
+    measurements = record.get('measurement_readiness', [])
+    assert measurements and measurements[-1]['expected_state'] == state['name'], \
+        'The delayed state must reach its original readiness gate'
+    if delay < 45:
+        assert clock[0] == delay
+        assert measurements[-1]['native_ready']['ready']
+        assert ('idle', 45000) in waits and ('native', 39000) in waits
+    else:
+        assert clock[0] == 45
+        assert record['result'] == 'fail'
+        assert 'native_ready' not in measurements[-1]
+    assert not record['errors'] and not record['rejected']
+
+
+@pytest.mark.parametrize('action,occurrence,delay', [
+    pytest.param('goto', 1, 6, id='initial'),
+    pytest.param('Expense reimbursement', 1, 6, id='workflow-switch'),
+    pytest.param('Show synthetic conflict', 1, 6, id='conflict'),
+    pytest.param('Resolve synthetic conflict', 1, 6, id='resolve'),
+    pytest.param('Show synthetic conflict', 2, 6, id='repeat-phase'),
+    pytest.param('goto', 1, 46, id='initial-exceeds-original-budget'),
+    pytest.param('Expense reimbursement', 1, 46, id='switch-exceeds-original-budget'),
+])
+def test_delayed_state_uses_existing_readiness_gate_before_geometry(monkeypatch, tmp_path,
+                                                                  action, occurrence, delay):
+    _run_case_until_delayed_geometry(monkeypatch, tmp_path, action, occurrence, delay)
