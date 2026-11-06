@@ -54,6 +54,16 @@ def _generation(value: dict) -> str:
     return generation
 
 
+def _verified_saved_draft(value: dict) -> ReportDraft:
+    """A browser snapshot's content must match its persisted recovery identity."""
+    draft = library.draft_from_dict(value.get("draft", {}))
+    if value.get("fingerprint") != draft.fingerprint:
+        raise library.LibraryError(
+            "The unfinished browser journal fingerprint does not match its saved draft. "
+            "Shared reports are unchanged.")
+    return draft
+
+
 def current_generation(token: str, contract: str, key: str, period: ReportPeriod) -> str:
     """Recover the new identity after an explicit discard, even without a draft."""
     if not enabled(token):
@@ -78,7 +88,7 @@ def load(token: str, contract: str, key: str, period: ReportPeriod) -> ActiveWor
             not isinstance(value.get("base_snapshot_revision"), int) or
             value["base_snapshot_revision"] < 0):
         raise library.LibraryError("The browser's unfinished report data could not be read safely.")
-    draft = library.draft_from_dict(value.get("draft", {}))
+    draft = _verified_saved_draft(value)
     if (draft.profile.contract, draft.profile.key, draft.period) != (contract, key, period):
         raise library.LibraryError("Unfinished browser work belongs to a different report.")
     result = []
@@ -130,6 +140,8 @@ def save(token: str, draft: ReportDraft, *, expected_revision: int,
         if previous and (previous.get("kind") not in ("browser_active_work_v1", "browser_active_work_discarded_v1")
                          or type(previous.get("revision")) is not int or previous["revision"] < 1):
             raise library.LibraryError("The unfinished browser journal could not be read safely.")
+        if previous and previous["kind"] == "browser_active_work_v1":
+            _verified_saved_draft(previous)
         generation = _generation(previous) if previous else ""
         revision = previous["revision"] if previous and previous["kind"] == "browser_active_work_v1" else 0
         asset_names = tuple(sorted(pending))
