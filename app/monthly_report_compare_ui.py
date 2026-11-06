@@ -44,7 +44,7 @@ def _recorded_design(profile):
 
 
 def _table(columns, rows):
-    titles = [getattr(c, "title", c) for c in columns]
+    titles = [c if isinstance(c, str) else getattr(c, "title", c) for c in columns]
     return _lines("Row " + str(n + 1) + ": " + "; ".join(
         str(titles[i] if i < len(titles) else f"Column {i + 1}") + ": " + str(value)
         for i, value in enumerate(row)) for n, row in enumerate(rows))
