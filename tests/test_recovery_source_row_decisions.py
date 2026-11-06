@@ -12,7 +12,9 @@ from app import monthly_report_active_work as active, monthly_report_library as 
 from app import monthly_report_sources as sources, monthly_report_training_review_flow as training
 from app import monthly_report_work_order_review_flow as orders
 from app.monthly_report_compare_ui import compare_drafts
+from app.monthly_report_model import Facility
 from app.monthly_report_native_layout import _build_native_docx, build_native_docx
+from app.monthly_report_source_scope import correct_scope
 from test_monthly_report_work_order_review_flow import draft_source, stored
 from test_training_review_flow import report
 from test_training_review_ui import click, open_app, widget
@@ -258,15 +260,20 @@ def test_unverified_free_text_hours_are_not_rendered(portable):
     assert 'Hours' in shown and '1234' not in shown and 'Private number' not in shown
 
 
-@pytest.mark.parametrize('case', ['undecided-site', 'extra-site-column', 'extra-cost-column'])
+@pytest.mark.parametrize('case', ['undecided-site', 'combined-sites', 'extra-site-column', 'extra-cost-column'])
 def test_numeric_hours_remain_private_outside_narrow_confirmed_event(case, portable):
     raw = CSV
-    if case != 'undecided-site':
+    if case.startswith('extra-'):
         header = b'Site' if case == 'extra-site-column' else b'Cost'
         raw = CSV.replace(b'Status\n', b'Status,'+header+b'\n').replace(b'Completed\n', b'Completed,PRIVATE SOURCE CELL\n')
     draft = report(raw)
     if case == 'undecided-site':
         draft = replace(draft, sources=(replace(draft.sources[0], scope_review=()),))
+    elif case == 'combined-sites':
+        profile = replace(draft.profile, scope_type='multi_site',
+                          facilities=(*draft.profile.facilities, Facility('south', 'Synthetic South')))
+        source = correct_scope(draft.sources[0], profile, ('north', 'south'))
+        draft = replace(draft, profile=profile, sources=(source,))
     app = open_app(draft)
     click(app, 'Review this Training table')
     saved = app.session_state['draft']

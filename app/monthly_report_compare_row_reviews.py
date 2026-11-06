@@ -64,7 +64,8 @@ def _corrected_hours(value, draft):
     row, = review['rows']
     source = next(s for s in draft.sources if s.id == value['source_id'])
     scope = reviewed_scope(source, draft.profile)
-    if not scope or scope['kind'] != 'sites' or row['issues'] or row['excluded']:
+    if (not scope or scope['kind'] != 'sites' or len(set(scope['facilities'])) != 1
+            or row['issues'] or row['excluded']):
         return ''
     hours = dict(row['corrections']).get('Hours', '')
     if (len(row['values']) == len(EVENT_COLUMNS) and hours == row['values'][-1]
