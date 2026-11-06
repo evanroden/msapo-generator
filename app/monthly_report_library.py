@@ -233,6 +233,8 @@ def _report_table_from_dict(value: dict) -> ReportTable:
 
 
 def block_from_dict(value: dict) -> ResolvedBlock:
+    if not isinstance(value, dict):
+        raise LibraryError("Invalid saved report block.")
     try:
         from app.monthly_report_asset_review import normalize_asset_reviews
         from app.monthly_report_model import AssetInstance
@@ -282,6 +284,8 @@ def spec_from_dict(value: dict) -> BlockSpec:
 
 
 def draft_from_dict(value: dict) -> ReportDraft:
+    if not isinstance(value, dict):
+        raise LibraryError("Invalid report snapshot.")
     try:
         from app.monthly_report_cover_recovery import request_from_dict
         reviews = value.get("source_row_reviews", ())
