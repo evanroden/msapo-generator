@@ -101,7 +101,9 @@ def _image(raw, reference):
         # shared artwork. Reopen because verify invalidates the first image.
         with Image.open(BytesIO(raw)) as image:
             image.load()
-    except (OSError, SyntaxError, UnidentifiedImageError, Image.DecompressionBombError) as exc:
+    except LogoArtworkError:
+        raise
+    except (OSError, SyntaxError, ValueError, UnidentifiedImageError, Image.DecompressionBombError) as exc:
         raise LogoArtworkError("A logo image could not be read.") from exc
 
 
