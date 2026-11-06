@@ -607,11 +607,13 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
 def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], existing: tuple[SourceContent, ...] = ()) -> tuple[tuple[SourceContent, ...], tuple[str, ...]]:
     sources = {c.source.sha256: c for c in existing}
     sizes, messages = 0, []
+    counted_sizes = {}
     for item in existing:
         # Missing originals remain in the draft inventory and its output
         # dependency checks. They cannot prevent other files from being read.
         try:
-            sizes += _path(profile, item.source.sha256, item.source.suffix).stat().st_size
+            counted_sizes[item.source.sha256] = _path(profile, item.source.sha256, item.source.suffix).stat().st_size
+            sizes += counted_sizes[item.source.sha256]
         except (ValueError, OSError):
             label = Path(item.source.filename.replace("\\", "/")).name
             messages.append(f"Saved source unavailable: {label}. Replace it before generating dependent content.")
@@ -636,7 +638,10 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
                     messages.append(f"Could not restore saved source: {filename}. The report still needs a valid copy.")
                     continue
                 messages.append(f"Saved source restored: {filename}. Prior reviews and report history are unchanged.")
-                sizes += len(raw)
+                # Replace the size already counted for a damaged copy. Missing
+                # originals contribute zero until their successful restoration.
+                sizes += len(raw) - counted_sizes.get(digest, 0)
+                counted_sizes[digest] = len(raw)
             else:
                 messages.append(f"Duplicate skipped: {filename}")
             continue
@@ -691,6 +696,7 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
             continue
         sources[digest] = content
         sizes += len(raw)
+        counted_sizes[digest] = len(raw)
         text_size += added
         queue.extend((name, data, depth+1) for name, data in attachments)
     return tuple(sources.values()), tuple(messages)
