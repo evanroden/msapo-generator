@@ -34,11 +34,20 @@ def layout_checks(draft):
             block = blocks.get(spec.key)
             if block is None or block.source == "Omit":
                 continue
-            from app.monthly_report_asset_layout import document_caption_problems
-            for index in document_caption_problems(block, draft.sources):
-                checks.append(ReportCheck('document_caption',
-                    f'Shorten source-page caption {index + 1} in {_label(spec.key)} to at most three lines before generating.',
-                    True, block.key))
+            # Caption measurement is only needed for recognized standalone
+            # PDF source pages. Plain photographs and non-image blocks retain
+            # their independent photo/layout rules without this font work.
+            if spec.type == "image_grid" and block.asset_hashes:
+                from app.monthly_report_asset_layout import (
+                    document_page_indexes, document_caption_problems)
+                if document_page_indexes(block, draft.sources):
+                    from app.monthly_report_correction_targets import picture_target
+                    for index in document_caption_problems(block, draft.sources):
+                        checks.append(ReportCheck(
+                            "document_caption",
+                            f"Shorten the source-page caption for picture {index + 1} "
+                            f"in {_label(spec.key)} to at most three lines before generating.",
+                            True, block.key, (picture_target(draft, block, index),)))
             if block.org_nodes:
                 problem = org_chart_problem(block.org_nodes)
                 if problem:
