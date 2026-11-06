@@ -204,6 +204,12 @@ def _logical_activity_lines(lines):
 
 
 
+def _site_identity_heading(value):
+    return bool(re.fullmatch(
+        r"(?:site|facility|building|location|client|customer|hospital)(?:id|name|key|code)?",
+        re.sub(r"[^a-z0-9]", "", value.casefold())))
+
+
 def _docx_site_table(text):
     """Recognize explicit tabular site evidence without inventing row scope."""
     lines = [line for line in text.splitlines() if line.strip()]
@@ -216,17 +222,29 @@ def _docx_site_table(text):
     headings = " ".join(lines[:first_tab + 1]).split("\t")
     if sum(bool(value.strip()) for value in headings) < 2:
         return False
-    def site_label(value):
-        return bool(re.fullmatch(
-            r"(?:site|facility|building|location|client|customer|hospital)(?:id|name|key|code)?",
-            re.sub(r"[^a-z0-9]", "", value.casefold())))
     # Cell line breaks can split both headers and rows across physical lines.
     # If the site label is in a later header fragment, conservatively hold the
     # item too. Original source bytes and unrelated source items are retained.
-    if any(site_label(value) for value in headings):
+    if any(_site_identity_heading(value) for value in headings):
         return bool(lines[first_tab + 1:])
-    return any(i + 1 < len(lines) and any(site_label(value) for value in line.split("\t"))
+    return any(i + 1 < len(lines) and any(_site_identity_heading(value) for value in line.split("\t"))
                for i, line in enumerate(lines[first_tab + 1:], first_tab + 1))
+
+
+def _txt_site_activity_table(content):
+    """Recognize only a complete tabular TXT with explicit site and work columns."""
+    source = content.source
+    if source.suffix != ".txt" or len(source.page_texts) != 1:
+        return False
+    lines = [line for line in source.page_texts[0].splitlines() if line.strip()]
+    if len(lines) < 2:
+        return False
+    headings = lines[0].split("\t")
+    work = {"activity", "workperformed", "workdescription", "servicenotes",
+            "servicedetails", "actions", "findings"}
+    return (any(_site_identity_heading(heading) for heading in headings)
+            and any(re.sub(r"[^a-z0-9]", "", heading.casefold()) in work for heading in headings)
+            and all(line.count("\t") == len(headings) - 1 for line in lines[1:]))
 
 
 def _activity_lines(text, suffix, *, with_dates=False):
@@ -350,6 +368,10 @@ def _activity_reader_notice(content):
     if is_work_order_source(content):
         return (content.source.filename + ": work-order records use Review counted work-order rows "
                 "and Add totals to summary; this file is not sent to the Activity reader.")
+    if _txt_site_activity_table(content):
+        return (content.source.filename + ": site-specific rows in this tab-separated text file need "
+                "an explicit target-site mapping. Review the original and add verified work directly "
+                "in Activity. The uploaded file is retained and is not sent to the Activity reader.")
     if content.source.suffix == ".docx" and any(_docx_site_table(text) for text in content.source.page_texts):
         return (content.source.filename + ": site-specific rows in this Word table need an explicit target-site mapping. "
                 "This file is not sent to the Activity reader. Other native narrative remains available; "
@@ -531,7 +553,7 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
             if is_work_order_source(content):
                 # CMMS/counting sources use their own reviewed metrics path.
                 continue
-            if _spreadsheet_has_site_scope_column(content):
+            if _spreadsheet_has_site_scope_column(content) or _txt_site_activity_table(content):
                 # Row-specific sites need the same review as the reader route.
                 continue
             csv_rows = _csv_activity_entries(content)

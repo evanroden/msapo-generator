@@ -273,9 +273,9 @@ def test_multiline_header_only_and_unrelated_tabbed_prose_still_do_not_establish
         assert not structured.reader_notices((ordinary,), "activity_summary")
 
 
-@pytest.mark.parametrize("suffix", [".txt", ".pdf", ".eml"])
-def test_other_source_formats_keep_existing_behavior(suffix):
-    item = content("Site\tWork performed\nForeign South\t" + FOREIGN, suffix=suffix)
+@pytest.mark.parametrize("suffix,heading", [(".txt", "Site inspection notes"), (".pdf", "Site"), (".eml", "Site")])
+def test_other_source_formats_keep_existing_behavior(suffix, heading):
+    item = content(heading + "\tWork performed\nForeign South\t" + FOREIGN, suffix=suffix)
     assert FOREIGN in structured.native_update((item,), "activity_summary").text
     assert not structured.reader_notices((item,), "activity_summary")
 
