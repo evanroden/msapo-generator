@@ -682,13 +682,31 @@ def save_capacity(profile, tables, *, expected_revision, actor, reviewed_fingerp
     return state
 
 
+def selected_site_keys(profile):
+    """Stable report identities win; legacy names may identify only one site."""
+    known = contract_facilities(profile)
+    known_keys = {f.key for f in known}
+    state = directory.load_directory(profile.contract)
+    if state is not None:
+        # A retired saved identity is still known. Its old name cannot turn
+        # this report into a different active site's report.
+        known_keys.update(site.key for site in state.sites)
+    wanted = {f.key for f in profile.facilities}
+    for facility in profile.facilities:
+        if facility.key in known_keys:
+            continue
+        names = directory.facility_names(facility)
+        matches = {f.key for f in known if names & directory.facility_names(f)}
+        if len(matches) == 1:
+            wanted.update(matches)
+    return wanted
+
+
 def capacity_block(profile, state=None):
     state = state or load_capacity(profile.contract)
     if state is None:
         return None
-    known = contract_facilities(profile)
-    wanted = {f.key for f in profile.facilities}
-    wanted.update(match_site(name, known) for f in profile.facilities for name in (f.title, *f.aliases))
+    wanted = selected_site_keys(profile)
     selected, refs = [], []
     for table in state.tables:
         rows = tuple(row for row, site in zip(table.rows, table.site_keys) if site in wanted)

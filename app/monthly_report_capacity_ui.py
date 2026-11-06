@@ -133,13 +133,7 @@ def _saved_capacity_caption(profile, state):
     # per-site subset. Two independently saved subsets may carry that same
     # reference with different filenames. Resolve the actual saved site rows
     # before exposing any source filename in this report's inventory.
-    known = capacity.contract_facilities(profile)
-    wanted = {facility.key for facility in profile.facilities}
-    for facility in profile.facilities:
-        for alias in (facility.title, *facility.aliases):
-            matched = capacity.match_site(alias, known)
-            if matched:
-                wanted.add(matched)
+    wanted = capacity.selected_site_keys(profile)
     sources = tuple(dict.fromkeys(
         table.source_filename for table in state.tables
         if table.source_filename and any(site in wanted for site in table.site_keys)
