@@ -1,9 +1,13 @@
 """Upload-first, source-grounded section preparation; originals never enter quotes output."""
 from dataclasses import replace
 import re
+from typing import NamedTuple
 
 from app import monthly_report_sources as sources
-from app.monthly_report_content_policy import contains_price, page_status, price_column, ambiguous_price_columns, table_price_columns
+from app.monthly_report_content_policy import (
+    _CURRENCIES, _CURRENCY_SYMBOLS, ambiguous_price_columns, contains_price,
+    page_status, price_column, table_price_columns,
+)
 from app.monthly_report_model import ResolvedBlock
 
 COLUMNS = {
@@ -204,6 +208,12 @@ def _logical_activity_lines(lines):
 
 
 
+def _site_identity_heading(value):
+    return bool(re.fullmatch(
+        r"(?:site|facility|building|location|client|customer|hospital)(?:id|name|key|code)?",
+        re.sub(r"[^a-z0-9]", "", value.casefold())))
+
+
 def _docx_site_table(text):
     """Recognize explicit tabular site evidence without inventing row scope."""
     lines = [line for line in text.splitlines() if line.strip()]
@@ -216,17 +226,29 @@ def _docx_site_table(text):
     headings = " ".join(lines[:first_tab + 1]).split("\t")
     if sum(bool(value.strip()) for value in headings) < 2:
         return False
-    def site_label(value):
-        return bool(re.fullmatch(
-            r"(?:site|facility|building|location|client|customer|hospital)(?:id|name|key|code)?",
-            re.sub(r"[^a-z0-9]", "", value.casefold())))
     # Cell line breaks can split both headers and rows across physical lines.
     # If the site label is in a later header fragment, conservatively hold the
     # item too. Original source bytes and unrelated source items are retained.
-    if any(site_label(value) for value in headings):
+    if any(_site_identity_heading(value) for value in headings):
         return bool(lines[first_tab + 1:])
-    return any(i + 1 < len(lines) and any(site_label(value) for value in line.split("\t"))
+    return any(i + 1 < len(lines) and any(_site_identity_heading(value) for value in line.split("\t"))
                for i, line in enumerate(lines[first_tab + 1:], first_tab + 1))
+
+
+def _txt_site_activity_table(content):
+    """Recognize only a complete tabular TXT with explicit site and work columns."""
+    source = content.source
+    if source.suffix != ".txt" or len(source.page_texts) != 1:
+        return False
+    lines = [line for line in source.page_texts[0].splitlines() if line.strip()]
+    if len(lines) < 2:
+        return False
+    headings = lines[0].split("\t")
+    work = {"activity", "workperformed", "workdescription", "servicenotes",
+            "servicedetails", "actions", "findings"}
+    return (any(_site_identity_heading(heading) for heading in headings)
+            and any(re.sub(r"[^a-z0-9]", "", heading.casefold()) in work for heading in headings)
+            and all(line.count("\t") == len(headings) - 1 for line in lines[1:]))
 
 
 def _activity_lines(text, suffix, *, with_dates=False):
@@ -350,7 +372,11 @@ def _activity_reader_notice(content):
     if is_work_order_source(content):
         return (content.source.filename + ": work-order records use Review counted work-order rows "
                 "and Add totals to summary; this file is not sent to the Activity reader.")
-    if content.source.suffix == ".docx" and any(_docx_site_table(text) for text in content.source.page_texts):
+    if _txt_site_activity_table(content):
+        return (content.source.filename + ": site-specific rows in this tab-separated text file need "
+                "an explicit target-site mapping. Review the original and add verified work directly "
+                "in Activity. The uploaded file is retained and is not sent to the Activity reader.")
+    if content.source.suffix == ".docx" and any(_docx_site_mapping_required(text) for text in content.source.page_texts):
         return (content.source.filename + ": site-specific rows in this Word table need an explicit target-site mapping. "
                 "This file is not sent to the Activity reader. Other native narrative remains available; "
                 "review the original and add only verified work directly in Activity. The uploaded file is retained.")
@@ -450,6 +476,92 @@ def reader_page_notices(contents, destination, value):
         if (content.source.id, number) in blocked & requested)
 
 
+_INVOICE_UNIT = rf"(?:{_CURRENCIES}|{_CURRENCY_SYMBOLS})"
+# Whitespace never belongs to a label word, unit or separator. Consume each
+# run once so a padded nonmatching saved header cannot repartition the spaces.
+_DOCX_INVOICE_CELL = re.compile(
+    rf"(?:^|(?<=\t))[^\S\r\n\t]*+(?:(?:vendor|supplier|subcontractor)[^\S\t]++)?"
+    rf"invoice[^\S\t]++(?:total|amount)(?:[^\S\t]*+(?:[:=][^\S\t]*+)?"
+    rf"(?:\({_INVOICE_UNIT}\)|\[{_INVOICE_UNIT}\]|{_INVOICE_UNIT}))?"
+    rf"[^\S\r\n\t]*+(?:[:=][^\S\r\n\t]*+)?(?=\t|$)", re.I | re.M)
+_DOCX_WORK_CELL = re.compile(
+    r"(?:^|(?<=\t))[^\S\r\n\t]*(?:activity|actions|findings|"
+    r"work[^\S\t]*(?:performed|description)|service[^\S\t]*(?:notes|details))"
+    r"[^\S\r\n\t]*(?=\t|$)", re.I | re.M)
+
+
+class _InvoiceActivityView(NamedTuple):
+    text: str
+    needs_site_mapping: bool = False
+
+
+def _docx_site_mapping_required(text):
+    if _docx_site_table(text):
+        return True
+    invoice = _docx_invoice_activity_view(text)
+    return bool(invoice and invoice.needs_site_mapping)
+
+
+def _docx_invoice_activity_view(text):
+    """Project invoice columns in their original item, holding uncertain mappings."""
+    if "\t" not in text or "invoice" not in text.casefold():
+        return None
+    lines = text.splitlines()
+    if len(lines) < 2:
+        return None
+    rows = [line.split("\t") for line in lines]
+    # An ordinary merged Word title is one leading cell followed by blank
+    # physical cells. It can precede the actual column heading row.
+    start = 0
+    while start < len(rows) - 1:
+        band = rows[start]
+        if (len(band) < 2 or not band[0].strip() or any(c.strip() for c in band[1:])
+                or _DOCX_INVOICE_CELL.fullmatch(band[0])):
+            break
+        start += 1
+    prefix, lines, rows = lines[:start], lines[start:], rows[start:]
+    headings = rows[0]
+    table_text = "\n".join(lines)
+    excluded = {i for i, title in enumerate(headings) if _DOCX_INVOICE_CELL.fullmatch(title)}
+    # A later genuine work/invoice schema can introduce or move a financial
+    # column. A literal invoice label in an ordinary data cell is not a schema.
+    def heading_key(value):
+        return re.sub(r"[^a-z0-9]", "", value.casefold())
+    other_fields = set()
+    if excluded:
+        other_fields = {heading_key(title) for i, title in enumerate(headings) if i not in excluded} - {""}
+    for i, row in enumerate(rows[1:-1], 1):
+        later = {j for j, title in enumerate(row) if _DOCX_INVOICE_CELL.fullmatch(title)}
+        if later and later != excluded and any(
+                _DOCX_WORK_CELL.fullmatch(value) or heading_key(value) in other_fields for value in row):
+            needs_site = _docx_site_table(table_text) or _docx_site_table("\n".join(lines[i:]))
+            return _InvoiceActivityView("", needs_site)
+    width = max(len(row) for row in rows)
+    if any(len(row) != width for row in rows):
+        # Word cell breaks and row breaks share the same flattened newline.
+        # A work/invoice header can itself wrap after a competing preamble.
+        # The original cells cannot then be assigned by physical position.
+        first_full = next(i for i, row in enumerate(rows) if len(row) == width)
+        match = _DOCX_INVOICE_CELL.search(table_text)
+        if match and (table_text.count("\n", 0, match.start()) <= first_full
+                      or _DOCX_WORK_CELL.search("\n".join(lines[1:]))):
+            return _InvoiceActivityView("", _docx_site_table(table_text))
+        return None
+    if not excluded:
+        return None
+    if _docx_site_table(table_text):
+        return _InvoiceActivityView("", True)
+    if not any(row[i].strip() for row in rows[1:] for i in excluded):
+        return None
+    if sum(bool(value.strip()) for value in headings) == 1:
+        return _InvoiceActivityView("")  # Could be a merged invoice title rather than a column.
+    safe = [[value for i, value in enumerate(row) if i not in excluded] for row in rows]
+    if not any(value.strip() for row in safe[1:] for value in row):
+        return _InvoiceActivityView("")
+    projected_lines = prefix + ["\t".join(row) for row in safe]
+    return _InvoiceActivityView("\n".join(projected_lines))
+
+
 def _activity_source_pages(content):
     """Keep spreadsheet column meaning while preparing native Activity text.
 
@@ -458,7 +570,9 @@ def _activity_source_pages(content):
     Original source text, tables, fingerprints and stored bytes stay intact.
     """
     if content.source.suffix not in {".csv", ".xlsx"} or not content.tables:
-        yield from enumerate(content.source.page_texts, 1)
+        for number, text in enumerate(content.source.page_texts, 1):
+            view = _docx_invoice_activity_view(text) if content.source.suffix == ".docx" else None
+            yield number, text if view is None else view.text
         return
     for number, table in enumerate(content.tables, 1):
         # The spreadsheet extractor has already selected the column headings.
@@ -531,7 +645,7 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
             if is_work_order_source(content):
                 # CMMS/counting sources use their own reviewed metrics path.
                 continue
-            if _spreadsheet_has_site_scope_column(content):
+            if _spreadsheet_has_site_scope_column(content) or _txt_site_activity_table(content):
                 # Row-specific sites need the same review as the reader route.
                 continue
             csv_rows = _csv_activity_entries(content)
@@ -641,15 +755,19 @@ def reader_update(contents, destination, value, existing=None, *, table_columns=
     block = existing or ResolvedBlock(destination, "This month")
     texts, rows, refs, pages, blocked_notices = [], [], [], {}, []
     normal = lambda text: " ".join(text.casefold().split())
+    docx_views = {}
+    source_notices = {}
     for item in items:
         if not isinstance(item, dict) or item.get("source") not in by_id:
             raise ValueError("The document reader returned an unknown source.")
         source = by_id[item["source"]].source
-        if destination == "activity_summary" and _activity_reader_notice(by_id[source.id]):
+        if destination == "activity_summary" and source.id not in source_notices:
+            source_notices[source.id] = _activity_reader_notice(by_id[source.id])
+        if source_notices.get(source.id):
             # Old cached/in-flight mixed results can still mention a source
             # whose rows need a different route. Exclude only that known source;
             # unknown source IDs and ungrounded eligible items still fail closed.
-            blocked_notices.append(_activity_reader_notice(by_id[source.id]))
+            blocked_notices.append(source_notices[source.id])
             continue
         number = item.get("page")
         if type(number) is not int or not 1 <= number <= len(source.page_texts):
@@ -677,6 +795,15 @@ def reader_update(contents, destination, value, existing=None, *, table_columns=
                 continue
         if number not in source.needs_vision and any(normal(c) not in normal(source.page_texts[number - 1]) for c in cells if c.strip()):
             raise ValueError("Suggested wording was not present on the cited source page.")
+        invoice_view = None
+        if destination == "activity_summary" and source.suffix == ".docx":
+            key = (source.id, number)
+            if key not in docx_views:
+                view = _docx_invoice_activity_view(source.page_texts[number - 1])
+                docx_views[key] = normal(view.text) if view is not None else None
+            invoice_view = docx_views[key]
+            if invoice_view is not None and (not text.strip() or normal(text) not in invoice_view):
+                continue
         refs.append(sources.source_reference(source, number))
         if destination == "activity_summary":
             if text.strip() and useful_activity(text):
@@ -694,7 +821,7 @@ def reader_update(contents, destination, value, existing=None, *, table_columns=
                          or normal(proposed) in normal(block.text)))
                 if not already_present:
                     texts.append(proposed)
-            if (item.get("include_page") is True and (source.id, number) not in contact_pages
+            if (item.get("include_page") is True and invoice_view is None and (source.id, number) not in contact_pages
                     and [source.id, number] in value.get("visual_pages", [])
                     and page_status(source.page_texts[number - 1], unreadable=number in source.needs_vision)[0] not in {"pricing", "legal", "signature"}):
                 pages.setdefault(source.id, set()).add(number)
