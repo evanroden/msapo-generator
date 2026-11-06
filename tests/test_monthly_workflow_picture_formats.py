@@ -39,8 +39,8 @@ def publish(block, assets, *, revision=0, contract="Contract A"):
 @pytest.mark.parametrize("suffix,raw", [
     ("png", b"not a PNG despite its matching content hash"),
     ("jpg", b"not a JPEG despite its matching content hash"),
-    ("png", b"\\x89PNG\\r\\n\\x1a\\nnot-a-decodable-image"),
-    ("jpg", b"\\xff\\xd8\\xff\\xe0not-a-decodable-image"),
+    ("png", bytes.fromhex("89504e470d0a1a0a") + b"not-a-decodable-image"),
+    ("jpg", bytes.fromhex("ffd8ffe0") + b"not-a-decodable-image"),
 ])
 def test_invalid_but_correctly_hashed_picture_does_not_publish(suffix, raw):
     block, assets = candidate(raw, suffix)
