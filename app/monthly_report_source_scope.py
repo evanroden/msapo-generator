@@ -452,7 +452,10 @@ def _covered_use(use, source, profile, period, *, sources=()):
 def included_scope_valid(draft, source):
     uses = source_uses(draft, source.id)
     if not uses:
-        return True
+        # A malformed included source/page token can fail strict use parsing.
+        # Absence of recognized uses does not approve a cited original's site.
+        from app.monthly_report_model import used_source_ids
+        return source.id not in used_source_ids(draft)
     scope = reviewed_scope(source, draft.profile)
     if scope:
         return scope["kind"] == "sites" or all(use[0] == "artwork" for use in uses)
