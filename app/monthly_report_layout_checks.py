@@ -61,9 +61,18 @@ def layout_checks(draft):
                     "table_columns",
                     f"A row in {_label(spec.key)} has more cells than its {len(spec.columns)} columns. "
                     "Remove the extra cells or move them into the right column.", True, block.key))
-            for table in block.extra_tables:
-                # Blank added tables are skipped by the renderer; never block them.
+            for table_number, table in enumerate(block.extra_tables, 1):
+                # The Word writer silently omits imported tables with no
+                # headings, even when their rows contain real source values.
+                # Do not discard those cells; require review before Generate.
                 filled = any(cell is not None and str(cell).strip() for row in table.rows for cell in row)
+                if filled and not table.columns:
+                    checks.append(ReportCheck(
+                        "table_missing_columns",
+                        f"Imported table {table_number} in {_label(spec.key)} "
+                        "has source rows but no column headings. Add headings "
+                        "or leave this table out before creating the report.",
+                        True, block.key))
                 if filled and table.columns and any(len(row) > len(table.columns) for row in table.rows):
                     checks.append(ReportCheck(
                         "table_columns",
