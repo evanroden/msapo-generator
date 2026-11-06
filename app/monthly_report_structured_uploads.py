@@ -3,7 +3,10 @@ from dataclasses import replace
 import re
 
 from app import monthly_report_sources as sources
-from app.monthly_report_content_policy import contains_price, page_status, price_column, ambiguous_price_columns, table_price_columns
+from app.monthly_report_content_policy import (
+    _CURRENCIES, _CURRENCY_SYMBOLS, ambiguous_price_columns, contains_price,
+    page_status, price_column, table_price_columns,
+)
 from app.monthly_report_model import ResolvedBlock
 
 COLUMNS = {
@@ -450,6 +453,45 @@ def reader_page_notices(contents, destination, value):
         if (content.source.id, number) in blocked & requested)
 
 
+_INVOICE_UNIT = rf"(?:{_CURRENCIES}|{_CURRENCY_SYMBOLS})"
+_DOCX_INVOICE_CELL = re.compile(
+    rf"(?:^|(?<=\t))[^\S\r\n\t]*(?:(?:vendor|supplier|subcontractor)[^\S\t]+)?"
+    rf"invoice[^\S\t]+(?:total|amount)(?:[^\S\t]*[:=]?[^\S\t]*"
+    rf"(?:\({_INVOICE_UNIT}\)|\[{_INVOICE_UNIT}\]|{_INVOICE_UNIT}))?"
+    rf"[^\S\r\n\t]*[:=]?[^\S\r\n\t]*(?=\t|$)", re.I | re.M)
+
+
+def _docx_invoice_activity_text(text):
+    """Return permitted cell text, an empty ambiguous item, or None for other items."""
+    if "\t" not in text or "invoice" not in text.casefold():
+        return None
+    lines = text.splitlines()
+    if len(lines) < 2:
+        return None
+    rows = [line.split("\t") for line in lines]
+    headings = rows[0]
+    width = max(len(row) for row in rows)
+    if any(len(row) != width for row in rows):
+        # Word cell breaks and row breaks share the same flattened newline.
+        # An invoice declaration starting in the initial heading fragments
+        # cannot safely be mapped to columns when physical widths disagree.
+        first_full = next(i for i, row in enumerate(rows) if len(row) == width)
+        flattened = "\n".join(lines)
+        match = _DOCX_INVOICE_CELL.search(flattened)
+        if match and flattened.count("\n", 0, match.start()) <= first_full:
+            return ""
+        return None
+    excluded = {i for i, title in enumerate(headings) if _DOCX_INVOICE_CELL.fullmatch(title)}
+    if not excluded or not any(row[i].strip() for row in rows[1:] for i in excluded):
+        return None
+    if _docx_site_table(text):
+        return ""  # The original table still needs site mapping.
+    safe = [[value for i, value in enumerate(row) if i not in excluded] for row in rows]
+    if not any(value.strip() for row in safe[1:] for value in row):
+        return ""
+    return "\n".join("\t".join(row) for row in safe)
+
+
 def _activity_source_pages(content):
     """Keep spreadsheet column meaning while preparing native Activity text.
 
@@ -458,7 +500,9 @@ def _activity_source_pages(content):
     Original source text, tables, fingerprints and stored bytes stay intact.
     """
     if content.source.suffix not in {".csv", ".xlsx"} or not content.tables:
-        yield from enumerate(content.source.page_texts, 1)
+        for number, text in enumerate(content.source.page_texts, 1):
+            view = _docx_invoice_activity_text(text) if content.source.suffix == ".docx" else None
+            yield number, text if view is None else view
         return
     for number, table in enumerate(content.tables, 1):
         # The spreadsheet extractor has already selected the column headings.
@@ -641,6 +685,7 @@ def reader_update(contents, destination, value, existing=None, *, table_columns=
     block = existing or ResolvedBlock(destination, "This month")
     texts, rows, refs, pages, blocked_notices = [], [], [], {}, []
     normal = lambda text: " ".join(text.casefold().split())
+    docx_views = {}
     for item in items:
         if not isinstance(item, dict) or item.get("source") not in by_id:
             raise ValueError("The document reader returned an unknown source.")
@@ -677,6 +722,15 @@ def reader_update(contents, destination, value, existing=None, *, table_columns=
                 continue
         if number not in source.needs_vision and any(normal(c) not in normal(source.page_texts[number - 1]) for c in cells if c.strip()):
             raise ValueError("Suggested wording was not present on the cited source page.")
+        invoice_view = None
+        if destination == "activity_summary" and source.suffix == ".docx":
+            key = (source.id, number)
+            if key not in docx_views:
+                view = _docx_invoice_activity_text(source.page_texts[number - 1])
+                docx_views[key] = normal(view) if view is not None else None
+            invoice_view = docx_views[key]
+            if invoice_view is not None and (not text.strip() or normal(text) not in invoice_view):
+                continue
         refs.append(sources.source_reference(source, number))
         if destination == "activity_summary":
             if text.strip() and useful_activity(text):
@@ -694,7 +748,7 @@ def reader_update(contents, destination, value, existing=None, *, table_columns=
                          or normal(proposed) in normal(block.text)))
                 if not already_present:
                     texts.append(proposed)
-            if (item.get("include_page") is True and (source.id, number) not in contact_pages
+            if (item.get("include_page") is True and invoice_view is None and (source.id, number) not in contact_pages
                     and [source.id, number] in value.get("visual_pages", [])
                     and page_status(source.page_texts[number - 1], unreadable=number in source.needs_vision)[0] not in {"pricing", "legal", "signature"}):
                 pages.setdefault(source.id, set()).add(number)
