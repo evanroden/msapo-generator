@@ -78,6 +78,99 @@ def test_empty_invoice_cells_keep_the_ordinary_view():
     assert list(activity._activity_source_pages(item(text))) == [(1, text)]
 
 
+@pytest.mark.parametrize("bands", [1, 2])
+@pytest.mark.parametrize("heading", ["Invoice total", "Pressure reading"])
+def test_actual_full_width_word_title_above_data_headings(tmp_path, monkeypatch, bands, heading):
+    monkeypatch.setattr(sources, "_path", lambda p, digest, suffix: tmp_path / (digest + suffix))
+    monkeypatch.setattr(library, "_atomic_write", lambda path, raw: path.write_bytes(raw))
+    doc = Document(BytesIO(original(headings=("Work performed", heading, "Reading"))))
+    table = doc.tables[0]
+    header = table.rows[0]._tr
+    for number in range(bands):
+        row = table.add_row()
+        row.cells[0].merge(row.cells[-1]).text = "Maintenance service detail " + str(number + 1)
+        header.addprevious(row._tr)
+    stream = BytesIO()
+    doc.save(stream)
+    source, _ = sources.ingest(PROFILE, "maintenance.docx", stream.getvalue())
+    n = next(n for n, p in enumerate(source.source.page_texts, 1) if INVOICE in p)
+    manual = ResolvedBlock("activity_summary", "This month", text=MANUAL)
+    block = activity.native_update((source,), "activity_summary", manual)
+    word = Document(BytesIO(_build_native_docx(draft_for(block, (source,)), template(tmp_path), section_key="activity")))
+    text = "\n".join(p.text for p in word.paragraphs)
+    response = {"visual_pages": [[source.source.id, n]], "items": [
+        {"source": source.source.id, "page": n, "text": ACTION + "\t" + INVOICE, "row": [], "include_page": True},
+        {"source": source.source.id, "page": n, "text": TECHNICAL, "row": [], "include_page": True},
+    ]}
+    read, pages = activity.reader_update((source,), "activity_summary", response, manual)
+    for value in (ACTION, TECHNICAL, NARRATIVE, MANUAL, "Maintenance service detail 1"):
+        assert value in block.text and value in text
+    assert (INVOICE in block.text) == (INVOICE in text) == (INVOICE in read.text) == (heading == "Pressure reading")
+    if heading == "Invoice total":
+        assert not pages and TECHNICAL in read.text
+    assert sources.source_bytes(PROFILE, source.source) == stream.getvalue()
+
+
+def test_banded_invoice_site_table_requires_original_site_review(tmp_path, monkeypatch):
+    monkeypatch.setattr(sources, "_path", lambda p, digest, suffix: tmp_path / (digest + suffix))
+    monkeypatch.setattr(library, "_atomic_write", lambda path, raw: path.write_bytes(raw))
+    doc = Document(BytesIO(original(headings=("Site", "Work performed", "Invoice total"),
+                                    rows=(("Foreign South", ACTION, INVOICE),))))
+    table = doc.tables[0]
+    header = table.rows[0]._tr
+    row = table.add_row()
+    row.cells[0].merge(row.cells[-1]).text = "Maintenance service detail"
+    header.addprevious(row._tr)
+    stream = BytesIO()
+    doc.save(stream)
+    source, _ = sources.ingest(PROFILE, "maintenance.docx", stream.getvalue())
+    result = activity.native_update((source,), "activity_summary")
+    assert ACTION not in result.text and INVOICE not in result.text and NARRATIVE in result.text
+    assert activity.reader_sources((source,), "activity_summary") == ()
+    assert "site-specific" in activity.reader_notices((source,), "activity_summary")[0]
+
+
+def test_competing_preamble_before_a_financial_work_schema_is_held_without_treating_data_as_a_heading():
+    ambiguous = "Service summary\tRevision B\t\nWork performed\tInvoice total\tReading\n" + ACTION + "\t" + INVOICE + "\t" + TECHNICAL
+    source = item(ambiguous)
+    source = replace(source, source=replace(source.source, page_texts=(ambiguous, NARRATIVE)))
+    result = activity.native_update((source,), "activity_summary")
+    assert INVOICE not in result.text and NARRATIVE in result.text
+    ordinary = "Work performed\tTechnician note\n" + ACTION + "\tInvoice total"
+    assert list(activity._activity_source_pages(item(ordinary))) == [(1, ordinary)]
+
+
+@pytest.mark.parametrize("mode", ["moved", "moved_compact", "same", "site", "literal"])
+def test_actual_word_table_with_a_second_heading_or_literal_data_cell(tmp_path, monkeypatch, mode):
+    monkeypatch.setattr(sources, "_path", lambda p, digest, suffix: tmp_path / (digest + suffix))
+    monkeypatch.setattr(library, "_atomic_write", lambda path, raw: path.write_bytes(raw))
+    second_action = "Adjusted synthetic fan F-2."
+    next_total = "45678.91"
+    if mode in ("moved", "moved_compact", "site"):
+        next_header = ("Site" if mode == "site" else "Reading",
+                       "WorkPerformed" if mode == "moved_compact" else "Work performed", "Invoice total")
+        later = ("Foreign South" if mode == "site" else "Inspected secondary airflow.", second_action, next_total)
+    else:
+        next_header = ("Work performed", "Invoice total", "Reading") if mode == "same" else (
+            "Inspected panel label.", "273.40", "Invoice total")
+        later = (second_action, next_total, "Measured pressure 52 psi.")
+    raw = original(rows=((ACTION, INVOICE, TECHNICAL), next_header, later))
+    source, _ = sources.ingest(PROFILE, "maintenance.docx", raw)
+    page = next(n for n, p in enumerate(source.source.page_texts, 1) if next_total in p)
+    block = activity.native_update((source,), "activity_summary")
+    word = Document(BytesIO(_build_native_docx(draft_for(block, (source,)), template(tmp_path), section_key="activity")))
+    text = "\n".join(p.text for p in word.paragraphs)
+    assert next_total not in text and INVOICE not in text and NARRATIVE in text
+    assert (second_action in text) == (mode in ("same", "literal"))
+    if mode == "site":
+        assert "site-specific" in activity.reader_notices((source,), "activity_summary")[0]
+    else:
+        payload = {"items": [{"source": source.source.id, "page": page, "text": "\t".join(later), "row": []}]}
+        old, _ = activity.reader_update((source,), "activity_summary", payload)
+        assert next_total not in old.text
+    assert sources.source_bytes(PROFILE, source.source) == raw
+
+
 @pytest.mark.parametrize("text", [
     f"Work performed\tInvoice\nTotal\n{ACTION}\t{INVOICE}",
     f"Vendor invoice\namount\tWork performed\n{INVOICE}\t{ACTION}",

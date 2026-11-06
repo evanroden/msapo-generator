@@ -1,6 +1,7 @@
 """Upload-first, source-grounded section preparation; originals never enter quotes output."""
 from dataclasses import replace
 import re
+from typing import NamedTuple
 
 from app import monthly_report_sources as sources
 from app.monthly_report_content_policy import (
@@ -353,7 +354,7 @@ def _activity_reader_notice(content):
     if is_work_order_source(content):
         return (content.source.filename + ": work-order records use Review counted work-order rows "
                 "and Add totals to summary; this file is not sent to the Activity reader.")
-    if content.source.suffix == ".docx" and any(_docx_site_table(text) for text in content.source.page_texts):
+    if content.source.suffix == ".docx" and any(_docx_site_mapping_required(text) for text in content.source.page_texts):
         return (content.source.filename + ": site-specific rows in this Word table need an explicit target-site mapping. "
                 "This file is not sent to the Activity reader. Other native narrative remains available; "
                 "review the original and add only verified work directly in Activity. The uploaded file is retained.")
@@ -461,35 +462,77 @@ _DOCX_INVOICE_CELL = re.compile(
     rf"[^\S\r\n\t]*[:=]?[^\S\r\n\t]*(?=\t|$)", re.I | re.M)
 
 
-def _docx_invoice_activity_text(text):
-    """Return permitted cell text, an empty ambiguous item, or None for other items."""
+class _InvoiceActivityView(NamedTuple):
+    text: str
+    needs_site_mapping: bool = False
+
+
+def _docx_site_mapping_required(text):
+    if _docx_site_table(text):
+        return True
+    invoice = _docx_invoice_activity_view(text)
+    return bool(invoice and invoice.needs_site_mapping)
+
+
+def _docx_invoice_activity_view(text):
+    """Project invoice columns in their original item, holding uncertain mappings."""
     if "\t" not in text or "invoice" not in text.casefold():
         return None
     lines = text.splitlines()
     if len(lines) < 2:
         return None
     rows = [line.split("\t") for line in lines]
+    # An ordinary merged Word title is one leading cell followed by blank
+    # physical cells. It can precede the actual column heading row.
+    start = 0
+    while start < len(rows) - 1:
+        band = rows[start]
+        if (len(band) < 2 or not band[0].strip() or any(c.strip() for c in band[1:])
+                or _DOCX_INVOICE_CELL.fullmatch(band[0])):
+            break
+        start += 1
+    prefix, lines, rows = lines[:start], lines[start:], rows[start:]
     headings = rows[0]
+    table_text = "\n".join(lines)
     width = max(len(row) for row in rows)
     if any(len(row) != width for row in rows):
         # Word cell breaks and row breaks share the same flattened newline.
         # An invoice declaration starting in the initial heading fragments
         # cannot safely be mapped to columns when physical widths disagree.
         first_full = next(i for i, row in enumerate(rows) if len(row) == width)
-        flattened = "\n".join(lines)
-        match = _DOCX_INVOICE_CELL.search(flattened)
-        if match and flattened.count("\n", 0, match.start()) <= first_full:
-            return ""
+        match = _DOCX_INVOICE_CELL.search(table_text)
+        if match and table_text.count("\n", 0, match.start()) <= first_full:
+            return _InvoiceActivityView("", _docx_site_table(table_text))
         return None
     excluded = {i for i, title in enumerate(headings) if _DOCX_INVOICE_CELL.fullmatch(title)}
-    if not excluded or not any(row[i].strip() for row in rows[1:] for i in excluded):
+    # A later genuine work/invoice schema can introduce or move a financial
+    # column. A literal invoice label in an ordinary data cell is not a schema.
+    def heading_key(value):
+        return re.sub(r"[^a-z0-9]", "", value.casefold())
+    work_fields = {"workperformed", "workdescription", "activity", "actions",
+                   "servicenotes", "servicedetails", "findings"}
+    if excluded:
+        work_fields.update(heading_key(title) for i, title in enumerate(headings)
+                           if i not in excluded and title.strip())
+        work_fields.discard("")
+    for i, row in enumerate(rows[1:-1], 1):
+        later = {j for j, title in enumerate(row) if _DOCX_INVOICE_CELL.fullmatch(title)}
+        if later and later != excluded and any(heading_key(value) in work_fields for value in row):
+            needs_site = _docx_site_table(table_text) or _docx_site_table("\n".join(lines[i:]))
+            return _InvoiceActivityView("", needs_site)
+    if not excluded:
         return None
-    if _docx_site_table(text):
-        return ""  # The original table still needs site mapping.
+    if _docx_site_table(table_text):
+        return _InvoiceActivityView("", True)
+    if not any(row[i].strip() for row in rows[1:] for i in excluded):
+        return None
+    if sum(bool(value.strip()) for value in headings) == 1:
+        return _InvoiceActivityView("")  # Could be a merged invoice title rather than a column.
     safe = [[value for i, value in enumerate(row) if i not in excluded] for row in rows]
     if not any(value.strip() for row in safe[1:] for value in row):
-        return ""
-    return "\n".join("\t".join(row) for row in safe)
+        return _InvoiceActivityView("")
+    projected_lines = prefix + ["\t".join(row) for row in safe]
+    return _InvoiceActivityView("\n".join(projected_lines))
 
 
 def _activity_source_pages(content):
@@ -501,8 +544,8 @@ def _activity_source_pages(content):
     """
     if content.source.suffix not in {".csv", ".xlsx"} or not content.tables:
         for number, text in enumerate(content.source.page_texts, 1):
-            view = _docx_invoice_activity_text(text) if content.source.suffix == ".docx" else None
-            yield number, text if view is None else view
+            view = _docx_invoice_activity_view(text) if content.source.suffix == ".docx" else None
+            yield number, text if view is None else view.text
         return
     for number, table in enumerate(content.tables, 1):
         # The spreadsheet extractor has already selected the column headings.
@@ -686,15 +729,18 @@ def reader_update(contents, destination, value, existing=None, *, table_columns=
     texts, rows, refs, pages, blocked_notices = [], [], [], {}, []
     normal = lambda text: " ".join(text.casefold().split())
     docx_views = {}
+    source_notices = {}
     for item in items:
         if not isinstance(item, dict) or item.get("source") not in by_id:
             raise ValueError("The document reader returned an unknown source.")
         source = by_id[item["source"]].source
-        if destination == "activity_summary" and _activity_reader_notice(by_id[source.id]):
+        if destination == "activity_summary" and source.id not in source_notices:
+            source_notices[source.id] = _activity_reader_notice(by_id[source.id])
+        if source_notices.get(source.id):
             # Old cached/in-flight mixed results can still mention a source
             # whose rows need a different route. Exclude only that known source;
             # unknown source IDs and ungrounded eligible items still fail closed.
-            blocked_notices.append(_activity_reader_notice(by_id[source.id]))
+            blocked_notices.append(source_notices[source.id])
             continue
         number = item.get("page")
         if type(number) is not int or not 1 <= number <= len(source.page_texts):
@@ -726,8 +772,8 @@ def reader_update(contents, destination, value, existing=None, *, table_columns=
         if destination == "activity_summary" and source.suffix == ".docx":
             key = (source.id, number)
             if key not in docx_views:
-                view = _docx_invoice_activity_text(source.page_texts[number - 1])
-                docx_views[key] = normal(view) if view is not None else None
+                view = _docx_invoice_activity_view(source.page_texts[number - 1])
+                docx_views[key] = normal(view.text) if view is not None else None
             invoice_view = docx_views[key]
             if invoice_view is not None and (not text.strip() or normal(text) not in invoice_view):
                 continue
