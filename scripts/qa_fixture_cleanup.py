@@ -277,13 +277,26 @@ def fill_budget(base):
             os.environ["EPC_DATA_DIR"] = before
 
 
-def wait_until(condition, seconds=60):
+def wait_until(condition, seconds=60, *, dispatch_events=None, label="observation"):
+    """Bound an observation without starving routed browser messages.
+
+    Synchronous Playwright dispatches WebSocket/HTTP callbacks only inside its
+    API calls. A Python sleep after a native click can prevent that very click
+    from reaching Streamlit. Browser callers therefore provide wait_for_timeout
+    as an event-dispatch tick; the filesystem predicate, not elapsed sleep,
+    decides success. No native action is repeated and no guard is removed.
+    Server startup, before there is a browser, uses the ordinary sleep path.
+    """
     deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
+    while (remaining := deadline - time.monotonic()) > 0:
         if condition():
             return
-        time.sleep(.05)
-    raise AssertionError("Synthetic observation deadline exceeded")
+        interval = min(.05, remaining)
+        if dispatch_events is None:
+            time.sleep(interval)
+        else:
+            dispatch_events(interval * 1000)
+    raise AssertionError("Synthetic observation deadline exceeded: " + label)
 
 
 class Server:
@@ -386,7 +399,8 @@ def exercise(engine, name, scenario, output):
                 key = page_keys[current]
                 before = snapshot(base, cookies[key])["generation_marker"]
                 current.get_by_role("button", name="Start fresh test with this fixture", exact=True).click()
-                wait_until(lambda: poll_generation(base, cookies[key]) not in (None, "", before))
+                wait_until(lambda: poll_generation(base, cookies[key]) not in (None, "", before),
+                           dispatch_events=current.wait_for_timeout, label="native Start generation")
                 record.setdefault("native_starts", []).append({"scope": namespace(base, cookies[key]).name,
                     "before": before, "after": poll_generation(base, cookies[key])})
                 if succeeds:
@@ -437,7 +451,8 @@ def exercise(engine, name, scenario, output):
                 arm(base, cookies["b"], mode)
                 start(page, succeeds=False)
                 if mode == "pause-fail-index":
-                    wait_until(lambda: (base / CONTROL / "paused").exists())
+                    wait_until(lambda: (base / CONTROL / "paused").exists(),
+                               dispatch_events=page.wait_for_timeout, label="pre-index pause entered")
                     returned = session("a", recovering=True)
                     hidden = snapshot(base, cookies["a"])
                     assert not hidden["exists"] and len(hidden["tombstones"]) == 1
@@ -461,13 +476,15 @@ def exercise(engine, name, scenario, output):
                     b_marker = snapshot(base, cookies["b"])["generation_marker"]
                     page.get_by_role("button", name="Reset this test workspace", exact=True).click()
                     expect(page.get_by_role("textbox", name="Your name", exact=True)).not_to_be_visible()
-                    wait_until(lambda: poll_generation(base, cookies["b"]) not in (None, "", b_marker))
+                    wait_until(lambda: poll_generation(base, cookies["b"]) not in (None, "", b_marker),
+                               dispatch_events=page.wait_for_timeout, label="native B Reset generation")
                     shared.idle(page)
                     assert snapshot(base, cookies["b"])["source_sha256"] is None
                     preserved(a_before)
                     capture("native-scoped-reset", page)
                 else:
-                    wait_until(lambda: server.process.poll() is not None)
+                    wait_until(lambda: server.process.poll() is not None,
+                               dispatch_events=page.wait_for_timeout, label="native partial process exit")
                     assert server.process.returncode == 23 and (base / CONTROL / "crashed").exists()
                     server.stop()
                     hidden = snapshot(base, cookies["a"])
@@ -496,7 +513,8 @@ def exercise(engine, name, scenario, output):
                     # Unrelated Reset neither clears the journal nor old copy.
                     unrelated_marker = snapshot(base, cookies["c"])["generation_marker"]
                     page.get_by_role("button", name="Reset this test workspace", exact=True).click()
-                    wait_until(lambda: poll_generation(base, cookies["c"]) not in (None, "", unrelated_marker))
+                    wait_until(lambda: poll_generation(base, cookies["c"]) not in (None, "", unrelated_marker),
+                               dispatch_events=page.wait_for_timeout, label="unrelated native C Reset generation")
                     shared.idle(page)
                     assert snapshot(base, cookies["a"])["tombstones"] == hidden["tombstones"]
                     unchanged_recovery()
@@ -504,7 +522,8 @@ def exercise(engine, name, scenario, output):
                     expect(affected.get_by_role("button", name="Reset this test workspace", exact=True)).to_be_visible()
                     marker = snapshot(base, cookies["b"])["generation_marker"]
                     affected.get_by_role("button", name="Reset this test workspace", exact=True).click()
-                    wait_until(lambda: poll_generation(base, cookies["b"]) not in (None, "", marker))
+                    wait_until(lambda: poll_generation(base, cookies["b"]) not in (None, "", marker),
+                               dispatch_events=affected.wait_for_timeout, label="affected native B Reset generation")
                     shared.idle(affected)
                     capture("affected-reset-reachable", affected)
                     assert (base / ADMISSION / JOURNAL).exists()

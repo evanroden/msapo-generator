@@ -239,3 +239,57 @@ def test_generation_poll_does_not_inventory_a_resetting_namespace(root, monkeypa
     assert qa.poll_generation(root, cookie) == marker.read_text()
     marker.unlink()
     assert qa.poll_generation(root, cookie) is None
+
+
+def test_browser_observation_dispatches_queued_websocket_without_reclick(root, monkeypatch):
+    # A routed click can be queued after locator.click returns. Only entering
+    # Playwright dispatches it; Python sleep must never be the browser poll.
+    cookie = qa.new_cookie()
+    target = qa.namespace(root, cookie)
+    target.mkdir(parents=True)
+    marker = target / qa.SENTINEL
+    old = target.name + '|' + 'a' * 32
+    new = target.name + '|' + 'b' * 32
+    marker.write_text(old)
+    calls = []
+    def dispatch(milliseconds):
+        calls.append(milliseconds)
+        marker.write_text(new)  # queued native callback, never another click
+    monkeypatch.setattr(qa.time, 'sleep', lambda _: pytest.fail('Browser poll starved Playwright'))
+    qa.wait_until(lambda: qa.poll_generation(root, cookie) not in (None, '', old),
+                  dispatch_events=dispatch, label='native Start generation')
+    assert calls == [50]
+    assert qa.poll_generation(root, cookie) == new
+
+
+def test_browser_observation_timeout_is_bounded_and_labels_phase(monkeypatch):
+    clock = [0.0]
+    polls = []
+    def dispatch(milliseconds):
+        polls.append(milliseconds)
+        clock[0] += milliseconds / 1000
+    monkeypatch.setattr(qa.time, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(qa.time, 'sleep', lambda _: pytest.fail('Browser poll used Python sleep'))
+    with pytest.raises(AssertionError, match='native Reset generation'):
+        qa.wait_until(lambda: False, seconds=.12, dispatch_events=dispatch,
+                      label='native Reset generation')
+    assert len(polls) == 3 and abs(sum(polls) - 120) < .001
+
+
+def test_browser_observation_does_not_dispatch_after_success(monkeypatch):
+    qa.wait_until(lambda: True, dispatch_events=lambda _: pytest.fail('Unneeded event dispatch'),
+                  label='already observed')
+
+
+def test_all_browser_filesystem_waits_preserve_event_dispatch():
+    import ast
+    import inspect
+    tree = ast.parse(inspect.getsource(qa.exercise))
+    waits = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+             and isinstance(node.func, ast.Name) and node.func.id == 'wait_until']
+    assert len(waits) == 6
+    for wait in waits:
+        keywords = {item.arg: item.value for item in wait.keywords}
+        assert {'dispatch_events', 'label'} <= keywords.keys()
+        assert isinstance(keywords['dispatch_events'], ast.Attribute)
+        assert keywords['dispatch_events'].attr == 'wait_for_timeout'
