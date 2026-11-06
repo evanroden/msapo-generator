@@ -1124,7 +1124,10 @@ def read_asset(contract: str, key: str, reference: str) -> bytes:
     try:
         if path.stat().st_size > MAX_ASSET_BYTES:
             raise LibraryError("Asset exceeds the size limit.")
-        raw = path.read_bytes()
+        with path.open("rb") as source:
+            raw = source.read(MAX_ASSET_BYTES + 1)
+        if len(raw) > MAX_ASSET_BYTES:
+            raise LibraryError("Asset exceeds the size limit.")
     except OSError as exc:
         raise LibraryError("A referenced library asset is unavailable.") from exc
     if hashlib.sha256(raw).hexdigest() != reference.split(".")[0]:
