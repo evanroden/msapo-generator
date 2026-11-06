@@ -131,7 +131,11 @@ def test_equal_serialization_and_receipt_order_preserve_existing_behavior(portab
     saved, working = copies()
     text, = working.source_row_reviews
     assert not compare_drafts(replace(working, source_row_reviews=(json.dumps(json.loads(text), indent=2),)), working)
-    other = replace(working, source_row_reviews=(text, 'older review'))
+    independent = report(CSV.replace(b'Private subject', b'Second subject'), 'second.csv')
+    value = training.prepare_review(independent, independent.sources[0], 1)
+    independent = training.store_review(independent, value)
+    other = replace(working, sources=(*working.sources, *independent.sources),
+                    source_row_reviews=(text, *independent.source_row_reviews))
     assert not compare_drafts(other, replace(other, source_row_reviews=other.source_row_reviews[::-1]))
     assert not compare_drafts(working, working)
     assert [c.title for c in compare_drafts(replace(working, prepared_by='Another editor'), working)] == ['Prepared by']
@@ -181,8 +185,95 @@ def test_older_damaged_or_excessive_review_is_reported_without_unsafe_details(po
 def test_ambiguous_duplicate_identity_is_visible_and_not_collapsed(portable):
     saved, _ = copies()
     duplicated = replace(saved, source_row_reviews=saved.source_row_reviews * 2)
+    with pytest.raises(ValueError, match='Multiple saved Training reviews'):
+        training.saved_review(duplicated, duplicated.sources[0], 1)
     shown = display(duplicated, saved)
     assert 'Private learner' not in shown and len(shown) < 1500
+
+
+def revised_work_orders():
+    draft, content = draft_source()
+    saved, initial = stored(draft, content)
+    row = orders.restored_group(initial, initial['groups'][0]).rows[0]
+    def correct(status):
+        changed = orders.change_row(initial, 0, row.key, {'status': status})
+        return orders.store_bundle(saved, changed, expected_revision=orders.revision(initial))
+    return content, correct
+
+
+def test_two_distinct_status_inputs_survive_same_normalized_result(portable):
+    content, correct = revised_work_orders()
+    left, right = correct('Private inspection A'), correct('Private inspection B')
+    def row(draft):
+        value = orders.saved_bundle(draft, content.source.id, 'workorders')
+        return orders.restored_group(value, value['groups'][0]).rows[0]
+    a, b = row(left), row(right)
+    assert a.status == b.status == '' and a.issues == b.issues
+    assert dict(a.corrections)['status'] != dict(b.corrections)['status']
+    shown = display(right, left)
+    assert 'Status' in shown and 'Private inspection' not in shown
+
+
+def test_reordered_competing_receipts_change_the_first_selected_work_order(portable):
+    content, correct = revised_work_orders()
+    a, b = correct('Open'), correct('Completed')
+    saved = replace(a, source_row_reviews=(*a.source_row_reviews, *b.source_row_reviews))
+    working = replace(saved, source_row_reviews=saved.source_row_reviews[::-1])
+    def status(draft):
+        first = orders.saved_bundle(draft, content.source.id, 'workorders')
+        return orders.restored_group(first, first['groups'][0]).rows[0].status
+    assert status(saved) != status(working)
+    assert len(display(working, saved)) < 1500
+
+
+@pytest.mark.parametrize('legacy', ['PRIVATE LEGACY KEY', ['PRIVATE LEGACY KEY']])
+def test_work_order_identity_ignores_training_only_legacy_extra_field(portable, legacy):
+    content, correct = revised_work_orders()
+    saved, working = correct('Open'), correct('Completed')
+    value = json.loads(working.source_row_reviews[0])
+    value['table'] = legacy
+    working = replace(working, source_row_reviews=(orders.encoded(value),))
+    assert orders.saved_bundle(working, content.source.id, 'workorders')['table'] == legacy
+    shown = display(working, saved)
+    assert 'Status' in shown and 'PRIVATE LEGACY KEY' not in shown
+
+
+def test_two_corrected_hours_are_distinct_on_each_side(portable):
+    saved, three = copies()
+    app = open_app(saved)
+    widget(app, 'text_input', 'Hours').set_value('2')
+    click(app, 'Save Training row review')
+    two = app.session_state['draft']
+    change, = compare_drafts(three, two)
+    assert 'Hours 2' in change.saved and 'Hours 3' in change.working
+    assert 'Hours 3' not in change.saved and 'Hours 2' not in change.working
+
+
+def test_unverified_free_text_hours_are_not_rendered(portable):
+    saved, _ = copies()
+    app = open_app(saved)
+    widget(app, 'text_input', 'Hours').set_value('Private number 1234')
+    click(app, 'Save Training row review')
+    shown = display(app.session_state['draft'], saved)
+    assert 'Hours' in shown and '1234' not in shown and 'Private number' not in shown
+
+
+@pytest.mark.parametrize('case', ['undecided-site', 'extra-site-column', 'extra-cost-column'])
+def test_numeric_hours_remain_private_outside_narrow_confirmed_event(case, portable):
+    raw = CSV
+    if case != 'undecided-site':
+        header = b'Site' if case == 'extra-site-column' else b'Cost'
+        raw = CSV.replace(b'Status\n', b'Status,'+header+b'\n').replace(b'Completed\n', b'Completed,PRIVATE SOURCE CELL\n')
+    draft = report(raw)
+    if case == 'undecided-site':
+        draft = replace(draft, sources=(replace(draft.sources[0], scope_review=()),))
+    app = open_app(draft)
+    click(app, 'Review this Training table')
+    saved = app.session_state['draft']
+    widget(app, 'text_input', 'Hours').set_value('29')
+    click(app, 'Save Training row review')
+    shown = display(app.session_state['draft'], saved)
+    assert 'Hours' in shown and '29' not in shown and 'PRIVATE SOURCE CELL' not in shown
 
 
 def test_foreign_scope_and_untrusted_filename_stay_private(portable):
