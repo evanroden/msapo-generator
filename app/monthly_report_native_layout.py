@@ -191,6 +191,59 @@ def _set_text(element, value):
 
 
 
+def _set_reviewed_footer_text(paragraph, value):
+    """Replace ordinary footer words without writing into retained field caches."""
+    markers = {qn('w:bookmarkStart'), qn('w:bookmarkEnd'), qn('w:proofErr')}
+    if any(child.tag not in (qn('w:pPr'), qn('w:r'), qn('w:fldSimple'))
+           and not (child.tag in markers and not len(child) and not (child.text or '').strip())
+           for child in paragraph):
+        return False
+    texts, controls, cached, depth = [], [], [], 0
+    for node in paragraph.iter():
+        if any(parent.tag == qn('w:fldSimple') for parent in node.iterancestors()):
+            if node.tag == qn('w:t'):
+                cached.append(node)
+            continue
+        if node.tag == qn('w:fldChar'):
+            kind = node.get(qn('w:fldCharType'))
+            if kind == 'begin':
+                depth += 1
+            elif kind == 'end':
+                depth -= 1
+                if depth < 0:
+                    return False
+        elif node.tag == qn('w:t') and depth:
+            cached.append(node)
+        elif (not depth and node.getparent() is not None
+              and node.getparent().tag == qn('w:r') and node.getparent().getparent() is paragraph):
+            if node.tag == qn('w:t'):
+                texts.append(node)
+            elif (node.tag in (qn('w:tab'), qn('w:cr')) or node.tag == qn('w:br')
+                  and node.get(qn('w:type'), 'textWrapping') == 'textWrapping'):
+                controls.append(node)
+    if depth or not texts:
+        return False
+    # The inspector excluded cached field words from the reviewed footer.
+    # Retain the counters themselves, but never authorize their old payload.
+    for node in cached:
+        node.text = ''
+    for node in controls:
+        node.getparent().remove(node)
+    # Reuse the ordinary text writer only on detached literal payload. The
+    # original paragraph/run formatting and every field node stay in place.
+    payload = OxmlElement('w:r')
+    payload.append(OxmlElement('w:t'))
+    _set_text(payload, value)
+    anchor = texts[0]
+    parent, index = anchor.getparent(), anchor.getparent().index(anchor)
+    parent.remove(anchor)
+    for offset, node in enumerate(list(payload)):
+        parent.insert(index + offset, node)
+    for node in texts[1:]:
+        node.text = ''
+    return True
+
+
 def _remove_unapproved_master_watermark_text(document):
     """A global master cannot lend an old client's VML textpath watermark.
 
@@ -2298,6 +2351,13 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             kind = "footnote" if node.tag == qn("w:footnoteReference") else "endnote"
             if kind + ":" + node.get(qn("w:id"), "") not in explicit_notes:
                 node.getparent().remove(node)
+    footer = blocks.get('footer_text')
+    reviewed_footers = defaultdict(set)
+    if footer is not None and footer.source != 'Omit' and draft.address_line.strip():
+        for item in inspection.items:
+            if (item.kind == 'text' and item.part.startswith('word/footer')
+                    and source_ref(item) in footer.references):
+                reviewed_footers['/' + item.part].add(item.position)
     for part in list(document.part.package.parts):
         name = str(part.partname)
         if not name.startswith(("/word/header", "/word/footer")) or not hasattr(part, "element"):
@@ -2308,6 +2368,15 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
         _clear_diagrams(part.element)
         _clear_hyperlinks(part.element)
         for paragraph in part.element.iter(qn("w:p")):
+            selected = reviewed_footers.get(name, ())
+            position = part.element.index(paragraph) + 1 if paragraph.getparent() is part.element else None
+            if position in selected:
+                # Starting Report combines selected footer paragraphs into one
+                # current value. Emit it once per physical part, at that part's
+                # first selected paragraph; shared section routes reuse the part.
+                value = draft.address_line.strip() if position == min(selected) else ''
+                if _set_reviewed_footer_text(paragraph, value):
+                    continue
             visible = deepcopy(paragraph)
             for fallback in list(visible.iter("{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback")):
                 fallback.getparent().remove(fallback)
