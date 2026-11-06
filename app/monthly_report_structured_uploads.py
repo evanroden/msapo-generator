@@ -114,10 +114,12 @@ def mapped_rows(content, destination, table_columns=None):
     blank for the operator to review. Never force a 4-column proposal row into
     a five/six-column Word table, truncate Status, or relabel a price as Scope.
     """
+    from app.monthly_report_followups import _DECISIONS, proposal_decision_titles
     requested = tuple(table_columns or COLUMNS[destination])
     if not requested or len(requested) > 100:
         raise ValueError("The selected report table has an invalid column layout.")
     role = tuple(_output_role(destination, title) for title in requested)
+    decision_targets = proposal_decision_titles(requested) if destination == "proposals" else ()
     required = "Recommendation" if destination == "capital_renewal" else "Scope"
     required_positions = tuple(n for n, item in enumerate(role) if item == required)
     if not required_positions:
@@ -128,11 +130,29 @@ def mapped_rows(content, destination, table_columns=None):
     for table in native_tables(content):
         excluded = (set(ambiguous_price_columns(table.columns, table.rows)) |
                     set(table_price_columns(table.columns, table.rows)))
+        decision_sources = proposal_decision_titles(table.columns) if decision_targets else ()
+        decision_indexes = {n for n, title in enumerate(decision_sources) if title}
         indexes = []
-        for output_title, semantic in zip(requested, role):
+        for output_position, (output_title, semantic) in enumerate(zip(requested, role)):
             if price_column(output_title):
                 indexes.append(None)
                 continue
+            if decision_targets and decision_targets[output_position]:
+                title = decision_targets[output_position]
+                heading = output_title.strip()
+                # Keep exact native labels bound to their own source cells
+                # before translating either importer's duplicate convention.
+                matches = [n for n, header in enumerate(table.columns)
+                           if str(header).strip() == heading]
+                occurrence = sum(header.strip() == heading for header in requested[:output_position])
+                if not matches:
+                    matches = [n for n, source_title in enumerate(decision_sources)
+                               if source_title == title and n not in indexes]
+                    occurrence = 0
+                if matches:
+                    match = matches[occurrence] if occurrence < len(matches) else None
+                    indexes.append(match if match not in excluded else None)
+                    continue
             target = " ".join(re.findall(r"[a-z0-9]+", output_title.casefold()))
             scored = []
             for index, header in enumerate(table.columns):
@@ -151,6 +171,20 @@ def mapped_rows(content, destination, table_columns=None):
         for original in table.rows:
             row = tuple(str(original[n]).strip() if n is not None and n < len(original)
                         else "" for n in indexes)
+            if len(decision_indexes) > 1:
+                values = {n: str(original[n]).strip() if n < len(original) and n not in excluded else ""
+                          for n in sorted(decision_indexes)}
+                decisions = tuple(_DECISIONS.get(" ".join(value.casefold().split()))
+                                  for value in values.values())
+                represented = {indexes[n] for n, title in enumerate(decision_targets) if title}
+                if (not (all(decisions) and len(set(decisions)) == 1)
+                        and not decision_indexes.issubset(represented)):
+                    target = next((n for n, title in enumerate(decision_targets) if title), None)
+                    if target is not None:
+                        # Keep competing evidence visible for review, within
+                        # the chosen layout. A blank is not an agreeing vote.
+                        evidence = "; ".join(f"{table.columns[n]}: {value}" for n, value in values.items())
+                        row = (*row[:target], evidence, *row[target + 1:])
             scope = next((row[n] for n in required_positions if row[n]), "")
             if scope and not _amount_only_description(scope) and not contains_price("\n".join(row)):
                 rows.append(row)

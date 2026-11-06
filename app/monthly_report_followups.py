@@ -76,6 +76,27 @@ def _proposal_details(text):
     return "; ".join(p for p in keep if p.strip()), decisions[0]
 
 
+def proposal_decision_titles(columns):
+    """Identify explicit decisions and the importers' duplicate display names."""
+    originals = tuple(str(column).strip() for column in columns)
+    titles = []
+    for position, original in enumerate(originals):
+        title = original
+        duplicate = re.fullmatch(r"(.+) \(([0-9]+)\)", title)
+        if duplicate and duplicate[1] in originals[:position]:
+            occurrence = 2
+            while f"{duplicate[1]} ({occurrence})" in originals[:position]:
+                occurrence += 1
+            # Word uses physical positions; CSV/XLSX uses the first unused
+            # duplicate name. Both compare the original, case-sensitive title.
+            if duplicate[2] in {str(position + 1), str(occurrence)}:
+                title = duplicate[1]
+        title = " ".join(title.casefold().split())
+        titles.append(title if re.fullmatch(
+            r"(?:(?:proposal|approval) )?(?:status|decision)", title) else "")
+    return tuple(titles)
+
+
 def _proposal_table_details(columns, row, prices):
     """Read table decisions before formatting; cell prose is not a new field.
 
@@ -85,17 +106,8 @@ def _proposal_table_details(columns, row, prices):
     fields = [(n, f"{columns[n]}: {value}") for n, value in enumerate(row)
               if n not in prices and value.strip()]
     original = "; ".join(text for _, text in fields)
-    indexes = []
-    for n, title in enumerate(columns):
-        title = title.strip()
-        # The importer disambiguates repeated headings with their physical
-        # column number. A repeated decision remains a decision, not prose.
-        duplicate = re.fullmatch(r"(.+) \((\d+)\)", title)
-        if duplicate and int(duplicate[2]) == n + 1 and duplicate[1] in columns[:n]:
-            title = duplicate[1]
-        if n not in prices and re.fullmatch(
-                r"(?:(?:proposal|approval)\s+)?(?:status|decision)", title, re.I):
-            indexes.append(n)
+    indexes = [n for n, title in enumerate(proposal_decision_titles(columns))
+               if title and n not in prices]
     decisions = tuple(_DECISIONS.get(" ".join(row[n].casefold().split()))
                       if n < len(row) else None for n in indexes)
     remaining = "; ".join(text for n, text in fields if n not in indexes)
