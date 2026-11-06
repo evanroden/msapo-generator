@@ -445,3 +445,175 @@ def test_replaced_requesting_generation_is_preserved_during_rollback(case, monke
             stage(case)
     assert records(root) == before and old.source_path.exists() and not pending(root).exists()
     assert (replaced[0].data_root / "new-generation-canary").read_text() == "SYNTHETIC replacement"
+
+
+@pytest.mark.parametrize("phase", ["before-journal", "before-index", "after-index", "source-write"])
+def test_returning_reclaimed_browser_cannot_replace_a_copy_owed_back_on_failure(case, monkeypatch, phase):
+    root, library, receipt, old, _ = case
+    before, injected = records(root), []
+    check, save, write = admission._check_admission, admission._save, vault._write_file
+
+    def return_then_fail():
+        injected.append(True)
+        assert not old.context.data_root.exists()
+        with pytest.raises(OSError, match="awaiting fixture cleanup recovery"):
+            with run("a"):
+                pytest.fail("A normal return silently replaced its counted set-aside generation")
+        assert not old.context.data_root.exists()
+        raise OSError("synthetic returning-browser admission failure")
+
+    def fail_check(directory, reservation, retained):
+        if not injected:
+            return_then_fail()
+        return check(directory, reservation, retained)
+
+    def fail_save(directory, selected):
+        if not injected:
+            if phase == "after-index":
+                save(directory, selected)
+            return_then_fail()
+        save(directory, selected)
+
+    def fail_write(directory, name, data):
+        if name == "source.docx" and not injected:
+            return_then_fail()
+        write(directory, name, data)
+
+    with monkeypatch.context() as fault:
+        if phase == "before-journal":
+            fault.setattr(admission, "_check_admission", fail_check)
+        elif phase == "source-write":
+            fault.setattr(vault, "_write_file", fail_write)
+        else:
+            fault.setattr(admission, "_save", fail_save)
+        with pytest.raises(OSError, match="synthetic returning-browser"):
+            stage(case)
+    assert injected and records(root) == before and not pending(root).exists()
+    assert old.source_path.read_bytes() == library.download(receipt.fixture_id)
+    with run("a") as returned:
+        assert returned.generation == old.context.generation
+    # The returned A is now active. B can retry without reclaiming A or reset.
+    result = stage(case)
+    assert result.source_path.exists() and old.source_path.exists()
+    assert len(records(root)) == 2
+    assert sum(item["added_bytes"] for item in records(root)) <= admission.MAX_ACTIVE_COPY_BYTES
+
+
+def test_return_after_partial_crash_then_requester_reset_restores_original_generation(case, monkeypatch):
+    root, library, receipt, old, _ = case
+    crash(case, "partial")
+    before = records(root)
+    tombstone, = (root / testing._BUCKET).glob(".reclaimed-*")
+    with pytest.raises(OSError, match="awaiting fixture cleanup recovery"):
+        with run("a"):
+            pytest.fail("Return during interrupted admission created a replacement")
+    assert records(root) == before and pending(root).exists()
+    assert next(tombstone.rglob("source.docx")).read_bytes() == library.download(receipt.fixture_id)
+    with run("b"):
+        testing.reset(root)  # explicit reset of B only, not A's hidden work
+    monkeypatch.setattr(testing, "set_aside_idle", lambda *args, **kwargs: None)
+    with run("c") as other:
+        with admission.admit_run_copy(other, 1):
+            pass
+    with run("a") as recovered:
+        assert recovered.generation == old.context.generation
+    assert old.source_path.read_bytes() == library.download(receipt.fixture_id)
+    assert not pending(root).exists() and not tombstone.exists()
+    assert len(records(root)) == 2
+
+
+def test_legacy_recreated_generation_preserves_both_copies_and_counted_recovery(case, monkeypatch):
+    root, library, receipt, old, _ = case
+    before, save, injected = records(root), admission._save, []
+    fresh_generation = "f" * 32
+
+    def legacy_return_then_fail(directory, selected):
+        if not injected:
+            injected.append(True)
+            # Model a pre-upgrade worker or already-existing collision. Current
+            # data_dir must never do this, but recovery still cannot delete it.
+            old.context.data_root.mkdir()
+            (old.context.data_root / testing._SENTINEL).write_text(old.context.scope + "|" + fresh_generation)
+            (old.context.data_root / "fresh-generation-canary").write_bytes(b"SYNTHETIC fresh work")
+            raise OSError("synthetic pre-index failure after legacy return")
+        save(directory, selected)
+
+    with monkeypatch.context() as fault:
+        fault.setattr(admission, "_save", legacy_return_then_fail)
+        with pytest.raises(OSError, match="both copies were preserved"):
+            stage(case)
+    tombstone, = (root / testing._BUCKET).glob(".reclaimed-*")
+    old_source = next(tombstone.rglob("source.docx"))
+    assert old_source.read_bytes() == library.download(receipt.fixture_id)
+    assert records(root) == before and pending(root).exists()
+    for _ in range(2):
+        with run("c") as other, pytest.raises(OSError, match="both copies were preserved"):
+            with admission.admit_run_copy(other, 1):
+                pytest.fail("An unsettled counted copy was pruned")
+        assert old_source.exists() and records(root) == before and pending(root).exists()
+    with run("a") as fresh:
+        assert fresh.generation == fresh_generation
+        assert (fresh.data_root / "fresh-generation-canary").read_bytes() == b"SYNTHETIC fresh work"
+        # Explicitly discard this synthetic fresh generation, not automatic
+        # recovery. Until this choice both generations must remain untouched.
+        testing.reset(root)
+    monkeypatch.setattr(testing, "set_aside_idle", lambda *args, **kwargs: None)
+    with run("c") as other:
+        with admission.admit_run_copy(other, 1):
+            pass
+    assert old.source_path.read_bytes() == library.download(receipt.fixture_id)
+    assert not pending(root).exists() and not tombstone.exists()
+    with run("a") as restored:
+        assert restored.generation == old.context.generation
+
+
+def _paused_failed_install(root, fixture_id, ready, release, outcome):
+    os.environ["EPC_DATA_DIR"] = str(root)
+    library = SharedFixtureLibrary(Path(root))
+    original, paused = admission._save, []
+
+    def pause_then_fail(directory, selected):
+        if not paused:
+            paused.append(True)
+            ready.set()
+            if not release.wait(30):
+                raise TimeoutError("Synthetic cross-process test did not release admission")
+            raise OSError("synthetic cross-process pre-index failure")
+        original(directory, selected)
+
+    admission._save = pause_then_fail
+    try:
+        with run("b"):
+            runs.stage_fixture(library, fixture_id, "b" * 32, profile())
+    except OSError as exc:
+        outcome.put(str(exc))
+    else:
+        outcome.put("unexpected success")
+
+
+def test_separate_returning_browser_process_cannot_replace_pending_copy(case):
+    root, library, receipt, old, _ = case
+    before = records(root)
+    ctx = multiprocessing.get_context("spawn")
+    ready, release, outcome = ctx.Event(), ctx.Event(), ctx.Queue()
+    child = ctx.Process(target=_paused_failed_install,
+                        args=(root, receipt.fixture_id, ready, release, outcome))
+    try:
+        child.start()
+        assert ready.wait(30)
+        with pytest.raises(OSError, match="awaiting fixture cleanup recovery"):
+            with run("a"):
+                pytest.fail("A separate returning process created a replacement")
+        release.set()
+        child.join(timeout=30)
+        assert child.exitcode == 0
+        assert outcome.get(timeout=5) == "synthetic cross-process pre-index failure"
+    finally:
+        release.set()
+        if child.is_alive():
+            child.terminate()
+            child.join(timeout=10)
+    assert records(root) == before and not pending(root).exists()
+    assert old.source_path.read_bytes() == library.download(receipt.fixture_id)
+    with run("a") as returned:
+        assert returned.generation == old.context.generation

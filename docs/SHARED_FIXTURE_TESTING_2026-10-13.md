@@ -89,7 +89,17 @@ idle copies and releases only its own new reservation, so it can be retried.
 A complete copy remains reserved if later inspection fails. If a stopped process
 leaves uncertain partial files, admission fails closed and preserves the journal
 and set-aside copies until that browser explicitly resets its test workspace.
-This is a safety boundary, not permission to purge another browser's work.
+This blocks all new fixture admissions, with no automatic expiry. The affected
+browser's reset is independent of admission; another browser's reset cannot
+resolve it. Damaged admission metadata or a conflicting older namespace instead
+requires storage recovery review. Ordinary reports and the shared original shelf
+are outside this admission gate. Never purge another browser's work to unblock it.
+
+A returning browser cannot create a replacement generation while its old copy
+is set aside. It retries after recovery, retaining the original generation when
+admission failed. If older software already created a conflicting generation,
+recovery preserves both copies and their counted reservation rather than deleting
+either. Review that conflict before explicitly discarding any current work.
 
 ## Current architecture
 
