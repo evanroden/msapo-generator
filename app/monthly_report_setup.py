@@ -171,6 +171,54 @@ def design_profile(profile, inspection, mappings, overrides=()):
                    block_overrides=overrides, imported_from=inspection.sha256)
 
 
+def _contains_narrative_fragment(text: str, fragment: str) -> bool:
+    """Match a whole contribution without normalizing its internal wording."""
+    fragment = fragment.strip()
+    if not fragment:
+        return True
+
+    def boundary(position, step):
+        # Imports join contributions with blank lines. A soft line break or
+        # inline quotation does not establish a complete existing contribution.
+        newlines = 0
+        while 0 <= position < len(text) and text[position].isspace():
+            newlines += text[position] == "\n"
+            if newlines >= 2:
+                return True
+            position += step
+        return not 0 <= position < len(text)
+
+    start = text.find(fragment)
+    if start < 0:
+        return False
+    if boundary(start - 1, -1) and boundary(start + len(fragment), 1):
+        return True
+
+    # Continue overlapping matches without rescanning long repeated fragments.
+    # Each entry is the length of that prefix's matching proper suffix.
+    overlaps = [0] * len(fragment)
+    matched = 0
+    for position in range(1, len(fragment)):
+        while matched and fragment[position] != fragment[matched]:
+            matched = overlaps[matched - 1]
+        if fragment[position] == fragment[matched]:
+            matched += 1
+        overlaps[position] = matched
+
+    matched = overlaps[-1]
+    for position in range(start + len(fragment), len(text)):
+        while matched and text[position] != fragment[matched]:
+            matched = overlaps[matched - 1]
+        if text[position] == fragment[matched]:
+            matched += 1
+        if matched == len(fragment):
+            start = position + 1 - len(fragment)
+            if boundary(start - 1, -1) and boundary(position + 1, 1):
+                return True
+            matched = overlaps[matched - 1]
+    return False
+
+
 def merge_blocks(existing: ResolvedBlock | None, incoming: ResolvedBlock) -> ResolvedBlock:
     """Append evidence to a partial draft. Never substitute it for another editor's work."""
     if existing is None or existing.source == "Omit":
@@ -183,7 +231,7 @@ def merge_blocks(existing: ResolvedBlock | None, incoming: ResolvedBlock) -> Res
             or (existing.org_nodes and incoming.org_nodes and existing.org_nodes != incoming.org_nodes)):
         raise ValueError("The incoming report has a different org chart. Keep it for reference and explicitly replace the existing chart after import; neither chart was overwritten.")
     text = existing.text
-    if incoming.text.strip() and incoming.text.strip() not in text:
+    if not _contains_narrative_fragment(text, incoming.text):
         text = "\n\n".join(t for t in (text, incoming.text) if t)
     from app.monthly_report_asset_instances import merge_picture_occurrences, with_asset_instances
     images, captions, instances = merge_picture_occurrences(existing, incoming)
