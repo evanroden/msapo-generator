@@ -83,6 +83,14 @@ The application passes a verified copy into the same Starting-report inspection 
 
 **Start fresh test with this fixture** and **Reset this test workspace** replace only the selected browser run and invalidate its pending generation. They preserve immutable shared fixtures. A reset does not purge originals, saved live histories or Library files. Under the owner's retention policy (#292), another browser's isolated run with no changes or visits for 24 hours is removed when a new copy is admitted; shared originals and the requesting browser's run are never removed. Disk exhaustion otherwise rejects admission without deleting prior work.
 
+Starting-report copy admission keeps a bounded recovery journal until the actual
+copy is verified and committed. A clean failed installation restores set-aside
+idle copies and releases only its own new reservation, so it can be retried.
+A complete copy remains reserved if later inspection fails. If a stopped process
+leaves uncertain partial files, admission fails closed and preserves the journal
+and set-aside copies until that browser explicitly resets its test workspace.
+This is a safety boundary, not permission to purge another browser's work.
+
 ## Current architecture
 
 | Module / boundary | Role and constraint |
