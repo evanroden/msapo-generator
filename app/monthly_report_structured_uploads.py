@@ -358,6 +358,10 @@ def _activity_reader_notice(content):
         return (content.source.filename + ": site-specific rows in this spreadsheet need an explicit target-site mapping. "
                 "This file is not sent to the Activity reader. Review the original and add only verified "
                 "work directly in Activity; the uploaded file is retained.")
+    if fields := _ambiguous_csv_activity_columns(content):
+        return (content.source.filename + ": ambiguous Activity CSV columns need explicit source mapping (" +
+                ", ".join(fields) + "). This file is not sent to the Activity reader. "
+                "Review the original and add only verified work directly in Activity; the uploaded file is retained.")
     return ""
 
 
@@ -371,6 +375,36 @@ def reader_notices(contents, destination):
     if destination != "activity_summary":
         return ()
     return tuple(notice for content in contents if (notice := _activity_reader_notice(content)))
+
+
+_CSV_ACTIVITY_COLUMNS = {
+    "work": {"activity", "workperformed", "workdescription", "servicenotes",
+             "servicedetails", "actions", "findings"},
+    "vendor": {"vendor", "contractor", "servicecompany"},
+    "date": {"servicedate", "eventdate", "workdate", "inspectiondate", "date"},
+    "status": {"status", "workstatus", "completionstatus"},
+}
+
+
+def _ambiguous_csv_activity_columns(content):
+    """Detect competing supported fields without remapping or changing cells."""
+    if content.source.suffix != ".csv":
+        return ()
+    ambiguous = []
+    for table in content.tables:
+        # Exact adapter suffixes (2 onward) also resemble authored headings;
+        # neither spelling authorizes selecting or ignoring competing values.
+        bases = tuple(re.sub(r"(?: \((?:[2-9]|[1-9][0-9]+)\))+$", "", title)
+                      for title in table.columns)
+        names = tuple(re.sub(r"[^a-z0-9]", "", title.casefold()) for title in bases)
+        if not any(name in _CSV_ACTIVITY_COLUMNS["work"] for name in names):
+            continue  # An unknown schema keeps its existing generic route.
+        for field, aliases in _CSV_ACTIVITY_COLUMNS.items():
+            positions = tuple(index for index, name in enumerate(names) if name in aliases)
+            if (len(positions) > 1 or
+                    any(bases[index] != table.columns[index] for index in positions)):
+                ambiguous.append(field)
+    return tuple(dict.fromkeys(ambiguous))
 
 
 _ACTIVITY_EMAIL = re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
@@ -483,6 +517,8 @@ def _csv_activity_entries(content):
     """
     if content.source.suffix != ".csv" or not content.tables:
         return None
+    if _ambiguous_csv_activity_columns(content):
+        return ()  # Recognized but unsafe; never fall through to flattened text.
     result = []
     for number, table in enumerate(content.tables, 1):
         names = tuple(re.sub(r"[^a-z0-9]", "", name.casefold()) for name in table.columns)
@@ -493,14 +529,12 @@ def _csv_activity_entries(content):
         def column(accepted):
             found = [index for index, name in enumerate(names) if name in accepted]
             return found[0] if len(found) == 1 else None
-        action = column({"activity", "workperformed", "workdescription",
-                         "servicenotes", "servicedetails", "actions", "findings"})
+        action = column(_CSV_ACTIVITY_COLUMNS["work"])
         if action is None:
             return None
-        vendor = column({"vendor", "contractor", "servicecompany"})
-        dated = column({"servicedate", "eventdate", "workdate",
-                        "inspectiondate", "date"})
-        status = column({"status", "workstatus", "completionstatus"})
+        vendor = column(_CSV_ACTIVITY_COLUMNS["vendor"])
+        dated = column(_CSV_ACTIVITY_COLUMNS["date"])
+        status = column(_CSV_ACTIVITY_COLUMNS["status"])
         for row in table.rows:
             def cell(index):
                 return str(row[index]).strip() if index is not None and index < len(row) else ""
