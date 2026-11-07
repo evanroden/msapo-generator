@@ -270,3 +270,67 @@ def test_radio_unsettled_press_is_not_retried_or_successful(monkeypatch, tmp_pat
     option.click.assert_called_once_with()
     radio.check.assert_not_called()
     assert item.events == [{"action": "Review saved directory", "status": "attempted"}]
+
+
+class WorksheetGateReached(Exception):
+    """Stop the unit model before the next native mutation."""
+
+
+def worksheet_gate(monkeypatch, tmp_path, *, value=qa.SHEET, count=1, visible=True):
+    """Exercise the real run's read-only worksheet gate against native UI shape."""
+    import sys
+    from types import ModuleType
+    page, wrapper, combo = Mock(), Mock(), Mock()
+    page.get_by_test_id.side_effect = lambda name: wrapper if name == "stSelectbox" else Mock()
+    wrapper.filter.return_value = wrapper
+    page.get_by_role.side_effect = lambda role, **kwargs: combo if (
+        role == "combobox" and kwargs.get("name") == "Contract worksheet") else Mock()
+    class Assertions:
+        def __init__(self, target):
+            self.target = target
+        def to_have_count(self, expected):
+            if self.target is combo:
+                assert count == expected, "Worksheet target is missing or ambiguous"
+        def to_be_visible(self):
+            if self.target is combo:
+                assert visible, "Worksheet is not visible"
+        def to_contain_text(self, expected):
+            assert self.target is wrapper and expected in "Contract worksheet", "Wrapper has label text, not input value"
+        def to_have_value(self, expected):
+            assert self.target is combo and value == expected, "Unexpected worksheet value"
+    fake = ModuleType("playwright.sync_api")
+    fake.expect = Assertions
+    monkeypatch.setitem(sys.modules, "playwright", ModuleType("playwright"))
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", fake)
+    item = qa.Journey(page, None, TOKEN, qa.Config(SHA), tmp_path)
+    # This models only the assertion. It does not claim upload/browser execution.
+    for method in ("guard", "radio", "snapshot", "action", "button"):
+        setattr(item, method, Mock())
+    def fill(label, value):
+        if label == "Contract name":
+            raise WorksheetGateReached()
+    item.fill = Mock(side_effect=fill)
+    return item, combo
+
+
+def test_worksheet_asserts_native_input_value_not_wrapper_text(monkeypatch, tmp_path):
+    item, combo = worksheet_gate(monkeypatch, tmp_path)
+    with pytest.raises(WorksheetGateReached):
+        item.run(b"synthetic", "Synthetic contract")
+    item.page.get_by_role.assert_any_call("combobox", name="Contract worksheet", exact=True)
+    combo.click.assert_not_called()
+    combo.fill.assert_not_called()
+    assert item.fill.call_args_list[-1].args == ("Contract name", "Synthetic contract")
+
+
+@pytest.mark.parametrize("options", [
+    {"value": ""}, {"value": "Synthetic Other Sites"}, {"value": qa.SHEET + " extra"},
+    {"count": 0}, {"count": 2}, {"visible": False},
+])
+def test_wrong_or_unavailable_worksheet_stops_before_contract_mutation(monkeypatch, tmp_path, options):
+    item, combo = worksheet_gate(monkeypatch, tmp_path, **options)
+    with pytest.raises(AssertionError):
+        item.run(b"synthetic", "Synthetic contract")
+    item.fill.assert_called_once_with("Directory editor name", qa.ACTOR)
+    combo.click.assert_not_called()
+    combo.fill.assert_not_called()

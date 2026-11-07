@@ -291,8 +291,10 @@ class LocalJourney(live.Journey):
         self.action("Upload invented workbook", lambda: uploader.locator("input[type=file]").set_input_files({
             "name": "synthetic-directory-retention.xlsx", "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "buffer": raw}))
         self.button("Read workbook")
-        worksheet = self.page.get_by_test_id("stSelectbox").filter(has=self.page.get_by_text("Contract worksheet", exact=True))
-        expect(worksheet).to_contain_text(SHEET)
+        worksheet = self.page.get_by_role("combobox", name="Contract worksheet", exact=True)
+        expect(worksheet).to_have_count(1)
+        expect(worksheet).to_be_visible()
+        expect(worksheet).to_have_value(SHEET)
         self.fill("Contract name", contract)
         expect(self.page.get_by_text("Saving 1 reviewed site records; 0 other saved records remain unchanged. Other workbook tabs are not imported into this contract.", exact=True)).to_be_visible()
         preview = self.expand("All included contacts before saving")
