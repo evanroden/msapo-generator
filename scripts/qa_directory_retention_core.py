@@ -163,6 +163,33 @@ class CoreJourney(local.LocalJourney):
             path.unlink(missing_ok=True)
             raise
 
+    def snapshot_history(self, stage):
+        """Observe the exact already-expanded native panel, allowing normal scroll.
+
+        Keep the viewport image separately. No control activation, canvas read,
+        injected event or DOM change substitutes for the displayed history.
+        """
+        from playwright.sync_api import expect
+        path = self.output / (stage + "-history-panel.png")
+        try:
+            self.guard()
+            title = self.page.get_by_text("History and restoration", exact=True)
+            summary = self.page.locator("summary").filter(has=title)
+            panel = self.page.get_by_test_id("stExpander").filter(has=summary)
+            expect(title).to_have_count(1)
+            expect(summary).to_have_count(1)
+            expect(panel).to_have_count(1)
+            expect(panel).to_be_visible()
+            expect(panel.locator("details")).to_have_attribute("open", "")
+            expect(panel.get_by_test_id("stDataFrame")).to_have_count(1)
+            expect(panel.get_by_test_id("stDataFrame")).to_be_visible()
+            self.guard()  # Locator assertion waits may pump browser events.
+            panel.screenshot(path=str(path))  # Native automatic scrolling only.
+            self.guard()
+        except Exception:
+            path.unlink(missing_ok=True)
+            raise
+
     def store_receipt(self, contract, stage):
         self.guard()
         digest = sha256(self.raw).hexdigest()
@@ -216,6 +243,7 @@ class CoreJourney(local.LocalJourney):
         expect(contacts.get_by_test_id("stDataFrame")).to_be_visible()
         receipt = self.store_receipt(contract, stage)
         self.snapshot(stage)
+        self.snapshot_history(stage)
         self.guard()
         return {"caption": caption.inner_text(), "store": receipt}
 

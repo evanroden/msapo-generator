@@ -244,3 +244,76 @@ def test_schema_rejects_boolean_integer_type_confusion(store, field, value):
 
 def test_retention_clock_is_explicitly_out_of_scope():
     assert "Retention-clock correctness (.imported timestamp) is not verified." in inspect.getsource(core.exercise)
+
+
+@pytest.mark.parametrize("failure", [None, "initial-guard", "pre-capture-guard", "post-capture-guard", "capture", "count", "visible", "expanded"])
+def test_history_panel_capture_guards_unique_visible_expanded_target_and_discards(tmp_path, monkeypatch, failure):
+    import sys
+    from types import ModuleType
+    sync_api = ModuleType("playwright.sync_api")
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", sync_api)
+    events = []
+    journey = core.CoreJourney.__new__(core.CoreJourney)
+    journey.output = tmp_path
+    journey.page = Mock()
+    summary = journey.page.locator.return_value.filter.return_value
+    panel = journey.page.get_by_test_id.return_value.filter.return_value
+    guard_calls = 0
+    def guard():
+        nonlocal guard_calls
+        guard_calls += 1
+        events.append("guard-" + str(guard_calls))
+        if failure == {1: "initial-guard", 2: "pre-capture-guard", 3: "post-capture-guard"}[guard_calls]:
+            raise core.SafetyStop("guard failed")
+    journey.guard = guard
+    class Assertions:
+        def to_have_count(self, count):
+            events.append("count")
+            assert count == 1
+            if failure == "count":
+                raise AssertionError("not unique")
+        def to_be_visible(self):
+            events.append("visible")
+            if failure == "visible":
+                raise AssertionError("not visible")
+        def to_have_attribute(self, name, value):
+            events.append("expanded")
+            assert (name, value) == ("open", "")
+            if failure == "expanded":
+                raise AssertionError("not expanded")
+    monkeypatch.setattr(sync_api, "expect", lambda locator: Assertions(), raising=False)
+    path = tmp_path / "saved-history-panel.png"
+    def screenshot(**kwargs):
+        events.append("capture")
+        assert kwargs == {"path": str(path)}
+        path.write_bytes(b"synthetic mocked image")
+        if failure == "capture":
+            raise RuntimeError("capture failed")
+    panel.screenshot.side_effect = screenshot
+    if failure:
+        with pytest.raises((core.SafetyStop, AssertionError, RuntimeError)):
+            journey.snapshot_history("saved")
+        assert not path.exists()
+    else:
+        journey.snapshot_history("saved")
+        assert path.exists()
+        assert events[0] == "guard-1"
+        assert events[-3:] == ["guard-2", "capture", "guard-3"]
+    if failure != "initial-guard":
+        journey.page.locator.assert_called_once_with("summary")
+        journey.page.get_by_text.assert_called_once_with("History and restoration", exact=True)
+        journey.page.locator.return_value.filter.assert_called_once_with(has=journey.page.get_by_text.return_value)
+        journey.page.get_by_test_id.assert_called_once_with("stExpander")
+        journey.page.get_by_test_id.return_value.filter.assert_called_once_with(has=summary)
+    if failure in {"initial-guard", "pre-capture-guard", "count", "visible", "expanded"}:
+        panel.screenshot.assert_not_called()
+
+
+def test_history_panel_capture_keeps_viewport_and_follows_native_receipt():
+    source = inspect.getsource(core.CoreJourney.saved_receipt)
+    assert source.index('self.expand("History and restoration")') < source.index('self.store_receipt(contract, stage)')
+    assert source.index('self.store_receipt(contract, stage)') < source.index('self.snapshot(stage)')
+    assert source.index('self.snapshot(stage)') < source.index('self.snapshot_history(stage)')
+    capture = inspect.getsource(core.CoreJourney.snapshot_history)
+    for forbidden in (".click(", "force=", ".evaluate(", "dispatch_event", "scrollIntoView"):
+        assert forbidden not in capture
