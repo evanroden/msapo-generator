@@ -66,6 +66,16 @@ jobs:
           MONTHLY_QA_PUBLIC_URL: ${{ vars.MONTHLY_QA_PUBLIC_URL || 'https://msapo-generator.onrender.com' }}
           MONTHLY_QA_RUN_LABEL: preparer
         run: python -m scripts.qa_monthly_preparer_live
+      # Disabled unless separately opted in. Never turn this into a fixture
+      # admission or a live-directory cleanup: it owns only its fresh cookie.
+      - name: Opt-in isolated directory retention disclosure and history
+        if: steps.still-current.outputs.run == 'true' && vars.MONTHLY_QA_DIRECTORY_ACCEPTANCE == 'synthetic-only-v1'
+        timeout-minutes: 6
+        env:
+          MONTHLY_QA_DIRECTORY_ACCEPTANCE: synthetic-only-v1
+          MONTHLY_QA_EXPECTED_COMMIT: ${{ github.event.workflow_run.head_sha }}
+          MONTHLY_QA_PUBLIC_URL: ${{ vars.MONTHLY_QA_PUBLIC_URL || 'https://msapo-generator.onrender.com' }}
+        run: python -m scripts.qa_directory_retention_live
       - name: Preserve only synthetic browser/output evidence
         if: always() && steps.still-current.outputs.run == 'true'
         uses: actions/upload-artifact@v4
