@@ -192,3 +192,81 @@ def test_workflow_has_no_new_trigger_and_is_explicitly_disabled_by_default():
     assert "group: monthly-isolated-live-production\n  cancel-in-progress: false" in source
     assert "if: steps.still-current.outputs.run == 'true' && vars.MONTHLY_QA_DIRECTORY_ACCEPTANCE == 'synthetic-only-v1'" in source
     assert source.count("run: python -m scripts.qa_directory_retention_live") == 1
+
+
+def radio_controls(monkeypatch, tmp_path, *, option_count=1, group_count=1, input_count=1,
+                   visible=True, enabled=True, settles=True):
+    """Model the native artifact's covered input and visible associated option."""
+    import sys
+    from types import ModuleType
+    page, group, options, option, radio = (Mock() for _ in range(5))
+    checked = []
+    page.get_by_role.side_effect = lambda role, **kwargs: group if role == "radiogroup" else radio
+    option.get_by_role.return_value = radio
+    group.get_by_test_id.return_value = options
+    options.filter.return_value = option
+    radio.check.side_effect = TimeoutError("Styled radio option intercepts the hidden input")
+    option.click.side_effect = lambda: checked.append(True) if settles else None
+    class Assertions:
+        def __init__(self, target):
+            self.target = target
+        def to_have_count(self, count):
+            counts = {id(group): group_count, id(option): option_count, id(radio): input_count}
+            assert counts[id(self.target)] == count, "Radio target is ambiguous or missing"
+        def to_be_visible(self):
+            assert self.target is option and visible, "Radio option is hidden"
+        def to_be_enabled(self):
+            assert self.target is radio and enabled, "Radio is disabled"
+        def to_be_checked(self):
+            assert self.target is radio and checked, "Native label press did not select the radio"
+    fake = ModuleType("playwright.sync_api")
+    fake.expect = Assertions
+    monkeypatch.setitem(sys.modules, "playwright", ModuleType("playwright"))
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", fake)
+    item = qa.Journey(page, None, TOKEN, qa.Config(SHA), tmp_path)
+    item.guard = Mock()
+    return item, group, options, option, radio
+
+
+def test_radio_uses_associated_native_option_not_covered_input(monkeypatch, tmp_path):
+    item, group, options, option, radio = radio_controls(monkeypatch, tmp_path)
+    item.radio("Review saved directory")
+    item.page.get_by_role.assert_any_call("radiogroup", name="Directory task", exact=True)
+    option.get_by_role.assert_called_once_with("radio", name="Review saved directory", exact=True)
+    group.get_by_role.assert_not_called()  # The has locator must not retain an ancestor group.
+    group.get_by_test_id.assert_called_once_with("stRadioOption")
+    options.filter.assert_called_once_with(has=radio)
+    option.click.assert_called_once_with()  # Native actionable pointer, no force/JS/keyboard fallback.
+    radio.check.assert_not_called()
+    assert item.guard.call_count == 3  # Before operation, after readiness waits, after native selection.
+    assert item.events == [{"action": "Review saved directory", "status": "completed"}]
+
+
+@pytest.mark.parametrize("options", [{"option_count": 0}, {"option_count": 2}, {"enabled": False},
+                                     {"group_count": 2}, {"input_count": 2}, {"visible": False}])
+def test_radio_requires_unique_visible_enabled_option(monkeypatch, tmp_path, options):
+    item, _, _, option, radio = radio_controls(monkeypatch, tmp_path, **options)
+    with pytest.raises(AssertionError):
+        item.radio("Review saved directory")
+    option.click.assert_not_called()
+    radio.check.assert_not_called()
+    assert item.events == [{"action": "Review saved directory", "status": "attempted"}]
+
+
+def test_radio_rechecks_guard_after_waits_before_native_press(monkeypatch, tmp_path):
+    item, _, _, option, radio = radio_controls(monkeypatch, tmp_path)
+    item.guard.side_effect = [None, qa.SafetyStop("Synthetic route drift")]
+    with pytest.raises(qa.SafetyStop):
+        item.radio("Review saved directory")
+    option.click.assert_not_called()
+    radio.check.assert_not_called()
+    assert item.events == [{"action": "Review saved directory", "status": "attempted"}]
+
+
+def test_radio_unsettled_press_is_not_retried_or_successful(monkeypatch, tmp_path):
+    item, _, _, option, radio = radio_controls(monkeypatch, tmp_path, settles=False)
+    with pytest.raises(AssertionError, match="did not select"):
+        item.radio("Review saved directory")
+    option.click.assert_called_once_with()
+    radio.check.assert_not_called()
+    assert item.events == [{"action": "Review saved directory", "status": "attempted"}]

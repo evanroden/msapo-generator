@@ -206,7 +206,23 @@ class Journey:
         return self.action(label, lambda: self.page.get_by_role("button", name=label, exact=True).click())
 
     def radio(self, label):
-        return self.action(label, lambda: self.page.get_by_role("radio", name=label, exact=True).check())
+        from playwright.sync_api import expect
+        def select():
+            group = self.page.get_by_role("radiogroup", name="Directory task", exact=True)
+            # Streamlit's styled option owns the native press; its input is
+            # visually hidden. Match that exact input without clicking through it.
+            option = group.get_by_test_id("stRadioOption").filter(
+                has=self.page.get_by_role("radio", name=label, exact=True))
+            radio = option.get_by_role("radio", name=label, exact=True)
+            expect(group).to_have_count(1)
+            expect(option).to_have_count(1)
+            expect(radio).to_have_count(1)
+            expect(option).to_be_visible()
+            expect(radio).to_be_enabled()
+            self.guard()  # Locator waits pump events; recheck before the press.
+            option.click()
+            expect(radio).to_be_checked()
+        return self.action(label, select)
 
     def fill(self, label, value):
         def enter():
