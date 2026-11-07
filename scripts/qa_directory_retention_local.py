@@ -8,6 +8,7 @@ A local result is not served-production or 30-day elapsed-time acceptance.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from hashlib import sha256
 import ipaddress
@@ -37,6 +38,76 @@ MARKER = ".directory-retention-local"
 GUARD_LOG = "network-guard.jsonl"
 CANARY = b"Synthetic ordinary-root canary: preserve unchanged"
 PREFIX = "directory-retention-synthetic-"
+
+
+# Local, read-only measurements. No text, field values, HTML, cookies or page
+# handlers are read/replaced. A button's geometric center is NOT a claim about
+# the exact point Playwright chose after clipping/automatic scrolling.
+CSV_GEOMETRY = r"""grids => {
+    const limit = 24;
+    const grid = grids.length === 1 ? grids[0] : null;
+    if (!grid) return {browserTime:performance.now(), gridCount:grids.length, unavailable:'missing-or-ambiguous-grid'};
+    const testids = new Set(['stDataFrame', 'stElementToolbar', 'stElementToolbarButtonContainer',
+        'stBaseButton-elementToolbar', 'stDataFrameResizable', 'stDataFrameGlideDataEditor',
+        'stExpander', 'stMain', 'stMainBlockContainer']);
+    const classes = ['dvn-scroller', 'stDataFrameGlideDataEditor', 'stElementToolbar'];
+    const describe = node => node ? {
+        tag: node.tagName, connected:node.isConnected,
+        testid:testids.has(node.getAttribute('data-testid')) ? node.getAttribute('data-testid') : null,
+        classes:classes.filter(name => node.classList.contains(name))
+    } : null;
+    const rect = node => {
+        const r = node.getBoundingClientRect();
+        return {x:r.x, y:r.y, width:r.width, height:r.height,
+                top:r.top, right:r.right, bottom:r.bottom, left:r.left};
+    };
+    const measure = node => {
+        if (!node) return null;
+        const s = getComputedStyle(node);
+        return {...describe(node), rect:rect(node), hover:node.matches(':hover'),
+            opacity:s.opacity, display:s.display, visibility:s.visibility,
+            position:s.position, top:s.top, zIndex:s.zIndex, pointerEvents:s.pointerEvents,
+            overflowX:s.overflowX, overflowY:s.overflowY, transform:s.transform,
+            scrollTop:node.scrollTop, scrollLeft:node.scrollLeft,
+            clientWidth:node.clientWidth, clientHeight:node.clientHeight};
+    };
+    const toolbars = grid.querySelectorAll('[data-testid="stElementToolbar"]');
+    const buttons = grid.querySelectorAll('button[aria-label="Download as CSV"]');
+    const button = buttons.length === 1 ? buttons[0] : null;
+    const ancestors = [];
+    let next = button || grid;
+    for (; next && ancestors.length < limit; next = next.parentElement) ancestors.push(measure(next));
+    let clip = {left:0, top:0, right:innerWidth, bottom:innerHeight};
+    if (button) {
+        for (let node = button.parentElement, depth = 0; node && depth < limit;
+             node = node.parentElement, depth++) {
+            const s = getComputedStyle(node), r = node.getBoundingClientRect();
+            if (/^(auto|scroll|hidden|clip)$/.test(s.overflowX)) {
+                clip.left = Math.max(clip.left, r.left + node.clientLeft);
+                clip.right = Math.min(clip.right, r.left + node.clientLeft + node.clientWidth);
+            }
+            if (/^(auto|scroll|hidden|clip)$/.test(s.overflowY)) {
+                clip.top = Math.max(clip.top, r.top + node.clientTop);
+                clip.bottom = Math.min(clip.bottom, r.top + node.clientTop + node.clientHeight);
+            }
+        }
+    }
+    let center = null;
+    if (button) {
+        const r = button.getBoundingClientRect(), x = r.x+r.width/2, y = r.y+r.height/2;
+        const inViewport = x >= 0 && x < innerWidth && y >= 0 && y < innerHeight;
+        const top = inViewport ? document.elementFromPoint(x, y) : null;
+        center = {x, y, inViewport, insideOverflowClip:x>=clip.left && x<clip.right && y>=clip.top && y<clip.bottom,
+            top:describe(top), buttonOwnsTop:!!top && button.contains(top),
+            stack:inViewport ? document.elementsFromPoint(x, y).slice(0, 12).map(describe) : []};
+    }
+    return {browserTime:performance.now(), gridCount:grids.length, viewport:{width:innerWidth,height:innerHeight},
+        windowScroll:{x:scrollX,y:scrollY}, grid:measure(grid),
+        toolbarCount:toolbars.length, toolbar:toolbars.length===1 ? measure(toolbars[0]) : null,
+        buttonCount:buttons.length, button:measure(button), ancestors, ancestorsTruncated:!!next,
+        overflowClip:clip, geometricCenter:center,
+        hovered:Array.from(document.querySelectorAll(':hover')).slice(0, limit).map(describe)};
+}"""
 
 
 def guarded_root(value):
@@ -216,6 +287,7 @@ class LocalJourney(live.Journey):
         self.namespace = self.base / "_enfra_monthly_report_qa_v1" / identity
         self.generation = None
         self.storage_receipts = []
+        self.csv_diagnostics = []
 
     def transport_boundary(self):
         self.server.alive()
@@ -255,6 +327,54 @@ class LocalJourney(live.Journey):
         expect(self.page.get_by_text(live.BANNER, exact=True)).to_be_visible()
         self.transport_boundary()
         super().guard()  # Same code/banner/exception gates and final physical boundary.
+
+    def capture_csv_geometry(self, grid, name, stage):
+        # Guard both sides of the read. Do not retain measurements from drift.
+        self.guard()
+        if len(self.csv_diagnostics) >= 64:
+            raise SafetyStop("Local CSV diagnostic record limit exceeded")
+        value = grid.evaluate_all(CSV_GEOMETRY)
+        self.guard()
+        encoded = json.dumps(value, allow_nan=False)
+        if len(encoded.encode("utf-8")) > 65536:
+            raise SafetyStop("Local CSV diagnostic size limit exceeded")
+        self.csv_diagnostics.append({"download": name, "stage": stage, "measurement": value})
+
+    @contextmanager
+    def observe_csv(self, grid, name, operation):
+        self.capture_csv_geometry(grid, name, "before-" + operation)
+        try:
+            yield
+        except Exception:
+            try:
+                self.capture_csv_geometry(grid, name, "failed-" + operation)
+            except Exception as diagnostic_error:
+                # Preserve the original native failure. A failed capture never
+                # permits another action or records content from a drifted page.
+                if len(self.csv_diagnostics) < 64:
+                    self.csv_diagnostics.append({"download": name, "stage": "failed-" + operation,
+                        "capture_error_type": type(diagnostic_error).__name__})
+            raise
+        else:
+            self.capture_csv_geometry(grid, name, "after-" + operation)
+
+    def download_grid(self, box, name):
+        from playwright.sync_api import expect
+        grid = box.get_by_test_id("stDataFrame")
+        expect(grid).to_have_count(1)
+        def download():
+            with self.observe_csv(grid, name, "hover"):
+                grid.hover()
+            with self.page.expect_download() as receipt:
+                with self.observe_csv(grid, name, "click"):
+                    grid.get_by_role("button", name="Download as CSV", exact=True).click()
+            item = receipt.value
+            if item.failure():
+                raise SafetyStop("Native CSV download failed.")
+            path = self.output / (name + ".csv")
+            item.save_as(str(path))
+            return path.read_bytes()
+        return self.action("Download " + name, download)
 
     def saved_receipt(self, contract, stage):
         value = super().saved_receipt(contract, stage)
@@ -363,7 +483,10 @@ def exercise(*, system_chromium=False):
                   "Loopback HTTP secure context, not Render HTTPS/deployment/network behavior.",
                   "Python socket audit and browser route guards, not an OS outbound sandbox.",
                   "No elapsed 30-day or aged hosted deletion claim.",
-                  "Single worksheet; no automatic inactive-row filtering claim."]}
+                  "Single worksheet; no automatic inactive-row filtering claim.",
+                  "Read-only CSV observations affect timing; success cannot alone explain an earlier failure.",
+                  "Overflow clipping is a rectangular estimate; transforms and nonrectangular clipping require separate hit-test evidence.",
+                  "Geometry is sampled around native operations, not each internal click retry. Hit tests use the geometric center, not a recorded Playwright click point."]}
     with tempfile.TemporaryDirectory(prefix=PREFIX) as temp:
         base = Path(temp)
         nonce, token = secrets.token_hex(16), secrets.token_hex(16)
@@ -440,6 +563,7 @@ def exercise(*, system_chromium=False):
             server.stop()
             record["events"] = journey.events if journey else []
             record["storage_receipts"] = journey.storage_receipts if journey else []
+            record["csv_diagnostics"] = journey.csv_diagnostics if journey else []
             record["blocked_requests"] = blocked
             record["page_errors"] = errors
             try:

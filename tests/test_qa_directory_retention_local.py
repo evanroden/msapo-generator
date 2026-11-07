@@ -30,7 +30,6 @@ def base():
 def test_local_orchestration_tracks_production_without_editing_its_globals():
     normalize = lambda method: ast.dump(ast.parse(textwrap.dedent(inspect.getsource(method))), include_attributes=False)
     assert normalize(local.LocalJourney.run) == normalize(live.Journey.run)
-    assert local.LocalJourney.download_grid is live.Journey.download_grid
     assert local.LocalJourney.action is live.Journey.action
     assert local.LocalJourney.button is live.Journey.button
     assert local.LocalJourney.radio is live.Journey.radio
@@ -261,3 +260,178 @@ def test_missing_banner_timeout_never_enters_mutation(base, tmp_path, monkeypatc
         item.action("Synthetic mutation", mutation)
     mutation.assert_not_called()
     assert item.events == []
+
+
+def test_local_csv_native_operations_are_unchanged_after_removing_observations():
+    class RemoveObservations(ast.NodeTransformer):
+        def visit_With(self, node):
+            self.generic_visit(node)
+            if (len(node.items) == 1 and isinstance(node.items[0].context_expr, ast.Call)
+                    and ast.unparse(node.items[0].context_expr.func) == "self.observe_csv"):
+                call = node.items[0].context_expr
+                assert [ast.unparse(value) for value in call.args[:2]] == ["grid", "name"]
+                assert ast.literal_eval(call.args[2]) in {"hover", "click"}
+                assert not call.keywords
+                return node.body
+            return node
+    native = ast.parse(textwrap.dedent(inspect.getsource(live.Journey.download_grid)))
+    measured = ast.parse(textwrap.dedent(inspect.getsource(local.LocalJourney.download_grid)))
+    measured = RemoveObservations().visit(measured)
+    assert ast.dump(native, include_attributes=False) == ast.dump(measured, include_attributes=False)
+
+
+def test_csv_capture_is_bounded_guarded_and_uses_immediate_query(base, tmp_path):
+    item = journey(base, tmp_path)
+    item.guard = Mock(side_effect=item.boundary)
+    grid = Mock()
+    grid.evaluate_all.return_value = {"gridCount": 0, "unavailable": "missing-or-ambiguous-grid"}
+    item.capture_csv_geometry(grid, "reviewed-contacts", "before-hover")
+    assert item.guard.call_count == 2
+    grid.evaluate.assert_not_called()
+    grid.evaluate_all.assert_called_once_with(local.CSV_GEOMETRY)
+    assert item.csv_diagnostics == [{"download": "reviewed-contacts", "stage": "before-hover",
+        "measurement": grid.evaluate_all.return_value}]
+
+
+@pytest.mark.parametrize("stage", ["before", "after"])
+def test_csv_capture_discards_data_when_either_guard_fails(base, tmp_path, stage):
+    item = journey(base, tmp_path)
+    item.guard = Mock(side_effect=item.boundary)
+    grid = Mock()
+    def drift(*args):
+        item.page.url = local.ORIGIN + "/?workflow=monthly"
+        return {"synthetic": "must not be retained"}
+    if stage == "before":
+        drift()
+    else:
+        grid.evaluate_all.side_effect = drift
+    with pytest.raises(local.SafetyStop):
+        item.capture_csv_geometry(grid, "reviewed-contacts", "before-click")
+    assert not item.csv_diagnostics
+    assert grid.evaluate_all.call_count == (0 if stage == "before" else 1)
+
+
+@pytest.mark.parametrize("failure", ["records", "bytes", "nonfinite"])
+def test_csv_diagnostics_enforce_record_and_payload_limits(base, tmp_path, failure):
+    item = journey(base, tmp_path)
+    item.guard = Mock(side_effect=item.boundary)
+    grid = Mock()
+    if failure == "records":
+        item.csv_diagnostics = [{} for _ in range(64)]
+    grid.evaluate_all.return_value = {"value": float("nan") if failure == "nonfinite" else "x" * 65537}
+    with pytest.raises((local.SafetyStop, ValueError)):
+        item.capture_csv_geometry(grid, "reviewed-contacts", "before-hover")
+    assert len(item.csv_diagnostics) == (64 if failure == "records" else 0)
+    assert grid.evaluate_all.call_count == (0 if failure == "records" else 1)
+
+
+def test_csv_observation_preserves_one_native_operation_and_stage_order(base, tmp_path):
+    item = journey(base, tmp_path)
+    events = []
+    item.capture_csv_geometry = Mock(side_effect=lambda grid, name, stage: events.append(stage))
+    operation = Mock(side_effect=lambda: events.append("native"))
+    with item.observe_csv(Mock(), "reviewed-contacts", "click"):
+        operation()
+    assert events == ["before-click", "native", "after-click"]
+    operation.assert_called_once_with()
+
+
+def test_failed_before_observation_blocks_native_operation(base, tmp_path):
+    item = journey(base, tmp_path)
+    item.capture_csv_geometry = Mock(side_effect=local.SafetyStop("guard failed"))
+    operation = Mock()
+    with pytest.raises(local.SafetyStop):
+        with item.observe_csv(Mock(), "reviewed-contacts", "click"):
+            operation()
+    operation.assert_not_called()
+
+
+def test_native_exception_survives_failed_diagnostic_without_retry(base, tmp_path):
+    item = journey(base, tmp_path)
+    item.capture_csv_geometry = Mock(side_effect=[None, local.SafetyStop("drifted")])
+    failure = TimeoutError("original pointer obstruction")
+    operation = Mock(side_effect=failure)
+    with pytest.raises(TimeoutError) as caught:
+        with item.observe_csv(Mock(), "reviewed-contacts", "click"):
+            operation()
+    assert caught.value is failure
+    operation.assert_called_once_with()
+    assert [call.args[-1] for call in item.capture_csv_geometry.call_args_list] == ["before-click", "failed-click"]
+    assert item.csv_diagnostics == [{"download": "reviewed-contacts", "stage": "failed-click",
+                                     "capture_error_type": "SafetyStop"}]
+
+
+def test_after_observation_failure_does_not_mark_action_completed(base, tmp_path):
+    item = journey(base, tmp_path)
+    item.guard = Mock()
+    item.capture_csv_geometry = Mock(side_effect=[None, local.SafetyStop("after drift")])
+    native = Mock()
+    def operation():
+        with item.observe_csv(Mock(), "reviewed-contacts", "click"):
+            native()
+    with pytest.raises(local.SafetyStop):
+        item.action("Download reviewed-contacts", operation)
+    native.assert_called_once()
+    assert item.events == [{"action": "Download reviewed-contacts", "status": "attempted"}]
+
+
+def test_read_only_geometry_script_against_explicit_dom_model():
+    """Run the actual collector, not a browser/layout simulation or native pass."""
+    import subprocess
+    script = r'''
+const collect = COLLECTOR;
+const style = {opacity:'1',display:'block',visibility:'visible',position:'static',top:'auto',
+  zIndex:'auto',pointerEvents:'auto',overflowX:'visible',overflowY:'visible',transform:'none'};
+const forbidden = () => {throw Error('Content or mutation is forbidden')};
+function node(tag, id, y, parent=null, overrides={}) {
+  const n = {tagName:tag,isConnected:true,parentElement:parent,scrollTop:0,scrollLeft:0,
+    clientWidth:100,clientHeight:30,clientLeft:0,clientTop:0,
+    classList:{contains:name => name==='dvn-scroller' && id==='scroller'},
+    getAttribute:name => name==='data-testid' ? id : null,
+    matches:selector => selector===':hover' && !!overrides.hover,
+    getBoundingClientRect:() => ({x:10,y,width:100,height:30,top:y,left:10,right:110,bottom:y+30}),
+    contains:target => {for(let p=target;p;p=p.parentElement) if(p===n) return true;return false;},
+    computed:{...style,...overrides}, click:forbidden,scrollIntoView:forbidden,setAttribute:forbidden};
+  for(const key of ['innerText','textContent','innerHTML','value','style','className'])
+    Object.defineProperty(n,key,{get:forbidden,set:forbidden});
+  return n;
+}
+globalThis.getComputedStyle = n => n.computed;
+globalThis.innerWidth=1440;globalThis.innerHeight=1000;
+globalThis.scrollX=0;globalThis.scrollY=0;
+const results=[];
+for(const scenario of ['retracted','visible-blocked','visible-clickable','outside-clip','ancestor-clipped','ambiguous-button','missing-grid','duplicate-grid']) {
+  const main=node('MAIN','stMain',0,null,{overflowY:'auto'});
+  main.clientHeight=scenario==='ancestor-clipped'?970:1000;
+  const grid=node('DIV','stDataFrame',982,main,{hover:scenario!=='retracted'});
+  const toolbar=node('DIV','stElementToolbar',scenario==='retracted'?966:940,grid,
+    {opacity:scenario==='retracted'?'0':'1',top:scenario==='retracted'?'-16px':'-42.4px'});
+  const button=node('BUTTON','stBaseButton-elementToolbar',scenario==='outside-clip'?990:960,toolbar);
+  const scroller=node('DIV','scroller',982,grid);
+  grid.querySelectorAll=selector => selector.includes('stElementToolbar') ? [toolbar] :
+    scenario==='ambiguous-button' ? [button,button] : [button];
+  const top=scenario==='visible-clickable'?button:scroller;
+  globalThis.document={elementFromPoint:() => top,elementsFromPoint:() => [top,grid,main],
+    querySelectorAll:() => Array(100).fill(grid)};
+  const observed=collect(scenario==='missing-grid'?[]:scenario==='duplicate-grid'?[grid,grid]:[grid]);
+  results.push({scenario,...observed});
+}
+console.log(JSON.stringify(results));
+'''.replace("COLLECTOR", local.CSV_GEOMETRY)
+    result = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True)
+    values = {item["scenario"]: item for item in json.loads(result.stdout)}
+    assert values["retracted"]["toolbar"]["opacity"] == "0"
+    assert not values["retracted"]["geometricCenter"]["buttonOwnsTop"]
+    assert values["visible-blocked"]["toolbar"]["opacity"] == "1"
+    assert not values["visible-blocked"]["geometricCenter"]["buttonOwnsTop"]
+    assert values["visible-clickable"]["geometricCenter"]["buttonOwnsTop"]
+    assert not values["outside-clip"]["geometricCenter"]["insideOverflowClip"]
+    assert values["ancestor-clipped"]["geometricCenter"]["inViewport"]
+    assert not values["ancestor-clipped"]["geometricCenter"]["insideOverflowClip"]
+    assert values["ambiguous-button"]["button"] is None
+    assert values["ambiguous-button"]["buttonCount"] == 2
+    assert values["missing-grid"]["gridCount"] == 0
+    assert values["duplicate-grid"]["gridCount"] == 2
+    assert len(values["visible-blocked"]["hovered"]) == 24
+    assert values["visible-blocked"]["geometricCenter"]["top"]["classes"] == ["dvn-scroller"]
+    assert values["visible-blocked"]["geometricCenter"]["top"]["testid"] is None
