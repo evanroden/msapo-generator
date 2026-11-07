@@ -17,7 +17,7 @@ def identities():
               "run_id": "123456789", "attempt": "1", "nonce": "a" * 64,
               "job": "invented_core_live", "job_id": "111", "workflow_id": "222", "issued_at": 1000, "expires_at": 1600,
               "workflow_ref": prepared.REPOSITORY + "/" + prepared.WORKFLOW_PATH + "@refs/pull/800/merge",
-              "workflow_sha": "3" * 40, "event_name": "pull_request", "event_sha": "4" * 40,
+              "workflow_sha": "4" * 40, "event_name": "pull_request", "event_sha": "4" * 40,
               "deployment_id": "invented-not-an-approval", "deployment_evidence_sha256": "b" * 64,
               "harness_digests": {name: "c" * 64 for name in prepared.HARNESS_FILES}}
     metadata = {"GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": prepared.REPOSITORY,
@@ -65,15 +65,13 @@ def test_current_event_metadata_must_match(identities, field):
         prepared.validate_permit(permit, copy.deepcopy(permit), metadata, event, checkout, now=1200)
 
 
-@pytest.mark.parametrize("mutation", ["fork", "head", "merge", "number", "empty", "dirty", "tree", "digest", "missing-digest"])
+@pytest.mark.parametrize("mutation", ["fork", "head", "number", "empty", "dirty", "tree", "digest", "missing-digest"])
 def test_event_and_measured_checkout_fail_closed(identities, mutation):
     permit, metadata, event, checkout = identities
     if mutation == "fork":
         event["pull_request"]["head"]["repo"]["full_name"] = "other/fork"
     elif mutation == "head":
         event["pull_request"]["head"]["sha"] = "f" * 40
-    elif mutation == "merge":
-        event["pull_request"]["merge_commit_sha"] = "f" * 40
     elif mutation == "number":
         event["number"] = 801
     elif mutation == "empty":
@@ -173,7 +171,8 @@ def authority_case(identities, monkeypatch):
           "head": copy.deepcopy(event["pull_request"]["head"]),
           "base": {"sha": prepared.AUDITED_APP_SHA, "ref": "main", "repo": {"full_name": prepared.REPOSITORY}}}
     path = prepared.WORKFLOW_PATH
-    responses = {"/pulls/800": pr, "/git/ref/heads/main": {"object": {"sha": prepared.AUDITED_APP_SHA}},
+    responses = {"/git/commits/" + p["event_sha"]: {"sha": p["event_sha"], "parents": [{"sha": prepared.AUDITED_APP_SHA}, {"sha": p["head"]}], "tree": {"sha": p["tree"]}},
+                 "/pulls/800": pr, "/git/ref/heads/main": {"object": {"sha": prepared.AUDITED_APP_SHA}},
                  "/actions/runs/" + p["run_id"]: {"id": int(p["run_id"]), "run_attempt": 1,
                     "event": "pull_request", "status": "in_progress", "head_sha": p["head"],
                     "repository": {"full_name": prepared.REPOSITORY}, "workflow_id": 222,
@@ -527,7 +526,7 @@ def test_final_receipt_distinguishes_expected_teardown_and_late_faults(fake_jour
         assert receipt["browser_faults"] == ["pageerror"]
 
 
-def test_current_state_has_two_fresh_gets_and_identity_has_five(authority_case):
+def test_current_state_has_two_fresh_gets_and_identity_has_six(authority_case):
     authority, _ = authority_case
     get = Mock(wraps=authority._get)
     authority._get = get
@@ -536,7 +535,7 @@ def test_current_state_has_two_fresh_gets_and_identity_has_five(authority_case):
     assert [c.args[0] for c in get.call_args_list] == ["/pulls/800", "/git/ref/heads/main"] * 2
     get.reset_mock()
     authority.check_identity()
-    assert get.call_count == 5
+    assert get.call_count == 6
 
 
 @pytest.mark.parametrize("drift", ["revoked", "head", "base", "main"])
@@ -604,8 +603,8 @@ def test_full_identity_check_at_startup_prebrowser_and_initial_navigation():
 def test_request_budget_is_conservative_and_hard_capped(identities):
     # Allow 120 guards rather than observed 93, all double-phased, plus
     # arm/claim/pre-browser/initial-navigation/upload/save/Storage full checks.
-    conservative_execution = 120 * 2 * 2 + 7 * 5
-    assert conservative_execution == 515
+    conservative_execution = 120 * 2 * 2 + 7 * 6
+    assert conservative_execution == 522
     assert conservative_execution < prepared.MAX_EXECUTION_GETS == 600
     assert prepared.RESERVED_PERMIT_POLL_GETS == 120
     assert prepared.MAX_EXECUTION_GETS + prepared.RESERVED_PERMIT_POLL_GETS == 720 < 1000
@@ -616,3 +615,58 @@ def test_request_budget_is_conservative_and_hard_capped(identities):
         authority._get("/pulls/800")
     authority._opener.open.assert_not_called()
     assert authority.failed
+
+
+@pytest.mark.parametrize("payload_merge", [None, "f" * 40, "missing"])
+def test_stale_webhook_merge_is_not_authority_but_immutable_proof_is_required(authority_case, payload_merge):
+    a, responses = authority_case
+    if payload_merge == "missing":
+        a.event["pull_request"].pop("merge_commit_sha")
+    else:
+        a.event["pull_request"]["merge_commit_sha"] = payload_merge
+    a.arm(a.reviewed["nonce"])
+    assert a.armed
+    # Even a previously accepted stale webhook never excuses wrong merge DAG.
+    responses["/git/commits/" + a.reviewed["event_sha"]]["tree"]["sha"] = "f" * 40
+    with pytest.raises(live.SafetyStop, match="parent/tree"):
+        a.check_identity()
+
+
+@pytest.mark.parametrize("bad", ["sha", "tree", "base-parent", "head-parent", "parent-order", "one-parent", "three-parents", "missing-tree", "workflow-sha"])
+def test_executing_immutable_commit_proof_fails_closed(authority_case, bad):
+    a, responses = authority_case
+    proof = responses["/git/commits/" + a.reviewed["event_sha"]]
+    if bad == "sha": proof["sha"] = "f" * 40
+    elif bad == "tree": proof["tree"]["sha"] = "f" * 40
+    elif bad == "base-parent": proof["parents"][0]["sha"] = "f" * 40
+    elif bad == "head-parent": proof["parents"][1]["sha"] = "f" * 40
+    elif bad == "parent-order": proof["parents"].reverse()
+    elif bad == "one-parent": proof["parents"].pop()
+    elif bad == "three-parents": proof["parents"].append({"sha": "f" * 40})
+    elif bad == "missing-tree": proof.pop("tree")
+    else:
+        a.reviewed["workflow_sha"] = "f" * 40
+        a.metadata["GITHUB_WORKFLOW_SHA"] = "f" * 40
+    with pytest.raises(live.SafetyStop):
+        a.arm(a.reviewed["nonce"])
+    assert not a.armed
+
+
+def test_actual_proven_stale_synchronize_case_has_valid_immutable_dag():
+    head = "6f843cb263e9d453919cfe1dbc3f330d90371bae"
+    tree = "d10360d4bc90f9794712e628c743db1236d06c43"
+    executing = "11e2db0528d34b80b1e94dd080285a8977c113d1"
+    proof = {"sha": executing, "parents": [{"sha": prepared.AUDITED_APP_SHA}, {"sha": head}], "tree": {"sha": tree}}
+    prepared.verify_event_commit(proof, executing, executing, head, tree)
+    stale_payload_merge = "6f5bd63e7d7c9bac856120cc14e43aba1f7db555"
+    with pytest.raises(live.SafetyStop):
+        prepared.verify_event_commit(proof, stale_payload_merge, executing, head, tree)
+
+
+def test_authority_endpoint_is_exact_validated_immutable_sha(identities):
+    a = prepared.FixedGitHubAuthority("invented-token", identities[0], identities[1], identities[2], None)
+    assert "/git/commits/" + identities[0]["event_sha"] in a._allowed
+    a._opener = Mock()
+    with pytest.raises(live.SafetyStop):
+        a._get("/git/commits/" + "f" * 40)
+    a._opener.open.assert_not_called()

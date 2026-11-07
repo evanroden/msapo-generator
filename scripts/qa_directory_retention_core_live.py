@@ -94,7 +94,7 @@ def validate_permit(candidate, authority, metadata, event, checkout, *, now):
         if (event["number"] != 800 or type(event["number"]) is not int
                 or event["repository"]["full_name"] != REPOSITORY
                 or event["pull_request"]["head"]["sha"] != p["head"]
-                or event["pull_request"]["merge_commit_sha"] != p["event_sha"]
+                or p["workflow_sha"] != p["event_sha"]
                 or event["pull_request"]["head"]["repo"]["full_name"] != REPOSITORY
                 or event["pull_request"]["base"]["repo"]["full_name"] != REPOSITORY):
             raise SafetyStop("Current PR event differs from permit")
@@ -110,6 +110,25 @@ def validate_permit(candidate, authority, metadata, event, checkout, *, now):
     return dict(p)
 
 
+def verify_event_commit(value, event_sha, workflow_sha, head, tree):
+    """Bind GitHub's immutable executing merge, not stale webhook merge fields.
+
+    Exact ordered parents and identical tree prove the executed workflow merge
+    contains only the audited base and reviewed PR head, with no extra merge
+    content. The authenticated fixed GitHub GET supplies value.
+    """
+    if (any(not isinstance(v, str) or not re.fullmatch(r"[0-9a-f]{40}", v)
+            for v in (event_sha, workflow_sha, head, tree)) or workflow_sha != event_sha):
+        raise SafetyStop("Executing workflow/merge SHA identity differs")
+    try:
+        if (value["sha"] != event_sha or not isinstance(value["parents"], list)
+                or [parent["sha"] for parent in value["parents"]] != [AUDITED_APP_SHA, head]
+                or value["tree"]["sha"] != tree):
+            raise SafetyStop("Executing merge commit parent/tree proof differs")
+    except (KeyError, TypeError):
+        raise SafetyStop("Executing merge commit proof is incomplete") from None
+
+
 PERMIT_BEGIN = "<!-- directory-retention-core-live-permit:begin -->"
 PERMIT_END = "<!-- directory-retention-core-live-permit:end -->"
 API_ROOT = "https://api.github.com/repos/" + REPOSITORY
@@ -117,7 +136,7 @@ RUNNER_TEMP_ROOT = Path("/home/runner/work/_temp")
 MAX_API_BYTES = 1024 * 1024
 MAX_EXECUTION_GETS = 600
 RESERVED_PERMIT_POLL_GETS = 120  # Future bootstrap must enforce this allocation.
-# 93 guards * 2 phases * 2 current-state GETs + 7 full checks * 5 = 407.
+# 93 guards * 2 phases * 2 current-state GETs + 7 full checks * 6 = 414.
 # Runtime cap plus polling allocation is 720, leaving 280 for other activity.
 IDENTITY_ACTIONS = frozenset({"Upload invented workbook", "Save contract directory", "Check available storage"})
 
@@ -206,7 +225,10 @@ class FixedGitHubAuthority:
         for key in ("run_id", "job_id", "workflow_id"):
             if not isinstance(reviewed.get(key), str) or not re.fullmatch(r"[1-9][0-9]*", reviewed[key]):
                 raise SafetyStop("Exact numeric runner identities missing")
-        self._allowed.update({"/actions/runs/" + reviewed["run_id"],
+        if not isinstance(reviewed.get("event_sha"), str) or not re.fullmatch(r"[0-9a-f]{40}", reviewed["event_sha"]):
+            raise SafetyStop("Exact immutable executing SHA missing")
+        self._allowed.update({"/git/commits/" + reviewed["event_sha"],
+                              "/actions/runs/" + reviewed["run_id"],
                               "/actions/runs/" + reviewed["run_id"] + "/attempts/1/jobs?per_page=100",
                               "/actions/workflows/" + reviewed["workflow_id"]})
 
@@ -257,7 +279,7 @@ class FixedGitHubAuthority:
         self._check(full_identity=False)
 
     def check_identity(self):
-        """Five fresh GETs: current state plus workflow/run/numeric job status."""
+        """Six fresh GETs: current state, immutable merge proof, workflow/run/job."""
         self._check(full_identity=True)
 
     def _check(self, *, full_identity):
@@ -280,6 +302,8 @@ class FixedGitHubAuthority:
             if self._get("/git/ref/heads/main")["object"]["sha"] != AUDITED_APP_SHA:
                 raise SafetyStop("Audited main changed")
             if full_identity:
+                verify_event_commit(self._get("/git/commits/" + p["event_sha"]),
+                                    p["event_sha"], p["workflow_sha"], p["head"], p["tree"])
                 run = self._get("/actions/runs/" + p["run_id"])
                 path = p["workflow_ref"].split("/", 2)[2].split("@", 1)[0]
                 if (type(run["id"]) is not int or str(run["id"]) != p["run_id"]

@@ -34,15 +34,16 @@ META_KEYS = {"GITHUB_ACTIONS", "GITHUB_REPOSITORY", "GITHUB_EVENT_NAME", "GITHUB
 
 class BootstrapGitHub(runner.FixedGitHubAuthority):
     """Only bootstrap GET transport; cannot arm/claim or execute a journey."""
-    def __init__(self, token, run_id):
+    def __init__(self, token, run_id, event_sha):
         if (not isinstance(token, str) or not token or re.search(r"\s", token)
-                or not isinstance(run_id, str) or not re.fullmatch(r"[1-9][0-9]*", run_id)):
+                or not isinstance(run_id, str) or not re.fullmatch(r"[1-9][0-9]*", run_id)
+                or not isinstance(event_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", event_sha)):
             raise runner.SafetyStop("Exact bootstrap credential/run identity missing")
         self._token = token
         self.failed = False
         self.get_count = 0
         self._opener = build_opener(ProxyHandler({}), runner.NoRedirect())
-        self._allowed = {"/pulls/800", "/git/ref/heads/main", "/actions/runs/" + run_id,
+        self._allowed = {"/pulls/800", "/git/ref/heads/main", "/git/commits/" + event_sha, "/actions/runs/" + run_id,
                          "/actions/runs/" + run_id + "/attempts/1/jobs?per_page=100"}
 
     def _get(self, endpoint):
@@ -108,7 +109,7 @@ def event_checkout_diagnostic(metadata, event, checkout):
                 "head_repository_matches": field(event, "pull_request", "head", "repo", "full_name") == runner.REPOSITORY,
                 "base_repository_matches": field(event, "pull_request", "base", "repo", "full_name") == runner.REPOSITORY,
                 "event_head_equals_checkout": event_head == checkout_head,
-                "event_merge_equals_github_sha": event_merge == github_sha,
+                "workflow_sha_equals_github_sha": field(metadata, "GITHUB_WORKFLOW_SHA") == github_sha,
                 "checkout_clean_is_true": field(checkout, "clean") is True},
             "validated_sha_or_null": {
                 "event_head": sha(event_head), "event_merge": sha(event_merge),
@@ -139,7 +140,7 @@ def observe_job(api, metadata, event, checkout, *, nonce=None):
                 or event["pull_request"]["head"]["repo"]["full_name"] != runner.REPOSITORY
                 or event["pull_request"]["base"]["repo"]["full_name"] != runner.REPOSITORY
                 or event["pull_request"]["head"]["sha"] != checkout["head"]
-                or event["pull_request"]["merge_commit_sha"] != metadata["GITHUB_SHA"]
+                or metadata["GITHUB_WORKFLOW_SHA"] != metadata["GITHUB_SHA"]
                 or checkout["clean"] is not True):
             raise EventCheckoutMismatch(event_checkout_diagnostic(metadata, event, checkout))
         pr = api._get("/pulls/800")
@@ -150,6 +151,9 @@ def observe_job(api, metadata, event, checkout, *, nonce=None):
                 or pr["base"]["ref"] != "main" or pr["base"]["sha"] != runner.AUDITED_APP_SHA
                 or api._get("/git/ref/heads/main")["object"]["sha"] != runner.AUDITED_APP_SHA):
             raise runner.SafetyStop("Bootstrap current source differs")
+        runner.verify_event_commit(api._get("/git/commits/" + metadata["GITHUB_SHA"]),
+                                   metadata["GITHUB_SHA"], metadata["GITHUB_WORKFLOW_SHA"],
+                                   checkout["head"], checkout["tree"])
         run_id = metadata["GITHUB_RUN_ID"]
         run = api._get("/actions/runs/" + run_id)
         if (str(run["id"]) != run_id or type(run["id"]) is not int
@@ -284,7 +288,7 @@ def execute_prepared(api, token, metadata, event, checkout):
     record = read_event(metadata, str(root / STATE_NAME))
     if (not isinstance(record, dict) or set(record) != {"observed", "metadata", "bootstrap_gets"}
             or record["metadata"] != metadata or type(record["bootstrap_gets"]) is not int
-            or record["bootstrap_gets"] != 4 or not isinstance(record["observed"], dict)
+            or record["bootstrap_gets"] != 5 or not isinstance(record["observed"], dict)
             or set(record["observed"]) != OBSERVED_FIELDS):
         raise runner.SafetyStop("Missing or invalid exact prepare-step handoff")
     observed = record["observed"]
@@ -326,7 +330,7 @@ def main():
     token = os.environ.pop("GITHUB_TOKEN", "")  # Never inherited by driver/browser subprocesses.
     event = read_event(metadata, os.environ.get("GITHUB_EVENT_PATH", ""))
     checkout = runner.measure_checkout()
-    api = BootstrapGitHub(token, metadata["GITHUB_RUN_ID"])
+    api = BootstrapGitHub(token, metadata["GITHUB_RUN_ID"], metadata["GITHUB_SHA"])
     if sys.argv[1:] == ["--prepare"]:
         prepare(api, metadata, event, checkout, os.environ.get("GITHUB_OUTPUT", ""))
     else:

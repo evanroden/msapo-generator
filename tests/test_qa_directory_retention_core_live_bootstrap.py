@@ -99,12 +99,12 @@ def test_no_permit_wait_is_bounded_without_browser_or_execution(job_case, monkey
     with pytest.raises(runner.SafetyStop, match="bounded wait"):
         bootstrap.await_permit(a, observed)
     assert get.call_count == bootstrap.WAIT_SECONDS // bootstrap.POLL_SECONDS == 108
-    assert 108 + 8 < runner.RESERVED_PERMIT_POLL_GETS
+    assert 108 + 10 < runner.RESERVED_PERMIT_POLL_GETS
     execute.assert_not_called()
 
 
 def test_bootstrap_get_cap_is_120_and_blocks_before_network():
-    api = bootstrap.BootstrapGitHub("invented-secret", "123")
+    api = bootstrap.BootstrapGitHub("invented-secret", "123", "4" * 40)
     api.get_count = 120
     api._opener = Mock()
     with pytest.raises(runner.SafetyStop, match="allocation"):
@@ -203,7 +203,7 @@ def test_prepare_persists_exact_immutable_private_and_public_challenge(prepared_
     state = json.loads((root / bootstrap.STATE_NAME).read_text())
     artifact = json.loads((out / "observed-job.json").read_text())
     assert state["observed"] == artifact
-    assert state["bootstrap_gets"] == 4
+    assert state["bootstrap_gets"] == 5
     assert state["metadata"] == a.metadata
     assert output.read_text() == "job_id=" + artifact["job_id"] + "\n"
     with pytest.raises(FileExistsError):
@@ -214,7 +214,7 @@ def test_resume_remeasures_same_job_source_and_preserves_get_budget(prepared_cas
     a, _, root, out, _ = prepared_case
     before = json.loads((root / bootstrap.STATE_NAME).read_text())["observed"]
     def no_permit(api, observed):
-        assert api.get_count == 8
+        assert api.get_count == 10
         assert observed == before
         raise runner.SafetyStop("No operator permit")
     monkeypatch.setattr(bootstrap, "await_permit", no_permit)
@@ -223,7 +223,7 @@ def test_resume_remeasures_same_job_source_and_preserves_get_budget(prepared_cas
     with pytest.raises(runner.SafetyStop):
         bootstrap.execute_prepared(a, "invented", a.metadata, a.event, runner.measure_checkout())
     receipt = json.loads((out / "bootstrap-receipt.json").read_text())
-    assert receipt["stage"] == "permit-poll" and receipt["bootstrap_gets"] == 8
+    assert receipt["stage"] == "permit-poll" and receipt["bootstrap_gets"] == 10
     assert receipt["reason"] == "No operator permit"
     assert json.loads((root / bootstrap.STATE_NAME).read_text())["observed"] == before
     execute.assert_not_called()
@@ -268,14 +268,14 @@ def test_output_command_refuses_arbitrary_paths(tmp_path, monkeypatch):
             bootstrap.emit_job_output({"RUNNER_TEMP": str(root)}, path, "123")
 
 
-@pytest.mark.parametrize("mismatch", ["number", "number-type", "repository", "head-repository", "base-repository", "head-sha", "merge-sha", "merge-null", "clean"])
+@pytest.mark.parametrize("mismatch", ["number", "number-type", "repository", "head-repository", "base-repository", "head-sha", "workflow-sha", "clean"])
 def test_early_diagnostic_identifies_exact_failed_predicate_without_relaxing_guard(job_case, tmp_path, monkeypatch, capsys, mismatch):
     a, _ = job_case
     event, metadata, checkout = copy.deepcopy(a.event), dict(a.metadata), runner.measure_checkout()
     expected = {"number": "event_number_equals_800", "number-type": "event_number_is_integer",
                 "repository": "event_repository_matches", "head-repository": "head_repository_matches",
                 "base-repository": "base_repository_matches", "head-sha": "event_head_equals_checkout",
-                "merge-sha": "event_merge_equals_github_sha", "merge-null": "event_merge_equals_github_sha",
+                "workflow-sha": "workflow_sha_equals_github_sha",
                 "clean": "checkout_clean_is_true"}[mismatch]
     if mismatch == "number": event["number"] = 801
     elif mismatch == "number-type": event["number"] = 800.0
@@ -283,8 +283,7 @@ def test_early_diagnostic_identifies_exact_failed_predicate_without_relaxing_gua
     elif mismatch == "head-repository": event["pull_request"]["head"]["repo"]["full_name"] = "wrong/repo"
     elif mismatch == "base-repository": event["pull_request"]["base"]["repo"]["full_name"] = "wrong/repo"
     elif mismatch == "head-sha": event["pull_request"]["head"]["sha"] = "f" * 40
-    elif mismatch == "merge-sha": event["pull_request"]["merge_commit_sha"] = "f" * 40
-    elif mismatch == "merge-null": event["pull_request"]["merge_commit_sha"] = None
+    elif mismatch == "workflow-sha": metadata["GITHUB_WORKFLOW_SHA"] = "f" * 40
     else: checkout["clean"] = False
     # Unknown/private fields must never leak into the diagnostic.
     metadata["GITHUB_TOKEN"] = "secret-sentinel"
@@ -326,6 +325,35 @@ def test_diagnostic_sha_fields_only_contain_full_validated_sha_or_null():
     assert "malicious-content" not in json.dumps(receipt)
 
 
-def test_merge_equality_still_required_in_bootstrap_and_runner():
-    assert 'event["pull_request"]["merge_commit_sha"] != metadata["GITHUB_SHA"]' in inspect.getsource(bootstrap.observe_job)
-    assert 'event["pull_request"]["merge_commit_sha"] != p["event_sha"]' in inspect.getsource(runner.validate_permit)
+def test_executing_workflow_sha_equality_replaces_stale_webhook_field():
+    assert 'metadata["GITHUB_WORKFLOW_SHA"] != metadata["GITHUB_SHA"]' in inspect.getsource(bootstrap.observe_job)
+    assert 'p["workflow_sha"] != p["event_sha"]' in inspect.getsource(runner.validate_permit)
+    assert 'merge_commit_sha' not in inspect.getsource(bootstrap.observe_job)
+    assert 'merge_commit_sha' not in inspect.getsource(runner.validate_permit)
+
+
+@pytest.mark.parametrize("payload_merge", [None, "f" * 40, "missing"])
+def test_observation_accepts_stale_payload_only_with_authenticated_immutable_dag(job_case, payload_merge):
+    a, responses = job_case
+    if payload_merge == "missing": a.event["pull_request"].pop("merge_commit_sha")
+    else: a.event["pull_request"]["merge_commit_sha"] = payload_merge
+    get = Mock(wraps=a._get)
+    a._get = get
+    result = bootstrap.observe_job(a, a.metadata, a.event, runner.measure_checkout())
+    assert result["event_sha"] == result["workflow_sha"] == a.metadata["GITHUB_SHA"]
+    assert get.call_count == 5
+    assert "/git/commits/" + a.metadata["GITHUB_SHA"] in [c.args[0] for c in get.call_args_list]
+    responses["/git/commits/" + a.metadata["GITHUB_SHA"]]["parents"].reverse()
+    with pytest.raises(runner.SafetyStop, match="parent/tree"):
+        bootstrap.observe_job(a, a.metadata, a.event, runner.measure_checkout())
+
+
+def test_bootstrap_commit_endpoint_cannot_be_arbitrary_ref():
+    api = bootstrap.BootstrapGitHub("invented-token", "123", "4" * 40)
+    assert "/git/commits/" + "4" * 40 in api._allowed
+    api._opener = Mock()
+    with pytest.raises(runner.SafetyStop):
+        api._get("/git/commits/main")
+    api._opener.open.assert_not_called()
+    with pytest.raises(runner.SafetyStop):
+        bootstrap.BootstrapGitHub("invented-token", "123", "../main")
