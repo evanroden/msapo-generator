@@ -1,0 +1,21 @@
+{
+  "source_sha": "45ecc27b7948423049404a70ed58d3f1155c6c2b",
+  "source_snapshot": "before",
+  "fixture_sha256": "32f56e5c991c91eb0d328858848b1c998ff4422e7abdef6aca1d22478ad4bf8e",
+  "synthetic_only": true,
+  "fixture_age_days": 31,
+  "native_browser": false,
+  "real_calendar_elapsed": false,
+  "before_action_raw_exact": true,
+  "preview_and_unconfirmed_not_persisted": true,
+  "raw_remaining": true,
+  "stamp_remaining": true,
+  "unreferenced_pool_remaining": true,
+  "history_unchanged": true,
+  "archived_state_unchanged": true,
+  "fingerprint_preserved": true,
+  "ordinary_root_unchanged": true,
+  "storage_captions": [
+    "Measured when you click Check available storage. The disk is also used by other app workflows. Originals are retained. Identical new assets and source files share one stored copy across all contracts and sites. Monthly history keeps references, so changing one site's selection does not change another report. Existing files can be consolidated below."
+  ]
+}
