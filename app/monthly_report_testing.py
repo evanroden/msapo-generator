@@ -113,11 +113,28 @@ def data_dir(base: Path) -> Path:
     if identity is None:
         return Path(base)
     target = _location(base, identity)
+    target.parent.mkdir(mode=0o700, exist_ok=True)
+    # Namespace creation and moves share the bucket lock. Check for a pending
+    # rename while holding it, so an ordinary return cannot implicitly replace
+    # work that a failed admission still owes back to this browser.
+    with _namespace_lock(target.parent, fcntl.LOCK_SH):
+        return _data_dir_locked(base, identity)
+
+
+def _data_dir_locked(base: Path, identity: str) -> Path:
+    target = _location(base, identity)
     expected = _LEASE.get()
     if not target.exists():
         if expected is not None:
             raise OSError("This isolated test was reset during a running task; retry on a new test session.")
-        target.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with os.scandir(target.parent) as entries:
+            for number, entry in enumerate(entries):
+                if number >= _MEASURE_LIMIT:
+                    raise OSError("Isolated recovery inventory needs storage review; existing files were preserved.")
+                if entry.name.startswith(_SET_ASIDE + identity + "-"):
+                    raise OSError("This isolated test is awaiting fixture cleanup recovery; "
+                                  "its existing files were preserved. Retry after recovery settles.")
+        target.mkdir(mode=0o700, exist_ok=True)
     sentinel = target / _SENTINEL
     if not sentinel.exists():
         # Existing unmarked content is never adopted, including after a crash.
@@ -223,16 +240,17 @@ def set_aside_idle(base: Path, identity: str, generation: str, *, now: float | N
     tombstone = None
     try:
         target = _location(base, identity)
-        with _namespace_lock(target, fcntl.LOCK_EX | fcntl.LOCK_NB):
-            newest = _idle_since(target, identity, generation, cutoff)
-            if newest is None:
-                return None
-            tombstone = target.parent / f"{_SET_ASIDE}{identity}-{generation}-{uuid4().hex}"
-            os.rename(target, tombstone)
-            # Requests resolve the namespace path each time, so nothing new
-            # lands in the set-aside copy; work already under way shows here.
-            if _last_change(tombstone) == newest:
-                return tombstone
+        with _namespace_lock(target.parent, fcntl.LOCK_EX | fcntl.LOCK_NB):
+            with _namespace_lock(target, fcntl.LOCK_EX | fcntl.LOCK_NB):
+                newest = _idle_since(target, identity, generation, cutoff)
+                if newest is None:
+                    return None
+                tombstone = target.parent / f"{_SET_ASIDE}{identity}-{generation}-{uuid4().hex}"
+                os.rename(target, tombstone)
+                # Requests resolve the namespace path each time, so nothing new
+                # lands in the set-aside copy; work already under way shows here.
+                if _last_change(tombstone) == newest:
+                    return tombstone
     except (OSError, UnicodeError):
         pass
     if tombstone is None or not os.path.lexists(tombstone):
@@ -242,11 +260,20 @@ def set_aside_idle(base: Path, identity: str, generation: str, *, now: float | N
 
 
 def restore_set_aside(base: Path, tombstone: Path) -> None:
-    """Put a set-aside namespace back, unless its browser already started a fresh one."""
-    target = _location(base, tombstone.name[len(_SET_ASIDE):].split("-", 1)[0])
-    if target.exists() or target.is_symlink():
-        discard_set_aside(tombstone)
-    else:
+    """Restore a counted copy, never discard either generation on collision."""
+    owner = _SET_ASIDE_NAME.fullmatch(tombstone.name)
+    if owner is None:
+        raise OSError("Unrecognized isolated recovery path; existing files were preserved.")
+    identity, generation = owner.groups()
+    target = _location(base, identity)
+    if tombstone.parent != target.parent or tombstone.is_symlink():
+        raise OSError("Unrecognized isolated recovery path; existing files were preserved.")
+    with _namespace_lock(target.parent, fcntl.LOCK_EX):
+        if _marker(tombstone / _SENTINEL, identity) != generation:
+            raise OSError("Isolated recovery generation does not match; existing files were preserved.")
+        if os.path.lexists(target):
+            raise OSError("The isolated recovery path has another generation; both copies were preserved. "
+                          "Storage recovery review is required before another fixture admission.")
         os.rename(tombstone, target)
 
 
@@ -272,18 +299,24 @@ def recover_set_aside(base: Path, reserved) -> None:
     if bucket.is_symlink() or not bucket.is_dir():
         return
     for leftover in bucket.iterdir():
+        owner = _SET_ASIDE_NAME.fullmatch(leftover.name)
         if leftover.is_symlink() or not leftover.is_dir():
+            if owner and owner.groups() in reserved:
+                raise OSError("A counted isolated recovery path is invalid; existing files were preserved.")
             continue
-        try:
-            if leftover.name.startswith(_DISCARDING):
-                shutil.rmtree(leftover, ignore_errors=True)
-            elif owner := _SET_ASIDE_NAME.fullmatch(leftover.name):
-                if owner.groups() in reserved:
-                    restore_set_aside(base, leftover)
-                else:
+        if owner and owner.groups() in reserved:
+            # A failed restore must stop admission before generation pruning
+            # can drop this still-counted copy. Never reinterpret collision or
+            # I/O uncertainty as permission to delete a reserved tombstone.
+            restore_set_aside(base, leftover)
+        else:
+            try:
+                if leftover.name.startswith(_DISCARDING):
+                    shutil.rmtree(leftover, ignore_errors=True)
+                elif owner:
                     discard_set_aside(leftover)
-        except OSError:
-            continue
+            except OSError:
+                continue
 
 
 def reclaim_idle(base: Path, identity: str, generation: str, *, now: float | None = None,
@@ -316,6 +349,14 @@ def reset(base: Path) -> None:
     identity = scope()
     if identity is None:
         raise ValueError("Test reset requires an active isolated test context.")
+    target = _location(base, identity)
+    if not target.parent.exists():
+        return _reset_locked(base, identity)
+    with _namespace_lock(target.parent, fcntl.LOCK_EX):
+        return _reset_locked(base, identity)
+
+
+def _reset_locked(base: Path, identity: str) -> None:
     target = _location(base, identity)
     if not target.exists():
         if _LEASE.get() is not None:

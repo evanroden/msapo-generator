@@ -161,9 +161,9 @@ def stage_fixture(library: SharedFixtureLibrary, fixture_id: str, run_token: str
              "lineage.json": storage._json_bytes({"schema": 1, **asdict(lineage)})}
     added_bytes = sum(len(raw) for raw in files.values()) + len(
         storage.FixtureVault._transaction("fixture-starting-report", _ENTRY, files))
-    from app.monthly_report_fixture_admission import admit_run_copy
+    from app.monthly_report_fixture_admission import admit_run_copy, fixture_install_receipt
     validate_run(context)
-    with admit_run_copy(context, added_bytes):
+    with admit_run_copy(context, added_bytes, install_receipt=fixture_install_receipt(files)):
         with storage._root(context.data_root) as root:
             with storage._marked_dir(root, _STAGING, marker, True) as directory:
                 with storage._admission_lock(directory):
