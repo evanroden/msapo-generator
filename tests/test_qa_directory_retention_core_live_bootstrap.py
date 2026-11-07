@@ -266,3 +266,66 @@ def test_output_command_refuses_arbitrary_paths(tmp_path, monkeypatch):
     for path in (str(tmp_path / "outside"), str(root / "other")):
         with pytest.raises(runner.SafetyStop):
             bootstrap.emit_job_output({"RUNNER_TEMP": str(root)}, path, "123")
+
+
+@pytest.mark.parametrize("mismatch", ["number", "number-type", "repository", "head-repository", "base-repository", "head-sha", "merge-sha", "merge-null", "clean"])
+def test_early_diagnostic_identifies_exact_failed_predicate_without_relaxing_guard(job_case, tmp_path, monkeypatch, capsys, mismatch):
+    a, _ = job_case
+    event, metadata, checkout = copy.deepcopy(a.event), dict(a.metadata), runner.measure_checkout()
+    expected = {"number": "event_number_equals_800", "number-type": "event_number_is_integer",
+                "repository": "event_repository_matches", "head-repository": "head_repository_matches",
+                "base-repository": "base_repository_matches", "head-sha": "event_head_equals_checkout",
+                "merge-sha": "event_merge_equals_github_sha", "merge-null": "event_merge_equals_github_sha",
+                "clean": "checkout_clean_is_true"}[mismatch]
+    if mismatch == "number": event["number"] = 801
+    elif mismatch == "number-type": event["number"] = 800.0
+    elif mismatch == "repository": event["repository"]["full_name"] = "wrong/repo"
+    elif mismatch == "head-repository": event["pull_request"]["head"]["repo"]["full_name"] = "wrong/repo"
+    elif mismatch == "base-repository": event["pull_request"]["base"]["repo"]["full_name"] = "wrong/repo"
+    elif mismatch == "head-sha": event["pull_request"]["head"]["sha"] = "f" * 40
+    elif mismatch == "merge-sha": event["pull_request"]["merge_commit_sha"] = "f" * 40
+    elif mismatch == "merge-null": event["pull_request"]["merge_commit_sha"] = None
+    else: checkout["clean"] = False
+    # Unknown/private fields must never leak into the diagnostic.
+    metadata["GITHUB_TOKEN"] = "secret-sentinel"
+    event["pull_request"]["body"] = "private-body-sentinel"
+    api = Mock()
+    monkeypatch.setattr(bootstrap, "OUT", tmp_path / "evidence")
+    write_state = Mock()
+    emit_output = Mock()
+    monkeypatch.setattr(bootstrap, "write_state", write_state)
+    monkeypatch.setattr(bootstrap, "emit_job_output", emit_output)
+    with pytest.raises(bootstrap.EventCheckoutMismatch, match="event/checkout differs"):
+        bootstrap.prepare(api, metadata, event, checkout, "not-used")
+    api._get.assert_not_called()
+    write_state.assert_not_called()
+    emit_output.assert_not_called()
+    files = list(bootstrap.OUT.iterdir())
+    assert [p.name for p in files] == ["early-preflight.json"]
+    raw = files[0].read_text()
+    receipt = json.loads(raw)
+    assert len(raw.encode()) < 4096
+    assert receipt["checks"][expected] is False
+    assert sum(not v for v in receipt["checks"].values()) == 1
+    assert set(receipt) == {"stage", "result", "checks", "validated_sha_or_null"}
+    log = capsys.readouterr().out
+    assert "STOPPED EARLY PREFLIGHT" in log
+    for secret in ("secret-sentinel", "private-body-sentinel", "wrong/repo"):
+        assert secret not in raw + log
+
+
+def test_diagnostic_sha_fields_only_contain_full_validated_sha_or_null():
+    receipt = bootstrap.event_checkout_diagnostic(
+        {"GITHUB_SHA": "credential-sentinel", "GITHUB_WORKFLOW_SHA": "a" * 40},
+        {"number": 800, "pull_request": {"head": {"sha": "b" * 40}, "merge_commit_sha": "malicious-content"}},
+        {"head": "c" * 40, "tree": "not-a-sha", "clean": False})
+    assert receipt["validated_sha_or_null"] == {
+        "event_head": "b" * 40, "event_merge": None, "checkout_head": "c" * 40,
+        "checkout_tree": None, "github_sha": None, "workflow_sha": "a" * 40}
+    assert "credential-sentinel" not in json.dumps(receipt)
+    assert "malicious-content" not in json.dumps(receipt)
+
+
+def test_merge_equality_still_required_in_bootstrap_and_runner():
+    assert 'event["pull_request"]["merge_commit_sha"] != metadata["GITHUB_SHA"]' in inspect.getsource(bootstrap.observe_job)
+    assert 'event["pull_request"]["merge_commit_sha"] != p["event_sha"]' in inspect.getsource(runner.validate_permit)

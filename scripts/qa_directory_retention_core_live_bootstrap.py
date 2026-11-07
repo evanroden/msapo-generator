@@ -85,6 +85,43 @@ def read_event(metadata, path):
         os.close(fd)
 
 
+def event_checkout_diagnostic(metadata, event, checkout):
+    """Allowlisted comparisons only; never serialize event/body/environment."""
+    def field(value, *keys):
+        for key in keys:
+            if not isinstance(value, dict):
+                return None
+            value = value.get(key)
+        return value
+    def sha(value):
+        return value if isinstance(value, str) and re.fullmatch(r"[0-9a-f]{40}", value) else None
+    number = field(event, "number")
+    event_head = field(event, "pull_request", "head", "sha")
+    event_merge = field(event, "pull_request", "merge_commit_sha")
+    checkout_head = field(checkout, "head")
+    github_sha = field(metadata, "GITHUB_SHA")
+    return {"stage": "event-checkout-preflight", "result": "stopped before GitHub API or browser",
+            "checks": {
+                "event_number_equals_800": number == 800,
+                "event_number_is_integer": type(number) is int,
+                "event_repository_matches": field(event, "repository", "full_name") == runner.REPOSITORY,
+                "head_repository_matches": field(event, "pull_request", "head", "repo", "full_name") == runner.REPOSITORY,
+                "base_repository_matches": field(event, "pull_request", "base", "repo", "full_name") == runner.REPOSITORY,
+                "event_head_equals_checkout": event_head == checkout_head,
+                "event_merge_equals_github_sha": event_merge == github_sha,
+                "checkout_clean_is_true": field(checkout, "clean") is True},
+            "validated_sha_or_null": {
+                "event_head": sha(event_head), "event_merge": sha(event_merge),
+                "checkout_head": sha(checkout_head), "checkout_tree": sha(field(checkout, "tree")),
+                "github_sha": sha(github_sha), "workflow_sha": sha(field(metadata, "GITHUB_WORKFLOW_SHA"))}}
+
+
+class EventCheckoutMismatch(runner.SafetyStop):
+    def __init__(self, diagnostic):
+        super().__init__("Bootstrap event/checkout differs")
+        self.diagnostic = diagnostic
+
+
 def observe_job(api, metadata, event, checkout, *, nonce=None):
     """Measure run/job identities before publishing the one-run challenge."""
     expected = {"GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": runner.REPOSITORY,
@@ -104,7 +141,7 @@ def observe_job(api, metadata, event, checkout, *, nonce=None):
                 or event["pull_request"]["head"]["sha"] != checkout["head"]
                 or event["pull_request"]["merge_commit_sha"] != metadata["GITHUB_SHA"]
                 or checkout["clean"] is not True):
-            raise runner.SafetyStop("Bootstrap event/checkout differs")
+            raise EventCheckoutMismatch(event_checkout_diagnostic(metadata, event, checkout))
         pr = api._get("/pulls/800")
         if (pr["state"] != "open" or pr["merged"] is not False
                 or pr["head"]["sha"] != checkout["head"]
@@ -219,7 +256,19 @@ def emit_job_output(metadata, output_path, job_id):
 
 
 def prepare(api, metadata, event, checkout, output_path):
-    observed = observe_job(api, metadata, event, checkout)
+    try:
+        observed = observe_job(api, metadata, event, checkout)
+    except EventCheckoutMismatch as exc:
+        # Preserve the failing guard. Emit only bounded, allowlisted evidence;
+        # no challenge, private handoff, permit, browser, or API call is created.
+        encoded = json.dumps(exc.diagnostic, sort_keys=True)
+        if len(encoded.encode()) > 4096:
+            raise runner.SafetyStop("Early diagnostic exceeded fixed budget") from None
+        OUT.mkdir(parents=True, exist_ok=False)
+        with (OUT / "early-preflight.json").open("x") as handle:
+            handle.write(encoded)
+        print("STOPPED EARLY PREFLIGHT " + encoded, flush=True)
+        raise
     record = {"observed": observed, "metadata": metadata, "bootstrap_gets": api.get_count}
     write_state(metadata, record)  # Permanent private handoff; never overwritten.
     OUT.mkdir(parents=True, exist_ok=False)
