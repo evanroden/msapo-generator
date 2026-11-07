@@ -119,16 +119,23 @@ def dialog_owner(metadata, binary):
             or '"Chromium-browser"' not in parents[0]['properties']):
         raise SafetyStop('Native dialog is not transient for the same browser PID')
     owned_pid(int(pid[1]), binary)
-    geometry = re.search(r'^\s*' + re.escape(dialog['id'])
+    native = window_description(metadata, dialog['id'])
+    parent = window_description(metadata, transient[1])
+    return {'pid': int(pid[1]), 'window': dialog['id'], 'transient_for': transient[1],
+            **native, 'browser_parent': parent}
+
+
+def window_description(metadata, window):
+    geometry = re.search(r'^\s*' + re.escape(window)
         + r' "([^"\n]{1,256})": [^\n]+? (\d+)x(\d+)[+-]\d+[+-]\d+\s+([+-]\d+)([+-]\d+)\s*$',
         metadata.get('window_tree', ''), re.M)
     if not geometry:
-        raise SafetyStop('Native dialog title and screen bounds were not proven')
+        raise SafetyStop('Owned window title and screen bounds were not proven')
     width, height, x, y = map(int, geometry.groups()[1:])
     if not (0 < width <= 32768 and 0 < height <= 32768 and abs(x) <= 32768 and abs(y) <= 32768):
-        raise SafetyStop('Native dialog screen bounds exceeded limit')
-    return {'pid': int(pid[1]), 'window': dialog['id'], 'transient_for': transient[1],
-            'title': geometry[1], 'screen_rect': {'x': x, 'y': y, 'width': width, 'height': height}}
+        raise SafetyStop('Owned window screen bounds exceeded limit')
+    return {'title': geometry[1], 'screen_rect': {'x': x, 'y': y, 'width': width, 'height': height}}
+
 
 
 class AccessibilityDiagnosticFailure(SafetyStop):
@@ -140,7 +147,7 @@ def capture_accessibility(env, owner):
     # Parent timeout + helper alarm bound hung IPC. Helper bounds serialized output
     # before printing, so capture_output cannot accumulate an unbounded tree.
     result = subprocess.run(['/usr/bin/python3', '-I', str(helper), str(owner['pid'])],
-        env=env, capture_output=True, timeout=20, check=False)
+        env=env, input=json.dumps(owner).encode('utf-8'), capture_output=True, timeout=20, check=False)
     if len(result.stdout) > MAX_BYTES or len(result.stderr) > 8192:
         raise SafetyStop('Accessibility helper output exceeded its bound')
     if result.returncode:
@@ -157,7 +164,7 @@ def capture_accessibility(env, owner):
                     topology = json.loads(result.stdout)
                 except (ValueError, UnicodeError):
                     topology = None
-                if not reader.valid_failure_topology(topology, owner['pid']):
+                if not reader.valid_failure_topology(topology, owner['pid'], owner):
                     raise SafetyStop('Invalid failure topology withheld')
                 error.topology = topology
             raise error

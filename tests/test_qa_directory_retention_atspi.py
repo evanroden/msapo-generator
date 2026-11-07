@@ -116,7 +116,7 @@ class Node:
 
 API = SimpleNamespace(**{'STATE_' + name.upper(): name for name in
     ('showing', 'visible', 'enabled', 'sensitive', 'focused', 'editable')},
-    DESKTOP_COORDS=0, ROLE_ENTRY='entry', ROLE_TEXT='text', ROLE_PASSWORD_TEXT='password', RELATION_LABELLED_BY='labelled-by',
+    DESKTOP_COORDS=0, ROLE_FRAME='frame', ROLE_ENTRY='entry', ROLE_TEXT='text', ROLE_PASSWORD_TEXT='password', RELATION_LABELLED_BY='labelled-by',
     listInterfaces=lambda node: getattr(node, 'interfaces', []))
 
 
@@ -171,10 +171,10 @@ def test_x11_parent_link_and_same_pid(monkeypatch):
     parent = {'id': '0x1', 'properties': 'WM_CLASS(STRING) = "browser", "Chromium-browser"\n_NET_WM_WINDOW_TYPE(ATOM) = _NET_WM_WINDOW_TYPE_NORMAL\n_NET_WM_PID(CARDINAL) = 123\n'}
     verified = []
     monkeypatch.setattr(bus, 'owned_pid', lambda pid, binary: verified.append((pid, binary)))
-    assert bus.dialog_owner({'windows': [dialog, parent], 'window_tree': ' 0x2 "Warning": ("chrome" "Chrome") 1124x822+0+0 +0+0\n'}, '/pinned')['pid'] == 123
+    assert bus.dialog_owner({'windows': [dialog, parent], 'window_tree': ' 0x2 "Warning": ("chrome" "Chrome") 1124x822+0+0 +0+0\n 0x1 "Browser": ("browser" "Chromium-browser") 1448x1085+10+10 +10+10\n'}, '/pinned')['pid'] == 123
     assert verified == [(123, '/pinned')]
     parent['properties'] = parent['properties'].replace('123', '456')
-    with pytest.raises(local.SafetyStop): bus.dialog_owner({'windows': [dialog, parent], 'window_tree': ' 0x2 "Warning": ("chrome" "Chrome") 1124x822+0+0 +0+0\n'}, '/pinned')
+    with pytest.raises(local.SafetyStop): bus.dialog_owner({'windows': [dialog, parent], 'window_tree': ' 0x2 "Warning": ("chrome" "Chrome") 1124x822+0+0 +0+0\n 0x1 "Browser": ("browser" "Chromium-browser") 1448x1085+10+10 +10+10\n'}, '/pinned')
     with pytest.raises(local.SafetyStop): bus.dialog_owner({'windows': [dialog, dialog]}, '/pinned')
 
 
@@ -385,3 +385,126 @@ def test_failed_metadata_retained_only_after_post_read_guard(monkeypatch, drift)
     with pytest.raises(local.SafetyStop): journey.capture_desktop('settled-after-click')
     assert ('accessibility_failure_topology' in journey.desktop_observations[0]) is not drift
     assert journey.guard.call_count == (1 if drift else 2)
+
+
+def nested_fixture(children=()):
+    frame = Node('frame', 'Browser', children=children)
+    frame.interfaces = ['Component']
+    frame.states = ['showing', 'visible']
+    frame.rect = SimpleNamespace(x=10, y=10, width=1448, height=1085)
+    owner = {'pid': 123, 'window': '0x2', 'transient_for': '0x1', 'title': 'Warning',
+             'screen_rect': {'x': 0, 'y': 0, 'width': 1124, 'height': 822},
+             'browser_parent': {'title': 'Browser', 'screen_rect': vars(frame.rect).copy()}}
+    app = Node('application', children=[frame])
+    return app, frame, owner
+
+
+def test_nested_candidate_is_metadata_only_and_still_failure():
+    candidate = Node('panel', 'Warning')  # Role is observed, never substituted.
+    candidate.interfaces = ['Component', 'Text', 'EditableText']
+    candidate.states = ['showing', 'visible', 'editable']
+    candidate.rect = SimpleNamespace(x=0, y=0, width=1124, height=822)
+    def forbidden(): raise AssertionError('Nested diagnostic queried text or relations')
+    candidate.queryText = candidate.getRelationSet = forbidden
+    app, frame, owner = nested_fixture([Node('panel', children=[candidate])])
+    with pytest.raises(reader.ObservationFailure, match='dialog_count') as exc:
+        reader.collect(Node('desktop', children=[app]), 123, {'dialog'}, API, owner)
+    topology = exc.value.topology
+    nested = topology['nested']
+    assert nested['complete'] and nested['candidate_indices'] == [2]
+    assert nested['nodes'][2]['role'] == 'panel'
+    assert reader.valid_failure_topology(topology, 123, owner)
+    assert all('editable_entry_text' not in node and 'labelled_by' not in node for node in nested['nodes'])
+
+
+@pytest.mark.parametrize('mode', ['pid', 'title', 'rect', 'role', 'multiple-children', 'multiple-apps'])
+def test_nested_traversal_requires_unique_verified_frame(mode):
+    app, frame, owner = nested_fixture([Node()])
+    apps = [app]
+    if mode == 'pid': frame.pid = 999
+    if mode == 'title': frame.name = 'Different'
+    if mode == 'rect': frame.rect.x = 11
+    if mode == 'role': frame.role = 'unknown'
+    if mode == 'multiple-children': app.children.append(Node())
+    if mode == 'multiple-apps': apps.append(app)
+    with pytest.raises(reader.ObservationFailure, match='ownership'):
+        reader.nested_topology(apps, 123, API, owner)
+
+
+@pytest.mark.parametrize('mode', ['node', 'depth', 'child', 'byte'])
+def test_nested_budget_retains_explicit_incomplete_prefix(monkeypatch, mode):
+    app, frame, owner = nested_fixture([Node('panel', children=[Node('panel', children=[Node()])])])
+    if mode == 'node': monkeypatch.setattr(reader, 'MAX_NODES', 2)
+    if mode == 'depth': monkeypatch.setattr(reader, 'NESTED_DEPTH', 1)
+    if mode == 'child': frame.children[0].children = [Node()] * 65
+    if mode == 'byte': monkeypatch.setattr(reader, 'NESTED_BYTES', 650)
+    value = reader.nested_topology([app], 123, API, owner)
+    assert value['complete'] is False
+    assert value['truncation'] == mode + '_limit'
+    assert value['nodes']
+    assert reader.valid_nested_topology(value, owner)
+
+
+def test_nested_foreign_descendant_is_not_read():
+    class Foreign(Node):
+        def get_attributes(self): raise AssertionError('Foreign metadata read')
+    app, frame, owner = nested_fixture([Foreign(pid=999)])
+    with pytest.raises(reader.ObservationFailure, match='ownership'):
+        reader.nested_topology([app], 123, API, owner)
+
+
+def test_nested_schema_rejects_false_candidate_and_extra_text():
+    app, frame, owner = nested_fixture([Node()])
+    value = reader.nested_topology([app], 123, API, owner)
+    value['candidate_indices'] = [1]
+    assert not reader.valid_nested_topology(value, owner)
+    value['candidate_indices'] = []
+    value['nodes'][1]['text'] = 'unrequested'
+    assert not reader.valid_nested_topology(value, owner)
+
+
+def test_helper_receives_bounded_owned_descriptor_on_stdin(monkeypatch):
+    _, _, owner = nested_fixture()
+    def run(args, **kwargs):
+        assert json.loads(kwargs['input']) == owner
+        assert len(kwargs['input']) <= 4096
+        return SimpleNamespace(stdout=b'{}', stderr=b'', returncode=0)
+    monkeypatch.setattr(bus.subprocess, 'run', run)
+    with pytest.raises(local.SafetyStop): bus.capture_accessibility({}, owner)
+
+
+@pytest.mark.parametrize('limit', ['depth', 'child', 'node'])
+def test_nested_breadth_first_preserves_shallow_candidate_after_large_first_branch(monkeypatch, limit):
+    first = Node('panel', children=[Node('panel', children=[Node()])])
+    if limit == 'depth': monkeypatch.setattr(reader, 'NESTED_DEPTH', 1)
+    if limit == 'child': first.children = [Node()] * 65
+    if limit == 'node':
+        first.children = [Node()] * 20
+        monkeypatch.setattr(reader, 'MAX_NODES', 3)
+    candidate = Node('panel', 'Warning')
+    candidate.interfaces = ['Component']
+    candidate.states = ['showing', 'visible']
+    candidate.rect = SimpleNamespace(x=0, y=0, width=1124, height=822)
+    app, frame, owner = nested_fixture([first, candidate])
+    result = reader.nested_topology([app], 123, API, owner)
+    assert result['complete'] is False
+    assert result['truncation'] == limit + '_limit'
+    assert len(result['candidate_indices']) == 1
+    assert result['nodes'][result['candidate_indices'][0]]['name'] == 'Warning'
+    assert len(result['nodes']) <= reader.MAX_NODES
+    assert reader.valid_nested_topology(result, owner)
+
+
+def test_nested_total_scheduled_nodes_and_queue_are_bounded(monkeypatch):
+    reads = []
+    class Counted(Node):
+        def getChildAtIndex(self, index):
+            reads.append(index)
+            return super().getChildAtIndex(index)
+    children = [Counted('panel', children=[Node()] * 64) for _ in range(64)]
+    app, frame, owner = nested_fixture(children)
+    monkeypatch.setattr(reader, 'MAX_NODES', 10)
+    result = reader.nested_topology([app], 123, API, owner)
+    assert len(result['nodes']) == 10
+    assert reads == []  # Scheduled sibling budget leaves no room for descendants.
+    assert result['complete'] is False and result['truncation'] == 'node_limit'

@@ -1,9 +1,11 @@
 """System-Python AT-SPI read-only helper. No actions, focus changes, setters or value mutation APIs.
 
 Invoked only after the parent proves X11 window ownership and pinned process
-ancestry. A failed/partial traversal produces no evidence, never a fallback input.
+ancestry. Role-count failure may retain bounded diagnostic topology, never input
+or acceptance. A truncated topology cannot establish absence of native controls.
 """
 import json
+from collections import deque
 import os
 from pathlib import Path
 import re
@@ -139,8 +141,123 @@ def failure_topology(apps, pid, api, dialog_count):
             'application_count': len(apps), 'dialog_count': dialog_count, 'nodes': nodes}
 
 
-def valid_failure_topology(data, pid):
+NESTED_DEPTH = 12
+NESTED_BYTES = 60000
+TRUNCATIONS = {'node_limit', 'depth_limit', 'child_limit', 'byte_limit'}
+
+
+def valid_rectangle(rect):
+    return (isinstance(rect, dict) and set(rect) == {'x', 'y', 'width', 'height'}
+        and all(type(value) is int for value in rect.values())
+        and all(abs(rect[key]) <= 32768 for key in ('x', 'y'))
+        and all(0 <= rect[key] <= 32768 for key in ('width', 'height')))
+
+
+def valid_descriptor(owner, pid):
+    if (not isinstance(owner, dict) or set(owner) != {'pid', 'window', 'transient_for',
+            'title', 'screen_rect', 'browser_parent'} or owner['pid'] != pid):
+        return False
+    for key in ('window', 'transient_for'):
+        if not isinstance(owner[key], str) or not re.fullmatch(r'0x[0-9a-f]+', owner[key]):
+            return False
+    parent = owner['browser_parent']
+    if not isinstance(parent, dict) or set(parent) != {'title', 'screen_rect'}:
+        return False
+    return all(isinstance(item['title'], str) and 0 < len(item['title']) <= MAX_STRING
+               and valid_rectangle(item['screen_rect']) for item in (owner, parent))
+
+
+def nested_topology(apps, pid, api, owner):
+    """Failure-only, metadata-only traversal under the observed X11 browser frame."""
+    if not valid_descriptor(owner, pid) or len(apps) != 1 or child_count(apps[0]) != 1:
+        raise ObservationFailure('ownership')
+    frame = apps[0].getChildAtIndex(0)
+    metadata = surface_metadata(frame, pid, api)
+    parent = owner['browser_parent']
+    if (frame.getRole() != api.ROLE_FRAME or metadata['name'] != parent['title']
+            or metadata['screen_rect'] != parent['screen_rect']
+            or not metadata['states']['showing'] or not metadata['states']['visible']):
+        raise ObservationFailure('ownership')
+    nodes, candidates = [], []
+    truncation = None
+    queue = deque([(frame, None, 0)])
+    scheduled = 1
+    # Breadth-first sampling preserves already queued siblings when a deep or
+    # wide branch is cut short. Both the queue and total scheduled nodes are
+    # bounded; truncation always means this topology cannot establish absence.
+    while queue:
+        node, parent_index, depth = queue.popleft()
+        try:
+            metadata = surface_metadata(node, pid, api)
+        except ObservationFailure as exc:
+            if exc.reason != 'child_bound':
+                raise
+            truncation = truncation or 'child_limit'
+            continue
+        value = {'index': len(nodes), 'parent': parent_index, 'depth': depth, **metadata}
+        if len(json.dumps(nodes + [value]).encode('utf-8')) > NESTED_BYTES:
+            truncation = truncation or 'byte_limit'
+            break
+        nodes.append(value)
+        if (metadata['name'] == owner['title'] and metadata['screen_rect'] == owner['screen_rect']
+                and metadata['states']['showing'] and metadata['states']['visible']):
+            candidates.append(value['index'])
+        if metadata['children'] and depth >= NESTED_DEPTH:
+            truncation = truncation or 'depth_limit'
+            continue
+        for offset in range(metadata['children']):
+            if scheduled >= MAX_NODES:
+                truncation = truncation or 'node_limit'
+                break
+            queue.append((node.getChildAtIndex(offset), value['index'], depth + 1))
+            scheduled += 1
+    return {'scope': 'verified-owned-browser-frame', 'complete': truncation is None,
+            'truncation': truncation, 'nodes': nodes, 'candidate_indices': candidates}
+
+
+def valid_nested_topology(data, owner):
+    if (not isinstance(data, dict) or set(data) != {'scope', 'complete', 'truncation', 'nodes', 'candidate_indices'}
+            or data['scope'] != 'verified-owned-browser-frame' or type(data['complete']) is not bool
+            or (data['truncation'] is not None and data['truncation'] not in TRUNCATIONS)
+            or data['complete'] != (data['truncation'] is None)
+            or not isinstance(data['nodes'], list) or not 1 <= len(data['nodes']) <= MAX_NODES
+            or len(json.dumps(data['nodes']).encode('utf-8')) > NESTED_BYTES):
+        return False
+    candidates = []
+    for index, node in enumerate(data['nodes']):
+        if (not isinstance(node, dict) or set(node) != {'index', 'parent', 'depth', 'role', 'name', 'children', 'states', 'screen_rect'}
+                or type(node['index']) is not int or node['index'] != index
+                or type(node['depth']) is not int or not 0 <= node['depth'] <= NESTED_DEPTH
+                or type(node['children']) is not int or not 0 <= node['children'] <= MAX_CHILDREN
+                or any(not isinstance(node[key], str) or len(node[key]) > MAX_STRING for key in ('role', 'name'))
+                or not isinstance(node['states'], dict)
+                or set(node['states']) != {'showing', 'visible', 'enabled', 'sensitive', 'focused', 'editable'}
+                or any(type(value) is not bool for value in node['states'].values())
+                or (node['screen_rect'] is not None and (not valid_rectangle(node['screen_rect'])
+                    or not node['states']['showing'] or not node['states']['visible']))):
+            return False
+        if index == 0:
+            if (node['parent'] is not None or node['depth'] != 0
+                    or node['name'] != owner['browser_parent']['title']
+                    or node['screen_rect'] != owner['browser_parent']['screen_rect']):
+                return False
+        elif (type(node['parent']) is not int or not 0 <= node['parent'] < index
+                or node['depth'] != data['nodes'][node['parent']]['depth'] + 1):
+            return False
+        if node['name'] == owner['title'] and node['screen_rect'] == owner['screen_rect']:
+            candidates.append(index)
+        actual_children = sum(other.get('parent') == index for other in data['nodes'] if isinstance(other, dict))
+        if actual_children > node['children'] or (data['complete'] and actual_children != node['children']):
+            return False
+    return data['candidate_indices'] == candidates
+
+
+def valid_failure_topology(data, pid, owner=None):
     """Validate helper JSON before retaining any failed-attempt diagnostic."""
+    if isinstance(data, dict) and 'nested' in data:
+        if not valid_descriptor(owner, pid) or not valid_nested_topology(data['nested'], owner):
+            return False
+        data = {key: value for key, value in data.items() if key != 'nested'}
     if (not isinstance(data, dict) or set(data) != {'pid', 'observation_only',
             'diagnostic_only', 'scope', 'application_count', 'dialog_count', 'nodes'}
             or data['pid'] != pid or data['observation_only'] is not True
@@ -178,7 +295,7 @@ def valid_failure_topology(data, pid):
         for root in roots)
 
 
-def collect(desktop, pid, dialog_roles, api):
+def collect(desktop, pid, dialog_roles, api, owner=None):
     global STAGE
     STAGE = "applications"
     apps = []
@@ -203,6 +320,8 @@ def collect(desktop, pid, dialog_roles, api):
     if len(dialogs) != 1:
         failure = ObservationFailure('dialog_count')
         failure.topology = failure_topology(apps, pid, api, len(dialogs))
+        if owner is not None:
+            failure.topology['nested'] = nested_topology(apps, pid, api, owner)
         raise failure
     STAGE = "nodes"
     nodes, owned_nodes = [], []
@@ -263,6 +382,12 @@ def main():
     signal.alarm(15)
     if len(sys.argv) != 2 or not re.fullmatch(r'[1-9][0-9]*', sys.argv[1]):
         raise ObservationFailure('arguments')
+    descriptor = sys.stdin.buffer.read(4097)
+    if len(descriptor) > 4096:
+        raise ObservationFailure('arguments')
+    owner = json.loads(descriptor)
+    if not valid_descriptor(owner, int(sys.argv[1])):
+        raise ObservationFailure('arguments')
     STAGE = 'runtime'
     base = Path(os.environ['EPC_DATA_DIR'])
     runtime = Path(os.environ['XDG_RUNTIME_DIR'])
@@ -282,7 +407,7 @@ def main():
     STAGE = 'registry'
     import pyatspi
     data = collect(pyatspi.Registry.getDesktop(0), int(sys.argv[1]),
-                   {pyatspi.ROLE_DIALOG, pyatspi.ROLE_FILE_CHOOSER}, pyatspi)
+                   {pyatspi.ROLE_DIALOG, pyatspi.ROLE_FILE_CHOOSER}, pyatspi, owner)
     data['bus_confined_to_owned_runtime'] = True
     STAGE = 'serialization'
     encoded = json.dumps(data).encode('utf-8')
@@ -296,8 +421,8 @@ if __name__ == '__main__':
     try:
         main()
     except Exception as exc:
-        # Failed role uniqueness stays failed. Retain only bounded shallow
-        # owned-PID metadata, never entry text or a broader fallback traversal.
+        # Failed role uniqueness stays failed. Retain only bounded owned-PID
+        # diagnostic metadata; nested traversal requires the verified browser frame.
         topology = getattr(exc, 'topology', None)
         if isinstance(exc, ObservationFailure) and exc.reason == 'dialog_count' and topology is not None:
             encoded = json.dumps(topology).encode('utf-8')

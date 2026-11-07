@@ -58,7 +58,8 @@ class HeadedJourney(headed.HeadedJourney):
         env = display_environment(self.base, self.config.commit)
         before = self.desktop_observations[-1]
         owner = bus.dialog_owner(before, verified_browser(self.base)["path"])
-        # Helper observes only the verified PID and only its unique native dialog.
+        # Helper observes the verified PID; role-count failure permits only bounded
+        # diagnostic topology under the separately verified X11 browser frame.
         try:
             data = bus.capture_accessibility(env, owner)
         except bus.AccessibilityDiagnosticFailure as exc:
