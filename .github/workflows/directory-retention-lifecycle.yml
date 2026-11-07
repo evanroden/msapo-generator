@@ -10,7 +10,11 @@ on:
       - 'app/monthly_report_admin_ui.py'
       - 'tests/test_monthly_report_directory_retention*.py'
       - 'tests/test_directory_retention_policy_comparison.py'
-      - 'tests/fixtures/directory_retention/**'
+      - 'scripts/directory_retention_fixture.py'
+      - 'tests/test_docs_index.py'
+      - 'tests/test_public_repository_hygiene.py'
+      - 'docs/DIRECTORY_RETENTION_291.md'
+      - 'docs/README.md'
       - 'scripts/compare_directory_retention_policy.py'
       - 'scripts/directory_retention_policy_probe.py'
       - 'requirements*.lock'
@@ -53,6 +57,8 @@ jobs:
             tests/test_monthly_report_directory_retention_journey.py \
             tests/test_monthly_report_directory_isolation.py \
             tests/test_directory_retention_policy_comparison.py \
+            tests/test_docs_index.py \
+            tests/test_public_repository_hygiene.py \
             --basetemp=test-artifacts/directory-retention-lifecycle/pytest-data \
             --junitxml=test-artifacts/directory-retention-lifecycle/focused-results.xml
           python scripts/compare_directory_retention_policy.py \

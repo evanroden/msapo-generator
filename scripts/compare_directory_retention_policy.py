@@ -19,9 +19,12 @@ import tarfile
 
 REPO = Path(__file__).resolve().parents[1]
 BEFORE = "45ecc27b7948423049404a70ed58d3f1155c6c2b"
-FIXTURE = REPO / "tests/fixtures/directory_retention/synthetic-retention.xlsx"
+sys.path.insert(0, str(REPO))
+from scripts.directory_retention_fixture import FIXTURE_NAME, FIXTURE_SHA, write_fixture
+
+FIXTURE_GENERATOR = REPO / "scripts/directory_retention_fixture.py"
 PROBE = REPO / "scripts/directory_retention_policy_probe.py"
-FIXTURE_SHA = "32f56e5c991c91eb0d328858848b1c998ff4422e7abdef6aca1d22478ad4bf8e"
+HISTORICAL_FIXTURE_SHA = "32f56e5c991c91eb0d328858848b1c998ff4422e7abdef6aca1d22478ad4bf8e"
 
 
 def git(*args: str) -> bytes:
@@ -90,7 +93,16 @@ def valid_observation(record: dict, commit: str, phase: str) -> bool:
             and all(record.get(k) is True for k in preserved))
 
 
+def checked_fixture(output: Path) -> Path:
+    fixture = output / FIXTURE_NAME
+    if (fixture.is_symlink() or fixture.resolve() != fixture or not fixture.is_file()
+            or fixture.stat().st_size > 65536 or sha256(fixture.read_bytes()).hexdigest() != FIXTURE_SHA):
+        raise ValueError("Synthetic fixture identity changed")
+    return fixture
+
+
 def run_probe(output: Path, phase: str, commit: str) -> dict:
+    fixture = checked_fixture(output)
     folder = output / phase
     folder.mkdir()
     source = folder / "source"
@@ -102,12 +114,13 @@ def run_probe(output: Path, phase: str, commit: str) -> dict:
                OPENAI_API_KEY="", SMARTSHEET_API_MODE="disabled", STREAMLIT_BROWSER_GATHER_USAGE_STATS="false",
                RETENTION_COMPARISON_OUTPUT=str(output), RETENTION_COMPARISON_SOURCE=str(source),
                RETENTION_COMPARISON_PHASE=phase, RETENTION_COMPARISON_SHA=commit,
-               RETENTION_COMPARISON_FIXTURE=str(FIXTURE))
+               RETENTION_COMPARISON_FIXTURE=str(fixture), RETENTION_COMPARISON_FIXTURE_SHA=FIXTURE_SHA)
     command = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--confcutdir=" + str(PROBE.parent),
                "--basetemp=" + str(folder / "pytest-data"), "--junitxml=" + str(folder / "results.xml"), str(PROBE)]
     with (folder / "pytest.log").open("xb") as log:
         result = subprocess.run(command, cwd=folder, env=env, stdout=log, stderr=subprocess.STDOUT, timeout=90)
     assert verify_snapshot(commit, source) == provenance
+    checked_fixture(output)
     record = json.loads((folder / "observation.json").read_text())
     expected_retained = phase == "before"
     correct = (valid_observation(record, commit, phase)
@@ -132,12 +145,17 @@ def main(argv=None) -> int:
     before, after = resolve(args.before), resolve(args.after)
     if before != BEFORE or before == after:
         raise ValueError("Before must be the audited pre-policy commit and distinct from after")
-    if sha256(FIXTURE.read_bytes()).hexdigest() != FIXTURE_SHA:
-        raise ValueError("Synthetic fixture identity changed")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
+    write_fixture(output)
+    checked_fixture(output)
     results = [run_probe(output, phase, commit) for phase, commit in (("before", before), ("after", after))]
+    checked_fixture(output)
     manifest = {"results": results, "fixture_sha256": FIXTURE_SHA, "python": sys.version,
+                "fixture_generation": "openpyxl cells with fixed document properties and deterministic ZIP metadata",
+                "fixture_generator_sha256": sha256(FIXTURE_GENERATOR.read_bytes()).hexdigest(),
+                "historical_fixture_sha256": HISTORICAL_FIXTURE_SHA,
+                "fixture_matches_historical_bytes": False,
                 "probe_sha256": sha256(PROBE.read_bytes()).hexdigest(),
                 "same_current_dependency_environment": True, "historical_dependencies_not_reconstructed": True,
                 "comparison_is_retrospective": True, "fixture_age_is_injected": True,

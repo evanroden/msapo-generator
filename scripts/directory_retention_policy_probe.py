@@ -28,9 +28,12 @@ from app import monthly_report_testing as testing
 from app.monthly_report_objects import object_path
 
 TOKEN = "91" * 16
-RAW = Path(os.environ["RETENTION_COMPARISON_FIXTURE"]).read_bytes()
+FIXTURE = Path(os.environ["RETENTION_COMPARISON_FIXTURE"])
+assert not FIXTURE.is_symlink() and FIXTURE == BASE / "synthetic-retention.xlsx"
+assert FIXTURE.resolve() == FIXTURE and FIXTURE.stat().st_size <= 65536
+RAW = FIXTURE.read_bytes()
 DIGEST = sha256(RAW).hexdigest()
-assert DIGEST == "32f56e5c991c91eb0d328858848b1c998ff4422e7abdef6aca1d22478ad4bf8e"
+assert DIGEST == os.environ["RETENTION_COMPARISON_FIXTURE_SHA"] == "854e76ae35afc67f7a6cfbbd2162ac02c6fe2c89e15a476d6aa0e2cbabb23baa"
 SOURCE_SHA = os.environ["RETENTION_COMPARISON_SHA"]
 
 

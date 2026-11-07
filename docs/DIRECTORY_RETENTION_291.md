@@ -29,9 +29,11 @@ Access remains shared. The implementation merged in #362 as
   and archive/restore after raw expiry. The scheduler delegates the original
   flock/save/expiry implementations; it does not replace them. Receipts stay in
   each test's own pytest temporary directory.
-- `scripts/compare_directory_retention_policy.py` and
-  `scripts/directory_retention_policy_probe.py`: the same retrospective policy
-  oracle on exact pre-policy/current source archives, described below.
+- `scripts/compare_directory_retention_policy.py`,
+  `scripts/directory_retention_policy_probe.py` and
+  `scripts/directory_retention_fixture.py`: the same retrospective policy oracle
+  on exact pre-policy/current source archives, with a source-generated invented
+  workbook, described below.
 - `tests/test_directory_retention_policy_comparison.py`: fail-closed source-ref,
   output reuse, extraction and preservation-evidence validation.
 - `.github/workflows/directory-retention-lifecycle.yml`: read-only, PR-only
@@ -39,7 +41,7 @@ Access remains shared. The implementation merged in #362 as
   fixture admission, production cleanup or live permit. It preserves synthetic
   receipts, JUnit, logs and comparison metadata for the exact CI source commit.
 
-The integrated local focused suite passed 46 tests. The separate comparison
+The initial integrated local focused suite passed 46 tests. The separate comparison
 verified the expected pre-policy failure and current-code pass. Independent
 review and exact-head hosted results must be recorded before final integration.
 
@@ -56,9 +58,15 @@ python scripts/compare_directory_retention_policy.py \
 
 The output directory must not exist. The runner performs no fetch; the audited
 pre-policy commit `45ecc27b7948423049404a70ed58d3f1155c6c2b` must already be present.
-The workbook `tests/fixtures/directory_retention/synthetic-retention.xlsx` is
-wholly invented, including hidden/inactive/excluded rows. SHA-256:
-`32f56e5c991c91eb0d328858848b1c998ff4422e7abdef6aca1d22478ad4bf8e`.
+The helper `scripts/directory_retention_fixture.py` generates a wholly invented
+workbook inside that new output directory, including hidden/inactive/excluded
+rows. Ordinary openpyxl cell construction, fixed document properties and stored
+ZIP entries produce a pinned SHA-256:
+`854e76ae35afc67f7a6cfbbd2162ac02c6fe2c89e15a476d6aa0e2cbabb23baa`.
+No workbook binary is tracked. Both comparison phases consume this same generated
+file. Its semantic cells and hidden-sheet state match the original synthetic
+workbook, but its normalized ZIP bytes deliberately differ from the historical
+fixture `32f56e5c991c91eb0d328858848b1c998ff4422e7abdef6aca1d22478ad4bf8e`.
 
 Each phase uses a fresh interpreter, source archive, HOME and pytest-owned store.
 All tracked source blobs are checked against Git before and after execution.
@@ -88,9 +96,33 @@ report. The issue's original baseline was owner-decision-required. The before
 commit is the PR's recorded base, not its merge's immediate first parent. Both
 phases receive an explicit 31-day-old fixture stamp; pre-policy code does not
 recognize that metadata. The same current dependency environment is used, not
-reconstructed historical dependencies. The repository probe adapts only the
-initial probe's source/output/fixture path management and source identity fields.
-The first logs/observations are unchanged; new CI results are separate artifacts.
+reconstructed historical dependencies. The repository probe retains the
+initial lifecycle and preservation assertions, adapting source/output paths and
+identity fields. Current reruns use the source-generated, semantically matching
+fixture described above, not the historical ZIP bytes. The first logs/observations
+and their original fixture hash are unchanged; new CI results are separate
+artifacts.
+
+## Preserved integration failure and narrow repair
+
+The first minimal integration at `485343f1a7939058353ea30c5810342d023ae2a2`
+passed focused retention checks, then [full run 42360194886](https://github.com/evanroden/msapo-generator/actions/runs/42360194886)
+reported 12,047 passes, two failures and two skips. Both failures were integration
+rules missed by the initial patch: this guide was absent from `docs/README.md`,
+and tracking the generated XLSX violated public-repository hygiene. No retention
+assertion failed. The [first JUnit artifact](https://github.com/evanroden/msapo-generator/actions/runs/42360194886/artifacts/13571988471)
+remains preserved, ZIP SHA-256
+`5a3d21cc852f8d16f407c0df73c53db399d83a1f9620d8f2a9ce83a3dfefffed`.
+
+The repair indexes the guide and generates the workbook from readable source at
+runtime instead of tracking a binary. Neither existing repository check nor its
+allowlist was weakened. The focused lifecycle workflow now also runs the unchanged
+docs-index and repository-hygiene tests, so these failures are caught early. The
+repaired focused suite passed 116 tests locally, including both formerly failing
+repository checks. The prior commit and first-failure evidence remain intact;
+this is a new-head repair,
+not a retry that hides the first result. The two original skips were optional YAML
+and Playwright imports, not retention cases.
 
 ## Native served evidence, already complete
 
