@@ -248,8 +248,12 @@ class LocalJourney(live.Journey):
     def guard(self):
         from playwright.sync_api import expect
         self.transport_boundary()
-        # Read-only startup wait: namespace creation may follow DOMContentLoaded.
+        # The wrapper nonce can render before the real app binds its namespace.
+        # Wait read-only for the product banner, emitted after storage binding.
         expect(self.page.get_by_text("Local synthetic server: " + self.config.nonce, exact=True)).to_be_visible()
+        self.transport_boundary()
+        expect(self.page.get_by_text(live.BANNER, exact=True)).to_be_visible()
+        self.transport_boundary()
         super().guard()  # Same code/banner/exception gates and final physical boundary.
 
     def saved_receipt(self, contract, stage):

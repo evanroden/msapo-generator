@@ -168,3 +168,96 @@ def test_final_isolation_failure_cannot_leave_passed_receipt(field, value):
     record[field] = value
     assert local.final_isolation_failure(record)
     assert record["result"] == "failed final isolation checks"
+
+
+def delayed_app(base, tmp_path, monkeypatch, on_banner, on_nonce=lambda item: None):
+    """Model the wrapper nonce arriving before the real app binds storage."""
+    import sys
+    from types import ModuleType
+    item = journey(base, tmp_path)
+    (item.namespace / ".enfra-qa-namespace").unlink()
+    item.namespace.rmdir()
+    item.page.get_by_text.side_effect = lambda value, **kwargs: ("text", value)
+    item.page.get_by_test_id.side_effect = lambda value: ("testid", value)
+    observed = []
+    class Assertion:
+        def __init__(self, locator):
+            self.locator = locator
+        def to_be_visible(self):
+            observed.append(self.locator)
+            if self.locator == ("text", "Local synthetic server: " + NONCE):
+                on_nonce(item)
+            if self.locator == ("text", live.BANNER):
+                on_banner(item)
+        def to_have_count(self, value):
+            pass
+    fake = ModuleType("playwright.sync_api")
+    fake.expect = Assertion
+    monkeypatch.setitem(sys.modules, "playwright", ModuleType("playwright"))
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", fake)
+    monkeypatch.setenv("EPC_DATA_DIR", str(base))
+    return item, observed
+
+
+def bind_real_synthetic_namespace(item):
+    from app.memory import _data_dir
+    from app.monthly_report_testing import isolated
+    with isolated(TOKEN):
+        assert _data_dir() == item.namespace
+
+
+def test_nonce_before_app_storage_waits_for_isolated_banner(base, tmp_path, monkeypatch):
+    item, observed = delayed_app(base, tmp_path, monkeypatch, bind_real_synthetic_namespace)
+    mutation = Mock()
+    item.action("Synthetic mutation", mutation)
+    mutation.assert_called_once()
+    assert ("text", live.BANNER) in observed
+    assert item.generation is not None
+    assert item.events == [{"action": "Synthetic mutation", "status": "completed"}]
+
+
+def test_visible_banner_never_substitutes_for_physical_namespace(base, tmp_path, monkeypatch):
+    item, _ = delayed_app(base, tmp_path, monkeypatch, lambda item: None)
+    mutation = Mock()
+    with pytest.raises(local.SafetyStop, match="physical namespace"):
+        item.action("Synthetic mutation", mutation)
+    mutation.assert_not_called()
+    assert item.events == []
+
+
+@pytest.mark.parametrize("stage", ["nonce", "banner"])
+@pytest.mark.parametrize("drift", ["cookie", "route", "network"])
+def test_readiness_wait_drift_stops_before_mutation(base, tmp_path, monkeypatch, stage, drift):
+    def change(item):
+        if drift == "cookie":
+            item.context.cookies.return_value[0]["value"] = "b" * 32
+        elif drift == "route":
+            item.page.url = local.ORIGIN + "/?workflow=monthly"
+        else:
+            item.blocked.append("unexpected")
+    def nonce(item):
+        if stage == "nonce":
+            change(item)
+    def banner(item):
+        bind_real_synthetic_namespace(item)
+        if stage == "banner":
+            change(item)
+    item, observed = delayed_app(base, tmp_path, monkeypatch, banner, nonce)
+    mutation = Mock()
+    with pytest.raises(local.SafetyStop):
+        item.action("Synthetic mutation", mutation)
+    mutation.assert_not_called()
+    assert item.events == []
+    if stage == "nonce":
+        assert ("text", live.BANNER) not in observed
+
+
+def test_missing_banner_timeout_never_enters_mutation(base, tmp_path, monkeypatch):
+    def missing(item):
+        raise TimeoutError("Synthetic missing banner")
+    item, _ = delayed_app(base, tmp_path, monkeypatch, missing)
+    mutation = Mock()
+    with pytest.raises(TimeoutError, match="missing banner"):
+        item.action("Synthetic mutation", mutation)
+    mutation.assert_not_called()
+    assert item.events == []
