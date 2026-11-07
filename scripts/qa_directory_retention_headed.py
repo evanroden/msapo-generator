@@ -6,8 +6,9 @@ It never supplies a destination, saves a directory, or substitutes picker APIs.
 """
 from __future__ import annotations
 
-from hashlib import sha256
+from hashlib import file_digest, sha256
 from io import BytesIO
+from importlib.metadata import version
 import json
 import os
 from pathlib import Path
@@ -31,10 +32,49 @@ from scripts.qa_directory_retention_local import (CANARY, GUARD_LOG, MARKER, PRE
 OUT = ROOT / "test-artifacts/directory-retention-headed-observation"
 SCREEN = (1600, 1200)
 AUTHORITY = ".owned-xauthority"
+BROWSER_MANIFEST = ".pinned-chromium.json"
 
 
 class ObservationComplete(Exception):
     """Intentional stop before directory confirmation/save, not acceptance."""
+
+
+def browser_identity(path):
+    """Verify the installed pinned binary without changing the browser's HOME."""
+    path = Path(path)
+    if (version("playwright") != "1.58.0" or not path.is_absolute()
+            or path.is_symlink() or path.resolve() != path or not path.is_file()
+            or path.parts[-3:] != ("chromium-1208", "chrome-linux64", "chrome")
+            or not os.access(path, os.X_OK)):
+        raise SafetyStop("Pinned Playwright Chromium executable was not proven")
+    with path.open("rb") as stream:
+        digest = file_digest(stream, "sha256").hexdigest()
+    return {"path": str(path), "sha256": digest, "playwright_version": "1.58.0"}
+
+
+def resolve_pinned_browser():
+    # Registry lookup runs before HOME is scrubbed. This starts only the
+    # Playwright driver, not a browser, and never searches for system Chromium.
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as playwright:
+        return browser_identity(playwright.chromium.executable_path)
+
+
+def verified_browser(base):
+    manifest = guarded_root(base) / BROWSER_MANIFEST
+    if manifest.is_symlink() or not manifest.is_file() or manifest.stat().st_size > 4096:
+        raise SafetyStop("Launcher-owned pinned browser manifest is missing or invalid")
+    envelope = json.loads(manifest.read_text())
+    if (not isinstance(envelope, dict) or set(envelope) != {"root_nonce", "browser"}
+            or envelope["root_nonce"] != (guarded_root(base) / MARKER).read_text()):
+        raise SafetyStop("Pinned browser manifest is not bound to this disposable root")
+    expected = envelope["browser"]
+    if not isinstance(expected, dict) or set(expected) != {"path", "sha256", "playwright_version"}:
+        raise SafetyStop("Pinned browser manifest fields are invalid")
+    actual = browser_identity(expected["path"])
+    if actual != expected:
+        raise SafetyStop("Pinned Chromium changed after launcher verification")
+    return actual
 
 
 def display_environment(base, commit):
@@ -132,6 +172,7 @@ class HeadedJourney(local.LocalJourney):
 def observe_owned_display():
     base = guarded_root(os.environ.get("EPC_DATA_DIR", ""))
     env = display_environment(base, os.environ.get("APP_GIT_COMMIT", ""))
+    binary = verified_browser(base)
     from playwright.sync_api import sync_playwright
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     if (OUT / "receipt.json").exists():
@@ -145,6 +186,8 @@ def observe_owned_display():
                   ["git", "status", "--porcelain", "--untracked-files=no"], cwd=ROOT, text=True).splitlines(),
               "worktree_diff_sha256": sha256(subprocess.check_output(["git", "diff", "HEAD"], cwd=ROOT)).hexdigest(),
               "browser_distribution": "Playwright pinned Chromium headed",
+              "browser_executable": binary,
+              "browser_registry_lookup": "playwright.chromium.executable_path before HOME isolation",
               "directory_acceptance": False, "native_dialog_confirmed": False,
               "limits": ["Observation only; no dialog approval, file validation or directory save.",
                          "Headed Xvfb and observation change timing; this does not explain headless behavior."],
@@ -166,7 +209,9 @@ def observe_owned_display():
     try:
         server.start()
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=False, env=env)
+            if verified_browser(base) != binary:
+                raise SafetyStop("Pinned browser identity changed before launch")
+            browser = playwright.chromium.launch(headless=False, env=env, executable_path=binary["path"])
             record["browser_version"] = browser.version
             context = browser.new_context(accept_downloads=True, service_workers="block",
                                           viewport={"width": 1440, "height": 1000})
@@ -258,6 +303,7 @@ def launch():
     if not features.check_feature("xcb"):
         raise SafetyStop("Pillow X11 capture support is required")
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    binary = resolve_pinned_browser()
     OUT.mkdir(parents=True, exist_ok=False)
     result = {"result": "not completed", "observation_only": True, "production_acceptance": False}
     with tempfile.TemporaryDirectory(prefix=PREFIX) as temp:
@@ -265,6 +311,8 @@ def launch():
         (base / MARKER).write_text(secrets.token_hex(16))
         (base / GUARD_LOG).write_text("")
         (base / "ordinary-canary").write_bytes(CANARY)
+        (base / BROWSER_MANIFEST).write_text(json.dumps({
+            "root_nonce": (base / MARKER).read_text(), "browser": binary}))
         authority = base / AUTHORITY
         authority.touch(mode=0o600, exist_ok=False)
         env = child_environment(base, commit)  # Never inherit a display or Xauthority.

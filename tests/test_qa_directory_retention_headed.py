@@ -186,8 +186,8 @@ def test_shared_network_handlers_have_exact_ast_parity():
                       'context.route("**/*", route)', 'context.route_web_socket("**/*", websocket)',
                       "final_isolation_failure(record)"):
         assert invariant in source
-    assert 'headless=False, env=env' in source
-    assert 'executable_path' not in source
+    assert 'headless=False, env=env, executable_path=binary["path"]' in source
+    assert 'binary = verified_browser(base)' in source
 
 
 def test_launcher_never_reuses_display_or_invokes_dialog_input(monkeypatch, tmp_path):
@@ -200,6 +200,7 @@ def test_launcher_never_reuses_display_or_invokes_dialog_input(monkeypatch, tmp_
     from PIL import features
     monkeypatch.setattr(features, "check_feature", Mock(return_value=True))
     monkeypatch.setattr(headed.subprocess, "check_output", Mock(return_value=SHA))
+    monkeypatch.setattr(headed, "resolve_pinned_browser", Mock(return_value={"path": "/fake/pinned", "sha256": "0" * 64, "playwright_version": "1.58.0"}))
     process = Mock(pid=12345)
     process.wait.return_value = 0
     popen = Mock(return_value=process)
@@ -237,3 +238,55 @@ def test_separate_workflow_cannot_opt_into_production():
     source = Path(headed.__file__).read_text()
     for forbidden in ("force=True", "showSaveFilePicker =", "add_init_script", "xdotool", "pyautogui", ".press(", ".keyboard"):
         assert forbidden not in source
+
+
+@pytest.fixture
+def pinned_binary(tmp_path, monkeypatch):
+    path = tmp_path / "chromium-1208/chrome-linux64/chrome"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"invented offline executable bytes; never executed")
+    path.chmod(0o700)
+    monkeypatch.setattr(headed, "version", lambda name: "1.58.0")
+    return path
+
+
+def test_pinned_manifest_resolves_installed_binary_with_scrubbed_home(base, pinned_binary, monkeypatch):
+    binary = headed.browser_identity(pinned_binary)
+    (base / headed.BROWSER_MANIFEST).write_text(json.dumps({
+        "root_nonce": (base / local.MARKER).read_text(), "browser": binary}))
+    monkeypatch.setenv("HOME", str(base / "home"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(base / "home/cache"))
+    assert headed.verified_browser(base) == binary
+    assert not (base / "home/cache/ms-playwright").exists()
+    assert binary["playwright_version"] == "1.58.0"
+
+
+@pytest.mark.parametrize("drift", ["missing", "hash", "version", "fields", "manifest-link", "binary-link", "not-executable", "system-path", "nonce"])
+def test_pinned_manifest_fail_closed(base, pinned_binary, monkeypatch, drift):
+    binary = headed.browser_identity(pinned_binary)
+    manifest = base / headed.BROWSER_MANIFEST
+    if drift == "hash":
+        pinned_binary.write_bytes(b"changed")
+    elif drift == "version":
+        monkeypatch.setattr(headed, "version", lambda name: "1.59.0")
+    elif drift == "fields":
+        binary["extra"] = True
+    elif drift == "binary-link":
+        original = pinned_binary.with_name("original")
+        pinned_binary.rename(original)
+        pinned_binary.symlink_to(original)
+    elif drift == "not-executable":
+        pinned_binary.chmod(0o600)
+    elif drift == "system-path":
+        binary["path"] = "/usr/bin/chromium"
+    if drift != "missing":
+        manifest.write_text(json.dumps({
+            "root_nonce": (base / local.MARKER).read_text(), "browser": binary}))
+    if drift == "nonce":
+        (base / local.MARKER).write_text("b" * 32)
+    if drift == "manifest-link":
+        target = base / "other-manifest"
+        manifest.rename(target)
+        manifest.symlink_to(target)
+    with pytest.raises(local.SafetyStop):
+        headed.verified_browser(base)
