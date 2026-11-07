@@ -1,0 +1,77 @@
+name: Directory core live one-run permit
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'scripts/qa_directory_retention_core_live*.py'
+      - 'tests/test_qa_directory_retention_core_live*.py'
+      - '.github/workflows/directory-retention-core-live.yml'
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: read
+
+concurrency:
+  group: monthly-isolated-live-production
+  cancel-in-progress: false
+
+jobs:
+  core_live:
+    name: core_live
+    if: github.repository == 'evanroden/msapo-generator' && github.event.pull_request.number == 800 && github.event.pull_request.head.repo.full_name == github.repository && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - name: Install locked app and pinned browser before permit wait
+        timeout-minutes: 18
+        run: |
+          python -m pip install -r requirements-dev.lock playwright==1.58.0
+          python scripts/patch_streamlit_frontend.py
+          python scripts/patch_streamlit_date_input.py
+          python -m playwright install --with-deps chromium
+      - name: Offline permit and safety regression tests
+        timeout-minutes: 4
+        run: |
+          python -m pytest -q tests/test_qa_directory_retention_live.py tests/test_qa_directory_retention_local.py tests/test_qa_directory_retention_core.py tests/test_qa_directory_retention_core_live.py tests/test_qa_directory_retention_core_live_bootstrap.py
+      - name: Prepare measured one-run challenge (no browser)
+        id: prepare
+        timeout-minutes: 2
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python scripts/qa_directory_retention_core_live_bootstrap.py --prepare
+      - name: Publish challenge artifact before permit wait
+        timeout-minutes: 2
+        uses: actions/upload-artifact@v4
+        with:
+          name: directory-core-live-challenge-${{ github.run_id }}-${{ github.run_attempt }}-${{ steps.prepare.outputs.job_id }}
+          path: test-artifacts/directory-retention-core-live-bootstrap/observed-job.json
+          retention-days: 1
+          if-no-files-found: error
+      - name: Wait bounded permit and execute exact prepared job once
+        timeout-minutes: 26
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python scripts/qa_directory_retention_core_live_bootstrap.py --execute
+      - name: Preserve immutable first-attempt synthetic evidence
+        if: always()
+        timeout-minutes: 2
+        uses: actions/upload-artifact@v4
+        with:
+          name: directory-retention-core-live-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            test-artifacts/directory-retention-core-live-bootstrap/
+            test-artifacts/directory-retention-core-live/
+          retention-days: 7
+          if-no-files-found: error
