@@ -301,3 +301,87 @@ def test_hidden_component_geometry_is_not_queried(states):
     field.queryComponent = forbidden
     value = collect(desktop([Node(children=[field])]), 123, {'dialog'})['nodes'][1]
     assert value['screen_rect'] is None
+
+
+def topology_fixture():
+    frame = Node('frame', 'Synthetic native window', children=[Node('entry', 'not traversed')])
+    return reader.failure_topology([Node('application', 'Chromium', children=[frame])], 123, API, 0)
+
+
+def test_dialog_count_retains_only_shallow_metadata_and_still_fails():
+    class ShallowOnly(Node):
+        def getChildAtIndex(self, index): raise AssertionError('Deeper topology read')
+        def queryText(self): raise AssertionError('Failure diagnostic text read')
+        def getRelationSet(self): raise AssertionError('Failure diagnostic relations read')
+    frame = ShallowOnly('frame', 'Synthetic native window', children=[Node()])
+    with pytest.raises(reader.ObservationFailure, match='dialog_count') as exc:
+        collect(desktop([frame]), 123, {'dialog'})
+    value = exc.value.topology
+    assert reader.valid_failure_topology(value, 123)
+    assert value['dialog_count'] == 0 and value['application_count'] == 1
+    assert [node['role'] for node in value['nodes']] == ['application', 'frame']
+    assert all('editable_entry_text' not in node and 'labelled_by' not in node for node in value['nodes'])
+
+
+def test_duplicate_dialogs_remain_failed_with_counts():
+    with pytest.raises(reader.ObservationFailure) as exc:
+        collect(desktop([Node(), Node()]), 123, {'dialog'})
+    assert exc.value.reason == 'dialog_count'
+    assert exc.value.topology['dialog_count'] == 2
+
+
+@pytest.mark.parametrize('mode', ['foreign', 'protected', 'bound'])
+def test_failure_topology_rejects_unsafe_nodes(mode):
+    frame = Node('frame')
+    if mode == 'foreign': frame.pid = 999
+    if mode == 'protected': frame.role = 'password'
+    children = [frame] if mode != 'bound' else [frame] * 64
+    with pytest.raises(reader.ObservationFailure):
+        reader.failure_topology([Node('application', children=children)], 123, API, 0)
+
+
+@pytest.mark.parametrize('mode', ['pid', 'extra', 'text', 'deep', 'count', 'rectangle'])
+def test_parent_topology_schema_rejects_drift(mode):
+    data = topology_fixture()
+    if mode == 'pid': data['pid'] = 999
+    if mode == 'extra': data['unrequested'] = 'value'
+    if mode == 'text': data['nodes'][1]['editable_entry_text'] = 'value'
+    if mode == 'deep': data['nodes'][1]['parent'] = 1
+    if mode == 'count': data['dialog_count'] = 1
+    if mode == 'rectangle': data['nodes'][1]['screen_rect'] = {'x': 0, 'y': 0, 'width': 1, 'height': 1}
+    assert not reader.valid_failure_topology(data, 123)
+
+
+def test_parent_failure_diagnostic_remains_exception(monkeypatch):
+    failure = {'stage': 'dialogs', 'reason': 'dialog_count', 'type': 'ObservationFailure'}
+    topology = topology_fixture()
+    monkeypatch.setattr(bus.subprocess, 'run', lambda *a, **kw: SimpleNamespace(
+        stdout=json.dumps(topology).encode(), stderr=json.dumps(failure).encode(), returncode=1))
+    with pytest.raises(bus.AccessibilityDiagnosticFailure) as exc:
+        bus.capture_accessibility({}, {'pid': 123})
+    assert exc.value.topology == topology
+
+
+@pytest.mark.parametrize('drift', [False, True])
+def test_failed_metadata_retained_only_after_post_read_guard(monkeypatch, drift):
+    from unittest.mock import Mock
+    topology = topology_fixture()
+    error = bus.AccessibilityDiagnosticFailure('failed')
+    error.topology = topology
+    monkeypatch.setattr(headed.HeadedJourney, 'capture_desktop', lambda self, stage: None)
+    monkeypatch.setattr(probe, 'display_environment', lambda *args: {})
+    monkeypatch.setattr(probe, 'verified_browser', lambda *args: {'path': '/pinned'})
+    monkeypatch.setattr(probe, 'desktop_measurement', lambda env: ({}, b''))
+    owner = {'pid': 123}
+    owners = iter([owner, {'pid': 999} if drift else owner])
+    monkeypatch.setattr(bus, 'dialog_owner', lambda *args: next(owners))
+    def fail(*args): raise error
+    monkeypatch.setattr(bus, 'capture_accessibility', fail)
+    journey = object.__new__(probe.HeadedJourney)
+    journey.base = Path('/unused')
+    journey.config = SimpleNamespace(commit='a' * 40)
+    journey.desktop_observations = [{}]
+    journey.guard = Mock()
+    with pytest.raises(local.SafetyStop): journey.capture_desktop('settled-after-click')
+    assert ('accessibility_failure_topology' in journey.desktop_observations[0]) is not drift
+    assert journey.guard.call_count == (1 if drift else 2)

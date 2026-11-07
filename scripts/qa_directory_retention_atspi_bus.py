@@ -131,6 +131,10 @@ def dialog_owner(metadata, binary):
             'title': geometry[1], 'screen_rect': {'x': x, 'y': y, 'width': width, 'height': height}}
 
 
+class AccessibilityDiagnosticFailure(SafetyStop):
+    """A failed observation carrying separately validated diagnostic evidence."""
+
+
 def capture_accessibility(env, owner):
     helper = Path(__file__).with_name('qa_directory_retention_atspi_read.py')
     # Parent timeout + helper alarm bound hung IPC. Helper bounds serialized output
@@ -147,7 +151,16 @@ def capture_accessibility(env, owner):
         if (isinstance(failure, dict) and set(failure) == {'stage', 'reason', 'type'}
                 and failure['stage'] in reader.STAGES and failure['reason'] in reader.REASONS
                 and failure['type'] in reader.TYPES):
-            raise SafetyStop('Accessibility helper failed: ' + json.dumps(failure, sort_keys=True))
+            error = AccessibilityDiagnosticFailure('Accessibility helper failed: ' + json.dumps(failure, sort_keys=True))
+            if failure == {'stage': 'dialogs', 'reason': 'dialog_count', 'type': 'ObservationFailure'} and result.stdout:
+                try:
+                    topology = json.loads(result.stdout)
+                except (ValueError, UnicodeError):
+                    topology = None
+                if not reader.valid_failure_topology(topology, owner['pid']):
+                    raise SafetyStop('Invalid failure topology withheld')
+                error.topology = topology
+            raise error
         raise SafetyStop('Accessibility helper failed: unclassified exit (raw output withheld)')
     data = json.loads(result.stdout)
     if (data.get('pid') != owner['pid'] or data.get('observation_only') is not True

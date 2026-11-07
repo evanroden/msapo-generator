@@ -59,7 +59,17 @@ class HeadedJourney(headed.HeadedJourney):
         before = self.desktop_observations[-1]
         owner = bus.dialog_owner(before, verified_browser(self.base)["path"])
         # Helper observes only the verified PID and only its unique native dialog.
-        data = bus.capture_accessibility(env, owner)
+        try:
+            data = bus.capture_accessibility(env, owner)
+        except bus.AccessibilityDiagnosticFailure as exc:
+            after, _ = desktop_measurement(env)
+            if bus.dialog_owner(after, verified_browser(self.base)["path"]) != owner:
+                raise SafetyStop("Native dialog ownership changed during failed accessibility read")
+            self.guard()
+            if hasattr(exc, "topology"):
+                before["accessibility_failure_topology"] = exc.topology
+                before["owned_dialog"] = owner
+            raise  # Diagnostic preservation never converts failure into success.
         after, _ = desktop_measurement(env)
         if bus.dialog_owner(after, verified_browser(self.base)["path"]) != owner:
             raise SafetyStop("Native dialog ownership changed during accessibility read")

@@ -86,6 +86,98 @@ def child_count(node):
     return count
 
 
+def surface_metadata(node, pid, api):
+    """Only one owned node's bounded metadata; never Text or relations."""
+    if node is None or node.get_process_id() != pid:
+        raise ObservationFailure('ownership')
+    # GTK exposes password entries with PASSWORD_TEXT; also reject explicit
+    # protected/password attributes rather than reading any text from them.
+    attributes = node.get_attributes()
+    if not isinstance(attributes, dict) or len(attributes) > 32:
+        raise ObservationFailure('attribute_bound')
+    for key, value in attributes.items():
+        bounded_text(key)
+        bounded_text(value)
+    if (node.getRole() == api.ROLE_PASSWORD_TEXT
+            or any(str(attributes.get(key, '')).lower() in {'true', '1', 'password'}
+                   for key in ('protected', 'password', 'text-input-type', 'input-type'))):
+        raise ObservationFailure('protected_field')
+    state = node.getState()
+    states = {name: bool(state.contains(getattr(api, 'STATE_' + name.upper())))
+              for name in ('showing', 'visible', 'enabled', 'sensitive', 'focused', 'editable')}
+    interfaces = api.listInterfaces(node)
+    if len(interfaces) > 32:
+        raise ObservationFailure('tree_bound')
+    rectangle = None
+    if 'Component' in interfaces and states['showing'] and states['visible']:
+        bounds = node.queryComponent().getExtents(api.DESKTOP_COORDS)
+        rectangle = {key: int(getattr(bounds, key)) for key in ('x', 'y', 'width', 'height')}
+        if (any(abs(rectangle[key]) > 32768 for key in ('x', 'y'))
+                or any(not 0 <= rectangle[key] <= 32768 for key in ('width', 'height'))):
+            raise ObservationFailure('rectangle_bound')
+    return {'role': bounded_text(node.getRoleName()), 'name': bounded_text(node.name),
+            'children': child_count(node), 'states': states, 'screen_rect': rectangle}
+
+
+def failure_topology(apps, pid, api, dialog_count):
+    """Failure diagnostic only: owned apps plus immediate children, no recursion."""
+    nodes = []
+    for app in apps:
+        if len(nodes) >= MAX_CHILDREN:
+            raise ObservationFailure('tree_bound')
+        parent = len(nodes)
+        metadata = surface_metadata(app, pid, api)
+        nodes.append({'index': parent, 'parent': None, **metadata})
+        for offset in range(metadata['children']):
+            if len(nodes) >= MAX_CHILDREN:
+                raise ObservationFailure('tree_bound')
+            child = app.getChildAtIndex(offset)
+            nodes.append({'index': len(nodes), 'parent': parent,
+                          **surface_metadata(child, pid, api)})
+    return {'pid': pid, 'observation_only': True, 'diagnostic_only': True,
+            'scope': 'owned-applications-and-immediate-children',
+            'application_count': len(apps), 'dialog_count': dialog_count, 'nodes': nodes}
+
+
+def valid_failure_topology(data, pid):
+    """Validate helper JSON before retaining any failed-attempt diagnostic."""
+    if (not isinstance(data, dict) or set(data) != {'pid', 'observation_only',
+            'diagnostic_only', 'scope', 'application_count', 'dialog_count', 'nodes'}
+            or data['pid'] != pid or data['observation_only'] is not True
+            or data['diagnostic_only'] is not True
+            or data['scope'] != 'owned-applications-and-immediate-children'
+            or type(data['dialog_count']) is not int or not 0 <= data['dialog_count'] <= MAX_CHILDREN
+            or data['dialog_count'] == 1 or type(data['application_count']) is not int
+            or not 1 <= data['application_count'] <= MAX_CHILDREN
+            or not isinstance(data['nodes'], list) or not 1 <= len(data['nodes']) <= MAX_CHILDREN):
+        return False
+    roots = []
+    for index, node in enumerate(data['nodes']):
+        if (not isinstance(node, dict) or set(node) != {'index', 'parent', 'role', 'name',
+                'children', 'states', 'screen_rect'} or node['index'] != index
+                or type(node['children']) is not int or not 0 <= node['children'] <= MAX_CHILDREN
+                or any(not isinstance(node[key], str) or len(node[key]) > MAX_STRING for key in ('role', 'name'))
+                or not isinstance(node['states'], dict)
+                or set(node['states']) != {'showing', 'visible', 'enabled', 'sensitive', 'focused', 'editable'}
+                or any(type(value) is not bool for value in node['states'].values())):
+            return False
+        if node['parent'] is None:
+            roots.append(index)
+        elif type(node['parent']) is not int or node['parent'] not in roots:
+            return False
+        rect = node['screen_rect']
+        if rect is not None:
+            if (not node['states']['showing'] or not node['states']['visible']
+                    or not isinstance(rect, dict) or set(rect) != {'x', 'y', 'width', 'height'}
+                    or any(type(value) is not int for value in rect.values())
+                    or any(abs(rect[key]) > 32768 for key in ('x', 'y'))
+                    or any(not 0 <= rect[key] <= 32768 for key in ('width', 'height'))):
+                return False
+    return len(roots) == data['application_count'] and all(
+        sum(node['parent'] == root for node in data['nodes']) == data['nodes'][root]['children']
+        for root in roots)
+
+
 def collect(desktop, pid, dialog_roles, api):
     global STAGE
     STAGE = "applications"
@@ -109,7 +201,9 @@ def collect(desktop, pid, dialog_roles, api):
             if node.getRole() in dialog_roles:
                 dialogs.append(node)
     if len(dialogs) != 1:
-        raise ObservationFailure('dialog_count')
+        failure = ObservationFailure('dialog_count')
+        failure.topology = failure_topology(apps, pid, api, len(dialogs))
+        raise failure
     STAGE = "nodes"
     nodes, owned_nodes = [], []
     def visit(node, parent, depth):
@@ -119,31 +213,9 @@ def collect(desktop, pid, dialog_roles, api):
             raise ObservationFailure('ownership')
         index = len(nodes)
         count = child_count(node)
-        # GTK exposes password entries with PASSWORD_TEXT; also reject explicit
-        # protected/password attributes rather than reading any text from them.
-        attributes = node.get_attributes()
-        if not isinstance(attributes, dict) or len(attributes) > 32:
-            raise ObservationFailure('attribute_bound')
-        for key, value in attributes.items():
-            bounded_text(key)
-            bounded_text(value)
-        if (node.getRole() == api.ROLE_PASSWORD_TEXT
-                or any(str(attributes.get(key, '')).lower() in {'true', '1', 'password'}
-                       for key in ('protected', 'password', 'text-input-type', 'input-type'))):
-            raise ObservationFailure('protected_field')
-        state = node.getState()
-        states = {name: bool(state.contains(getattr(api, 'STATE_' + name.upper())))
-                  for name in ('showing', 'visible', 'enabled', 'sensitive', 'focused', 'editable')}
+        metadata = surface_metadata(node, pid, api)
+        states = metadata['states']
         interfaces = api.listInterfaces(node)
-        if len(interfaces) > 32:
-            raise ObservationFailure('tree_bound')
-        rectangle = None
-        if 'Component' in interfaces and states['showing'] and states['visible']:
-            bounds = node.queryComponent().getExtents(api.DESKTOP_COORDS)
-            rectangle = {key: int(getattr(bounds, key)) for key in ('x', 'y', 'width', 'height')}
-            if (any(abs(rectangle[key]) > 32768 for key in ('x', 'y'))
-                    or any(not 0 <= rectangle[key] <= 32768 for key in ('width', 'height'))):
-                raise ObservationFailure('rectangle_bound')
         entry_text = None
         # Never inspect document text or non-editable labels through Text.
         # Password fields are deliberately excluded, even in this synthetic run.
@@ -155,9 +227,7 @@ def collect(desktop, pid, dialog_roles, api):
                 raise ObservationFailure('text_bound')
             entry_text = bounded_text(text.getText(0, length))
         nodes.append({'index': index, 'parent': parent, 'depth': depth,
-                      'role': bounded_text(node.getRoleName()),
-                      'name': bounded_text(node.name), 'children': count,
-                      'states': states, 'screen_rect': rectangle,
+                      **metadata,
                       'editable_entry_text': entry_text, 'labelled_by': []})
         owned_nodes.append(node)
         for offset in range(count):
@@ -226,6 +296,13 @@ if __name__ == '__main__':
     try:
         main()
     except Exception as exc:
+        # Failed role uniqueness stays failed. Retain only bounded shallow
+        # owned-PID metadata, never entry text or a broader fallback traversal.
+        topology = getattr(exc, 'topology', None)
+        if isinstance(exc, ObservationFailure) and exc.reason == 'dialog_count' and topology is not None:
+            encoded = json.dumps(topology).encode('utf-8')
+            if len(encoded) <= MAX_BYTES:
+                sys.stdout.buffer.write(encoded)
         # Only fixed allowlisted classifications, never raw exception text or values.
         print(json.dumps(diagnostic(exc)), file=sys.stderr)
         raise SystemExit(1)
