@@ -149,6 +149,26 @@ def action_evidence(source: ReportSource):
     return tuple(accepted), tuple(needs_review)
 
 
+def _labeled_facility(text, profile):
+    """None means no label; an empty value keeps conflicting labels unresolved."""
+    values = [value.strip() for value in re.findall(
+        r"(?im)^[ \t]*(?:facility|site|building)[ \t]*[:=][ \t]*([^\r\n]{1,160})", text)
+        if value.strip()]
+    if not values:
+        return None
+    normalize = lambda value: " ".join(value.casefold().split())
+    names = {}
+    for site in profile.facilities:
+        for name in (site.key, site.title, *site.aliases):
+            names.setdefault(normalize(name), set()).add(site.key)
+    identities = set()
+    for value in values:
+        label = normalize(value)
+        matches = names.get(label, ())
+        identities.add(("site", next(iter(matches))) if len(matches) == 1 else ("label", label))
+    return values[0] if len(identities) == 1 else ""
+
+
 def suggest_facts(source: ReportSource, profile: ReportProfile) -> ReportSource:
     text = "\n".join(source.page_texts)
     sample = (source.filename + "\n" + text[:30_000]).casefold()
@@ -169,8 +189,8 @@ def suggest_facts(source: ReportSource, profile: ReportProfile) -> ReportSource:
         return match[1].strip() if match else ""
     raw_date = labeled("service date|report date|completed date|date")
     date_match = re.search(r"\b(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}/\d{1,2}/\d{2,4})\b", raw_date)
-    facility = labeled("facility|site|building")
-    if not facility:
+    facility = _labeled_facility(text, profile)
+    if facility is None:
         # Filenames can suggest a document type, but cannot establish which
         # site's facts its contents describe. Scope needs native source text
         # or the user's explicit item-specific correction.
@@ -552,6 +572,10 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
             if data.get("native_action_policy", 0) < 1:
                 # This is the original extraction cache, never a reviewed draft.
                 source = replace(source, actions="\n".join(line for line, _ in native_action_lines(source))[:6000])
+            if _labeled_facility("\n".join(source.page_texts), profile) == "":
+                # Correct only the disposable extraction view. Saved/manual
+                # sources are overlaid by restore_sources and remain unchanged.
+                source = replace(source, facility="")
             return replace(content, source=replace(source, filename=filename)), ()
         rebuild_cache = True
     if not rebuild_cache or not _same_source_bytes(path, raw):
