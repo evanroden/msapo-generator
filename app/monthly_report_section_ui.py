@@ -1168,7 +1168,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                 st.rerun()
     cover_section = next((section for section in sections if section.key == "cover"), None)
     if cover_section and analysis.site_relation == "same":
-        from app.monthly_report_start_import import cover_photo_candidates
+        from app.monthly_report_start_import import cover_photo_candidates, cover_photo_choice_pending
         from app.monthly_report_picture_cards import review_cover_gallery
         from app.monthly_report_native_art_review import native_cover_furniture_ids
         furniture_ids = native_cover_furniture_ids(inspection.items) if source_view is not None else ()
@@ -1269,6 +1269,13 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                     st.caption(section.title + " · " + status)
     remaining = [s.title for s in sections if not plans.get(s.key, {}).get("approved")]
     todo = [*missing, *(["Review these sections: " + "; ".join(remaining) + "."] if remaining else [])]
+    if (cover_section is not None and analysis.site_relation == "same"
+            and cover_photo_choice_pending(cover_section.items, plans.get("cover", {}),
+                                           native_furniture_ids=furniture_ids)):
+        # An empty gallery selection is not the user's No-cover decision.
+        # This also protects the secondary uploader when its card is closed.
+        todo.append("Choose a cover photograph above or select No cover photograph "
+                    "before continuing; this report's photo has not been decided.")
     if fallback_error:
         todo.append("The selected ENFRA template could not be verified; your review is unchanged.")
     if fallback_template and not plans.get("cover", {}).get("omit"):

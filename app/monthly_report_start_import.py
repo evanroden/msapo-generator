@@ -261,6 +261,34 @@ def cover_photo_candidates(items, *, native_furniture_ids=()):
     return tuple(item for item in possible if item.word_section in cover_sections and item.position < stop)
 
 
+def cover_photo_choice_pending(items, plan, *, native_furniture_ids=()):
+    """No automatic approval when a plausible source photo has no decision.
+
+    Choosing an imported occurrence, an explicit No-photo receipt scoped to
+    these exact candidates, or a deliberate replacement is sufficient. A
+    template/whole-cover omission never claims to have recovered the photo.
+    """
+    if plan.get("omit"):
+        return False
+    candidates = cover_photo_candidates(items, native_furniture_ids=native_furniture_ids)
+    if not candidates:
+        return False
+    identities = tuple(item.id for item in candidates)
+    selected = [identity for identity in plan.get("selected", ())
+                if plan.get("destinations", {}).get(identity) == "cover_photo"]
+    if (len(selected) == 1 and selected[0] in identities
+            and not plan.get("cover_photo_omitted")):
+        return False
+    if (plan.get("cover_photo_omitted")
+            and tuple(plan.get("cover_photo_source_ids", ())) == identities
+            and not selected):
+        return False
+    if (not plan.get("cover_photo_omitted")
+            and any(slot == "cover_photo" for slot, _ in plan.get("new_assets", ()))):
+        return False
+    return True
+
+
 def unresolved_cover_artwork(items, *, native_furniture_ids=()):
     """Visible cover rasters with neither a photo choice nor a known logo role.
 
@@ -567,6 +595,23 @@ def _build_starting_import(path, inspection, plans, *, source_view=None, _operat
     plans = tuple(plans)
     if not all(p.get("approved") for p in plans):
         raise ValueError("Resolve the remaining starting-report questions before continuing.")
+    # An approved automatic plan can still have skipped an ambiguous source
+    # photograph. Both Starting Report routes must fail closed at the same
+    # builder boundary, including when a UI widget was unmounted on rerun.
+    from app.monthly_report_native_art_review import native_cover_furniture_ids
+    cover = next((s for s in section_reviews(inspection, source_view=source_view)
+                  if s.key == "cover"), None)
+    furniture_ids = native_cover_furniture_ids(inspection.items) if source_view is not None else ()
+    if cover is not None:
+        for plan in plans:
+            if (plan.get("key") == "cover" and plan.get("automatic")
+                    and plan.get("source_site_relation") == "same"
+                    and plan.get("source_sha256") == inspection.sha256
+                    and cover_photo_choice_pending(cover.items, plan,
+                                                   native_furniture_ids=furniture_ids)):
+                raise ValueError(
+                    "Choose a cover photograph from this Starting Report, or explicitly "
+                    "select No cover photograph before continuing. The original is unchanged.")
     # Check before contribution filtering: Omit cannot erase its conflicting
     # preservation record or move an exact target into an inactive plan.
     for plan in plans:
