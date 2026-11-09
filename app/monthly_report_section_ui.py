@@ -1281,14 +1281,8 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                           source_view=source_view, profile=candidate)
     with st.expander("Review what will be carried across (optional)", key=p + "_check_import", on_change="rerun") as details:
         if details.open:
-            for section in sections:
-                if section not in questions:
-                    plan = plans[section.key]
-                    has_content = any(plan.get(key) for key in ("selected", "new_assets", "preserved_assets"))
-                    status = "ready" if has_content else "starts blank"
-                    if not plan.get("approved") or plan.get("questions"):
-                        status = "needs review"
-                    st.caption(section.title + " · " + status)
+            from app.monthly_report_carryover_summary import render_carryover_summary
+            render_carryover_summary(sections, plans)
     remaining = [s.title for s in sections if not plans.get(s.key, {}).get("approved")]
     todo = [*missing, *(["Review these sections: " + "; ".join(remaining) + "."] if remaining else [])]
     if fallback_error:
