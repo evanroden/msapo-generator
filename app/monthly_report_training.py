@@ -78,10 +78,8 @@ def matrix_for_year(profile, matrix, stored, year, directory=None):
         return hospital_matrix(profile, matrix, directory)
     saved = _year_sites(stored, year)
     selected = {f.key: f.title for f in profile.facilities}
-    columns = []
-    for key, title in selected.items():
-        columns.extend(saved[key]["columns"] if key in saved else matrix.columns[2:])
-    columns = tuple(dict.fromkeys(columns))
+    columns = _requirement_columns(saved[key]["columns"] if key in saved else matrix.columns[2:]
+                                   for key in selected)
     rows = []
     for key, title in selected.items():
         if key in saved:
@@ -93,8 +91,8 @@ def matrix_for_year(profile, matrix, stored, year, directory=None):
                                           for value in row[2:]))
                                 for row in matrix.rows if row[1] == title)
         for row in source_rows:
-            values = dict(zip(source_columns, row[1:]))
-            rows.append((row[0], title, *(values.get(c, "Not recorded") for c in columns)))
+            values = {_requirement_key(column): value for column, value in zip(source_columns, row[1:])}
+            rows.append((row[0], title, *(values.get(_requirement_key(c), "Not recorded") for c in columns)))
     result = ReportTable(("Team member", "Site", *columns), tuple(rows), reference)
     return hospital_matrix(profile, result, directory)
 
@@ -109,8 +107,12 @@ def load_training(contract):
     return library._read(path) if path.exists() else {"schema": 1, "revision": 0, "sites": {}}
 
 
+def _requirement_key(name):
+    return " ".join(name.casefold().split())
+
+
 def validate_matrix(table):
-    if table.columns[:2] != ("Team member", "Site") or len({" ".join(c.casefold().split()) for c in table.columns}) != len(table.columns):
+    if table.columns[:2] != ("Team member", "Site") or len({_requirement_key(c) for c in table.columns}) != len(table.columns):
         raise ValueError("Training names must be unique and different from the team and site headings.")
     if len(table.columns) > 52 or len(table.rows) > 500:
         raise ValueError("Use at most 50 trainings and 500 team members.")
@@ -125,6 +127,18 @@ def validate_matrix(table):
         if any(value not in STATUSES for value in row[2:]):
             raise ValueError("Choose a recorded training status.")
     return table
+
+
+def _requirement_columns(groups):
+    """Join site requirements by their validated identity, retaining spelling."""
+    columns = {}
+    for group in groups:
+        # A duplicate within one site's record is ambiguous. Validate before
+        # joining so normalization cannot select one of its competing values.
+        validate_matrix(ReportTable(("Team member", "Site", *group), ()))
+        for title in group:
+            columns.setdefault(_requirement_key(title), title)
+    return tuple(columns.values())
 
 
 def save_training(profile, table, *, expected_revision, actor):
@@ -231,20 +245,18 @@ def seed_matrix(profile, block, stored, directory=None, *, year=None):
             unscoped = seed_matrix(profile, block, {"sites": prior}, directory)
             return matrix_for_year(profile, unscoped, stored, year, directory)
     reference = year_matrix_reference(year) if year is not None and not sites else MATRIX_REF
-    columns, rows = [], []
+    rows = []
     eligible, excluded = _directory_people(profile, directory)
     selected = {f.key: f for f in profile.facilities}
-    for key in selected:
-        columns.extend(sites.get(key, {}).get("columns", ()))
-    columns = list(dict.fromkeys(columns))
+    columns = _requirement_columns(sites.get(key, {}).get("columns", ()) for key in selected)
     for key, facility in selected.items():
         site = sites.get(key, {})
         known = set()
         for row in site.get("rows", ()):
             if (_person(row[0]), _person(facility.title)) in excluded:
                 continue
-            values = dict(zip(site.get("columns", ()), row[1:]))
-            rows.append((row[0], facility.title, *(values.get(c, "Not recorded") for c in columns)))
+            values = {_requirement_key(column): value for column, value in zip(site.get("columns", ()), row[1:])}
+            rows.append((row[0], facility.title, *(values.get(_requirement_key(c), "Not recorded") for c in columns)))
             known.add(_person(row[0]))
         for name in eligible.get(key, ()):
             if _person(name) not in known:

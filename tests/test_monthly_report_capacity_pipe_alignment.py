@@ -40,6 +40,18 @@ def test_pipe_alignment_keeps_exact_header_and_first_and_following_rows(border, 
     assert table.rows == (NORTH, SOUTH)
 
 
+def test_alignment_preserves_empty_measure_cells_and_correct_positions():
+    # The #716 blank-cell fix must survive an indented pipe alignment row.
+    north = ("North Hospital", "Steam", "", "50000", "lb/hr")
+    south = ("South Hospital", "Chilled water", "0", "", "tons")
+    lines = (pipe_row(COLUMNS), pipe_row(("---:",) * len(COLUMNS)),
+             pipe_row(north), pipe_row(south))
+    text = "\n".join("\t  " + line for line in lines)
+    table, = capacity._text_tables(text, "Synthetic")
+    assert table.columns == COLUMNS
+    assert table.rows == (north, south)
+
+
 def test_alignment_rules_do_not_merge_distinct_tables_or_promote_first_data_row():
     steam = text_table((NORTH,))
     cooling_columns = ("Facility", "Cooling capacity", "Units", "Qualifier")

@@ -7,7 +7,14 @@ from collections.abc import Mapping
 
 
 def runtime_commit(environ: Mapping[str, str] | None = None) -> str:
-    """Render provides the commit at runtime; reject arbitrary/untrusted text."""
+    """The served commit; reject arbitrary/untrusted text.
+
+    Render provides RENDER_GIT_COMMIT at runtime. Other hosts stamp
+    APP_GIT_COMMIT into the image at build time (Dockerfile build argument).
+    """
     source = os.environ if environ is None else environ
-    value = str(source.get("RENDER_GIT_COMMIT", "") or "")
-    return value.lower() if re.fullmatch(r"[0-9a-fA-F]{40}", value) else ""
+    for name in ("RENDER_GIT_COMMIT", "APP_GIT_COMMIT"):
+        value = str(source.get(name, "") or "")
+        if re.fullmatch(r"[0-9a-fA-F]{40}", value):
+            return value.lower()
+    return ""

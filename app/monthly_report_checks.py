@@ -20,6 +20,7 @@ from app.monthly_report_model import (
     used_block_keys,
     used_source_ids,
 )
+from app.monthly_report_page_reference import page_identity
 
 
 @dataclass(frozen=True)
@@ -247,8 +248,9 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                             tuple(picture_target(draft, block, n)
                                   for n in range(len(block.asset_hashes))
                                   if reference in asset_context(block, n))))
-                    if source and reference in image_references and len(parts) == 3 and parts[1].isdigit():
-                        page = int(parts[1])
+                    identity = page_identity(reference)
+                    if source and reference in image_references and identity is not None:
+                        page = identity[1]
                         page_captions = tuple(block.asset_captions[index] if index < len(block.asset_captions) else ""
                                               for index in range(len(block.asset_hashes))
                                               if reference in asset_context(block, index))
@@ -325,6 +327,15 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
         key, text = item[:2]
         narrative = item[2] if len(item) >= 3 else None
         structural_month = len(item) == 4 and item[3]
+        # Word renderers split VT/FF and record separators into paragraphs.
+        # Only reject characters that reach the XML writer unchanged.
+        invalid = sorted(set(re.findall(r"[\x00-\x08\x0e-\x1b\x1f\ud800-\udfff\ufffe\uffff]", text)))
+        if invalid:
+            codes = ", ".join(f"U+{ord(character):04X}" for character in invalid)
+            checks.append(ReportCheck(
+                "text_character",
+                f"Remove unsupported text characters ({codes}) from {key.replace('_', ' ')} before creating the report.",
+                True, key))
         if contains_price(text):
             checks.append(ReportCheck("pricing", f"Remove pricing from {key.replace('_', ' ')}. Client reports cannot contain prices.", True, key))
         phrases = placeholder_matches(text)

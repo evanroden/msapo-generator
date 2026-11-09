@@ -22,6 +22,9 @@ def _unused_column(columns, name):
 
 
 def _new_editor(table, scope):
+    columns = table.columns
+    if len(set(columns)) != len(columns):
+        columns = tuple(f'{index + 1}. {title}' for index, title in enumerate(columns))
     identity = _unused_column(table.columns, '__work_order_row_id')
     action = _unused_column((*table.columns, identity), '__work_order_row_action')
     artificial = not table.rows
@@ -30,7 +33,8 @@ def _new_editor(table, scope):
     return {'scope': scope, 'epoch': uuid4().hex, 'action_epoch': uuid4().hex,
             'table': table, 'pending': None, 'intent': None, 'rendered': False,
             'identity': identity, 'action': action, 'artificial': artificial,
-            'ids': ids, 'seed': [dict(zip(table.columns, row)) | {
+            'columns': columns,
+            'ids': ids, 'seed': [dict(zip(columns, row)) | {
                 identity: row_id, action: list(ACTIONS) if not artificial else []}
                 for row, row_id in zip(rows, ids)]}
 
@@ -67,6 +71,9 @@ def edit_imported_work_order_table(table, key, scope, prefix):
     state_key = key + '_row_editor'
     state = st.session_state.get(state_key)
     previous_state = state
+    if state and len(set(table.columns)) != len(table.columns) and 'columns' not in state:
+        # Retire pre-fix collapsed input without rewriting intact canonical cells.
+        state = None
     if state and state['scope'] == scope:
         pending = state['pending']
         if pending and table == pending['result']:
@@ -121,7 +128,8 @@ def edit_imported_work_order_table(table, key, scope, prefix):
     state['rendered'] = True
     # Strip BOTH helper columns before any blank/artificial-slot check. Values
     # in a button or hidden identity cell are not work-order data.
-    rows = [tuple(_cell_text(row.get(column)) for column in table.columns) for row in raw_rows]
+    columns = state.get('columns', table.columns)
+    rows = [tuple(_cell_text(row.get(column)) for column in columns) for row in raw_rows]
     ids = [row.get(state['identity']) for row in raw_rows]
     if state['artificial']:
         artificial_id = state['ids'][0]
