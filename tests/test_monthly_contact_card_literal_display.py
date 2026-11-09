@@ -99,8 +99,8 @@ def test_plain_contact_labels_keep_the_same_edit_and_add_controls():
     app = _open(table)
     assert "Synthetic Alice · Supervisor · North" in [
         widget.value for widget in app.markdown]
-    assert any(button.label == "Edit contact" for button in app.button)
-    assert any(button.label == "Add contact" for button in app.button)
+    assert _card_widget(app, "button", "_open_0_0").label == "Edit contact"
+    assert _card_widget(app, "button", "_add_0").label == "Add contact"
     app.run()
     assert not app.exception
     assert app.session_state["visible_tables"] == (table,)
@@ -123,3 +123,17 @@ def test_contract_scoped_vendor_summary_preserves_unmapped_values_and_msa_status
     assert _card_widget(app, "text_input", "_field_2").value == "**Source note**"
     _card_widget(app, "button", "_close").click().run()
     assert app.session_state["visible_tables"] == (table,)
+
+def test_html_like_contact_names_display_as_source_text():
+    row = ("<strong>Synthetic Name</strong>", "Supervisor <level-2>", "Plant <West>")
+    table = ReportTable(("Name", "Role", "Site"), (row,), "synthetic:html-like")
+    app = _open(table)
+    summary = " · ".join(row)
+    assert literal(summary) in [w.value for w in app.markdown]
+    assert summary not in [w.value for w in app.markdown]
+    _card_widget(app, "button", "_open_0_0").click().run()
+    assert not app.exception
+    assert tuple(_card_widget(app, "text_input", f"_field_{i}").value for i in range(3)) == row
+    _card_widget(app, "button", "_close").click().run()
+    assert app.session_state["visible_tables"] == (table,)
+    assert app.session_state["original_tables"] == (table,)
