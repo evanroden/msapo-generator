@@ -131,7 +131,7 @@ def test_unmatched_visible_editor_reports_recovery_instead_of_retargeting(monkey
 @pytest.mark.parametrize("code,text", (
     ("required", ""),
     ("review", "Unreviewed synthetic text"),
-    ("placeholder", "TBD: verify this synthetic report section"),
+    ("placeholder", "Insert image in this synthetic report section"),
     ("pricing", "Synthetic quoted price: $125"),
     ("text_character", "Synthetic bad character " + chr(1)),
 ))
