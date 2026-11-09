@@ -395,7 +395,7 @@ def test_diagnostic_trailing_proposal_note_pdf_has_unique_labels(
     from pathlib import Path
     import shutil
     import subprocess
-    import fitz
+    import pymupdf as fitz
 
     if not shutil.which("libreoffice"):
         pytest.skip("LibreOffice is required for native Word-to-PDF output")

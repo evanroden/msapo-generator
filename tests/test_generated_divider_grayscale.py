@@ -20,7 +20,7 @@ def test_generated_divider_photo_is_grayscale_without_removing_brand_band():
 
 
 def test_generated_divider_pdf_photo_is_grayscale(tmp_path, monkeypatch):
-    import fitz
+    import pymupdf as fitz
     import pytest
     from conftest import libreoffice_can_convert
     from app import pdf_converter
