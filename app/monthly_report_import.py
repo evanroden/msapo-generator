@@ -82,9 +82,10 @@ def _cover_unreadable_object_note(element, *, word_section: int, position: int) 
         f"Cover body element {position} (Word section {word_section}) contains "
         + ", ".join(kinds)
         + ". Its text and placement are retained in the original, not approved as editable layout. "
-        "In Word, replace this specific drawing with an exported PNG/JPEG and upload the "
-        "report again, or explicitly use an existing saved cover design or the "
-        "independent ENFRA template instead of importing its cover."
+        "In Word, export or replace this specific drawing as PNG/JPEG, save "
+        "the corrected DOCX, then choose it in Starting report and analyze "
+        "again. If offered, an existing saved cover or verified ENFRA "
+        "template is a separate, explicitly selected fallback."
     )
 
 
