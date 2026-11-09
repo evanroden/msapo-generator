@@ -139,7 +139,12 @@ def _sync_tokens(previous_rows, previous_tokens, rows):
 def _field_default(value, kind):
     try:
         if kind == "date":
-            return date.fromisoformat(value) if value else None
+            parsed = date.fromisoformat(value) if value else None
+            # Streamlit's default calendar range extends ten years on either
+            # side. Preserve out-of-range dates as editable source text.
+            if parsed is not None and not date.min.year + 10 <= parsed.year <= date.max.year - 10:
+                return value
+            return parsed
         if kind in {"number", "currency"}:
             if not value:
                 return None
