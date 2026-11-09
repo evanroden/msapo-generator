@@ -78,12 +78,29 @@ def retire_contributions(block, contributions):
     return block
 
 
+def _retirement_page_key(reference):
+    """Identify a source/page for detachment only; never authorize a review."""
+    if not isinstance(reference, str):
+        return None
+    parts = reference.split(":")
+    if (len(parts) != 3 or not parts[0] or not parts[2] or not 1 <= len(parts[1]) <= 6
+            or not parts[1].isascii() or not parts[1].isdecimal()):
+        return None
+    # Historical page references may have a leading zero; never parse an
+    # unbounded integer or mistake a malformed token for page ownership.
+    number = parts[1].lstrip("0")
+    return (parts[0], number) if number else None
+
+
 def _detached(item, owned, token=None):
-    """An occurrence without the given source's links; other links stay."""
+    """Detach only an accepted source/page; retain unrelated page evidence."""
     from app.monthly_report_asset_instances import new_asset_instance
+    context_prefix = "asset-source-context:v1:"
+    owned_pages = {_retirement_page_key(ref) for ref in owned}
+    owned_pages.discard(None)
     references = tuple(ref for ref in item.references
-        if ref not in owned and not any(ref.startswith("asset-source-context:v1:" + value.split(":")[0] + ":")
-                                        for value in owned))
+        if ref not in owned and not (ref.startswith(context_prefix)
+                                    and _retirement_page_key(ref[len(context_prefix):]) in owned_pages))
     if token is None:
         return new_asset_instance(item.asset, references)
     # Retirement reruns on every render; the same receipt yields the same record.

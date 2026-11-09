@@ -83,7 +83,9 @@ def test_invalid_page_does_not_mark_plain_text_as_a_source_contribution(page):
     draft = draft_for(block)
     original = asdict(draft)
     assert source_uses(draft, SOURCE_ID) == ()
-    assert included_scope_valid(draft, SOURCE)
+    # An invalid page is not a source contribution, but its retained included
+    # reference must not approve an original whose site is still unknown.
+    assert not included_scope_valid(draft, SOURCE)
     assert asdict(draft) == original
 
 

@@ -144,6 +144,12 @@ def _column_positions(columns, aliases):
     return tuple(n for n, heading in enumerate(columns) if _name(heading) in aliases)
 
 
+def _source_header_bases(columns):
+    """Detect adapter numbering for ambiguity only; never remap source cells."""
+    return tuple(re.sub(r"(?: \((?:[2-9]|[1-9][0-9]+)\))+$", "", heading)
+                 for heading in columns)
+
+
 def _event_mapping(columns):
     return {key: matches[0] if len(matches := _column_positions(columns, names)) == 1
             else None for key, names in EVENT_HEADERS.items()}
@@ -281,6 +287,48 @@ def _event_issues(row, period):
     return tuple(errors)
 
 
+def review_training_event_sites(review, profile):
+    """Keep explicit source sites authoritative, including in retained reviews."""
+    if review.kind != "events":
+        return review
+    rows = []
+    for row in review.rows:
+        # The spreadsheet adapter disambiguates duplicate headings with " (2)"
+        # onward. A literal heading with that exact shape is indistinguishable:
+        # retain its cells and require review rather than invent site authority.
+        headings = _source_header_bases(row.origin.columns)
+        positions = _column_positions(headings, SITE)
+        numbered = any(headings[index] != row.origin.columns[index] for index in positions)
+        issue = ""
+        if len(positions) > 1 or numbered:
+            issue = "Ambiguous source Training site columns need review. Omit this row or correct the original source."
+        elif positions and not _normalize_site(row.origin.cells[positions[0]], profile):
+            issue = "Source Training site is missing, ambiguous or outside selected sites. Omit this row or correct the original source."
+        if issue and issue not in row.issues:
+            row = replace(row, issues=(*row.issues, issue))
+        rows.append(row)
+    return replace(review, rows=tuple(rows))
+
+
+def review_training_event_source(review, profile):
+    """Recheck source ambiguity without modifying a retained review receipt."""
+    review = review_training_event_sites(review, profile)
+    if review.kind != "events":
+        return review
+    headings = _source_header_bases(review.original_columns)
+    questions = list(review.issues)
+    for name, aliases in EVENT_HEADERS.items():
+        positions = _column_positions(headings, aliases)
+        question = ""
+        if len(positions) > 1:
+            question = "Multiple " + name + " columns need a deliberate choice."
+        elif any(headings[index] != review.original_columns[index] for index in positions):
+            question = "Numbered " + name + " column needs source mapping review."
+        if question and question not in questions:
+            questions.append(question)
+    return replace(review, issues=tuple(questions))
+
+
 def _matrix_issues(row, source_year, profile):
     values = row.values
     issues = []
@@ -387,10 +435,10 @@ def review_training_table(source: TrainingTableSource, profile: ReportProfile,
         questions.append("Confirm which calendar year the original requirements belong to.")
     if source.native_word:
         questions.append("Confirm the native Word table's merged cells and layout before import.")
-    return TrainingImportReview(
+    return review_training_event_source(TrainingImportReview(
         source, period.key, kind, source_year, tuple(columns), tuple(physical),
         tuple(normalized_cols), tuple(candidates), tuple(questions),
-        tuple(unresolved), native_layout_confirmed=not source.native_word)
+        tuple(unresolved), native_layout_confirmed=not source.native_word), profile)
 
 
 def correct_training_row(review: TrainingImportReview, key: str, changes: dict[str, str],
@@ -428,7 +476,8 @@ def correct_training_row(review: TrainingImportReview, key: str, changes: dict[s
                       else _matrix_issues(updated, review.source_year, profile))
     rows = list(review.rows)
     rows[index] = updated
-    return replace(review, rows=_mark_training_duplicates(rows, review.kind))
+    return review_training_event_source(
+        replace(review, rows=_mark_training_duplicates(rows, review.kind)), profile)
 
 
 def exclude_training_row(review: TrainingImportReview, key: str, *,

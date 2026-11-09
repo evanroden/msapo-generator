@@ -93,13 +93,56 @@ def mentioned_periods(text):
     periods = set()
     for month in range(1, 13):
         name = calendar.month_name[month]
-        for match in re.finditer(rf"\b(?:{name}|{name[:3]}\.?)\s+(?:\d{{1,2}},?\s+)?(20\d{{2}})\b", text, re.IGNORECASE):
+        variants = rf"{name}|{name[:3]}\.?"
+        if month == 9:
+            variants += r"|Sept\.?"
+        for match in re.finditer(
+                rf"\b(?:{variants})\s+(?:\d{{1,2}},?\s+)?(20\d{{2}})\b",
+                text, re.IGNORECASE):
             periods.add((int(match[1]), month))
     for match in re.finditer(r"\b(20\d{2})[-/](0?[1-9]|1[0-2])(?:[-/]\d{1,2})?\b", text):
         periods.add((int(match[1]), int(match[2])))
     for match in re.finditer(r"\b(0?[1-9]|1[0-2])/\d{1,2}/(20\d{2})\b", text):
         periods.add((int(match[2]), int(match[1])))
+    # Self-contained MM/YYYY dates are valid on covers and in body facts.
+    # A Windows path, work-order suffix, longer date or decimal is not a date.
+    for match in re.finditer(
+            r"(?<![\w/\\.\-])(0?[1-9]|1[0-2])/(20\d{2})(?![\w/\\.\-])",
+            text):
+        periods.add((int(match[2]), int(match[1])))
     return periods
+
+
+# A source cover can be one month behind unfinished work. A *planned* event
+# mentioned for the requested month is not proof that the event happened.
+# Inspect clauses rather than all body dates together: a completed September
+# repair and an October schedule often occur in adjacent paragraphs.
+_PROSPECTIVE = re.compile(
+    r"\b(?:plan(?:s|ned|ning)?|schedul(?:e|ed|ing)|upcoming|future|"
+    r"expect(?:ed|ing|s)?|anticipat(?:ed|ing|e)?|intend(?:ed|s)?|"
+    r"propos(?:ed|al)|forecast|projected|targeted|tentative|"
+    r"will|to\s+be|not\s+yet|pending)\b", re.IGNORECASE
+)
+
+
+def _target_month_evidence(text, requested):
+    """(dated actual/unclear work, scheduled-only mention) in one source item.
+
+    Date detection intentionally reuses the existing explicit-year rules.
+    A future-looking clause can contain the right month while describing
+    work which has not occurred. Such text stays editable and is not
+    automatically discarded; it simply needs the ordinary period review.
+    """
+    current = planned = False
+    clauses = re.split(r"[;\n]+|(?<=[.!?])\s+(?=[A-Z])", text)
+    for clause in clauses:
+        if requested not in mentioned_periods(clause):
+            continue
+        if _PROSPECTIVE.search(clause):
+            planned = True
+        else:
+            current = True
+    return current, planned
 
 
 def analyze_starting_report(inspection, profile, period, known_sites=(), *, confirmed_sites=None, known_profiles=()):
@@ -129,7 +172,7 @@ def analyze_starting_report(inspection, profile, period, known_sites=(), *, conf
                 sites = matched
     target = {site.key for site in profile.facilities}
     relation = "same" if sites and {s.key for s in sites} == target else "other" if sites else "unknown"
-    current, older, uncertain = [], [], []
+    current, older, uncertain, prospective = [], [], [], []
     requested = (period.year, period.month)
     cover_periods = mentioned_periods("\n".join(inspection.title_candidates))
     source_period = next(iter(cover_periods)) if len(cover_periods) == 1 else None
@@ -141,7 +184,13 @@ def analyze_starting_report(inspection, profile, period, known_sites=(), *, conf
             continue
         text = "\n".join((item.text, *(" ".join(row) for row in item.rows)))
         periods = mentioned_periods(text)
-        if requested in periods:
+        actual_month, scheduled_month = _target_month_evidence(text, requested)
+        if scheduled_month:
+            # A matching *future plan* is not a completion record. Even when
+            # an actual current task appears elsewhere, review this distinct
+            # planned paragraph or source table before presenting it as work.
+            prospective.append(item.id)
+        if actual_month:
             current.append(item.id)
         # Only standalone dated prose is safely left out automatically. Tables
         # can contain cumulative history; images cannot inherit a nearby date.
@@ -149,11 +198,14 @@ def analyze_starting_report(inspection, profile, period, known_sites=(), *, conf
             older.append(item.id)
         else:
             uncertain.append(item.id)
-    # A cover can lag unfinished body edits. Only an item's own explicit date
-    # proves old prose; undated work stays available for a section-level check.
-    period_review = tuple(i.id for i in inspection.items
-                          if i.kind == "text" and i.id in uncertain) if (
-        source_period and source_period < requested and not current) else ()
+    # A cover can lag unfinished body edits. An incidental scheduled target-
+    # month mention must neither waive independent undated work review nor
+    # become current work simply because another paragraph is genuinely dated.
+    # A scheduled-only source table also needs review, without removing rows.
+    period_review = tuple(i.id for i in inspection.items if (
+        source_period and source_period < requested and
+        ((i.kind == "text" and i.id in uncertain and not current)
+         or (i.kind in ("text", "table") and i.id in prospective))))
     return StartingReportAnalysis(sites, relation, tuple(current), tuple(older), tuple(uncertain), source_period, period_review)
 
 

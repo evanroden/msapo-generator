@@ -6,6 +6,8 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 # Documentation index
 
+[Directory original retention verification](DIRECTORY_RETENTION_291.md) - synthetic lifecycle/race regressions, reproducible retrospective policy comparison, and completed native served acceptance with scope limits.
+
 [Annual Training requirements](MONTHLY_TRAINING_YEARS.md) — explicit matrix year, legacy unknown-year preservation, deliberate annual transition, and unchanged separation from completed monthly sessions.
 
 [Native forward-message compatibility](native-forward-message-compatibility.md) — bounded native cache-advertisement repair, existing frontend generation retention, and independent browser acceptance requirements.
@@ -13,6 +15,8 @@ maintained: manually, pinned by tests/test_docs_index.py
 [Isolated source-render diagnostic](ISOLATED_SOURCE_RENDER_DIAGNOSTIC.md) — explicit, browser-isolated full-resolution passive DOCX inspection on the deployed renderer, with immutable source/input/output receipts; not report approval or completed-report acceptance.
 
 [External-agent Render archive retrieval](EXTERNAL_RENDER_ARCHIVE_ACCESS_2026-10-14.md) — anonymous six-source and synthetic-evidence shelves on the existing Render persistent disk; exact-download checksum tool for external agents, plus explicit owner upload and two-served-build acceptance boundaries. Code availability is not confirmation that an archive has been uploaded.
+
+[Monthly deterministic assembly boundary](monthly_report_assembly_boundary.md) — accepted-source review, synthetic saved-state and pinned-design checks, structural comparison limits and remaining served acceptance.
 
 [Shared report templates for agents](SHARED_REPORT_TEMPLATES.md) — immutable original DOCX references, 512 MiB uploads, and verified UI/CLI downloads. Storage does not install a master or alter reports; verify shared access before claiming availability.
 
