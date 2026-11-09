@@ -34,11 +34,20 @@ def layout_checks(draft):
             block = blocks.get(spec.key)
             if block is None or block.source == "Omit":
                 continue
-            from app.monthly_report_asset_layout import document_caption_problems
-            for index in document_caption_problems(block, draft.sources):
-                checks.append(ReportCheck('document_caption',
-                    f'Shorten source-page caption {index + 1} in {_label(spec.key)} to at most three lines before generating.',
-                    True, block.key))
+            # Caption measurement is only needed for recognized standalone
+            # PDF source pages. Plain photographs and non-image blocks retain
+            # their independent photo/layout rules without this font work.
+            if spec.type == "image_grid" and block.asset_hashes:
+                from app.monthly_report_asset_layout import (
+                    document_page_indexes, document_caption_problems)
+                if document_page_indexes(block, draft.sources):
+                    from app.monthly_report_correction_targets import picture_target
+                    for index in document_caption_problems(block, draft.sources):
+                        checks.append(ReportCheck(
+                            "document_caption",
+                            f"Shorten the source-page caption for picture {index + 1} "
+                            f"in {_label(spec.key)} to at most three lines before generating.",
+                            True, block.key, (picture_target(draft, block, index),)))
             if block.org_nodes:
                 problem = org_chart_problem(block.org_nodes)
                 if problem:
@@ -61,9 +70,18 @@ def layout_checks(draft):
                     "table_columns",
                     f"A row in {_label(spec.key)} has more cells than its {len(spec.columns)} columns. "
                     "Remove the extra cells or move them into the right column.", True, block.key))
-            for table in block.extra_tables:
-                # Blank added tables are skipped by the renderer; never block them.
+            for table_number, table in enumerate(block.extra_tables, 1):
+                # The Word writer silently omits imported tables with no
+                # headings, even when their rows contain real source values.
+                # Do not discard those cells; require review before Generate.
                 filled = any(cell is not None and str(cell).strip() for row in table.rows for cell in row)
+                if filled and not table.columns:
+                    checks.append(ReportCheck(
+                        "table_missing_columns",
+                        f"Imported table {table_number} in {_label(spec.key)} "
+                        "has source rows but no column headings. Add headings "
+                        "or leave this table out before creating the report.",
+                        True, block.key))
                 if filled and table.columns and any(len(row) > len(table.columns) for row in table.rows):
                     checks.append(ReportCheck(
                         "table_columns",

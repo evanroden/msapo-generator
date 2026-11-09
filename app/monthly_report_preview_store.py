@@ -151,14 +151,19 @@ class PreviewStore:
         """Decode only the one/two visible pages; never build a whole-page HTML."""
         if dpi not in (96, 120, 150):
             raise ValueError('Choose a supported preview resolution.')
+        # Validate the request's shape before consulting the private ticket.
+        # A stale/foreign/malformed ticket is an unavailable preview, not
+        # trusted page metadata: authenticate it through _get first.
         if (not isinstance(indexes, (list, tuple)) or len(indexes) > 2
-                or any(type(index) is not int or not 0 <= index < ticket.pages for index in indexes)):
+                or any(type(index) is not int or index < 0 for index in indexes)):
             raise ValueError('Choose at most two existing preview pages.')
         indexes = tuple(dict.fromkeys(indexes))
         with self._lock:
             entry = self._get(owner, ticket)
             if entry is None:
                 return None
+            if any(index >= entry.ticket.pages for index in indexes):
+                raise ValueError('Choose at most two existing preview pages.')
             result = []
             # Open only for a raster miss. Ownership, expiry and the backing
             # file were checked above, even when every requested page is warm.

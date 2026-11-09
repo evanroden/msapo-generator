@@ -117,3 +117,28 @@ def test_docker_build_patches_metadata_after_repository_copy():
     copy_position = source.index("COPY . .")
     patch_position = source.index("RUN python scripts/patch_streamlit_metadata.py")
     assert patch_position > copy_position
+    # Another host passes its own address; the default stays the Render one.
+    assert "ARG PUBLIC_SITE_ORIGIN=" + metadata.SITE_ORIGIN in source
+    assert 'patch_streamlit_metadata.py --origin "$PUBLIC_SITE_ORIGIN"' in source
+
+
+def test_another_host_origin_is_used_for_every_absolute_link(tmp_path):
+    static_dir = _fake_static_dir(tmp_path)
+    metadata.install_branding(static_dir, branding_dir=REPO_ROOT / "branding",
+                              origin="https://reports.example.org/")
+    html = (static_dir / "index.html").read_text(encoding="utf-8")
+    assert '<link rel="canonical" href="https://reports.example.org/" />' in html
+    assert 'content="https://reports.example.org/' + metadata.PREVIEW_NAME + '"' in html
+    assert "onrender.com" not in html
+
+
+@pytest.mark.parametrize("origin", (
+    "http://reports.example.org", "https://reports.example.org/path",
+    'https://x.example.org" onload="alert(1)', "reports.example.org", "https://",
+    "https://reports.example.org?x=1",
+))
+def test_origin_that_is_not_a_bare_https_origin_is_refused(tmp_path, origin):
+    static_dir = _fake_static_dir(tmp_path)
+    with pytest.raises(ValueError):
+        metadata.install_branding(static_dir, branding_dir=REPO_ROOT / "branding", origin=origin)
+    assert (static_dir / "index.html").read_text(encoding="utf-8") == DEFAULT_STREAMLIT_SHELL

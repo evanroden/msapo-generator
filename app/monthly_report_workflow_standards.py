@@ -4,12 +4,16 @@ The old global store is read-only migration input. Opening a report never seeds
 standing data, discovers other contracts, or adopts legacy procedures.
 """
 from dataclasses import asdict, dataclass, replace
+from io import BytesIO
 import hashlib
 import re
+
+from PIL import Image
 
 from app import monthly_report_library as library
 from app.monthly_report_asset_review import approve_all_assets, asset_context, pending_asset_indexes, refresh_asset_source_context
 from app.monthly_report_model import ResolvedBlock, profile_sections
+from app.monthly_report_page_reference import page_identity
 
 WORKFLOW_KEYS = ("business_hours_workflow", "after_hours_workflow")
 
@@ -67,8 +71,9 @@ def load_standards(contract=None):
         if (type(value["revision"]) is not int or value["revision"] < 1
                 or len(workflows) > 2 or len({item.key for item in workflows}) != len(workflows)
                 or any(item.key not in WORKFLOW_KEYS or item.block.key != item.key
-                       or not _eligible(item.block) or not item.origin_profile
-                       or not item.origin_fingerprint or not item.saved_at
+                       or not _eligible(item.block)
+                       or any(not isinstance(text, str) or not text for text in (
+                           item.origin_contract, item.origin_profile, item.origin_fingerprint, item.saved_at))
                        or (contract is not None and _contract(item.origin_contract) != _contract(contract))
                        for item in workflows)):
             raise ValueError("Invalid procedure manifest")
@@ -84,6 +89,23 @@ def _verify_asset(reference, raw):
         raise library.LibraryError("The workflow picture exceeds the size limit.")
     if library.asset_reference(raw, reference.rsplit(".", 1)[-1]) != reference:
         raise library.LibraryError("A workflow picture failed its integrity check.")
+    # A matching content hash alone does not prove these bytes can be rendered.
+    # Check only the disposable in-memory bytes, never rewrite the original.
+    expected = "PNG" if reference.endswith(".png") else "JPEG"
+    try:
+        with Image.open(BytesIO(raw)) as picture:
+            if picture.format != expected:
+                raise ValueError("Picture bytes do not match the saved file type.")
+            picture.verify()
+        if expected == "JPEG":
+            # Pillow's verify() checks JPEG headers but accepts some incomplete
+            # entropy streams. Decode a draft-resolution copy to detect them
+            # without expanding an original full-size photograph in memory.
+            with Image.open(BytesIO(raw)) as picture:
+                picture.draft("RGB", (1024, 1024))
+                picture.load()
+    except (OSError, ValueError, SyntaxError, Image.DecompressionBombError) as exc:
+        raise library.LibraryError("A workflow picture is not a readable PNG or JPEG.") from exc
     return raw
 
 
@@ -127,6 +149,9 @@ def _publish(contract, block, assets, *, origin_profile, origin_fingerprint,
         previous = next((item for item in current.workflows if item.key == block.key), None)
         if (previous and previous.block == pinned and previous.origin_profile == origin_profile
                 and previous.origin_fingerprint == origin_fingerprint):
+            # An unchanged manifest can still have missing or damaged picture links.
+            for ref, raw in prepared.items():
+                library._atomic_write(path / "assets" / ref, raw)
             return current
         item = WorkflowStandard(block.key, pinned, _contract(contract), origin_profile,
                                 origin_fingerprint, library._now())
@@ -155,10 +180,11 @@ def source_pages_allowed(block, sources, profile):
         if reference.startswith(("docx:", "contract-workflow-standard:v1:", "asset-source-context:v1:")):
             continue
         parts = reference.split(":")
-        if (len(parts) != 3 or not parts[1].isdigit()
+        identity = page_identity(reference)
+        if (identity is None
                 or not re.fullmatch(r"[a-f0-9]{64}", parts[2])):
             return False
-        source, page = source_index.get(parts[0]), int(parts[1])
+        source, page = source_index.get(identity[0]), identity[1]
         if (source is None or page not in source.selected_pages
                 or not 1 <= page <= len(source.page_texts) or not page_allowed(source, page)
                 or not visual_source_scope_valid(source, profile, artwork_keys=(block.key,))):
