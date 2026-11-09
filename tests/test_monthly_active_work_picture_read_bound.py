@@ -144,7 +144,10 @@ def test_opened_stream_over_limit_is_refused_before_digest_with_stream_closed(
                     draft.profile.key, draft.period)
     assert sizes == [len(raw) + 1] and streams[0].closed
     assert journal.read_bytes() == before
-    assert picture.read_bytes() == raw
+    # Path.read_bytes() opens through Path.open, which is still swapped for the
+    # picture here; read the untouched file through the original opener.
+    with original_open(picture, "rb") as handle:
+        assert handle.read() == raw
 
 
 def test_unchanged_oversized_file_still_refused_by_early_limit(monkeypatch, tmp_path):
