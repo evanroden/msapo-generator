@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import hashlib
+import json
 from pathlib import Path
 import re
 import uuid
@@ -53,6 +54,16 @@ def _generation(value: dict) -> str:
     return generation
 
 
+def _verified_saved_draft(value: dict) -> ReportDraft:
+    """A browser snapshot's content must match its persisted recovery identity."""
+    draft = library.draft_from_dict(value.get("draft", {}))
+    if value.get("fingerprint") != draft.fingerprint:
+        raise library.LibraryError(
+            "The unfinished browser journal fingerprint does not match its saved draft. "
+            "Shared reports are unchanged.")
+    return draft
+
+
 def current_generation(token: str, contract: str, key: str, period: ReportPeriod) -> str:
     """Recover the new identity after an explicit discard, even without a draft."""
     if not enabled(token):
@@ -77,7 +88,7 @@ def load(token: str, contract: str, key: str, period: ReportPeriod) -> ActiveWor
             not isinstance(value.get("base_snapshot_revision"), int) or
             value["base_snapshot_revision"] < 0):
         raise library.LibraryError("The browser's unfinished report data could not be read safely.")
-    draft = library.draft_from_dict(value.get("draft", {}))
+    draft = _verified_saved_draft(value)
     if (draft.profile.contract, draft.profile.key, draft.period) != (contract, key, period):
         raise library.LibraryError("Unfinished browser work belongs to a different report.")
     result = []
@@ -127,13 +138,19 @@ def save(token: str, draft: ReportDraft, *, expected_revision: int,
         path = folder / "working.json"
         previous = library._read(path) if path.exists() else None
         if previous and (previous.get("kind") not in ("browser_active_work_v1", "browser_active_work_discarded_v1")
-                         or type(previous.get("revision")) is not int or previous["revision"] < 1):
+                         or type(previous.get("revision")) is not int or previous["revision"] < 1
+                         or (previous["kind"] == "browser_active_work_v1"
+                             and not isinstance(previous.get("draft"), dict))):
             raise library.LibraryError("The unfinished browser journal could not be read safely.")
+        if previous and previous["kind"] == "browser_active_work_v1":
+            _verified_saved_draft(previous)
         generation = _generation(previous) if previous else ""
         revision = previous["revision"] if previous and previous["kind"] == "browser_active_work_v1" else 0
         asset_names = tuple(sorted(pending))
         same = bool(previous and previous["kind"] == "browser_active_work_v1"
                     and previous.get("fingerprint") == draft.fingerprint
+                    and previous.get("draft", {}).get("cover_recovery_request") == (
+                        json.loads(json.dumps(asdict(draft.cover_recovery_request))) if draft.cover_recovery_request else None)
                     and previous.get("base_snapshot_revision") == base_snapshot_revision
                     and tuple(previous.get("assets", ())) == asset_names)
         operation = {"id": operation_id, "parent_revision": expected_revision,
@@ -161,7 +178,16 @@ def save(token: str, draft: ReportDraft, *, expected_revision: int,
                 raise ActiveWorkConflict("The pending browser save no longer matches its committed report.")
             for name, raw in pending.items():
                 target = folder / "assets" / name
-                if not target.is_file() or target.stat().st_size > library.MAX_ASSET_BYTES or target.read_bytes() != raw:
+                if target.is_symlink() or not target.is_file():
+                    raise library.LibraryError("A committed browser-save picture failed its integrity check.")
+                try:
+                    if target.stat().st_size > library.MAX_ASSET_BYTES:
+                        raise library.LibraryError("A committed browser-save picture failed its integrity check.")
+                    with target.open("rb") as source:
+                        retained = source.read(library.MAX_ASSET_BYTES + 1)
+                except OSError as exc:
+                    raise library.LibraryError("A committed browser-save picture failed its integrity check.") from exc
+                if len(retained) > library.MAX_ASSET_BYTES or retained != raw:
                     raise library.LibraryError("A committed browser-save picture failed its integrity check.")
             return ActiveWork(draft, revision, base_snapshot_revision, generation=generation,
                               updated_at=previous.get("updated_at", ""))
@@ -173,6 +199,26 @@ def save(token: str, draft: ReportDraft, *, expected_revision: int,
         next_revision = (previous["revision"] if previous else 0) + 1
         missing = any(not (folder / "assets" / name).is_file() for name in asset_names)
         if same and not missing:
+            # A present picture alias can be damaged after the last save. The
+            # caller supplied and content-verified its bytes above; repair only
+            # that private alias, without advancing the unchanged journal.
+            repairs = []
+            for name, raw in pending.items():
+                target = folder / "assets" / name
+                if target.is_symlink():
+                    raise library.LibraryError("A retained browser-save picture cannot be verified safely.")
+                try:
+                    with target.open("rb") as source:
+                        retained = source.read(library.MAX_ASSET_BYTES + 1)
+                except OSError as exc:
+                    raise library.LibraryError("A retained browser-save picture could not be verified safely.") from exc
+                if retained != raw:
+                    repairs.append((target, raw))
+            for target, raw in repairs:
+                try:
+                    library._atomic_write(target, raw)
+                except OSError as exc:
+                    raise library.LibraryError("A retained browser-save picture could not be restored safely.") from exc
             return ActiveWork(draft, revision, base_snapshot_revision, generation=generation,
                               updated_at=previous.get("updated_at", ""))
         for name, raw in pending.items():

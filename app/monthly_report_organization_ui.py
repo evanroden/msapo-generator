@@ -190,6 +190,73 @@ def _change_part(prefix, active_key, selected):
     st.session_state[active_key] = selected
 
 
+
+def _contact_summary_tables(spec, block):
+    """Use the identical visible row/schema order as the authoritative editor."""
+    from app.monthly_report_visual_ui import _contact_block_tables
+    has_primary = bool(block.rows or (spec.type == "table" and spec.columns and not block.extra_tables))
+    return tuple(_contact_block_tables(block, spec, has_primary))
+
+
+def _open_contact_from_summary(prefix, active_key, spec, block, table_index, row_index, scope):
+    """Open an existing native row directly, without creating a second editor."""
+    from uuid import uuid4
+    from app.monthly_report_editor import _signature
+    from app.monthly_report_guided import _rich_text_scope
+    from app.monthly_report_visual_ui import _contact_widget_prefix
+
+    if scope != _rich_text_scope(prefix):
+        return  # An obsolete report/incarnation's click cannot select a new row.
+    tables = _contact_summary_tables(spec, block)
+    if (table_index >= len(tables) or row_index >= len(tables[table_index].rows)):
+        return
+    root = _contact_widget_prefix(prefix, "contact_matrix")
+    editor_key = root + "_compact_" + _signature((
+        tuple(table.columns for table in tables),
+        tuple(ref for ref in block.references
+              if not ref.startswith(("directory:", "directory-add-intent:"))),
+    ))
+    existing = st.session_state.get(editor_key)
+    st.session_state[root + "_compact_editor_key"] = editor_key
+    if isinstance(existing, dict) and existing.get("pending"):
+        # Expose an unresolved correction rather than replace its receipt.
+        _change_part(prefix, active_key, "contact_matrix")
+        return
+    record = (dict(existing) if isinstance(existing, dict)
+              and existing.get("tables") == tables else {})
+    record.update(tables=tables, active=(table_index, row_index),
+                  editor_slot=(table_index, row_index), fields=(),
+                  field_scope=uuid4().hex, epoch=uuid4().hex)
+    record.pop("pending", None)
+    st.session_state[editor_key] = record
+    _change_part(prefix, active_key, "contact_matrix")
+
+
+def _render_contact_summary_actions(spec, block, prefix, active_key):
+    """Put Edit beside saved contact summaries; keep bulk Add/Undo separately."""
+    if block.source == "Omit":
+        return
+    from app.monthly_report_editor import _signature
+    from app.monthly_report_guided import _rich_text_scope
+    from app.monthly_report_visual_ui import _contact_label
+
+    tables = _contact_summary_tables(spec, block)
+    if not any(table.rows for table in tables):
+        return
+    signature = _signature((tuple((table.columns, table.rows) for table in tables), block.references))
+    scope = _rich_text_scope(prefix)
+    for table_index, table in enumerate(tables):
+        for row_index, row in enumerate(table.rows):
+            description, action = st.columns([5, 1])
+            with description:
+                st.text(_contact_label(table.columns, row, row_index))
+            with action:
+                st.button("Edit contact",
+                          key=f"{prefix}_organization_contact_{scope}_{signature}_{table_index}_{row_index}",
+                          on_click=_open_contact_from_summary,
+                          args=(prefix, active_key, spec, block, table_index, row_index, scope))
+
+
 def render_organization(draft, blocks, specs, prefix, assets, field, edit_content, *, show_preview=True):
     """Return updated blocks; only an explicit Edit opens a part's editor.
 
@@ -216,6 +283,11 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
         st.markdown("#### " + title)
         current_draft = replace(draft, blocks=tuple(updated.values()))
         _preview_part(current_draft, spec, block, prefix, assets, title, show_preview=show_preview)
+        # A deferred Done must fill the same summary position as a closed rerun.
+        contact_summary = st.empty() if key == "contact_matrix" else None
+        if contact_summary is not None and st.session_state.get(active_key) != key:
+            with contact_summary.container():
+                _render_contact_summary_actions(spec, block, prefix, active_key)
         if st.session_state.get(active_key) != key:
             action = {
                 "org_chart": "Edit chart",
@@ -226,7 +298,9 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
             st.button(action, key=prefix + "_organization_open_" + key,
                       on_click=_change_part, args=(prefix, active_key, key))
             return
+        contract_inclusion = False
         def render_editor():
+            nonlocal contract_inclusion
             st.button("Done", key=prefix + "_organization_close_" + key,
                       on_click=_change_part, args=(prefix, active_key, ""))
             # The specialized editors retain the explicit Include of a left-out part.
@@ -237,18 +311,27 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
                                         show_preview=show_preview, directory_baseline=canonical_before)
                 return _edit_notes(changed, prefix, field, canonical_before=canonical_before)
             if key == "org_chart":
+                # Explicit saved-chart adoption remounts only this chart's
+                # registered fields; old same-node-key values must not replay.
+                epoch = st.session_state.get(prefix + "_chart_default_epoch", 0)
+                def chart_field(name, default):
+                    return field(name + ("_chart_default_" + str(epoch) if epoch else ""), default)
                 if block.org_nodes:
                     changed = _include_left_out(spec, block, prefix)
-                    changed = edit_org_chart(current_draft, changed, prefix, assets, field, show_preview=show_preview)
+                    changed = edit_org_chart(current_draft, changed, prefix, assets, chart_field, show_preview=show_preview)
                     return _edit_notes(changed, prefix, field, canonical_before=canonical_before)
                 changed = edit_content(spec, block)
                 with st.expander("Build an editable team chart (optional)"):
                     changed = edit_org_chart(
                         replace(current_draft, blocks=tuple(changed if b.key == key else b for b in current_draft.blocks)),
-                        changed, prefix, assets, field, show_preview=show_preview,
+                        changed, prefix, assets, chart_field, show_preview=show_preview,
                     )
                 return changed
-            return edit_content(spec, block)
+            from app.monthly_report_workflow_defaults_ui import render_contract_procedure
+            changed = edit_content(spec, block)
+            changed, contract_inclusion = render_contract_procedure(
+                current_draft, changed, assets, prefix)
+            return changed
 
         switch_key = prefix + "_deferred_contact_switch"
         settling = key == "contact_matrix" and isinstance(st.session_state.get(switch_key), dict)
@@ -258,10 +341,18 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
                 changed = render_editor()
         else:
             changed = render_editor()
+        chart_included = False
+        if key == "org_chart":
+            from app.monthly_report_org_chart_defaults_ui import render_chart_defaults
+            chart_draft = replace(current_draft, blocks=tuple(changed if b.key == key else b for b in current_draft.blocks))
+            changed, chart_included = render_chart_defaults(chart_draft, changed, assets, prefix)
+            if chart_included:
+                epoch_key = prefix + "_chart_default_epoch"
+                st.session_state[epoch_key] = st.session_state.get(epoch_key, 0) + 1
         # Opening and closing an unchanged part must not invalidate its saved
         # review; an explicit Include of a left-out part is a real change.
         from app.monthly_report_guided import included_left_out
-        updated[key] = (changed if included_left_out(prefix, key)
+        updated[key] = (changed if chart_included or contract_inclusion or included_left_out(prefix, key)
                         or replace(changed, source=block.source) != block else block)
         if settling:
             request = st.session_state[switch_key]
@@ -284,6 +375,8 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
                 # edit and returned the canonical block to the workflow saver.
                 st.session_state[active_key] = request['selected']
                 close_slot.empty()
+                with contact_summary.container():
+                    _render_contact_summary_actions(spec, updated[key], prefix, active_key)
                 st.button("Edit contacts", key=prefix + "_organization_open_" + key,
                           on_click=_change_part, args=(prefix, active_key, key))
     parts = [(key, title) for key, title in ORGANIZATION_PARTS if key not in WORKFLOW_KEYS]
@@ -296,8 +389,8 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
     for key, title in parts:
         with slots[key]:
             render_part(key, title)
-    with st.expander("ENFRA outage procedures", expanded=False):
-        st.caption("Saved procedures are included when selected. Changes here affect this report.")
+    with st.expander("Contract outage procedures", expanded=False):
+        st.caption("Use this contract’s procedures. Changes affect this report unless you explicitly save a contract default.")
         for key, title in ORGANIZATION_PARTS:
             if key in WORKFLOW_KEYS:
                 render_part(key, title)

@@ -36,7 +36,8 @@ moves a corrected draft away from an obsolete approver.
 Nothing learned on one contract is ever surfaced on another; even administrator
 details remain scoped to the exact account.
 
-Storage is a SQLite file on the Render persistent disk (mounted at /test1).
+Storage is a SQLite file in EPC_DATA_DIR: the Render persistent disk mounted at
+/test1, or the share another host mounts there.
 Falls back to a repo-local ./data_store for local dev, and degrades gracefully
 (no learning, no crash) if the database can't be opened at all.
 
@@ -388,8 +389,9 @@ def _connect() -> sqlite3.Connection | None:
     disk is missing, read-only, full or corrupt (FM-G04), so learning degrades
     without touching the workflow.
 
-    Persistent WAL mode and migrations are established once per database
-    identity/schema version. Connections themselves are never cached or shared.
+    The journal mode (WAL on a local disk, the rollback journal on a network
+    share) and migrations are established once per database identity/schema
+    version. Connections themselves are never cached or shared.
     """
     conn: sqlite3.Connection | None = None
     try:
@@ -402,7 +404,17 @@ def _connect() -> sqlite3.Connection | None:
             version = conn.execute("PRAGMA schema_version").fetchone()[0]
             identity = (stat.st_dev, stat.st_ino, version)
             if _INITIALIZED_DATABASES.get(str(path)) != identity:
-                conn.execute("PRAGMA journal_mode=WAL")
+                # WAL on a local disk; the rollback journal on a network share
+                # (see app/sqlite_storage.py). Leaving WAL needs the only open
+                # connection; while another is open SQLite refuses ("database
+                # is locked"), so this request keeps the current mode and a
+                # later connection tries again.
+                from app.sqlite_storage import journal_mode
+                wanted = journal_mode(path)
+                try:
+                    switched = str(conn.execute(f"PRAGMA journal_mode={wanted}").fetchone()[0]).upper() == wanted
+                except sqlite3.OperationalError:
+                    switched = False
                 conn.executescript(_SCHEMA)
                 _migrate_expense_approver_identity(conn)
                 # After the identity migration, which rebuilds
@@ -411,7 +423,8 @@ def _connect() -> sqlite3.Connection | None:
                 version = conn.execute("PRAGMA schema_version").fetchone()[0]
                 if len(_INITIALIZED_DATABASES) >= 128:
                     _INITIALIZED_DATABASES.clear()
-                _INITIALIZED_DATABASES[str(path)] = (stat.st_dev, stat.st_ino, version)
+                if switched:
+                    _INITIALIZED_DATABASES[str(path)] = (stat.st_dev, stat.st_ino, version)
         return conn
     except Exception:
         if conn is not None:

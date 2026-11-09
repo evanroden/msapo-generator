@@ -406,7 +406,7 @@ class FixtureVault:
                 raise VaultIntegrityError("Private fixture original hash/size does not match.")
             receipt = FixtureReceipt(fixture_id, digest, len(original), value["media_type"], metadata)
             return FixtureOriginal(receipt, original), len(encoded) + len(transaction)
-        except (KeyError, TypeError, ValueError) as exc:
+        except (KeyError, TypeError, ValueError, RecursionError) as exc:
             raise VaultIntegrityError("Private fixture manifest is invalid.") from exc
         finally:
             os.close(fd)

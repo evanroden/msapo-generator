@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 import time
 
+from docx import Document
 import pytest
 
 from app import monthly_report_render_jobs as jobs
@@ -71,10 +72,14 @@ def test_docx_remains_downloadable_when_pdf_runs_out_of_resources(monkeypatch):
     from app import monthly_report_docx as module
     from app.monthly_report_model import synthetic_draft, synthetic_profiles, ReportPeriod
     draft = synthetic_draft(synthetic_profiles()[0], ReportPeriod(2026,9))
-    monkeypatch.setattr(module, 'assemble_docx', lambda *a, **kw: b'completed-docx')
+    # Match assembly's valid DOCX contract and omit the stock preview thumbnail.
+    document = Document()
+    document.add_paragraph('completed-docx')
+    completed_docx = module._save(document)
+    monkeypatch.setattr(module, 'assemble_docx', lambda *a, **kw: completed_docx)
     def busy(*a, **kw):
         raise jobs.RenderBusy('Synthetic converter resource pressure')
     monkeypatch.setattr(jobs, 'convert_to_pdf', busy)
     package = module.generate_report(draft)
-    assert package.docx == b'completed-docx' and package.pdf is None
+    assert package.docx == completed_docx and package.pdf is None
     assert 'DOCX is ready' in package.pdf_error

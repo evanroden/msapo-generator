@@ -22,6 +22,12 @@ def _renders_photo_pages(profile):
         return False  # the design error itself is reported when generating
 
 
+def _first_wide_row(rows, width):
+    """Return the first 1-based row number and its unmodified cell count."""
+    return next(((number, len(row)) for number, row in enumerate(rows, 1)
+                 if len(row) > width), None)
+
+
 def layout_checks(draft):
     from app.monthly_report_checks import ReportCheck
     from app.monthly_report_visuals import org_chart_problem, photo_caption_problems
@@ -34,11 +40,20 @@ def layout_checks(draft):
             block = blocks.get(spec.key)
             if block is None or block.source == "Omit":
                 continue
-            from app.monthly_report_asset_layout import document_caption_problems
-            for index in document_caption_problems(block, draft.sources):
-                checks.append(ReportCheck('document_caption',
-                    f'Shorten source-page caption {index + 1} in {_label(spec.key)} to at most three lines before generating.',
-                    True, block.key))
+            # Caption measurement is only needed for recognized standalone
+            # PDF source pages. Plain photographs and non-image blocks retain
+            # their independent photo/layout rules without this font work.
+            if spec.type == "image_grid" and block.asset_hashes:
+                from app.monthly_report_asset_layout import (
+                    document_page_indexes, document_caption_problems)
+                if document_page_indexes(block, draft.sources):
+                    from app.monthly_report_correction_targets import picture_target
+                    for index in document_caption_problems(block, draft.sources):
+                        checks.append(ReportCheck(
+                            "document_caption",
+                            f"Shorten the source-page caption for picture {index + 1} "
+                            f"in {_label(spec.key)} to at most three lines before generating.",
+                            True, block.key, (picture_target(draft, block, index),)))
             if block.org_nodes:
                 problem = org_chart_problem(block.org_nodes)
                 if problem:
@@ -56,18 +71,35 @@ def layout_checks(draft):
                             f"Shorten photo caption {index + 1} in {_label(spec.key)}, or choose fewer "
                             f"photos per page. At {block.photos_per_page} per page a caption can use "
                             "at most four lines.", True, block.key))
-            if spec.columns and any(len(row) > len(spec.columns) for row in block.rows):
-                checks.append(ReportCheck(
-                    "table_columns",
-                    f"A row in {_label(spec.key)} has more cells than its {len(spec.columns)} columns. "
-                    "Remove the extra cells or move them into the right column.", True, block.key))
-            for table in block.extra_tables:
-                # Blank added tables are skipped by the renderer; never block them.
-                filled = any(cell is not None and str(cell).strip() for row in table.rows for cell in row)
-                if filled and table.columns and any(len(row) > len(table.columns) for row in table.rows):
+            if spec.columns:
+                wide_row = _first_wide_row(block.rows, len(spec.columns))
+                if wide_row is not None:
+                    row_number, cells = wide_row
                     checks.append(ReportCheck(
                         "table_columns",
-                        f"A row in an added table in {_label(spec.key)} has more cells than its "
-                        f"{len(table.columns)} columns. Remove the extra cells or add the missing column.",
+                        f"Row {row_number} in {_label(spec.key)} has {cells} cells but only "
+                        f"{len(spec.columns)} columns. Correct the row before creating the report.",
                         True, block.key))
+            for table_number, table in enumerate(block.extra_tables, 1):
+                # The Word writer silently omits imported tables with no
+                # headings, even when their rows contain real source values.
+                # Do not discard those cells; require review before Generate.
+                filled = any(cell is not None and str(cell).strip() for row in table.rows for cell in row)
+                if filled and not table.columns:
+                    checks.append(ReportCheck(
+                        "table_missing_columns",
+                        f"Imported table {table_number} in {_label(spec.key)} "
+                        "has source rows but no column headings. Add headings "
+                        "or leave this table out before creating the report.",
+                        True, block.key))
+                if filled and table.columns:
+                    wide_row = _first_wide_row(table.rows, len(table.columns))
+                    if wide_row is not None:
+                        row_number, cells = wide_row
+                        checks.append(ReportCheck(
+                            "table_columns",
+                            f"Imported table {table_number}, row {row_number} in {_label(spec.key)} "
+                            f"has {cells} cells but {len(table.columns)} columns. Add a heading or "
+                            "correct the row before creating the report.",
+                            True, block.key))
     return checks

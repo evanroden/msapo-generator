@@ -1,0 +1,67 @@
+name: Synthetic fixture cleanup DOM
+
+on:
+  pull_request:
+    paths:
+      - 'run_web.py'
+      - 'app/web_ui.py'
+      - 'app/device_identity.py'
+      - 'app/memory.py'
+      - 'app/monthly_report_shared_fixtures.py'
+      - 'app/monthly_report_fixture_*.py'
+      - 'app/monthly_report_testing.py'
+      - 'app/monthly_report_shared_testing_ui.py'
+      - 'app/monthly_report_ui.py'
+      - 'scripts/qa_fixture_cleanup.py'
+      - 'scripts/qa_shared_fixture_testing.py'
+      - 'scripts/patch_streamlit_*.py'
+      - 'tests/test_qa_fixture_cleanup.py'
+      - '.github/workflows/fixture-cleanup.yml'
+      - 'requirements*.lock'
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  synthetic-cleanup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - name: Install locked app and both isolated browser engines
+        timeout-minutes: 20
+        run: |
+          sudo python3 scripts/ci_ubuntu_mirror_priority.py
+          python -m pip install -r requirements-dev.lock playwright==1.58.0
+          python scripts/patch_streamlit_frontend.py
+          python scripts/patch_streamlit_date_input.py
+          python -m playwright install --with-deps chromium webkit
+      - name: Synthetic fault, recovery and native disclosure gates
+        timeout-minutes: 16
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 15 <<'NATIVE_TEST'
+          python -m pytest -q tests/test_qa_fixture_cleanup.py
+          python scripts/qa_fixture_cleanup.py
+          NATIVE_TEST
+      - name: Retain synthetic first failures, DOM screenshots, traces and source receipts
+        if: always()
+        timeout-minutes: 3
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-fixture-cleanup-${{ github.run_attempt }}
+          path: test-artifacts/fixture-cleanup/
+          retention-days: 7
+          if-no-files-found: error
