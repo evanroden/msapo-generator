@@ -72,7 +72,121 @@ def observe_correction_navigation(page):
                 if (type === 'click' || type === 'pointercancel') pressed = null;
             }, {capture:true,passive:true});
         window.__sourceCorrectionNavigationObservations = samples;
+
+        // Preserve one bounded cold-gesture record even if this observer is
+        // installed again. These are observable inputs, not private guard state.
+        if (window.__sourceColdGestureObservations) return;
+        const cold = {sampleLimit:128, samples:[], truncated:false, stopReason:null};
+        window.__sourceColdGestureObservations = cold;
+        const listeners = [];
+        let watched = null, frameId = null, resize = null, finished = false;
+        const listen = (target, type, handler) => {
+            target.addEventListener(type, handler, {capture:true, passive:true});
+            listeners.push([target, type, handler]);
+        };
+        const stop = reason => {
+            if (finished) return;
+            finished = true;
+            cold.stopReason = reason;
+            if (frameId !== null) cancelAnimationFrame(frameId);
+            frameId = null;
+            resize?.disconnect();
+            for (const [target, type, handler] of listeners)
+                target.removeEventListener(type, handler, true);
+        };
+        const sample = (type, event = null) => {
+            if (!watched || finished) return;
+            const {button, marker, workspace, main, block} = watched;
+            const rect = button.getBoundingClientRect();
+            const owners = [...workspace?.querySelectorAll('.enfra-source-correction-owner') || []];
+            const number = key => typeof event?.[key] === 'number' ? event[key] : null;
+            cold.samples.push({type, time:performance.now(),
+                event:event ? {isTrusted:event.isTrusted === true,
+                    isPrimary:typeof event.isPrimary === 'boolean' ? event.isPrimary : null,
+                    button:number('button'), pointerType:event.pointerType ?? null,
+                    pointerId:number('pointerId'), clientX:number('clientX'), clientY:number('clientY'),
+                    key:event.key ?? null, targetTag:event.target?.tagName ?? null,
+                    targetInButton:Boolean(event.target?.nodeType && button.contains(event.target))} : null,
+                document:{hidden:document.hidden, visibility:document.visibilityState},
+                button:{connected:button.isConnected, disabled:button.disabled,
+                    stale:Boolean(button.closest('[data-stale="true"]')),
+                    inert:Boolean(button.closest('[inert]')),
+                    rect:{x:rect.x, y:rect.y, width:rect.width, height:rect.height}},
+                marker:{connected:marker.isConnected, reportIdentity:marker.dataset.reportIdentity ?? null,
+                    sourceId:marker.dataset.sourceId ?? null},
+                workspace:{count:document.querySelectorAll('.st-key-epc_workspace_monthly').length,
+                    connected:Boolean(workspace?.isConnected), mode:workspace?.dataset.epcMode ?? null,
+                    identity:workspace?._epcWorkspace?.identity ?? null, ownerCount:owners.length,
+                    owner:owners.length ? {connected:owners[0].isConnected,
+                        reportIdentity:owners[0].dataset.reportIdentity ?? null} : null},
+                main:{connected:Boolean(main?.isConnected), blockConnected:Boolean(block?.isConnected),
+                    scrollTop:main?.scrollTop ?? null, scrollHeight:main?.scrollHeight ?? null,
+                    clientHeight:main?.clientHeight ?? null, scrollLeft:main?.scrollLeft ?? null}});
+            if (cold.samples.length === cold.sampleLimit) {
+                cold.truncated = true;
+                stop('sample-limit');
+            }
+        };
+        const frame = () => {
+            frameId = null;
+            sample('animation-frame');
+            if (!finished) frameId = requestAnimationFrame(frame);
+        };
+        listen(document, 'pointerdown', event => {
+            if (watched) {sample('pointerdown', event); return;}
+            const button = event.target.closest?.('button');
+            const marker = button?.closest('[class*="st-key-monthly_source_warning_"]')
+                ?.querySelector('.enfra-source-warning');
+            if (!button || !marker) return;
+            const workspace = document.querySelector('.st-key-epc_workspace_monthly');
+            const main = button.closest('[data-testid="stMain"]');
+            const block = main?.querySelector('[data-testid="stMainBlockContainer"]');
+            watched = {button, marker, workspace, main, block, pointerId:event.pointerId};
+            sample('pointerdown', event);
+            resize = new ResizeObserver(() => sample('resize'));
+            if (block) resize.observe(block);
+            resize.observe(button);
+            if (main) listen(main, 'scroll', event => sample('scroll', event));
+            frameId = requestAnimationFrame(frame);
+        });
+        listen(document, 'pointermove', event => sample('pointermove', event));
+        for (const type of ['pointerup', 'pointercancel'])
+            listen(document, type, event => {
+                sample(type, event);
+                if (watched && event.pointerId === watched.pointerId) stop(type);
+            });
+        for (const type of ['wheel', 'keydown', 'visibilitychange'])
+            listen(document, type, event => {
+                if (watched) {sample(type, event); stop(type);}
+            });
+        for (const type of ['blur', 'pagehide'])
+            listen(window, type, event => {
+                if (watched) {
+                    sample(type, event);
+                    // Capture also sees ordinary descendant focus changes.
+                    // Only the window itself losing focus ends this gesture.
+                    if (type !== 'blur' || event.target === window) stop(type);
+                }
+            });
     }""")
+
+
+def _capture_cold_gesture_observations(page, record):
+    """Keep first-gesture evidence across reload without masking a test failure."""
+    if ("cold_gesture_observations" in record
+            or "cold_gesture_observation_failure" in record):
+        return
+    try:
+        captured = page.evaluate("window.__sourceColdGestureObservations || null")
+        if not isinstance(captured, dict) or captured.get("sampleLimit") != 128:
+            raise ValueError("Cold gesture observer did not return its bounded record.")
+        samples = captured.get("samples")
+        if (not isinstance(samples, list) or not 1 <= len(samples) <= 128
+                or not isinstance(samples[0], dict) or samples[0].get("type") != "pointerdown"):
+            raise ValueError("Cold gesture observer did not capture a bounded first pointerdown.")
+        record["cold_gesture_observations"] = captured
+    except Exception as exc:
+        record["cold_gesture_observation_failure"] = (type(exc).__name__ + ": " + str(exc))[:500]
 
 
 def browser_task(browser_type, name):
@@ -96,7 +210,9 @@ def browser_task(browser_type, name):
     page = context.new_page()
     page.set_default_timeout(20000)
     page.on("pageerror", lambda error: errors.append(str(error)))
-    record = {"synthetic_only": True, "errors": errors, "external": external}
+    from scripts.qa_cold_source_gesture import prove_native_gesture
+    record = {"synthetic_only": True, "errors": errors, "external": external,
+              "isolated_native_geometry_control": prove_native_gesture(browser)}
     out = qa.OUT / name
     out.mkdir(parents=True, exist_ok=True)
     # Hold the unchanged local native v2 module so the initial warning is
@@ -232,6 +348,17 @@ def browser_task(browser_type, name):
             r"^QA comparison completed: source replay · 18/18 · action [0-9a-f]{12} · at "
         ))).to_have_count(1, timeout=25000)
 
+        _capture_cold_gesture_observations(page, record)
+        assert ("cold_gesture_observations" in record
+                and "cold_gesture_observation_failure" not in record), record.get("cold_gesture_observation_failure")
+        cold_gesture = record["cold_gesture_observations"]
+        assert (cold_gesture.get("stopReason") == "pointerup"
+                and cold_gesture.get("truncated") is False
+                and cold_gesture["samples"][-1].get("type") == "pointerup"
+                and cold_gesture["samples"][0].get("event", {}).get("pointerId") is not None
+                and cold_gesture["samples"][-1].get("event", {}).get("pointerId")
+                == cold_gesture["samples"][0].get("event", {}).get("pointerId")), (
+                    "Successful cold navigation requires observations through its matching pointerup.", cold_gesture)
         page.set_viewport_size({"width": 390, "height": 844})
         record["stage"] = "narrow reload and keyboard date re-entry"
         page.reload(wait_until="domcontentloaded")
@@ -297,6 +424,7 @@ def browser_task(browser_type, name):
             record["capture_failure"] = str(capture_error)[:500]
         raise
     finally:
+        _capture_cold_gesture_observations(page, record)
         for request in held:
             request.continue_()
         page.unroute(component_module)

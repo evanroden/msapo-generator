@@ -249,9 +249,16 @@ def _docx_tables(profile, source):
 
 def _text_tables(text, name):
     """Only delimiters with an observable column structure qualify as a table."""
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    groups, current = [], []
+    # Keep edge tabs as empty cells until the table's delimiter is established.
+    lines = [line if "\t" in line else line.strip() for line in text.splitlines() if line.strip()]
+    groups, current, delimiter = [], [], None
     for line in lines:
+        stripped = line.strip()
+        # Preserve indentation around existing pipe/space tables and captions.
+        # A TSV header instead makes edge tabs structural, including pipe cells.
+        if (delimiter != "tab" and "\t" not in stripped
+                and (delimiter == "text" or "|" in stripped or re.search(r"\s{2,}", stripped))):
+            line = stripped
         if "\t" in line:
             row = tuple(line.split("\t"))
         elif "|" in line:
@@ -259,10 +266,16 @@ def _text_tables(text, name):
         else:
             row = tuple(re.split(r"\s{2,}", line))
         if len(row) > 1 and not all(re.fullmatch(r"[:\- ]*", c) for c in row):
+            if delimiter is None:
+                if "\t" in stripped:
+                    delimiter = "tab"
+                elif "\t" not in line:
+                    delimiter = "text"
             current.append(row)
         elif current:
             groups.append(current)
             current = []
+            delimiter = None
     if current:
         groups.append(current)
     return tuple(SourceTable(name + (f" / table {n}" if len(groups) > 1 else ""), rows[0], tuple(rows[1:]))
@@ -399,6 +412,29 @@ If no capacity table is visible return an empty tables list. This output will be
     return payload
 
 
+def _reader_title_sites_supported(title, text, facilities):
+    """Do not promote a reader-invented heading into a contract site binding.
+
+    A table's *title* is free-form model output, but _candidate may use it to
+    identify the site for every row without a site column. For readable pages
+    each known facility mentioned in that title must also be named by the
+    original source text. Only exact known names/aliases count; no substring
+    guessing or cross-page borrowing. Unrecognized names stay unmapped under
+    the existing review rules.
+    """
+    title, text = _normal(title), _normal(text)
+
+    def names_site(name, content):
+        return bool(re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", content))
+
+    for facility in facilities:
+        names = directory.facility_names(facility)
+        if any(names_site(name, title) for name in names):
+            if not any(names_site(name, text) for name in names):
+                return False
+    return True
+
+
 def reader_result(profile, inspection, value):
     source = inspection.content.source
     raw_tables = value.get("tables") if isinstance(value, dict) else None
@@ -411,6 +447,7 @@ def reader_result(profile, inspection, value):
         if (not isinstance(raw, dict) or type(raw.get("page")) is not int
                 or raw["page"] not in pages
                 or not isinstance(raw.get("title", ""), str)
+                or len(raw.get("title", "")) > 4000
                 or not isinstance(raw.get("columns"), list) or not isinstance(raw.get("rows"), list)
                 or not 1 <= len(raw["columns"]) <= 100 or len(raw["rows"]) > MAX_ROWS):
             raise ValueError("Capacity reader returned invalid table details; shared data is unchanged.")
@@ -429,6 +466,11 @@ def reader_result(profile, inspection, value):
             if any(cell.strip() and _normal(cell) not in native
                    for cell in (*columns, *(c for row in rows for c in row))):
                 raise ValueError("A suggested capacity label or unit was not in the source. Review the original file.")
+            # Unlike validated cells, a model-proposed title is not direct
+            # source evidence. Never use an unproved site name in that title
+            # to assign reusable capacity to a contract facility.
+            if not _reader_title_sites_supported(raw.get("title", ""), native, facilities):
+                raise ValueError("A suggested capacity title names a site not on the cited page. Review the site against the original file.")
         candidate = _candidate(SourceTable(raw.get("title") or f"Page {page}", tuple(columns), tuple(tuple(r) for r in rows)),
                                source, page, facilities, source.page_texts[page - 1])
         if candidate and not any(t.page == candidate.page and t.columns == candidate.columns and t.rows == candidate.rows for t in tables):
@@ -506,6 +548,29 @@ def _row_key(table, row, site):
     return site, _schema(table), _table_scope(table.title), dimensions
 
 
+def duplicate_capacity_rows(tables):
+    """Locate repeated site/service/plant identities in one reviewed import.
+
+    Identical values are not proof of two distinct pieces of equipment. Keep
+    the original source rows visible and require a distinct label or explicit
+    removal instead of publishing two copies of the same capacity fact.
+    Positions are 1-based (source table, data row), suitable for review.
+    """
+    seen = {}
+    repeats = []
+    for table_number, table in enumerate(tables, 1):
+        for row_number, (row, site) in enumerate(zip(table.rows, table.site_keys), 1):
+            if not site:
+                continue  # Unmatched sites are rejected by the existing review gate.
+            key = _row_key(table, row, site)
+            previous = seen.get(key)
+            if previous is not None:
+                repeats.append((previous, (table_number, row_number), site))
+            else:
+                seen[key] = (table_number, row_number)
+    return tuple(repeats)
+
+
 def _saved_table_candidates(current, new, site):
     """Resolve within an observed heading before considering column shape.
 
@@ -544,6 +609,11 @@ def first_fill_tables(current, incoming):
     facility; an existing service's numeric change is not an automatic update.
     Provenance, units, NR and old snapshots remain unchanged.
     """
+    incoming = tuple(incoming)
+    if duplicate_capacity_rows(incoming):
+        # Do not publish an arbitrary subset of a source containing duplicate
+        # identities. The reviewed source stays available for explicit repair.
+        return ()
     occupied = {
         _row_key(table, row, site)
         for table in (current.tables if current else ())
@@ -566,6 +636,13 @@ def save_capacity(profile, tables, *, expected_revision, actor, reviewed_fingerp
     if not tables or reviewed_fingerprint != review_fingerprint(tables):
         raise ValueError("The capacity review changed. Review the current tables before saving.")
     _validate_tables(tables, contract_facilities(profile))
+    repeats = duplicate_capacity_rows(tables)
+    if repeats:
+        first, second, _ = repeats[0]
+        raise ValueError(
+            "Two capacity rows have the same site and labels "
+            f"(table {first[0]} row {first[1]}, table {second[0]} row {second[1]}). "
+            "Remove the duplicate or identify a different plant/service before saving.")
     if any("[unclear]" in cell.casefold() for t in tables for row in t.rows for cell in row):
         raise ValueError("Correct unreadable capacity cells against the source before saving.")
     if mode not in ("merge", "replace_sites", "keep_both"):
@@ -584,6 +661,21 @@ def save_capacity(profile, tables, *, expected_revision, actor, reviewed_fingerp
                 if key in incoming and incoming[key] != row:
                     raise ValueError("Two capacity rows have the same site and labels but different values. Add the missing plant/service label before saving.")
                 incoming[key] = row
+        if mode == "keep_both" and current is not None:
+            # "Keep both" is for genuinely different capacity schemas, not
+            # two versions of the *same* site/service/plant measurement.
+            # Otherwise even a single incoming row can duplicate an approved
+            # standing row and falsely inflate the next report's capacity.
+            saved_keys = {
+                _row_key(old, row, site)
+                for old in current.tables
+                for row, site in zip(old.rows, old.site_keys)
+            }
+            if saved_keys.intersection(incoming):
+                raise ValueError(
+                    "Keep both would duplicate capacity rows with the same site "
+                    "and labels. Choose a distinct service/plant or replace "
+                    "the existing measurement instead.")
         replaced = set()
         if mode == "replace_sites":
             for new in tables:
@@ -617,13 +709,31 @@ def save_capacity(profile, tables, *, expected_revision, actor, reviewed_fingerp
     return state
 
 
+def selected_site_keys(profile):
+    """Stable report identities win; legacy names may identify only one site."""
+    known = contract_facilities(profile)
+    known_keys = {f.key for f in known}
+    state = directory.load_directory(profile.contract)
+    if state is not None:
+        # A retired saved identity is still known. Its old name cannot turn
+        # this report into a different active site's report.
+        known_keys.update(site.key for site in state.sites)
+    wanted = {f.key for f in profile.facilities}
+    for facility in profile.facilities:
+        if facility.key in known_keys:
+            continue
+        names = directory.facility_names(facility)
+        matches = {f.key for f in known if names & directory.facility_names(f)}
+        if len(matches) == 1:
+            wanted.update(matches)
+    return wanted
+
+
 def capacity_block(profile, state=None):
     state = state or load_capacity(profile.contract)
     if state is None:
         return None
-    known = contract_facilities(profile)
-    wanted = {f.key for f in profile.facilities}
-    wanted.update(match_site(name, known) for f in profile.facilities for name in (f.title, *f.aliases))
+    wanted = selected_site_keys(profile)
     selected, refs = [], []
     for table in state.tables:
         rows = tuple(row for row, site in zip(table.rows, table.site_keys) if site in wanted)
@@ -646,6 +756,8 @@ def capacity_block(profile, state=None):
 def resolve_capacity(draft: ReportDraft) -> ReportDraft:
     """Fill an empty first-use report only; snapshots and manual edits stay pinned."""
     current = next((b for b in draft.blocks if b.key == "thermal_capacity"), None)
+    if current and current.source == "Omit":
+        return draft
     if current and (current.text.strip() or current.rows or any(t.rows for t in current.extra_tables) or current.asset_hashes or current.org_nodes):
         return draft
     shared = capacity_block(draft.profile)
@@ -659,6 +771,8 @@ def resolve_capacity(draft: ReportDraft) -> ReportDraft:
 
 def can_refresh_capacity(profile, block):
     """An explicit shared save can refresh an unedited shared copy, not manual work."""
+    if block.source == "Omit":
+        return False
     if not (block.text.strip() or block.rows or any(t.rows for t in block.extra_tables) or block.asset_hashes or block.org_nodes):
         return True
     revisions = {int(match[1]) for reference in block.references

@@ -1,6 +1,6 @@
 """Evidence-only drafting. Files/cache/decoding stay on the caller thread."""
 
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import date
 from decimal import Decimal
 import hashlib
@@ -400,7 +400,15 @@ def _date_supported(text, event_date):
     return any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns)
 
 
-def _unverified_fact_dates(facts, sources):
+@dataclass(frozen=True)
+class FactDateProblem:
+    fact_id: str
+    source_id: str
+    page: int
+    message: str
+
+
+def fact_date_problems(facts, sources):
     """Revalidate persisted date claims without rewriting accepted evidence."""
     by_id = {source.id: source for source in sources}
     problems = []
@@ -413,11 +421,16 @@ def _unverified_fact_dates(facts, sources):
         if (type(fact.page) is int and 1 <= fact.page <= len(source.page_texts)
                 and _date_supported(source.page_texts[fact.page - 1], fact.date)):
             continue
-        problems.append(
+        problems.append(FactDateProblem(fact.id, source.id, fact.page,
             f"{source.filename} page {fact.page}: the saved date {fact.date} was not verified "
             "on the cited page. Read this page again and choose Use these facts, then "
-            "correct and review the linked wording. Your saved evidence is unchanged.")
+            "correct and review the linked wording. Your saved evidence is unchanged."))
     return tuple(dict.fromkeys(problems))
+
+
+def _unverified_fact_dates(facts, sources):
+    """Preserve the existing message API; structured owners need not parse it."""
+    return tuple(dict.fromkeys(problem.message for problem in fact_date_problems(facts,sources)))
 
 
 def block_date_problems(block, sources):
@@ -425,6 +438,63 @@ def block_date_problems(block, sources):
     wanted = {identity for paragraph in block.ai_paragraphs for identity in paragraph.fact_ids}
     return _unverified_fact_dates(
         (fact for source in sources for fact in source.facts if fact.id in wanted), sources)
+
+
+def _quote_on_source_token_boundaries(native: str, quote: str) -> bool:
+    """Require a complete cited quote, not a prefix of an equipment ID/value.
+
+    The reader can quote a relevant excerpt rather than an entire sentence,
+    so remain case/whitespace tolerant. But a substring ending inside F-20,
+    400psi, 40.0 or 1,200,000 is NOT evidence for F-2, 40 or 1,200.
+    Examine every occurrence: an early prefix collision may precede an
+    independent, valid occurrence later on the same page.
+    """
+    value = " ".join(native.split()).casefold()
+    needle = " ".join(quote.split()).casefold()
+    if not needle:
+        return False
+
+    def word(c):
+        return bool(c) and (c.isalnum() or c == "_")
+
+    # Match the dash variants already recognized by _quantity_tokens,
+    # without normalizing the source or quoted punctuation itself.
+    signs = ("-", "+", "\u2010", "\u2011", "\u2012", "\u2013", "\u2212", "\ufe63", "\uff0d")
+    compound = signs + (".", ",", "/")
+    at = value.find(needle)
+    while at != -1:
+        end = at + len(needle)
+        left = value[at - 1] if at else ""
+        right = value[end] if end < len(value) else ""
+        left_extends = (
+            word(needle[0]) and (
+                word(left)
+                or left in signs
+                or (left in (".", ",", "/")
+                    and at > 1 and word(value[at - 2]))
+            )
+        ) or (
+            len(needle) > 1
+            and needle[0] in compound
+            and word(needle[1])
+            and word(left)
+        )
+        right_extends = (
+            word(needle[-1]) and (
+                word(right)
+                or (right in compound
+                    and end + 1 < len(value) and word(value[end + 1]))
+            )
+        ) or (
+            len(needle) > 1
+            and needle[-1] in compound
+            and word(needle[-2])
+            and word(right)
+        )
+        if not left_extends and not right_extends:
+            return True
+        at = value.find(needle, at + 1)
+    return False
 
 
 def normalize_facts(value, source, pages, profile, period, vendors=()):
@@ -472,9 +542,16 @@ def normalize_facts(value, source, pages, profile, period, vendors=()):
                 "A fact was incomplete or exceeded its bounds. No facts were accepted."
             )
         native = " ".join(source.page_texts[page - 1].split()).casefold()
-        if " ".join(quote.split()).casefold() not in native:
+        if not _quote_on_source_token_boundaries(native, quote):
             raise ValueError(
                 "A fact's evidence quote was not found on its page. Review the source manually."
+            )
+        # A price-free summary can still cite a priced quote that would be
+        # persisted and transmitted in later model drafting requests.
+        if contains_price(quote):
+            raise ValueError(
+                "A fact's evidence quote contains pricing. Choose a price-free excerpt; "
+                "no facts were accepted."
             )
         if contains_price(text) or numbers(text) - numbers(quote):
             raise ValueError(
@@ -564,10 +641,20 @@ def drafting_request(block_key, sources, period, vendors=(), tags=(), instructio
         raise ValueError(
             "Choose a supported narrative and keep redrafting notes under 2,000 characters."
         )
-    facts = tuple(
+    candidates = tuple(
         f for s in sources for f in s.facts if f.kind in BLOCK_KINDS[block_key]
     )
+    # Preserve saved historical facts, but never serialize priced quotes or
+    # priced fact wording into an outward AI drafting payload.
+    facts = tuple(
+        f for f in candidates if not (
+            contains_price(f.text) or contains_price(f.quote)))
     if not facts:
+        if candidates:
+            raise ValueError(
+                "All available facts for this section contain pricing in their "
+                "wording or source quotes. Read a price-free excerpt; saved facts were not changed."
+            )
         raise ValueError(
             "No extracted facts for this section yet. Read sources or add Copilot notes first."
         )
@@ -624,6 +711,13 @@ def normalize_draft(value, key, facts, sources):
             raise ValueError("A draft cited a missing source or page.")
         if problems := _unverified_fact_dates(cited, sources):
             raise ValueError(problems[0])
+        # A previously cached completion cannot bypass the quote guard.
+        if any(contains_price(f.text) or contains_price(f.quote) for f in cited):
+            raise ValueError(
+                "A cited fact or source quote contains pricing. "
+                "Re-read price-free evidence before using this suggestion. "
+                "Your existing narrative was preserved."
+            )
         refs = tuple(
             dict.fromkeys(
                 source_reference(source_map[f.source_id], f.page) for f in cited

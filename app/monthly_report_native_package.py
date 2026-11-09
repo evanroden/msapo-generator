@@ -369,6 +369,12 @@ def passive_docx(path: Path) -> bytes:
                 root = _xml(raw)
                 original_xml = XML.tostring(root)
                 _passive_markup(root)
+                if kind == 'settings' and root.tag == '{' + W + '}settings':
+                    # Schema associations can carry the source client's namespace
+                    # and local file paths, including inside compatibility choices.
+                    for declaration in list(root.iter('{' + W + '}attachedSchema',
+                            '{http://schemas.openxmlformats.org/schemaLibrary/2006/main}schemaLibrary')):
+                        declaration.getparent().remove(declaration)
                 if name == 'word/document.xml':
                     for note_kind in NOTE_KINDS:
                         note_ids[note_kind] = {node.get('{' + W + '}id') for node in root.iter('{' + W + '}' + note_kind[:-1] + 'Reference')}

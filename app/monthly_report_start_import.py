@@ -93,13 +93,56 @@ def mentioned_periods(text):
     periods = set()
     for month in range(1, 13):
         name = calendar.month_name[month]
-        for match in re.finditer(rf"\b(?:{name}|{name[:3]}\.?)\s+(?:\d{{1,2}},?\s+)?(20\d{{2}})\b", text, re.IGNORECASE):
+        variants = rf"{name}|{name[:3]}\.?"
+        if month == 9:
+            variants += r"|Sept\.?"
+        for match in re.finditer(
+                rf"\b(?:{variants})\s+(?:\d{{1,2}},?\s+)?(20\d{{2}})\b",
+                text, re.IGNORECASE):
             periods.add((int(match[1]), month))
     for match in re.finditer(r"\b(20\d{2})[-/](0?[1-9]|1[0-2])(?:[-/]\d{1,2})?\b", text):
         periods.add((int(match[1]), int(match[2])))
     for match in re.finditer(r"\b(0?[1-9]|1[0-2])/\d{1,2}/(20\d{2})\b", text):
         periods.add((int(match[2]), int(match[1])))
+    # Self-contained MM/YYYY dates are valid on covers and in body facts.
+    # A Windows path, work-order suffix, longer date or decimal is not a date.
+    for match in re.finditer(
+            r"(?<![\w/\\.\-])(0?[1-9]|1[0-2])/(20\d{2})(?![\w/\\.\-])",
+            text):
+        periods.add((int(match[2]), int(match[1])))
     return periods
+
+
+# A source cover can be one month behind unfinished work. A *planned* event
+# mentioned for the requested month is not proof that the event happened.
+# Inspect clauses rather than all body dates together: a completed September
+# repair and an October schedule often occur in adjacent paragraphs.
+_PROSPECTIVE = re.compile(
+    r"\b(?:plan(?:s|ned|ning)?|schedul(?:e|ed|ing)|upcoming|future|"
+    r"expect(?:ed|ing|s)?|anticipat(?:ed|ing|e)?|intend(?:ed|s)?|"
+    r"propos(?:ed|al)|forecast|projected|targeted|tentative|"
+    r"will|to\s+be|not\s+yet|pending)\b", re.IGNORECASE
+)
+
+
+def _target_month_evidence(text, requested):
+    """(dated actual/unclear work, scheduled-only mention) in one source item.
+
+    Date detection intentionally reuses the existing explicit-year rules.
+    A future-looking clause can contain the right month while describing
+    work which has not occurred. Such text stays editable and is not
+    automatically discarded; it simply needs the ordinary period review.
+    """
+    current = planned = False
+    clauses = re.split(r"[;\n]+|(?<=[.!?])\s+(?=[A-Z])", text)
+    for clause in clauses:
+        if requested not in mentioned_periods(clause):
+            continue
+        if _PROSPECTIVE.search(clause):
+            planned = True
+        else:
+            current = True
+    return current, planned
 
 
 def analyze_starting_report(inspection, profile, period, known_sites=(), *, confirmed_sites=None, known_profiles=()):
@@ -129,7 +172,7 @@ def analyze_starting_report(inspection, profile, period, known_sites=(), *, conf
                 sites = matched
     target = {site.key for site in profile.facilities}
     relation = "same" if sites and {s.key for s in sites} == target else "other" if sites else "unknown"
-    current, older, uncertain = [], [], []
+    current, older, uncertain, prospective = [], [], [], []
     requested = (period.year, period.month)
     cover_periods = mentioned_periods("\n".join(inspection.title_candidates))
     source_period = next(iter(cover_periods)) if len(cover_periods) == 1 else None
@@ -141,7 +184,13 @@ def analyze_starting_report(inspection, profile, period, known_sites=(), *, conf
             continue
         text = "\n".join((item.text, *(" ".join(row) for row in item.rows)))
         periods = mentioned_periods(text)
-        if requested in periods:
+        actual_month, scheduled_month = _target_month_evidence(text, requested)
+        if scheduled_month:
+            # A matching *future plan* is not a completion record. Even when
+            # an actual current task appears elsewhere, review this distinct
+            # planned paragraph or source table before presenting it as work.
+            prospective.append(item.id)
+        if actual_month:
             current.append(item.id)
         # Only standalone dated prose is safely left out automatically. Tables
         # can contain cumulative history; images cannot inherit a nearby date.
@@ -149,11 +198,14 @@ def analyze_starting_report(inspection, profile, period, known_sites=(), *, conf
             older.append(item.id)
         else:
             uncertain.append(item.id)
-    # A cover can lag unfinished body edits. Only an item's own explicit date
-    # proves old prose; undated work stays available for a section-level check.
-    period_review = tuple(i.id for i in inspection.items
-                          if i.kind == "text" and i.id in uncertain) if (
-        source_period and source_period < requested and not current) else ()
+    # A cover can lag unfinished body edits. An incidental scheduled target-
+    # month mention must neither waive independent undated work review nor
+    # become current work simply because another paragraph is genuinely dated.
+    # A scheduled-only source table also needs review, without removing rows.
+    period_review = tuple(i.id for i in inspection.items if (
+        source_period and source_period < requested and
+        ((i.kind == "text" and i.id in uncertain and not current)
+         or (i.kind in ("text", "table") and i.id in prospective))))
     return StartingReportAnalysis(sites, relation, tuple(current), tuple(older), tuple(uncertain), source_period, period_review)
 
 
@@ -249,6 +301,86 @@ def suggested_cover_photo(items, *, native_furniture_ids=()):
     first, second = ranked[:2]
     area, runner_up = first.image_width * first.image_height, second.image_width * second.image_height
     return first if area > 40000 and area >= 1.6 * max(1, runner_up) else None
+
+
+def reuse_identical_saved_cover(plan, section, inspection, path, existing_blocks, *, source_view=None, trusted_brand_refs=()):
+    """Keep the existing cover only when each selected contribution matches.
+
+    Unknown header art remains in the source and is not assigned or approved.
+    No saved photo, logo, footer, source or prior user choice is overwritten.
+    """
+    import hashlib
+    if (source_view is not None or not plan.get("automatic") or plan.get("omit")
+            or plan.get("source_sha256") != inspection.sha256
+            or plan.get("source_site_relation") != "same"
+            or any(item.kind == "unsupported" for item in section.items)):
+        return plan
+    unknown = unresolved_cover_artwork(section.items)
+    if not unknown or any(not is_header_artwork(item) for item in unknown):
+        return plan
+    if set(plan.get("questions", ())) != {"Other cover artwork has no confirmed photograph or logo role."}:
+        return plan
+    items = {item.id: item for item in section.items}
+    selected = tuple(plan.get("selected", ()))
+    if not selected or any(identity not in items for identity in selected):
+        return plan
+    destinations = plan.get("destinations", {})
+    if sum(destinations.get(identity) == "cover_photo" for identity in selected) != 1:
+        return plan
+    try:
+        with path.open("rb") as stream:
+            if hashlib.file_digest(stream, "sha256").hexdigest() != inspection.sha256:
+                return plan
+        from app.monthly_report_import import read_import_image
+        # Another large body image might be an alternate photo, not decorative
+        # furniture. Ignore it only when its normalized bytes exactly match an
+        # already-selected current brand/client logo; otherwise keep review.
+        chosen_photo = next(identity for identity in selected
+                            if destinations.get(identity) == "cover_photo")
+        candidates = cover_photo_candidates(section.items)
+        if chosen_photo not in {item.id for item in candidates}:
+            return plan
+        logo_refs = {reference for key in ("brand_logo", "client_logo")
+                     for block in (existing_blocks.get(key),)
+                     if block is not None and block.source != "Omit"
+                     for reference in block.asset_hashes[:1]}
+        # Verified shared brand assets can identify an additional source logo,
+        # even when the current report still contains an older logo. They never
+        # replace or mutate that current report's saved branding here.
+        trusted_used = set()
+        for candidate in candidates:
+            if candidate.id == chosen_photo:
+                continue
+            image = read_import_image(path, candidate, line_art=True, preserve_transparency=True)
+            candidate_ref = hashlib.sha256(image.data).hexdigest() + "." + image.extension
+            if candidate_ref not in logo_refs:
+                if candidate_ref not in trusted_brand_refs:
+                    return plan
+                trusted_used.add(candidate_ref)
+        for identity in selected:
+            item, slot = items[identity], destinations.get(identity)
+            current = existing_blocks.get(slot)
+            if current is None or current.source == "Omit":
+                return plan
+            if item.kind == "image" and slot in {"cover_photo", "brand_logo", "client_logo"}:
+                if not current.asset_hashes:
+                    return plan
+                image = read_import_image(path, item, line_art=slot != "cover_photo",
+                                          preserve_transparency=slot in {"brand_logo", "client_logo"})
+                reference = hashlib.sha256(image.data).hexdigest() + "." + image.extension
+                if reference != current.asset_hashes[0]:
+                    return plan
+            elif item.kind == "text" and slot == "footer_text":
+                if plan.get("texts", {}).get(identity, "").strip() != current.text.strip():
+                    return plan
+            else:
+                return plan
+    except (ValueError, OSError):
+        return plan
+    return {**plan, "action": "Leave this section out", "omit": True,
+            "selected": [], "destinations": {}, "questions": (), "approved": True,
+            "automatic_identical_cover_reuse": True,
+            "automatic_brand_identity_refs": tuple(sorted(trusted_used))}
 
 
 def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_design=False, source_view=None,
@@ -377,9 +509,34 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
                 table, _ = table_without_prices(item)
                 if not table:
                     continue
+                if section.key == "activity":
+                    from app.monthly_report_annual_work_order_grid import (
+                        annual_site_month_table, annual_grid_candidate, annual_grid_matches_profile)
+                    annual = annual_site_month_table(item)
+                    if annual_grid_candidate(item):
+                        # Exact month headings do not prove the imported sites
+                        # belong to the target report or the bands are sound.
+                        if annual is None:
+                            questions.append("Review this annual work-order grid's category bands, site fields and month order.")
+                            continue
+                        if profile is None or not annual_grid_matches_profile(annual, profile):
+                            questions.append("Review this annual work-order grid's sites against the selected report group.")
+                            continue
+                        table = annual
+                        slot = "work_orders"
                 if table_has_pricing(table.columns, table.rows):
                     questions.append("Check this table's pricing or column headings.")
                     continue
+                if slot == "subcontractor_matrix" and item.merged_title_rows:
+                    from app.monthly_report_vendor_groups import grouped_vendor_contacts
+                    grouped_vendor = grouped_vendor_contacts(item)
+                    if grouped_vendor is None:
+                        questions.append("Review the vendor table's merged category labels and contact headings.")
+                        continue
+                    if table_has_pricing(grouped_vendor.columns, grouped_vendor.rows):
+                        questions.append("Check the vendor table for pricing before including it.")
+                        continue
+                    table = grouped_vendor
                 plan["tables"][item.id] = table
             if slot not in known:
                 slot = default_slot(section.key)

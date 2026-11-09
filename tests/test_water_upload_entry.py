@@ -19,7 +19,10 @@ def test_empty_section_has_one_uploader_with_stable_identity(tmp_path, monkeypat
     uploaders = app.get('file_uploader')
     assert len(uploaders) == 1
     assert uploaders[0].proto.id.endswith(f'-synthetic_evidence_section_{destination}_upload')
-    assert len(add_file_popovers(app)) == (0 if destination == 'water_reports' else 1)
+    # Every section's existing uploader is now directly reachable; no
+    # Add files popover may hide saved-source reuse or the first upload.
+    assert not add_file_popovers(app)
+    assert any(value.value == 'Upload new' for value in app.text)
     assert app.session_state['test_blocks'] == {}
     assert app.session_state['test_sources'] == ()
 

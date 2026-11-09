@@ -202,16 +202,37 @@ def test_admin_preview_does_not_continue_after_namespace_reset(logos, tmp_path, 
 def test_read_logo_rechecks_namespace_after_read(logos, tmp_path, monkeypatch):
     from pathlib import Path
     from app import monthly_report_testing as qa
-    read = Path.read_bytes
+    original_open = Path.open
+
+    class ResetAfterRead:
+        def __init__(self, stream):
+            self.stream = stream
+
+        def __enter__(self):
+            self.stream.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self.stream.__exit__(*args)
+
+        def read(self, limit=-1):
+            assert limit == branding.MAX_IMAGE_BYTES + 1
+            raw = self.stream.read(limit)
+            qa.reset(tmp_path)
+            return raw
+
     with qa.isolated("f" * 32):
         seed_legacy(logos)
         target = branding._path() / "assets" / logos[0].asset
-        def reset_after_read(path):
-            raw = read(path)
-            if path == target:
-                qa.reset(tmp_path)
-            return raw
-        monkeypatch.setattr(Path, "read_bytes", reset_after_read)
+
+        def reset_after_read(path, mode="r", *args, **kwargs):
+            stream = original_open(path, mode, *args, **kwargs)
+            return ResetAfterRead(stream) if path == target and mode == "rb" else stream
+
+        # The product now uses an explicitly bounded stream read, not the
+        # former unbounded Path.read_bytes call. Preserve the same exact
+        # namespace-generation race and refusal after the actual byte read.
+        monkeypatch.setattr(Path, "open", reset_after_read)
         with pytest.raises(OSError, match="reset"):
             branding.read_logo(logos[0])
 

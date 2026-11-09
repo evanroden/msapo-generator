@@ -11,6 +11,7 @@ from io import BytesIO
 import json
 from urllib.parse import urlsplit
 from zipfile import BadZipFile, ZipFile
+import zlib
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 import streamlit as st
@@ -101,7 +102,9 @@ def _image(raw, reference):
         # shared artwork. Reopen because verify invalidates the first image.
         with Image.open(BytesIO(raw)) as image:
             image.load()
-    except (OSError, SyntaxError, UnidentifiedImageError, Image.DecompressionBombError) as exc:
+    except LogoArtworkError:
+        raise
+    except (OSError, SyntaxError, ValueError, UnidentifiedImageError, Image.DecompressionBombError) as exc:
         raise LogoArtworkError("A logo image could not be read.") from exc
 
 
@@ -134,7 +137,7 @@ def inspect_bundle(raw):
                     _image(data, logo.asset)
                     assets[logo.asset] = data
             return logos, assets
-    except (BadZipFile, UnicodeError, json.JSONDecodeError, KeyError, RuntimeError) as exc:
+    except (BadZipFile, zlib.error, UnicodeError, json.JSONDecodeError, KeyError, RuntimeError) as exc:
         raise ValueError("The logo collection is not a readable, complete ZIP.") from exc
 
 
@@ -159,7 +162,10 @@ def save_branding(logos, assets, *, expected_revision, actor, confirmed, action=
         for logo in logos:
             raw = assets.get(logo.asset)
             if raw is None:
-                raw = (path / "assets" / logo.asset).read_bytes()
+                # Restoring a saved collection must use the same bounded,
+                # integrity-checked read as normal report/logo reuse.
+                # Never allocate an unrestricted saved asset before _image.
+                raw = read_logo(logo)
             _image(raw, logo.asset)
             library._atomic_write(path / "assets" / logo.asset, raw)
         state = BrandingState(expected_revision + 1, logos, actor, library._now(), action)
@@ -192,7 +198,13 @@ def read_logo(logo):
     try:
         if path.stat().st_size > MAX_IMAGE_BYTES:
             raise LogoArtworkError("A saved logo exceeds the image size limit.")
-        raw = path.read_bytes()
+        # A saved image can grow or be replaced between stat() and open().
+        # Bound the allocation at the read itself, without modifying the
+        # retained artwork or silently accepting a truncated image.
+        with path.open("rb") as stream:
+            raw = stream.read(MAX_IMAGE_BYTES + 1)
+        if len(raw) > MAX_IMAGE_BYTES:
+            raise LogoArtworkError("A saved logo exceeds the image size limit.")
     except OSError as exc:
         library._qa_path_guard(path)
         raise LogoArtworkError("A saved logo image could not be read.") from exc
@@ -246,3 +258,45 @@ def apply_defaults(draft, assets, *, skip_slots=()):
             from app.monthly_report_asset_review import approve_all_assets
             blocks[key] = approve_all_assets(block)
     return replace(draft, blocks=tuple(blocks.values()))
+
+
+def refresh_proven_prior_default_brand(block, trusted_source_refs, assets):
+    """Upgrade only an exact former shared default proved by this source.
+
+    User-selected/replaced, omitted, annotated, or otherwise changed blocks are
+    never upgraded. The caller must supply source-specific, current catalog
+    identity evidence; this helper changes only the new draft, not history.
+    """
+    from app.monthly_report_asset_review import approve_all_assets
+    from app.monthly_report_model import ResolvedBlock
+    if block is None or block.key != 'brand_logo' or block.source != 'Library' or len(block.asset_hashes) != 1:
+        return block
+    expected = approve_all_assets(ResolvedBlock('brand_logo', 'Library', asset_hashes=block.asset_hashes))
+    if block != expected:
+        return block
+    current = load_branding()
+    latest = find_logo(brand=True, state=current) if current else None
+    if latest is None or latest.asset not in trusted_source_refs or latest.asset == block.asset_hashes[0]:
+        return block
+    # Bound history reads. Missing/damaged historical artwork cannot authorize
+    # an update; storage/lease errors still propagate rather than being hidden.
+    for revision in range(current.revision - 1, max(0, current.revision - 33), -1):
+        try:
+            prior = load_branding(revision)
+        except library.LibraryError as exc:
+            if isinstance(exc.__cause__, FileNotFoundError):
+                return block  # Missing history cannot prove a prior default.
+            raise  # Never hide corrupt storage or a namespace/lease failure.
+        old = find_logo(brand=True, state=prior) if prior else None
+        if old is None or old.asset != block.asset_hashes[0]:
+            continue
+        try:
+            read_logo(old)
+            raw = read_logo(latest)
+        except LogoArtworkError:
+            return block
+        if load_branding() != current:
+            raise ValueError('Shared branding changed while importing. Review the cover again.')
+        assets[latest.asset] = raw
+        return approve_all_assets(ResolvedBlock('brand_logo', 'Library', asset_hashes=(latest.asset,)))
+    return block

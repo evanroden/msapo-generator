@@ -2,15 +2,16 @@
 from test_monthly_report_ui import monthly
 
 
-def test_section_selector_replaces_jump_run_and_keeps_one_ordered_page(monkeypatch, tmp_path):
+def test_sequential_controls_keep_one_ordered_page(monkeypatch, tmp_path):
     app = monthly(monkeypatch, tmp_path)
     assert not app.exception
     markup = "\n".join(m.value for m in app.markdown)
-    assert markup.count('class="epc-section-selector"') == 1
-    assert 'aria-label="Jump to section"' in markup
-    assert markup.count('class="epc-review-shortcut"') == 1
-    assert '<button type="button" class="epc-review-shortcut" disabled>Review</button>' in markup
-    assert '<label for="monthly-section-choice">Section</label>' in markup
+    assert 'class="epc-section-selector"' not in markup
+    assert markup.count('class="epc-section-back"') == 1
+    assert markup.count('class="epc-section-next"') == 1
+    assert 'aria-label="Jump to section"' not in markup
+    assert 'class="epc-review-shortcut"' not in markup
+    assert 'role="status" aria-live="polite"' in markup
     assert '<span class="epc-section-navigation">' in markup
     assert '<div class="epc-section-navigation">' not in markup
     assert '**Jump to:**' not in markup
@@ -24,13 +25,15 @@ def test_section_selector_replaces_jump_run_and_keeps_one_ordered_page(monkeypat
     assert not any(e.label == "Expected pages (layout information only)" for e in app.expander)
 
 
-def test_section_jumps_survive_activity_edit_without_extra_workflow_pages(monkeypatch, tmp_path):
+def test_sequential_controls_survive_activity_edit_without_extra_workflow_pages(monkeypatch, tmp_path):
     app = monthly(monkeypatch, tmp_path)
     next(w for w in app.text_area if w.label == "Activity summary").set_value(
         "September inspections completed.").run()
     assert not app.exception
     markup = "\n".join(m.value for m in app.markdown)
-    assert markup.count('class="epc-section-selector"') == 1
+    assert 'class="epc-section-selector"' not in markup
+    assert markup.count('class="epc-section-back"') == 1
+    assert markup.count('class="epc-section-next"') == 1
     assert 'data-epc-pair="monthly_activity"' in markup
     assert next(w for w in app.text_area if w.label == "Activity summary").value == (
         "September inspections completed.")

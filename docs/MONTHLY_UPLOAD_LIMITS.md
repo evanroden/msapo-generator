@@ -1,7 +1,7 @@
 # Monthly upload routes and limits
 
 This is an implementation inventory for issue #472, based on main
-`fe051571da209e29f16e2b37cb9fe1eec60c924b` and its route-guidance follow-up.
+`9cc96e6265fbf0ce40dbacf8d013cdc6b612e549` and its route-guidance follow-up.
 It does not increase any limit or certify realistic-size files under #471.
 A chooser's maximum is only the largest supported file-type admission ceiling;
 parsing, artwork interpretation, page inclusion and report totals are separate.
