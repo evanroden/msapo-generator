@@ -299,6 +299,10 @@ PDF. Production stores contract learning, anonymous-browser requester learning,
 and guarded Smartsheet API state
 on the persistent disk at `EPC_DATA_DIR=/test1`.
 
+Moving to another host (settings, the one-instance rule, SQLite on a network
+share, and the checked data move) is covered in
+[docs/AZURE_MIGRATION.md](docs/AZURE_MIGRATION.md).
+
 Render dashboard values override `render.yaml`. When form behavior differs from
 the repository, compare `SMARTSHEET_FORM_URL`,
 `SMARTSHEET_FORM_FIELD_MAP_JSON`, `SMARTSHEET_URL_PREFILL_ENABLED`, and

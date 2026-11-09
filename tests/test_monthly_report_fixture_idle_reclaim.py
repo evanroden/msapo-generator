@@ -203,19 +203,21 @@ def test_reclaim_waits_for_a_returning_request_recording_its_use(root, monkeypat
     assert outcome == [False] and (returning.data_root / "synthetic-copy.bin").exists()
 
 
-def test_a_request_that_finds_its_namespace_moved_fails_closed(root, monkeypatch):
+def test_a_request_initializing_its_namespace_prevents_a_concurrent_move(root, monkeypatch):
     returning = full_copy(A)
     age(returning.data_root, 25)
-    marker = testing._marker
+    marker, attempts = testing._marker, []
 
     def reclaimed_right_after_the_check(sentinel, identity):
         generation = marker(sentinel, identity)
-        contextvars.Context().run(testing.reclaim_idle, root, returning.scope, returning.generation)
+        attempts.append(contextvars.Context().run(testing.reclaim_idle, root, returning.scope, returning.generation))
         return generation
 
     monkeypatch.setattr(testing, "_marker", reclaimed_right_after_the_check)
-    with testing.isolated(A), pytest.raises(OSError, match="reset during a running task"):
-        memory._data_dir()
+    with run(A) as current:
+        assert current.generation == returning.generation
+    assert attempts == [False]
+    assert (returning.data_root / "synthetic-copy.bin").exists()
 
 
 def test_a_scan_error_after_a_set_aside_puts_it_back(root):
@@ -343,4 +345,83 @@ def test_a_run_reset_during_the_commit_keeps_the_idle_copies(root, monkeypatch):
             pytest.fail("A reset run reached the install")
     assert (abandoned.data_root / "synthetic-copy.bin").exists()
     assert abandoned.scope in [item["scope"] for item in reservations(root)]
+    assert not list((root / testing._BUCKET).glob(".reclaimed-*"))
+
+
+def test_generic_recovery_collision_cannot_discard_a_still_counted_copy(root, monkeypatch):
+    abandoned = full_copy(A, 1024)
+    before = reservations(root)
+    age(abandoned.data_root, 25)
+    tombstone = testing.set_aside_idle(root, abandoned.scope, abandoned.generation)
+    assert tombstone is not None
+    # A collision left by an older worker is preserved even without an install
+    # journal. It must not be dropped by later generic generation pruning.
+    abandoned.data_root.mkdir()
+    (abandoned.data_root / testing._SENTINEL).write_text(abandoned.scope + "|" + "f" * 32)
+    (abandoned.data_root / "fresh-canary").write_bytes(b"SYNTHETIC fresh generation")
+    for _ in range(2):
+        with run(B) as requesting, pytest.raises(OSError, match="both copies were preserved"):
+            with admission.admit_run_copy(requesting, 1):
+                pytest.fail("Counted collision reached a new write")
+        assert reservations(root) == before
+        assert (tombstone / "synthetic-copy.bin").read_bytes() == b"SYNTHETIC staged copy"
+        assert (abandoned.data_root / "fresh-canary").read_bytes() == b"SYNTHETIC fresh generation"
+    with run(A):
+        testing.reset(root)  # explicit consent to discard this fresh synthetic generation
+    monkeypatch.setattr(testing, "set_aside_idle", lambda *args, **kwargs: None)
+    with run(B) as requesting:
+        with admission.admit_run_copy(requesting, 1):
+            pass
+    assert (abandoned.data_root / "synthetic-copy.bin").exists()
+    assert not tombstone.exists()
+    assert len(reservations(root)) == 2
+
+
+def _paused_returning_request(root, ready, release, outcome):
+    os.environ["EPC_DATA_DIR"] = str(root)
+    marker = testing._marker
+
+    def pause_marker(sentinel, identity):
+        result = marker(sentinel, identity)
+        ready.set()
+        if not release.wait(30):
+            raise TimeoutError("Synthetic returning request was not released")
+        return result
+
+    testing._marker = pause_marker
+    try:
+        with run(A) as current:
+            outcome.put(current.generation)
+    except OSError as exc:
+        outcome.put(str(exc))
+
+
+def test_bucket_lifecycle_lock_prevents_move_during_another_process_initialization(root):
+    import multiprocessing
+    import fcntl
+
+    abandoned = full_copy(A, 1024)
+    age(abandoned.data_root, 25)
+    ctx = multiprocessing.get_context("spawn")
+    ready, release, outcome = ctx.Event(), ctx.Event(), ctx.Queue()
+    child = ctx.Process(target=_paused_returning_request, args=(root, ready, release, outcome))
+    try:
+        child.start()
+        assert ready.wait(30)
+        # At this checkpoint no activity timestamp or namespace lock has been
+        # acquired yet. The independent kernel bucket lock protects the gap.
+        with pytest.raises(BlockingIOError):
+            with testing._namespace_lock(abandoned.data_root.parent, fcntl.LOCK_EX | fcntl.LOCK_NB):
+                pytest.fail("Namespace initialization did not hold its lifecycle lock")
+        assert testing.set_aside_idle(root, abandoned.scope, abandoned.generation) is None
+        release.set()
+        child.join(timeout=30)
+        assert child.exitcode == 0
+        assert outcome.get(timeout=5) == abandoned.generation
+    finally:
+        release.set()
+        if child.is_alive():
+            child.terminate()
+            child.join(timeout=10)
+    assert (abandoned.data_root / "synthetic-copy.bin").exists()
     assert not list((root / testing._BUCKET).glob(".reclaimed-*"))

@@ -7,9 +7,11 @@ from dataclasses import replace
 from io import BytesIO
 
 from docx import Document
+from docx.oxml.ns import qn
 from docx.shared import Inches
 import pytest
 
+from app.monthly_report_contents_pagination import anchor_for
 from app.monthly_report_docx import assemble_docx
 from app.monthly_report_import import inspect_docx, _heading
 from app.monthly_report_model import (
@@ -22,6 +24,23 @@ from test_monthly_report_divider_numerals import (
     _synthetic_doc, _geometry, _docx_native_parts,
 )
 from conftest import requires_libreoffice
+
+
+def _contents_entries(document):
+    """Read Word contents hyperlinks, not python-docx's version-dependent paragraph.text."""
+    entries = []
+    for position, paragraph in enumerate(document.paragraphs):
+        for link in paragraph._p.iter(qn("w:hyperlink")):
+            anchor = link.get(qn("w:anchor"), "")
+            if anchor.startswith("mr_contents_"):
+                label = "".join(node.text or "" for node in link.iter(qn("w:t")))
+                entries.append((position, anchor, label))
+    return tuple(entries)
+
+
+def _body_headings(document):
+    """Only actual section-body headings, never contents hyperlinks or divider art."""
+    return tuple(p.text for p in document.paragraphs if p.style.name == "Heading 1")
 
 
 def _twelve_section_draft():
@@ -51,21 +70,23 @@ def test_ar_at_section_ten_has_unique_contents_divider_and_body_heading():
     assert draft == source_draft
     doc = Document(BytesIO(raw))
     paragraphs = [paragraph.text for paragraph in doc.paragraphs]
-    assert paragraphs.count("10. Accounts Receivable") == 2  # contents and body
+    # Word contents entries live in w:hyperlink nodes. Some python-docx
+    # versions omit that text from paragraph.text; counting it as a second
+    # ordinary paragraph incorrectly reports a missing heading.
+    contents = _contents_entries(doc)
+    expected = [(anchor_for(section.key), f"{section.number}. {section.title}")
+                for section in ordered]
+    assert [(anchor, label) for _, anchor, label in contents] == expected
+    assert _body_headings(doc) == tuple(label for _, label in expected)
+    assert [label for _, _, label in contents].count("10. Accounts Receivable") == 1
+    assert _body_headings(doc).count("10. Accounts Receivable") == 1
     assert paragraphs.count("Section 10") == 1
     assert paragraphs.count("Accounts Receivable") == 1  # divider title only
-    assert paragraphs.count("1. Organizational Chart") == 2
-    assert paragraphs.count("11. Pending & Declined Proposals") == 2
-    assert paragraphs.count("12. Training Summary") == 2
     assert paragraphs.count("Section 1") == 1
-    assert paragraphs.index("1. Organizational Chart") < paragraphs.index(
-        "10. Accounts Receivable") < paragraphs.index(
-        "11. Pending & Declined Proposals")
-    ar_positions = [index for index, text in enumerate(paragraphs)
-                    if text == "10. Accounts Receivable"]
-    # The first entry is the Contents label; the second is the section body.
-    assert len(ar_positions) == 2
-    assert ar_positions[0] < paragraphs.index("Section 10") < ar_positions[1]
+    ar_divider = paragraphs.index("Section 10")
+    ar_body = next(i for i, p in enumerate(doc.paragraphs)
+                   if p.style.name == "Heading 1" and p.text == "10. Accounts Receivable")
+    assert contents[9][0] < ar_divider < ar_body
     assert paragraphs.count("Synthetic nonfinancial status: invoice review is ongoing.") == 1
 
 
@@ -84,11 +105,18 @@ def test_optional_section_omission_preserves_dynamic_numbering_not_hardcoded_ten
         ("training", "11"),
     ]
     raw = assemble_docx(revised, acknowledged_fingerprint=revised.fingerprint)
-    paragraphs = [p.text for p in Document(BytesIO(raw)).paragraphs]
-    assert paragraphs.count("9. Accounts Receivable") == 2
+    doc = Document(BytesIO(raw))
+    paragraphs = [p.text for p in doc.paragraphs]
+    contents = _contents_entries(doc)
+    expected = [(anchor_for(section.key), f"{section.number}. {section.title}")
+                for section in ordered]
+    assert [(anchor, label) for _, anchor, label in contents] == expected
+    assert _body_headings(doc) == tuple(label for _, label in expected)
+    assert [label for _, _, label in contents].count("9. Accounts Receivable") == 1
+    assert _body_headings(doc).count("9. Accounts Receivable") == 1
     assert paragraphs.count("Section 9") == 1
-    assert paragraphs.count("10. Pending & Declined Proposals") == 2
-    assert "10. Accounts Receivable" not in paragraphs
+    assert "10. Accounts Receivable" not in (label for _, _, label in contents)
+    assert "10. Accounts Receivable" not in _body_headings(doc)
     assert all("Water Treatment Reports" not in text for text in paragraphs)
 
 

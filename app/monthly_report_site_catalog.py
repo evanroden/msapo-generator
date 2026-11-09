@@ -10,8 +10,17 @@ def site_options(contract):
     from app.monthly_report_directory import available_sites, load_directory
     directory = load_directory(contract)
     if contract != contracts.RRH_CONTRACT:
-        catalog = tuple(Facility(re.sub(r"[^a-z0-9]+", "-", title.casefold()).strip("-")[:60], title) for title in contracts.sites_for_contract(contract))
-        return available_sites(catalog, directory)
+        catalog, keys = [], set()
+        for title in contracts.sites_for_contract(contract):
+            key = re.sub(r"[^a-z0-9]+", "-", title.casefold()).strip("-")[:60]
+            # Two distinct catalog sites must never share a report identity.
+            # Replacing existing keys with guessed suffixes could retarget
+            # saved site-scoped reports, so require a catalog correction.
+            if key in keys:
+                raise ValueError("Catalog sites have the same report site key. Correct their catalog identities before selecting report sites.")
+            keys.add(key)
+            catalog.append(Facility(key, title))
+        return available_sites(tuple(catalog), directory)
     # Explicit owner-confirmed alias relationship. Never group sites by address
     # or guess regional membership from a title or geographic location.
     result = []
