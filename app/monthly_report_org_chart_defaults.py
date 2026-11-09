@@ -4,8 +4,12 @@ Reports contain copies, not live pointers. Existing profile charts remain local
 until the operator explicitly publishes them at the displayed scope.
 """
 from dataclasses import asdict, dataclass, replace
+from io import BytesIO
 import hashlib
 import re
+
+from PIL import Image
+
 from app import monthly_report_library as library
 from app.monthly_report_asset_review import approve_all_assets, asset_context, pending_asset_indexes, refresh_asset_source_context
 from app.monthly_report_model import ResolvedBlock
@@ -93,6 +97,22 @@ def _verify(reference, raw):
     if (not library._ASSET.fullmatch(reference) or len(raw) > library.MAX_ASSET_BYTES
             or library.asset_reference(raw,reference.rsplit('.',1)[-1]) != reference):
         raise library.LibraryError('Chart picture failed its size or integrity check.')
+    # A filename that hashes correctly is not necessarily a decodable picture.
+    # Inspect only the bounded copy, including on saved-default readback.
+    expected = 'PNG' if reference.endswith('.png') else 'JPEG'
+    try:
+        with Image.open(BytesIO(raw)) as picture:
+            if picture.format != expected:
+                raise ValueError('The chart image does not match its saved file type.')
+            picture.verify()
+        if expected == 'JPEG':
+            # JPEG verify() accepts some truncated scans; a draft-resolution
+            # decode checks the complete stream without full-size expansion.
+            with Image.open(BytesIO(raw)) as picture:
+                picture.draft('RGB', (1024, 1024))
+                picture.load()
+    except (OSError, ValueError, SyntaxError, Image.DecompressionBombError) as exc:
+        raise library.LibraryError('A chart picture is not a readable PNG or JPEG.') from exc
     return raw
 
 
