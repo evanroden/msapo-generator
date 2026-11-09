@@ -54,6 +54,40 @@ _NATIVE_CAPTION_FRAMES = {
 RASTER = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff", ".webp", ".heic", ".heif"}
 
 
+def _cover_unreadable_object_note(element, *, word_section: int, position: int) -> str:
+    """Name an unsupported cover object's location and actual XML kind.
+
+    This describes a source occurrence, not a substitute for preserving its
+    layout. Never echo textbox content, object names or financial labels.
+    """
+    boxes = sum(node.tag == W + "txbxContent" for node in element.iter())
+    groups = sum(node.tag == V + "group" for node in element.iter())
+    vml = sum(node.tag in (V + "shape", V + "rect", V + "roundrect")
+              for node in element.iter())
+    drawingml = sum(node.tag == A + "graphicData"
+                    and not node.get("uri", "").endswith("/picture")
+                    for node in element.iter())
+    kinds = []
+    if boxes:
+        kinds.append(f"{boxes} floating Word text box{'es' if boxes != 1 else ''}")
+    if groups:
+        kinds.append(f"{groups} grouped VML drawing{'s' if groups != 1 else ''}")
+    elif vml:
+        kinds.append(f"{vml} VML shape{'s' if vml != 1 else ''}")
+    if drawingml:
+        kinds.append(f"{drawingml} DrawingML shape/group{'s' if drawingml != 1 else ''}")
+    if not kinds:
+        kinds.append("an unsupported Word drawing")
+    return (
+        f"Cover body element {position} (Word section {word_section}) contains "
+        + ", ".join(kinds)
+        + ". Its text and placement are retained in the original, not approved as editable layout. "
+        "In Word, replace this specific drawing with an exported PNG/JPEG and upload the "
+        "report again, or explicitly use an existing saved cover design or the "
+        "independent ENFRA template instead of importing its cover."
+    )
+
+
 class ImportError(ValueError):
     """A bounded, operator-visible import failure."""
 
@@ -778,8 +812,12 @@ def inspect_docx(path: Path) -> DocxInspection:
                                             note="Native table title")
                             elif standalone_frame:
                                 add("unsupported", part, position, text=text,
-                                    note="Word text frame needs manual layout review. Preserve and review its complete page "
-                                         "or add a reviewed replacement; extracted labels do not preserve the layout.")
+                                    note=(_cover_unreadable_object_note(
+                                        element, word_section=word_section, position=position)
+                                        if part == "word/document.xml" and word_section <= 2
+                                        and section in ("", "cover") else
+                                        "Word text frame needs manual layout review. Preserve and review its complete page "
+                                        "or add a reviewed replacement; extracted labels do not preserve the layout."))
                             elif text:
                                 # A floating Word textbox has separate layout/review
                                 # ownership. Do not also offer its words as ordinary
@@ -883,11 +921,16 @@ def inspect_docx(path: Path) -> DocxInspection:
                                     if divergent_native:
                                         alternate_positions.add((part, position))
                                         native_role = ""
-                                    add("native_layout" if native_role else "unsupported", part, position, text=text,
-                                        note=native_role or ("Alternate Word representations contain different or unsupported content. Review and replace this exact drawing; every original representation is retained." if divergent_native else
+                                    note = native_role or ("Alternate Word representations contain different or unsupported content. Review and replace this exact drawing; every original representation is retained." if divergent_native else
                                               "Unmapped native SmartArt: complete local text-only drawing could not be established." if diagram else
                                               "Native divider artwork" if detected and detected != "unmatched" else
-                                              "Native Word drawing: preserve and review its complete page layout, or add a replacement picture. Nothing is executed during inspection."))
+                                              "Native Word drawing: preserve and review its complete page layout, or add a replacement picture. Nothing is executed during inspection.")
+                                    if not native_role and part == "word/document.xml" and word_section <= 2 and section in ("", "cover"):
+                                        note = _cover_unreadable_object_note(
+                                            element, word_section=word_section, position=position
+                                        ) + (" The modern and fallback Word representations disagree." if divergent_native else "")
+                                    add("native_layout" if native_role else "unsupported", part, position,
+                                        text=text, note=note)
                             if element.find(".//" + W + "altChunk") is not None or element.tag == W + "altChunk":
                                 add("unsupported", part, position, note="Embedded document content was not executed. Review it in the original.")
                             if part == "word/document.xml" and element.find(".//" + W + "sectPr") is not None:
