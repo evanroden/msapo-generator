@@ -15,6 +15,7 @@ from uuid import uuid4
 import streamlit as st
 
 from app.monthly_report_editor import _cell_text, _signature
+from app.monthly_report_ui_text import literal
 
 
 CARD_TABLES = {"proposals": ("proposal", "Add proposal"),
@@ -23,6 +24,20 @@ CARD_TABLES = {"proposals": ("proposal", "Add proposal"),
 _REQUEST_WORDS = {"request", "requested", "requests", "question", "questions", "answer",
                   "response", "details", "information"}
 _REQUEST_METADATA = {"#", "number", "no", "id", "by", "date", "status", "link", "reference", "ref"}
+_SOURCE_MARKUP = re.compile(
+    r"https?://|www\.|@|[\[\]*_\x60<>~\\]|(?m:^\s*(?:[#>+\-]\s|\d+[.)]\s|[-*_]{3,}\s*$))",
+    re.I,
+)
+
+
+def _source_display(value):
+    """Escape source markup only; keep ordinary native labels byte-stable.
+
+    The returned string is strictly for Markdown-capable Streamlit controls.
+    Never use it for saved rows, field keys, comparison or a callback target.
+    """
+    raw = str(value)
+    return literal(raw) if _SOURCE_MARKUP.search(raw) else raw
 
 
 def _request_prose(title):
@@ -164,16 +179,18 @@ def _summary(columns, row, noun, index, prose=None):
     main = next((value for column, value in values if value and prose and prose(column)), "")
     main = main or next((value for column, value in values if value and any(
         word in column.casefold() for word in ("description", "scope", "title", "task", "recommendation"))), "")
-    st.write(main or f"{noun.capitalize()} {index + 1}")
+    st.write(_source_display(main) if main else f"{noun.capitalize()} {index + 1}")
     identifiers = [(column, value) for column, value in values if value and (any(
         word in column.casefold() for word in ("number", "#", "identifier", "facility", "site", "vendor", "area", "asset"))
         or column.casefold() == "id" or column.casefold().endswith(" id"))]
     if identifiers:
-        st.caption(" · ".join(f"{column}: {value}" for column, value in identifiers))
+        st.caption(" · ".join(f"{_source_display(column)}: {_source_display(value)}"
+                              for column, value in identifiers))
     decisions = [(column, value) for column, value in values if any(
         word in column.casefold() for word in ("status", "decision"))]
     if decisions:
-        st.caption(" · ".join(f"{column}: {value or 'Not recorded'}" for column, value in decisions))
+        st.caption(" · ".join(f"{_source_display(column)}: {_source_display(value or 'Not recorded')}"
+                              for column, value in decisions))
 
 
 def _comparison_rows(columns, rows):
@@ -389,7 +406,7 @@ def _render_fields(columns, fields, args, field, queue=_queue, *, prose=None):
     keys = []
     for index, (title, (key, original, kind, default)) in enumerate(zip(columns, fields), 1):
         # These labels do not replace the stored or exported source headings.
-        label = title if title.strip() else f"Column {index}"
+        label = _source_display(title) if title.strip() else f"Column {index}"
         options = dict(key=field(key, default), value=default, on_change=queue, args=args)
         keys.append(options["key"])
         if kind == "date" and (isinstance(default, date) or default is None):
