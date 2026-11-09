@@ -1,5 +1,6 @@
 """Viewport-driven section previews with bounded work and disposable shared cache."""
 from concurrent.futures import ThreadPoolExecutor
+import hashlib
 from threading import BoundedSemaphore
 from time import monotonic
 from uuid import uuid4
@@ -7,6 +8,7 @@ from uuid import uuid4
 import streamlit as st
 
 from app import monthly_report_library as library
+from app import monthly_report_section_assembly_cache as assembly_cache
 from app.monthly_report_render_jobs import RenderBusy
 from app.monthly_report_preview import (
     _section_scope, preview_page, preview_section, section_preview_fingerprint,
@@ -28,7 +30,12 @@ def _build_preview_entry(draft, section_key, assets, title, owner=None):
     def loader(ref):
         return assets.get(ref) or library.read_asset(draft.profile.contract, draft.profile.key, ref)
     try:
-        preview = preview_section(draft, section_key, loader)
+        # Include unsaved asset bytes, not just their reference labels, in the
+        # session-scoped reuse key. Library-backed assets are SHA-verified.
+        asset_versions = tuple(sorted((ref, hashlib.sha256(raw).digest())
+                                      for ref, raw in assets.items())) if owner else ()
+        with assembly_cache.owner_scope(owner, asset_versions):
+            preview = preview_section(draft, section_key, loader)
         ticket = STORE.put(owner or uuid4().hex, preview)
         return {'ticket': ticket, 'pages': ticket.pages}
     except RenderBusy:
