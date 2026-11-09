@@ -1083,6 +1083,16 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
         from app.monthly_report_training_review_ui import render_training_import
         draft, blocks = render_training_import(draft, blocks, prefix)
         handled.add("training_summary")
+    if section.key == "accounts_receivable":
+        from app.monthly_report_receivable_ui import render_receivable_intake
+        draft, blocks = render_receivable_intake(
+            replace(draft, blocks=tuple(blocks.values())), blocks, prefix)
+        ar_block = blocks.get("accounts_receivable")
+        if ar_block and any(ref.startswith("receivable:v1:")
+                            for ref in ar_block.references):
+            # One reviewed source owns its derivative. Legacy/manual AR rows
+            # keep their existing native table editor when no such receipt exists.
+            handled.add("accounts_receivable")
     if section.key == "organization":
         from app.monthly_report_organization_ui import render_organization
         blocks = render_organization(draft, blocks, specs, prefix, assets, field,
