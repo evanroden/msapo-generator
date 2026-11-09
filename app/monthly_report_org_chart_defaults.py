@@ -71,6 +71,8 @@ def load_defaults(contract):
         if type(data['revision']) is not int or data['revision'] < 1 or len({v.site_key for v in items}) != len(items):
             raise ValueError('Invalid revision or duplicate scope')
         for item in items:
+            if not isinstance(item.site_key,str):
+                raise ValueError('Invalid chart scope')
             if item.site_key:
                 library._valid_key(item.site_key)
             if not eligible(item.block) or not item.origin_profile or not item.origin_fingerprint or not item.saved_at:
