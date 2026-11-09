@@ -396,6 +396,60 @@ def _csv_unicode_encoding(raw: bytes) -> str | None:
     return None
 
 
+def _csv_table(text: str) -> SourceTable:
+    """Select only a uniquely consistent CSV dialect within the review budget.
+
+    Sniffer can reject a valid delimiter when quoted cells contain that same
+    separator or a newline. Probe the four already-supported separators with
+    strict RFC-style double-quote handling over the *whole* source instead of
+    treating a failed sample sniff as proof of comma CSV. A one-column table
+    is legitimate only if every dialect agrees and none reports malformed
+    rows; it is not a fallback for an inconsistent multi-column export.
+    """
+    candidates = []
+    single_column = None
+    malformed = False
+    over_budget = None
+    for delimiter in (",", ";", "\t", "|"):
+        try:
+            table = _table("CSV", csv.reader(
+                StringIO(text, newline=""), delimiter=delimiter,
+                quotechar='"', doublequote=True, strict=True,
+            ), strict_columns=True)
+        except csv.Error:
+            malformed = True
+            continue
+        except ValueError as exc:
+            if "review budget" in str(exc):
+                # An alternate separator cannot bypass row/cell/column limits.
+                over_budget = exc
+            else:
+                malformed = True
+            continue
+        if len(table.columns) > 1:
+            candidates.append((delimiter, table))
+        elif single_column is None:
+            single_column = table
+    if over_budget is not None:
+        raise over_budget
+    if len(candidates) == 1:
+        return candidates[0][1]
+    if len(candidates) > 1:
+        labels = {",": "comma", ";": "semicolon", "\t": "tab", "|": "pipe"}
+        choices = ", ".join(labels[delimiter] for delimiter, _ in candidates)
+        raise ValueError(
+            f"CSV delimiter is ambiguous ({choices}). Export with one consistent "
+            "delimiter and quote values that contain separators, then upload again."
+        )
+    if malformed or single_column is None:
+        raise ValueError(
+            "CSV delimiter or quoting could not be determined from consistent "
+            "columns. Export with one delimiter and quote fields containing "
+            "separators or newlines, then upload again."
+        )
+    return single_column
+
+
 def _spreadsheet(raw: bytes, suffix: str) -> tuple[SourceTable, ...]:
     if suffix == ".csv":
         encoding = _csv_unicode_encoding(raw)
@@ -409,13 +463,7 @@ def _spreadsheet(raw: bytes, suffix: str) -> tuple[SourceTable, ...]:
                 text = raw.decode("utf-8-sig")
             except UnicodeDecodeError:
                 text = raw.decode("cp1252")
-        sample = text[:8192]
-        try:
-            dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
-        except csv.Error:
-            dialect = csv.excel
-        return (_table("CSV", csv.reader(StringIO(text), dialect, strict=True),
-                       strict_columns=True),)
+        return (_csv_table(text),)
     from app.monthly_report_xlsx_currency import currency_evidence_value, preserve_currency_number_types
     # Bound ZIP/XML before openpyxl reads shared strings or worksheet dimensions.
     from zipfile import ZipFile
@@ -474,7 +522,7 @@ def _cached_extraction(data, digest, suffix):
             raise ValueError("Invalid source extraction cache sequence.")
         return value
 
-    for name in ("client_page_policy", "native_action_policy", "vendor_passage_policy"):
+    for name in ("client_page_policy", "native_action_policy", "vendor_passage_policy", "csv_dialect_policy"):
         if type(data.get(name, 0)) is not int or data.get(name, 0) < 0:
             raise ValueError("Invalid source extraction cache policy.")
     record = data["source"]
@@ -561,8 +609,15 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
             # Cache damage is recoverable; a stale/foreign QA namespace is not.
             library._qa_path_guard(cache)
             content = None
-        # Keep signed-Unicode migration independent of structural cache validation.
-        if (content is not None and (not unicode_csv or data.get("csv_unicode_policy") == 1)
+        # Only previously cached one-column CSVs can retain the old failed
+        # Sniffer fallback; already-correct multi-column caches stay warm.
+        # This disposable-extraction refresh never alters saved human edits.
+        old_csv_one_column = (suffix == ".csv" and content is not None
+                              and data.get("csv_dialect_policy") != 1
+                              and any(len(table.columns) == 1 for table in content.tables))
+        # Keep signed-Unicode migration independent of the delimiter policy.
+        if (content is not None and not old_csv_one_column
+                and (not unicode_csv or data.get("csv_unicode_policy") == 1)
                 and (suffix != ".xlsx" or (type(data.get("xlsx_currency_policy")) is int
                                           and data["xlsx_currency_policy"] == 1))
                 and (suffix != ".pdf" or data.get("vendor_passage_policy", 0) >= 7)):
@@ -647,7 +702,8 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
     library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1,
         "native_action_policy": 1, "vendor_passage_policy": 7,
         **({"xlsx_currency_policy": 1} if suffix == ".xlsx" else {}),
-        **({"csv_unicode_policy": 1} if unicode_csv else {}), **asdict(content)}))
+        **({"csv_unicode_policy": 1} if unicode_csv else {}),
+        **({"csv_dialect_policy": 1} if suffix == ".csv" else {}), **asdict(content)}))
     return content, attachments
 
 
