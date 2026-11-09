@@ -9,6 +9,7 @@ import re
 from app import monthly_report_library as library
 from app.monthly_report_asset_review import approve_all_assets, asset_context, pending_asset_indexes, refresh_asset_source_context
 from app.monthly_report_model import ResolvedBlock
+from app.monthly_report_page_reference import page_identity
 
 @dataclass(frozen=True)
 class ChartDefault:
@@ -114,9 +115,10 @@ def source_pages_allowed(block, sources, profile):
         if ref.startswith(('docx:','contract-org-chart:v1:','asset-source-context:v1:')):
             continue
         parts = ref.split(':')
-        if len(parts) != 3 or not parts[1].isdigit() or not re.fullmatch(r'[a-f0-9]{64}',parts[2]):
+        identity = page_identity(ref)
+        if identity is None or not re.fullmatch(r'[a-f0-9]{64}',parts[2]):
             return False
-        source, page = index.get(parts[0]), int(parts[1])
+        source, page = index.get(identity[0]), identity[1]
         if source is None or page not in source.selected_pages or not 1 <= page <= len(source.page_texts) or not page_allowed(source,page) or not visual_source_scope_valid(source,profile,artwork_keys=(block.key,)):
             return False
     return True
