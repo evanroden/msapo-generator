@@ -1,8 +1,8 @@
 /* Native keyed containers precede both asynchronous display components. Keep
    their initial geometry independent of adapter registration and first measure. */
 [class*="st-key-epc_workspace_"] [class*="st-key-epc_preview_slot_"] {min-height:max(180px,var(--epc-preview-height,min(78dvh,780px)));}
-.st-key-epc_workspace_monthly .st-key-monthly_report_navigation {background:var(--background-color,#fff);border-bottom:1px solid rgba(128,128,128,.25);padding:.25rem 0;}
-.st-key-epc_workspace_monthly .epc-section-navigation {display:flex;gap:.6rem;align-items:center;min-width:0;max-width:100%;background:var(--background-color,#fff);}
+.st-key-epc_workspace_monthly .st-key-monthly_report_navigation {background:transparent;border:0;padding:0;pointer-events:none;}
+.st-key-epc_workspace_monthly .epc-section-navigation {display:flex;gap:.6rem;align-items:center;min-width:0;width:fit-content;max-width:min(100%,25rem);background:var(--background-color,#fff);border-radius:.5rem;padding:.2rem;box-sizing:border-box;pointer-events:auto;}
 .st-key-epc_workspace_monthly .epc-section-selector {font:inherit;color:inherit;background:var(--background-color,#fff);border:1px solid #557f7f;border-radius:.4rem;min-height:44px;min-width:0;width:min(32rem,100%);flex:0 1 32rem;padding:.4rem .6rem;}
 
 /* Reserve the direct Review action from native render; no late toolbar mount. */
@@ -14,7 +14,7 @@
 .st-key-epc_workspace_monthly .epc-section-next {font:inherit;color:inherit;background:var(--background-color,#fff);border:1px solid #557f7f;border-radius:.4rem;min-height:44px;flex:0 0 auto;padding:.4rem .6rem;cursor:pointer;}
 .st-key-epc_workspace_monthly .epc-section-back:focus-visible,
 .st-key-epc_workspace_monthly .epc-section-next:focus-visible {outline:3px solid #557f7f;outline-offset:2px;}
-.st-key-epc_workspace_monthly .epc-section-progress {flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.9rem;}
+.st-key-epc_workspace_monthly .epc-section-progress {flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.9rem;}
 
 /* Streamlit 1.61.1 gives a tagged multiselect input 3rem only while focused.
    Keep that native minimum for linked-paragraph evidence on blur too: removing

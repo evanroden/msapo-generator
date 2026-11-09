@@ -28,6 +28,31 @@ from app.monthly_report_import import (
 )
 
 
+def _remove_duplicate_divider_chart_break(chart, body):
+    """Remove a redundant page break only at a proven divider/chart boundary."""
+    allowed = {qn('w:' + name) for name in ('p', 'pPr', 'r', 'rPr', 'rFonts', 'sz',
+               'szCs', 'noProof', 'spacing', 'lang', 'b', 'bCs', 'i', 'iCs', 'color', 'br')}
+    preceding = chart.getprevious()
+    if preceding is None or preceding.tag != qn('w:p'):
+        return
+    breaks = list(preceding.iter(qn('w:br')))
+    if len(breaks) != 1 or breaks[0].get(qn('w:type')) != 'page':
+        return
+    if any(n.tag not in allowed or (n.text and n.text.strip()) for n in preceding.iter()):
+        return
+    cursor = preceding.getprevious()
+    while cursor is not None and cursor.tag == qn('w:p'):
+        section = cursor.find('./' + qn('w:pPr') + '/' + qn('w:sectPr'))
+        if section is not None:
+            kind = section.find(qn('w:type'))
+            if (kind is None or kind.get(qn('w:val'), 'nextPage') == 'nextPage') and _is_native_divider_background(cursor, _text(cursor)):
+                breaks[0].getparent().remove(breaks[0])
+            return
+        if any(n.tag not in allowed - {qn('w:br')} or (n.text and n.text.strip()) for n in cursor.iter()):
+            return
+        cursor = cursor.getprevious()
+
+
 class NativeLayoutError(ValueError):
     """The source layout cannot represent the current content safely."""
 
@@ -164,6 +189,59 @@ def _set_text(element, value):
         for node in group[1:]:
             node.text = ""
 
+
+
+def _set_reviewed_footer_text(paragraph, value):
+    """Replace ordinary footer words without writing into retained field caches."""
+    markers = {qn('w:bookmarkStart'), qn('w:bookmarkEnd'), qn('w:proofErr')}
+    if any(child.tag not in (qn('w:pPr'), qn('w:r'), qn('w:fldSimple'))
+           and not (child.tag in markers and not len(child) and not (child.text or '').strip())
+           for child in paragraph):
+        return False
+    texts, controls, cached, depth = [], [], [], 0
+    for node in paragraph.iter():
+        if any(parent.tag == qn('w:fldSimple') for parent in node.iterancestors()):
+            if node.tag == qn('w:t'):
+                cached.append(node)
+            continue
+        if node.tag == qn('w:fldChar'):
+            kind = node.get(qn('w:fldCharType'))
+            if kind == 'begin':
+                depth += 1
+            elif kind == 'end':
+                depth -= 1
+                if depth < 0:
+                    return False
+        elif node.tag == qn('w:t') and depth:
+            cached.append(node)
+        elif (not depth and node.getparent() is not None
+              and node.getparent().tag == qn('w:r') and node.getparent().getparent() is paragraph):
+            if node.tag == qn('w:t'):
+                texts.append(node)
+            elif (node.tag in (qn('w:tab'), qn('w:cr')) or node.tag == qn('w:br')
+                  and node.get(qn('w:type'), 'textWrapping') == 'textWrapping'):
+                controls.append(node)
+    if depth or not texts:
+        return False
+    # The inspector excluded cached field words from the reviewed footer.
+    # Retain the counters themselves, but never authorize their old payload.
+    for node in cached:
+        node.text = ''
+    for node in controls:
+        node.getparent().remove(node)
+    # Reuse the ordinary text writer only on detached literal payload. The
+    # original paragraph/run formatting and every field node stay in place.
+    payload = OxmlElement('w:r')
+    payload.append(OxmlElement('w:t'))
+    _set_text(payload, value)
+    anchor = texts[0]
+    parent, index = anchor.getparent(), anchor.getparent().index(anchor)
+    parent.remove(anchor)
+    for offset, node in enumerate(list(payload)):
+        parent.insert(index + offset, node)
+    for node in texts[1:]:
+        node.text = ''
+    return True
 
 
 def _remove_unapproved_master_watermark_text(document):
@@ -1310,12 +1388,21 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
         _remove_unapproved_master_watermark_text(document)
     body = document.element.body
     original = list(body)
-    # Capture only recognized native divider roots, before any body edits.
+    # A native divider is an inspected output occurrence, not a media hash.
+    # Capture proven roots before body cleanup; shared/adjacent source pictures
+    # remain untouched. Retain the scorecard seam cleanup added on main.
     divider_positions = {item.position for item in inspection.items
                          if item.kind == "image" and item.part == "word/document.xml"
-                         and item.note == "Native divider artwork"}
+                         and item.note == "Native divider artwork"
+                         and 0 < item.position <= len(original)}
     divider_photo_roots = [node for index, node in enumerate(original, 1)
-                           if index in divider_positions and _is_native_divider_background(node, _text(node))]
+                           if index in divider_positions
+                           and _is_native_divider_background(node, _text(node))]
+    scorecard_dividers = [original[item.position - 1] for item in inspection.items
+                          if item.kind == "image" and item.section == "scorecards"
+                          and item.part == "word/document.xml" and item.note == "Native divider artwork"
+                          and 0 < item.position <= len(original)
+                          and _is_native_divider_background(original[item.position - 1], _text(original[item.position - 1]))]
     # A merged technical cell may cross a removed price column. Preserve its
     # geometry only when its text is explicitly present in the supplied filtered
     # table. A cell beginning in a removed column is redacted in full.
@@ -1934,6 +2021,26 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                 key = "native_followups_" + sec
                 specs[key] = (sec, type("TextSpec", (), {"type": "rich_text", "columns": ()})())
                 render_blocks.append(ResolvedBlock(key, "This month", text="\n".join(texts)))
+    # Bound original chart occurrences are already proved against the exact
+    # image bytes and source reference. Their body nodes may be retained rather
+    # than emitted again; never infer chart ownership from visual appearance.
+    organization_chart_roots = [
+        original[item.position - 1] for item in inspection.items
+        if item.part == "word/document.xml" and item.id in image_proofs
+        and image_proofs[item.id][0] == "org_chart"
+        and 0 < item.position <= len(original)
+    ]
+    # Bind only exact, preserved current contact-table references. An unrelated
+    # nearby source table cannot acquire a chart-page break.
+    organization_contact_tables = [
+        original[item.position - 1]
+        for block in render_blocks if block.key == "contact_matrix" and block.source != "Omit"
+        for table in block.extra_tables
+        if table.reference in preserved_table_refs
+        for item in [native_tables.get(table.reference)]
+        if item is not None and item.section == "organization" and item.part == "word/document.xml"
+        and 0 < item.position <= len(original) and original[item.position - 1].tag == qn("w:tbl")
+    ]
     for block in render_blocks:
         if block.source == "Omit" or block.key not in specs or block.key in unchanged:
             continue
@@ -2067,6 +2174,8 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                        continuation=bool(shape and shape.continuation),
                        keep_all_rows_intact=(block.key == "contact_matrix"), template=prototype)
                 page_plan.emitted(anchor, kind="table")
+                if block.key == "contact_matrix":
+                    organization_contact_tables.append(anchor)
                 label = work_order_labels.get(anchor)
                 if label is not None and table_reference == source_ref_by_id[label[1]]:
                     # Empty-row normalization can re-emit an otherwise unchanged
@@ -2182,6 +2291,8 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                     last.addnext(clone)
                     page_plan.emitted(clone, last, kind="picture")
                 last = clone
+                if block.key == "org_chart":
+                    organization_chart_roots.append(clone)
                 if not source_page:
                     emitted_photo_roots.add(page_plan._root(clone))
                     unused_document_anchors.discard(anchor)
@@ -2250,6 +2361,13 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             kind = "footnote" if node.tag == qn("w:footnoteReference") else "endnote"
             if kind + ":" + node.get(qn("w:id"), "") not in explicit_notes:
                 node.getparent().remove(node)
+    footer = blocks.get('footer_text')
+    reviewed_footers = defaultdict(set)
+    if footer is not None and footer.source != 'Omit' and draft.address_line.strip():
+        for item in inspection.items:
+            if (item.kind == 'text' and item.part.startswith('word/footer')
+                    and source_ref(item) in footer.references):
+                reviewed_footers['/' + item.part].add(item.position)
     for part in list(document.part.package.parts):
         name = str(part.partname)
         if not name.startswith(("/word/header", "/word/footer")) or not hasattr(part, "element"):
@@ -2260,6 +2378,15 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
         _clear_diagrams(part.element)
         _clear_hyperlinks(part.element)
         for paragraph in part.element.iter(qn("w:p")):
+            selected = reviewed_footers.get(name, ())
+            position = part.element.index(paragraph) + 1 if paragraph.getparent() is part.element else None
+            if position in selected:
+                # Starting Report combines selected footer paragraphs into one
+                # current value. Emit it once per physical part, at that part's
+                # first selected paragraph; shared section routes reuse the part.
+                value = draft.address_line.strip() if position == min(selected) else ''
+                if _set_reviewed_footer_text(paragraph, value):
+                    continue
             visible = deepcopy(paragraph)
             for fallback in list(visible.iter("{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback")):
                 fallback.getparent().remove(fallback)
@@ -2342,6 +2469,62 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     for panel in empty_panels:
         panel.remove_if_empty(body, page_plan, cleared_activity_paragraphs)
     page_plan.finish(document=document)
+    from app.monthly_report_scorecard_seam import fill_scorecard_seam
+    for divider in dict.fromkeys(scorecard_dividers):
+        fill_scorecard_seam(document, divider)
+    # Newly rendered chart pages and contact tables are separate content.
+    # Only act on exact output nodes from these two blocks, after page-plan
+    # cleanup, so no source page, omitted chart or unrelated table is moved.
+    chart_nodes = [node for node in organization_chart_roots if node.getparent() is body]
+    contact_nodes = [node for node in organization_contact_tables if node.getparent() is body]
+    if chart_nodes and contact_nodes:
+        # Move only an exact adjacent current contact table and chart, never
+        # crossing unrelated material or an explicit section boundary.
+        if len(chart_nodes) == len(contact_nodes) == 1:
+            chart, table = chart_nodes[0], contact_nodes[0]
+            if (table.getnext() is chart and
+                    not any(node.find(".//" + qn("w:sectPr")) is not None for node in (chart, table))):
+                chart.addnext(table)
+        for chart in chart_nodes:
+            _remove_duplicate_divider_chart_break(chart, body)
+        nodes = list(body)
+        first_table = min(contact_nodes, key=nodes.index)
+        earlier_charts = [node for node in chart_nodes if nodes.index(node) < nodes.index(first_table)]
+        if earlier_charts:
+            chart_index = max(nodes.index(node) for node in earlier_charts)
+            # Keep an immediately preceding, unambiguous contacts heading on
+            # the same page as the table. Do not move unrelated text.
+            target = first_table
+            previous = first_table.getprevious()
+            if (previous is not None and previous.tag == qn("w:p")
+                    and nodes.index(previous) > chart_index
+                    and _text(previous).strip().casefold() in
+                        {"facility contacts", "site contacts", "contacts"}):
+                target = previous
+            table_index = nodes.index(target)
+            intervening = nodes[chart_index + 1:table_index]
+            def active_page_break(node):
+                return any(item.get(qn("w:val"), "1").lower() not in {"0", "false", "off"}
+                           for item in node.iter(qn("w:pageBreakBefore")))
+            def page_section_break(node):
+                for section in node.iter(qn("w:sectPr")):
+                    kind = section.find(qn("w:type"))
+                    if kind is None or kind.get(qn("w:val"), "nextPage") in {"nextPage", "oddPage", "evenPage"}:
+                        return True
+                return False
+            target_break = target.tag == qn("w:p") and active_page_break(target)
+            existing_break = target_break or any(
+                any(br.get(qn("w:type")) == "page" for br in node.iter(qn("w:br")))
+                or active_page_break(node) or page_section_break(node)
+                for node in intervening)
+            if not existing_break:
+                paragraph = OxmlElement("w:p")
+                properties = OxmlElement("w:pPr")
+                properties.append(OxmlElement("w:pageBreakBefore"))
+                paragraph.append(properties)
+                target.addprevious(paragraph)
+    # Occurrence-local transformation after #754-era native output assembly
+    # and scorecard seam processing. Preserve original shared image parts.
     from app.monthly_report_divider_monochrome import monochrome_divider_photos
     monochrome_divider_photos(document, divider_photo_roots)
     from app.monthly_report_divider_numerals import fit_proposals_numeral

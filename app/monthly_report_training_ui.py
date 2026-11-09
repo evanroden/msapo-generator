@@ -393,19 +393,7 @@ def render_training(draft, blocks, prefix, field):
                        "Monthly notes and the saved report version are unchanged.")
         with st.expander("Add requirement", expanded=False):
             new_training = st.text_input("Requirement name", key=key + "_new_requirement")
-            if st.button("Add requirement", key=key + "_add_requirement", disabled=not new_training.strip()):
-                title = new_training.strip()
-                if title.casefold() in {c.casefold() for c in matrix.columns}:
-                    st.error("That training already has a column.")
-                else:
-                    proposed = replace(matrix, columns=(*matrix.columns, title), rows=tuple((*r, "Not recorded") for r in matrix.rows))
-                    if st.session_state.get(key + "_stale_standing"):
-                        raise library.RevisionConflict("Shared training has newer information. Reload saved training before editing its matrix.")
-                    stored = save_training(draft.profile, proposed, expected_revision=stored["revision"], actor=draft.prepared_by)
-                    matrix = proposed
-                    explicit = True
-                    st.session_state[store_key] = stored
-                    st.session_state[matrix_key] = matrix
+            add_requirement = st.button("Add requirement", key=key + "_add_requirement", disabled=not new_training.strip())
         matrix_slot = st.empty()
         with matrix_slot.container():
             rows = _matrix_grid(matrix, draft.profile, key)
@@ -416,14 +404,28 @@ def render_training(draft, blocks, prefix, field):
                               for i, c in enumerate(matrix.columns)) for row in rows if row.get("Team member")), matrix.reference)
         if hospital_matrix(draft.profile, edited, directory) != edited:
             raise ValueError("This matrix is for hospital staff. Remove the identified ENFRA, asset-management or vendor person before saving.")
+        # Capture the delivered old grid before changing its column-based key.
+        # Commit the edit and new requirement together; failed saves keep that
+        # same visible grid available for correction or explicit retry.
+        if add_requirement:
+            title = new_training.strip()
+            if title.casefold() in {c.casefold() for c in edited.columns}:
+                st.error("That training already has a column.")
+            else:
+                edited = replace(edited, columns=(*edited.columns, title),
+                                 rows=tuple((*row, "Not recorded") for row in edited.rows))
         if edited != matrix:
             if st.session_state.get(key + "_stale_standing"):
                 raise library.RevisionConflict("Shared training has newer information. Reload saved training before editing its matrix.")
             stored = save_training(draft.profile, edited, expected_revision=stored["revision"], actor=draft.prepared_by)
             st.session_state[store_key] = stored
             st.session_state[matrix_key] = edited
+            changed_columns = matrix.columns != edited.columns
             matrix = edited
             explicit = True
+            if changed_columns:
+                with matrix_slot.container():
+                    _matrix_grid(matrix, draft.profile, key)
         matrix, stored, switched_year = _requirements_year(
             draft, block, matrix, stored, directory, key, prefix)
         if switched_year:

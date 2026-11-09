@@ -197,6 +197,17 @@ def patch_index(index_path: Path, *, origin: str = SITE_ORIGIN) -> None:
     index_path.write_text(source, encoding="utf-8")
 
 
+def public_origin(value: str) -> str:
+    """A bare https origin (scheme, host, optional port), or ValueError.
+
+    It is written into HTML attributes unescaped, so anything else is refused.
+    """
+    origin = value.strip().rstrip("/")
+    if not re.fullmatch(r"https://[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?(?::\d{1,5})?", origin):
+        raise ValueError(f"Public site origin must look like https://host, got {value!r}")
+    return origin
+
+
 def install_branding(
     static_dir: Path,
     *,
@@ -204,6 +215,7 @@ def install_branding(
     origin: str = SITE_ORIGIN,
 ) -> None:
     """Copy public assets and patch the crawler-visible Streamlit shell."""
+    origin = public_origin(origin)
     index_path = static_dir / "index.html"
     icon_source = branding_dir / "process-control-icon.png"
     preview_source = branding_dir / "process-control-preview.png"

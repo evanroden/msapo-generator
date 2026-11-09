@@ -143,3 +143,14 @@ def test_template_limit_admits_above_200_mib_but_rejects_above_512():
     with pytest.raises(ValueError, match="bounded limit"):
         audit._valid_inputs("templates", "a" * 12, "b" * 64,
                             512 * 1024 * 1024 + 1, "c" * 40, "before")
+
+
+def test_empty_shelf_messages_match_the_app_and_name_no_host():
+    """The fetcher recognises an empty shelf by the app's exact message, which
+    must stay true on any host."""
+    app = SCRIPT.parents[1] / "app"
+    source = "".join((app / name).read_text() for name in (
+        "monthly_report_shared_testing_ui.py", "monthly_report_shared_templates_ui.py"))
+    for message in fetcher._EMPTY.values():
+        assert f'st.info("{message}")' in source
+        assert "Render" not in message

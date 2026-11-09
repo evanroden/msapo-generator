@@ -102,8 +102,23 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      # Hosts other than Render stamp the served commit at build time (About
+      # shows it); build the way they do and check the image reports it.
       - name: Build production image
-        run: docker build --tag msapo-render-check .
+        env:
+          COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: docker build --build-arg APP_GIT_COMMIT="$COMMIT" --tag msapo-render-check .
+      - name: Verify the image reports its commit and passes the host check
+        env:
+          COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          served="$(docker run --rm msapo-render-check python -c 'from app.public_build import runtime_commit; print(runtime_commit())')"
+          test "$served" = "$COMMIT" || { echo "image reports '$served', built from $COMMIT"; exit 1; }
+          docker run --rm --env EPC_DATA_DIR=/tmp/host-check-data \
+            --env ANTHROPIC_API_KEY=test-key-not-used \
+            --env SMARTSHEET_FORM_URL=https://example.invalid/form \
+            --env EXPENSE_ACCOUNT_DIRECTORS_JSON='{}' \
+            msapo-render-check sh -c 'mkdir -p /tmp/host-check-data && python scripts/host_check.py --offline'
       - name: Verify production app starts and becomes healthy
         run: |
           docker run --detach --name msapo-render-check --env ANTHROPIC_API_KEY=test-key-not-used msapo-render-check

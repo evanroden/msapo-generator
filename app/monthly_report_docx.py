@@ -314,8 +314,8 @@ def _divider_background(document, raw):
     """Full-page photo behind editable Word text; crop only divider artwork."""
     normalized = normalize_report_image(raw, ".png", frame=(8.5, 11), dpi=150)
     with Image.open(BytesIO(normalized.data)) as image:
-        # Only the divider photograph is monochrome; the brand bands below
-        # retain their color, and the source asset remains unchanged.
+        # Monochrome only the photo; the bands drawn below stay colored.
+        # The original user-supplied artwork is never modified.
         page = ImageOps.fit(ImageOps.grayscale(image).convert("RGB"), (1275, 1650), Image.Resampling.LANCZOS)
     # A solid band guarantees title contrast regardless of the supplied photo.
     draw = ImageDraw.Draw(page)
