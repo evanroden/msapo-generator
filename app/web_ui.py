@@ -1612,6 +1612,17 @@ def _render_asset_control(
     # rerun.  Reset only this account/site asset selection to the fresh guess.
     if st.session_state.get(asset_state_key) not in options:
         st.session_state[asset_state_key] = default_asset
+    # Keep the Smartsheet-bound asset key independent of a dropdown whose
+    # options change with every search. A changed options list can reset the
+    # Streamlit widget; only an explicit user selection updates the asset.
+    large_picker = not rrh and len(uids) > LARGE_ASSET_SITE_THRESHOLD
+    picker_key = f"asset_picker_{token}_{contract}_{site}"
+    if large_picker and st.session_state.get(picker_key) != st.session_state[asset_state_key]:
+        st.session_state[picker_key] = st.session_state[asset_state_key]
+
+    def commit_large_picker_selection() -> None:
+        st.session_state[asset_state_key] = st.session_state[picker_key]
+
     raw_asset = st.selectbox(
         "Specific asset *",
         options,
@@ -1622,12 +1633,15 @@ def _render_asset_control(
             if uid == ASSET_NONE
             else f"{labels[uid]} · {uid}"
         ),
-        key=asset_state_key,
+        key=picker_key if large_picker else asset_state_key,
+        on_change=commit_large_picker_selection if large_picker else None,
         help=(
             "The tool suggests the asset from the quote and selected site. "
             "Choose a different one only if the suggestion is wrong."
         ),
     )
+    if large_picker:
+        raw_asset = st.session_state[asset_state_key]
     full_asset_id = normalize_asset_id(raw_asset)
     if full_asset_id:
         st.caption(f"Full Asset ID sent to Smartsheet: **{full_asset_id}**")

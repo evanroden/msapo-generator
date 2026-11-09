@@ -108,11 +108,16 @@ def test_large_picker_renders_bounded_options_and_preserves_unanswered_state(
     assert any("SYN-SLR-2987" in option for option in app.selectbox[0].options)
     assert app.session_state[key] == web_ui.ASSET_PLACEHOLDER
 
+    app.selectbox[0].set_value("SYN-SLR-2987").run()
+    assert not app.exception
+    assert app.session_state[key] == "SYN-SLR-2987"
+
     search = next(field for field in app.text_input if field.label.startswith("Find an asset"))
     search.set_value("not-in-registry").run()
     assert not app.exception
     assert len(app.selectbox[0].options) == 2
-    assert app.session_state[key] == web_ui.ASSET_PLACEHOLDER
+    assert app.session_state[key] == "SYN-SLR-2987"
+    assert any("SYN-SLR-2987" in option for option in app.selectbox[0].options)
 
 
 def test_rrh_asset_picker_keeps_original_single_selectbox(monkeypatch, tmp_path):
