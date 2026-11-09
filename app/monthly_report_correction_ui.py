@@ -103,13 +103,17 @@ PHOTO_CAPTION_NOTICE = (
 
 
 def _current_photo_caption(draft, target):
-    if resolve_target(draft, target) is None:
+    resolved = resolve_target(draft, target)
+    if resolved is None:
         return False
-    block, index, source = resolve_target(draft, target)
-    if block is None or source is not None or index is None:
+    block, index, source = resolved
+    if block is None or index is None:
         return False
+    # A source-page caption must remain a source-page warning: after source loss,
+    # the same image could otherwise acquire an ordinary photo-caption warning.
+    code = "document_caption" if source is not None else "photo_caption"
     from app.monthly_report_layout_checks import layout_checks
-    return any(check.code in {"photo_caption", "document_caption"} and target in check.targets
+    return any(check.code == code and target in check.targets
                for check in layout_checks(draft))
 
 
@@ -152,11 +156,10 @@ def photo_caption_request(prefix, draft, block, index):
     target = request.get("target")
     resolved = resolve_target(draft, target)
     if (resolved is None or resolved[0] != block or resolved[1] != index
-            or resolved[2] is not None or
-            not _current_photo_caption(draft, target)):
+            or not _current_photo_caption(draft, target)):
         return ""
     from app.monthly_report_correction_targets import picture_target
-    if picture_target(draft, block, index) != target:
+    if picture_target(draft, block, index, source=resolved[2], page=target.page) != target:
         return ""
     st.session_state.pop(prefix + "_photo_caption_navigation_open", None)
     return ('<a class="enfra-page-correction-request" data-report-identity="' +

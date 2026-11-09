@@ -213,3 +213,28 @@ def test_document_caption_removed_page_refuses_any_other_picture(monkeypatch):
     assert PREFIX + "_photos_improvements_editing" not in state
     assert "unavailable" in state[PREFIX + "_photo_caption_navigation_notice"]
     assert state[PREFIX + "_unrelated_text"] == "Pending note"
+
+
+
+@pytest.mark.parametrize("change", ("source-revised", "page-unselected"))
+def test_document_caption_changed_source_page_refuses_jump(monkeypatch, change):
+    from tests.test_monthly_report_caption_preflight import report_with_caption, check_captions
+    draft, _, source = report_with_caption("Synthetic source-page caption. " * 100)
+    (check,) = check_captions(draft)
+    (target,) = check.targets
+    assert (target.source_id, target.source_hash, target.source_revision, target.page) == (
+        source.id, source.sha256, source.fingerprint, 1)
+    assert resolve_target(draft, target)[2] == source
+    state = {PREFIX + "_draft": draft, PREFIX + "_unrelated_text": "Untouched input"}
+    monkeypatch.setattr(ui, "st", SimpleNamespace(session_state=state))
+    monkeypatch.setattr(guided, "_rich_text_scope", lambda prefix: SCOPE)
+    ui.queue_photo_caption(PREFIX, target, SCOPE)
+    changed_source = (replace(source, service_date="2026-10-01")
+                      if change == "source-revised" else replace(source, selected_pages=()))
+    changed = replace(draft, sources=(changed_source,))
+    assert resolve_target(changed, target) is None
+    ui.consume_photo_caption(PREFIX, changed, SCOPE)
+    assert PREFIX + "_photo_caption_navigation_open" not in state
+    assert PREFIX + "_photos_improvements_editing" not in state
+    assert "unavailable" in state[PREFIX + "_photo_caption_navigation_notice"]
+    assert state[PREFIX + "_unrelated_text"] == "Untouched input"
