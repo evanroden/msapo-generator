@@ -93,7 +93,7 @@ def selected_directory_sites(state, facilities):
     return tuple(result)
 
 
-def render_selected_directory(contract, facilities, actor, prefix):
+def render_selected_directory(contract, facilities, actor, prefix, draft=None):
     """Return a replacement report block only after an explicit shared save."""
     with st.expander("Contract and site directory"):
         if not actor.strip():
@@ -129,6 +129,10 @@ def render_selected_directory(contract, facilities, actor, prefix):
                 report_contacts, missing = directory.contact_block(proposed, facilities, bindings)
                 if missing:
                     raise ValueError("Cannot save contacts for unmatched sites: " + "; ".join(missing))
+                # Apply can be refused when the report has independent contact
+                # content. Check before committing the shared directory update.
+                if draft is not None:
+                    directory.apply_contacts(draft, report_contacts)
                 directory.save_directory(
                     contract, merged,
                     expected_revision=revision, actor=actor, confirmed=True,
@@ -138,7 +142,7 @@ def render_selected_directory(contract, facilities, actor, prefix):
                 return report_contacts
         except (ValueError, OSError) as exc:
             st.error(literal(exc))
-            st.caption("No contacts were replaced. Reload the current directory before trying again.")
+            st.caption("No contacts or shared directory changes were saved. Keep the report unchanged, or review its existing contact content and retry.")
 
 
 def _suggested_site(site, existing, site_aliases=None, saved_keys=()):
@@ -451,9 +455,14 @@ def review_contacts(draft, prefix, field, assets):
         confirmed = st.checkbox("Replace this report’s contact matrix with this reviewed directory table", key=prefix + "_contacts_ok_" + signature)
         st.caption("This is an explicit replacement in this report only. It does not change shared report defaults, org charts, membership or the source workbook. Save progress to pin it for next month.")
         if st.button("Use reviewed contact table", key=prefix + "_use_contacts", disabled=not (confirmed and candidate.rows and not missing)):
-            st.session_state[prefix + "_contacts_undo"] = (current, draft.sections)
-            draft = directory.apply_contacts(draft, candidate)
-            _resume_contacts(draft, prefix)
+            try:
+                updated = directory.apply_contacts(draft, candidate)
+            except ValueError as exc:
+                st.error(literal(exc))
+            else:
+                st.session_state[prefix + "_contacts_undo"] = (current, draft.sections)
+                draft = updated
+                _resume_contacts(draft, prefix)
         undo = st.session_state.get(prefix + "_contacts_undo")
         if undo and st.button("Undo contact table update", key=prefix + "_undo_contacts"):
             blocks = {b.key: b for b in draft.blocks}
