@@ -812,13 +812,12 @@ def inspect_docx(path: Path) -> DocxInspection:
                                             text=rows[0][0], suggested_slot="service_calls",
                                             note="Native table title")
                             elif standalone_frame:
-                                add("unsupported", part, position, text=text,
-                                    note=(_cover_unreadable_object_note(
+                                note = ("Word text frame needs manual layout review. Preserve and review its complete page "
+                                        "or add a reviewed replacement; extracted labels do not preserve the layout.")
+                                if part == "word/document.xml" and word_section <= 2 and section in ("", "cover"):
+                                    note += " " + _cover_unreadable_object_note(
                                         element, word_section=word_section, position=position)
-                                        if part == "word/document.xml" and word_section <= 2
-                                        and section in ("", "cover") else
-                                        "Word text frame needs manual layout review. Preserve and review its complete page "
-                                        "or add a reviewed replacement; extracted labels do not preserve the layout."))
+                                add("unsupported", part, position, text=text, note=note)
                             elif text:
                                 # A floating Word textbox has separate layout/review
                                 # ownership. Do not also offer its words as ordinary
@@ -927,9 +926,10 @@ def inspect_docx(path: Path) -> DocxInspection:
                                               "Native divider artwork" if detected and detected != "unmatched" else
                                               "Native Word drawing: preserve and review its complete page layout, or add a replacement picture. Nothing is executed during inspection.")
                                     if not native_role and part == "word/document.xml" and word_section <= 2 and section in ("", "cover"):
-                                        note = _cover_unreadable_object_note(
-                                            element, word_section=word_section, position=position
-                                        ) + (" The modern and fallback Word representations disagree." if divergent_native else "")
+                                        note += " " + _cover_unreadable_object_note(
+                                            element, word_section=word_section, position=position)
+                                        if divergent_native:
+                                            note += " The modern and fallback Word representations disagree."
                                     add("native_layout" if native_role else "unsupported", part, position,
                                         text=text, note=note)
                             if element.find(".//" + W + "altChunk") is not None or element.tag == W + "altChunk":

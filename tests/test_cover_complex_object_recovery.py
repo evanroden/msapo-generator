@@ -94,6 +94,15 @@ def test_synthetic_cover_inventory_and_unchanged_body(tmp_path, complex_cover):
         assert any("grouped VML drawing" in item.note for item in blockers)
         assert all("Word section 1" in item.note and "body element" in item.note
                    and "PNG/JPEG" in item.note for item in blockers)
+        # Cover guidance is appended: native/alternate classification is a
+        # persisted prefix used by compatibility and source-view consumers.
+        assert any(
+            item.note.startswith(
+                "Native Word drawing: preserve and review its complete page layout, "
+                "or add a replacement picture. Nothing is executed during inspection. "
+            ) and "grouped VML drawing" in item.note
+            for item in blockers
+        )
         assert all(item.position > 0 for item in blockers)
     else:
         # The no-floating-content control keeps the same native source
@@ -128,3 +137,47 @@ def test_unsupported_cover_cannot_erase_corrections_on_failure_then_explicit_omi
     assert any(mapping.item_id == body.id for mapping in mappings)
     assert path.read_bytes() == original
     assert inspect_docx(path) == inspection
+
+
+def test_standalone_cover_frame_keeps_original_review_prefix(tmp_path):
+    document = Document()
+    paragraph = document.add_paragraph()
+    paragraph._p.append(parse_xml(
+        '<w:r xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        '<w:txbxContent><w:p><w:r><w:t>Synthetic floating cover label</w:t>'
+        '</w:r></w:p></w:txbxContent></w:r>'
+    ))
+    path = tmp_path / "standalone-frame.docx"
+    document.save(path)
+    inspection = inspect_docx(path)
+    assert any(
+        item.note.startswith(
+            "Word text frame needs manual layout review. Preserve and review its complete page "
+            "or add a reviewed replacement; extracted labels do not preserve the layout. "
+        )
+        and "1 floating Word text box" in item.note
+        and "Word section 1" in item.note
+        and "PNG/JPEG" in item.note
+        for item in inspection.items
+    )
+
+
+def test_divergent_cover_alternate_keeps_compatibility_prefix(tmp_path):
+    from test_monthly_report_source_frame_logo_role import source
+
+    inspection = inspect_docx(source(tmp_path, divergent=True))
+    divergent = [
+        item for item in inspection.items
+        if item.note.startswith(
+            "Alternate Word representations contain different or unsupported content. "
+            "Review and replace this exact drawing; every original representation is retained. "
+        )
+    ]
+    assert divergent
+    assert any(
+        "Cover body element" in item.note
+        and "Word section 1" in item.note
+        and "PNG/JPEG" in item.note
+        and "The modern and fallback Word representations disagree." in item.note
+        for item in divergent
+    )
