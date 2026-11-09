@@ -149,7 +149,12 @@ def _read_with_bytes(path: Path) -> tuple[dict, bytes]:
         if not isinstance(value, dict) or value.get("schema") != 1:
             raise LibraryError("Unsupported report storage schema; existing data was preserved.")
         return value, raw
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+    except LibraryError:
+        raise  # Keep the specific storage-size and schema recovery messages.
+    except (OSError, ValueError, RecursionError) as exc:
+        # The JSON decoder can reject integer conversion or nesting limits
+        # without raising JSONDecodeError. Keep those limits and surface the
+        # same recoverable read failure; never replace the damaged record.
         raise LibraryError("Saved report data could not be read; existing data was preserved.") from exc
 
 
