@@ -196,6 +196,20 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                   independent_template=False, native_art_size_limited=False):
     p = prefix + "_section_" + section.key
     old = plans.get(section.key, {})
+    if section.key == "other":
+        targets = ("", *(spec.key for spec in known_sections()))
+        target_key = field(p + "_target", old.get("target", ""))
+        if st.session_state[target_key] not in targets:
+            st.session_state[target_key] = ""
+        # An older staged plan or a pending widget change cannot approve an
+        # unresolved destination just because its review card is closed.
+        if not old.get("omit") and (
+                old.get("target") not in targets[1:]
+                or st.session_state[target_key] != old.get("target")):
+            old["approved"] = False
+            old["approval_stamp"] = ""
+            # Closed-card widget cleanup must not resurrect the old choice.
+            old["target"] = st.session_state[target_key]
     # Streamlit includes an expander's label in its identity, even with a key.
     # A changing "Ready" suffix would close it and discard its active widgets.
     text_only_period_review = (bool(old.get("period_review_items"))
@@ -339,10 +353,10 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 # as this month's activity. It remains in the retained original.
                 items = [i for i in items if i.kind == "image" or i.suggested_slot == "footer_text"]
             elif section.key == "other":
-                target = st.selectbox("Where should this content appear?", ["", *[s.key for s in known_sections()]],
-                                      format_func=lambda k: next((s.title for s in known_sections() if s.key == k), "Choose a report section"), key=field(p + "_target", old.get("target", "")))
+                target = st.selectbox("Where should this content appear?", targets,
+                                      format_func=lambda k: next((s.title for s in known_sections() if s.key == k), "Choose a report section"), key=target_key)
                 plan["target"] = target
-                if not target:
+                if target not in targets[1:]:
                     blocking.append("Choose a section above, or leave this additional content out of the draft.")
             from app.monthly_report_source_content_roles import render_role_texts, source_text_role
             texts = [i for i in items if i.kind == "text"]
@@ -648,6 +662,7 @@ def _starting_review_sections(sections, plans, diagram_failures):
         if (plan.get("approved") and not questions
                 and not (section.key == "cover" and plan.get("omit")
                          and not plan.get("automatic_identical_cover_reuse"))
+                and not (section.key == "other" and plan.get("source_site_relation") == "same")
                 and not plan.get("period_review_items")):
             continue
         if (section.key in diagram_failures and questions
