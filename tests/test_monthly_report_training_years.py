@@ -1,0 +1,315 @@
+"""Annual matrix identity must not disappear or overwrite another year's record."""
+from dataclasses import asdict, replace
+from io import BytesIO
+
+import pytest
+from docx import Document
+
+from app import monthly_report_library as library, monthly_report_training as training
+from app.monthly_report_model import (
+    Facility, ReportDraft, ReportPeriod, ReportProfile, ReportTable, ResolvedBlock,
+    default_sections,
+)
+from app.monthly_report_setup import new_month_draft
+
+
+@pytest.fixture
+def profile(tmp_path, monkeypatch):
+    monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path / 'runtime'))
+    return ReportProfile('Synthetic Annual', 'north', 'Synthetic North',
+                         (Facility('north', 'Synthetic North'),))
+
+
+def matrix(year=None, status='Completed'):
+    return ReportTable(('Team member', 'Site', 'Safety', 'Orientation'),
+                       (('Synthetic Learner', 'Synthetic North', status, ''),),
+                       training.MATRIX_REF if year is None else f'training:matrix:v2:{year}')
+
+
+def draft(profile, table):
+    section = next(s for s in default_sections() if s.key == 'training')
+    block = ResolvedBlock('training_summary', 'This month', extra_tables=(table,))
+    return ReportDraft(profile, ReportPeriod(2026, 11), 'Synthetic Editor', (section,), (block,))
+
+
+def test_year_matrix_survives_same_year_and_cross_year_rollover(profile):
+    original = draft(profile, matrix(2026))
+    december = new_month_draft(original, ReportPeriod(2026, 12))
+    january = new_month_draft(december, ReportPeriod(2027, 1))
+    # The old year stays explicitly identified, not silently rebranded or erased.
+    assert december.blocks[0].extra_tables == (matrix(2026),)
+    assert january.blocks[0].extra_tables == (matrix(2026),)
+    assert original.blocks[0].extra_tables == (matrix(2026),)
+
+
+def test_apply_year_matrix_replaces_only_the_previous_matrix(profile):
+    note = ReportTable(('Imported context',), (('Keep this source value',),), 'source:context')
+    block = replace(draft(profile, matrix()).blocks[0], text='Keep monthly note',
+                    extra_tables=(note, matrix()))
+    result = training.apply_tables(block, matrix(2027, 'Not recorded'), None)
+    assert result.extra_tables == (note, matrix(2027, 'Not recorded'))
+    assert result.text == block.text
+    assert library.block_from_dict(asdict(result)) == result
+
+
+def test_shared_year_save_retains_legacy_and_other_years(profile):
+    legacy = training.save_training(profile, matrix(), expected_revision=0, actor='Editor')
+    first = training.save_training(profile, matrix(2026, 'Pending'), expected_revision=1, actor='Editor')
+    second = training.save_training(profile, matrix(2027, 'Not recorded'), expected_revision=2, actor='Editor')
+    assert second['sites'] == legacy['sites']
+    assert second['years']['2026'] == first['years']['2026']
+    assert second['years']['2027']['sites']['north']['rows'][0][1:] == ['Not recorded', '']
+
+
+def test_saved_annual_matrix_wins_over_unscoped_standing_values(profile):
+    stored = training.save_training(profile, matrix(), expected_revision=0, actor='Editor')
+    block = draft(profile, matrix(2027, 'Pending')).blocks[0]
+    assert training.seed_matrix(profile, block, stored) == matrix(2027, 'Pending')
+
+
+def test_word_output_labels_the_actual_matrix_year(profile):
+    from app.monthly_report_docx import assemble_docx
+    report = draft(profile, matrix(2026))
+    document = Document(BytesIO(assemble_docx(report, acknowledged_fingerprint=report.fingerprint)))
+    assert 'Training requirements — 2026' in '\n'.join(p.text for p in document.paragraphs)
+    assert 'Completed' in '\n'.join(c.text for t in document.tables for row in t.rows for c in row.cells)
+
+
+@pytest.mark.parametrize('status', training.STATUSES)
+def test_explicit_new_year_resets_recorded_status_but_keeps_blank(profile, status):
+    original = matrix(2026, status)
+    result = training.matrix_for_year(profile, original, {}, 2027)
+    assert result.reference == 'training:matrix:v2:2027'
+    assert result.rows[0][2:] == ('' if status == '' else 'Not recorded', '')
+    assert original == matrix(2026, status)
+    assert training.matrix_for_year(profile, original, {}, 2026) == original
+
+
+def test_year_change_reuses_exact_year_and_keeps_other_sites(profile):
+    other_site = Facility('south', 'Synthetic South')
+    combined = replace(profile, facilities=(*profile.facilities, other_site), scope_type='multi_site')
+    legacy = replace(matrix(), rows=(*matrix().rows, ('South Learner', other_site.title, 'Completed', 'Pending')))
+    stored = training.save_training(combined, legacy, expected_revision=0, actor='Editor')
+    stored = training.save_training(profile, matrix(2027, 'Pending'), expected_revision=1, actor='Editor')
+    empty = ResolvedBlock('training_summary', 'This month')
+    result = training.seed_matrix(combined, empty, stored, year=2027)
+    assert result.rows == (matrix(2027, 'Pending').rows[0], ('South Learner', other_site.title, 'Not recorded', 'Not recorded'))
+    changed = training.save_training(profile, matrix(2028), expected_revision=2, actor='Editor')
+    assert changed['years']['2027'] == stored['years']['2027']
+    assert changed['sites'] == stored['sites']
+    foreign = replace(profile, contract='Another Synthetic Contract')
+    assert training.load_training(foreign.contract)['revision'] == 0
+
+
+def test_annual_snapshot_omission_and_double_rollover_remain_truthful(profile):
+    from datetime import date
+    report = draft(profile, matrix(2026))
+    event = training.add_event(None, title='Recorded session', when=date(2026, 11, 4),
+        mode='Virtual', participants=['Synthetic Learner'], hours='', period=report.period)
+    block = replace(report.blocks[0], source='Omit', extra_tables=(matrix(2026), event))
+    report = replace(report, blocks=(block,))
+    saved = library.save_snapshot(report, expected_revision=0, entered_editor=report.prepared_by)
+    reopened = library.load_snapshot(profile.contract, profile.key, report.period).draft
+    assert reopened == report
+    future = new_month_draft(new_month_draft(reopened, ReportPeriod(2026, 12)), ReportPeriod(2027, 1))
+    assert future.blocks[0].source == 'Omit'
+    assert future.blocks[0].extra_tables == (matrix(2026),)
+    assert library.load_snapshot(profile.contract, profile.key, report.period) == saved
+
+
+@pytest.mark.parametrize('bad', [True, 0, 999, 10000, '2026', 2026.5])
+def test_annual_year_must_be_explicit_valid_integer(bad):
+    with pytest.raises(ValueError):
+        training.year_matrix_reference(bad)
+
+
+def test_matrix_replacement_is_idempotent_and_stale_year_write_refused(profile):
+    original = draft(profile, matrix(2026)).blocks[0]
+    updated = training.apply_tables(original, matrix(2027, 'Pending'), None)
+    assert updated.extra_tables == (matrix(2027, 'Pending'),)
+    assert training.apply_tables(updated, matrix(2027, 'Pending'), None) == updated
+    first = training.save_training(profile, matrix(2026), expected_revision=0, actor='Editor')
+    with pytest.raises(library.RevisionConflict):
+        training.save_training(profile, matrix(2027), expected_revision=0, actor='Stale Editor')
+    assert training.load_training(profile.contract) == first
+
+
+APP = '''
+import streamlit as st
+from app.monthly_report_training_ui import render_training
+
+def field(key, value):
+    if key not in st.session_state:
+        st.session_state[key] = value
+    return key
+st.session_state['blocks'] = render_training(st.session_state['draft'], st.session_state['blocks'], 'annual', field)
+'''
+
+
+def open_app(profile, monkeypatch, *, table=None, omitted=False):
+    from streamlit.testing.v1 import AppTest
+    from app import monthly_report_directory
+    monkeypatch.setattr(monthly_report_directory, 'load_directory', lambda *_: None)
+    report = replace(draft(profile, table or matrix()), period=ReportPeriod(2027, 1))
+    block = replace(report.blocks[0], text='Keep monthly note', source='Omit' if omitted else 'This month')
+    report = replace(report, blocks=(block,))
+    app = AppTest.from_string(APP, default_timeout=20)
+    app.session_state['draft'] = report
+    app.session_state['blocks'] = {block.key: block}
+    app.run()
+    assert not app.exception and not app.error
+    return app
+
+
+def start_button(app):
+    return next(b for b in app.button if b.label == 'Start 2027 requirements')
+
+
+def annual_block(app):
+    return app.session_state['blocks']['training_summary']
+
+
+def test_ui_year_change_reentry_and_current_grid_are_consistent(profile, monkeypatch):
+    original = training.save_training(profile, matrix(), expected_revision=0, actor='Editor')
+    app = open_app(profile, monkeypatch)
+    assert training.load_training(profile.contract) == original
+    assert any('year not recorded' in c.value for c in app.caption)
+    notes = next(w for w in app.text_area if w.label == 'Training notes')
+    notes.set_value('New note delivered with the switch')
+    start_button(app).click().run()
+    assert not app.exception and not app.error
+    block = annual_block(app)
+    assert block.text == 'New note delivered with the switch'
+    assert block.extra_tables == (matrix(2027, 'Not recorded'),)
+    grids = [g for g in app.dataframe if '_grid_' in g.key]
+    assert len(grids) == 1
+    assert grids[0].value.iloc[0]['Safety'] == 'Not recorded'
+    assert any('Training requirements — 2027' in c.value for c in app.caption)
+    saved = training.load_training(profile.contract)
+    assert saved['sites'] == original['sites'] and saved['revision'] == 2
+    app.run()
+    assert annual_block(app) == block
+    assert training.load_training(profile.contract) == saved
+    assert not any(b.label == 'Start 2027 requirements' for b in app.button)
+    fresh = open_app(profile, monkeypatch, table=matrix(2027, 'Not recorded'))
+    assert annual_block(fresh).extra_tables == block.extra_tables
+    assert training.load_training(profile.contract) == saved
+
+
+def test_year_switch_does_not_override_a_same_event_grid_edit(profile, monkeypatch):
+    training.save_training(profile, matrix(), expected_revision=0, actor='Editor')
+    app = open_app(profile, monkeypatch)
+    grid = next(g for g in app.dataframe if '_grid_' in g.key)
+    app.session_state[grid.key] = {'edited_rows': {0: {'Safety': 'Pending'}}, 'added_rows': [], 'deleted_rows': []}
+    start_button(app).click().run()
+    assert not app.exception and not app.error
+    assert annual_block(app).extra_tables == (matrix(None, 'Pending'),)
+    stored = training.load_training(profile.contract)
+    assert stored['revision'] == 2 and 'years' not in stored
+    assert any('Your edits are kept' in w.value for w in app.warning)
+    start_button(app).click().run()
+    assert not app.exception and not app.error
+    assert annual_block(app).extra_tables == (matrix(2027, 'Not recorded'),)
+    assert training.load_training(profile.contract)['sites'] == stored['sites']
+
+
+@pytest.mark.parametrize('change', ['period', 'incarnation', 'contract'])
+def test_stale_year_action_cannot_publish_in_another_scope(profile, monkeypatch, change):
+    from app import monthly_report_training_ui as ui
+    app = open_app(profile, monkeypatch)
+    # Capture the same native callback packet without delivering its button.
+    key = next(k for k in app.session_state.filtered_state if k.endswith('_matrix_draft')).removesuffix('_matrix_draft')
+    from app.monthly_report_editor import _signature
+    epoch = app.session_state['annual_rich_text_epoch']
+    scope = _signature(('annual', epoch, ''))
+    report = app.session_state['draft']
+    request = {'scope': _signature((report.profile, report.period, scope, 'This month', report.prepared_by, report.synthetic)),
+               'matrix': _signature(matrix()), 'revision': 0, 'year': 2027}
+    if change == 'incarnation':
+        app.session_state['annual_rich_text_epoch'] = 'new-incarnation'
+    elif change == 'period':
+        app.session_state['draft'] = replace(report, period=ReportPeriod(2028, 1))
+    else:
+        app.session_state['draft'] = replace(report, profile=replace(profile, contract='Other Synthetic'))
+    app.session_state['annual_training_year_request'] = request
+    app.run()
+    assert not app.exception
+    assert training.load_training(profile.contract)['revision'] == 0
+    assert training.load_training('Other Synthetic')['revision'] == 0
+    assert annual_block(app).extra_tables == (matrix(),)
+
+
+def test_omitted_matrix_cannot_be_included_by_year_action(profile, monkeypatch):
+    app = open_app(profile, monkeypatch, omitted=True)
+    assert start_button(app).disabled
+    assert annual_block(app).source == 'Omit'
+    assert training.load_training(profile.contract)['revision'] == 0
+
+
+def test_fresh_new_year_uses_roster_without_prior_completion_or_passive_save(profile):
+    stored = training.save_training(profile, matrix(2026), expected_revision=0, actor='Editor')
+    result = training.seed_matrix(profile, ResolvedBlock('training_summary', 'This month'), stored, year=2027)
+    assert result == matrix(2027, 'Not recorded')
+    assert training.load_training(profile.contract) == stored
+    assert training.seed_matrix(profile, ResolvedBlock('training_summary', 'This month'), stored, year=2026) == matrix(2026)
+    before = training.seed_matrix(profile, ResolvedBlock('training_summary', 'This month'), stored, year=2025)
+    assert not before.rows and before.reference == 'training:matrix:v2:2025'
+
+
+def test_failed_annual_save_preserves_notes_and_prior_matrix(profile, monkeypatch):
+    from app import monthly_report_training_ui as ui
+    stored = training.save_training(profile, matrix(), expected_revision=0, actor='Editor')
+    app = open_app(profile, monkeypatch)
+    def fail(*args, **kwargs):
+        raise OSError('Synthetic annual storage failure')
+    monkeypatch.setattr(ui, 'save_training', fail)
+    next(w for w in app.text_area if w.label == 'Training notes').set_value('Retain pending note')
+    start_button(app).click().run()
+    assert not app.exception
+    assert any('Synthetic annual storage failure' in e.value for e in app.error)
+    assert annual_block(app).extra_tables == (matrix(),)
+    assert annual_block(app).text == 'Retain pending note'
+    assert training.load_training(profile.contract) == stored
+
+
+def test_annual_metadata_budget_refuses_write_without_damaging_prior_year(profile, monkeypatch):
+    saved = training.save_training(profile, matrix(2026), expected_revision=0, actor='Editor')
+    paths = tuple(training._path(profile.contract).rglob('*.json'))
+    originals = {path: path.read_bytes() for path in paths}
+    monkeypatch.setattr(library, 'MAX_JSON_BYTES', max(map(len, originals.values())) + 5)
+    with pytest.raises(ValueError, match='metadata exceeds the storage limit'):
+        training.save_training(profile, matrix(2027), expected_revision=1, actor='Editor')
+    assert {p: p.read_bytes() for p in training._path(profile.contract).rglob('*.json')} == originals
+    assert training.load_training(profile.contract) == saved
+
+
+def test_stale_year_action_preserves_external_report_matrix(profile, monkeypatch):
+    app = open_app(profile, monkeypatch)
+    start_button(app).click()  # The mounted control still carries its original receipt.
+    block = annual_block(app)
+    external = replace(matrix(), rows=(('Corrected Learner', 'Synthetic North', 'Pending', ''),))
+    app.session_state['blocks'] = {block.key: replace(block, extra_tables=(external,))}
+    app.run()
+    assert not app.exception and not app.error
+    assert annual_block(app).extra_tables == (external,)
+    assert training.load_training(profile.contract)['revision'] == 0
+    assert any('Your edits are kept' in w.value for w in app.warning)
+    assert next(g for g in app.dataframe if '_grid_' in g.key).value.iloc[0]['Team member'] == 'Corrected Learner'
+
+
+def test_stale_period_request_cannot_fire_after_return_to_original_month(profile, monkeypatch):
+    app = open_app(profile, monkeypatch)
+    from app.monthly_report_editor import _signature
+    report = app.session_state['draft']
+    epoch = app.session_state['annual_rich_text_epoch']
+    request = {'scope': _signature((report.profile, report.period, _signature(('annual', epoch, '')),
+                                  'This month', report.prepared_by, report.synthetic)),
+               'matrix': _signature(matrix()), 'revision': 0, 'year': 2027}
+    app.session_state['annual_training_year_request'] = request
+    app.session_state['draft'] = replace(report, period=ReportPeriod(2028, 1))
+    app.run()
+    app.session_state['draft'] = report
+    app.run()
+    assert not app.exception
+    assert annual_block(app).extra_tables == (matrix(),)
+    assert training.load_training(profile.contract)['revision'] == 0

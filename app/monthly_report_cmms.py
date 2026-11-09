@@ -76,12 +76,17 @@ def map_cmms(table: SourceTable, mapping: CMMSMapping, profile: ReportProfile,
     pm, cm = folded(mapping.pm_values), folded(mapping.cm_values)
     if pm & cm:
         raise ValueError("PM and CM categories must be distinct.")
-    aliases = {n.strip().casefold(): f.key for f in profile.facilities for n in (f.key, f.title, *f.aliases)}
+    aliases = {}
+    for facility in profile.facilities:
+        for name in (facility.key, facility.title, *facility.aliases):
+            label = name.strip().casefold()
+            if label:
+                aliases.setdefault(label, set()).add(facility.key)
     facilities = {f.key: f.title for f in profile.facilities}
     if set(mapping.complete_facilities) - set(facilities):
         raise ValueError("Coverage must name confirmed profile facilities.")
     records, conflicts, notices = {}, set(), []
-    invalid = unknown = duplicates = 0
+    invalid = unknown = ambiguous = duplicates = 0
     for row in table.rows:
         def cell(column):
             return row[columns[column]].strip() if column and columns[column] < len(row) else ""
@@ -91,7 +96,16 @@ def map_cmms(table: SourceTable, mapping: CMMSMapping, profile: ReportProfile,
         if not finished or not identity:
             invalid += 1
             continue
-        facility = aliases.get(cell(mapping.facility).casefold()) if mapping.facility else mapping.assigned_facility
+        if mapping.facility:
+            # A stable key can also name another site's title or alias.
+            # Resolve free-text labels before applying WO identity rules.
+            matches = aliases.get(cell(mapping.facility).casefold(), ())
+            if len(matches) > 1:
+                ambiguous += 1
+                continue
+            facility = next(iter(matches), "")
+        else:
+            facility = mapping.assigned_facility
         if not facility:
             unknown += 1
             continue
@@ -112,6 +126,9 @@ def map_cmms(table: SourceTable, mapping: CMMSMapping, profile: ReportProfile,
         notices.append(f"{invalid} rows have a missing/invalid finish date or WO identity; excluded from mapped tables.")
     if unknown:
         notices.append(f"{unknown} rows name facilities outside this profile; review the source and membership mapping.")
+    if ambiguous:
+        notices.append(f"{ambiguous} rows have ambiguous facility labels; excluded until corrected. "
+                       "Use unique source labels or explicitly assign a single-facility export.")
     if duplicates:
         notices.append(f"{duplicates} identical WO rows were counted once.")
     if conflicts:
@@ -127,13 +144,14 @@ def map_cmms(table: SourceTable, mapping: CMMSMapping, profile: ReportProfile,
     for month in windows:
         for facility, title in facilities.items():
             values = [v for (f, _), v in records.items() if f == facility and v[0].isoformat().startswith(month)]
-            # Invalid or conflicting rows invalidate aggregate completeness. The
+            # Invalid, ambiguous or conflicting rows invalidate completeness. The
             # operator can correct the source instead of accepting false totals.
-            complete = month in mapping.complete_months and facility in mapping.complete_facilities and not (invalid or unknown or conflicts)
+            complete = (month in mapping.complete_months and facility in mapping.complete_facilities
+                        and not (invalid or unknown or ambiguous or conflicts))
             categories_known = bool(mapping.category) and all(v[1] for v in values)
             counts = tuple(str(sum(v[1] == kind for v in values)) if complete and categories_known else "" for kind in ("PM", "CM"))
             grid.append((month, title, *counts, str(len(values)) if complete else ""))
-    if set(windows) - set(mapping.complete_months) or invalid or unknown or conflicts:
+    if set(windows) - set(mapping.complete_months) or invalid or unknown or ambiguous or conflicts:
         notices.append("Unconfirmed or incomplete historical counts remain blank. Confirm complete export coverage only for months and all profile facilities actually covered.")
     specs = (
         BlockSpec("service_calls", "table", columns=(ColumnSpec("facility", "Facility"), ColumnSpec("wo", "WO #"),

@@ -222,6 +222,8 @@ class NativePages:
                         if node.tag == qn('w:p'):
                             properties = node.get_or_add_pPr()
                             for tag in ('pageBreakBefore', 'keepNext', 'spacing'):
+                                if tag == 'keepNext' and self.kinds.get(node) == 'table-title':
+                                    continue  # Generated year labels belong to their matrix.
                                 for item in list(properties.findall(qn('w:' + tag))):
                                     properties.remove(item)
                             spacing = OxmlElement('w:spacing')
@@ -246,7 +248,7 @@ class NativePages:
                 if key not in present and inherited.get(key) != node.get(qn('r:id')):
                     properties.insert(0, deepcopy(node))
                 inherited[key] = node.get(qn('r:id'))
-            if document is not None and rewrite and any(self.kinds.get(node) == 'text' for node in nodes):
+            if document is not None and rewrite and any(self.kinds.get(node) in {'text', 'table-title'} for node in nodes):
                 if self.source_header_scope is None:
                     from app.monthly_report_native_text import reserve_running_header
                     reserve_running_header(document, properties)

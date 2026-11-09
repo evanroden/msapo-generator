@@ -37,29 +37,33 @@ def test_review_journey_never_precommits_or_retries_the_native_click(monkeypatch
         return {"revision": 2}
 
     monkeypatch.setattr(qa, "durable_activity", durable)
-    qa.direct_review_journey(Page(), "isolated-root", "synthetic-engine")
+    monkeypatch.setattr(qa, "section_order", lambda page: [
+        {'id': 'monthly_cover'}, {'id': 'monthly_activity'}, {'id': 'monthly_final'}, {'id': 'report_review'}])
+    monkeypatch.setattr(qa, "navigate_sections", lambda page, target, **kwargs:
+                        events.append(("navigate", target, kwargs)))
+    qa.sequential_review_journey(Page(), "isolated-root", "synthetic-engine")
     fill = events.index(("Activity summary", "fill", qa.REVIEW_TEXT))
-    click = events.index(("Review", "click"))
+    click = events.index((".epc-section-next", "click"))
     durable_index = events.index(("durable", qa.REVIEW_TEXT))
     focus = events.index(("#report-review", "to_be_focused"))
     assert events[fill + 1:click] == [("Activity summary", "to_be_focused")]
     assert fill < click < durable_index < focus
-    assert events.count(("Review", "click")) == 1
-    assert events.count(("Review", "press", "Enter")) == 1
-    assert events.count(("Jump to section", "select_option", "monthly_activity")) == 2
+    assert events.count((".epc-section-next", "click")) == 2
+    assert events.count((".epc-section-next", "press", "Enter")) == 1
+    assert len([event for event in events if event[:2] == ("navigate", "monthly_activity")]) == 3
     assert events.count(("Activity summary", "to_have_value", qa.REVIEW_TEXT)) == 2
-    assert events.count(("durable", qa.REVIEW_TEXT)) == 2
-    keyboard = events.index(("Review", "press", "Enter"))
+    assert events.count(("durable", qa.REVIEW_TEXT)) == 3
+    keyboard = events.index((".epc-section-next", "press", "Enter"))
     assert events[keyboard - 2:keyboard] == [
-        ("Jump to section", "press", "Tab"), ("Review", "to_be_focused")]
+        (".epc-section-back", "press", "Tab"), (".epc-section-next", "to_be_focused")]
 
 
-def test_continue_acceptance_requires_activity_without_a_selector_workaround():
+def test_continue_acceptance_requires_cover_before_sequential_activity():
     source = inspect.getsource(qa)
     start = source.index('phase["name"] = "enter ordered report/editor after import"')
     end = source.index('capture(page, name, "imported-current-report")', start)
     entry = source[start:end]
-    assert '.st-key-epc_pair_monthly_activity' in entry
-    assert '.st-key-epc_pair_monthly_cover' not in entry
+    assert '.st-key-epc_pair_monthly_cover' in entry
+    assert entry.index('Continue starts directly at Cover') < entry.index('navigate_sections(page, "monthly_activity")')
     assert 'select_option' not in entry
-    assert 'activitySection.contains(document.activeElement)' in entry
+    assert 'coverSection.contains(document.activeElement)' in entry

@@ -256,13 +256,15 @@ def _loader(reference):
 
 def test_generated_word_file_carries_no_logo_metadata(monkeypatch, tmp_path):
     from app import pdf_converter
-
-    def no_pdf(path):
+    requested=[]
+    def no_pdf(path, *, lossless_images):
+        requested.append(lossless_images)
         raise pdf_converter.PDFConversionError("Synthetic converter unavailable")
 
     monkeypatch.setattr(pdf_converter, "OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(pdf_converter, "convert_to_pdf", no_pdf)
     package = generate_report(_draft_with_canary_logo(), asset_loader=_loader)
+    assert requested==[True]
     with ZipFile(BytesIO(package.docx)) as archive:
         media = [name for name in archive.namelist() if name.startswith("word/media/")]
         assert media, "the synthetic logo must reach the generated document"

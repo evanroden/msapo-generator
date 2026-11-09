@@ -42,7 +42,7 @@ def test_retry_converts_same_bytes_in_foreground_slot_and_keeps_native_identity(
     monkeypatch.setattr(jobs, 'convert_to_pdf', convert)
     result = module.retry_report_pdf(draft, package)
     assert result == replace(package, pdf=b'%PDF-synthetic', pdf_error='')
-    assert observations == [('slot', {}), ('convert', package.docx, {'wait_seconds':130})]
+    assert observations == [('slot', {}), ('convert', package.docx, {'wait_seconds':130, 'lossless_images':True})]
     assert not target.exists()
     assert module.retry_report_pdf(draft, result) is result
     assert len(observations) == 2

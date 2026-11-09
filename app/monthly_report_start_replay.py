@@ -1,6 +1,7 @@
 """Replay an acknowledged Starting source without restoring report-only deletions."""
 
 from dataclasses import replace
+import re
 
 from app.monthly_report_model import ReportDraft, ResolvedBlock, known_sections
 from app.monthly_report_setup import merge_drafts
@@ -114,6 +115,58 @@ def _retain_contribution_blocks(incoming, previous, retained):
     return replace(incoming, blocks=tuple(blocks))
 
 
+_CAPITAL_TABLE_KEYS = frozenset({"capital_renewal", "end_of_life"})
+_DOCX_TABLE_REFERENCE = re.compile(r"docx:[0-9a-f]{64}:item-[0-9]{4,}")
+
+
+def _guard_carried_capital_tables(existing: ReportDraft, incoming: ReportDraft) -> None:
+    """Do not append an old table over a carried correction without a receipt.
+
+    Starting contributions are month-scoped. A carried table still identifies
+    its immutable source occurrence, but that identity alone cannot reconcile
+    competing report/source-review edits. Unchanged tables use the normal
+    idempotent merge. Changed/omitted ones require the existing report editor;
+    a verified same-month contribution still uses the three-way path below.
+    """
+    current = {block.key: block for block in existing.blocks}
+    capital = next((section for section in existing.sections if section.key == "capital"), None)
+
+    def occurrences(block):
+        result = {}
+        for table in block.extra_tables:
+            if (isinstance(table.reference, str) and table.reference in block.references
+                    and _DOCX_TABLE_REFERENCE.fullmatch(table.reference)):
+                result.setdefault(table.reference, []).append(table)
+        return result
+
+    for block in incoming.blocks:
+        if block.key not in _CAPITAL_TABLE_KEYS or block.key not in current:
+            continue
+        present = current[block.key]
+        old_tables, new_tables = occurrences(present), occurrences(block)
+        shared = old_tables.keys() & new_tables.keys()
+        if not shared:
+            continue  # Never infer identity from row text, labels or business IDs.
+        if existing.profile.facilities != incoming.profile.facilities:
+            raise ValueError(
+                "Capital source tables belong to different selected sites. "
+                "Reopen the intended report; your report and original are unchanged."
+            )
+        changed = any(len(old_tables[ref]) != 1 or len(new_tables[ref]) != 1
+                      or old_tables[ref][0] != new_tables[ref][0] for ref in shared)
+        # A source table and its prose can share the same section block. An
+        # appended old paragraph must not resurrect a deliberate clear/edit.
+        changed_notes = bool(block.text.strip() and block.text.strip() not in present.text)
+        if (changed or changed_notes or present.source == "Omit"
+                or capital is not None and not capital.included):
+            label = "Capital renewal" if block.key == "capital_renewal" else "Capital end-of-life schedule"
+            raise ValueError(
+                f"{label} already contains edits or an exclusion for this exact source table. "
+                "Keep your current report and edit the current list instead of reimporting this table. "
+                "Your report and original are unchanged; no duplicate rows were added."
+            )
+
+
 def merge_starting_drafts(existing: ReportDraft | None, incoming: ReportDraft,
                           previous: ReportDraft | None = None, *, verified: bool = True) -> ReportDraft:
     """Three-way, report-scoped replay; unrelated sources use the normal merge.
@@ -151,6 +204,7 @@ def merge_starting_drafts(existing: ReportDraft | None, incoming: ReportDraft,
             existing = replace(existing, blocks=tuple(retained if block.key == "cover_photo" else block for block in existing.blocks))
             incoming = replace(incoming, blocks=tuple(block for block in incoming.blocks if block.key != "cover_photo"))
     if previous is None:
+        _guard_carried_capital_tables(existing, incoming)
         return merge_drafts(existing, incoming)
 
     prior = {b.key: b for b in previous.blocks}

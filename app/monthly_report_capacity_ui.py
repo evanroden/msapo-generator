@@ -104,6 +104,8 @@ def _columns(columns):
 
 
 def _capacity_file(prefix):
+    from app.monthly_report_native_loading import reserve_empty_uploader
+    reserve_empty_uploader(prefix + "_capacity_upload", "Thermal capacity file")
     return st.file_uploader(
         "Thermal capacity file",
         type=sorted(suffix.lstrip(".") for suffix in capacity.SUPPORTED),
@@ -131,13 +133,7 @@ def _saved_capacity_caption(profile, state):
     # per-site subset. Two independently saved subsets may carry that same
     # reference with different filenames. Resolve the actual saved site rows
     # before exposing any source filename in this report's inventory.
-    known = capacity.contract_facilities(profile)
-    wanted = {facility.key for facility in profile.facilities}
-    for facility in profile.facilities:
-        for alias in (facility.title, *facility.aliases):
-            matched = capacity.match_site(alias, known)
-            if matched:
-                wanted.add(matched)
+    wanted = capacity.selected_site_keys(profile)
     sources = tuple(dict.fromkeys(
         table.source_filename for table in state.tables
         if table.source_filename and any(site in wanted for site in table.site_keys)
@@ -193,7 +189,10 @@ def render_capacity(draft, block, prefix, field, *, show_scope=True):
         st.session_state[prefix + "_capacity_context"] = context
     state = capacity.load_capacity(profile.contract)
     scope_slot = st.container() if show_scope else None
-    with st.expander("Capacity source and reusable data", expanded=not _has_values(block),
+    # Keep the file action visible even when capacity rows already exist. A
+    # previously saved grid must not hide the route for this month’s source.
+    st.caption("Edit this report’s capacity values in the table above, or upload a thermal capacity file below. Existing reusable-site values change only after an explicit correction.")
+    with st.expander("Capacity source and reusable data", expanded=True,
                      key=prefix + "_capacity_source_panel"):
         result = _render_capacity_source(draft, block, prefix, field, context, state)
     if scope_slot is not None:
