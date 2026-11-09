@@ -1483,6 +1483,28 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             items[item.position].append(item)
     section_by_pos, section, headings = {}, "cover", set()
     blocks = {block.key: block for block in draft.blocks}
+    preview_cover_end = first_word_end or len(original)
+    if section_key == "cover":
+        # An explicitly selected cover photograph may occupy the immediately
+        # adjoining, picture-only Word section. Keep that verified panel in the
+        # cover preview, but never broaden the preview to later report content.
+        from app.monthly_report_start_import import cover_photo_candidates
+        photo = blocks.get("cover_photo")
+        if photo is not None and photo.source != "Omit" and photo.asset_hashes:
+            selected_panels = [
+                item for item in cover_photo_candidates(inspection.items)
+                if item.position > preview_cover_end
+                and source_ref(item) in photo.references
+                and image_matches(item, "cover_photo", photo.asset_hashes)
+            ]
+            if selected_panels:
+                last_selected = max(item.position for item in selected_panels)
+                preview_cover_end = next(
+                    (position for position, element in enumerate(original, 1)
+                     if position >= last_selected
+                     and (element.tag == qn("w:sectPr")
+                          or element.find(".//" + qn("w:sectPr")) is not None)),
+                    len(original))
     supplied_notes = {item.note: item for item in inspection.items
                       if item.note.startswith(("footnote:", "endnote:")) and item.text.strip()
                       and any(block.source != "Omit" and source_ref(item) in block.references
@@ -1782,7 +1804,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
         if element.tag == qn('w:sectPr'):
             continue
         section_ends[sec] = element
-        if section_key and (sec != section_key or (section_key == "cover" and position > (first_word_end or len(original)))):
+        if section_key and (sec != section_key or (section_key == "cover" and position > preview_cover_end)):
             body.remove(element)
             continue
         group = items[position]
@@ -2314,7 +2336,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     if section_key:
         selected_positions = [position for position, sec in section_by_pos.items()
                               if sec == section_key and original[position - 1].tag != qn("w:sectPr")
-                              and (section_key != "cover" or position <= (first_word_end or len(original)))]
+                              and (section_key != "cover" or position <= preview_cover_end)]
         closing = None
         if selected_positions:
             for element in original[max(selected_positions) - 1:]:

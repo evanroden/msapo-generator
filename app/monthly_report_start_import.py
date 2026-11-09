@@ -598,6 +598,8 @@ def _build_starting_import(path, inspection, plans, *, source_view=None, _operat
     # An approved automatic plan can still have skipped an ambiguous source
     # photograph. Both Starting Report routes must fail closed at the same
     # builder boundary, including when a UI widget was unmounted on rerun.
+    # An explicit No-photo intent (even one with stale scope or conflicting
+    # selection) goes to the stricter source/candidate validator below.
     from app.monthly_report_native_art_review import native_cover_furniture_ids
     cover = next((s for s in section_reviews(inspection, source_view=source_view)
                   if s.key == "cover"), None)
@@ -607,6 +609,7 @@ def _build_starting_import(path, inspection, plans, *, source_view=None, _operat
             if (plan.get("key") == "cover" and plan.get("automatic")
                     and plan.get("source_site_relation") == "same"
                     and plan.get("source_sha256") == inspection.sha256
+                    and not plan.get("cover_photo_omitted")
                     and cover_photo_choice_pending(cover.items, plan,
                                                    native_furniture_ids=furniture_ids)):
                 raise ValueError(
