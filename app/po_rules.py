@@ -474,17 +474,3 @@ def normalize_asset_id(value: object) -> str:
     # Internal whitespace collapsed so the same asset never produces two
     # different context IDs because of a double space.
     return " ".join(text.split())
-
-
-def asset_id_is_numeric(value: object) -> bool:
-    """Compatibility helper: configured full asset codes are valid text IDs.
-
-    NOT CALLED ANYWHERE -- neither app code nor tests. It survives from the
-    era when the Asset ID was expected to be a five-digit JDE number; the name
-    is now actively misleading, since it returns True for "EEA-CWP-07" and for
-    "". Kept because removal is a separate verified phase.
-
-    The 160 is the same cell limit build_po_context warns on, duplicated rather
-    than shared.
-    """
-    return len(normalize_asset_id(value)) <= 160

@@ -41,7 +41,6 @@ import json
 import re
 from dataclasses import dataclass
 from decimal import Decimal
-from pathlib import Path
 from typing import Any, Mapping
 
 from app import contracts
@@ -119,13 +118,6 @@ _LOCKED_FIELDS = (
 # sign would be a "Confirm the job number" warning the operator cannot clear by
 # choosing anything.
 RRH_DEFAULT_JOB_NUMBER = RRH_JOB_NUMBERS[0]
-# Session-state slot for a prepared context, described in
-# docs/SMARTSHEET_PO_IMPLEMENTATION_HANDOFF_2026-08-04.md. The current page
-# passes the POContext straight to smartsheet_inline instead, so nothing reads
-# or writes this key today.
-PREPARED_PO_CONTEXT_STATE_KEY = "_prepared_smartsheet_po_context"
-
-
 @dataclass(frozen=True)
 class POContext:
     """One immutable snapshot of a reviewed purchase order.
@@ -179,24 +171,6 @@ def _state_text(state: Mapping[str, Any], key: str, default: str = "") -> str:
     if value is None:
         return default
     return str(value).strip()
-
-
-def _existing_path(value: Any) -> Path | None:
-    """Return ``value`` as an existing regular file, else ``None``.
-
-    NOT CALLED ANYWHERE. It survives from the era when the generated document
-    travelled as a path on disk; the MSAPO reversal made the builder return
-    bytes (see docs/COMMIT_NOTES_2026-08-12_MSAPO_FORM_RESTORED.md §2.1) and
-    nothing has needed a path since. Kept because deletion is a separate
-    verified phase, not because a caller exists.
-    """
-    if not value:
-        return None
-    try:
-        path = Path(value)
-    except TypeError:
-        return None
-    return path if path.exists() and path.is_file() else None
 
 
 def _safe_basename(contract: str, site: str, description: str, rrh: bool) -> str:
@@ -991,9 +965,7 @@ def build_po_context(
         warnings.append(
             "The attachment package must contain the original quote and one MSAPO form PDF."
         )
-    # 160 is Smartsheet's practical single-line cell limit for this column. The
-    # same number is repeated in po_rules.asset_id_is_numeric; they are not
-    # linked, so a change needs both.
+    # 160 is Smartsheet's practical single-line cell limit for this column.
     if len(asset_id) > 160:
         warnings.append("The selected full Asset ID is unexpectedly long.")
 

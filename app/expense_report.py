@@ -73,11 +73,6 @@ EXPENSE_TEMPLATE_PATH = (
 # an item silently routed into the Miscellaneous block of the official form.
 EXPENSE_SECTION_MISC = "miscellaneous"
 EXPENSE_SECTION_ENTERTAINMENT = "entertainment"
-# Declarative pairing only -- nothing in app/ or tests/ reads EXPENSE_SECTIONS
-# today (verified by ripgrep). Kept because it is the one place stating that
-# these two are the complete set; do not treat it as a live enum.
-EXPENSE_SECTIONS = (EXPENSE_SECTION_MISC, EXPENSE_SECTION_ENTERTAINMENT)
-
 ALLOCATION_JOB = "job"
 # ALLOCATION_WORK_ORDER / ALLOCATION_OVERHEAD are NOT dead and must not be
 # deleted: they are the values a stale session or an old stored allocation can
@@ -90,13 +85,6 @@ ALLOCATION_OVERHEAD = "overhead"
 # import-compatible, but reject those routes so Work Order and Other Expenses
 # columns can never be populated by this workflow.
 #
-# ALLOCATION_KINDS itself has no reader anywhere in app/ or tests/ (verified by
-# ripgrep); the actual gate is the `!= ALLOCATION_JOB` test in
-# allocation_problems and again in _fill_allocation. Widening this tuple
-# therefore enables NOTHING on its own -- which is the safe direction, but do
-# not read it as the switch that turns work orders back on.
-ALLOCATION_KINDS = (ALLOCATION_JOB,)
-
 # The official form's own row numbers. These are coordinates in a supplied
 # .xlsx, not preferences: MILEAGE_ROWS ends at 17 because row 18 holds
 # =SUM(H10:H17), and the same pairing holds for 39 and 59 below. Change a range
