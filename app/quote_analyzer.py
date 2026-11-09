@@ -308,7 +308,7 @@ def _call_api_with_retry(client, quote_text: str, max_retries: int = 3, *, until
                 "amount, tax IS included in the quoted total.\n\n"
                 f"--- BEGIN QUOTE ---\n{quote_text}\n--- END QUOTE ---"
             )}],
-        ), until=until, attempts=max_retries,
+        ), until=until, attempts=max_retries, model_name=ANTHROPIC_MODEL,
     )
     return complete_response_text(message)
 
