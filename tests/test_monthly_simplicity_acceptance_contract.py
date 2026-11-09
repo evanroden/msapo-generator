@@ -127,3 +127,10 @@ def test_separate_training_task_begins_after_source_close_receipt():
     assert 'assert closed[key] == before_close[key]' in branch
     assert branch.count('summary.click()') == 1
     assert 'sleep(' not in branch and 'force=' not in branch and 'timeout=' not in branch
+
+def test_native_journey_captures_visible_controls_at_each_synthetic_state():
+    source = HARNESS.read_text()
+    assert 'def visible_control_inventory(page):' in source
+    assert '"control_inventory": visible_control_inventory(page)' in source
+    assert "getBoundingClientRect" in source and "by_kind" in source
+    assert "Refresh synthetic observation" in source

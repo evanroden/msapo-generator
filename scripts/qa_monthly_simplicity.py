@@ -195,6 +195,34 @@ def native_control_inventory(page):
     }""")
 
 
+def visible_control_inventory(page):
+    """Count actual visible native controls, not captions or hidden source forms."""
+    return page.evaluate(r"""() => {
+      const visible = el => {
+        const css = getComputedStyle(el), rect = el.getBoundingClientRect();
+        return css.display !== 'none' && css.visibility !== 'hidden'
+          && rect.width > 0 && rect.height > 0
+          && !el.closest('[aria-hidden="true"],[inert]');
+      };
+      const found = [...document.querySelectorAll(
+        'button,input:not([type="hidden"]),textarea,select,details>summary'
+      )].filter(visible).filter(el =>
+        !el.textContent.includes('Refresh synthetic observation'));
+      const items = found.map(el => {
+        const tag = el.tagName.toLowerCase();
+        const kind = tag === 'input' ? (el.type || 'text') : tag;
+        const name = (el.getAttribute('aria-label')
+          || (el.labels?.length ? el.labels[0].textContent : '')
+          || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 110);
+        return {kind, name, disabled: Boolean(el.disabled),
+          expanded: el.getAttribute('aria-expanded')};
+      });
+      const by_kind = {};
+      for (const item of items) by_kind[item.kind] = (by_kind[item.kind] || 0) + 1;
+      return {total: items.length, by_kind, items};
+    }""")
+
+
 def exercise(engine, name, record):
     browser = engine.launch(headless=True)
     context = browser.new_context(viewport={"width": 1440, "height": 1000}, accept_downloads=False)
@@ -217,7 +245,8 @@ def exercise(engine, name, record):
     def capture(stage):
         record["steps"].append({"stage": stage, "receipt": receipt(page),
                                 "browser_title": page.title(),
-                                "visible_controls": native_control_inventory(page)})
+                                "visible_controls": native_control_inventory(page),
+                                "control_inventory": visible_control_inventory(page)})
         page.screenshot(path=str(OUT / f"{name}-{stage}.png"), full_page=False)
     try:
         record["phase"] = "ordinary empty report"
@@ -230,7 +259,8 @@ def exercise(engine, name, record):
         site.locator("xpath=ancestor::label[1]").click()
         select(page, "Reporting month", "September")
         select(page, "Reporting year", "2026")
-        page.get_by_role("button", name="Use ENFRA template", exact=True).click()
+        # No choice click when the ENFRA template is the only option.
+        expect(page.get_by_role("button", name="Use ENFRA template", exact=True)).to_have_count(0)
         actor = page.get_by_role("textbox", name="Your name", exact=True)
         actor.fill(ACTOR)
         actor.press("Tab")
