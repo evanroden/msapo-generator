@@ -6,6 +6,8 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 # Documentation index
 
+[Accounts Receivable schema discovery](MONTHLY_RECEIVABLE_SCHEMA_REVIEW.md) — source-bound read-only invoice-field inventory; owner financial-source policy recorded in #458, with field-level eligibility and AR Aging implementation still outstanding.
+
 [Directory original retention verification](DIRECTORY_RETENTION_291.md) - synthetic lifecycle/race regressions, reproducible retrospective policy comparison, and completed native served acceptance with scope limits.
 
 [Annual Training requirements](MONTHLY_TRAINING_YEARS.md) — explicit matrix year, legacy unknown-year preservation, deliberate annual transition, and unchanged separation from completed monthly sessions.
