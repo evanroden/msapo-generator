@@ -153,7 +153,7 @@ def fill_training(page, number):
 
 def visible_control_inventory(page):
     """Count actual visible native controls, not captions or hidden source forms."""
-    return page.evaluate("""() => {
+    return page.evaluate(r"""() => {
       const visible = el => {
         const css = getComputedStyle(el), rect = el.getBoundingClientRect();
         return css.display !== 'none' && css.visibility !== 'hidden'
@@ -169,7 +169,7 @@ def visible_control_inventory(page):
         const kind = tag === 'input' ? (el.type || 'text') : tag;
         const name = (el.getAttribute('aria-label')
           || (el.labels?.length ? el.labels[0].textContent : '')
-          || el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 110);
+          || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 110);
         return {kind, name, disabled: Boolean(el.disabled),
           expanded: el.getAttribute('aria-expanded')};
       });
