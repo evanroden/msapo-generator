@@ -146,7 +146,7 @@ def test_end_to_end_render_produces_a_pdf_and_leaves_no_intermediates():
     assert payload.startswith(b"%PDF-")
     assert len(payload) > 1000
 
-    import fitz
+    import pymupdf as fitz
 
     with fitz.open(stream=payload, filetype="pdf") as document:
         text = "\n".join(page.get_text() for page in document)
@@ -187,7 +187,7 @@ def test_long_native_msapo_pdf_has_no_split_short_scope_items():
     pdf = build_msapo_pdf(analysis=_analysis(), scope="\n".join(lines),
                           inclusions=["Labor and supplies"], exclusions=["Unapproved work"])
 
-    import fitz
+    import pymupdf as fitz
 
     with fitz.open(stream=pdf, filetype="pdf") as rendered:
         assert len(rendered) >= 3

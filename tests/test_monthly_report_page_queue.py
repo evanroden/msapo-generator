@@ -2,7 +2,7 @@
 from dataclasses import asdict, replace
 from io import BytesIO
 
-import fitz
+import pymupdf as fitz
 from PIL import Image, ImageDraw
 
 from app import monthly_report_library as library, monthly_report_upload_ui as ui

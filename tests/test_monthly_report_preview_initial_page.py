@@ -1,6 +1,6 @@
 from dataclasses import replace
 
-import fitz
+import pymupdf as fitz
 import pytest
 
 from app import monthly_report_preview as preview

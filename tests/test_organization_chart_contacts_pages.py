@@ -77,7 +77,7 @@ from conftest import requires_libreoffice
 @requires_libreoffice
 def test_rendered_chart_and_contacts_occupy_distinct_pages(tmp_path, monkeypatch):
     """Actual PDF output must place current contact text after the chart page."""
-    import fitz
+    import pymupdf as fitz
     from app import pdf_converter
     d=Document();d.add_heading('ORGANIZATIONAL CHART',1)
     image=BytesIO();Image.new('RGB',(1200,600),'blue').save(image,format='PNG')
@@ -104,7 +104,7 @@ def test_rendered_chart_and_contacts_occupy_distinct_pages(tmp_path, monkeypatch
 @requires_libreoffice
 def test_rendered_retained_chart_and_contacts_are_separate(tmp_path, monkeypatch):
     import re
-    import fitz
+    import pymupdf as fitz
     from hashlib import sha256
     from app import pdf_converter
     from app.monthly_report_import import inspect_docx, read_import_image
@@ -158,7 +158,7 @@ def test_bound_unchanged_contact_table_also_moves_after_chart(tmp_path, monkeypa
     # preserved table path (the text may wrap within a PDF table cell).
     from conftest import libreoffice_can_convert
     if libreoffice_can_convert():
-        import fitz
+        import pymupdf as fitz
         import re
         from app import pdf_converter
         rendered=tmp_path/'retained-both.docx'; result.save(rendered)
@@ -192,7 +192,7 @@ def test_source_chart_after_table_is_moved_before_new_contacts(tmp_path, monkeyp
     assert any(e.xpath('.//*[local-name()="pageBreakBefore"]') for e in body[chart_i+1:table_i+1])
     from conftest import libreoffice_can_convert
     if libreoffice_can_convert():
-        import fitz
+        import pymupdf as fitz
         import re
         from app import pdf_converter
         generated=tmp_path/'reversed-output.docx';result.save(generated)

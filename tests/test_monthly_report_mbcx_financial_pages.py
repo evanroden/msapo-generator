@@ -2,7 +2,7 @@
 from dataclasses import asdict, replace
 from io import BytesIO
 import importlib
-import fitz
+import pymupdf as fitz
 import pytest
 from docx import Document
 from app import monthly_report_sources as sources, monthly_report_library as library
@@ -131,7 +131,7 @@ def test_legacy_empty_financial_fields_preserve_source_fingerprint(monkeypatch,t
 
 APP='''
 import streamlit as st
-import fitz
+import pymupdf as fitz
 from dataclasses import replace
 from app import monthly_report_sources as sources
 from app.monthly_report_model import synthetic_profiles
