@@ -4,8 +4,11 @@ The old global store is read-only migration input. Opening a report never seeds
 standing data, discovers other contracts, or adopts legacy procedures.
 """
 from dataclasses import asdict, dataclass, replace
+from io import BytesIO
 import hashlib
 import re
+
+from PIL import Image
 
 from app import monthly_report_library as library
 from app.monthly_report_asset_review import approve_all_assets, asset_context, pending_asset_indexes, refresh_asset_source_context
@@ -86,6 +89,23 @@ def _verify_asset(reference, raw):
         raise library.LibraryError("The workflow picture exceeds the size limit.")
     if library.asset_reference(raw, reference.rsplit(".", 1)[-1]) != reference:
         raise library.LibraryError("A workflow picture failed its integrity check.")
+    # A matching content hash alone does not prove these bytes can be rendered.
+    # Check only the disposable in-memory bytes, never rewrite the original.
+    expected = "PNG" if reference.endswith(".png") else "JPEG"
+    try:
+        with Image.open(BytesIO(raw)) as picture:
+            if picture.format != expected:
+                raise ValueError("Picture bytes do not match the saved file type.")
+            picture.verify()
+        if expected == "JPEG":
+            # Pillow's verify() checks JPEG headers but accepts some incomplete
+            # entropy streams. Decode a draft-resolution copy to detect them
+            # without expanding an original full-size photograph in memory.
+            with Image.open(BytesIO(raw)) as picture:
+                picture.draft("RGB", (1024, 1024))
+                picture.load()
+    except (OSError, ValueError, SyntaxError, Image.DecompressionBombError) as exc:
+        raise library.LibraryError("A workflow picture is not a readable PNG or JPEG.") from exc
     return raw
 
 
