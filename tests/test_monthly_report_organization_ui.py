@@ -51,7 +51,7 @@ def test_four_current_parts_need_no_keep_or_change_questions():
         "#### After-hours outage procedure", "#### Facility contacts",
     }
     assert not at.text_area and not at.checkbox and not at.radio and not at.selectbox
-    assert len(at.button) == 4
+    assert len(at.button) == 5  # Four part actions plus direct saved-contact Edit.
     procedures = next(item for item in at.expander if item.label == "Contract outage procedures")
     assert procedures.proto.expanded is False
     assert {item.label for item in procedures.button} == {

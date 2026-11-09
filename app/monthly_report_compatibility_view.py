@@ -38,17 +38,18 @@ MAX_VIEW_EXPANDED_BYTES = 32 * 1024 * 1024
 MAX_VIEW_XML_BYTES = 20 * 1024 * 1024
 MAX_VIEW_MEDIA_BYTES = 16 * 1024 * 1024
 MAX_VIEW_XML_NODES = 120_000
+MAX_VIEW_PARTS = 512
+MAX_VIEW_XML_DEPTH = 64
 
 
 def _view_budget(archive):
     infos = archive.infolist()
-    if len(infos) > 512 or sum(i.file_size for i in infos) > MAX_VIEW_EXPANDED_BYTES:
-        _fail('capability package expansion budget')
+    _budget('capability package part budget', len(infos), MAX_VIEW_PARTS, 'parts')
+    _budget('capability package expansion budget', sum(i.file_size for i in infos), MAX_VIEW_EXPANDED_BYTES)
     xml = [i for i in infos if i.filename.endswith(('.xml', '.rels'))]
-    if sum(i.file_size for i in xml) > MAX_VIEW_XML_BYTES:
-        _fail('capability XML byte budget')
-    if sum(i.file_size for i in infos if i.filename.startswith('word/media/')) > MAX_VIEW_MEDIA_BYTES:
-        _fail('capability cumulative media byte budget')
+    _budget('capability XML byte budget', sum(i.file_size for i in xml), MAX_VIEW_XML_BYTES)
+    _budget('capability cumulative media byte budget',
+            sum(i.file_size for i in infos if i.filename.startswith('word/media/')), MAX_VIEW_MEDIA_BYTES)
     from defusedxml import ElementTree as safe_xml
     nodes = 0
     for info in xml:
@@ -57,14 +58,30 @@ def _view_budget(archive):
             for event, element in safe_xml.iterparse(stream, events=('start','end'), forbid_dtd=True):
                 if event == 'start':
                     nodes += 1; depth += 1
-                    if nodes > MAX_VIEW_XML_NODES or depth > 64:
-                        _fail('capability XML complexity budget')
+                    _budget('capability XML complexity budget', nodes, MAX_VIEW_XML_NODES, 'nodes')
+                    _budget('capability XML depth budget', depth, MAX_VIEW_XML_DEPTH, 'levels')
                 else:
                     depth -= 1; element.clear()
 
 
 class CompatibilityError(ImportError):
     pass
+
+
+class CompatibilityBudgetError(CompatibilityError):
+    """A processing refusal is distinct from unsupported or damaged artwork."""
+
+    def __init__(self, budget, observed, limit, unit='bytes'):
+        from app.monthly_report_upload_limits import byte_limit_label
+        self.budget, self.observed, self.limit, self.unit = budget, observed, limit, unit
+        actual = byte_limit_label(observed) if unit == 'bytes' else f'{observed:,} {unit}'
+        maximum = byte_limit_label(limit) if unit == 'bytes' else f'{limit:,} {unit}'
+        super().__init__(f'Native rendition is not proved: {budget}. Observed {actual}; limit is {maximum}.')
+
+
+def _budget(label, observed, limit, unit='bytes'):
+    if observed > limit:
+        raise CompatibilityBudgetError(label, observed, limit, unit)
 
 
 def _fail(message):
@@ -432,8 +449,9 @@ class CompatibilityView:
 
 def derive_compatibility_view(original_bytes):
     """Pure default-off derivation; no original or persistent state is written."""
-    if not isinstance(original_bytes, bytes) or len(original_bytes) > MAX_VIEW_SOURCE_BYTES:
+    if not isinstance(original_bytes, bytes):
         _fail('source byte budget/type')
+    _budget('source byte budget', len(original_bytes), MAX_VIEW_SOURCE_BYTES)
     with TemporaryDirectory(prefix='native-view-') as temporary:
         source = Path(temporary)/'original.docx'; source.write_bytes(original_bytes)
         with _package(source) as budget_archive:
@@ -611,12 +629,12 @@ def _bind(original, rendition, candidates, archival_chrome=()):
 def rederive_compatibility_view(path, expected_receipt=None):
     """Boundary primitive: caller receipts never grant permission by themselves."""
     path = Path(path)
-    if path.stat().st_size > MAX_VIEW_SOURCE_BYTES: _fail('source byte budget')
+    _budget('source byte budget', path.stat().st_size, MAX_VIEW_SOURCE_BYTES)
     # The staged file can grow or be replaced after stat. Bound the read
     # itself, and reject overflow before parsing rather than truncating it.
     with path.open('rb') as stream:
         original = stream.read(MAX_VIEW_SOURCE_BYTES + 1)
-    if len(original) > MAX_VIEW_SOURCE_BYTES: _fail('source byte budget')
+    _budget('source byte budget', len(original), MAX_VIEW_SOURCE_BYTES)
     view = derive_compatibility_view(original)
     if expected_receipt is not None and expected_receipt != view.receipt_bytes:
         _fail('stale or tampered source-view receipt')

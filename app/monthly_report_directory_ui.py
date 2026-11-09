@@ -286,14 +286,23 @@ def _render_directory(field):
         st.caption("A confirmed import keeps the uploaded workbook file for 30 days for checking, then deletes it. "
                    "The reviewed contacts and directory history stay.")
         if st.button("Read workbook", disabled=upload is None, key="report_directory_read"):
-            raw = upload.getvalue()
-            inspection = directory.inspect_workbook(raw)
-            st.session_state["report_directory_workbook"] = (raw, inspection)
-            st.rerun()
+            try:
+                raw = upload.getvalue()
+                inspection = directory.inspect_workbook(raw)
+            except (ValueError, OSError) as exc:
+                # Keep rendering the last successful review. Exiting this render
+                # unmounts its native controls and discards mapping choices.
+                st.error(literal(exc))
+                if st.session_state.get("report_directory_workbook"):
+                    st.info("The selected workbook could not be read. Your previous workbook review remains below. Retry Read workbook or choose another file.")
+            else:
+                st.session_state["report_directory_workbook"] = (raw, inspection)
+                st.rerun()
         staged = st.session_state.get("report_directory_workbook")
         if not staged:
             return
         raw, inspection = staged
+        st.caption("Reviewing the last successfully read workbook. Selecting another file does not replace this review until Read workbook succeeds.")
         if mode == "Import all contract contacts":
             from app.monthly_report_directory_batch_ui import render_batch
             render_batch(inspection, raw, actor, "report_directory_batch_" + inspection.sha256[:16])

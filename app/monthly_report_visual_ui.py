@@ -120,6 +120,7 @@ def edit_org_chart(draft, block, prefix, assets, field, *, show_preview=True):
         return block
     left, right = st.columns([1, 1]) if show_preview else (st.container(), None)
     nodes = []
+    remove_key = None
     with left:
         for node in block.org_nodes:
             key = p + "_person_" + node.key
@@ -162,16 +163,19 @@ def edit_org_chart(draft, block, prefix, assets, field, *, show_preview=True):
                     replace(node, name=name, role=role, team=team, reports_to=parent)
                 )
                 if st.button("Remove position", key=key + "_remove_button"):
-                    kept = tuple(
-                        replace(n, reports_to="") if n.reports_to == node.key else n
-                        for n in (*nodes[:-1], *block.org_nodes[len(nodes) :])
-                    )
-                    _install(
-                        draft,
-                        prefix,
-                        replace(block, org_nodes=kept),
-                        clear=p + "_person_",
-                    )
+                    remove_key = node.key
+        if remove_key is not None:
+            # Collect every delivered field before the rerun clears their widgets.
+            kept = tuple(
+                replace(n, reports_to="") if n.reports_to == remove_key else n
+                for n in nodes if n.key != remove_key
+            )
+            _install(
+                draft,
+                prefix,
+                replace(block, org_nodes=kept),
+                clear=p + "_person_",
+            )
         block = replace(block, source="This month", org_nodes=tuple(nodes))
         if st.button(
             "Add position", key=p + "_add", disabled=len(nodes) >= 60
