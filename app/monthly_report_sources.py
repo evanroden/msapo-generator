@@ -410,6 +410,7 @@ def _csv_table(text: str) -> SourceTable:
     single_column = None
     malformed = False
     over_budget = None
+    inconsistent_columns = None
     for delimiter in (",", ";", "\t", "|"):
         try:
             table = _table("CSV", csv.reader(
@@ -423,6 +424,9 @@ def _csv_table(text: str) -> SourceTable:
             if "review budget" in str(exc):
                 # An alternate separator cannot bypass row/cell/column limits.
                 over_budget = exc
+            elif "different column counts" in str(exc):
+                inconsistent_columns = exc
+                malformed = True
             else:
                 malformed = True
             continue
@@ -441,6 +445,8 @@ def _csv_table(text: str) -> SourceTable:
             f"CSV delimiter is ambiguous ({choices}). Export with one consistent "
             "delimiter and quote values that contain separators, then upload again."
         )
+    if inconsistent_columns is not None:
+        raise inconsistent_columns
     if malformed or single_column is None:
         raise ValueError(
             "CSV delimiter or quoting could not be determined from consistent "
