@@ -16,7 +16,8 @@ VIEW = SimpleNamespace(receipt_sha256="b" * 64)
 
 
 def target(*facilities):
-    return replace(synthetic_profiles()[0], facilities=facilities)
+    profile = synthetic_profiles()[1 if len(facilities) > 1 else 0]
+    return replace(profile, facilities=facilities)
 
 
 @pytest.mark.parametrize("changed", [

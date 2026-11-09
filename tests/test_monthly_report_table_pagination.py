@@ -135,18 +135,21 @@ def test_header_never_stranded_and_repeats_above_current_rows(tmp_path, monkeypa
 
 
 @requires_libreoffice
-def test_wide_chart_and_one_row_can_share_the_page(tmp_path, monkeypatch):
+def test_wide_chart_and_one_contact_use_separate_pages(tmp_path, monkeypatch):
     _, pdf = render(tmp_path, monkeypatch, 1, (1536, 862))
     with pymupdf.open(stream=pdf, filetype='pdf') as document:
-        assert len(document) == 2
-        page = document[-1]
-        assert 'Contact name' in page.get_text() and 'Synthetic Person 00' in page.get_text()
-        image = page.get_image_info()[0]
-        box = pymupdf.Rect(image['bbox'])
+        assert len(document) == 3
+        divider, chart_page, contact_page = document[0], document[1], document[2]
+        assert 'ORGANIZATIONAL CHART' in divider.get_text()
+        assert 'Contact name' not in chart_page.get_text()
+        assert 'Synthetic Person 00' not in chart_page.get_text()
+        assert 'Contact name' in contact_page.get_text()
+        assert 'Synthetic Person 00' in contact_page.get_text()
+        assert len(chart_page.get_image_info()) == 1
+        assert not contact_page.get_image_info()
+        box = pymupdf.Rect(chart_page.get_image_info()[0]['bbox'])
         assert box.width == pytest.approx(9*72, abs=.5)
         assert box.width / box.height == pytest.approx(1536/862, abs=.001)
-        words = page.get_text('words')
-        assert min(w[1] for w in words if w[4] == 'Contact') > box.y1
 
 
 def test_empty_contacts_do_not_add_header_or_claims(tmp_path):

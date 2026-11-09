@@ -191,7 +191,8 @@ class SharedSourceBundles:
             # Read only compact transaction metadata; do not allocate an
             # archive-sized dummy buffer while listing stored receipts.
             transaction = json.loads(txn)
-            if (transaction.get("schema") != 1 or transaction.get("kind") != "reference-bundle"
+            if (type(transaction) is not dict
+                    or transaction.get("schema") != 1 or transaction.get("kind") != "reference-bundle"
                     or transaction.get("target") != bundle_id
                     or transaction.get("files") != {blob: receipt.archive_size, "receipt.json": len(raw)}):
                 raise storage.VaultIntegrityError("Reference archive transaction is invalid.")
@@ -202,7 +203,7 @@ class SharedSourceBundles:
                     or info.st_mode & 0o077 or info.st_size != receipt.archive_size):
                 raise storage.VaultIntegrityError("Reference original has unsafe disk geometry.")
             return receipt
-        except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        except (ValueError, KeyError, TypeError, RecursionError, json.JSONDecodeError) as exc:
             raise storage.VaultIntegrityError("Reference archive receipt is invalid.") from exc
         finally:
             os.close(fd)

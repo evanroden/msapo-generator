@@ -1,0 +1,25 @@
+{
+  "snapshots": [
+    {
+      "snapshot": "before",
+      "sha": "45ecc27b7948423049404a70ed58d3f1155c6c2b",
+      "tree": "8242ac09c1760fb84eb9c560bc2af9611f92445a",
+      "tracked_blobs_verified": 825,
+      "all_matched": true
+    },
+    {
+      "snapshot": "after",
+      "sha": "df8b748325bd096a7affcf4f30671e82e852ae00",
+      "tree": "709b9a0b6986e1610880efe46eeb0a8af4a3835d",
+      "tracked_blobs_verified": 1381,
+      "all_matched": true
+    }
+  ],
+  "test_sha256": "1a61a379950da70a32dc6eb638e7290a27d9127538c3055e595c1bdcff423090",
+  "verification_python": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]",
+  "same_current_dependency_environment": true,
+  "historical_dependencies_not_reconstructed": true,
+  "comparison_is_retrospective": true,
+  "fixture_age_is_injected": true,
+  "provenance_note": "Initial provenance attempt used historical repository lacking the after commit and did not produce a receipt. Corrected read-only verifier uses the source object repository for each snapshot; no tests rerun and no results changed."
+}
