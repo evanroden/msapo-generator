@@ -59,12 +59,14 @@ def layout_checks(draft):
                     from app.monthly_report_asset_layout import picture_runs, photo_run
                     problems = (indexes[local] for is_document, indexes in picture_runs(block, draft.sources)
                                 if not is_document for local in photo_caption_problems(photo_run(block, indexes)))
+                    from app.monthly_report_correction_targets import picture_target
                     for index in problems:
                         checks.append(ReportCheck(
                             "photo_caption",
                             f"Shorten photo caption {index + 1} in {_label(spec.key)}, or choose fewer "
                             f"photos per page. At {block.photos_per_page} per page a caption can use "
-                            "at most four lines.", True, block.key))
+                            "at most four lines.", True, block.key,
+                            (picture_target(draft, block, index),)))
             if spec.columns and any(len(row) > len(spec.columns) for row in block.rows):
                 checks.append(ReportCheck(
                     "table_columns",

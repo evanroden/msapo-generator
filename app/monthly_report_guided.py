@@ -762,7 +762,9 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
         editor_anchor = "report-editor-" + spec.key
         if draft is not None:
             from html import escape
-            st.markdown('<span id="' + escape(editor_anchor, quote=True) + '"></span>', unsafe_allow_html=True)
+            from app.monthly_report_correction_ui import text_warning_marker
+            st.markdown('<span id="' + escape(editor_anchor, quote=True) + '"></span>' +
+                        text_warning_marker(draft, block, prefix, editor_key), unsafe_allow_html=True)
         from app.monthly_report_native_loading import reserve_text_area
         reserve_text_area(editor_key, text_height)
         st.text_area(
@@ -1512,6 +1514,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     consume_financial_correction(prefix,replace(draft,blocks=tuple(blocks.values())),_rich_text_scope(prefix))
     from app.monthly_report_source_detail_navigation import consume_navigation as consume_source_detail
     consume_source_detail(prefix,replace(draft,blocks=tuple(blocks.values())),_rich_text_scope(prefix))
+    from app.monthly_report_correction_ui import consume_photo_caption
+    consume_photo_caption(prefix,replace(draft,blocks=tuple(blocks.values())),_rich_text_scope(prefix))
     with workspace("monthly", prefix, navigation_key="monthly_report_navigation", landing=landing):
         with st.container(key="monthly_report_navigation"):
             st.markdown('<span class="epc-section-navigation">'
@@ -1791,8 +1795,11 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     render_source_detail_link(check,draft,prefix)
             else:
                 (st.error if check.blocking else st.warning)(review_message(check, draft))
-                from app.monthly_report_correction_ui import render_picture_links
+                from app.monthly_report_correction_ui import render_picture_links, render_photo_caption_links
                 render_picture_links(check, draft, prefix)
+                render_photo_caption_links(check, draft, prefix)
+                from app.monthly_report_correction_ui import render_text_warning_links
+                render_text_warning_links(check, draft, prefix)
                 from app.monthly_report_correction_ui import render_source_page_links
                 render_source_page_links(check, draft, prefix)
                 from app.monthly_report_followup_navigation import render_links
@@ -1961,4 +1968,6 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         st.session_state[prefix+'_source_detail_navigation_notice']=SOURCE_DETAIL_NOTICE
     source_detail_notice=st.session_state.pop(prefix+'_source_detail_navigation_notice',None)
     if source_detail_notice:st.warning(source_detail_notice)
+    from app.monthly_report_correction_ui import finish_photo_caption
+    finish_photo_caption(prefix)
     _refresh_period_editors_after_commit(prefix)
