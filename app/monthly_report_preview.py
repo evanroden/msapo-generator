@@ -323,7 +323,23 @@ def _section_preview_docx(draft, section_key, asset_loader=None, *, source_view=
     source = source_for(draft.profile)
     if source is not None:
         from app.monthly_report_native_layout import build_native_docx
-        return build_native_docx(scope, source, asset_loader=asset_loader, section_key=section_key, master=is_master(draft.profile), source_view=source_view)
+        from app import monthly_report_section_assembly_cache as assembly_cache
+        revision = None
+        if assembly_cache.active():
+            # Preflight and pinned-source validation still run on every request.
+            # A full draft fingerprint is conservative: unrelated edits may
+            # miss the cache, but cannot reuse old native content.
+            from app.monthly_report_source_view_runtime import cache_identity
+            revision = (draft.fingerprint, section_key, cache_identity(draft))
+            cached = assembly_cache.read(revision)
+            if cached is not None:
+                return cached
+        raw = build_native_docx(scope, source, asset_loader=asset_loader,
+                                section_key=section_key, master=is_master(draft.profile),
+                                source_view=source_view)
+        if revision is not None:
+            assembly_cache.remember(revision, raw)
+        return raw
 
     if source_view is not None:
         raise ValueError('A compatibility source view requires its pinned original native design.')
