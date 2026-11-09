@@ -368,9 +368,29 @@ def test_xlsx_cmms_is_supported_but_annual_count_grid_is_not_calls(storage):
     not_calls = review_service_calls(summary, PROFILE, PERIOD)
     assert not not_calls.rows and not not_calls.ready_for_inclusion
     assert not_calls.original_rows == summary.tables[0].rows
-    assert not_calls.notes
+    assert not_calls.mapping.wo is None and not_calls.mapping.task is None
+    assert not_calls.notes == (
+        "Choose or correct the wo column before including this table.",
+        "Choose or correct the task column before including this table.",
+    )
     assert not_calls.counts()["unmatched"] == 2
+    with pytest.raises(ValueError, match="Review unresolved onsite calls"):
+        reviewed_service_call_block(not_calls)
     assert sources.source_bytes(PROFILE, summary.source).startswith(b"Metric")
+
+    # A full twelve-month site/metric count grid belongs to the annual
+    # work-order review, not to the one-row-per-completed-call contract.
+    annual = read_csv("annual-work-orders.csv",
+        b"Site,Metric,Unit,January,February,March,April,May,June,July,August,September,October,November,December\n"
+        b"Demo North,PM Completed,Count,1,2,3,4,5,6,7,8,9,10,11,12\n"
+        b"Demo South,Corrective Maintenance,Count,0,1,0,2,0,1,0,1,0,1,0,1\n")
+    annual_calls = review_service_calls(annual, PROFILE, PERIOD)
+    assert not annual_calls.rows and not annual_calls.ready_for_inclusion
+    assert annual_calls.counts()["unmatched"] == 2
+    assert annual_calls.original_rows == annual.tables[0].rows
+    with pytest.raises(ValueError, match="Review unresolved onsite calls"):
+        reviewed_service_call_block(annual_calls)
+    assert sources.source_bytes(PROFILE, annual.source).startswith(b"Site,Metric,Unit")
 
 
 
