@@ -412,7 +412,7 @@ def test_diagnostic_trailing_proposal_note_pdf_has_unique_labels(
                    for item in inspection.items
                    if item.kind == "table" and item.section == "proposals")
     block = replace(draft.blocks[0], extra_tables=tables,
-                    text=draft.blocks[0].text + "\\n\\nSynthetic trailing technical note.")
+                    text=draft.blocks[0].text + "\n\nSynthetic trailing technical note.")
     payload = build_native_docx(replace(draft, blocks=(block, draft.blocks[1])),
                                 path, section_key="proposals")
     exported = tmp_path / "synthetic-native.docx"
