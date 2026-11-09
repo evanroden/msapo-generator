@@ -422,6 +422,10 @@ def _activity_reader_notice(content):
         return (content.source.filename + ": ambiguous Activity CSV columns need explicit source mapping (" +
                 ", ".join(fields) + "). This file is not sent to the Activity reader. "
                 "Review the original and add only verified work directly in Activity; the uploaded file is retained.")
+    if _csv_activity_priced_status(content):
+        return (content.source.filename + ": an Activity status includes pricing, so its work row needs review. "
+                "Review the original and add only verified work directly in Activity, preserving its status without prices. "
+                "Other safe rows remain available. This file is not sent to the Activity reader; the uploaded file is retained.")
     return ""
 
 
@@ -465,6 +469,20 @@ def _ambiguous_csv_activity_columns(content):
                     any(bases[index] != table.columns[index] for index in positions)):
                 ambiguous.append(field)
     return tuple(dict.fromkeys(ambiguous))
+
+
+def _csv_activity_priced_status(content):
+    """Page-scoped reader evidence cannot safely omit a financial row qualifier."""
+    if content.source.suffix != ".csv":
+        return False
+    for table in content.tables:
+        names = tuple(re.sub(r"[^a-z0-9]", "", title.casefold()) for title in table.columns)
+        work = [index for index, name in enumerate(names) if name in _CSV_ACTIVITY_COLUMNS["work"]]
+        status = [index for index, name in enumerate(names) if name in _CSV_ACTIVITY_COLUMNS["status"]]
+        if len(work) == len(status) == 1 and any(
+                contains_price(str(row[status[0]])) for row in table.rows if status[0] < len(row)):
+            return True
+    return False
 
 
 _ACTIVITY_EMAIL = re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
@@ -689,8 +707,10 @@ def _csv_activity_entries(content):
             narrative = _activity_text(cell(action))
             if _date_only_source_label(narrative) or not useful_activity(narrative) or contains_price(narrative):
                 continue
+            if contains_price(cell(status)):
+                continue  # Omitting this qualifier could falsely report completed work.
             status_text = _activity_text(cell(status))
-            if status_text and not contains_price(status_text):
+            if status_text:
                 narrative += " (Status: " + status_text + ")"
             date_text = cell(dated) if dated is not None else content.source.service_date
             # Numeric and locale-ambiguous dates must not become reported facts.
