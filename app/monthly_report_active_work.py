@@ -99,7 +99,10 @@ def load(token: str, contract: str, key: str, period: ReportPeriod) -> ActiveWor
         try:
             if path.stat().st_size > library.MAX_ASSET_BYTES:
                 raise library.LibraryError("An unfinished report picture exceeds the file limit.")
-            raw = path.read_bytes()
+            with path.open("rb") as source:
+                raw = source.read(library.MAX_ASSET_BYTES + 1)
+            if len(raw) > library.MAX_ASSET_BYTES:
+                raise library.LibraryError("An unfinished report picture exceeds the file limit.")
         except OSError as exc:
             raise library.LibraryError("An unfinished picture could not be restored. Saved reports are unchanged.") from exc
         if library.asset_reference(raw, name.rsplit(".", 1)[-1]) != name:
