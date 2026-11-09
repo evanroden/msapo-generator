@@ -178,6 +178,26 @@ def save(token: str, draft: ReportDraft, *, expected_revision: int,
         next_revision = (previous["revision"] if previous else 0) + 1
         missing = any(not (folder / "assets" / name).is_file() for name in asset_names)
         if same and not missing:
+            # A present picture alias can be damaged after the last save. The
+            # caller supplied and content-verified its bytes above; repair only
+            # that private alias, without advancing the unchanged journal.
+            repairs = []
+            for name, raw in pending.items():
+                target = folder / "assets" / name
+                if target.is_symlink():
+                    raise library.LibraryError("A retained browser-save picture cannot be verified safely.")
+                try:
+                    with target.open("rb") as source:
+                        retained = source.read(library.MAX_ASSET_BYTES + 1)
+                except OSError as exc:
+                    raise library.LibraryError("A retained browser-save picture could not be verified safely.") from exc
+                if retained != raw:
+                    repairs.append((target, raw))
+            for target, raw in repairs:
+                try:
+                    library._atomic_write(target, raw)
+                except OSError as exc:
+                    raise library.LibraryError("A retained browser-save picture could not be restored safely.") from exc
             return ActiveWork(draft, revision, base_snapshot_revision, generation=generation,
                               updated_at=previous.get("updated_at", ""))
         for name, raw in pending.items():
