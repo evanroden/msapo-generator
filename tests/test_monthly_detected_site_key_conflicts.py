@@ -15,11 +15,13 @@ from app.monthly_report_ui import _field
 
 known = Facility("north", "Known North Campus", ("North Main", "North Annex"))
 choice = st.selectbox("Detected site variant",
-                      ("exact", "different title", "different aliases", "other detection"))
+                      ("exact", "different title", "different aliases", "reordered aliases", "other detection"))
 if choice == "different title":
     detected = Facility("north", "Other North Campus", known.aliases)
 elif choice == "different aliases":
     detected = Facility("north", known.title, ("North Main", "Different Annex"))
+elif choice == "reordered aliases":
+    detected = Facility("north", known.title, tuple(reversed(known.aliases)))
 elif choice == "other detection":
     detected = Facility("west", "Detected West Campus", ("West Unit",))
 else:
@@ -30,6 +32,7 @@ result = correct_detected_sites(
     (detected,), (known,), "key-collision", _field,
     source_view=SimpleNamespace(receipt_sha256="b" * 64))
 st.session_state["accepted"] = tuple((s.key, s.title) for s in result) if result else None
+st.session_state["accepted_aliases"] = tuple(s.aliases for s in result) if result else None
 """
 
 
@@ -93,6 +96,15 @@ def test_exact_duplicate_site_definition_does_not_trigger_unnecessary_review():
     assert widget.session_state["accepted"] == (("north", "Known North Campus"),)
     widget.run()
     assert widget.session_state["accepted"] == (("north", "Known North Campus"),)
+
+
+def test_equivalent_alias_reorder_preserves_known_canonical_facility():
+    widget = app(COLLISION_APP)
+    widget.selectbox[0].set_value("reordered aliases").run()
+    assert not widget.exception
+    confirm(widget)
+    assert widget.session_state["accepted"] == (("north", "Known North Campus"),)
+    assert widget.session_state["accepted_aliases"] == (("North Main", "North Annex"),)
 
 
 def test_distinct_new_source_site_can_still_be_explicitly_confirmed():

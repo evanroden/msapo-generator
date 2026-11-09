@@ -41,8 +41,9 @@ def correct_detected_sites(inspection, target, period, detected, known_sites, pr
     conflicting_keys = set()
     for site in (*known_sites, *detected):
         known = options.get(site.key)
-        if known is not None and (known.title, set(known.aliases)) != (site.title, set(site.aliases)):
-            conflicting_keys.add(site.key)
+        if known is not None:
+            if (known.title, set(known.aliases)) != (site.title, set(site.aliases)):
+                conflicting_keys.add(site.key)
         else:
             options[site.key] = site
     with st.expander("Correct source sites"):
