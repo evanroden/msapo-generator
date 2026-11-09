@@ -112,12 +112,16 @@ def source_for(profile):
         raise ValueError("The saved report design reference is invalid.")
     metadata = _metadata(profile, digest)
     source_hash = metadata["source_sha256"] if "companion_sha256" in metadata else digest
-    directory = _directory(profile.contract)
-    candidates = [library._root() / "designs" / "master" / (source_hash + ".docx")] if is_master(profile) else [directory / (source_hash + ".docx"),
-                  library._profile_path(profile.contract, profile.key) / "imports" / (source_hash + ".docx")]
-    # A new site can reuse a pinned design within its own contract. Never search
-    # another contract, and never choose an import by recency or filename.
-    if not is_master(profile):
+    if is_master(profile):
+        # A company master has no contract directory. Resolve only its exact,
+        # integrity-checked pinned global original.
+        candidates = [library._root() / "designs" / "master" / (source_hash + ".docx")]
+    else:
+        directory = _directory(profile.contract)
+        candidates = [directory / (source_hash + ".docx"),
+                      library._profile_path(profile.contract, profile.key) / "imports" / (source_hash + ".docx")]
+        # A new site can reuse a pinned design within its own contract.
+        # Never search another contract or choose an import by recency.
         candidates.extend((library._root() / "library" / library._contract_directory(profile.contract)).glob("*/imports/" + source_hash + ".docx"))
     for path in candidates:
         if path.is_file():
@@ -127,6 +131,38 @@ def source_for(profile):
                 raise ValueError("The saved ENFRA design failed its integrity check.")
             return path
     raise ValueError("The original ENFRA page design is unavailable. Restore its saved reference report in Report design settings.")
+
+
+def installed_master_download():
+    """Return the exact manifest-selected Word original without changing stored state.
+
+    The revision and hash travel with the verified bytes, so an installation
+    completing during this read cannot relabel the previous version.
+    """
+    from types import SimpleNamespace
+    from app.monthly_report_import import MAX_DOCX_BYTES
+
+    current = master_state()
+    revision = current.get("revision", 0)
+    digest = current.get("default", "")
+    if not digest:
+        return None
+    profile = SimpleNamespace(contract="", template=MASTER_PREFIX + digest)
+    source = source_for(profile)
+    # Preserve existing DOCX limit, including a file that grows after stat.
+    if source.stat().st_size > MAX_DOCX_BYTES:
+        raise ValueError("The installed master exceeds the Word file limit.")
+    with source.open("rb") as stream:
+        data = stream.read(MAX_DOCX_BYTES + 1)
+    if len(data) > MAX_DOCX_BYTES:
+        raise ValueError("The installed master exceeds the Word file limit.")
+    source_hash = hashlib.sha256(data).hexdigest()
+    metadata = _metadata(profile, digest)
+    expected = metadata["source_sha256"] if "companion_sha256" in metadata else digest
+    if source_hash != expected:
+        raise ValueError("The installed master failed its integrity check.")
+    return {"revision": revision, "hash": digest, "source_hash": expected,
+            "size": len(data), "bytes": data}
 
 
 def fingerprint(profile):
