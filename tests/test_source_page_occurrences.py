@@ -2,7 +2,7 @@
 from dataclasses import replace
 from datetime import date
 
-import fitz
+import pymupdf as fitz
 import pytest
 
 from app import monthly_report_library as library, monthly_report_sources as sources
