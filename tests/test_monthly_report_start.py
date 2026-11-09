@@ -202,7 +202,9 @@ def test_single_available_template_skips_a_choice_and_starts_normally(monkeypatc
     from app import monthly_report_start_ui as start_ui
     from app import monthly_report_designs as designs
     monkeypatch.setattr(start_ui, "recommended_designs", lambda *_: ())
-    monkeypatch.setattr(designs, "master_state", lambda: {"default": False})
+    # The real empty-library shape: later screens read "revision" as well.
+    monkeypatch.setattr(designs, "master_state",
+                        lambda: {"revision": 0, "default": "", "history": []})
     app = monthly(monkeypatch, tmp_path, saved=False)
     next(field for field in app.text_input if field.label == "Site name").set_value(
         "Synthetic One-Choice Site").run()
