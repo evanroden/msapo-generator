@@ -360,14 +360,14 @@ def _date_only_source_label(text):
 
 
 def _non_table_activity_identity(source):
-    """A first-found DOC/PDF/email label is not a per-event attribution.
+    """A first-found document label is not a per-event attribution.
 
     Keep the source's canonical metadata untouched. Only suppress a blanket
     output prefix when multiple independently source-authored dates or vendors
     appear in the same original. An operator may then review and add exact
     per-event context; the native pass must never guess it.
     """
-    if source.suffix not in {".docx", ".pdf", ".eml", ".msg"}:
+    if source.suffix not in {".txt", ".docx", ".pdf", ".eml", ".msg"}:
         return source
     from datetime import datetime
     dated, vendors = set(), set()
