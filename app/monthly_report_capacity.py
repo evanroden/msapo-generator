@@ -247,9 +247,16 @@ def _docx_tables(profile, source):
 
 def _text_tables(text, name):
     """Only delimiters with an observable column structure qualify as a table."""
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    groups, current = [], []
+    # Keep edge tabs as empty cells until the table's delimiter is established.
+    lines = [line if "\t" in line else line.strip() for line in text.splitlines() if line.strip()]
+    groups, current, delimiter = [], [], None
     for line in lines:
+        stripped = line.strip()
+        # Preserve indentation around existing pipe/space tables and captions.
+        # A TSV header instead makes edge tabs structural, including pipe cells.
+        if (delimiter != "tab" and "\t" not in stripped
+                and (delimiter == "text" or "|" in stripped or re.search(r"\s{2,}", stripped))):
+            line = stripped
         if "\t" in line:
             row = tuple(line.split("\t"))
         elif "|" in line:
@@ -257,10 +264,16 @@ def _text_tables(text, name):
         else:
             row = tuple(re.split(r"\s{2,}", line))
         if len(row) > 1 and not all(re.fullmatch(r"[:\- ]*", c) for c in row):
+            if delimiter is None:
+                if "\t" in stripped:
+                    delimiter = "tab"
+                elif "\t" not in line:
+                    delimiter = "text"
             current.append(row)
         elif current:
             groups.append(current)
             current = []
+            delimiter = None
     if current:
         groups.append(current)
     return tuple(SourceTable(name + (f" / table {n}" if len(groups) > 1 else ""), rows[0], tuple(rows[1:]))
