@@ -42,3 +42,40 @@ def test_high_confidence_august_unused_python_exports_are_absent():
     assert not hasattr(po_rules, "asset_id_is_numeric")
     assert expense_report.ALLOCATION_JOB == "job"
     assert callable(po_rules.normalize_asset_id)
+
+
+def test_august_removed_symbols_have_no_remaining_runtime_source_references():
+    """Also catches string-based getattr/imports, page discovery and CSS hooks.
+
+    Historical docs are deliberately excluded: section 5.1 records the prior
+    names as audit evidence and is not an executable consumer. This test itself
+    records the removed names in negative assertions, so exclude this file.
+    """
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    former_symbols = (
+        "epc-needs-value",
+        "scope-section",
+        "scope-text",
+        "step-num navy",
+        "ALLOCATION_KINDS",
+        "EXPENSE_SECTIONS",
+        "_existing_path",
+        "asset_id_is_numeric",
+        "PREPARED_PO_CONTEXT_STATE_KEY",
+        "_prepared_smartsheet_po_context",
+    )
+    executable_suffixes = {".py", ".js", ".cjs", ".css", ".html", ".yml", ".yaml", ".toml"}
+    offenders = []
+    for directory in ("app", "pages", "scripts", "tests", ".github"):
+        for path in (root / directory).rglob("*"):
+            if not path.is_file() or path == Path(__file__).resolve():
+                continue
+            if path.suffix not in executable_suffixes:
+                continue
+            body = path.read_text(encoding="utf-8", errors="replace")
+            for symbol in former_symbols:
+                if symbol in body:
+                    offenders.append(f"{path.relative_to(root)}: {symbol}")
+    assert not offenders, f"Orphaned symbol still referenced: {offenders[:12]}"
