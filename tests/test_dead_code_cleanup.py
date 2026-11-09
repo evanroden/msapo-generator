@@ -69,6 +69,7 @@ def test_august_removed_symbols_have_no_remaining_runtime_source_references():
         "asset_id_is_numeric",
         "PREPARED_PO_CONTEXT_STATE_KEY",
         "_prepared_smartsheet_po_context",
+        "review_contacts",
     )
     executable_suffixes = {".py", ".js", ".cjs", ".css", ".html", ".yml", ".yaml", ".toml"}
     offenders = []

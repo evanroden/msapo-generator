@@ -1,11 +1,9 @@
 """Directory attribution gate and recoverable removal, using synthetic contacts."""
 
-from dataclasses import replace
 
 from streamlit.testing.v1 import AppTest
 
 from app import monthly_report_directory as directory, monthly_report_directory_ui as ui
-from app.monthly_report_model import ReportPeriod, synthetic_draft, synthetic_profiles
 
 
 DIRECTORY_APP = """
@@ -84,17 +82,6 @@ def test_archive_and_restore_require_confirmation_and_retain_contacts(monkeypatc
     restored = directory.load_directory(initial.contract)
     assert not restored.archived and restored.revision == 3 and restored.sites == initial.sites
     assert directory.load_directory(initial.contract, 2).archived
-
-
-def test_nameless_report_does_not_read_directory_contact_suggestions(monkeypatch):
-    draft = replace(synthetic_draft(synthetic_profiles()[0], ReportPeriod(2026, 9)), prepared_by="")
-
-    def forbidden(*args, **kwargs):
-        raise AssertionError("Contact comparison must not load a directory for a nameless report")
-
-    monkeypatch.setattr(directory, "load_directory", forbidden)
-    monkeypatch.setattr(ui.st, "caption", lambda *args, **kwargs: None)
-    assert ui.review_contacts(draft, "synthetic", lambda key, default: key, {}) == draft
 
 
 def test_contract_choices_merge_catalog_case_and_whitespace_variants(monkeypatch):
