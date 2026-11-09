@@ -15,6 +15,8 @@ def decoded(text):
             from app.monthly_report_work_order_review_flow import decoded as decode
         elif kind == "training":
             from app.monthly_report_training_review_flow import decoded as decode
+        elif kind == "receivables":
+            from app.monthly_report_receivable_intake import decoded as decode
         else:
             raise ValueError(message)
         return decode(text)

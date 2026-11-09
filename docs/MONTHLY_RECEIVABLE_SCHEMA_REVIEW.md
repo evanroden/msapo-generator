@@ -90,3 +90,53 @@ Starting Report import tests keep their monetary exclusion requirements.
 
 No genuine source material, production data, shared records or installed masters
 are accessed. No existing financial gate or report output is changed.
+
+
+## Reviewed Section 10 intake — scope of the 28 October decision
+
+The owner permits amounts in the **internal application review** for the
+source-bound invoice, payment, credit and balance fields. That review does not
+grant client-output permission. The Section 10 derivative in this first
+integration is explicitly a **nonfinancial open-invoice status and aging-bucket
+view**, not a complete monetary AR Aging statement. It displays the original
+invoice identity, confirmed report site, invoice/due dates (or a visible
+unknown/ambiguous date), normalized status and due-date aging as of a human
+confirmed date. It does **not** display balances, sums, aged dollar buckets,
+payments, credit figures or vendor invoice totals in Word/PDF.
+
+| Field family | Internal review | Monthly client report |
+| --- | --- | --- |
+| Invoice number, customer account, site, status | Exact original and deliberate corrections | Site, invoice number and status only; customer account remains internal |
+| Invoice date, due date, as-of date, calculated aging category | Raw date, explicit as-of and any ambiguous/blank values | Dates or explicit unknown; aging **category**, never inferred monetary aging |
+| Original amount, paid amount, credit amount, remaining balance, currency, source monetary bucket columns | Source values visible to the operator and retained in a bounded source receipt, including blanks, signed credits and partial payments | **Not emitted by this intake**, regardless of source category |
+| Contract prices/amounts | Internally allowed | Permitted by owner **only when verified in contract** and attached to current field-level source/audience evidence; this intake does not invent that approval |
+| ENFRA client-facing report amounts (e.g., MBCx) | Internally allowed | Permitted by owner only through the existing independent verified client-facing financial source/page gate |
+| Vendor invoices, unknown/mixed sources | Internally visible for review | **No vendor-invoice totals or unverified amounts**, including aggregates moved into another section |
+
+Rows are read from the existing shared source manager's verified original CSV
+or XLSX. The intake re-reads original bytes and compares the exact table and
+SHA-256 with the discovered table, preserving its number and each one-based
+source-row reference. Manual row corrections are stored separately from every
+original cell. A report-scoped fingerprint links the accepted status rows to
+the source SHA, original table identity, report sites and reporting month.
+Generation rejects stale/removed source/receipt or changed status rows; a
+same-named file or identical invoice value is never substituted for another
+source/occurrence. Existing generic table/narrative/image financial exclusions
+remain authoritative outside this source-bound derivative.
+
+**Status and aging rules:** only explicit ISO YYYY-MM-DD is interpreted, with
+no locale inference for dates such as 03/04/2026. A human-specified aging
+as-of date and available due date determine Current, 1–30, 31–60, 61–90 or
+91+ days past due. Paid/closed invoices are not aged as open receivables;
+credits are distinguished, not silently treated as payment. Unknown due dates
+remain unknown, not zero. Partial payments retain their status and source
+amounts; no missing balance is derived. Where all four amounts are present,
+original minus paid minus credit must equal source balance. Contradictory
+closed balances, unmatched sites and duplicate (site, account, invoice)
+identities require correction before acceptance.
+
+This implementation does not certify a full monetary AR Aging statement.
+The independently authorized contract and ENFRA client-report monetary path
+must retain its established source/page approvals and cannot be inferred from
+a selected category or reused from an invoice receipt. Synthetic unit checks
+do not establish true original document or served Word/PDF acceptance.
