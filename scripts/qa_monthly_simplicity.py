@@ -181,7 +181,8 @@ def exercise(engine, name, record):
         site.locator("xpath=ancestor::label[1]").click()
         select(page, "Reporting month", "September")
         select(page, "Reporting year", "2026")
-        page.get_by_role("button", name="Use ENFRA template", exact=True).click()
+        # No choice click when the ENFRA template is the only option.
+        expect(page.get_by_role("button", name="Use ENFRA template", exact=True)).to_have_count(0)
         actor = page.get_by_role("textbox", name="Your name", exact=True)
         actor.fill(ACTOR)
         actor.press("Tab")

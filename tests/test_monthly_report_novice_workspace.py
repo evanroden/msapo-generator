@@ -44,7 +44,7 @@ def test_actions_use_actual_page_and_preserve_colleague_work():
 def test_general_template_sections_have_one_editing_home(monkeypatch, tmp_path):
     app = monthly(monkeypatch, tmp_path, saved=False)
     next(w for w in app.text_input if w.label == 'Site name').set_value('Synthetic Cedar').run()
-    next(b for b in app.button if b.label == 'Use ENFRA template').click().run()
+    assert not any(b.label == 'Use ENFRA template' for b in app.button)
     next(w for w in app.text_input if w.label == 'Your name').set_value('Synthetic Editor').run()
     next(b for b in app.button if b.label == 'Start this report').click().run()
     step(app, 2)
