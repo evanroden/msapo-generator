@@ -43,6 +43,21 @@ def vendor_block(app):
     return app.session_state["report_vendor_draft"].blocks[0]
 
 
+def _vendor_input(app, column=5):
+    """Locate the native column by key, not its escaped display label."""
+    controls = [w for w in app.text_input
+                if isinstance(w.key, str) and w.key.endswith(f"_field_{column}")]
+    assert len(controls) == 1
+    return controls[0]
+
+
+def _vendor_open(app):
+    controls = [b for b in app.button
+                if isinstance(b.key, str) and b.key.endswith("_open_0_0")]
+    assert len(controls) == 1
+    return controls[0]
+
+
 @pytest.mark.parametrize("rows", [(), (("Synthetic Site", "HVAC", "Example Vendor", "Example Contact", "", ""),)])
 def test_vendor_pages_show_with_empty_or_populated_table_without_requiring_review(rows):
     app = vendor_app(rows)
@@ -63,9 +78,9 @@ def test_vendor_agreement_edit_preserves_unknown_and_invalidates_only_changed_co
     rows = (("Synthetic Site", "HVAC", "Example Vendor", "Example Contact", "", ""),)
     app = vendor_app(rows)
     assert not app.text_input
-    next(b for b in app.button if b.label == "Edit vendor contact").click().run()
-    assert next(w for w in app.text_input if w.label == "Agreement status (MSA)").value == ""
-    next(w for w in app.text_input if w.label == "Agreement status (MSA)").set_value("Needs confirmation").run()
+    _vendor_open(app).click().run()
+    assert _vendor_input(app).value == ""
+    _vendor_input(app).set_value("Needs confirmation").run()
     assert not app.exception
     block = vendor_block(app)
     assert block.rows[0][-1] == "Needs confirmation"
@@ -116,7 +131,7 @@ def test_saved_vendor_cards_start_collapsed_without_changing_report_fingerprint(
     app = vendor_app(rows)
     assert not app.exception
     assert not app.text_input
-    assert any(b.label == "Edit vendor contact" for b in app.button)
+    assert any(isinstance(b.key, str) and b.key.endswith("_open_0_0") for b in app.button)
     assert not any(b.label == "Remove contact" for b in app.button)
     assert any("Vendor contacts for this report" in caption.value for caption in app.caption)
     before = vendor_block(app)
@@ -124,8 +139,8 @@ def test_saved_vendor_cards_start_collapsed_without_changing_report_fingerprint(
     assert not app.exception
     assert vendor_block(app) == before
     assert vendor_block(app).rows[0][-1] == "Needs confirmation"
-    next(b for b in app.button if b.label == "Edit vendor contact").click().run()
-    assert next(w for w in app.text_input if w.label == "Agreement status (MSA)").value == "Needs confirmation"
+    _vendor_open(app).click().run()
+    assert _vendor_input(app).value == "Needs confirmation"
 
 
 def test_retained_blank_vendor_contact_stays_compact_until_explicit_edit():
@@ -133,9 +148,9 @@ def test_retained_blank_vendor_contact_stays_compact_until_explicit_edit():
     assert not app.exception
     assert not app.text_input
     before = vendor_block(app)
-    next(b for b in app.button if b.label == "Edit vendor contact").click().run()
+    _vendor_open(app).click().run()
     assert vendor_block(app) == before
-    assert next(w for w in app.text_input if w.label == "Agreement status (MSA)").value == ""
+    assert _vendor_input(app).value == ""
     assert vendor_block(app).rows[0][-1] == ""
 
 
@@ -147,8 +162,8 @@ def test_vendor_native_inputs_do_not_replay_previous_report_incarnation():
     app = vendor_app(rows)
     assert not app.exception
     assert not app.text_input
-    next(b for b in app.button if b.label == "Edit vendor contact").click().run()
-    old = next(w for w in app.text_input if w.label == "Agreement status (MSA)")
+    _vendor_open(app).click().run()
+    old = _vendor_input(app)
     old_id = old.key
     assert old.value == "Pending"
     baseline = vendor_block(app)
@@ -159,8 +174,8 @@ def test_vendor_native_inputs_do_not_replay_previous_report_incarnation():
     assert not app.exception
     assert not app.text_input
     assert vendor_block(app) == baseline
-    next(b for b in app.button if b.label == "Edit vendor contact").click().run()
-    current = next(w for w in app.text_input if w.label == "Agreement status (MSA)")
+    _vendor_open(app).click().run()
+    current = _vendor_input(app)
     assert current.key != old_id
     assert current.value == "Pending"
     assert vendor_block(app) == baseline

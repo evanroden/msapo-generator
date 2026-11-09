@@ -17,10 +17,12 @@ import csv
 import hashlib
 from pathlib import Path
 import re
+from xml.etree.ElementTree import ParseError as XMLParseError
 from zipfile import BadZipFile
 import zlib
 
 import pymupdf as fitz
+from lxml.etree import XMLSyntaxError
 from openpyxl import load_workbook
 
 from app import monthly_report_library as library, ocr
@@ -73,7 +75,12 @@ def source_bytes(profile: ReportProfile, source: ReportSource) -> bytes:
     limit = 128 * 1024 * 1024 if source.suffix == ".docx" else MAX_FILE_BYTES
     if path.stat().st_size > limit:
         raise ValueError("Saved source exceeds the file limit.")
-    raw = path.read_bytes()
+    # The original may change between stat and open. Bound the actual read
+    # before hashing; never accept a truncated prefix as the saved original.
+    with path.open("rb") as stream:
+        raw = stream.read(limit + 1)
+    if len(raw) > limit:
+        raise ValueError("Saved source exceeds the file limit.")
     if hashlib.sha256(raw).hexdigest() != source.sha256:
         raise ValueError("A source file failed its integrity check.")
     return raw
@@ -142,6 +149,26 @@ def action_evidence(source: ReportSource):
     return tuple(accepted), tuple(needs_review)
 
 
+def _labeled_facility(text, profile):
+    """None means no label; an empty value keeps conflicting labels unresolved."""
+    values = [value.strip() for value in re.findall(
+        r"(?im)^[ \t]*(?:facility|site|building)[ \t]*[:=][ \t]*([^\r\n]{1,160})", text)
+        if value.strip()]
+    if not values:
+        return None
+    normalize = lambda value: " ".join(value.casefold().split())
+    names = {}
+    for site in profile.facilities:
+        for name in (site.key, site.title, *site.aliases):
+            names.setdefault(normalize(name), set()).add(site.key)
+    identities = set()
+    for value in values:
+        label = normalize(value)
+        matches = names.get(label, ())
+        identities.add(("site", next(iter(matches))) if len(matches) == 1 else ("label", label))
+    return values[0] if len(identities) == 1 else ""
+
+
 def suggest_facts(source: ReportSource, profile: ReportProfile) -> ReportSource:
     text = "\n".join(source.page_texts)
     sample = (source.filename + "\n" + text[:30_000]).casefold()
@@ -162,8 +189,8 @@ def suggest_facts(source: ReportSource, profile: ReportProfile) -> ReportSource:
         return match[1].strip() if match else ""
     raw_date = labeled("service date|report date|completed date|date")
     date_match = re.search(r"\b(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}/\d{1,2}/\d{2,4})\b", raw_date)
-    facility = labeled("facility|site|building")
-    if not facility:
+    facility = _labeled_facility(text, profile)
+    if facility is None:
         # Filenames can suggest a document type, but cannot establish which
         # site's facts its contents describe. Scope needs native source text
         # or the user's explicit item-specific correction.
@@ -213,17 +240,27 @@ def suggest_facts(source: ReportSource, profile: ReportProfile) -> ReportSource:
 
 
 class _PlainHTML(HTMLParser):
+    _BLOCKS = frozenset(("p", "div", "tr", "li", "h1", "h2", "h3", "h4", "h5", "h6",
+                         "blockquote", "pre", "dt", "dd", "table", "ul", "ol", "dl"))
+
     def __init__(self):
         super().__init__()
         self.parts, self.hidden = [], 0
     def handle_starttag(self, tag, attrs):
         if tag in ("script", "style"):
             self.hidden += 1
-        if tag in ("p", "br", "div", "tr"):
-            self.parts.append("\n")
+        if not self.hidden:
+            if tag in self._BLOCKS or tag in ("br", "hr"):
+                self.parts.append("\n")
+            elif tag in ("td", "th"):
+                # Cells must not concatenate numbers or source field labels.
+                # Start tags also cover HTML's optional closing cell tags.
+                self.parts.append("\t")
     def handle_endtag(self, tag):
         if tag in ("script", "style"):
             self.hidden = max(0, self.hidden - 1)
+        elif not self.hidden and tag in self._BLOCKS:
+            self.parts.append("\n")
     def handle_data(self, data):
         if not self.hidden:
             self.parts.append(data)
@@ -243,11 +280,20 @@ def _email(raw: bytes) -> tuple[str, tuple[tuple[str, bytes], ...], tuple[str, .
         text = _plain_html(text)
     headers = "\n".join(f"{'Message date' if key == 'Date' else key}: {message.get(key, '')}" for key in ("Subject", "Date", "From"))
     attachments, notices = [], []
-    for item in message.walk():
-        if item.is_multipart():
-            if item.get_content_type() == "message/rfc822":
-                notices.append("Nested email retained in the original; save its attachments separately.")
-            continue
+    def direct_parts(part):
+        # walk() descends through message/rfc822 attachments even when its
+        # wrapper was skipped. Files in a forwarded email belong to that
+        # forwarded original and require deliberate, separate import.
+        if part.get_content_type() == "message/rfc822":
+            notices.append("Nested email retained in the original; save its attachments separately.")
+            return
+        if part.is_multipart():
+            for child in part.iter_parts():
+                yield from direct_parts(child)
+            return
+        yield part
+
+    for item in direct_parts(message):
         filename = item.get_filename()
         if filename:
             if len(attachments) >= MAX_SOURCES:
@@ -370,6 +416,7 @@ def _spreadsheet(raw: bytes, suffix: str) -> tuple[SourceTable, ...]:
             dialect = csv.excel
         return (_table("CSV", csv.reader(StringIO(text), dialect, strict=True),
                        strict_columns=True),)
+    from app.monthly_report_xlsx_currency import currency_evidence_value, preserve_currency_number_types
     # Bound ZIP/XML before openpyxl reads shared strings or worksheet dimensions.
     from zipfile import ZipFile
     with ZipFile(BytesIO(raw)) as z:
@@ -380,17 +427,22 @@ def _spreadsheet(raw: bytes, suffix: str) -> tuple[SourceTable, ...]:
             raise ValueError("Expanded workbook exceeds the safe parsing budget.")
     try:
         workbook = load_workbook(BytesIO(raw), read_only=True, data_only=True, keep_links=False)
+    except (XMLParseError, XMLSyntaxError) as exc:
+        raise ValueError("Workbook XML could not be read. Export a fresh XLSX or CSV copy.") from exc
     except TypeError as exc:
         raise ValueError("Workbook structure could not be read. Export a fresh XLSX or CSV copy.") from exc
     try:
         if len(workbook.worksheets) > 30:
             raise ValueError("Workbook exceeds 30 worksheets; upload the required sheets separately.")
+        preserve_currency_number_types(workbook)
         tables, total = [], 0
         for sheet in workbook.worksheets:
             if sheet.max_row and sheet.max_row > MAX_TABLE_ROWS or sheet.max_column and sheet.max_column > 200:
                 raise ValueError("Worksheet dimensions exceed the review budget.")
             try:
-                table = _table(sheet.title, sheet.iter_rows(values_only=True))
+                table = _table(sheet.title, (
+                    tuple(currency_evidence_value(cell.value, cell.number_format) for cell in row)
+                    for row in sheet.iter_rows()))
             except ValueError as exc:
                 if str(exc) == "Spreadsheet has no nonempty rows.":
                     continue
@@ -402,6 +454,10 @@ def _spreadsheet(raw: bytes, suffix: str) -> tuple[SourceTable, ...]:
         if not tables:
             raise ValueError("Workbook has no nonempty worksheets.")
         return tuple(tables)
+    except (XMLParseError, XMLSyntaxError) as exc:
+        # Read-only worksheets decode XML lazily, after the workbook loads.
+        # Contain only these parser failures, not arbitrary product SyntaxError.
+        raise ValueError("Workbook XML could not be read. Export a fresh XLSX or CSV copy.") from exc
     except TypeError as exc:
         # openpyxl can reject malformed typed properties when reading either
         # the package or its lazy rows. Keep this decoder boundary separate
@@ -507,6 +563,8 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
             content = None
         # Keep signed-Unicode migration independent of structural cache validation.
         if (content is not None and (not unicode_csv or data.get("csv_unicode_policy") == 1)
+                and (suffix != ".xlsx" or (type(data.get("xlsx_currency_policy")) is int
+                                          and data["xlsx_currency_policy"] == 1))
                 and (suffix != ".pdf" or data.get("vendor_passage_policy", 0) >= 7)):
             source = content.source
             if data.get("client_page_policy", 0) < 1 and suffix not in (".csv", ".xlsx"):
@@ -514,6 +572,10 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
             if data.get("native_action_policy", 0) < 1:
                 # This is the original extraction cache, never a reviewed draft.
                 source = replace(source, actions="\n".join(line for line, _ in native_action_lines(source))[:6000])
+            if _labeled_facility("\n".join(source.page_texts), profile) == "":
+                # Correct only the disposable extraction view. Saved/manual
+                # sources are overlaid by restore_sources and remain unchanged.
+                source = replace(source, facility="")
             return replace(content, source=replace(source, filename=filename)), ()
         rebuild_cache = True
     if not rebuild_cache or not _same_source_bytes(path, raw):
@@ -584,6 +646,7 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
     content = SourceContent(source, tables, tuple(image_items))
     library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1,
         "native_action_policy": 1, "vendor_passage_policy": 7,
+        **({"xlsx_currency_policy": 1} if suffix == ".xlsx" else {}),
         **({"csv_unicode_policy": 1} if unicode_csv else {}), **asdict(content)}))
     return content, attachments
 
@@ -591,11 +654,13 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
 def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], existing: tuple[SourceContent, ...] = ()) -> tuple[tuple[SourceContent, ...], tuple[str, ...]]:
     sources = {c.source.sha256: c for c in existing}
     sizes, messages = 0, []
+    counted_sizes = {}
     for item in existing:
         # Missing originals remain in the draft inventory and its output
         # dependency checks. They cannot prevent other files from being read.
         try:
-            sizes += _path(profile, item.source.sha256, item.source.suffix).stat().st_size
+            counted_sizes[item.source.sha256] = _path(profile, item.source.sha256, item.source.suffix).stat().st_size
+            sizes += counted_sizes[item.source.sha256]
         except (ValueError, OSError):
             label = Path(item.source.filename.replace("\\", "/")).name
             messages.append(f"Saved source unavailable: {label}. Replace it before generating dependent content.")
@@ -620,7 +685,10 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
                     messages.append(f"Could not restore saved source: {filename}. The report still needs a valid copy.")
                     continue
                 messages.append(f"Saved source restored: {filename}. Prior reviews and report history are unchanged.")
-                sizes += len(raw)
+                # Replace the size already counted for a damaged copy. Missing
+                # originals contribute zero until their successful restoration.
+                sizes += len(raw) - counted_sizes.get(digest, 0)
+                counted_sizes[digest] = len(raw)
             else:
                 messages.append(f"Duplicate skipped: {filename}")
             continue
@@ -675,6 +743,7 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
             continue
         sources[digest] = content
         sizes += len(raw)
+        counted_sizes[digest] = len(raw)
         text_size += added
         queue.extend((name, data, depth+1) for name, data in attachments)
     return tuple(sources.values()), tuple(messages)

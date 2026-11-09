@@ -107,29 +107,33 @@ def test_ambiguous_or_unmerged_vendor_rows_do_not_become_categories(tmp_path):
     assert grouped_vendor_contacts(replace(item, merged_title_rows=())) is None
 
 
+def _card_widget(app, kind, suffix):
+    """Find keyed contact controls without relying on Markdown label text."""
+    controls = [w for w in getattr(app, kind)
+                if isinstance(w.key, str) and w.key.endswith(suffix)]
+    assert len(controls) == 1
+    return controls[0]
+
+
 def test_grouped_contact_cards_add_and_move_without_ghost_rows():
     from tests.test_monthly_report_compact_contacts import workspace, block
     table = ReportTable(("Discipline", "Vendor", "Contact", "Phone"), EXPECTED, "synthetic:vendors")
     app = workspace((table,))
     assert not app.exception
     assert any("Trade: HVAC" in str(label.value) for label in app.text)
-    next(button for button in app.button
-         if button.label == "Add vendor contact to Electrical").click().run()
+    _card_widget(app, "button", "_add_group_0_1").click().run()
     assert not app.exception
-    assert next(field for field in app.text_input if field.label == "Discipline").value == "Electrical"
-    next(button for button in app.button if button.label == "Close editing").click().run()
+    assert _card_widget(app, "text_input", "_field_0").value == "Electrical"
+    _card_widget(app, "button", "_close").click().run()
     assert block(app).extra_tables[0].rows == EXPECTED
-    next(button for button in app.button
-         if button.label == "Add vendor contact to Electrical").click().run()
-    next(field for field in app.text_input
-         if field.label == "Vendor").set_value("Synthetic Vendor Four").run()
-    next(button for button in app.button if button.label == "Close editing").click().run()
+    _card_widget(app, "button", "_add_group_0_1").click().run()
+    _card_widget(app, "text_input", "_field_1").set_value("Synthetic Vendor Four").run()
+    _card_widget(app, "button", "_close").click().run()
     assert block(app).extra_tables[0].rows[-1] == ("Electrical", "Synthetic Vendor Four", "", "")
-    next(button for button in app.button
-         if button.label == "Edit vendor contact" and button.key.endswith("_open_0_0")).click().run()
-    next(field for field in app.text_input if field.label == "Discipline").set_value("Electrical").run()
-    next(field for field in app.text_input if field.label == "Vendor").set_value("Renamed Invented Vendor").run()
-    next(button for button in app.button if button.label == "Close editing").click().run()
+    _card_widget(app, "button", "_open_0_0").click().run()
+    _card_widget(app, "text_input", "_field_0").set_value("Electrical").run()
+    _card_widget(app, "text_input", "_field_1").set_value("Renamed Invented Vendor").run()
+    _card_widget(app, "button", "_close").click().run()
     result = block(app).extra_tables[0].rows
     assert len(result) == 4 and result[0][:2] == ("Electrical", "Renamed Invented Vendor")
     assert result[1:3] == EXPECTED[1:]

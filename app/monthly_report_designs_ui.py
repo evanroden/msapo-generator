@@ -18,8 +18,7 @@ def apply_master_design(draft, digest):
 
 
 def design_summary(draft):
-    """Read-only version detail; the current report stays on its own pin."""
-    current = designs.master_state()
+    """Read-only pin detail, with None when the available master cannot be read."""
     pin = draft.profile.template
     if pin.startswith(designs.BUILTIN_PREFIX):
         identity = "Built-in report design"
@@ -29,14 +28,21 @@ def design_summary(draft):
         identity = "Report-specific design · " + pin[len(designs.PREFIX):][:12]
     else:
         identity = "Legacy report design · " + pin[:40]
-    return identity, current["revision"]
+    try:
+        latest = designs.master_state()["revision"]
+    except (ValueError, OSError):
+        latest = None
+    return identity, latest
 
 
 def render_design_status(draft):
     identity, latest = design_summary(draft)
     st.caption("This report uses: " + identity)
-    st.caption("Available company master: version " + str(latest) +
-               ". Other designs cannot silently change this report.")
+    if latest is None:
+        st.warning("The company master is unavailable. This report keeps its current design.")
+    else:
+        st.caption("Available company master: version " + str(latest) +
+                   ". Other designs cannot silently change this report.")
     st.caption("Master installation is on the separate Administration page.")
 
 
@@ -49,6 +55,25 @@ def render_design_settings(actor, prefix):
     base_revision = st.session_state.setdefault(base_key, current["revision"])
     if current["revision"]:
         st.caption("Current master: version " + str(current["revision"]))
+    if current.get("default"):
+        with st.expander("Inspect installed master", expanded=False):
+            try:
+                snapshot = designs.installed_master_download()
+                if snapshot is not None:
+                    st.caption(
+                        f"Version {snapshot['revision']} · "
+                        f"{snapshot['size']:,} bytes · "
+                        f"SHA-256 {snapshot['source_hash']}"
+                    )
+                    st.download_button(
+                        "Download installed Word master",
+                        data=snapshot["bytes"],
+                        file_name=f"ENFRA-master-v{snapshot['revision']}.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        key=prefix + "_native_design_download_" + snapshot["hash"],
+                    )
+            except (ValueError, OSError) as exc:
+                st.error(str(exc))
     source = st.file_uploader("New ENFRA master design", type=["docx"], max_upload_size=128,
                               key=prefix + "_native_design_upload")
     companion_pdf = st.file_uploader("Finished PDF for this design (optional)", type=["pdf"],
@@ -101,10 +126,18 @@ def render_design_settings(actor, prefix):
 
 def render_apply_master_design(draft, prefix):
     """An explicit report-local choice, separate from global installation."""
-    current = designs.master_state()
+    try:
+        current = designs.master_state()
+    except (ValueError, OSError):
+        return
     if current.get("default") and draft.profile.template != designs.MASTER_PREFIX + current["default"]:
         st.caption("Apply the current master layout and section order to this draft. Monthly content and saved versions are retained; the shared master is unchanged.")
         if st.button("Apply current master to this report", key=prefix + "_native_design_apply"):
-            st.session_state[prefix + "_draft"] = apply_master_design(draft, current["default"])
+            try:
+                updated = apply_master_design(draft, current["default"])
+            except (ValueError, OSError):
+                st.warning("The company master could not be applied. This report keeps its current design.")
+                return
+            st.session_state[prefix + "_draft"] = updated
             st.session_state.pop(prefix + "_section_preview_cache", None)
             st.rerun()

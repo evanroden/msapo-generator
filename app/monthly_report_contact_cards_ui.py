@@ -12,6 +12,26 @@ import streamlit as st
 from app.monthly_report_ui_text import literal
 
 
+def _vendor_summary(columns, row, label):
+    """Show original agreement values and ambiguous imported columns literally."""
+    fields = [(str(name).strip(), str('' if value is None else value).strip()) for name, value in zip(columns, row)]
+    identity = {'name', 'contact name', 'contact', 'person', 'employee', 'vendor', 'vendor name',
+                'contractor', 'company', 'supplier'}
+    known = identity | {'discipline', 'trade', 'category', 'site', 'facility', 'building',
+                        'location', 'hospital', 'role', 'title', 'position', 'job title',
+                        'phone', 'telephone', 'phone number', 'email', 'email address',
+                        'msa', 'agreement status', 'agreement status (msa)'}
+    pieces = [label]
+    if not any(name.casefold() in identity and value for name, value in fields):
+        unknown = [(name, value) for name, value in fields if name and value and name.casefold() not in known]
+        if len(unknown) == 1:
+            pieces.append(f'{unknown[0][0]}: {unknown[0][1]}')
+    for name, value in fields:
+        if name.casefold() in {'msa', 'agreement status', 'agreement status (msa)'}:
+            pieces.append(f'{name}: {value or "Not provided"}')
+    return ' · '.join(pieces)
+
+
 def _category_index(table):
     return next((index for index, title in enumerate(table.columns)
                  if " ".join(title.casefold().split()) in {"discipline", "trade", "category"}), None)
@@ -222,7 +242,8 @@ def edit_contact_tables(tables, key, field, label, *, vendor=False, prepare=None
                     st.write('Edit ' + noun)
                     _fields(table, fields, field, args, vendor)
                 else:
-                    st.write(literal(label(table.columns, row, ri)))
+                    summary = label(table.columns, row, ri)
+                    st.write(literal(_vendor_summary(table.columns, row, summary) if vendor else summary))
                     st.button('Edit ' + noun, key=key + f'_open_{ti}_{ri}',
                               on_click=_queue, args=(*args, 'open', (ti, ri)))
         if category_index is not None:

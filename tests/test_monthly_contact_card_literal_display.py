@@ -39,6 +39,13 @@ def _open(table, *, vendor=False):
     return app
 
 
+def _card_widget(app, kind, suffix):
+    controls = [w for w in getattr(app, kind)
+                if isinstance(w.key, str) and w.key.endswith(suffix)]
+    assert len(controls) == 1
+    return controls[0]
+
+
 def test_untrusted_contact_card_summary_is_literal_with_raw_identity_and_edit():
     table = ReportTable(
         ("Name", "Role", "Site"),
@@ -51,15 +58,12 @@ def test_untrusted_contact_card_summary_is_literal_with_raw_identity_and_edit():
     assert summary not in rendered
     assert app.session_state["visible_tables"] == (table,)
 
-    next(button for button in app.button if button.label == "Edit contact").click().run()
+    _card_widget(app, "button", "_open_0_0").click().run()
     assert not app.exception
-    assert next(control.value for control in app.text_input
-                if control.label == "Name") == PERSON
-    assert next(control.value for control in app.text_input
-                if control.label == "Role") == ROLE
-    assert next(control.value for control in app.text_input
-                if control.label == "Site") == SITE
-    next(button for button in app.button if button.label == "Close editing").click().run()
+    assert _card_widget(app, "text_input", "_field_0").value == PERSON
+    assert _card_widget(app, "text_input", "_field_1").value == ROLE
+    assert _card_widget(app, "text_input", "_field_2").value == SITE
+    _card_widget(app, "button", "_close").click().run()
     assert not app.exception
     assert app.session_state["visible_tables"] == (table,)
     assert app.session_state["original_tables"] == (table,)
@@ -74,16 +78,14 @@ def test_vendor_category_and_custom_field_labels_are_literal_but_values_unchange
     rendered = [widget.value for widget in app.markdown]
     assert literal(PERSON + " · Contractor") in rendered
     assert PERSON + " · Contractor" not in rendered
-    group = next(button for button in app.button
-                 if "Add vendor contact to " in button.label)
+    group = _card_widget(app, "button", "_add_group_0_0")
     assert group.label == literal("Add vendor contact to " + TRADE)
     assert group.label != "Add vendor contact to " + TRADE
     assert app.session_state["visible_tables"] == (table,)
 
-    next(button for button in app.button if button.label == "Edit vendor contact").click().run()
+    _card_widget(app, "button", "_open_0_0").click().run()
     assert not app.exception
-    custom = next(control for control in app.text_input
-                  if "Supplier notes" in control.label)
+    custom = _card_widget(app, "text_input", "_field_3")
     assert custom.label == literal(CUSTOM)
     assert custom.value == "**Source note**"
     assert app.session_state["visible_tables"] == (table,)
@@ -101,4 +103,23 @@ def test_plain_contact_labels_keep_the_same_edit_and_add_controls():
     assert any(button.label == "Add contact" for button in app.button)
     app.run()
     assert not app.exception
+    assert app.session_state["visible_tables"] == (table,)
+
+def test_contract_scoped_vendor_summary_preserves_unmapped_values_and_msa_status():
+    # The merged #686 summary must not drop unrecognized source columns.
+    table = ReportTable(
+        ("Discipline", "MSA", CUSTOM),
+        ((TRADE, "", "**Source note**"),), "synthetic:retained-vendor",
+    )
+    app = _open(table, vendor=True)
+    summary = TRADE + " · " + CUSTOM + ": **Source note** · MSA: Not provided"
+    assert literal(summary) in [w.value for w in app.markdown]
+    assert summary not in [w.value for w in app.markdown]
+    assert app.session_state["original_tables"] == (table,)
+    assert app.session_state["visible_tables"] == (table,)
+    _card_widget(app, "button", "_open_0_0").click().run()
+    assert not app.exception
+    assert _card_widget(app, "text_input", "_field_1").value == ""
+    assert _card_widget(app, "text_input", "_field_2").value == "**Source note**"
+    _card_widget(app, "button", "_close").click().run()
     assert app.session_state["visible_tables"] == (table,)

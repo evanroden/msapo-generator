@@ -222,11 +222,11 @@ def run_case(browser,width,output):
     def switch(label,state,opened=False):
         page.evaluate('(s)=>window.__shellEpoch(s)',state)
         page.get_by_role('radio',name=label,exact=True).click()
-        expect(page.get_by_text('State: '+state,exact=True)).to_be_visible()
         snapshot(state,state,opened)
     try:
         page.goto(URL,wait_until='domcontentloaded')
-        expect(page.get_by_text('State: monthly-setup',exact=True)).to_be_visible()
+        # Each snapshot validates the visible state through the existing native
+        # readiness gate before geometry; do not preempt it with a 5s caption wait.
         initial=snapshot('monthly-setup','monthly-setup')
         page.evaluate("window.__shellEpoch('setup-to-ready')")
         page.get_by_role('button',name='Finish synthetic setup',exact=True).click()
@@ -241,9 +241,9 @@ def run_case(browser,width,output):
         for label,state in [('Expense reimbursement','expense'),('Purchase order','po'),('Monthly report','monthly-ready')]:switch(label,state)
         page.evaluate("window.__shellEpoch('conflict')")
         page.get_by_role('button',name='Show synthetic conflict',exact=True).click()
-        expect(page.get_by_text('State: monthly-conflict',exact=True)).to_be_visible();snapshot('monthly-conflict','monthly-conflict')
+        snapshot('monthly-conflict','monthly-conflict')
         page.get_by_role('button',name='Resolve synthetic conflict',exact=True).click()
-        expect(page.get_by_text('State: monthly-ready',exact=True)).to_be_visible();snapshot('resolved-ready','monthly-ready')
+        snapshot('resolved-ready','monthly-ready')
         # Capture every visible frame before native sidebar animation intentionally changes width.
         evidence=page.evaluate('window.__shellEvidence');assert not evidence['overflow']
         record['first_visible_and_switch_frames']=evidence
@@ -271,7 +271,6 @@ def run_case(browser,width,output):
                              ('Resolve synthetic conflict','monthly-ready'),
                              ('Return to synthetic setup','monthly-setup')]:
             page.get_by_role('button',name=action,exact=True).click()
-            expect(page.get_by_text('State: '+state,exact=True)).to_be_visible()
             snapshot(state+'-repeat',state)
             page.get_by_test_id('stExpandSidebarButton').click()
             expect(page.get_by_test_id('stSidebar')).to_have_attribute('aria-expanded','true')
