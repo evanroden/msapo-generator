@@ -511,9 +511,10 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                             blocking.append(
                                 f"{len(unread)} specific cover object(s) are not safely importable. "
                                 "A new cover photograph does not replace those objects. "
-                                "Replace the identified object in Word and re-upload it, or "
-                                "explicitly continue using a different saved cover/template. "
-                                + cover_recovery
+                                "Export or replace each identified object as PNG/JPEG in Word, "
+                                "then select the corrected DOCX in Starting report and analyze again. "
+                                "When available, an existing saved cover or independent ENFRA "
+                                "template is a separate fallback. " + cover_recovery
                             )
                     else:
                         blocking.append(
@@ -1305,9 +1306,11 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             unread = next((item for item in cover_section.items if item.kind == "unsupported"), None)
             detail = (f"{unread.id} · {unread.note} " if unread is not None else
                       "Cover image identity has no confirmed photograph or logo role. ")
-            message = (detail + "Choose the independent ENFRA template or keep an existing saved "
-                       "report cover to continue without this source design. The original upload "
-                       "and already edited body sections remain available.")
+            message = (detail + "Export or replace the identified object as PNG/JPEG in Word, "
+                       "then choose the corrected DOCX in Starting report and analyze again. "
+                       "An existing saved cover or verified ENFRA template may be available "
+                       "as a separate explicit fallback. The original upload and already "
+                       "edited body sections remain available.")
             if native_art_size_limited:
                 message = ("This upload exceeds the native-artwork processing limit, so its page design cannot yet be used. "
                            "Choose an available ENFRA template above, or keep the original and upload a smaller test copy. "
