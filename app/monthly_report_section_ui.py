@@ -12,9 +12,11 @@ from app import monthly_report_library as library
 from app.monthly_report_content_policy import contains_price, table_has_pricing
 from app.monthly_report_docx import normalize_report_image
 from app.monthly_report_cover_images import image_byte_limit, read_picture_upload, normalize_cover_photo
-from app.monthly_report_upload_limits import uploader_limit_mib, byte_limit_label
+from app.monthly_report_upload_limits import uploader_limit_mib, byte_limit_label, docx_size_error
 from app.monthly_report_editor import _grid, _key, _signature
 from app.monthly_report_import import imported_draft
+from app import monthly_report_import as docx_import
+from app.monthly_report_upload_guidance import starting_upload_options
 from app.monthly_report_import_ui import _stage
 from app.monthly_report_model import (
     Facility,
@@ -767,14 +769,14 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                          expanded=bool(st.session_state.get(prefix + "_stage")
                                        or st.session_state.get(prefix + "_failed_digest"))):
             st.caption("Upload an earlier or unfinished Word report.")
-            upload = st.file_uploader("Starting report", type=["docx"], max_upload_size=128,
-                                      key=prefix + "_upload")
+            upload = st.file_uploader("Starting report", type=["docx"],
+                                      key=prefix + "_upload", **starting_upload_options())
             _open_saved_original()
     else:
         st.subheader("Start with a report")
         st.caption("Upload an earlier or unfinished Word report.")
-        upload = st.file_uploader("Starting report", type=["docx"], max_upload_size=128,
-                                  key=prefix + "_upload")
+        upload = st.file_uploader("Starting report", type=["docx"],
+                                  key=prefix + "_upload", **starting_upload_options())
     # File selection is the Analyze action. The exact content hash, never
     # its reusable filename or a widget rerun, determines whether a new
     # source must be inspected. An error leaves the existing staged draft
@@ -874,7 +876,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                      and "source byte budget" in str(exc))):
                 native_art_size_limited = True
                 st.warning(
-                    f"This file is within the 128 MiB upload limit, but automatic native-artwork "
+                    f"This file is within the {byte_limit_label(docx_import.MAX_DOCX_BYTES)} upload limit, but automatic native-artwork "
                     f"interpretation is limited to {byte_limit_label(MAX_VIEW_SOURCE_BYTES)}. "
                     "This is a processing limit, not evidence that the artwork is damaged. "
                     "Your original and current review are unchanged. Use an available independent "
@@ -1316,8 +1318,8 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             # Continue may reuse immutable normalized bytes from this exact
             # render, but source identity and mutable saved state are checked
             # again, then profile/snapshot CAS protects final publication.
-            if path.stat().st_size > 128 * 1024 * 1024:
-                raise ValueError("Original DOCX exceeds the import limit.")
+            if path.stat().st_size > docx_import.MAX_DOCX_BYTES:
+                raise ValueError(docx_size_error(docx_import.MAX_DOCX_BYTES))
             with path.open("rb") as stream:
                 if hashlib.file_digest(stream, "sha256").hexdigest() != inspection.sha256:
                     raise ValueError("Original DOCX changed during review. Analyze it again.")
