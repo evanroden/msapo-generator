@@ -9,6 +9,7 @@ from app import monthly_report_sources as sources
 from app.monthly_report_training_import import (
     training_tables, restore_training_review, training_review_record,
     confirm_training_word_layout,
+    review_training_event_source,
 )
 from app.monthly_report_training import is_matrix_reference
 
@@ -153,7 +154,7 @@ def render_training_import(draft, blocks, prefix):
                     st.form_submit_button("Review this Training table", on_click=_queue,
                         args=(action_key, {**base, "action": "prepare"}, (("year", year),)))
                 return draft, blocks
-            review = restore_training_review(value["record"])
+            review = review_training_event_source(restore_training_review(value["record"]), draft.profile)
             st.caption({"events": "Dated Training sessions", "requirements": "Annual staff requirements"}.get(review.kind, "Source mapping needs review"))
             for issue in review.issues:
                 st.info(issue)

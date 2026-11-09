@@ -666,6 +666,11 @@ def active_selection_journey(base, cookies, page, record, session, start,
     second_state = snapshot(base, cookies["a"])
     assert second_state["source_sha256"] == second["original_sha256"]
     assert second_state["generation_marker"] != first_state["generation_marker"]
+    # Starting B can remount the shared shelf with its default selection A.
+    # Explicitly select B for this download; selection is not another Start.
+    select_fixture(page, second)
+    active_label(expected_b)
+    assert snapshot(base, cookies["a"])["namespace_files"] == second_state["namespace_files"]
     download_original(page, "started-B", second)
     capture("native-start-active-B", page)
     page.reload(wait_until="domcontentloaded")

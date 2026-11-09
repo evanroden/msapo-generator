@@ -149,7 +149,12 @@ def _read_with_bytes(path: Path) -> tuple[dict, bytes]:
         if not isinstance(value, dict) or value.get("schema") != 1:
             raise LibraryError("Unsupported report storage schema; existing data was preserved.")
         return value, raw
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+    except LibraryError:
+        raise  # Keep the specific storage-size and schema recovery messages.
+    except (OSError, ValueError, RecursionError) as exc:
+        # The JSON decoder can reject integer conversion or nesting limits
+        # without raising JSONDecodeError. Keep those limits and surface the
+        # same recoverable read failure; never replace the damaged record.
         raise LibraryError("Saved report data could not be read; existing data was preserved.") from exc
 
 
@@ -233,6 +238,8 @@ def _report_table_from_dict(value: dict) -> ReportTable:
 
 
 def block_from_dict(value: dict) -> ResolvedBlock:
+    if not isinstance(value, dict):
+        raise LibraryError("Invalid saved report block.")
     try:
         from app.monthly_report_asset_review import normalize_asset_reviews
         from app.monthly_report_model import AssetInstance
@@ -282,6 +289,8 @@ def spec_from_dict(value: dict) -> BlockSpec:
 
 
 def draft_from_dict(value: dict) -> ReportDraft:
+    if not isinstance(value, dict):
+        raise LibraryError("Invalid report snapshot.")
     try:
         from app.monthly_report_cover_recovery import request_from_dict
         reviews = value.get("source_row_reviews", ())
@@ -1124,7 +1133,10 @@ def read_asset(contract: str, key: str, reference: str) -> bytes:
     try:
         if path.stat().st_size > MAX_ASSET_BYTES:
             raise LibraryError("Asset exceeds the size limit.")
-        raw = path.read_bytes()
+        with path.open("rb") as source:
+            raw = source.read(MAX_ASSET_BYTES + 1)
+        if len(raw) > MAX_ASSET_BYTES:
+            raise LibraryError("Asset exceeds the size limit.")
     except OSError as exc:
         raise LibraryError("A referenced library asset is unavailable.") from exc
     if hashlib.sha256(raw).hexdigest() != reference.split(".")[0]:

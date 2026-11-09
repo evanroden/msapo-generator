@@ -357,3 +357,12 @@ def test_native_label_journey_retains_real_reload_controls_and_identity_checks()
     text = inspect.getsource(qa.active_selection_journey)
     assert '"Current test: "' in text and '"namespace_files"' in text
     assert '"coworker_A_unchanged"' in text and '"originals_unchanged"' in text
+    # Shelf selection can reset on native Start, independently of active lineage.
+    # Require a fresh B selection before demanding its fixture/hash-scoped
+    # download control, without another Start or changing the run's bytes.
+    started = text.split('    start(page)\n    active_label(expected_b)', 1)[1].split(
+        '    page.reload(', 1)[0]
+    assert started.index('select_fixture(page, second)') < started.index(
+        'download_original(page, "started-B", second)')
+    assert 'active_label(expected_b)' in started
+    assert '"namespace_files"' in started

@@ -51,6 +51,8 @@ def grouped_vendor_contacts(item) -> ReportTable | None:
     labels = _normalized(columns)
     category_index = next((index for index, title in enumerate(labels)
                            if title in _GROUP_COLUMNS), None)
+    identity_columns = tuple(index for index, title in enumerate(labels)
+                             if title in _NAME_COLUMNS)
     # A filtered source table must not regain price columns in this adapter.
     from app.monthly_report_content_policy import table_price_columns
     if table_price_columns(columns, rows[header_index + 1:]):
@@ -74,6 +76,10 @@ def grouped_vendor_contacts(item) -> ReportTable | None:
         if _normalized(row) == labels:
             continue  # An exact repeated header is not a person.
         if not current_group or _is_header(row):
+            return None
+        # A phone, status or note without any vendor/contact name is not a
+        # person. Keep the full untouched source for explicit manual mapping.
+        if not any(str(row[column]).strip() for column in identity_columns):
             return None
         values = tuple(str(value) for value in row)
         if category_index is not None:
