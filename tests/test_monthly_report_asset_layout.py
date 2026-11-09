@@ -219,7 +219,7 @@ from tests.conftest import requires_libreoffice
 
 @requires_libreoffice
 def test_rendered_document_tail_has_no_new_blank_page(tmp_path):
-    import fitz
+    import pymupdf as fitz
     from docx.enum.text import WD_BREAK
     from tests.test_monthly_report_native_layout import draft
     from app.monthly_report_native_layout import build_native_docx
@@ -372,7 +372,7 @@ def test_obsolete_document_anchor_break_removed_even_in_protected_region(tmp_pat
 
 @requires_libreoffice
 def test_rendered_appended_grid_page_is_body_level_and_readable(tmp_path):
-    import fitz
+    import pymupdf as fitz
     from tests.test_monthly_report_native_layout import draft
     from app.monthly_report_native_layout import build_native_docx
     from app.pdf_converter import convert_to_pdf
@@ -535,7 +535,7 @@ def test_document_only_native_grid_uses_body_pages_in_source_order(tmp_path, cou
 @pytest.mark.parametrize('count', [1, 2])
 @pytest.mark.parametrize('retained', [False, True])
 def test_rendered_document_only_native_grid_has_no_blank_page(tmp_path, count, retained):
-    import fitz
+    import pymupdf as fitz
     from app.pdf_converter import convert_to_pdf
     from app.monthly_report_import import inspect_docx, map_items, ImportMapping
     from app.monthly_report_native_layout import build_native_docx

@@ -274,7 +274,7 @@ def test_generated_word_file_carries_no_logo_metadata(monkeypatch, tmp_path):
 
 def _pdf_findings(pdf: bytes) -> list:
     """Canaries in any embedded PDF image (decoded stream bytes) or PDF metadata."""
-    import fitz
+    import pymupdf as fitz
     found = []
     with fitz.open(stream=pdf, filetype="pdf") as document:
         images = {item[0] for page in document for item in page.get_images(full=True)}

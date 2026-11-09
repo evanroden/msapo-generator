@@ -11,7 +11,7 @@ import json
 import os
 from pathlib import Path
 
-import fitz
+import pymupdf as fitz
 import pytest
 from streamlit.testing.v1 import AppTest
 

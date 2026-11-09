@@ -2,7 +2,7 @@
 from hashlib import sha256
 from pathlib import Path
 
-import fitz
+import pymupdf as fitz
 import pytest
 import requests
 from streamlit.testing.v1 import AppTest

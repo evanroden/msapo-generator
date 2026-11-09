@@ -83,7 +83,7 @@ def test_mid_operation_manifest_change_prevents_output(sample):
 
 def test_automatic_generate_and_retry_bind_art_review_and_word_bytes(sample, monkeypatch, tmp_path):
     from app import monthly_report_docx as word, monthly_report_render_jobs as jobs, pdf_converter
-    import fitz
+    import pymupdf as fitz
     path, view, profile, period, inventory, receipt = sample
     draft, loader = save_sample(sample)
     with pytest.raises(ValueError, match='picture'):
@@ -278,7 +278,7 @@ def test_operation_rechecks_all_exact_evidence_before_publication(sample, damage
 @pytest.mark.parametrize('damage', ['source', 'receipt', 'art'])
 def test_conversion_cannot_publish_or_relabel_old_output_after_evidence_mutation(
         sample, monkeypatch, tmp_path, mode, damage):
-    import fitz
+    import pymupdf as fitz
     from app import monthly_report_docx as word, monthly_report_preview as preview
     from app import monthly_report_render_jobs as jobs, pdf_converter
     path, view, profile, period, inventory, receipt = sample

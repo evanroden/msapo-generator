@@ -146,7 +146,7 @@ def test_edited_carried_proposals_save_reenter_and_print_once(monkeypatch, tmp_p
     from hashlib import sha256
     from io import BytesIO
     from pathlib import Path
-    import fitz
+    import pymupdf as fitz
     from docx import Document
     from app.monthly_report_docx import generate_report
 

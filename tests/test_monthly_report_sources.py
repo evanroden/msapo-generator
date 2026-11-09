@@ -3,7 +3,7 @@ from email.message import EmailMessage
 from io import BytesIO
 import struct
 
-import fitz
+import pymupdf as fitz
 from PIL import Image
 from openpyxl import Workbook
 import pytest

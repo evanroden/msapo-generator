@@ -3,7 +3,7 @@ from concurrent.futures import Future
 from dataclasses import replace
 from threading import BoundedSemaphore
 
-import fitz
+import pymupdf as fitz
 from streamlit.testing.v1 import AppTest
 
 from app import monthly_report_section_preview_ui as ui

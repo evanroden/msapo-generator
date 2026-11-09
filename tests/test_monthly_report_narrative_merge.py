@@ -335,7 +335,7 @@ def test_real_starting_upload_then_native_edit_save_reopen_and_reimport(tmp_path
 
 @requires_libreoffice
 def test_real_native_pdf_retains_both_source_paragraphs(tmp_path, monkeypatch):
-    import fitz
+    import pymupdf as fitz
     from app import pdf_converter
 
     paths, drafts = source_pair(tmp_path)

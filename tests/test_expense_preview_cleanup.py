@@ -7,7 +7,7 @@ from datetime import date
 from hashlib import sha256
 from types import SimpleNamespace
 
-import fitz
+import pymupdf as fitz
 import pytest
 from streamlit.testing.v1 import AppTest
 

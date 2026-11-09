@@ -133,7 +133,7 @@ def test_saved_complete_grid_survives_native_projection_without_mutation(tmp_pat
 
 @requires_libreoffice
 def test_native_pdf_preserves_six_loads_and_missing_reading(tmp_path):
-    import fitz
+    import pymupdf as fitz
     from app.pdf_converter import convert_to_pdf
 
     raw, expected = _native_grid(tmp_path)

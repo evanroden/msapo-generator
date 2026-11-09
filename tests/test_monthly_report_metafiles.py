@@ -2,7 +2,7 @@ from io import BytesIO
 import struct
 from zipfile import ZipFile, ZIP_DEFLATED
 
-import fitz
+import pymupdf as fitz
 from PIL import Image
 import pytest
 

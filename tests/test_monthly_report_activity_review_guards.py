@@ -12,7 +12,7 @@ from pathlib import Path
 from zipfile import ZipFile
 
 from docx import Document
-import fitz
+import pymupdf as fitz
 import pytest
 from streamlit.testing.v1 import AppTest
 

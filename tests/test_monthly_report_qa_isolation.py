@@ -4,7 +4,7 @@ from dataclasses import replace
 from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor
 
-import fitz
+import pymupdf as fitz
 import pytest
 
 from app import memory

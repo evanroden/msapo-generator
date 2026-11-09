@@ -17,7 +17,7 @@ import sys
 import time
 from uuid import uuid4
 
-import fitz
+import pymupdf as fitz
 from openpyxl import Workbook
 import pytest
 

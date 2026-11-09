@@ -6,7 +6,7 @@ from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 
-import fitz
+import pymupdf as fitz
 import pytest
 from dotenv import dotenv_values
 from PIL import Image

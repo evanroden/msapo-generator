@@ -1,4 +1,4 @@
-import fitz
+import pymupdf as fitz
 
 from app.scope_pdf import build_scope_pdf
 

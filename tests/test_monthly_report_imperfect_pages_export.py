@@ -8,7 +8,7 @@ from io import BytesIO
 from shutil import which
 from zipfile import ZipFile
 
-import fitz
+import pymupdf as fitz
 import pytest
 from docx import Document
 

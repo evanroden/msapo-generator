@@ -2,7 +2,7 @@ from dataclasses import replace
 from io import BytesIO
 import hashlib
 
-import fitz
+import pymupdf as fitz
 from docx import Document
 from openpyxl import Workbook
 from PIL import Image
