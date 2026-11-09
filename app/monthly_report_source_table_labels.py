@@ -25,8 +25,9 @@ def table_task_label(table, destination: str, *, position=0, total=1) -> str:
         elif any(h in {"wo #", "wo", "work order", "work order number", "work order id"}
                  for h in headings):
             title = "Work-order records"
-        elif any(re.search(r"\bpm\b", h) or "preventive maintenance" in h
-                 for h in headings):
+        # Explicit non-PM columns do not establish a preventive-work schema.
+        elif any(not match[1] for h in headings for match in re.finditer(
+                r"\b(non[\s\u2010-\u2015-]*)?(?:pm|preventive maintenance)\b", h)):
             title = "Preventive maintenance summary"
         else:
             title = "Work-order source table"

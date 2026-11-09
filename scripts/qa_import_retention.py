@@ -56,12 +56,31 @@ SETTLED_CONFIRMATION_JS = r"""({label}) => {
 }"""
 
 
-def wait_for_settled_confirmation(page, label):
+def wait_for_settled_confirmation(page, label, deadline):
     """Observe one checked, current card after the native rerender, without acting."""
-    deadline = time.monotonic() + 5
-    handle = page.wait_for_function(SETTLED_CONFIRMATION_JS, arg={'label': label}, timeout=5000)
+    remaining = max(1, int((deadline - time.monotonic()) * 1000))
+    handle = page.wait_for_function(SETTLED_CONFIRMATION_JS, arg={'label': label}, timeout=remaining)
     handle.dispose()
     return max(1, int((deadline - time.monotonic()) * 1000))
+
+
+def expect_settled_confirmation(page, confirmation, label, expect):
+    """Recheck strict uniqueness if a new rerender starts after settlement.
+
+    One five-second budget covers the complete wait and strict assertion. Only
+    the specific transient duplicate-locator error can retry; a persistent
+    duplicate, unchecked result, or unrelated failure remains a failure.
+    """
+    deadline = time.monotonic() + 5
+    while True:
+        remaining = wait_for_settled_confirmation(page, label, deadline)
+        try:
+            expect(confirmation).to_be_checked(timeout=remaining)
+            return
+        except AssertionError as exc:
+            if 'strict mode violation' not in str(exc) or time.monotonic() >= deadline:
+                raise
+
 
 
 def exercise(engine,name,source,base,scenario,replacement=None):
@@ -116,8 +135,7 @@ def exercise(engine,name,source,base,scenario,replacement=None):
                 label=confirmation.locator('xpath=ancestor::label')
                 expect(label).to_have_count(1)
                 label.click()
-                remaining = wait_for_settled_confirmation(page, 'This work belongs in September 2026')
-                expect(confirmation).to_be_checked(timeout=remaining)
+                expect_settled_confirmation(page, confirmation, 'This work belongs in September 2026', expect)
             confirm_month();expect(proceed).to_be_enabled()
             record['month_action']='one-visible-associated-label-click'
             # Close and reopen the actual review control after confirmation.

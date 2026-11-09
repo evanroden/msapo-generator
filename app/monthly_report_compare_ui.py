@@ -44,7 +44,7 @@ def _recorded_design(profile):
 
 
 def _table(columns, rows):
-    titles = [getattr(c, "title", c) for c in columns]
+    titles = [c if isinstance(c, str) else getattr(c, "title", c) for c in columns]
     return _lines("Row " + str(n + 1) + ": " + "; ".join(
         str(titles[i] if i < len(titles) else f"Column {i + 1}") + ": " + str(value)
         for i, value in enumerate(row)) for n, row in enumerate(rows))
@@ -128,6 +128,11 @@ def compare_drafts(working, saved):
     add("Prepared by", saved.prepared_by, working.prepared_by)
     add("Address/footer", saved.address_line, working.address_line)
     add("Known equipment tags", _lines(saved.profile.asset_tags), _lines(working.profile.asset_tags))
+    if saved.source_row_reviews != working.source_row_reviews:
+        from app.monthly_report_compare_row_reviews import compare_row_reviews
+        reviewed = compare_row_reviews(working, saved)
+        if reviewed:
+            add("Imported row reviews", *reviewed, force=True)
     add("Report section order", _lines(s.title for s in saved.sections), _lines(s.title for s in working.sections))
     before_sections = {s.key: s for s in saved.sections}
     after_sections = {s.key: s for s in working.sections}

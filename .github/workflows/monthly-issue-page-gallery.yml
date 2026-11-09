@@ -1,0 +1,65 @@
+name: Monthly issue page gallery
+
+on:
+  pull_request:
+    paths:
+      - 'app/monthly_report_issue_page_gallery.py'
+      - 'app/monthly_report_issues.py'
+      - 'app/monthly_report_source_manager_ui.py'
+      - 'app/monthly_report_upload_ui.py'
+      - 'scripts/qa_issue_page_gallery.py'
+      - 'scripts/qa_monthly_adaptive.py'
+      - 'tests/fixtures/workspaces/monthly_app.py'
+      - 'requirements*.lock'
+      - '.github/workflows/monthly-issue-page-gallery.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'app/monthly_report_issue_page_gallery.py'
+      - 'app/monthly_report_issues.py'
+      - 'app/monthly_report_source_manager_ui.py'
+      - 'app/monthly_report_upload_ui.py'
+      - 'scripts/qa_issue_page_gallery.py'
+      - 'scripts/qa_monthly_adaptive.py'
+      - 'tests/fixtures/workspaces/monthly_app.py'
+      - 'requirements*.lock'
+      - '.github/workflows/monthly-issue-page-gallery.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  native-issue-pages:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - name: Install locked app and real browser/rendering dependencies
+        timeout-minutes: 20
+        run: |
+          sudo python3 scripts/ci_ubuntu_mirror_priority.py
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-calc fontconfig fonts-dejavu-core fonts-liberation fonts-crosextra-carlito fonts-crosextra-caladea fonts-texgyre fonts-opensymbol
+          python -m pip install -r requirements-dev.lock playwright==1.58.0
+          python scripts/patch_streamlit_frontend.py
+          python scripts/patch_streamlit_date_input.py
+          python -m playwright install --with-deps chromium webkit
+      - name: Native upload, pointer and keyboard selection, preview and shared reopen
+        timeout-minutes: 12
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 10 <<'NATIVE_TEST'
+          python scripts/qa_issue_page_gallery.py
+          NATIVE_TEST
+      - name: Preserve each first-attempt result and failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monthly-issue-page-gallery-${{ github.run_attempt }}
+          path: test-artifacts/issue-page-gallery/
+          retention-days: 7
+          if-no-files-found: error

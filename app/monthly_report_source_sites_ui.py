@@ -10,7 +10,8 @@ from app.monthly_report_model import Facility
 
 def correction_scope(inspection, target, period, source_view=None):
     return (inspection.sha256, getattr(source_view, "receipt_sha256", ""),
-            target.contract, target.key, tuple(sorted(f.key for f in target.facilities)),
+            target.contract, target.key, tuple(sorted((f.key, f.title, tuple(sorted(f.aliases)))
+                                               for f in target.facilities)),
             period.key)
 
 

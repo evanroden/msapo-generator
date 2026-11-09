@@ -138,20 +138,56 @@ nodes=[node(true,false,'Activity Summary')]; assert.equal(check(arg),true);
     assert result.returncode==0,result.stdout+result.stderr
 
 
-def test_confirmation_wait_preserves_strict_native_assertion_and_five_second_budget():
-    from scripts.qa_import_retention import wait_for_settled_confirmation, SETTLED_CONFIRMATION_JS
+def test_confirmation_wait_preserves_strict_native_assertion_and_five_second_budget(monkeypatch):
+    from scripts import qa_import_retention as qa
     class Handle:
         disposed = False
         def dispose(self): self.disposed = True
-    handle = Handle()
+    handles = []
     class Page:
         def wait_for_function(self, expression, *, arg, timeout):
-            assert expression == SETTLED_CONFIRMATION_JS
+            assert expression == qa.SETTLED_CONFIRMATION_JS
             assert arg == {'label': 'This work belongs in September 2026'}
-            assert timeout == 5000
-            return handle
-    remaining = wait_for_settled_confirmation(Page(), 'This work belongs in September 2026')
-    assert 0 < remaining <= 5000
-    assert handle.disposed
-    source=Path('scripts/qa_import_retention.py').read_text()
-    assert "label.click()\n                remaining = wait_for_settled_confirmation(page, 'This work belongs in September 2026')\n                expect(confirmation).to_be_checked(timeout=remaining)" in source
+            assert 0 < timeout <= 5000
+            handle = Handle(); handles.append(handle); return handle
+    class Clock:
+        value = 10.0
+        def __call__(self): return self.value
+    clock = Clock(); monkeypatch.setattr(qa.time, 'monotonic', clock)
+    attempts = []
+    class Assertion:
+        def to_be_checked(self, *, timeout):
+            attempts.append(timeout)
+            if len(attempts) == 1:
+                clock.value += .2
+                raise AssertionError('strict mode violation: two elements')
+    qa.expect_settled_confirmation(Page(), object(), 'This work belongs in September 2026', lambda _: Assertion())
+    assert len(attempts) == 2 and attempts[1] < attempts[0]
+    assert len(handles) == 2 and all(handle.disposed for handle in handles)
+    source = Path('scripts/qa_import_retention.py').read_text()
+    assert "label.click()\n                expect_settled_confirmation(page, confirmation, 'This work belongs in September 2026', expect)" in source
+
+
+def test_confirmation_settlement_does_not_mask_other_errors_or_persistent_duplicates(monkeypatch):
+    from scripts import qa_import_retention as qa
+    class Clock:
+        value = 0.0
+        def __call__(self): return self.value
+    clock = Clock(); monkeypatch.setattr(qa.time, 'monotonic', clock)
+    monkeypatch.setattr(qa, 'wait_for_settled_confirmation', lambda *args: 1000)
+    class Assertion:
+        def __init__(self, text): self.text = text
+        def to_be_checked(self, *, timeout):
+            clock.value += 3
+            raise AssertionError(self.text)
+    calls = []
+    def expectation(text):
+        def call(_): calls.append(text); return Assertion(text)
+        return call
+    with pytest.raises(AssertionError, match='unchecked'):
+        qa.expect_settled_confirmation(None, None, 'label', expectation('unchecked'))
+    assert len(calls) == 1
+    clock.value = 0; calls.clear()
+    with pytest.raises(AssertionError, match='strict mode violation'):
+        qa.expect_settled_confirmation(None, None, 'label', expectation('strict mode violation'))
+    assert len(calls) == 2

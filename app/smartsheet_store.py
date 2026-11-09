@@ -24,6 +24,7 @@ import os
 import sqlite3
 import time
 import uuid
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -122,8 +123,9 @@ class SubmissionStore:
         driver would open its own transaction and the claim would no longer be
         atomic against a concurrent worker.
 
-        WAL plus a 10s busy timeout is what lets a second Streamlit rerun wait
-        rather than immediately fail with "database is locked".
+        The 10s busy timeout is what lets a second Streamlit rerun wait rather
+        than immediately fail with "database is locked". WAL is used on a local
+        disk and SQLite's rollback journal on a network share.
 
         The ALTER TABLE block migrates databases created before leases existed.
         It is guarded by PRAGMA table_info rather than by try/except, so a
@@ -137,7 +139,15 @@ class SubmissionStore:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             conn = sqlite3.connect(self.path, timeout=10, isolation_level=None)
-            conn.execute("PRAGMA journal_mode=WAL")
+            # WAL on a local disk; the rollback journal on a network share,
+            # where WAL is unsafe (app/sqlite_storage.py). Leaving WAL needs
+            # the only open connection: while another is open SQLite refuses,
+            # and this connection keeps the current mode instead of failing.
+            from app.sqlite_storage import journal_mode
+            try:
+                conn.execute(f"PRAGMA journal_mode={journal_mode(self.path.resolve())}")
+            except sqlite3.OperationalError:
+                pass
             conn.execute("PRAGMA busy_timeout=10000")
             conn.execute(
                 """
@@ -229,7 +239,7 @@ class SubmissionStore:
         token = uuid.uuid4().hex
         expires = now + max(30, int(lease_seconds))
         try:
-            with self._connect() as conn:
+            with closing(self._connect()) as conn, conn:
                 # BEGIN IMMEDIATE takes the write lock up front, so the
                 # read-then-insert/update below cannot interleave with another
                 # worker's identical sequence. A plain BEGIN (or SQLite's
@@ -322,7 +332,7 @@ class SubmissionStore:
         continue writing to a submission it no longer owns.
         """
         try:
-            with self._connect() as conn:
+            with closing(self._connect()) as conn, conn:
                 cur = conn.execute(
                     f"UPDATE submissions SET {sql_fragment} "
                     "WHERE submission_key = ? AND lease_token = ?",
@@ -391,7 +401,7 @@ class SubmissionStore:
         lease raises instead of silently writing nothing.
         """
         try:
-            with self._connect() as conn:
+            with closing(self._connect()) as conn, conn:
                 conn.execute("BEGIN IMMEDIATE")
                 row = conn.execute(
                     "SELECT attached_json FROM submissions "
@@ -471,7 +481,7 @@ class SubmissionStore:
         """
         now = time.time()
         try:
-            with self._connect() as conn:
+            with closing(self._connect()) as conn, conn:
                 conn.execute("BEGIN IMMEDIATE")
                 conn.execute(
                     """
@@ -504,7 +514,7 @@ class SubmissionStore:
         ``_decode_attached`` rather than being reported as an empty list.
         """
         try:
-            with self._connect() as conn:
+            with closing(self._connect()) as conn, conn:
                 row = conn.execute(
                     "SELECT status, row_id, attached_json, last_error, updated_at, "
                     "lease_expires_at, attempts FROM submissions WHERE submission_key = ?",
@@ -541,7 +551,7 @@ class SubmissionStore:
         """
         cutoff = time.time() - max(30, retention_days) * 86400
         try:
-            with self._connect() as conn:
+            with closing(self._connect()) as conn, conn:
                 cur = conn.execute(
                     "DELETE FROM submissions WHERE status IN ('complete', 'failed') "
                     "AND updated_at < ?",

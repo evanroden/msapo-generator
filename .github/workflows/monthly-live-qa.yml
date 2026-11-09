@@ -50,7 +50,7 @@ jobs:
         if: steps.still-current.outputs.run == 'true'
         env:
           MONTHLY_QA_EXPECTED_COMMIT: ${{ github.event.workflow_run.head_sha }}
-          MONTHLY_QA_PUBLIC_URL: https://msapo-generator.onrender.com
+          MONTHLY_QA_PUBLIC_URL: ${{ vars.MONTHLY_QA_PUBLIC_URL || 'https://msapo-generator.onrender.com' }}
         # Two independent first-attempt passes on the same served SHA, each
         # with a fresh Chromium process, browser cookie and isolated namespace.
         # They run one at a time; a failure fails this gate rather than being
@@ -63,7 +63,7 @@ jobs:
         if: steps.still-current.outputs.run == 'true'
         env:
           MONTHLY_QA_EXPECTED_COMMIT: ${{ github.event.workflow_run.head_sha }}
-          MONTHLY_QA_PUBLIC_URL: https://msapo-generator.onrender.com
+          MONTHLY_QA_PUBLIC_URL: ${{ vars.MONTHLY_QA_PUBLIC_URL || 'https://msapo-generator.onrender.com' }}
           MONTHLY_QA_RUN_LABEL: preparer
         run: python -m scripts.qa_monthly_preparer_live
       - name: Preserve only synthetic browser/output evidence
