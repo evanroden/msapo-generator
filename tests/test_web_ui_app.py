@@ -1041,3 +1041,23 @@ def test_touch_devices_get_single_tap_caret_placement_on_fields():
     # The rule has to cover the real input elements, not only buttons.
     for selector in ("input", "textarea", 'div[data-baseweb="input"]'):
         assert selector in block, f"{selector} missing from the touch rules"
+
+
+def test_workflow_browser_titles_follow_active_mode_and_new_session_route():
+    """The browser tab identifies the chosen workflow without adding a control."""
+    from app.web_ui import (_browser_workflow_title, PURCHASE_WORKFLOW,
+                            EXPENSE_WORKFLOW, MONTHLY_REPORT_WORKFLOW)
+    pages = {
+        PURCHASE_WORKFLOW: "Purchase order · ENFRA Process Control",
+        EXPENSE_WORKFLOW: "Expense reimbursement · ENFRA Process Control",
+        MONTHLY_REPORT_WORKFLOW: "Monthly report · ENFRA Process Control",
+    }
+    assert len(set(pages.values())) == 3
+    for mode, expected in pages.items():
+        assert _browser_workflow_title(mode, "purchase") == expected
+    assert _browser_workflow_title(None, "monthly") == pages[MONTHLY_REPORT_WORKFLOW]
+    assert _browser_workflow_title(None, "expense") == pages[EXPENSE_WORKFLOW]
+    assert _browser_workflow_title(None, "unrecognized") == pages[PURCHASE_WORKFLOW]
+    assert _browser_workflow_title("stale value", "monthly") == pages[MONTHLY_REPORT_WORKFLOW]
+    assert _browser_workflow_title(PURCHASE_WORKFLOW, "purchase", "isolated") == pages[MONTHLY_REPORT_WORKFLOW]
+    assert _browser_workflow_title(PURCHASE_WORKFLOW, "monthly", "isolated") == pages[PURCHASE_WORKFLOW]

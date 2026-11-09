@@ -1651,6 +1651,22 @@ def _workflow_query_name(mode):
                  if workflow == mode), "purchase")
 
 
+def _browser_workflow_title(session_mode, query_mode, qa_mode=None):
+    """Name the actual selected workflow in the browser tab, not a generic app."""
+    allowed = (PURCHASE_WORKFLOW, EXPENSE_WORKFLOW, MONTHLY_REPORT_WORKFLOW)
+    if qa_mode in {"isolated", "fixtures"} and query_mode != "monthly":
+        mode = MONTHLY_REPORT_WORKFLOW
+    else:
+        mode = session_mode if session_mode in allowed else (
+            _workflow_from_query(query_mode) or PURCHASE_WORKFLOW)
+    label = {
+        PURCHASE_WORKFLOW: "Purchase order",
+        EXPENSE_WORKFLOW: "Expense reimbursement",
+        MONTHLY_REPORT_WORKFLOW: "Monthly report",
+    }[mode]
+    return label + " · ENFRA Process Control"
+
+
 def main() -> None:
     """Render the whole page: workflow selector, then the three purchase steps.
 
@@ -1680,8 +1696,14 @@ def main() -> None:
     reasoning, including what would have to change first, is §5 of
     docs/COMMIT_NOTES_2026-08-12_TOUCH_AND_RENDERER_RELIABILITY.md.
     """
+    try:
+        title_mode = st.session_state.get("workflow_mode")
+        title_route = st.query_params.get("workflow")
+        title_qa = st.query_params.get("monthly_qa")
+    except (AttributeError, RuntimeError, ValueError):
+        title_mode, title_route, title_qa = None, None, None
     st.set_page_config(
-        page_title="ENFRA Process Control",
+        page_title=_browser_workflow_title(title_mode, title_route, title_qa),
         page_icon=str(
             Path(__file__).resolve().parents[1]
             / "branding"
