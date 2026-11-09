@@ -1,5 +1,9 @@
 # External-agent retrieval of Render QA archives
 
+For individual Word templates and the 512 MiB reference-upload limit, see
+[Shared report templates](SHARED_REPORT_TEMPLATES.md). The older archive formats
+below retain their separate limits and storage buckets.
+
 **Status: retrieval tool implemented; actual owner archive upload and a cross-deploy byte comparison remain open.** This document describes the existing Render archive shelves, not an assertion that either shelf already contains owner data. See the [current remaining-work ledger](PHASE1_PHASE2_REMAINING_2026-10-14.md) for dated witnesses and precise blocked operations.
 
 ## Location and access

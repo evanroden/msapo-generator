@@ -85,9 +85,16 @@ def default_slot(section):
 
 
 def table_without_prices(item):
-    rows = item.rows
+    rows = item.rows[item.table_header_row:]
     if not rows:
         return None, ()
+    if getattr(item, "section", "") == "activity":
+        from app.monthly_report_annual_work_order_grid import annual_site_month_table
+        annual = annual_site_month_table(item)
+        if annual is not None:
+            # The original source remains immutable. Only a fully understood
+            # multi-site year grid acquires an explicit Category column.
+            return annual, ()
     headings = logical_table_columns(rows[0])
     removed = table_price_columns(headings, rows[1:])
     keep = [i for i in range(len(rows[0])) if i not in removed]

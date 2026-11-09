@@ -211,7 +211,7 @@ def _images_cover_half_page(page, images: list[dict]) -> bool:
     a full scan. Sweep disjoint x bands and merge their y intervals instead.
     Image coordinates are unrotated, unlike Page.rect; clip in that same space.
     """
-    import fitz
+    import pymupdf as fitz
 
     bounds = page.rect * page.derotation_matrix
     threshold = max(1.0, bounds.get_area()) * 0.5
@@ -265,7 +265,7 @@ def _check_extracted_size(size: int) -> None:
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
     """Read native pages locally; OCR scanned pages in ordered contiguous runs."""
-    import fitz
+    import pymupdf as fitz
 
     until = time.monotonic() + OPERATION_BUDGET_SECONDS
     parts: list[str] = []
@@ -373,7 +373,7 @@ def _ocr_pdf_via_document(file_bytes: bytes, *, until: float | None = None) -> s
 
 def _ocr_pdf_via_page_images(file_bytes: bytes, *, until: float | None = None) -> str:
     """OCR a PDF through bounded, normalized page images."""
-    import fitz  # PyMuPDF
+    import pymupdf as fitz  # PyMuPDF
 
     content: list[dict] = []
     with fitz.open(stream=file_bytes, filetype="pdf") as pdf:

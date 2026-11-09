@@ -34,6 +34,8 @@ def geometry(page, button_key):
             button:button.getBoundingClientRect().toJSON(),
             reference:reference.getBoundingClientRect().toJSON(),
             navigation:document.querySelector('.st-key-monthly_report_navigation').getBoundingClientRect().toJSON(),
+            next:document.querySelector('.epc-section-next').getBoundingClientRect().toJSON(),
+            back:document.querySelector('.epc-section-back').getBoundingClientRect().toJSON(),
             slot:reference.querySelector('[class*="st-key-epc_preview_slot_"]').getBoundingClientRect().toJSON(),
             mode:document.querySelector('.st-key-epc_workspace_monthly').dataset.epcMode || null,
             scrollTop:document.querySelector('[data-testid="stMain"]').scrollTop};
@@ -85,6 +87,9 @@ def exercise(engine, name, late, target, press=True):
                     button.addEventListener(type, () => window.__previewPointerEvents.push(type));
             }''', button_key)
             before = geometry(page, button_key)
+            assert before['next']['height'] >= 44 and before['back']['height'] >= 44, before
+            assert before['navigation']['height'] >= before['next']['height'], before
+            assert before['back']['right'] <= before['next']['left'], before
             page.screenshot(path=str(OUT / f'{name}-{label}-before.png'))
             x = before['button']['x'] + before['button']['width'] / 2
             y = before['button']['y'] + before['button']['height'] / 2
@@ -115,6 +120,10 @@ def exercise(engine, name, late, target, press=True):
                 assert abs(after['cover']['height'] - before['cover']['height']) <= 3, run
                 assert abs(after['scrollTop'] - before['scrollTop']) <= 3, run
                 assert abs(after['navigation']['height'] - before['navigation']['height']) <= 3, run
+                for control in ('back', 'next'):
+                    for axis in ('width', 'height'):
+                        assert abs(after[control][axis] - before[control][axis]) <= 3, run
+                assert after['back']['right'] <= after['next']['left'], run
             if late == 'pre-adapter-preview':
                 assert before['mode'] is None and after['mode'] is None, run
                 assert abs(after['slot']['height'] - before['slot']['height']) <= 3, run

@@ -4,9 +4,10 @@ This is not a PDF reading-order guesser. Raw extraction remains authoritative;
 missing, changed or incomplete paragraph evidence requires source review.
 """
 from dataclasses import dataclass
+from datetime import date
 from hashlib import sha256
 import re
-import fitz
+import pymupdf as fitz
 
 _LABEL = re.compile(r'(?im)^[ \t]*(actions?|findings?|recommendations?|follow[- ]?ups?)\s*[:=]')
 _FIELD = re.compile(r"^[ \t]*[A-Za-z][^:\r\n=]{0,60}\s*[:=]")
@@ -16,18 +17,47 @@ MAX_VENDOR_FIELD_CHARS = 6000
 FIELD_PATTERNS = {"actions": r"\b(completed|repaired|replaced|inspected)\b",
                   "findings": r"\b(findings?|observed)\b", "recommendations": r"\brecommend",
                   "follow_ups": r"\b(follow.up|pending|scheduled)\b"}
+
+
+def _valid_metadata_date(value):
+    """Validate an existing printed date shape without inferring its locale.
+
+    Slash dates may be day-first or month-first; the original text is never
+    rewritten or treated as period/scope approval.
+    """
+    if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
+        try:
+            date.fromisoformat(value)
+            return True
+        except ValueError:
+            return False
+    match = re.fullmatch(r"([0-9]{1,2})/([0-9]{1,2})/([0-9]{2,4})", value)
+    if match is None:
+        return False
+    first, second = int(match[1]), int(match[2])
+    year = int(match[3])
+    if len(match[3]) == 2:
+        year += 2000 if year <= 68 else 1900
+    for month, day in ((first, second), (second, first)):
+        try:
+            date(year, month, day)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
 def typed_metadata(line):
     if not field_boundary(line):
         return False
     heading, value = re.split('[:=]', line, maxsplit=1)
     heading, value = heading.strip().casefold(), value.strip()
-    date = heading in {'report date', 'service date', 'date'} and re.fullmatch(
-        r'\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{2,4}', value)
+    valid_date = heading in {'report date', 'service date', 'date'} and _valid_metadata_date(value)
     counter = heading in {'header', 'footer', 'page'} and re.fullmatch(
         r'(?i)(?:page\s+)?\d{1,3}(?:\s+of\s+\d{1,3})?', value)
     identifier = heading in {'report id', 'report number'} and re.fullmatch(
         r'[A-Za-z0-9_-]{1,48}', value) and any(c.isdigit() for c in value)
-    return bool(date or counter or identifier)
+    return bool(valid_date or counter or identifier)
 
 
 def unsupported_fields(text):

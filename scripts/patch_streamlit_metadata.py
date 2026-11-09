@@ -129,6 +129,34 @@ def _remove_managed_tags(source: str) -> str:
     )
 
 
+_SHELL_STYLE_ID = "process-control-workflow-shell"
+_SHELL_CSS_PATH = Path(__file__).resolve().parents[1] / "app" / "workflow_shell.css"
+
+
+def _install_shell_style(source: str) -> str:
+    """Publish the same critical CSS used by Python, before any client script."""
+    try:
+        css = _SHELL_CSS_PATH.read_text(encoding="utf-8")
+    except OSError as error:
+        raise RuntimeError("Missing shared workflow shell CSS; static shell not published") from error
+    if not css.strip() or "<" in css or ">" in css:
+        raise RuntimeError("Invalid shared workflow shell CSS; static shell not published")
+    pattern = rf'\s*<style id="{_SHELL_STYLE_ID}">.*?</style>'
+    if len(re.findall(pattern, source, flags=re.DOTALL)) > 1:
+        raise RuntimeError("Duplicate managed workflow shell styles; static shell not published")
+    source = re.sub(pattern, "", source, flags=re.DOTALL)
+    head = re.search(r"<head\b[^>]*>", source, flags=re.IGNORECASE)
+    if head is None:
+        raise RuntimeError("Missing opening head; static shell not published")
+    # Keep the encoding declaration within HTML's first 1024 bytes.
+    charset = re.search(r"<meta\b[^>]*\bcharset\s*=[^>]*>", source, flags=re.IGNORECASE)
+    insertion = charset.end() if charset else head.end()
+    script = re.search(r"<script\b", source, flags=re.IGNORECASE)
+    if script and insertion > script.start():
+        raise RuntimeError("Charset follows script; static shell not published")
+    return source[:insertion] + f'\n    <style id="{_SHELL_STYLE_ID}">\n{css}</style>' + source[insertion:]
+
+
 def patch_index(index_path: Path, *, origin: str = SITE_ORIGIN) -> None:
     """Patch one Streamlit index in place; safe to run repeatedly."""
     source = index_path.read_text(encoding="utf-8")
@@ -165,7 +193,19 @@ def patch_index(index_path: Path, *, origin: str = SITE_ORIGIN) -> None:
     )
     if head_count != 1:
         raise RuntimeError(f"Could not patch Streamlit head: {index_path}")
+    source = _install_shell_style(source)
     index_path.write_text(source, encoding="utf-8")
+
+
+def public_origin(value: str) -> str:
+    """A bare https origin (scheme, host, optional port), or ValueError.
+
+    It is written into HTML attributes unescaped, so anything else is refused.
+    """
+    origin = value.strip().rstrip("/")
+    if not re.fullmatch(r"https://[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?(?::\d{1,5})?", origin):
+        raise ValueError(f"Public site origin must look like https://host, got {value!r}")
+    return origin
 
 
 def install_branding(
@@ -175,6 +215,7 @@ def install_branding(
     origin: str = SITE_ORIGIN,
 ) -> None:
     """Copy public assets and patch the crawler-visible Streamlit shell."""
+    origin = public_origin(origin)
     index_path = static_dir / "index.html"
     icon_source = branding_dir / "process-control-icon.png"
     preview_source = branding_dir / "process-control-preview.png"

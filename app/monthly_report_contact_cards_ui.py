@@ -10,6 +10,31 @@ from uuid import uuid4
 import streamlit as st
 
 
+def _vendor_summary(columns, row, label):
+    """Show original agreement values and ambiguous imported columns literally."""
+    fields = [(str(name).strip(), str('' if value is None else value).strip()) for name, value in zip(columns, row)]
+    identity = {'name', 'contact name', 'contact', 'person', 'employee', 'vendor', 'vendor name',
+                'contractor', 'company', 'supplier'}
+    known = identity | {'discipline', 'trade', 'category', 'site', 'facility', 'building',
+                        'location', 'hospital', 'role', 'title', 'position', 'job title',
+                        'phone', 'telephone', 'phone number', 'email', 'email address',
+                        'msa', 'agreement status', 'agreement status (msa)'}
+    pieces = [label]
+    if not any(name.casefold() in identity and value for name, value in fields):
+        unknown = [(name, value) for name, value in fields if name and value and name.casefold() not in known]
+        if len(unknown) == 1:
+            pieces.append(f'{unknown[0][0]}: {unknown[0][1]}')
+    for name, value in fields:
+        if name.casefold() in {'msa', 'agreement status', 'agreement status (msa)'}:
+            pieces.append(f'{name}: {value or "Not provided"}')
+    return ' · '.join(pieces)
+
+
+def _category_index(table):
+    return next((index for index, title in enumerate(table.columns)
+                 if " ".join(title.casefold().split()) in {"discipline", "trade", "category"}), None)
+
+
 def _capture(tables, active, fields):
     result = list(tables)
     if active is None or not fields:
@@ -24,7 +49,12 @@ def _capture(tables, active, fields):
         rows[row_index] = (rows[row_index] if all(value == original for value, (_, original) in zip(values, fields))
                            else (*values, *rows[row_index][len(values):]))
     elif any(str(value or '').strip() for value in values):
-        rows.append(values)
+        # A prefilled trade is not itself a new contact. The user must enter
+        # at least one other field before a new row is persisted.
+        category_index = _category_index(table)
+        if category_index is None or any(str(value or '').strip()
+                                         for index, value in enumerate(values) if index != category_index):
+            rows.append(values)
     result[table_index] = replace(table, rows=tuple(rows))
     return tuple(result)
 
@@ -41,8 +71,11 @@ def _queue(key, epoch, expected, active, fields, action, target=None):
     next_active = active
     if action == 'open':
         next_active = target
+        record.pop('add_category', None)
     elif action == 'add':
-        next_active = (target, len(result[target].rows))
+        table_index, category = target if isinstance(target, tuple) else (target, "")
+        next_active = (table_index, len(result[table_index].rows))
+        record['add_category'] = category
     elif action == 'close':
         next_active = None
     elif action == 'remove':
@@ -167,6 +200,12 @@ def edit_contact_tables(tables, key, field, label, *, vendor=False, prepare=None
         ti, ri = active
         table = tables[ti]
         row = table.rows[ri] if ri < len(table.rows) else tuple('' for _ in table.columns)
+        if vendor and ri == len(table.rows) and record.get('add_category'):
+            category_index = _category_index(table)
+            if category_index is not None:
+                values = list(row)
+                values[category_index] = record['add_category']
+                row = tuple(values)
         fields = tuple((key + '_' + record.setdefault('field_scope', uuid4().hex) + f'_field_{ci}', row[ci] if ci < len(row) else '')
                        for ci in range(len(table.columns)))
     record['fields'] = fields
@@ -185,7 +224,15 @@ def edit_contact_tables(tables, key, field, label, *, vendor=False, prepare=None
             # it must not move the native editor between positional parent blocks.
             slot = record.get('editor_slot', active)[1]
             entries.insert(min(slot, len(entries)), (ri, row))
+        category_index = _category_index(table) if vendor else None
+        previous_category = None
         for ri, row in entries:
+            if category_index is not None:
+                category = str(row[category_index] if category_index < len(row) else '').strip()
+                if category != previous_category:
+                    # Display imported group names literally, not as Markdown.
+                    st.text('Trade: ' + (category or 'Unassigned'))
+                    previous_category = category
             editing = active == (ti, ri)
             card_key = key + '_active_editor' if editing else key + f'_row_{ti}_{ri}'
             with st.container(key=card_key, border=True):
@@ -193,9 +240,20 @@ def edit_contact_tables(tables, key, field, label, *, vendor=False, prepare=None
                     st.write('Edit ' + noun)
                     _fields(table, fields, field, args, vendor)
                 else:
-                    st.write(label(table.columns, row, ri))
+                    summary = label(table.columns, row, ri)
+                    st.write(_vendor_summary(table.columns, row, summary) if vendor else summary)
                     st.button('Edit ' + noun, key=key + f'_open_{ti}_{ri}',
                               on_click=_queue, args=(*args, 'open', (ti, ri)))
+        if category_index is not None:
+            seen_categories = []
+            for row in table.rows:
+                category = str(row[category_index] if category_index < len(row) else '').strip()
+                if category and category not in seen_categories:
+                    seen_categories.append(category)
+            for group_index, category in enumerate(seen_categories):
+                st.button('Add vendor contact to ' + category,
+                          key=key + f'_add_group_{ti}_{group_index}',
+                          on_click=_queue, args=(*args, 'add', (ti, category)))
         st.button('Add ' + noun, key=key + f'_add_{ti}',
                   on_click=_queue, args=(*args, 'add', ti))
     return tables, intermediate
@@ -207,7 +265,16 @@ def _fields(table, fields, field, args, vendor):
         label = ('Agreement status (MSA)' if vendor and heading.strip().casefold() == 'msa'
                  else heading if heading.strip() else f'Detail {ci + 1}')
         # Original blank/duplicate headings remain untouched in the table schema.
-        st.text_input(label, key=field(key, original), max_chars=500,
+        # Supply the saved text in the native element's first-mount default,
+        # not an empty element followed by a session-state hydration effect.
+        # Keep field registration, but let Streamlit seed a genuinely new key
+        # from that default; never remove or replace an existing delivered edit.
+        existing_keys = set(st.session_state)
+        native_key = field(key, original)
+        initial = st.session_state.get(native_key, original)
+        if native_key not in existing_keys:
+            st.session_state.pop(native_key, None)
+        st.text_input(label, value=initial, key=native_key, max_chars=500,
                       on_change=_queue, args=(*args, 'edit'))
     st.button('Close editing', key=args[0] + '_close', on_click=_queue, args=(*args, 'close'))
     st.button('Remove contact', key=args[0] + '_remove', on_click=_queue,

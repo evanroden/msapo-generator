@@ -305,9 +305,10 @@ def exercise(browser, name, base, record):
         (out / "unchanged-synthetic-source.pdf").write_bytes(raw)
         record["source"] = {"size": len(raw), "sha256": digest}
         water = page.locator(WATER)
-        water.get_by_role("button", name="Add files", exact=True).click()
         uploader = page.locator('[data-testid="stFileUploader"]').filter(
             has=page.get_by_text("Water-treatment files", exact=True))
+        expect(uploader).to_be_visible()
+        expect(water.get_by_role("button", name="Add files", exact=True)).to_have_count(0)
         uploader.locator('input[type="file"]').set_input_files(
             {"name": NAME, "mimeType": "application/pdf", "buffer": raw})
         expect(water.get_by_text(NAME, exact=True)).to_be_visible(timeout=45000)

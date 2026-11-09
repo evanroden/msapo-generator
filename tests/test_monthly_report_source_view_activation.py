@@ -239,11 +239,20 @@ render_section_setup(profile.contract,period,'Synthetic Operator',_field,state=s
     for checkbox in checks: checkbox.check()
     app.run()
     button=next(b for b in app.button if b.label=='Continue to this month’s updates')
+    if prior == 'other-month-view':
+        # Last month's art approval does not certify undated work for October.
+        assert button.disabled
+        month_review = next(c for c in app.checkbox if c.label == 'This work belongs in October 2026')
+        assert not month_review.value
+        month_review.check().run()
+        button=next(b for b in app.button if b.label=='Continue to this month’s updates')
     assert not button.disabled, [i.value for i in app.info]
     button.click().run()
     assert not app.exception and not app.error, [e.value for e in app.error]
     loaded=library.load_imported_draft(profile.contract,profile.key)
     assert loaded.period == period
+    assert "Synthetic completed inspection." in next(b.text for b in loaded.blocks if b.key == 'activity_summary')
+    assert library.imported_original(profile.contract, profile.key).read_bytes() == path.read_bytes()
     assert library.source_view_replay_recorded(profile.contract,profile.key,period,profile.imported_from)
     assert all(not b.client_asset_reviews for b in loaded.blocks if b.key != 'client_logo')
 

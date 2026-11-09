@@ -14,7 +14,7 @@ def _saved_at(value):
         moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
         if moment.tzinfo is not None:
             return moment.astimezone(timezone.utc).strftime("%b %d, %Y · %H:%M UTC")
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         pass
     return value or "Date not recorded"
 

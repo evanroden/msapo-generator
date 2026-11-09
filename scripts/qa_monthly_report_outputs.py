@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-import fitz
+import pymupdf as fitz
 
 from app.monthly_report_docx import generate_report
 from tests.test_monthly_report_full_synthetic_output import approved_synthetic_draft

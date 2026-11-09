@@ -115,6 +115,10 @@ def _hash_generation_part(value):
         # Keep the recorded pre-occurrence diagnostic comparable. Real
         # occurrence metadata still changes this digest and the report guards.
         structured.pop("asset_instances")
+    if isinstance(value, ResolvedBlock) and value.cover_original is None:
+        # Match screenshots recorded before optional original provenance existed.
+        # Populated provenance remains part of this synthetic diagnostic only.
+        structured.pop("cover_original")
 
     def text(item):
         # Likewise for follow-ups recorded before their month stamp existed.
@@ -221,6 +225,41 @@ def _active_jobs() -> bool:
             if running is not None and not running[2].done():
                 return True
     return False
+
+
+def _reset_readiness(base):
+    """Observe the same guard as reset, without draining or changing jobs."""
+    if not testing.current_generation_matches(base):
+        return "unavailable"
+    return "busy" if _active_jobs() else "ready"
+
+
+def _render_reset_readiness(base):
+    # Only render() inside the server-isolated QA route calls this helper.
+    # Keep the existing opaque generation prefix; never expose an owner cookie
+    # or full lease. A stale fragment cannot authorize a replacement namespace.
+    if testing.scope() is None or testing.generation() is None:
+        raise ValueError("Reset readiness requires an owned synthetic namespace.")
+    captured = testing.capture_namespace()
+    generation = testing.generation()[:12]
+
+    @st.fragment
+    def readiness():
+        # A native probe reruns ONLY this fragment. Never schedule automatic
+        # work while ordinary editor/upload/history fragments are active.
+        st.button("Check reset readiness", key="monthly_qa_reset_probe")
+        with captured():
+            # Metadata has no text or layout footprint, including its Streamlit
+            # wrapper. Never expose cookies, owner IDs, or the full lease.
+            st.html(
+                '<style>[data-testid="stElementContainer"]:has([data-monthly-qa-reset-readiness])'
+                '{display:none!important}</style>'
+                '<span hidden aria-hidden="true" data-monthly-qa-reset-readiness="'
+                + _reset_readiness(base) + '" data-generation="' + generation
+                + '" data-observation="' + uuid4().hex[:12] + '"></span>'
+            )
+
+    readiness()
 
 
 def _clear_report_widgets():
@@ -332,6 +371,7 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
 
     saved = library.load_snapshot(fixture.CONTRACT, fixture.profile().key, fixture.PERIOD)
     current_generation = testing.generation()
+    _render_reset_readiness(live_storage_root)
     kind = ("original-source replay" if saved.draft.sources else "known-value prefill") if saved else "empty"
     st.caption(f"QA fixture state: {kind} · generation {current_generation[:12]} · revision {saved.revision if saved else 0}")
     if receipt := st.session_state.get("monthly_qa_fixture_receipt"):

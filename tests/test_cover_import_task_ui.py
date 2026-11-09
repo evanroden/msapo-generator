@@ -11,6 +11,7 @@ from pathlib import Path
 from docx import Document
 from docx.shared import Inches
 from streamlit.testing.v1 import AppTest
+import pytest
 
 from app import monthly_report_guided, monthly_report_library as library, monthly_report_section_ui as section_ui
 from app.monthly_report_model import ReportDraft
@@ -130,3 +131,44 @@ def test_failed_import_keeps_source_choice_and_retry_then_explicit_reopen(monkey
     assert not app.exception and stage_key in app.session_state.filtered_state
     assert next(b for b in current(app).blocks if b.key == "cover_photo") == photo
     assert source.read_bytes() == before
+
+
+def test_pending_photo_uses_only_current_render_source_and_report_scope(monkeypatch, tmp_path):
+    from app.monthly_report_editor import _signature
+    app, _, _ = stage_source(monkeypatch, tmp_path)
+    draft = current(app)
+    state = library.load_profile(draft.profile.contract, draft.profile.key)
+    values = dict(app.session_state.filtered_state)
+    prefix = 'report_setup_' + _signature((draft.profile.contract, draft.profile.key, draft.period.key))
+    active = values[prefix + '_active_section_review']
+    assert active[1] + '_section_plans' in values
+    monkeypatch.setattr(section_ui.st, 'session_state', values)
+    from app import monthly_report_import
+    monkeypatch.setattr(monthly_report_import, 'read_import_image',
+                        lambda *a, **k: pytest.fail('Inactive source photo must not be read'))
+    for other in (replace(draft, period=replace(draft.period, month=draft.period.month % 12 + 1)),
+                  replace(draft, profile=replace(draft.profile, contract='Another synthetic contract'))):
+        assert section_ui.render_pending_cover_selection(other, {}, other.profile.contract, other.period, None) == (other, {})
+    values[prefix + '_active_section_review'] = ('0' * 64, active[1])
+    assert section_ui.render_pending_cover_selection(draft, {}, draft.profile.contract, draft.period, state) == (draft, {})
+    values.pop(prefix + '_active_section_review')
+    assert section_ui.render_pending_cover_selection(draft, {}, draft.profile.contract, draft.period, state) == (draft, {})
+
+
+def test_import_admission_clears_pending_preview_scope_before_busy_return(monkeypatch):
+    from app.monthly_report_editor import _signature
+    from app.monthly_report_model import synthetic_profiles, ReportPeriod
+    from app import monthly_report_render_jobs as jobs, monthly_report_busy_ui
+    profile, period = synthetic_profiles()[0], ReportPeriod(2026, 9)
+    key = 'report_setup_' + _signature((profile.contract, profile.key, period.key)) + '_active_section_review'
+    values = {key: ('old source', 'old scope')}
+    monkeypatch.setattr(section_ui.st, 'session_state', values)
+    def busy(*a, **k):
+        raise jobs.RenderBusy('Synthetic capacity wait')
+    monkeypatch.setattr(jobs, 'work_slot', busy)
+    monkeypatch.setattr(monthly_report_busy_ui, 'show_busy_retry', lambda: None)
+    @section_ui._source_view_admission
+    def render(contract, period, *, identity=None, source_view=None):
+        pytest.fail('Busy admission must not render an old scope')
+    assert render(profile.contract, period, identity=profile, source_view=object()) is True
+    assert key not in values

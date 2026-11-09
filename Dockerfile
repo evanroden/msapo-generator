@@ -60,11 +60,21 @@ ENV FONTCONFIG_FILE=/app/runtime/fonts.conf
 
 RUN python runtime/check_renderer.py
 
-RUN python scripts/patch_streamlit_metadata.py
+# Absolute address used in link previews. A host other than Render passes its
+# public https origin, e.g. --build-arg PUBLIC_SITE_ORIGIN=https://example.org
+ARG PUBLIC_SITE_ORIGIN=https://msapo-generator.onrender.com
+RUN python scripts/patch_streamlit_metadata.py --origin "$PUBLIC_SITE_ORIGIN"
 RUN python scripts/patch_streamlit_frontend.py
 RUN python scripts/patch_streamlit_date_input.py
 
 RUN mkdir -p output
+
+# Render reports the served commit at runtime (RENDER_GIT_COMMIT). Other hosts
+# stamp it here so About can still show it, e.g.
+#   --build-arg APP_GIT_COMMIT=$(git rev-parse HEAD)
+# Last, so a new commit rebuilds only this layer.
+ARG APP_GIT_COMMIT=""
+ENV APP_GIT_COMMIT=$APP_GIT_COMMIT
 
 EXPOSE 8501
 

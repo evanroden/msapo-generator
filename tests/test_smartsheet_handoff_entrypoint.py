@@ -195,7 +195,8 @@ def test_enfra_brand_and_responsive_mobile_controls_are_present():
     assert "font-size: 16px !important" in source
     assert 'input, textarea, [role="combobox"]' in source
     assert "min-height: 44px" in source
-    assert "safe-area-inset-left" in source
+    from app.web_ui import CUSTOM_CSS
+    assert "safe-area-inset-left" in CUSTOM_CSS
     assert 'primaryColor = "#D6EF4B"' in config
     assert 'secondaryBackgroundColor = "#D3E7E0"' in config
     assert 'textColor = "#092B24"' in config

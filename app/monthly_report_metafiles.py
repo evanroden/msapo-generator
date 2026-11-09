@@ -12,6 +12,8 @@ from zipfile import ZipFile, ZIP_DEFLATED
 
 from PIL import Image
 
+from app.monthly_report_metafile_cache import cached_vector_png
+
 
 METAFILES = {'.emf', '.wmf'}
 _RENDER_VERSION = 'passive-metafile-v2'
@@ -80,7 +82,7 @@ def _renderer_fingerprint(binary, font_config, font_path):
 
 def rasterize_metafile(raw, suffix):
     """Prepare a full lossless raster for the existing pricing/image review gate."""
-    import fitz
+    import pymupdf as fitz
     from app import monthly_report_library as library
     from app.monthly_report_import import ImportError
     from app.monthly_report_word_pages import _RENDER_LOCK, _render
@@ -94,11 +96,17 @@ def rasterize_metafile(raw, suffix):
                                         os.environ.get('FONTCONFIG_FILE', ''), os.environ.get('FONTCONFIG_PATH', ''))
     key = sha256(fingerprint + suffix.encode() + raw).hexdigest()
     cached = directory / (key + '.png')
-    if cached.exists() and cached.stat().st_size <= 24 * 1024 * 1024:
-        return cached.read_bytes()
+    hit = cached_vector_png(cached)
+    if hit is not None:
+        return hit
     if not _RENDER_LOCK.acquire(blocking=False):
         raise ImportError('Another report picture is being prepared. Try again in a moment.')
     try:
+        # Recheck after waiting for the render lock; a sibling may have
+        # completed the exact same derivative in the meantime.
+        hit = cached_vector_png(cached)
+        if hit is not None:
+            return hit
         package, size = _image_package(raw, suffix)
         with tempfile.TemporaryDirectory(prefix='drawing-', dir=directory) as temporary:
             temporary = Path(temporary)

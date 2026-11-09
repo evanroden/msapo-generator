@@ -1,0 +1,403 @@
+"""Source regression only; hosted shell geometry remains required."""
+import re
+from pathlib import Path
+import pytest
+from app.web_ui import CUSTOM_CSS
+
+ROOT = Path(__file__).parents[1]
+
+
+def test_shared_shell_width_precedes_workspace_and_preserves_gutters():
+    css = re.sub(r'/\*.*?\*/', '', CUSTOM_CSS, flags=re.S)
+    block = css.split('\n    .block-container {', 1)[1].split('}', 1)[0]
+    assert 'max-width: 1680px !important;' in block
+    for side in ('left', 'right'):
+        assert f'padding-{side}: max(1rem, env(safe-area-inset-{side})) !important;' in block
+    assert '1000px' not in block
+    source = (ROOT / 'app/web_ui.py').read_text()
+    assert source.index('st.markdown(CUSTOM_CSS, unsafe_allow_html=True)') < source.index('st.segmented_control(')
+
+
+def test_workspace_mount_and_mode_never_resize_the_outer_shell():
+    for filename in ('workspace_layout.css', 'workspace_initial.css'):
+        css = re.sub(r'/\*.*?\*/', '', (ROOT / 'app' / filename).read_text(), flags=re.S)
+        assert not re.search(r'(?:stMainBlockContainer|\.block-container)[^{]*\{[^}]*max-width', css)
+    css = (ROOT / 'app/workspace_layout.css').read_text()
+    assert 'grid-template-columns:minmax(0,1.12fr) minmax(0,1fr)' in css
+    assert '[data-epc-mode="compact"] .epc-workspace-row {grid-template-columns:minmax(0,1fr);}' in css
+    assert '[data-epc-mode="book"]' in css and '[data-epc-mode="tabletop"]' in css
+
+
+def test_browser_matrix_covers_requested_states_and_sidebar_boundary():
+    from scripts.qa_workflow_shell_width import WIDTHS, CASES, FIXTURE
+    assert WIDTHS == (390, 768, 1024, 1440, 1780, 1781, 1920)
+    assert set(CASES) == {'po', 'expense', 'monthly-setup', 'monthly-conflict', 'monthly-ready'}
+    compile(FIXTURE, 'synthetic-shell-fixture', 'exec')
+    assert 'label=st.segmented_control' in FIXTURE
+    assert 'on_click=phase_to' in FIXTURE
+    assert 'window.__shellAdapterGate' in FIXTURE
+    assert 'monthly_report_library' not in FIXTURE
+
+
+def test_frame_gate_rejects_wrong_width_and_a_late_width_change():
+    import pytest
+    from scripts.qa_workflow_shell_width import validate_samples
+    good={'openerOverlap':0,'maxWidth':'1680px','width':1440,'x':0,'tabX':16,'tabWidth':1408}
+    validate_samples([good,dict(good),{**good,'maxWidth':'none'}],good)
+    for samples in ([],[{**good,'maxWidth':'1000px','width':1000}],
+                    [good,{**good,'width':1000}], [good,{**good,'maxWidth':'none','width':1000}],
+                    [good,{**good,'maxWidth':'none','width':1920}], [good,{**good,'x':20}], [good,{**good,'openerOverlap':1}],
+                    [good,{**good,'tabX':30}], [good,{**good,'tabWidth':1380}]):
+        with pytest.raises(AssertionError):validate_samples(samples,good)
+
+
+def test_browser_network_boundary_is_exact_loopback_only():
+    from scripts.qa_workflow_shell_width import local_url
+    assert local_url('http://127.0.0.1:8591/media/test')
+    assert local_url('ws://127.0.0.1:8591/_stcore/stream',websocket=True)
+    assert local_url('blob:http://127.0.0.1:8591/d7d4c664-daf7-45cc-a084-ee86312a68c0')
+    for value in ('http://127.0.0.1:8592/','http://user@127.0.0.1:8591/',
+                  'https://example.com/','file:///tmp/a','data:text/html,test',
+                  'http://127.0.0.1.evil:8591/',
+                  'blob:http://evil.example/d7d4c664-daf7-45cc-a084-ee86312a68c0',
+                  'blob:http://127.0.0.1:8592/d7d4c664-daf7-45cc-a084-ee86312a68c0',
+                  'blob:http://127.0.0.1:8591/not-a-blob-id'):
+        assert not local_url(value)
+
+
+def test_hosted_shell_job_is_separate_mandatory_and_bounded():
+    workflow=(ROOT/'.github/workflows/adaptive-workspaces.yml').read_text()
+    job=workflow.split('\n  workflow-shell-width:\n',1)[1]
+    assert 'timeout-minutes: 50' in job and 'timeout-minutes: 20' in job
+    assert 'timeout-minutes: 26' in job and 'timeout-minutes: 3' in job
+    assert "ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'" in job
+    assert 'python scripts/qa_workflow_shell_width.py' in job
+    assert 'continue-on-error' not in job
+    assert 'if:' not in job.split('      - name: Retain first shell-width',1)[0]
+    assert 'if: always()' in job
+    for path in ('scripts/qa_workflow_shell_width.py','tests/test_workflow_shell_width.py'):
+        assert workflow.count("      - '"+path+"'")==2
+
+
+def test_existing_adaptive_fixture_uses_production_shell_before_workspace():
+    fixture=(ROOT/'tests/fixtures/workspaces/app.py').read_text()
+    assert 'from app.web_ui import CUSTOM_CSS' in fixture
+    assert fixture.index('st.markdown(CUSTOM_CSS, unsafe_allow_html=True)') < fixture.index("with workspace(")
+    assert 'max-width:1000px' not in fixture
+
+
+def test_static_shell_style_is_single_sourced_early_idempotent_and_fail_closed(tmp_path,monkeypatch):
+    import pytest
+    from scripts import patch_streamlit_metadata as metadata
+    css=(ROOT/'app/workflow_shell.css').read_text()
+    assert css in CUSTOM_CSS
+    index=tmp_path/'index.html'
+    index.write_text('<html><head><meta charset="UTF-8"><title>Streamlit</title><script type="module" src="app.js"></script></head><body></body></html>')
+    metadata.patch_index(index)
+    first=index.read_text()
+    assert first.count('id="process-control-workflow-shell"')==1
+    assert first.index(css)<first.index('<script')
+    assert first.index('charset')<1024
+    metadata.patch_index(index)
+    assert index.read_text()==first
+    invalid=tmp_path/'invalid.css'
+    monkeypatch.setattr(metadata,'_SHELL_CSS_PATH',invalid)
+    for content in (None,'','</style><script>alert(1)</script>'):
+        if content is not None:invalid.write_text(content)
+        with pytest.raises(RuntimeError):metadata.patch_index(index)
+        assert index.read_text()==first
+
+
+def test_static_shell_survives_locked_frontend_date_publication(tmp_path):
+    import json
+    from hashlib import sha256
+    import streamlit
+    from scripts import patch_streamlit_metadata as metadata
+    from scripts import patch_streamlit_frontend as frontend
+    from scripts import patch_streamlit_date_input as date
+    from streamlit_static_fixture import pristine_html
+    installed=Path(streamlit.__file__).parent/'static'
+    target=tmp_path/'static/js';target.mkdir(parents=True)
+    members={**json.loads(frontend.MANIFEST_PATH.read_bytes())['members'],
+             **json.loads(frontend.FLOATING_MANIFEST_PATH.read_bytes())['members']}
+    for name,record in members.items():
+        raw=(installed/'static/js'/name).read_bytes()
+        assert sha256(raw).hexdigest()==record['sha256']
+        (target/name).write_bytes(raw)
+    index=tmp_path/'index.html';index.write_bytes(pristine_html(installed))
+    metadata.patch_index(index)
+    frontend.patch_bundle(tmp_path,installed_version='1.61.1')
+    date.patch_bundle(tmp_path,installed_version='1.61.1')
+    css=(ROOT/'app/workflow_shell.css').read_text()
+    first=index.read_text()
+    assert first.count('id="process-control-workflow-shell"')==1 and css in first
+    assert first.index(css)<first.index('<script')
+    assert first.index('charset')<1024
+    metadata.patch_index(index)
+    frontend.patch_bundle(tmp_path,installed_version='1.61.1')
+    date.patch_bundle(tmp_path,installed_version='1.61.1')
+    assert index.read_text()==first
+
+
+def test_full_state_sidebar_matrix_cannot_pass_with_missing_setup_or_conflict():
+    import pytest
+    from scripts.qa_workflow_shell_width import CASES,validate_state_coverage
+    states=[{'state':state,'sidebar_open':opened} for state in CASES for opened in (False,True)]
+    validate_state_coverage(states)
+    for missing in ('monthly-setup','monthly-conflict'):
+        with pytest.raises(AssertionError):
+            validate_state_coverage([row for row in states if not (row['state']==missing and row['sidebar_open'])])
+
+
+def test_native_measurement_rejects_placeholders_stale_and_wrong_owners():
+    """Execute the actual browser predicate without starting a browser."""
+    import json
+    import subprocess
+    from scripts.qa_workflow_shell_width import NATIVE_READINESS
+    script = r'''
+const assert=require('node:assert/strict');
+class Node {
+ constructor(text=''){this.textContent=text;this.attrs={};this.children=[];this.stale=false;this.visible=true;}
+ getBoundingClientRect(){return {width:this.visible?100:0,height:20};}
+ getAttribute(k){return this.attrs[k]??null;}
+ contains(n){return this.children.includes(n)||this.children.some(c=>c.contains(n));}
+ closest(){return this.stale?this:null;}
+ querySelectorAll(s){return this.queries?.[s]??[];}
+}
+const app=new Node(),main=new Node(),shell=new Node(),owner=new Node(),group=new Node();
+const radios=['Purchase order','Expense reimbursement','Monthly report'].map(x=>new Node(x));
+radios[2].attrs['aria-checked']='true';
+const caption=new Node('State: monthly-setup');
+app.attrs['data-test-script-state']='notRunning';
+main.children=[shell];shell.children=[owner];owner.children=[group];
+group.queries={'[role="radio"]':radios};main.queries={'[data-testid="stCaptionContainer"]':[caption]};
+const nodes={'[data-testid="stApp"]':[app],'[data-testid="stMain"]':[main],'.block-container':[shell],
+ '.st-key-workflow_mode':[owner],'.st-key-workflow_mode [role="radiogroup"]':[], '[data-testid="stSkeleton"]':[new Node()]};
+global.document={querySelectorAll:s=>nodes[s]??[]};
+global.getComputedStyle=()=>({visibility:'visible',display:'block'});
+const probe=PROBE;
+assert.equal(probe('monthly-setup').ready,false); // null / skeleton is not native readiness
+assert.equal(probe('monthly-setup').skeletonCount,1);
+nodes['.st-key-workflow_mode [role="radiogroup"]']=[group];
+assert.equal(probe('monthly-setup').ready,true);
+assert.equal(probe('po').ready,false); // wrong selected native workflow
+assert.equal(probe('monthly-ready').ready,false); // stale phase caption
+assert.equal(probe('unknown').ready,false);
+owner.stale=true;assert.equal(probe('monthly-setup').ready,false);owner.stale=false;
+shell.children=[];assert.equal(probe('monthly-setup').ready,false);shell.children=[owner];
+nodes['.st-key-workflow_mode'].push(new Node());assert.equal(probe('monthly-setup').ready,false);nodes['.st-key-workflow_mode'].pop();
+caption.stale=true;assert.equal(probe('monthly-setup').ready,false);caption.stale=false;
+app.attrs['data-test-script-state']='running';assert.equal(probe('monthly-setup').ready,false);
+app.attrs['data-test-script-state']='notRunning';group.visible=false;assert.equal(probe('monthly-setup').ready,false);
+group.visible=true;assert.equal(probe('monthly-setup').ready,true);
+'''.replace('const probe=PROBE;', 'const probe='+NATIVE_READINESS+';')
+    subprocess.run(['node','-e',script],check=True,capture_output=True,text=True)
+
+
+def test_measurement_mount_wait_shares_idle_deadline_and_retains_timing():
+    from scripts.qa_workflow_shell_width import wait_native_measurement
+    calls=[]
+    class Handle:
+        def json_value(self):return {'ready':True,'at':150}
+        def dispose(self):calls.append('dispose')
+    class Page:
+        def get_by_test_id(self,name):return self
+        def to_have_attribute(self,*args,**kwargs):calls.append(('idle',kwargs['timeout']))
+        def evaluate(self,js,*args):
+            if args:
+                if not any(isinstance(x,tuple) and x[0]=='wait' for x in calls):
+                    return {'ready':False,'at':100,'groupCount':0,'skeletonCount':4}
+                return {'ready':True,'at':151}
+            calls.append('two-frames')
+        def wait_for_function(self,js,**kwargs):
+            calls.append(('wait',kwargs['timeout'],kwargs['arg']))
+            assert 'r.ready ? r : false' in js
+            return Handle()
+    times=iter([0,1,3,4,5]);evidence={}
+    wait_native_measurement(Page(),'monthly-setup',evidence,lambda x:x,clock=lambda:next(times))
+    assert calls==[('idle',44000),('wait',42000,'monthly-setup'),'dispose','two-frames']
+    assert evidence['initial_after_backend_idle']['skeletonCount']==4
+    assert evidence['backend_idle_to_native_ready_ms']==50
+
+
+def test_measurement_expired_or_replaced_owner_never_authorizes_geometry():
+    import pytest
+    from scripts.qa_workflow_shell_width import wait_native_measurement
+    class Page:
+        def get_by_test_id(self,name):return self
+        def to_have_attribute(self,*args,**kwargs):pass
+        def evaluate(self,js,*args):return {'ready':False,'at':100}
+        def wait_for_function(self,*args,**kwargs):return self
+        def json_value(self):return {'ready':True,'at':150}
+        def dispose(self):pass
+    times=iter([0,46])
+    with pytest.raises(TimeoutError):
+        wait_native_measurement(Page(),'monthly-ready',{},lambda x:x,clock=lambda:next(times))
+    with pytest.raises(AssertionError,match='owner changed'):
+        wait_native_measurement(Page(),'monthly-ready',{},lambda x:x,clock=lambda:0)
+
+
+def test_measurement_late_final_owner_evaluation_cannot_admit_geometry():
+    import pytest
+    from scripts.qa_workflow_shell_width import wait_native_measurement
+    class Page:
+        def get_by_test_id(self,name):return self
+        def to_have_attribute(self,*args,**kwargs):pass
+        def evaluate(self,js,*args):return {'ready':True,'at':100}
+        def wait_for_function(self,*args,**kwargs):return self
+        def json_value(self):return {'ready':True,'at':150}
+        def dispose(self):pass
+    times=iter([0,1,2,3,46])
+    with pytest.raises(TimeoutError):
+        wait_native_measurement(Page(),'monthly-ready',{},lambda x:x,clock=lambda:next(times))
+
+
+def _run_case_until_delayed_geometry(monkeypatch, tmp_path, delayed_action, occurrence, delay):
+    """Exercise the real driver and deadline with synthetic page responses.
+
+    Stop at the requested geometry probe: this does not emulate layout, execute
+    the browser predicate, or claim completion of the native acceptance matrix.
+    """
+    import json
+    import sys
+    from types import ModuleType
+    from unittest.mock import Mock
+    from scripts import qa_workflow_shell_width as qa
+
+    class GeometryReached(BaseException):
+        pass
+
+    clock = [0.0]
+    state = {'name': 'monthly-setup', 'ready_at': 0.0, 'delayed': False}
+    actions = {}
+    waits = []
+    geometry = {
+        'maxWidth': '1680px', 'overflow': False, 'openerOverlap': 0,
+        'box': {'x': 0, 'width': 1024}, 'main': {'width': 1024},
+        'tabs': {'x': 16, 'width': 992}, 'paddingTop': '60px',
+    }
+    sample = {'x': 0, 'width': 1024, 'tabX': 16, 'tabWidth': 992,
+              'maxWidth': '1680px', 'openerOverlap': 0}
+
+    def action(name):
+        actions[name] = actions.get(name, 0) + 1
+        next_state = {
+            'goto': 'monthly-setup', 'Finish synthetic setup': 'monthly-ready',
+            'Expense reimbursement': 'expense', 'Purchase order': 'po',
+            'Monthly report': 'monthly-ready', 'Show synthetic conflict': 'monthly-conflict',
+            'Resolve synthetic conflict': 'monthly-ready', 'Return to synthetic setup': 'monthly-setup',
+        }.get(name)
+        if next_state is not None:
+            state['name'] = next_state
+        if (name, actions[name]) == (delayed_action, occurrence):
+            state.update(ready_at=clock[0] + delay, delayed=True)
+
+    def wait_until_ready(timeout, kind):
+        waits.append((kind, timeout))
+        deadline = clock[0] + timeout / 1000
+        if state['ready_at'] > deadline:
+            clock[0] = deadline
+            raise TimeoutError(f'{kind} exhausted {timeout}ms before synthetic content was ready')
+        clock[0] = max(clock[0], state['ready_at'])
+
+    def readiness(expected_state):
+        return {'ready': clock[0] >= state['ready_at'] and state['name'] == expected_state,
+                'at': clock[0] * 1000}
+
+    def evaluate(js, *args):
+        if js == qa.NATIVE_READINESS:
+            return readiness(args[0])
+        if js == 'window.__shellEvidence':
+            return {'samples': [sample], 'overflow': False, 'epoch': 'synthetic'}
+        # Epoch, adapter-release, and two-frame callbacks have no clock cost in
+        # this synthetic control; native frame behavior has separate coverage.
+        return None
+
+    def wait_for_function(js, **kwargs):
+        if 'arg' in kwargs:
+            wait_until_ready(kwargs['timeout'], 'native')
+            result = readiness(kwargs['arg'])
+            assert result['ready']
+            return Mock(json_value=lambda: result, dispose=lambda: None)
+        return None  # adapter mounting is outside this readiness-order control
+
+    def probe(js):
+        assert js == qa.PROBE
+        if state['delayed']:
+            raise GeometryReached
+        return geometry
+
+    def locator(kind, name):
+        value = Mock()
+        value.click.side_effect = lambda: action(name)
+        value.inner_text.side_effect = lambda: 'State: ' + state['name']
+        value.evaluate.side_effect = probe
+        value.get_by_role.side_effect = lambda role, **kwargs: locator(role, kwargs.get('name', name))
+
+        def to_be_visible(**kwargs):
+            assert kind == 'text' and name.startswith('State: ')
+            wait_until_ready(kwargs.get('timeout', 5000), 'caption')
+            assert name == 'State: ' + state['name']
+
+        def to_have_attribute(attribute, expected, **kwargs):
+            if name == 'stApp':
+                assert (attribute, expected) == ('data-test-script-state', 'notRunning')
+                wait_until_ready(kwargs['timeout'], 'idle')
+            else:
+                assert name == 'stSidebar' and attribute == 'aria-expanded'
+
+        value.to_be_visible.side_effect = to_be_visible
+        value.to_have_attribute.side_effect = to_have_attribute
+        return value
+
+    page = Mock()
+    page.goto.side_effect = lambda *args, **kwargs: action('goto')
+    page.get_by_text.side_effect = lambda text, **kwargs: locator('text', text)
+    page.get_by_test_id.side_effect = lambda name: locator('test_id', name)
+    page.get_by_role.side_effect = lambda role, **kwargs: locator(role, kwargs.get('name'))
+    page.locator.side_effect = lambda selector: locator('selector', selector)
+    page.evaluate.side_effect = evaluate
+    page.wait_for_function.side_effect = wait_for_function
+    context = Mock(new_page=lambda: page)
+    browser = Mock(new_context=lambda **kwargs: context)
+    playwright = ModuleType('playwright')
+    sync_api = ModuleType('playwright.sync_api')
+    sync_api.expect = lambda value: value
+    playwright.sync_api = sync_api
+    monkeypatch.setitem(sys.modules, 'playwright', playwright)
+    monkeypatch.setitem(sys.modules, 'playwright.sync_api', sync_api)
+    original_wait = qa.wait_native_measurement
+    monkeypatch.setattr(qa, 'wait_native_measurement',
+                        lambda page, state, evidence, expect:
+                        original_wait(page, state, evidence, expect, clock=lambda: clock[0]))
+    expected_exception = GeometryReached if delay < 45 else TimeoutError
+    with pytest.raises(expected_exception):
+        qa.run_case(browser, 1024, tmp_path)
+    record = json.loads((tmp_path / 'results.json').read_text())
+    assert state['delayed'], 'The requested action was not reached'
+    measurements = record.get('measurement_readiness', [])
+    assert measurements and measurements[-1]['expected_state'] == state['name'], \
+        'The delayed state must reach its original readiness gate'
+    if delay < 45:
+        assert clock[0] == delay
+        assert measurements[-1]['native_ready']['ready']
+        assert ('idle', 45000) in waits and ('native', 39000) in waits
+    else:
+        assert clock[0] == 45
+        assert record['result'] == 'fail'
+        assert 'native_ready' not in measurements[-1]
+    assert not record['errors'] and not record['rejected']
+
+
+@pytest.mark.parametrize('action,occurrence,delay', [
+    pytest.param('goto', 1, 6, id='initial'),
+    pytest.param('Expense reimbursement', 1, 6, id='workflow-switch'),
+    pytest.param('Show synthetic conflict', 1, 6, id='conflict'),
+    pytest.param('Resolve synthetic conflict', 1, 6, id='resolve'),
+    pytest.param('Show synthetic conflict', 2, 6, id='repeat-phase'),
+    pytest.param('goto', 1, 46, id='initial-exceeds-original-budget'),
+    pytest.param('Expense reimbursement', 1, 46, id='switch-exceeds-original-budget'),
+])
+def test_delayed_state_uses_existing_readiness_gate_before_geometry(monkeypatch, tmp_path,
+                                                                  action, occurrence, delay):
+    _run_case_until_delayed_geometry(monkeypatch, tmp_path, action, occurrence, delay)

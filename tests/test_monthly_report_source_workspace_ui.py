@@ -24,7 +24,7 @@ def test_one_source_intake_stays_below_writing_and_hidden_raster_work_stops(monk
     editor = next(item for item in app.text_area if item.label == "Activity summary")
     editor.set_value("My direct Activity wording.").run()
     identity = editor.id
-    button(app, "Manage source files").click().run()
+    assert any("_source_manager_panel{display:block" in item.value for item in app.markdown)
     assert sum(item.label == "Add source files" for item in app.get("file_uploader")) == 1
     assert not any(item.label in ("Monthly source files", "Add activity files (optional)")
                    for item in app.get("file_uploader"))
@@ -54,7 +54,7 @@ def test_one_source_intake_stays_below_writing_and_hidden_raster_work_stops(monk
 
 def test_switching_sources_captures_old_caption_and_keeps_each_form_identity(monkeypatch, tmp_path):
     app = monthly(monkeypatch, tmp_path)
-    button(app, "Manage source files").click().run()
+    assert any("_source_manager_panel{display:block" in item.value for item in app.markdown)
     uploads(monkeypatch, (("synthetic-utility.pdf", utility_pdf()), ("synthetic-service.pdf", pdf_bytes(1))))
     app.run()
     assert not app.exception

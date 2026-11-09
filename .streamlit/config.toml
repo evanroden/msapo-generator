@@ -6,7 +6,9 @@ address = "0.0.0.0"
 # aligned instead of relying on Streamlit to override a contradictory value.
 enableCORS = true
 enableXsrfProtection = true
-maxUploadSize = 200
+# Shared reference templates may be larger than documents the report importer
+# can parse. Each importer retains its own smaller, independently checked cap.
+maxUploadSize = 512
 
 [browser]
 gatherUsageStats = false

@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 import streamlit as st
+from app.web_ui import CUSTOM_CSS
 from app.workspace_layout import workspace, workspace_section, workspace_columns
 from app.reference_preview import render_reference
 
@@ -17,7 +18,8 @@ def synthetic_pdf(section):
         return document.tobytes()
 
 st.set_page_config(layout="wide")
-st.markdown('<style>.block-container{max-width:1000px !important;padding-top:1rem}header{visibility:hidden}</style>',unsafe_allow_html=True)
+st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+st.markdown('<style>.block-container{padding-top:1rem}header{visibility:hidden}</style>',unsafe_allow_html=True)
 st.title('Synthetic adaptive workspace')
 with workspace('monthly', 'synthetic-report-a', navigation_key='monthly_report_navigation'):
     with st.container(key='monthly_report_navigation'):

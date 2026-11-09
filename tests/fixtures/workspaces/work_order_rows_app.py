@@ -57,6 +57,12 @@ if st.checkbox("Show synthetic table", value=True):
 draft = st.session_state.draft
 if loaded is None or draft != loaded.draft:
     recovery_save.save(st.session_state, PREFIX, scope, token, draft, {})
+# A marked diagnostic browser exercises the parent's ordinary acknowledgement
+# before its in-flight menu press arrives. This fixture-only rerun changes no
+# cell or action payload and is never enabled on a real report.
+if (st.context.cookies.get("synthetic_acknowledge_edit") == "1" and draft != before
+        and not st.session_state.get(PREFIX + "_work_order_grid_refresh")):
+    st.rerun()
 _refresh_period_editors_after_commit(PREFIX)
 durable = active.load(token, draft.profile.contract, draft.profile.key, draft.period)
 assert durable is not None

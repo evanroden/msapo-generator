@@ -18,6 +18,7 @@ from pathlib import Path
 import re
 import stat
 import struct
+import zlib
 from uuid import uuid4
 from zipfile import BadZipFile, ZipFile
 
@@ -126,7 +127,7 @@ def validate_reference_archive(original: bytes, *, max_bytes: int = _MAX_ARCHIVE
             if set(names) != expected:
                 raise ValueError("The archive contains undeclared or extraneous members.")
             return tuple(files)
-    except (BadZipFile, KeyError, RuntimeError, UnicodeError, json.JSONDecodeError) as exc:
+    except (BadZipFile, zlib.error, KeyError, RuntimeError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError("Invalid immutable six-source reference archive.") from exc
 
 
@@ -150,6 +151,7 @@ class SharedSourceBundles:
         # but each type has its OWN physical bucket, validator, and quota.
         # The existing owner-original bucket and receipts remain unchanged.
         self._bucket = _BUCKET
+        self._extension = ".zip"
         self._validate_archive = validate_reference_archive
         self._file_count_bounds = (6, 6)
 
@@ -184,12 +186,13 @@ class SharedSourceBundles:
                     or not self._file_count_bounds[0] <= len(files) <= self._file_count_bounds[1]
                     or storage._json_bytes(asdict(receipt)) != raw):
                 raise storage.VaultIntegrityError("Reference receipt does not match its entry.")
-            blob = receipt.archive_sha256 + ".zip"
+            blob = receipt.archive_sha256 + self._extension
             txn = storage._read_file(fd, storage._TRANSACTION, 4096)
             # Read only compact transaction metadata; do not allocate an
             # archive-sized dummy buffer while listing stored receipts.
             transaction = json.loads(txn)
-            if (transaction.get("schema") != 1 or transaction.get("kind") != "reference-bundle"
+            if (type(transaction) is not dict
+                    or transaction.get("schema") != 1 or transaction.get("kind") != "reference-bundle"
                     or transaction.get("target") != bundle_id
                     or transaction.get("files") != {blob: receipt.archive_size, "receipt.json": len(raw)}):
                 raise storage.VaultIntegrityError("Reference archive transaction is invalid.")
@@ -200,7 +203,7 @@ class SharedSourceBundles:
                     or info.st_mode & 0o077 or info.st_size != receipt.archive_size):
                 raise storage.VaultIntegrityError("Reference original has unsafe disk geometry.")
             return receipt
-        except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        except (ValueError, KeyError, TypeError, RecursionError, json.JSONDecodeError) as exc:
             raise storage.VaultIntegrityError("Reference archive receipt is invalid.") from exc
         finally:
             os.close(fd)
@@ -231,7 +234,7 @@ class SharedSourceBundles:
     def _download(self, bucket, receipt: SourceBundle) -> bytes:
         fd = os.open(receipt.bundle_id, storage._DIRECTORY_FLAGS, dir_fd=bucket)
         try:
-            original = storage._read_file(fd, receipt.archive_sha256 + ".zip", self._max_archive)
+            original = storage._read_file(fd, receipt.archive_sha256 + self._extension, self._max_archive)
         finally:
             os.close(fd)
         if len(original) != receipt.archive_size or sha256(original).hexdigest() != receipt.archive_sha256:
@@ -249,6 +252,10 @@ class SharedSourceBundles:
 
     def upload(self, original: bytes) -> SourceBundle:
         sources = self._validate_archive(original, max_bytes=self._max_archive)
+        return self._store(original, sources)
+
+    def _store(self, original: bytes, sources: tuple[SourceFile, ...]) -> SourceBundle:
+        """Persist already-validated bytes using the common immutable transaction."""
         digest = sha256(original).hexdigest()
         with self._directory(create=True) as bucket:
             with storage._admission_lock(bucket):
@@ -268,7 +275,7 @@ class SharedSourceBundles:
                         "Shared reference archive shelf is full; existing originals were retained.")
                 storage.FixtureVault._install(
                     bucket, receipt.bundle_id,
-                    {digest + ".zip": original, "receipt.json": record},
+                    {digest + self._extension: original, "receipt.json": record},
                     lambda: None, kind="reference-bundle")
                 return receipt
 
@@ -363,7 +370,7 @@ def validate_synthetic_evidence_archive(original: bytes, *,
             if set(names) != expected:
                 raise ValueError("The synthetic evidence ZIP has undeclared members.")
             return tuple(verified)
-    except (BadZipFile, KeyError, RuntimeError, UnicodeError, json.JSONDecodeError) as exc:
+    except (BadZipFile, zlib.error, KeyError, RuntimeError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError("Invalid manifest-bound synthetic evidence ZIP.") from exc
 
 

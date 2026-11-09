@@ -15,6 +15,7 @@ import secrets
 import time
 from datetime import datetime, timezone
 from zipfile import ZipFile
+from urllib.parse import parse_qs, urlparse
 
 import pymupdf
 from playwright.sync_api import sync_playwright, expect, TimeoutError as BrowserTimeout
@@ -56,6 +57,26 @@ def event(stage: str, **details) -> None:
     print("QA EVENT " + stage + " " + json.dumps(details, sort_keys=True), flush=True)
 
 
+def reset_readiness_diagnostics(page) -> dict:
+    """Bounded allowlisted metadata only; never serialize DOM or session state."""
+    try:
+        return page.evaluate("""() => {
+            const nodes = document.querySelectorAll('[data-monthly-qa-reset-readiness]');
+            const hex = value => typeof value === 'string' && value.length === 12 &&
+                /^[0-9a-f]{12}$/.test(value) ? value : null;
+            return {receipt_count: nodes.length, receipts: [...nodes].slice(0, 8).map(node => ({
+                stale: Boolean(node.closest('[data-stale="true"]')),
+                status: ['ready', 'busy', 'unavailable'].includes(node.dataset.monthlyQaResetReadiness)
+                    ? node.dataset.monthlyQaResetReadiness : 'invalid',
+                generation: hex(node.dataset.generation),
+                observation: hex(node.dataset.observation)
+            }))};
+        }""")
+    except Exception:
+        # Do not mask the original failure or retain potentially private errors.
+        return {"unavailable": True}
+
+
 def state_diagnostics(page, action: str, error: Exception) -> None:
     # Never write a full page dump or internal exception paths. Only already
     # synthetic QA status captions and alert *kinds* may reach CI artifacts.
@@ -72,6 +93,7 @@ def state_diagnostics(page, action: str, error: Exception) -> None:
     diagnostics = {
         "action": action, "error_type": type(error).__name__,
         "qa_status": captions[-12:], "alert_kinds": safe_alerts,
+        "reset_readiness": reset_readiness_diagnostics(page),
     }
     # Synthetic QA only: diagnose visible-editor hydration against the
     # server-acknowledged Activity journal without recording any source text.
@@ -148,13 +170,118 @@ def load_fixture(page, mode: str, *, previous_generation: str | None = None) -> 
     return state
 
 
+def await_reset_admissible(page, from_state: dict, *, timeout: int = 40000) -> None:
+    """Wait before the one native reset; do not mistake script-idle for job-idle."""
+    deadline = time.monotonic() + timeout / 1000
+
+    def remaining():
+        budget = int((deadline - time.monotonic()) * 1000)
+        if budget <= 0:
+            raise BrowserTimeout("Synthetic reset readiness did not become idle in time.")
+        return budget
+
+    address, expected_origin = urlparse(page.url), urlparse(URL)
+    query = parse_qs(address.query)
+    if ((address.scheme, address.netloc) != (expected_origin.scheme, expected_origin.netloc)
+            or query.get("workflow") != ["monthly"] or query.get("monthly_qa") != ["isolated"]):
+        raise AssertionError("Reset readiness left the isolated synthetic route.")
+    from scripts.qa_public_build import running_code_marker
+    expect(running_code_marker(page, timeout=remaining())).to_have_text(
+        "Running code: " + EXPECTED, timeout=remaining())
+    state = await_fixture_state(page, from_state["mode"], timeout=remaining())
+    if state["generation"] != from_state["generation"]:
+        raise AssertionError("Reset readiness belongs to another fixture generation.")
+    # Full-script idle is only a prerequisite; it is NOT worker readiness.
+    # Require a fresh server observation after it, covering previews admitted
+    # below the QA controls during this full render.
+    page.wait_for_function("""() => document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state') === 'notRunning'""",
+                           timeout=remaining())
+    # Count ALL receipts, including stale copies awaiting retirement. A stale
+    # ready copy must not outvote a current busy copy or authorize any click.
+    receipt_predicate = """({generation, prior}) => {
+        const receipts = [...document.querySelectorAll('[data-monthly-qa-reset-readiness]')];
+        if (receipts.length !== 1) return false;
+        const node = receipts[0];
+        if (node.closest('[data-stale="true"]') ||
+            node.dataset.generation !== generation ||
+            !/^[0-9a-f]{12}$/.test(node.dataset.observation || '')) return false;
+        if (!['ready', 'busy', 'unavailable'].includes(node.dataset.monthlyQaResetReadiness) ||
+            node.dataset.observation.length !== 12 ||
+            (prior !== null && node.dataset.observation === prior)) return false;
+        return {observation: node.dataset.observation, status: node.dataset.monthlyQaResetReadiness};
+    }"""
+    receipt = page.wait_for_function(
+        receipt_predicate, arg={"generation": from_state["generation"], "prior": None},
+        timeout=remaining()).json_value()
+    while True:
+        # No unsolicited timer: each read-only server probe follows a real
+        # native button click after full-script idle in this same context.
+        page.wait_for_function("""() => document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state') === 'notRunning'""",
+                               timeout=remaining())
+        page.get_by_role("button", name="Check reset readiness", exact=True).click(timeout=remaining())
+        receipt = page.wait_for_function(
+            receipt_predicate, arg={"generation": from_state["generation"], "prior": receipt["observation"]},
+            timeout=remaining()).json_value()
+        if receipt["status"] == "ready":
+            # Metadata may arrive before its fragment finishes. Never start a
+            # full-app Reset until that run is idle and this exact observation
+            # is still the sole current receipt.
+            page.wait_for_function("""() => document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state') === 'notRunning'""",
+                                   timeout=remaining())
+            confirmed = page.wait_for_function(
+                receipt_predicate, arg={"generation": from_state["generation"], "prior": None},
+                timeout=remaining()).json_value()
+            if confirmed == receipt:
+                break
+            # A full render superseded the observation. Obtain another native
+            # probe rather than accepting possibly early readiness from it.
+            receipt = confirmed
+            if receipt["status"] == "ready":
+                continue
+        if receipt["status"] != "busy":
+            raise AssertionError("Synthetic reset readiness is unavailable for this generation.")
+        page.wait_for_timeout(min(250, remaining()))
+    # Recheck ownership after waiting. The server repeats its active-worker
+    # guard on the click, so a job starting after this receipt still fails safe.
+    state = await_fixture_state(page, from_state["mode"], timeout=remaining())
+    if state["generation"] != from_state["generation"]:
+        raise AssertionError("The fixture changed while waiting for reset readiness.")
+
+
+def await_reset_transition(page, from_state: dict, *, timeout: int = 40000) -> dict:
+    """Fail promptly on an explicit refusal; keep the original ack deadline."""
+    started = time.monotonic()
+    pattern = (r"^QA fixture state: empty · generation (?!" +
+               re.escape(from_state["generation"]) + r"\b)[0-9a-f]{12} · revision 0$")
+    outcome = page.wait_for_function(r"""pattern => {
+        const alerts = [...document.querySelectorAll('[data-testid="stAlert"]')];
+        if (alerts.some(node => /Test reset rejected:|Isolated reset could not be confirmed\./.test(node.textContent || '')))
+            return 'rejected';
+        const expected = new RegExp(pattern);
+        return [...document.querySelectorAll('p')].some(node => expected.test(node.textContent || '')) ? 'empty' : false;
+    }""", arg=pattern, timeout=timeout).json_value()
+    if outcome == "rejected":
+        raise AssertionError("The guarded synthetic reset was explicitly refused; no retry was attempted.")
+    remaining = max(1, timeout - int((time.monotonic() - started) * 1000))
+    return await_fixture_state(page, "empty", previous_generation=from_state["generation"],
+                               timeout=remaining)
+
+
 def reset_fixture(page, from_state: dict, stage: str) -> dict:
+    try:
+        await_reset_admissible(page, from_state)
+    except (AssertionError, BrowserTimeout) as exc:
+        state_diagnostics(page, "reset-readiness-" + stage, exc)
+        raise
     event("reset_requested", stage_id=stage, generation=from_state["generation"])
     page.get_by_role("button", name="Reset this test only", exact=True).click()
     # The Replay button existed before reset. Its visibility provided ZERO
     # evidence that reset was acknowledged, causing an apparent lost click.
-    state = await_fixture_state(page, "empty", previous_generation=from_state["generation"],
-                                timeout=40000)
+    try:
+        state = await_reset_transition(page, from_state, timeout=40000)
+    except (AssertionError, BrowserTimeout) as exc:
+        state_diagnostics(page, "reset-" + stage, exc)
+        raise
     ack = page.get_by_text(re.compile(
         r"^QA reset acknowledged: empty fixture · generation " + state["generation"] +
         r" · action [0-9a-f]{12}"

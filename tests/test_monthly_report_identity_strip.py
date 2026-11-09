@@ -62,6 +62,17 @@ def test_identity_strip_keeps_one_native_container_from_zero_sites_through_resel
         nodes = [node for node in app.main if node.type == 'flex_container'
                  and node.proto.id.endswith('-monthly_report_identity_sites')]
         assert len(nodes) == 1
+        # Put changing full-height text after the chooser, not above the next
+        # site press or inside an additional keyboard-dependent scroll viewport.
+        assert nodes[0].proto.height_config.use_content
+        assert not nodes[0].proto.flex_container.border
+        order = {id(node): index for index, node in enumerate(app.main)}
+        chooser = next(item for item in app.expander if item.label == 'Change report sites')
+        assert order[id(chooser)] < order[id(nodes[0])]
+        assert all(node is not nodes[0] for node in chooser)
+        for item in app.get('file_uploader'):
+            if item.label == 'Starting report':
+                assert order[id(nodes[0])] < order[id(item)]
         return nodes[0].proto.id
 
     initial = identity()
@@ -75,11 +86,38 @@ def test_identity_strip_keeps_one_native_container_from_zero_sites_through_resel
     assert identity() == initial
     assert any(first.label in item.value and second.label in item.value for item in app.caption)
     app.checkbox(keys[1]).uncheck().run()
+    assert identity() == initial
+    assert any(item.value == 'Site: ' + first.label for item in app.caption)
     app.checkbox(keys[0]).uncheck().run()
     assert identity() == initial
     assert any(item.value == 'Select report sites.' for item in app.caption)
     assert tuple(app.checkbox(key).proto.id for key in keys) == native
+    # Invalid selections still retain the same complete, visible summary slot.
+    custom = next(item for item in app.text_input if item.label == 'Site name')
+    custom.set_value('!!!').run()
+    assert identity() == initial
+    assert any(item.value == 'Select report sites.' for item in app.caption)
+    assert any('Give each new site a name' in item.value for item in app.warning)
+    long_name = 'Synthetic long site ' + 'extended identity ' * 20
+    app.text_input(custom.key).set_value(long_name).run()
+    assert identity() == initial
+    assert any(item.value == 'Site: ' + long_name.strip() for item in app.caption)
+    app.text_input(custom.key).set_value('').run()
+    assert identity() == initial
     assert not app.exception and library.list_profiles(RRH_CONTRACT) == ()
+
+
+def test_full_identity_caption_precedes_the_existing_report_editor(monkeypatch, tmp_path):
+    app = monthly(monkeypatch, tmp_path)
+    nodes = list(app.main)
+    identity = next(node for node in nodes if node.type == 'flex_container'
+                    and node.proto.id.endswith('-monthly_report_identity_sites'))
+    chooser = next(item for item in app.expander if item.label == 'Change report sites')
+    editor = next(item for item in app.text_area if item.label == 'Activity summary')
+    order = {id(node): index for index, node in enumerate(nodes)}
+    assert order[id(chooser)] < order[id(identity)] < order[id(editor)]
+    assert identity.proto.height_config.use_content
+    assert not app.exception
 
 
 def test_explicit_details_save_preserves_working_design_content_and_immutable_history(monkeypatch, tmp_path):

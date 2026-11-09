@@ -24,7 +24,7 @@ from xml.etree import ElementTree as XML
 from zipfile import ZipFile, ZIP_DEFLATED
 
 from defusedxml import ElementTree as ET
-import fitz
+import pymupdf as fitz
 from PIL import Image
 
 from app.monthly_report_render_compat import rendering_docx

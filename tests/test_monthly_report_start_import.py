@@ -70,7 +70,7 @@ def test_current_half_finished_report_keeps_completed_and_undated_work_without_k
 
 
 def test_earlier_report_rolls_monthly_content_forward_but_keeps_standing_contacts_and_ledger(tmp_path):
-    path = report_file(tmp_path, month="July 2026", activity=("Repaired the pump.",), photo=True, table=True)
+    path = report_file(tmp_path, month="July 2026", activity=("July 2026: Repaired the pump.",), photo=True, table=True)
     analysis, draft, _ = build(path)
     assert analysis.source_period == (2026, 7) and analysis.older_items
     assert not any(b.key == "activity_summary" for b in draft.blocks)
@@ -85,7 +85,7 @@ def test_earlier_report_rolls_monthly_content_forward_but_keeps_standing_contact
     assert next(b for b in draft.blocks if b.key == "contact_matrix").extra_tables[0].rows
     ledger = next(b for b in draft.blocks if b.key == "work_orders").extra_tables[0]
     assert ledger.rows == (("July 2026", "4"), ("August 2026", "8"))
-    assert "Repaired the pump." in " ".join(i.text for i in inspect_docx(path).items)
+    assert "July 2026: Repaired the pump." in " ".join(i.text for i in inspect_docx(path).items)
 
 
 def test_stale_cover_does_not_discard_current_work_or_undated_pictures(tmp_path):

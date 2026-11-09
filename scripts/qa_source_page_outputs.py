@@ -19,7 +19,7 @@ from tempfile import TemporaryDirectory
 from zipfile import ZipFile
 
 from docx import Document
-import fitz
+import pymupdf as fitz
 from pytest import MonkeyPatch
 
 from app import monthly_report_library as library, monthly_report_sources as sources, pdf_converter, web_ui
@@ -98,9 +98,10 @@ def _record(output, label, draft, saved, package, *, required_text, forbidden_te
         assert excluded not in xml, (label, "Old caption remains in a Word package part", excluded)
 
     # Re-open the delivered DOCX from disk and render it through the named
-    # LibreOffice path. This is a repeat rendering of saved bytes with the same
-    # backend, not a second independent renderer or Microsoft Word acceptance.
-    rendered = pdf_converter.convert_to_pdf(docx_path)
+    # LibreOffice path with final Monthly's lossless image setting. This repeats
+    # saved bytes with the same backend/export profile, not a second independent
+    # renderer or Microsoft Word acceptance.
+    rendered = pdf_converter.convert_to_pdf(docx_path, lossless_images=True)
     try:
         word_pdf = rendered.read_bytes()
     finally:

@@ -43,6 +43,7 @@ def test_historical_fingerprint_and_snapshot_are_preserved_during_migration():
     value.pop("client_asset_reviews")
     value.pop("asset_provenance")
     value.pop("asset_instances")
+    value.pop("cover_original")  # Absent from the historical serialized schema.
     historical = hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     value["client_reviewed_fingerprint"] = historical
     stored = json.dumps(value, sort_keys=True)

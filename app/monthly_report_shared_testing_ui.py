@@ -174,6 +174,15 @@ def _process_pending(library, browser_token, live_storage_root):
     pending = st.session_state.get(_PREFIX + "pending")
     if not pending:
         return
+    if pending["action"] == "template":
+        try:
+            from app.monthly_report_shared_templates_ui import save_pending
+            save_pending(live_storage_root, pending["upload_key"])
+        except (ValueError, OSError) as exc:
+            st.session_state[_PREFIX + "error"] = "The report template was not saved: " + str(exc)
+        finally:
+            st.session_state.pop(_PREFIX + "pending", None)
+        return
     if pending["action"] == "evidence_bundle":
         try:
             upload = st.session_state.get(_PREFIX + "evidence_bundle_file")
@@ -332,7 +341,7 @@ def _render_reference_bundle_shelf(live_storage_root):
             st.error("Shared source archive storage needs recovery. Existing files were not reset.")
             return
         if not saved:
-            st.info("No external-agent source archive is stored on Render yet.")
+            st.info("No external-agent source archive is stored yet.")
             return
         entries = {bundle.bundle_id: bundle for bundle in saved}
         chosen = st.selectbox("Stored source archive", tuple(entries),
@@ -387,7 +396,7 @@ def _render_synthetic_evidence_shelf(live_storage_root):
             st.error("Synthetic evidence storage needs recovery. No originals were removed.")
             return
         if not saved:
-            st.info("No synthetic evidence ZIP is stored on Render yet.")
+            st.info("No synthetic evidence ZIP is stored yet.")
             return
         entries = {item.bundle_id: item for item in saved}
         chosen = st.selectbox("Saved synthetic evidence archive", tuple(entries),
@@ -430,6 +439,8 @@ def render(browser_token, browser_timezone, field, move, live_storage_root):
     if error := st.session_state.pop(_PREFIX + "error", None):
         st.error(error)
     _render_upload()
+    from app.monthly_report_shared_templates_ui import render as render_templates
+    render_templates(live_storage_root)
     _render_reference_bundle_shelf(live_storage_root)
     _render_synthetic_evidence_shelf(live_storage_root)
     try:

@@ -26,7 +26,7 @@ from threading import RLock
 from uuid import uuid4
 from zipfile import ZipFile
 
-import fitz
+import pymupdf as fitz
 from PIL import Image, UnidentifiedImageError
 
 from app import monthly_report_testing as testing

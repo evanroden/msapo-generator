@@ -76,7 +76,7 @@ def test_cancel_saved_original_restores_current_cover_without_saving(
 
 def test_cancel_discards_only_saved_original_review_choices_and_reopens_cleanly(monkeypatch, tmp_path):
     app, _, stage_key, stage = _open_saved_review(monkeypatch, tmp_path)
-    scope = stage_key.removesuffix("_stage") + "_" + stage[2].sha256[:16] + "_"
+    scope = app.session_state[stage_key.removesuffix("_stage") + "_active_section_review"][1] + "_"
     plans_key = scope + "section_plans"
     next(b for b in app.button if b.label == "No cover photograph").click().run()
     assert not app.exception
@@ -129,7 +129,7 @@ def test_delayed_cancel_does_not_cancel_reopened_same_original(monkeypatch, tmp_
     assert app.session_state[stage_key][2].sha256 == stage[2].sha256
     assert app.session_state[token_key] != old_token
     next(b for b in app.button if b.label == "No cover photograph").click().run()
-    plans_key = stage_key.removesuffix("_stage") + "_" + stage[2].sha256[:16] + "_section_plans"
+    plans_key = app.session_state[stage_key.removesuffix("_stage") + "_active_section_review"][1] + "_section_plans"
     assert app.session_state[plans_key]["cover"]["cover_photo_omitted"]
     before = current(app)
     old_cancel.click().run()

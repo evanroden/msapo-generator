@@ -15,7 +15,7 @@ from app.monthly_report_asset_review import asset_fingerprint, normalize_asset_r
 
 
 MONTHLY_BLOCKS = frozenset({"work_orders", "activity_summary", "improvements", "mbcx_report", "service_calls",
-                          "vendor_reports", "water_reports", "training_summary", "accounts_receivable", "accounts_receivable_notes"})
+                          "vendor_reports", "water_monthly_update", "water_reports", "training_summary", "accounts_receivable", "accounts_receivable_notes"})
 PAGE_BLOCKS = frozenset({"vendor_reports", "water_reports", "mbcx_report"})
 PERIOD_REVIEW_BLOCKS = frozenset({"utility_analysis", "mbcx_status", "equipment_issues", "equipment_issues_evidence"})
 DECISIONS = ("Needs review", "Keep in report", "Save for reference", "Exclude from this draft")
@@ -160,10 +160,63 @@ def design_profile(profile, inspection, mappings, overrides=()):
         if s.key not in order:
             order.append(s.key)
         block_order.setdefault(s.key, [])
+        if (s.key == "water" and "water_reports" in block_order[s.key]
+                and "water_monthly_update" not in block_order[s.key]):
+            # A missing optional slot is a new default, not a user-selected
+            # trailing update. Preserve order when both slots were mapped.
+            block_order[s.key].insert(block_order[s.key].index("water_reports"), "water_monthly_update")
         block_order[s.key].extend(b.key for b in s.blocks if b.key not in block_order[s.key])
     return replace(profile, section_order=tuple(order), excluded_sections=tuple(s.key for s in skeleton if s.key not in included),
                    section_titles=tuple(found.items()), section_block_order=tuple((k, tuple(v)) for k, v in block_order.items()),
                    block_overrides=overrides, imported_from=inspection.sha256)
+
+
+def _contains_narrative_fragment(text: str, fragment: str) -> bool:
+    """Match a whole contribution without normalizing its internal wording."""
+    fragment = fragment.strip()
+    if not fragment:
+        return True
+
+    def boundary(position, step):
+        # Imports join contributions with blank lines. A soft line break or
+        # inline quotation does not establish a complete existing contribution.
+        newlines = 0
+        while 0 <= position < len(text) and text[position].isspace():
+            newlines += text[position] == "\n"
+            if newlines >= 2:
+                return True
+            position += step
+        return not 0 <= position < len(text)
+
+    start = text.find(fragment)
+    if start < 0:
+        return False
+    if boundary(start - 1, -1) and boundary(start + len(fragment), 1):
+        return True
+
+    # Continue overlapping matches without rescanning long repeated fragments.
+    # Each entry is the length of that prefix's matching proper suffix.
+    overlaps = [0] * len(fragment)
+    matched = 0
+    for position in range(1, len(fragment)):
+        while matched and fragment[position] != fragment[matched]:
+            matched = overlaps[matched - 1]
+        if fragment[position] == fragment[matched]:
+            matched += 1
+        overlaps[position] = matched
+
+    matched = overlaps[-1]
+    for position in range(start + len(fragment), len(text)):
+        while matched and text[position] != fragment[matched]:
+            matched = overlaps[matched - 1]
+        if text[position] == fragment[matched]:
+            matched += 1
+        if matched == len(fragment):
+            start = position + 1 - len(fragment)
+            if boundary(start - 1, -1) and boundary(position + 1, 1):
+                return True
+            matched = overlaps[matched - 1]
+    return False
 
 
 def merge_blocks(existing: ResolvedBlock | None, incoming: ResolvedBlock) -> ResolvedBlock:
@@ -178,7 +231,7 @@ def merge_blocks(existing: ResolvedBlock | None, incoming: ResolvedBlock) -> Res
             or (existing.org_nodes and incoming.org_nodes and existing.org_nodes != incoming.org_nodes)):
         raise ValueError("The incoming report has a different org chart. Keep it for reference and explicitly replace the existing chart after import; neither chart was overwritten.")
     text = existing.text
-    if incoming.text.strip() and incoming.text.strip() not in text:
+    if not _contains_narrative_fragment(text, incoming.text):
         text = "\n\n".join(t for t in (text, incoming.text) if t)
     from app.monthly_report_asset_instances import merge_picture_occurrences, with_asset_instances
     images, captions, instances = merge_picture_occurrences(existing, incoming)
@@ -423,7 +476,7 @@ def new_month_draft(draft: ReportDraft, period: ReportPeriod) -> ReportDraft:
         _carry_period_content(b, draft.period)
         if b.key == "equipment_issues" and (b.ai_written or b.ai_paragraphs) else
         _carry_period_content(preserve_asset_reviews(b, ResolvedBlock(
-                      b.key, "Omit" if b.key == "equipment_issues" and b.source == "Omit" else "This month",
+                      b.key, "Omit" if b.key in carried_keys and b.source == "Omit" else "This month",
                       photos_per_page=b.photos_per_page,
                       asset_hashes=b.asset_hashes if b.key in carried_keys else (),
                       asset_captions=b.asset_captions if b.key in carried_keys else (),
@@ -439,4 +492,4 @@ def new_month_draft(draft: ReportDraft, period: ReportPeriod) -> ReportDraft:
                                                *(r for p in b.ai_paragraphs for r in p.references))}
     references.update(r for item in follow_ups for r in item.references)
     sources = tuple(s for s in draft.sources if any(r == s.id or r.startswith(s.id + ":") for r in references))
-    return replace(draft, period=period, sources=sources, follow_ups=follow_ups, blocks=blocks)
+    return replace(draft, period=period, sources=sources, follow_ups=follow_ups, blocks=blocks, cover_recovery_request=None, source_row_reviews=())

@@ -39,9 +39,9 @@ def test_synthetic_fixture_uses_native_sidebar_and_only_session_navigation():
     assert len(app.get("link_button")) == 4
 
 
-def test_header_clearance_is_limited_to_narrow_workflows_with_a_sidebar():
+def test_header_clearance_covers_shared_shell_with_a_sidebar():
     selector = '.stApp:has([data-testid="stSidebar"]) .block-container {'
-    narrow = CUSTOM_CSS.split("@media (max-width: 1100px) {", 1)[1]
+    narrow = CUSTOM_CSS.split("@media (max-width: 1780px) {", 1)[1]
     assert narrow.lstrip().startswith(selector)
     assert "padding-top: 3.75rem !important;" in narrow.split(selector, 1)[1].split("}", 1)[0]
 

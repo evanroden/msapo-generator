@@ -226,6 +226,8 @@ def test_accepted_totals_summary_is_quiet_and_reopens_in_the_one_manager(monkeyp
     managers[0].click().run()
     assert not app.exception
     assert sum("work_orders.csv · Totals accepted" in item.value for item in app.caption) == 1
+    assert any("_source_manager_panel{display:block" in item.value for item in app.markdown)
     assert not any("Review the extracted text or spreadsheet content" in item.value for item in app.caption)
     app.run()
     assert sum("work_orders.csv · Totals accepted" in item.value for item in app.caption) == 1
+    assert any("_source_manager_panel{display:block" in item.value for item in app.markdown)
