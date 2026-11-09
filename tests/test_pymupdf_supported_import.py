@@ -13,7 +13,7 @@ import pymupdf
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE_DIRS = ("app", "scripts", "pages", "runtime")
+SOURCE_DIRS = ("app", "scripts", "pages", "runtime", "tests")
 
 
 def test_application_and_qa_use_supported_pymupdf_import_path():

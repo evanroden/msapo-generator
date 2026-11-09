@@ -391,7 +391,7 @@ def test_public_storage_guided_upload_keeps_manual_and_verified_work(monkeypatch
 
 @requires_libreoffice
 def test_public_storage_converted_pdf_keeps_safe_work_and_reading_without_invoice(monkeypatch, tmp_path):
-    import fitz
+    import pymupdf as fitz
     from app import pdf_converter
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "runtime"))
     monkeypatch.setattr(pdf_converter, "OUTPUT_DIR", tmp_path)

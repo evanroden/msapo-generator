@@ -9,7 +9,7 @@ from app.reference_preview import render_reference
 
 @st.cache_data
 def synthetic_pdf(section):
-    import fitz
+    import pymupdf as fitz
     with fitz.open() as document:
         for index in range(2):
             page = document.new_page()
