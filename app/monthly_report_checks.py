@@ -20,6 +20,7 @@ from app.monthly_report_model import (
     used_block_keys,
     used_source_ids,
 )
+from app.monthly_report_page_reference import page_identity
 
 
 @dataclass(frozen=True)
@@ -247,8 +248,9 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                             tuple(picture_target(draft, block, n)
                                   for n in range(len(block.asset_hashes))
                                   if reference in asset_context(block, n))))
-                    if source and reference in image_references and len(parts) == 3 and parts[1].isdigit():
-                        page = int(parts[1])
+                    identity = page_identity(reference)
+                    if source and reference in image_references and identity is not None:
+                        page = identity[1]
                         page_captions = tuple(block.asset_captions[index] if index < len(block.asset_captions) else ""
                                               for index in range(len(block.asset_hashes))
                                               if reference in asset_context(block, index))
