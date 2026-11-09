@@ -116,9 +116,18 @@ def annual_grid_matches_profile(table: ReportTable, profile) -> bool:
     """Foreign/unknown site membership is a review task, not silent inclusion."""
     if not profile or not getattr(profile, "facilities", ()) or not table.rows:
         return False
-    permitted = {_normalized(value) for site in profile.facilities
-                 for value in (site.title, *site.aliases) if _normalized(value)}
-    return all(_normalized(row[1]) in permitted for row in table.rows)
+    # A valid profile can have a facility key identical to another site's
+    # title/alias. Membership in the union of labels cannot establish which
+    # site's annual counts the source row describes.
+    owners = {}
+    for site in profile.facilities:
+        for value in (site.key, site.title, *site.aliases):
+            if not isinstance(value, str):
+                continue
+            label = _normalized(value)
+            if label:
+                owners.setdefault(label, set()).add(site.key)
+    return all(len(owners.get(_normalized(row[1]), ())) == 1 for row in table.rows)
 
 
 def annual_header_cells(table: ReportTable) -> frozenset[tuple[int, int]]:

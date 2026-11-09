@@ -9,6 +9,8 @@ all source selection, review and generation gates remain separate.
 from dataclasses import replace
 import re
 
+from app.monthly_report_page_reference import page_identity
+
 
 def document_page_indexes(block, sources):
     if block.key != 'improvements':
@@ -34,10 +36,11 @@ def document_page_indexes(block, sources):
         if len(plain) != 1 or plain[0] not in block.references:
             continue
         parts = plain[0].split(':')
-        if len(parts) != 3 or not parts[1].isdigit() or source_ids.count(parts[0]) != 1:
+        identity = page_identity(plain[0])
+        if identity is None or source_ids.count(identity[0]) != 1:
             continue
-        source = next(source for source in sources if source.id == parts[0])
-        number = int(parts[1])
+        source = next(source for source in sources if source.id == identity[0])
+        number = identity[1]
         if not (source.suffix == '.pdf' and 1 <= number <= len(source.page_texts)
                 and number in source.selected_pages):
             continue
