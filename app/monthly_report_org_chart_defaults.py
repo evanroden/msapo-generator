@@ -4,11 +4,16 @@ Reports contain copies, not live pointers. Existing profile charts remain local
 until the operator explicitly publishes them at the displayed scope.
 """
 from dataclasses import asdict, dataclass, replace
+from io import BytesIO
 import hashlib
 import re
+
+from PIL import Image
+
 from app import monthly_report_library as library
 from app.monthly_report_asset_review import approve_all_assets, asset_context, pending_asset_indexes, refresh_asset_source_context
 from app.monthly_report_model import ResolvedBlock
+from app.monthly_report_page_reference import page_identity
 
 @dataclass(frozen=True)
 class ChartDefault:
@@ -70,6 +75,8 @@ def load_defaults(contract):
         if type(data['revision']) is not int or data['revision'] < 1 or len({v.site_key for v in items}) != len(items):
             raise ValueError('Invalid revision or duplicate scope')
         for item in items:
+            if not isinstance(item.site_key,str):
+                raise ValueError('Invalid chart scope')
             if item.site_key:
                 library._valid_key(item.site_key)
             if not eligible(item.block) or not item.origin_profile or not item.origin_fingerprint or not item.saved_at:
@@ -90,6 +97,22 @@ def _verify(reference, raw):
     if (not library._ASSET.fullmatch(reference) or len(raw) > library.MAX_ASSET_BYTES
             or library.asset_reference(raw,reference.rsplit('.',1)[-1]) != reference):
         raise library.LibraryError('Chart picture failed its size or integrity check.')
+    # A filename that hashes correctly is not necessarily a decodable picture.
+    # Inspect only the bounded copy, including on saved-default readback.
+    expected = 'PNG' if reference.endswith('.png') else 'JPEG'
+    try:
+        with Image.open(BytesIO(raw)) as picture:
+            if picture.format != expected:
+                raise ValueError('The chart image does not match its saved file type.')
+            picture.verify()
+        if expected == 'JPEG':
+            # JPEG verify() accepts some truncated scans; a draft-resolution
+            # decode checks the complete stream without full-size expansion.
+            with Image.open(BytesIO(raw)) as picture:
+                picture.draft('RGB', (1024, 1024))
+                picture.load()
+    except (OSError, ValueError, SyntaxError, Image.DecompressionBombError) as exc:
+        raise library.LibraryError('A chart picture is not a readable PNG or JPEG.') from exc
     return raw
 
 
@@ -114,9 +137,10 @@ def source_pages_allowed(block, sources, profile):
         if ref.startswith(('docx:','contract-org-chart:v1:','asset-source-context:v1:')):
             continue
         parts = ref.split(':')
-        if len(parts) != 3 or not parts[1].isdigit() or not re.fullmatch(r'[a-f0-9]{64}',parts[2]):
+        identity = page_identity(ref)
+        if identity is None or not re.fullmatch(r'[a-f0-9]{64}',parts[2]):
             return False
-        source, page = index.get(parts[0]), int(parts[1])
+        source, page = index.get(identity[0]), identity[1]
         if source is None or page not in source.selected_pages or not 1 <= page <= len(source.page_texts) or not page_allowed(source,page) or not visual_source_scope_valid(source,profile,artwork_keys=(block.key,)):
             return False
     return True
@@ -152,7 +176,8 @@ def save_default(draft, block, assets, *, scope, expected_revision, expected_fin
         for ref,raw in prepared.items():
             target=path/'assets'/ref
             if target.exists():
-                _verify(ref,target.read_bytes())
+                with target.open('rb') as source:
+                    _verify(ref,source.read(library.MAX_ASSET_BYTES + 1))
             else:
                 library._atomic_write(target,raw)
         raw=library._json({'schema':1,'contract':_contract(draft.profile.contract),'actor':actor,**asdict(state)})

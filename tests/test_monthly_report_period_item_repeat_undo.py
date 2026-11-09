@@ -70,7 +70,8 @@ def test_partial_restore_keeps_other_removed_occurrence_out_after_reimport():
     # The same source block returns two literal lines after import/merge.
     replayed = replace(once, text=OLD + "\n" + OLD)
     reconciled = apply_exclusions(replayed, PERIOD)
-    assert reconciled.text == OLD
+    # Removing the second occurrence must preserve the first line's original newline.
+    assert reconciled.text == OLD + "\n"
     assert len(receipts(reconciled)) == 1
     assert exclusions(reconciled, PERIOD)[0]["remaining"] == 1
     assert restore(reconciled).text == OLD + "\n" + OLD

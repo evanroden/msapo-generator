@@ -48,9 +48,10 @@ def canonical_issues(draft):
     spec = specs.get(block.key)
     tables = [(tuple(c.title for c in spec.columns) if spec else (), block.rows, "")]
     tables += [(table.columns, table.rows, table.reference) for table in block.extra_tables]
-    # Accepted register rows have a source-row identity separate from their
+    # Accepted table rows have a source-row identity separate from their
     # editable text. Reimporting that source must not recreate a changed card.
     candidates = [(text, block.references, None, "ongoing", "", "", "") for text in texts]
+    row_occurrences = {}
     for columns, rows, reference in tables:
         from app.monthly_report_issue_register import mapped_issue_register
         mapped = mapped_issue_register(columns, rows, reference)
@@ -62,28 +63,35 @@ def canonical_issues(draft):
         width = max((len(row) for row in rows), default=len(columns))
         columns = (*columns, *(f"Detail {n + 1}" for n in range(len(columns), width)))
         prices = table_price_columns(columns, rows)
-        for row in rows:
+        for index, row in enumerate(rows):
             text = "; ".join(f"{columns[n]}: {value}" for n, value in enumerate(row)
                              if n not in prices and value.strip())
             if text:
+                # Keep physical rows even when their visible wording matches.
+                # Count equal source-row identities, rather than table position,
+                # so unrelated tables can move without recreating edited cards.
+                identity = _digest(("issue-table-row-v1", reference, index, columns, row))
+                occurrence = row_occurrences.get(identity, 0)
+                row_occurrences[identity] = occurrence + 1
+                row_key = "follow-" + _digest((identity, occurrence))[:20]
                 candidates.append((text, (*block.references, *((reference,) if reference else ())),
-                                   None, "ongoing", "", "", ""))
+                                   row_key, "ongoing", "", text, reference))
     items = list(draft.follow_ups)
     keys = {item.key for item in items if item.category == "issue"}
     seen = {item.text.strip() for item in items if item.category == "issue"}
     statements = []
-    for text, references, register_key, status, update, legacy_text, table_reference in candidates:
+    for text, references, row_key, status, update, legacy_text, table_reference in candidates:
         if _no_equipment_issues(text):
             if _REMOVED_STATEMENT + _digest(text) not in block.references:
                 statements.append(text)
             continue
-        key = register_key or issue_key(text)
+        key = row_key or issue_key(text)
         # Two separate, identical source rows remain distinct. A repeated
         # import of one accepted row is recognized by its original row ID;
         # later card text/status edits do not change that identity.
-        if key in keys or (register_key is None and text.strip() in seen):
+        if key in keys or (row_key is None and text.strip() in seen):
             continue
-        if register_key and any(
+        if row_key and any(
             item.category == "issue" and item.key == issue_key(legacy_text)
             and (not table_reference or not item.references or table_reference in item.references)
             for item in legacy_items
@@ -727,10 +735,14 @@ def _render_issue_evidence(item, draft, options, p, field, prefix, cycle):
                               p + "_note", note, field, identity=identity, cycle=cycle, height=90, max_chars=4000)
     _render_issue_period_confirmation(item, draft, p, identity, cycle, prefix)
     if options or references:
+        source_key = p + "_sources_" + _digest(list(options))
         selected = _issue_control(st.multiselect, "Supporting source pages",
-            p + "_sources_" + _digest(list(options)),
-            [ref for ref in references if ref in options], field,
-            identity=identity, cycle=cycle, options=list(options), format_func=options.get) if options else []
+            source_key, [ref for ref in references if ref in options], field,
+            identity=identity, cycle=cycle, options=list(options),
+            format_func=options.get) if options else []
+        if options:
+            from app.monthly_report_issue_page_gallery import render_page_gallery
+            render_page_gallery(draft, options, selected, p, source_key, identity, field)
         missing = tuple(ref for ref in references if ref not in options)
         if missing:
             notice = st.empty()
