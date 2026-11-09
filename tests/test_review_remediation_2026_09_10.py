@@ -531,3 +531,93 @@ def test_receipt_section_suggestion_respects_explicit_choice(
     )
     app.run()
     assert section().value == expected
+
+
+
+@pytest.mark.parametrize(
+    ("status_code", "expected_attempts"),
+    [(401, 1), (429, 3), (529, 3)],
+)
+def test_quote_api_transient_statuses_have_bounded_retries(
+    monkeypatch, status_code, expected_attempts
+):
+    """401 fails immediately; rate limiting and overload share one retry owner."""
+    calls, sleeps = [], []
+
+    def reply(request):
+        calls.append(request)
+        return httpx.Response(
+            status_code,
+            json={"error": {"type": "api_error", "message": "synthetic"}},
+            request=request,
+        )
+
+    monkeypatch.setattr(api_retry.time, "sleep", sleeps.append)
+    with anthropic.Anthropic(
+        api_key="synthetic",
+        max_retries=0,
+        http_client=httpx.Client(transport=httpx.MockTransport(reply)),
+    ) as client:
+        with pytest.raises(anthropic.APIStatusError):
+            quote_analyzer._call_api_with_retry(client, "synthetic quote")
+    assert len(calls) == expected_attempts
+    assert sleeps == ([3, 6] if expected_attempts == 3 else [])
+
+
+def test_retired_quote_model_404_names_configuration_without_retry(monkeypatch):
+    """An obsolete environment override must be identifiable from the UI detail."""
+    configured_model = "claude-synthetic-retired"
+    monkeypatch.setattr(quote_analyzer, "ANTHROPIC_MODEL", configured_model)
+    calls = []
+
+    def missing(request):
+        calls.append(request)
+        return httpx.Response(
+            404,
+            json={"error": {"type": "not_found_error", "message": "model not found"}},
+            request=request,
+        )
+
+    with anthropic.Anthropic(
+        api_key="synthetic",
+        max_retries=0,
+        http_client=httpx.Client(transport=httpx.MockTransport(missing)),
+    ) as client:
+        with pytest.raises(api_retry.ModelUnavailableError) as error:
+            quote_analyzer._call_api_with_retry(client, "synthetic quote")
+
+    message = str(error.value)
+    assert configured_model in message
+    assert "ANTHROPIC_MODEL" in message
+    assert "Render" in message
+    assert len(calls) == 1
+
+
+def test_retired_ocr_model_404_names_configuration_without_retry(monkeypatch):
+    """OCR uses the same model diagnostic, including before quote parsing begins."""
+    configured_model = "claude-synthetic-retired"
+    monkeypatch.setattr(ocr, "ANTHROPIC_MODEL", configured_model)
+    real_client = anthropic.Anthropic
+    calls = []
+
+    def missing(request):
+        calls.append(request)
+        return httpx.Response(
+            404,
+            json={"error": {"type": "not_found_error", "message": "model not found"}},
+            request=request,
+        )
+
+    def client(**kwargs):
+        return real_client(
+            api_key="synthetic",
+            max_retries=kwargs["max_retries"],
+            http_client=httpx.Client(transport=httpx.MockTransport(missing)),
+        )
+
+    monkeypatch.setattr(ocr.anthropic, "Anthropic", client)
+    with pytest.raises(api_retry.ModelUnavailableError) as error:
+        ocr._ocr_request([{"type": "text", "text": "Synthetic quote"}])
+
+    assert configured_model in str(error.value)
+    assert len(calls) == 1
