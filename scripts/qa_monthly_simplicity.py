@@ -223,7 +223,9 @@ def exercise(engine, name, record):
         record["phase"] = "ordinary empty report"
         page.goto(URL, wait_until="domcontentloaded")
         expect(page).to_have_title("Monthly report · ENFRA Process Control", timeout=30000)
+        capture("fresh-contract-discovery")
         page.get_by_role("button", name=CONTRACT, exact=True).click()
+        capture("fresh-site-selection")
         site = page.get_by_role("checkbox", name=SITE, exact=True)
         site.locator("xpath=ancestor::label[1]").click()
         select(page, "Reporting month", "September")
@@ -232,6 +234,7 @@ def exercise(engine, name, record):
         actor = page.get_by_role("textbox", name="Your name", exact=True)
         actor.fill(ACTOR)
         actor.press("Tab")
+        capture("fresh-start-ready")
         page.get_by_role("button", name="Start this report", exact=True).click()
         expect(page.locator(PANEL)).to_be_visible(timeout=45000)
         settled(page)
