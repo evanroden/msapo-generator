@@ -252,7 +252,7 @@ def _text_tables(text, name):
     # Keep edge tabs as empty cells until the table's delimiter is established.
     lines = [line if "\t" in line else line.strip() for line in text.splitlines() if line.strip()]
     groups, current, delimiter = [], [], None
-    for line in lines:
+    for index, line in enumerate(lines):
         stripped = line.strip()
         # Preserve indentation around existing pipe/space tables and captions.
         # A TSV header instead makes edge tabs structural, including pipe cells.
@@ -265,6 +265,14 @@ def _text_tables(text, name):
             row = tuple(part.strip() for part in line.strip("|").split("|"))
         else:
             row = tuple(re.split(r"\s{2,}", line))
+        # A Markdown alignment row belongs to its pipe header. Retain the
+        # active table and all #716 TAB/blank-cell delimiter handling.
+        if (len(current) == 1 and delimiter == "text" and len(row) == len(current[0])
+                and index > 0 and "|" in line and "\t" not in line
+                and "|" in lines[index - 1].strip()
+                and "\t" not in lines[index - 1].strip()
+                and all(re.fullmatch(r":?-{3,}:?", cell.strip()) for cell in row)):
+            continue
         if len(row) > 1 and not all(re.fullmatch(r"[:\- ]*", c) for c in row):
             if delimiter is None:
                 if "\t" in stripped:
