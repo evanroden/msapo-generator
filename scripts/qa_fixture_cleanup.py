@@ -29,7 +29,7 @@ from scripts import qa_shared_fixture_testing as shared
 
 OUT = ROOT / "test-artifacts" / "fixture-cleanup"
 ORIGIN, URL = shared.ORIGIN, shared.URL
-SCENARIOS = ("source-failure", "return-during-rollback", "partial-crash", "corrupt-journal", "quota")
+SCENARIOS = ("source-failure", "return-during-rollback", "partial-crash", "corrupt-journal", "quota", "active-selection")
 CONTROL = "_cleanup_harness"
 SOURCE = Path("_enfra_fixture_start_v1/starting-report/source.docx")
 QA_BUCKET = "_enfra_monthly_report_qa_v1"
@@ -231,20 +231,29 @@ def install_faults(base):
     testing.recover_set_aside = recover
 
 
-def seed(base):
+def seed(base, *, second=False):
     require_clean_configuration()
     base = guarded_root(base)
     from app import monthly_report_fixture_vault as vault
     from app.monthly_report_shared_fixtures import SharedFixtureLibrary
     source = shared.synthetic_docx()
+    if second:
+        from io import BytesIO
+        from docx import Document
+        document = Document(BytesIO(source))
+        document.add_paragraph("SECOND SYNTHETIC FIXTURE: distinct bytes for label identity checks.")
+        stream = BytesIO()
+        document.save(stream)
+        source = stream.getvalue()
+    friendly_name = "Synthetic selected fixture B" if second else "Synthetic cleanup DOM"
     identity = vault.ReportIdentity("Synthetic Testing Contract", ("synthetic-site-a",), "2026-10", ("Synthetic Site A",))
-    metadata = vault.FixtureMetadata("Synthetic cleanup DOM", identity, identity, "AUTH03",
+    metadata = vault.FixtureMetadata(friendly_name, identity, identity, "AUTH03",
         "Preserve synthetic incomplete work.", (vault.ExpectedSection("Activity", includes=("synthetic pump",)),),
         "2026-11-06T00:00:00+00:00", True)
     receipt = SharedFixtureLibrary(base).upload(source, metadata)
     (base / "synthetic-live-canary").write_text("Synthetic ordinary-root record must remain unchanged")
     return {"original_sha256": sha256(source).hexdigest(), "fixture_id": receipt.fixture_id,
-            "original_size": len(source)}
+            "original_size": len(source), "friendly_name": friendly_name}
 
 
 def age(base, cookie):
@@ -343,6 +352,9 @@ def exercise(engine, name, scenario, output):
         (base / shared.GUARD_LOG).write_text("")
         (base / CONTROL).mkdir()
         record["fixture"] = seed(base)
+        if scenario == "active-selection":
+            record["second_fixture"] = seed(base, second=True)
+            assert record["second_fixture"]["original_sha256"] != record["fixture"]["original_sha256"]
         cookies = {key: new_cookie() for key in "abc"}
         original = snapshot(base, cookies["a"])
         server = Server(base, output)
@@ -407,14 +419,28 @@ def exercise(engine, name, scenario, output):
                     expect(current.get_by_role("textbox", name="Your name", exact=True)).to_be_visible(timeout=60000)
                     shared.idle(current)
 
-            def download_original(current, label):
+            def select_fixture(current, fixture):
+                control = current.get_by_role("combobox", name="Shared fixture", exact=True)
+                expected_label = fixture["friendly_name"] + " · " + fixture["fixture_id"][:8]
+                control.click()
+                current.get_by_role("option", name=expected_label, exact=True).click()
+                expect(control).to_have_value(expected_label)
+                scope = fixture["fixture_id"] + "_" + fixture["original_sha256"][:16]
+                expect(current.locator(".st-key-_shared_fixture_start_" + scope)).to_be_visible()
+                expect(current.locator(".st-key-_shared_fixture_download_" + scope)).to_be_visible()
+                shared.idle(current)
+
+            def download_original(current, label, fixture=None):
+                fixture = fixture or record["fixture"]
+                scope = fixture["fixture_id"] + "_" + fixture["original_sha256"][:16]
+                expect(current.locator(".st-key-_shared_fixture_download_" + scope)).to_be_visible()
                 with current.expect_download() as pending:
                     current.get_by_role("button", name="Download unchanged original", exact=True).click()
                 downloaded = base / CONTROL / (label + ".docx")
                 pending.value.save_as(downloaded)
                 value = digest(downloaded)
-                assert value == record["fixture"]["original_sha256"]
-                record.setdefault("original_downloads", []).append({"label": label, "sha256": value})
+                assert value == fixture["original_sha256"]
+                record.setdefault("original_downloads", []).append({"label": label, "fixture_id": fixture["fixture_id"], "sha256": value})
                 downloaded.unlink()
 
             def preserved(before, key="a"):
@@ -426,131 +452,139 @@ def exercise(engine, name, scenario, output):
             page = session("a")
             expect(page.get_by_text("Anyone with this link can upload, view and download these files without a login. The fixture library is shared; this browser’s report workspace is isolated.", exact=True)).to_be_visible()
             expect(page.get_by_text("Reset clears this browser’s disposable report run. Shared originals remain available.", exact=True)).to_be_visible()
+            if scenario == "active-selection":
+                select_fixture(page, record["fixture"])
             start(page)
             a_before = snapshot(base, cookies["a"])
             assert a_before["source_sha256"] == record["fixture"]["original_sha256"]
             capture("native-stage-and-disclosure", page)
             download_original(page, "before-fault")
-            # Close A before artificial aging; no background session refresh can
-            # turn the intended idle fixture into an accidental active fixture.
-            page.close()
-            page = session("b")
-            if scenario == "quota":
-                record["quota_setup"] = fill_budget(base)
-                full = snapshot(base, cookies["a"])["reservations"]
-                start(page, succeeds=False)
-                expect(page.get_by_text("128 MiB budget", exact=False)).to_be_visible()
-                expect(page.get_by_text("Copies unused for 24 hours are cleared automatically.", exact=False)).to_be_visible()
-                shared.idle(page)
-                assert snapshot(base, cookies["b"])["source_sha256"] is None
-                assert preserved(a_before)["reservations"] == full
-                capture("quota-disclosure", page)
+            if scenario == "active-selection":
+                active_selection_journey(base, cookies, page, record, session, start,
+                                         select_fixture, download_original, capture)
+                # Final common original witness remains source-bound to A.
+                select_fixture(page, record["fixture"])
             else:
-                age(base, cookies["a"])
-                mode = {"source-failure": "source-failure", "return-during-rollback": "pause-fail-index"}.get(scenario, "crash-partial")
-                arm(base, cookies["b"], mode)
-                start(page, succeeds=False)
-                if mode == "pause-fail-index":
-                    wait_until(lambda: (base / CONTROL / "paused").exists(),
-                               dispatch_events=page.wait_for_timeout, label="pre-index pause entered")
-                    returned = session("a", recovering=True)
-                    hidden = snapshot(base, cookies["a"])
-                    assert not hidden["exists"] and len(hidden["tombstones"]) == 1
-                    capture("return-fails-closed-during-admission", returned)
-                    (base / CONTROL / "release").write_text("release synthetic failure")
-                if mode != "crash-partial":
-                    message = "SYNTHETIC pre-index failure" if mode == "pause-fail-index" else "SYNTHETIC source-write failure"
-                    expect(page.get_by_text(message, exact=False)).to_be_visible(timeout=60000)
-                    shared.idle(page)
-                    after = preserved(a_before)
-                    assert after["reservations"] == a_before["reservations"] and not after["journal"]
-                    failed = snapshot(base, cookies["b"])
-                    assert failed["source_sha256"] is None and not failed["pending_entries"]
-                    assert not failed["tombstones"] and not failed["discarding"]
-                    capture("failed-admission-preserves-before", page)
-                    returned = session("a")  # Real return refreshes A before B's distinct success.
-                    start(page)
-                    preserved(a_before)
-                    assert snapshot(base, cookies["b"])["source_sha256"] == a_before["source_sha256"]
-                    capture("native-retry-success", page)
-                    b_marker = snapshot(base, cookies["b"])["generation_marker"]
-                    page.get_by_role("button", name="Reset this test workspace", exact=True).click()
-                    expect(page.get_by_role("textbox", name="Your name", exact=True)).not_to_be_visible()
-                    wait_until(lambda: poll_generation(base, cookies["b"]) not in (None, "", b_marker),
-                               dispatch_events=page.wait_for_timeout, label="native B Reset generation")
+                # Close A before artificial aging; no background session refresh can
+                # turn the intended idle fixture into an accidental active fixture.
+                page.close()
+                page = session("b")
+                if scenario == "quota":
+                    record["quota_setup"] = fill_budget(base)
+                    full = snapshot(base, cookies["a"])["reservations"]
+                    start(page, succeeds=False)
+                    expect(page.get_by_text("128 MiB budget", exact=False)).to_be_visible()
+                    expect(page.get_by_text("Copies unused for 24 hours are cleared automatically.", exact=False)).to_be_visible()
                     shared.idle(page)
                     assert snapshot(base, cookies["b"])["source_sha256"] is None
-                    preserved(a_before)
-                    capture("native-scoped-reset", page)
+                    assert preserved(a_before)["reservations"] == full
+                    capture("quota-disclosure", page)
                 else:
-                    wait_until(lambda: server.process.poll() is not None,
-                               dispatch_events=page.wait_for_timeout, label="native partial process exit")
-                    assert server.process.returncode == 23 and (base / CONTROL / "crashed").exists()
-                    server.stop()
-                    hidden = snapshot(base, cookies["a"])
-                    assert hidden["journal"] and len(hidden["tombstones"]) == 1 and not hidden["exists"]
-                    if scenario == "corrupt-journal":
-                        (base / ADMISSION / JOURNAL).write_text('{"schema":2}')
-                    recovery_before = snapshot(base, cookies["a"])
-                    def unchanged_recovery():
-                        observed = snapshot(base, cookies["a"])
-                        for field in ("tombstones", "discarding", "reservations", "index_sha256", "journal_sha256"):
-                            assert observed[field] == recovery_before[field], field
-                    # Close all dead sessions before restart: old clients must not
-                    # reconnect and race test setup or repeat a pending callback.
-                    for current in contexts:
-                        for dead_page in current.pages:
-                            dead_page.close()
-                    server.start()
-                    returned = session("a", recovering=True)
-                    capture("return-blocked-after-crash", returned)
-                    page = session("c")
+                    age(base, cookies["a"])
+                    mode = {"source-failure": "source-failure", "return-during-rollback": "pause-fail-index"}.get(scenario, "crash-partial")
+                    arm(base, cookies["b"], mode)
                     start(page, succeeds=False)
-                    blocked = "Fixture installation recovery metadata is invalid." if scenario == "corrupt-journal" else "requires its browser's scoped reset"
-                    expect(page.get_by_text(blocked, exact=False)).to_be_visible()
-                    capture("unrelated-start-blocked", page)
-                    unchanged_recovery()
-                    # Unrelated Reset neither clears the journal nor old copy.
-                    unrelated_marker = snapshot(base, cookies["c"])["generation_marker"]
-                    page.get_by_role("button", name="Reset this test workspace", exact=True).click()
-                    wait_until(lambda: poll_generation(base, cookies["c"]) not in (None, "", unrelated_marker),
-                               dispatch_events=page.wait_for_timeout, label="unrelated native C Reset generation")
-                    shared.idle(page)
-                    assert snapshot(base, cookies["a"])["tombstones"] == hidden["tombstones"]
-                    unchanged_recovery()
-                    affected = session("b")
-                    expect(affected.get_by_role("button", name="Reset this test workspace", exact=True)).to_be_visible()
-                    marker = snapshot(base, cookies["b"])["generation_marker"]
-                    affected.get_by_role("button", name="Reset this test workspace", exact=True).click()
-                    wait_until(lambda: poll_generation(base, cookies["b"]) not in (None, "", marker),
-                               dispatch_events=affected.wait_for_timeout, label="affected native B Reset generation")
-                    shared.idle(affected)
-                    capture("affected-reset-reachable", affected)
-                    assert (base / ADMISSION / JOURNAL).exists()
-                    unchanged_recovery()
-                    (base / CONTROL / "restored.jsonl").write_text("")
-                    start(page, succeeds=scenario != "corrupt-journal")
-                    if scenario == "corrupt-journal":
+                    if mode == "pause-fail-index":
+                        wait_until(lambda: (base / CONTROL / "paused").exists(),
+                                   dispatch_events=page.wait_for_timeout, label="pre-index pause entered")
+                        returned = session("a", recovering=True)
+                        hidden = snapshot(base, cookies["a"])
+                        assert not hidden["exists"] and len(hidden["tombstones"]) == 1
+                        capture("return-fails-closed-during-admission", returned)
+                        (base / CONTROL / "release").write_text("release synthetic failure")
+                    if mode != "crash-partial":
+                        message = "SYNTHETIC pre-index failure" if mode == "pause-fail-index" else "SYNTHETIC source-write failure"
+                        expect(page.get_by_text(message, exact=False)).to_be_visible(timeout=60000)
+                        shared.idle(page)
+                        after = preserved(a_before)
+                        assert after["reservations"] == a_before["reservations"] and not after["journal"]
+                        failed = snapshot(base, cookies["b"])
+                        assert failed["source_sha256"] is None and not failed["pending_entries"]
+                        assert not failed["tombstones"] and not failed["discarding"]
+                        capture("failed-admission-preserves-before", page)
+                        returned = session("a")  # Real return refreshes A before B's distinct success.
+                        start(page)
+                        preserved(a_before)
+                        assert snapshot(base, cookies["b"])["source_sha256"] == a_before["source_sha256"]
+                        capture("native-retry-success", page)
+                        b_marker = snapshot(base, cookies["b"])["generation_marker"]
+                        page.get_by_role("button", name="Reset this test workspace", exact=True).click()
+                        expect(page.get_by_role("textbox", name="Your name", exact=True)).not_to_be_visible()
+                        wait_until(lambda: poll_generation(base, cookies["b"]) not in (None, "", b_marker),
+                                   dispatch_events=page.wait_for_timeout, label="native B Reset generation")
+                        shared.idle(page)
+                        assert snapshot(base, cookies["b"])["source_sha256"] is None
+                        preserved(a_before)
+                        capture("native-scoped-reset", page)
+                    else:
+                        wait_until(lambda: server.process.poll() is not None,
+                                   dispatch_events=page.wait_for_timeout, label="native partial process exit")
+                        assert server.process.returncode == 23 and (base / CONTROL / "crashed").exists()
+                        server.stop()
+                        hidden = snapshot(base, cookies["a"])
+                        assert hidden["journal"] and len(hidden["tombstones"]) == 1 and not hidden["exists"]
+                        if scenario == "corrupt-journal":
+                            (base / ADMISSION / JOURNAL).write_text('{"schema":2}')
+                        recovery_before = snapshot(base, cookies["a"])
+                        def unchanged_recovery():
+                            observed = snapshot(base, cookies["a"])
+                            for field in ("tombstones", "discarding", "reservations", "index_sha256", "journal_sha256"):
+                                assert observed[field] == recovery_before[field], field
+                        # Close all dead sessions before restart: old clients must not
+                        # reconnect and race test setup or repeat a pending callback.
+                        for current in contexts:
+                            for dead_page in current.pages:
+                                dead_page.close()
+                        server.start()
+                        returned = session("a", recovering=True)
+                        capture("return-blocked-after-crash", returned)
+                        page = session("c")
+                        start(page, succeeds=False)
+                        blocked = "Fixture installation recovery metadata is invalid." if scenario == "corrupt-journal" else "requires its browser's scoped reset"
                         expect(page.get_by_text(blocked, exact=False)).to_be_visible()
+                        capture("unrelated-start-blocked", page)
+                        unchanged_recovery()
+                        # Unrelated Reset neither clears the journal nor old copy.
+                        unrelated_marker = snapshot(base, cookies["c"])["generation_marker"]
+                        page.get_by_role("button", name="Reset this test workspace", exact=True).click()
+                        wait_until(lambda: poll_generation(base, cookies["c"]) not in (None, "", unrelated_marker),
+                                   dispatch_events=page.wait_for_timeout, label="unrelated native C Reset generation")
                         shared.idle(page)
                         assert snapshot(base, cookies["a"])["tombstones"] == hidden["tombstones"]
-                        assert (base / ADMISSION / JOURNAL).exists()
-                        assert snapshot(base, cookies["c"])["source_sha256"] is None
                         unchanged_recovery()
-                        capture("corrupt-journal-still-blocked", page)
-                    else:
-                        assert not (base / ADMISSION / JOURNAL).exists()
-                        complete = snapshot(base, cookies["c"])
-                        assert complete["source_sha256"] == a_before["source_sha256"]
-                        assert not complete["pending_entries"] and not complete["tombstones"] and not complete["discarding"]
-                        assert complete["reservations"] == [{"scope": complete["scope"],
-                            "generation": complete["generation_marker"].split("|")[1],
-                            "added_bytes": complete["installed_payload_bytes"]}]
-                        observations = [json.loads(line) for line in (base / CONTROL / "restored.jsonl").read_text().splitlines()]
-                        assert any({"scope": a_before["scope"], "generation": a_before["generation_marker"].split("|")[1],
-                                    "source_sha256": a_before["source_sha256"]} in row["restored"] for row in observations)
-                        # Distinct C success can reclaim A again under the 24-hour policy.
-                        capture("known-partial-recovered-then-new-admission", page)
+                        affected = session("b")
+                        expect(affected.get_by_role("button", name="Reset this test workspace", exact=True)).to_be_visible()
+                        marker = snapshot(base, cookies["b"])["generation_marker"]
+                        affected.get_by_role("button", name="Reset this test workspace", exact=True).click()
+                        wait_until(lambda: poll_generation(base, cookies["b"]) not in (None, "", marker),
+                                   dispatch_events=affected.wait_for_timeout, label="affected native B Reset generation")
+                        shared.idle(affected)
+                        capture("affected-reset-reachable", affected)
+                        assert (base / ADMISSION / JOURNAL).exists()
+                        unchanged_recovery()
+                        (base / CONTROL / "restored.jsonl").write_text("")
+                        start(page, succeeds=scenario != "corrupt-journal")
+                        if scenario == "corrupt-journal":
+                            expect(page.get_by_text(blocked, exact=False)).to_be_visible()
+                            shared.idle(page)
+                            assert snapshot(base, cookies["a"])["tombstones"] == hidden["tombstones"]
+                            assert (base / ADMISSION / JOURNAL).exists()
+                            assert snapshot(base, cookies["c"])["source_sha256"] is None
+                            unchanged_recovery()
+                            capture("corrupt-journal-still-blocked", page)
+                        else:
+                            assert not (base / ADMISSION / JOURNAL).exists()
+                            complete = snapshot(base, cookies["c"])
+                            assert complete["source_sha256"] == a_before["source_sha256"]
+                            assert not complete["pending_entries"] and not complete["tombstones"] and not complete["discarding"]
+                            assert complete["reservations"] == [{"scope": complete["scope"],
+                                "generation": complete["generation_marker"].split("|")[1],
+                                "added_bytes": complete["installed_payload_bytes"]}]
+                            observations = [json.loads(line) for line in (base / CONTROL / "restored.jsonl").read_text().splitlines()]
+                            assert any({"scope": a_before["scope"], "generation": a_before["generation_marker"].split("|")[1],
+                                        "source_sha256": a_before["source_sha256"]} in row["restored"] for row in observations)
+                            # Distinct C success can reclaim A again under the 24-hour policy.
+                            capture("known-partial-recovered-then-new-admission", page)
             download_original(page, "after-journey")
             assert record["frontend"] and all(item["matches"] for item in record["frontend"])
             assert not record["network_attempts"] and not record["page_errors"]
@@ -587,6 +621,90 @@ def exercise(engine, name, scenario, output):
     return record
 
 
+
+def active_selection_journey(base, cookies, page, record, session, start,
+                             select_fixture, download_original, capture):
+    """Native labels follow the staged lineage, never the shelf selection."""
+    from playwright.sync_api import expect
+    first, second = record["fixture"], record["second_fixture"]
+    expected_a = "Current test: " + first["friendly_name"] + " · October 2026"
+    expected_b = "Current test: " + second["friendly_name"] + " · October 2026"
+
+    def active_label(expected):
+        labels = page.get_by_text(re.compile(r"^Current test: "))
+        expect(labels).to_have_count(1)
+        expect(labels).to_have_text(expected)
+        expect(labels).to_be_visible()
+
+    first_state = snapshot(base, cookies["a"])
+    active_label(expected_a)
+    select_fixture(page, second)
+    active_label(expected_a)
+    assert snapshot(base, cookies["a"])["namespace_files"] == first_state["namespace_files"]
+    download_original(page, "selected-B-while-A-active", second)
+    capture("selected-B-active-A", page)
+
+    # A real reload discards session UI state; the active source is recovered
+    # from durable lineage, regardless of the shelf's default selection.
+    page.reload(wait_until="domcontentloaded")
+    expect(page.get_by_role("heading", name="Shared report testing", exact=True)).to_be_visible(timeout=60000)
+    active_label(expected_a)
+    select_fixture(page, second)
+    active_label(expected_a)
+    assert snapshot(base, cookies["a"])["namespace_files"] == first_state["namespace_files"]
+    capture("reloaded-active-A-selected-B", page)
+
+    coworker = session("c")
+    select_fixture(coworker, first)
+    start(coworker)
+    coworker_before = snapshot(base, cookies["c"])
+    expect(coworker.get_by_text(expected_a, exact=True)).to_be_visible()
+
+    # Native Start is the only action that changes the active fixture to B.
+    start(page)
+    active_label(expected_b)
+    second_state = snapshot(base, cookies["a"])
+    assert second_state["source_sha256"] == second["original_sha256"]
+    assert second_state["generation_marker"] != first_state["generation_marker"]
+    # Starting B can remount the shared shelf with its default selection A.
+    # Explicitly select B for this download; selection is not another Start.
+    select_fixture(page, second)
+    active_label(expected_b)
+    assert snapshot(base, cookies["a"])["namespace_files"] == second_state["namespace_files"]
+    download_original(page, "started-B", second)
+    capture("native-start-active-B", page)
+    page.reload(wait_until="domcontentloaded")
+    expect(page.get_by_role("heading", name="Shared report testing", exact=True)).to_be_visible(timeout=60000)
+    active_label(expected_b)
+    assert snapshot(base, cookies["a"])["namespace_files"] == second_state["namespace_files"]
+    capture("reloaded-active-B", page)
+
+    page.get_by_role("button", name="Reset this test workspace", exact=True).click()
+    wait_until(lambda: poll_generation(base, cookies["a"]) not in
+               (None, "", second_state["generation_marker"]),
+               dispatch_events=page.wait_for_timeout, label="active-label native Reset")
+    expect(page.get_by_text(re.compile(r"^Current test: "))).to_have_count(0)
+    expect(page.get_by_role("textbox", name="Your name", exact=True)).not_to_be_visible()
+    shared.idle(page)
+    assert snapshot(base, cookies["a"])["source_sha256"] is None
+    coworker_after = snapshot(base, cookies["c"])
+    for key in ("generation_marker", "source_sha256", "namespace_files", "originals", "live_canary"):
+        assert coworker_after[key] == coworker_before[key], key
+    expect(coworker.get_by_text(expected_a, exact=True)).to_be_visible()
+    select_fixture(page, second)
+    download_original(page, "reset-B-original-preserved", second)
+    capture("native-reset-clears-only-active-label", page)
+    record["active_selection"] = {
+        "selected_B_preserved_active_A": True,
+        "reload_recovered_active_A": True,
+        "native_start_changed_active_to_B": True,
+        "reload_recovered_active_B": True,
+        "reset_removed_active_label_and_source": True,
+        "coworker_A_unchanged": True,
+        "originals_unchanged": snapshot(base, cookies["a"])["originals"] == first_state["originals"],
+    }
+    assert record["active_selection"]["originals_unchanged"]
+
 def main():
     from playwright.sync_api import sync_playwright
     OUT.mkdir(parents=True, exist_ok=True)
@@ -613,7 +731,7 @@ def main():
                     except Exception as exc:
                         results["failures"].append(name + ":" + scenario + ": " + str(exc))
     finally:
-        results["result"] = "passed" if len(results["completed"]) == 10 and not results["failures"] else "failed"
+        results["result"] = "passed" if len(results["completed"]) == 2 * len(SCENARIOS) and not results["failures"] else "failed"
         (OUT / "results.json").write_text(json.dumps(results, indent=2))
     assert results["result"] == "passed", results["failures"]
 
