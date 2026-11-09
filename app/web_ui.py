@@ -50,6 +50,11 @@ import streamlit as st
 from app import contracts
 from app.ui_highlight import highlight_needed_fields
 from app.asset_guess import guess_asset_uid, lowest_numbered_of_type
+from app.asset_picker import (
+    ASSET_SEARCH_LIMIT,
+    LARGE_ASSET_SITE_THRESHOLD,
+    search_asset_uids,
+)
 from app.assets import assets_for_facility, guess_asset_id
 from app.config import (
     FACILITIES,
@@ -1077,6 +1082,11 @@ def _asset_control_data(
         )
     uids = [asset["uid"] for asset in site_assets]
     labels = {asset["uid"]: contracts.asset_label(asset) for asset in site_assets}
+    # At large sites, a type-only or weak textual resemblance must not select
+    # one of thousands of units. Only the registry's explicit UID/tag match
+    # may prefill a result; the operator can search for any other asset.
+    if not rrh and len(site_assets) > LARGE_ASSET_SITE_THRESHOLD:
+        return site_assets, labels, exact_guess if exact_guess in uids else None
     broad_guess = guess_asset_uid(
         site_assets,
         quote_text=quote_text,
@@ -1559,11 +1569,36 @@ def _render_asset_control(
     resolved_options = [ASSET_NONE, *uids]
     stored_asset = st.session_state.get(asset_state_key)
     needs_choice = guess not in uids and stored_asset not in resolved_options
-    options = (
-        [ASSET_PLACEHOLDER, *resolved_options]
-        if needs_choice or stored_asset == ASSET_PLACEHOLDER
-        else resolved_options
-    )
+    if not rrh and len(uids) > LARGE_ASSET_SITE_THRESHOLD:
+        search_text = st.text_input(
+            "Find an asset by tag, UID, equipment type or serves",
+            key=f"asset_search_{token}_{contract}_{site}",
+            placeholder="Type part of a tag, UID, equipment, or area served",
+        )
+        matches = search_asset_uids(site_assets, search_text)
+        options = (
+            [ASSET_PLACEHOLDER]
+            if needs_choice or stored_asset == ASSET_PLACEHOLDER
+            else []
+        )
+        options.append(ASSET_NONE)
+        # Keep both the confirmed value and a strong quote suggestion in the
+        # small option list even when the search terms no longer match them.
+        for uid in (stored_asset, guess, *matches):
+            if uid in uids and uid not in options:
+                options.append(uid)
+        if search_text.strip() and not matches:
+            st.caption("No matching assets. Try another tag, UID, or description.")
+        elif search_text.strip() and len(matches) == ASSET_SEARCH_LIMIT:
+            st.caption("Showing the first 25 matches. Type more to narrow the results.")
+        elif not search_text.strip():
+            st.caption("Type to search the registry. Up to 25 matches appear at a time.")
+    else:
+        options = (
+            [ASSET_PLACEHOLDER, *resolved_options]
+            if needs_choice or stored_asset == ASSET_PLACEHOLDER
+            else resolved_options
+        )
     default_asset = (
         guess
         if guess in uids
@@ -1577,6 +1612,17 @@ def _render_asset_control(
     # rerun.  Reset only this account/site asset selection to the fresh guess.
     if st.session_state.get(asset_state_key) not in options:
         st.session_state[asset_state_key] = default_asset
+    # Keep the Smartsheet-bound asset key independent of a dropdown whose
+    # options change with every search. A changed options list can reset the
+    # Streamlit widget; only an explicit user selection updates the asset.
+    large_picker = not rrh and len(uids) > LARGE_ASSET_SITE_THRESHOLD
+    picker_key = f"asset_picker_{token}_{contract}_{site}"
+    if large_picker and st.session_state.get(picker_key) != st.session_state[asset_state_key]:
+        st.session_state[picker_key] = st.session_state[asset_state_key]
+
+    def commit_large_picker_selection() -> None:
+        st.session_state[asset_state_key] = st.session_state[picker_key]
+
     raw_asset = st.selectbox(
         "Specific asset *",
         options,
@@ -1587,12 +1633,15 @@ def _render_asset_control(
             if uid == ASSET_NONE
             else f"{labels[uid]} · {uid}"
         ),
-        key=asset_state_key,
+        key=picker_key if large_picker else asset_state_key,
+        on_change=commit_large_picker_selection if large_picker else None,
         help=(
             "The tool suggests the asset from the quote and selected site. "
             "Choose a different one only if the suggestion is wrong."
         ),
     )
+    if large_picker:
+        raw_asset = st.session_state[asset_state_key]
     full_asset_id = normalize_asset_id(raw_asset)
     if full_asset_id:
         st.caption(f"Full Asset ID sent to Smartsheet: **{full_asset_id}**")
