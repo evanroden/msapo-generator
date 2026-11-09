@@ -138,7 +138,7 @@ from tests.conftest import requires_libreoffice
 @requires_libreoffice
 @pytest.mark.parametrize('section', [None, 'cover'])
 def test_actual_pdf_keeps_synthetic_circle_round(tmp_path, monkeypatch, section):
-    import fitz
+    import pymupdf as fitz
     from app import pdf_converter
     from app.monthly_report_render_compat import rendering_docx
     monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path / 'store'))

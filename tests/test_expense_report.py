@@ -8,7 +8,7 @@ from email import policy
 from email.parser import BytesParser
 from io import BytesIO
 
-import fitz
+import pymupdf as fitz
 import pytest
 from openpyxl import load_workbook
 from PIL import Image, ImageDraw

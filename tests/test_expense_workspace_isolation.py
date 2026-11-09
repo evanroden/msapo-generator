@@ -18,7 +18,7 @@ import socket
 import sqlite3
 import subprocess
 
-import fitz
+import pymupdf as fitz
 from PIL import Image
 import pytest
 from streamlit.testing.v1 import AppTest

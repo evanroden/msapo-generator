@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 
 from docx import Document
-import fitz
+import pymupdf as fitz
 import pytest
 
 from app.monthly_report_docx import assemble_docx

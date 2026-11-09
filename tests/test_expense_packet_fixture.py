@@ -5,7 +5,7 @@ from pathlib import Path
 import json
 import tempfile
 
-import fitz
+import pymupdf as fitz
 from openpyxl import load_workbook
 import requests
 from streamlit.testing.v1 import AppTest

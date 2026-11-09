@@ -12,7 +12,7 @@ from threading import BoundedSemaphore
 
 from docx import Document
 from docx.shared import Inches
-import fitz
+import pymupdf as fitz
 import pytest
 
 from app import monthly_report_section_preview_ui as ui, monthly_report_section_ui as section_ui

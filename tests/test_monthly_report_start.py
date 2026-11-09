@@ -146,7 +146,7 @@ def test_from_scratch_regional_report_generates_and_next_month_keeps_design(monk
     from streamlit.testing.v1 import AppTest
     from test_monthly_report_ui import ROOT, choose_report
     from app.contracts import RRH_CONTRACT
-    import fitz
+    import pymupdf as fitz
     app = monthly(monkeypatch, tmp_path, saved=False)
     next(w for w in app.text_input if w.label == "Site name").set_value("Synthetic Cedar; Synthetic Harbor; Synthetic Meadow").run()
     next(w for w in app.text_input if w.label == "Name for this group (optional)").set_value("Synthetic Lakes Region").run()

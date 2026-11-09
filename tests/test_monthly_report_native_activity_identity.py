@@ -181,7 +181,7 @@ def test_native_vendor_csv_activity_reaches_real_word_and_pdf(monkeypatch, tmp_p
     """Exercise the actual assembled synthetic monthly binaries, not a text stub."""
     from tests.test_monthly_report_full_synthetic_output import approved_synthetic_draft
     from app.monthly_report_docx import generate_report
-    import fitz
+    import pymupdf as fitz
 
     raw = (
         b"Vendor,Event date,Work performed,Status,Price\n"

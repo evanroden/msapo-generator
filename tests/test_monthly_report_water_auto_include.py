@@ -1,6 +1,6 @@
 """Water pages attach after the final deliberate review, never merely on rerender."""
 
-import fitz
+import pymupdf as fitz
 
 from app import monthly_report_sources as sources
 from app.monthly_report_content_policy import page_allowed

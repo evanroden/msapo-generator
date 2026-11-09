@@ -386,7 +386,7 @@ def test_starting_upload_edit_omit_save_reopen_reimport_and_two_rollovers(tmp_pa
 
 @requires_libreoffice
 def test_real_native_pdf_preserves_both_generic_issue_rows_without_prices(tmp_path, monkeypatch):
-    import fitz
+    import pymupdf as fitz
     from app import pdf_converter
 
     columns = (*COLUMNS, "Cost")

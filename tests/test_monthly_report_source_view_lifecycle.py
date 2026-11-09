@@ -153,7 +153,7 @@ def test_final_generate_and_full_section_preview_share_view_and_keep_gates(store
     """Exercise actual public builders/storage; PDF adapter stub is NOT layout QA."""
     from app import monthly_report_docx as word, monthly_report_preview as preview
     from app import monthly_report_render_jobs as jobs, pdf_converter
-    import fitz
+    import pymupdf as fitz
     path,view,draft,loader,replacement=stored
     final=replace(draft,blocks=tuple(approve_all_assets(b) for b in draft.blocks))
     original=path.read_bytes();converted=[]

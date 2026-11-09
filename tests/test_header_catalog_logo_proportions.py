@@ -88,7 +88,7 @@ from tests.conftest import requires_libreoffice
 @pytest.mark.parametrize('role', ['brand_logo', 'client_logo'])
 @pytest.mark.parametrize('size', [(500, 100), (100, 500), (200, 200)])
 def test_replaced_header_and_footer_circles_render_round(tmp_path, monkeypatch, role, size):
-    import fitz
+    import pymupdf as fitz
     from PIL import ImageChops
     from app import pdf_converter
     from app.monthly_report_render_compat import rendering_docx

@@ -35,7 +35,7 @@ def test_power_schema_filters_only_the_price_column(unit):
 @requires_libreoffice
 @pytest.mark.parametrize("unit", ("W", "kW", "MW"))
 def test_native_power_load_import_reload_and_word_pdf(monkeypatch, tmp_path, unit):
-    import fitz
+    import pymupdf as fitz
 
     # Keep the existing independent values and real native-layout journey;
     # vary only the unit-qualified headings, never client content.
