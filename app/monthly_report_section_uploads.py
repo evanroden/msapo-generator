@@ -4,6 +4,7 @@ from dataclasses import dataclass, replace
 import re
 
 from app import monthly_report_sources as sources
+from app.monthly_report_page_reference import page_identity
 
 
 SECTION_UPLOADS = {
@@ -11,7 +12,7 @@ SECTION_UPLOADS = {
     "improvements": ("Activity service reports and photos", "Activity service report files"),
     "water_reports": ("Water-treatment reports", "Water-treatment files"),
     "mbcx_report": ("System performance reports", "MBCx report files"),
-    "utility_analysis": ("Utility results and charts", "Utility result files"),
+    "utility_analysis": ("Monthly Scorecards", "Scorecard files"),
 }
 CLASSIFICATION_DESTINATIONS = {
     "Vendor service": "improvements", "Water treatment": "water_reports",
@@ -31,12 +32,6 @@ def source_route(reference):
             or any(re.fullmatch(r"[0-9a-f]{64}", part) is None for part in parts[1:])):
         return None
     return tuple(parts)
-
-
-def page_identity(reference):
-    """Read the stable source/page identity, independent of mutable source facts."""
-    parts = reference.split(":")
-    return (parts[0], int(parts[1])) if len(parts) == 3 and parts[1].isdigit() else None
 
 
 def included_pages(blocks):
@@ -190,9 +185,10 @@ def prepare_section_pages(profile, contents, destination, blocks, assets=None, *
         raise ValueError("Embedding limit is 150 selected image/PDF pages per report. Remove pages before adding more.")
     destinations = tuple((c.source.id, destination) for c in contents
                          if any(identity == c.source.id for identity, _ in pending))
+    # A default Add is append-only, just like an explicit page selection.
+    # Do not re-rasterize or recheck pages already included in this report.
     prepared = sources.prepare_pages(
-        profile, contents, destinations,
-        only_pages=frozenset(pending) if only_pages is not None else None)
+        profile, contents, destinations, only_pages=frozenset(pending))
     result = {}
     for block in prepared:
         indexes = tuple(n for n, reference in enumerate(block.references) if page_identity(reference) in pending)

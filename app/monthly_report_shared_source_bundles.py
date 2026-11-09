@@ -18,6 +18,7 @@ from pathlib import Path
 import re
 import stat
 import struct
+import zlib
 from uuid import uuid4
 from zipfile import BadZipFile, ZipFile
 
@@ -126,7 +127,7 @@ def validate_reference_archive(original: bytes, *, max_bytes: int = _MAX_ARCHIVE
             if set(names) != expected:
                 raise ValueError("The archive contains undeclared or extraneous members.")
             return tuple(files)
-    except (BadZipFile, KeyError, RuntimeError, UnicodeError, json.JSONDecodeError) as exc:
+    except (BadZipFile, zlib.error, KeyError, RuntimeError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError("Invalid immutable six-source reference archive.") from exc
 
 
@@ -190,7 +191,8 @@ class SharedSourceBundles:
             # Read only compact transaction metadata; do not allocate an
             # archive-sized dummy buffer while listing stored receipts.
             transaction = json.loads(txn)
-            if (transaction.get("schema") != 1 or transaction.get("kind") != "reference-bundle"
+            if (type(transaction) is not dict
+                    or transaction.get("schema") != 1 or transaction.get("kind") != "reference-bundle"
                     or transaction.get("target") != bundle_id
                     or transaction.get("files") != {blob: receipt.archive_size, "receipt.json": len(raw)}):
                 raise storage.VaultIntegrityError("Reference archive transaction is invalid.")
@@ -201,7 +203,7 @@ class SharedSourceBundles:
                     or info.st_mode & 0o077 or info.st_size != receipt.archive_size):
                 raise storage.VaultIntegrityError("Reference original has unsafe disk geometry.")
             return receipt
-        except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        except (ValueError, KeyError, TypeError, RecursionError, json.JSONDecodeError) as exc:
             raise storage.VaultIntegrityError("Reference archive receipt is invalid.") from exc
         finally:
             os.close(fd)
@@ -368,7 +370,7 @@ def validate_synthetic_evidence_archive(original: bytes, *,
             if set(names) != expected:
                 raise ValueError("The synthetic evidence ZIP has undeclared members.")
             return tuple(verified)
-    except (BadZipFile, KeyError, RuntimeError, UnicodeError, json.JSONDecodeError) as exc:
+    except (BadZipFile, zlib.error, KeyError, RuntimeError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError("Invalid manifest-bound synthetic evidence ZIP.") from exc
 
 

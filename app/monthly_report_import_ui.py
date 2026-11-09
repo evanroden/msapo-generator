@@ -25,6 +25,10 @@ def _signature(value) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()[:20]
 
 
+def _mark_column_customization(key):
+    st.session_state[key] = True
+
+
 def _stage(upload):
     # A session-owned TemporaryDirectory is cleaned when discarded. It never
     # becomes a library asset, and live UploadedFile objects are not mirrored.
@@ -67,21 +71,32 @@ def render_import(state: library.LibraryState, field, browser_timezone: str = ""
         )
         if st.button("Read DOCX for mapping", key=prefix + "_read", disabled=upload is None):
             try:
-                old = st.session_state.pop(stage_key, None)
-                if old:
-                    old[0].cleanup()
+                # Inspection can fail after the upload is accepted. Keep the
+                # prior source and its review usable until this one is ready.
+                with st.spinner("Reading document structure and content…"):
+                    staged = _stage(upload)
+            except (ValueError, OSError) as exc:
+                st.error(str(exc))
+                if st.session_state.get(stage_key) is not None:
+                    st.caption("Your previous DOCX review and mappings are unchanged. Retry reading or choose another file.")
+            else:
+                old = st.session_state.get(stage_key)
+                st.session_state[stage_key] = staged
                 st.session_state[prefix + "_mappings"] = {}
                 st.session_state.pop(prefix + "_saved", None)
                 st.session_state.pop(prefix + "_preview", None)
-                with st.spinner("Reading document structure and content…"):
-                    staged = _stage(upload)
-                st.session_state[stage_key] = staged
-            except (ValueError, OSError) as exc:
-                st.error(str(exc))
+                if old:
+                    try:
+                        old[0].cleanup()
+                    except OSError:
+                        # The new review is already installed; cleanup failure
+                        # must not be misreported as a rejected replacement.
+                        st.warning("New DOCX ready for review; the previous temporary review could not be removed.")
         staged = st.session_state.get(stage_key)
         if staged is None:
             return
         _, path, inspection = staged
+        st.caption("Reviewing the last successfully read DOCX.")
         document_key = prefix + "_" + inspection.sha256[:16]
         mappings = st.session_state.setdefault(prefix + "_mappings", {})
         st.caption(f"{len(inspection.items)} items · {inspection.word_sections} Word sections. Word section counts do not determine report membership or layout.")
@@ -139,15 +154,28 @@ def render_import(state: library.LibraryState, field, browser_timezone: str = ""
                 if st.session_state.get(destination_key) not in allowed:
                     st.session_state[destination_key] = default
                 destination = st.selectbox("Confirmed destination", allowed, key=destination_key)
-                columns, header = (), True
+                columns, header, complete_vendor_table = (), True, False
                 if item.rows:
-                    header = st.checkbox("First row contains column headings", key=field(document_key + "_headers_" + item.id, True))
-                    columns = tuple(st.multiselect("Columns to keep in this order", list(range(len(item.rows[0]))),
-                                                    format_func=lambda i: f"{i+1}: {item.rows[0][i][:70] or 'blank'}",
-                                                    key=field(document_key + "_columns_" + item.id, list(range(len(item.rows[0]))))))
+                    header = st.checkbox("Row after the title contains column headings" if item.table_header_row else
+                                         "First row contains column headings", key=field(document_key + "_headers_" + item.id, True))
+                    labels = item.rows[item.table_header_row] if header else item.rows[0]
+                    default_columns = list(range(len(item.rows[0])))
+                    columns_key = field(document_key + "_columns_" + item.id, default_columns)
+                    customized_key = document_key + "_columns_customized_" + item.id
+                    # Existing staged selections and every deliberate change
+                    # remain authoritative, even if all columns are restored.
+                    if list(st.session_state.get(columns_key, default_columns)) != default_columns:
+                        st.session_state[customized_key] = True
+                    columns = tuple(st.multiselect("Columns to keep in this order", default_columns,
+                                                    format_func=lambda i: f"{i+1}: {labels[i][:70] or 'blank'}",
+                                                    key=columns_key, on_change=_mark_column_customization,
+                                                    args=(customized_key,)))
+                    complete_vendor_table = (destination == "subcontractor_matrix" and header
+                                             and columns == tuple(default_columns)
+                                             and not st.session_state.get(customized_key, False))
                     st.caption("Imported columns remain editable text until you choose a typed monthly-upload mapping. Unselected columns stay in this source review.")
                 if st.button("Add confirmed mapping", key=document_key + "_add", disabled=bool(item.rows) and not columns):
-                    mappings[item.id] = ImportMapping(item.id, destination, columns, header)
+                    mappings[item.id] = ImportMapping(item.id, destination, () if complete_vendor_table else columns, header)
                     st.session_state.pop(prefix + "_saved", None)
                     st.rerun()
         else:

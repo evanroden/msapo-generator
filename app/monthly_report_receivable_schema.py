@@ -67,7 +67,7 @@ class ReceivableSchemaReview:
     missing_roles: tuple[str, ...]
     # These decisions must be resolved before wiring this diagnostic to intake.
     pending_decisions: tuple[str, ...] = (
-        "output audience and permitted fields (#458)",
+        "verified source/audience and field-level eligibility (#458)",
         "invoice identity scope and duplicate/conflict handling",
         "aging date basis, as-of date and bucket boundaries",
         "partial payments, credits, paid and closed records",

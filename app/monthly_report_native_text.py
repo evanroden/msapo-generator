@@ -51,9 +51,14 @@ def _body_typography_after_subheading(paragraph, styles, scopes):
         number = properties.find(qn('w:numId')) if properties is not None else None
         level = properties.find(qn('w:ilvl')) if properties is not None else None
         value = number.get(qn('w:val')) if number is not None else None
-        if value and value.isdigit() and int(value) > 0:
+        if number is None:
+            return None
+        if value and value.isascii() and value.isdigit():
+            if not value.strip('0'):
+                return None  # Explicitly inactive numbering.
             return value, level.get(qn('w:val'), '0') if level is not None else '0'
-        return None
+        # Present but unrecognized is not proof of either a heading or a list.
+        return False
 
     value = _text(paragraph).strip()
     terminal = value.rstrip("\"'”’»)]} ").rstrip()[-1:]
@@ -64,7 +69,7 @@ def _body_typography_after_subheading(paragraph, styles, scopes):
             or terminal in '.?!:;…' or '\n' in value or '\r' in value
             or any(True for _ in paragraph.iter(qn('w:br')))
             or any(True for _ in paragraph.iter(qn('w:cr')))
-            or numbering(paragraph) or not runs or not all(bold(r) for r in runs)
+            or numbering(paragraph) is not None or not runs or not all(bold(r) for r in runs)
             or not any(word[1:].islower() for word in words)
             or not all(word[0].isupper() or word in connectors for word in words)):
         return paragraph

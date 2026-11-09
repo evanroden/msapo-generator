@@ -6,13 +6,16 @@ display changes alone cannot change the report.
 """
 from dataclasses import replace
 from datetime import date
+from decimal import Decimal, InvalidOperation
 from functools import partial
+import math
 import re
 from uuid import uuid4
 
 import streamlit as st
 
 from app.monthly_report_editor import _cell_text, _signature
+from app.monthly_report_ui_text import literal
 
 
 CARD_TABLES = {"proposals": ("proposal", "Add proposal"),
@@ -21,6 +24,20 @@ CARD_TABLES = {"proposals": ("proposal", "Add proposal"),
 _REQUEST_WORDS = {"request", "requested", "requests", "question", "questions", "answer",
                   "response", "details", "information"}
 _REQUEST_METADATA = {"#", "number", "no", "id", "by", "date", "status", "link", "reference", "ref"}
+_SOURCE_MARKUP = re.compile(
+    r"https?://|www\.|@|[\[\]*_\x60<>~\\]|(?m:^\s*(?:[#>+\-]\s|\d+[.)]\s|[-*_]{3,}\s*$))",
+    re.I,
+)
+
+
+def _source_display(value):
+    """Escape source markup only; keep ordinary native labels byte-stable.
+
+    The returned string is strictly for Markdown-capable Streamlit controls.
+    Never use it for saved rows, field keys, comparison or a callback target.
+    """
+    raw = str(value)
+    return literal(raw) if _SOURCE_MARKUP.search(raw) else raw
 
 
 def _request_prose(title):
@@ -35,9 +52,27 @@ def _values(fields):
                  for key, original, kind, default in fields)
 
 
-def _queue(key, expected, tokens, active, fields, action="edit", target=None, *, preserve_empty=False):
+def _queue(key, expected, tokens, active, fields, action="edit", target=None, *, preserve_empty=False, group=()):
     """One delivered native action includes the currently open row's text."""
     record = dict(st.session_state.get(key, {}))
+    if group and action == "edit" and record.get("group_closed"):
+        return  # A late field echo cannot reopen the row a sibling action closed.
+    if group and action in {"open", "add", "remove"}:
+        for other_key in group:
+            if other_key == key:
+                continue
+            other = st.session_state.get(other_key, {})
+            snapshot = other.get("group_args")
+            if snapshot and snapshot[2] and not other.get("group_closed"):
+                # Capture the delivered fields through the same pending-row
+                # protocol before changing which table owns the native editor.
+                switching = action in {"open", "add"}
+                _queue(other_key, *snapshot, "close" if switching else "edit",
+                       preserve_empty=preserve_empty)
+                if switching:
+                    other = dict(st.session_state[other_key])
+                    other["group_closed"] = True
+                    st.session_state[other_key] = other
     rows, identities = list(expected), list(tokens)
     draft_token = record.get("draft_token")
     draft_index = record.get("draft_index", len(rows))
@@ -94,6 +129,8 @@ def _queue(key, expected, tokens, active, fields, action="edit", target=None, *,
     baseline = previous["baseline"] if continues_pending else expected
     record["pending"] = {"baseline": baseline, "expected": expected, "result": tuple(rows), "tokens": tuple(identities),
                          "active": active, "draft_token": draft_token, "draft_index": draft_index}
+    if group:
+        record["group_closed"] = not bool(active)
     st.session_state[key] = record
 
 
@@ -117,10 +154,22 @@ def _sync_tokens(previous_rows, previous_tokens, rows):
 def _field_default(value, kind):
     try:
         if kind == "date":
-            return date.fromisoformat(value) if value else None
+            parsed = date.fromisoformat(value) if value else None
+            # Streamlit's default calendar range extends ten years on either
+            # side. Preserve out-of-range dates as editable source text.
+            if parsed is not None and not date.min.year + 10 <= parsed.year <= date.max.year - 10:
+                return value
+            return parsed
         if kind in {"number", "currency"}:
-            return float(value) if value else None
-    except (TypeError, ValueError):
+            if not value:
+                return None
+            number = float(value)
+            # Keep source precision when a browser number would round, underflow,
+            # or exceed its safe integer range. Text stays editable, never zeroed.
+            if (math.isfinite(number) and abs(number) <= (1 << 53) - 1
+                    and Decimal(str(number)) == Decimal(str(value))):
+                return number
+    except (TypeError, ValueError, OverflowError, InvalidOperation):
         pass  # Keep a recorded unknown value as editable text.
     return value
 
@@ -130,16 +179,18 @@ def _summary(columns, row, noun, index, prose=None):
     main = next((value for column, value in values if value and prose and prose(column)), "")
     main = main or next((value for column, value in values if value and any(
         word in column.casefold() for word in ("description", "scope", "title", "task", "recommendation"))), "")
-    st.write(main or f"{noun.capitalize()} {index + 1}")
+    st.write(_source_display(main) if main else f"{noun.capitalize()} {index + 1}")
     identifiers = [(column, value) for column, value in values if value and (any(
         word in column.casefold() for word in ("number", "#", "identifier", "facility", "site", "vendor", "area", "asset"))
         or column.casefold() == "id" or column.casefold().endswith(" id"))]
     if identifiers:
-        st.caption(" · ".join(f"{column}: {value}" for column, value in identifiers))
+        st.caption(" · ".join(f"{_source_display(column)}: {_source_display(value)}"
+                              for column, value in identifiers))
     decisions = [(column, value) for column, value in values if any(
         word in column.casefold() for word in ("status", "decision"))]
     if decisions:
-        st.caption(" · ".join(f"{column}: {value or 'Not recorded'}" for column, value in decisions))
+        st.caption(" · ".join(f"{_source_display(column)}: {_source_display(value or 'Not recorded')}"
+                              for column, value in decisions))
 
 
 def _comparison_rows(columns, rows):
@@ -147,6 +198,10 @@ def _comparison_rows(columns, rows):
     # These display-only labels never replace the exported original schema.
     labels = tuple(f"{index + 1}. {column}" if columns.count(column) > 1 else column
                    for index, column in enumerate(columns))
+    if len(set(labels)) != len(labels):
+        # An original heading may already equal a duplicate's display label.
+        # Prefix every heading only then: positions make all labels unique.
+        labels = tuple(f"{index + 1}. {column}" for index, column in enumerate(columns))
     return [dict(zip(labels, row)) for row in rows]
 
 
@@ -225,7 +280,7 @@ def _onsite_projection(columns, rows):
     return (_ONSITE_COLUMNS if title_frame else columns), context, canonical
 
 
-def _edit_table(columns, rows, types, key, noun, add_label, field, *, onsite=False, prose=None):
+def _edit_table(columns, rows, types, key, noun, add_label, field, *, onsite=False, prose=None, group=()):
     record = dict(st.session_state.get(key, {}))
     # A focus request belongs only to the render that follows its Add.
     entry_focus = record.pop("entry_focus", None)
@@ -241,6 +296,11 @@ def _edit_table(columns, rows, types, key, noun, add_label, field, *, onsite=Fal
         if incoming == pending["result"]:
             record.pop("pending", None)
     elif pending:
+        if group:
+            # Conflict choices retain the pending version; a sibling must not
+            # recapture fields from this table's retired editor over it.
+            record.update(group_args=None, group_closed=True)
+            st.session_state[key] = record
         st.warning("This table changed after you edited a row. Both versions are kept below.")
         with st.expander("Compare row edits", expanded=True):
             st.caption("Current report")
@@ -264,7 +324,7 @@ def _edit_table(columns, rows, types, key, noun, add_label, field, *, onsite=Fal
     draft_token = record.get("draft_token")
     st.session_state[key] = record
 
-    queue = partial(_queue, preserve_empty=True) if onsite else _queue
+    queue = partial(_queue, preserve_empty=onsite, group=group)
     context = {}
     if onsite:
         columns, context, canonical = _onsite_projection(columns, rows)
@@ -296,6 +356,9 @@ def _edit_table(columns, rows, types, key, noun, add_label, field, *, onsite=Fal
                                    kinds[index]))
                    for index in range(len(columns))) if active else ()
     args = (key, rows, tokens, active, fields)
+    if group:
+        record.update(group_args=args[1:], group_closed=not bool(active))
+        st.session_state[key] = record
     entries = list(zip(tokens, rows))
     if active and active == draft_token:
         entries.insert(min(record.get("draft_index", len(entries)), len(entries)),
@@ -343,7 +406,7 @@ def _render_fields(columns, fields, args, field, queue=_queue, *, prose=None):
     keys = []
     for index, (title, (key, original, kind, default)) in enumerate(zip(columns, fields), 1):
         # These labels do not replace the stored or exported source headings.
-        label = title if title.strip() else f"Column {index}"
+        label = _source_display(title) if title.strip() else f"Column {index}"
         options = dict(key=field(key, default), value=default, on_change=queue, args=args)
         keys.append(options["key"])
         if kind == "date" and (isinstance(default, date) or default is None):
@@ -375,6 +438,10 @@ def edit_row_cards(spec, block, prefix, field, *, empty=None, notice=None):
     if spec.key == "service_calls":
         # Retire pre-projection callbacks that could have opened a header as a call.
         key += "_onsite_context_v1"
+    group = tuple(key + "_extra_" + str(index) + "_" + _signature(table.columns)
+                  for index, table in enumerate(block.extra_tables))
+    if block.rows or not block.extra_tables:
+        group += (key + "_rows",)
     tables, table_keys = [], []
     for index, table in enumerate(block.extra_tables):
         if len(block.extra_tables) > 1:
@@ -389,14 +456,14 @@ def edit_row_cards(spec, block, prefix, field, *, empty=None, notice=None):
             tables.append(review_table_headings(table, key + "_headings_" + str(index), field))
             continue
         edited = _edit_table(table.columns, table.rows, (), table_key, noun, add_label, field,
-                             onsite=spec.key == "service_calls", prose=prose)
+                             onsite=spec.key == "service_calls", prose=prose, group=group)
         table_keys.append(table_key)
         tables.append(replace(table, rows=edited) if edited != table.rows else table)
     rows = block.rows
     if rows or not block.extra_tables:
         columns = tuple(column.title for column in spec.columns) or ("Facility", "Item", "Status")
         rows = _edit_table(columns, rows, tuple(column.type for column in spec.columns), key + "_rows", noun, add_label, field,
-                           onsite=spec.key == "service_calls", prose=prose)
+                           onsite=spec.key == "service_calls", prose=prose, group=group)
         table_keys.append(key + "_rows")
     if empty and notice is not None:
         written = any(value is not None and str(value).strip()

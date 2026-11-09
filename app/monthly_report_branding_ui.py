@@ -105,7 +105,10 @@ def offer_logo(block, contract, prefix, assets, *, scope=None):
         from app.monthly_report_branding_replace import OWNER_VARIANT_PREFIX
         review_label = ("owner-provided artwork reviewed" if logo.source_note.startswith(OWNER_VARIANT_PREFIX)
                         else "official source checked")
-        st.caption(f"Available: {logo.title} · {review_label} {logo.checked_on}")
+        # User-supplied logo titles are data, not Markdown/URL markup.
+        # Match literal contract/site names, including the bare-URL guard.
+        from app.monthly_report_ui_text import literal
+        st.caption(f"Available: {literal(logo.title)} · {review_label} {logo.checked_on}")
         st.image(raw, width=240)
         st.caption("Optional: changes this draft only. Saved reports and shared defaults stay unchanged.")
         label = "Use this logo in this report" if block.asset_hashes else "Add this logo to this report"
