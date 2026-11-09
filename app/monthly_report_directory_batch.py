@@ -210,25 +210,12 @@ def _public_mapping(sheet, scope, mapping, targets):
         for g in groups if g.get("Use")), tuple(targets))
 
 
-_MAX_SOURCE_TEXT = 1000
+_MAX_SOURCE_TEXT = directory.MAX_CONTACT_SOURCE_TEXT
 
 
 def _source_union(*sources):
-    """Join provenance references, bounded below the directory review budget.
-
-    The first reference and the newest ones that fit are kept; each saved
-    directory revision still holds the complete earlier chain.
-    """
-    parts = list(dict.fromkeys(s for source in sources for s in source.split(";") if s))
-    if len(";".join(parts)) <= _MAX_SOURCE_TEXT or len(parts) < 2:
-        return ";".join(parts)
-    first, kept, size = parts[0], [], len(parts[0])
-    for part in reversed(parts[1:]):
-        if size + 1 + len(part) > _MAX_SOURCE_TEXT:
-            break
-        kept.insert(0, part)
-        size += 1 + len(part)
-    return ";".join((first, *kept))
+    """Use the same bounded provenance summary as single-sheet imports."""
+    return directory.contact_source_union(*sources)
 
 
 def _same(field, value, other):

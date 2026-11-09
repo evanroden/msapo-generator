@@ -23,8 +23,8 @@ _CAPTION = re.compile(
     r"SHA-256: ([0-9a-f]{64})$")
 _CHUNK = 256 * 1024
 _EMPTY = {
-    "originals": "No external-agent source archive is stored on Render yet.",
-    "synthetic": "No synthetic evidence ZIP is stored on Render yet.",
+    "originals": "No external-agent source archive is stored yet.",
+    "synthetic": "No synthetic evidence ZIP is stored yet.",
     "templates": "No shared report template is stored yet.",
 }
 

@@ -1,0 +1,80 @@
+name: Directory retention lifecycle evidence
+
+on:
+  pull_request:
+    paths:
+      - 'app/monthly_report_directory*.py'
+      - 'app/monthly_report_testing.py'
+      - 'app/monthly_report_objects.py'
+      - 'app/monthly_report_library.py'
+      - 'app/monthly_report_admin_ui.py'
+      - 'tests/test_monthly_report_directory_retention*.py'
+      - 'tests/test_directory_retention_policy_comparison.py'
+      - 'scripts/directory_retention_fixture.py'
+      - 'tests/test_docs_index.py'
+      - 'tests/test_public_repository_hygiene.py'
+      - 'docs/DIRECTORY_RETENTION_291.md'
+      - 'docs/README.md'
+      - 'scripts/compare_directory_retention_policy.py'
+      - 'scripts/directory_retention_policy_probe.py'
+      - 'requirements*.lock'
+      - '.github/workflows/directory-retention-lifecycle.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  retention-lifecycle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - name: Install locked test dependencies
+        timeout-minutes: 10
+        run: python -m pip install -r requirements-dev.lock
+      - name: Disposable-store controls and retrospective comparison
+        timeout-minutes: 3
+        env:
+          ANTHROPIC_API_KEY: test-key-not-used
+          CANDIDATE_SHA: ${{ github.sha }}
+        run: |
+          mkdir -p test-artifacts/directory-retention-lifecycle
+          python -m pytest -q \
+            tests/test_monthly_report_directory_retention.py \
+            tests/test_monthly_report_directory_retention_controls.py \
+            tests/test_monthly_report_directory_retention_journey.py \
+            tests/test_monthly_report_directory_isolation.py \
+            tests/test_directory_retention_policy_comparison.py \
+            tests/test_docs_index.py \
+            tests/test_public_repository_hygiene.py \
+            --basetemp=test-artifacts/directory-retention-lifecycle/pytest-data \
+            --junitxml=test-artifacts/directory-retention-lifecycle/focused-results.xml
+          python scripts/compare_directory_retention_policy.py \
+            --after "$CANDIDATE_SHA" \
+            --output test-artifacts/directory-retention-lifecycle/comparison
+      - name: Preserve first-attempt synthetic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: directory-retention-lifecycle-${{ github.run_attempt }}
+          path: |
+            test-artifacts/directory-retention-lifecycle/focused-results.xml
+            test-artifacts/directory-retention-lifecycle/pytest-data/**/synthetic-retention-receipts/*.json
+            test-artifacts/directory-retention-lifecycle/comparison/comparison.json
+            test-artifacts/directory-retention-lifecycle/comparison/*/pytest.log
+            test-artifacts/directory-retention-lifecycle/comparison/*/results.xml
+            test-artifacts/directory-retention-lifecycle/comparison/*/observation.json
+          retention-days: 30
+          if-no-files-found: error

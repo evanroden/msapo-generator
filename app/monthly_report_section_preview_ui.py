@@ -320,12 +320,17 @@ def _render_ordered_preview(section_key, prefix, title):
                 if not pending:
                     error = ('The cached preview expired before pages could be '
                              'displayed. Retry the preview.')
-    if error:
-        if not stale:
-            status = _preview_status(failed=True)
-        st.warning(error)
-        st.button('Retry preview', key=prefix + '_ordered_retry_' + section_key,
-                  on_click=_scoped_callback(_retry_preview, prefix, section_key))
+    # Keep the reserved viewer at one fragment delta path. Inserting an error
+    # and Retry before it replaced its native slot while the fragment streamed,
+    # briefly collapsing a preceding section underneath a navigation action.
+    # Only this stable message container's children change; no scroll is restored.
+    with st.container(key=prefix + '_ordered_preview_messages_' + section_key):
+        if error:
+            if not stale:
+                status = _preview_status(failed=True)
+            st.warning(error)
+            st.button('Retry preview', key=prefix + '_ordered_retry_' + section_key,
+                      on_click=_scoped_callback(_retry_preview, prefix, section_key))
     widget_key = prefix + '_preview_surface_' + section_key
     render_view(key=widget_key, view_scope=state['owner'] + '|' + widget_key, generation=state['wanted'].get(section_key, ''), title=title,
                 ticket=ticket, images=images, status=status, stale=stale,
