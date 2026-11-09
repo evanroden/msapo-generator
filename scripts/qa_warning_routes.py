@@ -390,6 +390,22 @@ def exercise(engine,name,mode,scenario,base):
         return page.locator('.st-key-'+prefix+suffix+' button')
     def jump(code,control,block=None,*,source_page=False,ordinal=None):
         navigate_sections(page,'report_review',keyboard=keyboard)
+        if code in ('source_facility', 'client_source_page'):
+            # Passive synthetic-only geometry samples diagnose late scroll/resize.
+            page.evaluate('''() => {
+                const samples=[]; window.__warningGeometry=samples;
+                const start=performance.now(); let last='';
+                function sample() {
+                    const e=document.activeElement, r=e?.getBoundingClientRect?.();
+                    const sc=document.querySelector('[data-testid="stMain"]');
+                    const x={t:Math.round(performance.now()-start),role:e?.getAttribute?.('role')||null,
+                        label:e?.getAttribute?.('aria-label')||null,top:r?Math.round(r.top):null,
+                        bottom:r?Math.round(r.bottom):null,scroll:sc?Math.round(sc.scrollTop):null};
+                    const key=JSON.stringify([x.role,x.label,x.top,x.bottom,x.scroll]);
+                    if(key!==last && samples.length<100){samples.push(x);last=key;}
+                    if(performance.now()-start<7000) requestAnimationFrame(sample);
+                } requestAnimationFrame(sample);
+            }''')
         commit(warning_action(code,block,source_page=source_page,ordinal=ordinal))
         focus_proof(control)
         if scenario=='source' and code=='source_facility':
@@ -562,6 +578,16 @@ def exercise(engine,name,mode,scenario,base):
         record['result']='failed';record['error']=type(exc).__name__+': '+str(exc);record['traceback']=traceback.format_exc()
         try:page.screenshot(path=str(output/'failure.png'))
         except Exception as capture_error:record['screenshot_error']=str(capture_error)
+        # Log bounded synthetic focus state when the large trace artifact cannot be retrieved.
+        try:
+            focus=page.evaluate('''() => {const e=document.activeElement; return {tag:e?.tagName || null, role:e?.getAttribute('role') || null, id:e?.id || null, label:e?.getAttribute('aria-label') || null};}''')
+            print('WARNING_ROUTE_FAILURE_FOCUS '+json.dumps({'case':key,'focus':focus}),flush=True)
+        except Exception as focus_error:
+            print('WARNING_ROUTE_FAILURE_FOCUS_UNAVAILABLE '+str(focus_error)[:300],flush=True)
+        try:
+            print('WARNING_ROUTE_GEOMETRY '+json.dumps({'case':key,'samples':page.evaluate('window.__warningGeometry || []')}),flush=True)
+        except Exception as geometry_error:
+            print('WARNING_ROUTE_GEOMETRY_UNAVAILABLE '+str(geometry_error)[:300],flush=True)
         raise
     finally:
         for action in (lambda:context.tracing.stop(path=str(output/'trace.zip')),context.close,browser.close):

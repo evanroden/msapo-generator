@@ -8,6 +8,8 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 [Monthly Report ownership and carryover decisions](monthly_report_ownership_matrix.md) — audited contract, site and report behavior; explicit requirements, proposals and unresolved choices; synthetic scope examples and a migration proposal that preserves originals and history. This decision record does not approve policy changes or a production migration.
 
+[Directory original retention verification](DIRECTORY_RETENTION_291.md) - synthetic lifecycle/race regressions, reproducible retrospective policy comparison, and completed native served acceptance with scope limits.
+
 [Annual Training requirements](MONTHLY_TRAINING_YEARS.md) — explicit matrix year, legacy unknown-year preservation, deliberate annual transition, and unchanged separation from completed monthly sessions.
 
 [Native forward-message compatibility](native-forward-message-compatibility.md) — bounded native cache-advertisement repair, existing frontend generation retention, and independent browser acceptance requirements.
@@ -15,6 +17,8 @@ maintained: manually, pinned by tests/test_docs_index.py
 [Isolated source-render diagnostic](ISOLATED_SOURCE_RENDER_DIAGNOSTIC.md) — explicit, browser-isolated full-resolution passive DOCX inspection on the deployed renderer, with immutable source/input/output receipts; not report approval or completed-report acceptance.
 
 [External-agent Render archive retrieval](EXTERNAL_RENDER_ARCHIVE_ACCESS_2026-10-14.md) — anonymous six-source and synthetic-evidence shelves on the existing Render persistent disk; exact-download checksum tool for external agents, plus explicit owner upload and two-served-build acceptance boundaries. Code availability is not confirmation that an archive has been uploaded.
+
+[Monthly deterministic assembly boundary](monthly_report_assembly_boundary.md) — accepted-source review, synthetic saved-state and pinned-design checks, structural comparison limits and remaining served acceptance.
 
 [Shared report templates for agents](SHARED_REPORT_TEMPLATES.md) — immutable original DOCX references, 512 MiB uploads, and verified UI/CLI downloads. Storage does not install a master or alter reports; verify shared access before claiming availability.
 
@@ -170,6 +174,7 @@ Not tied to one change; expected to stay true.
 | [`JOB_NUMBER_CATALOG_AND_UNITY_DISAMBIGUATION_2026-08-10.md`](JOB_NUMBER_CATALOG_AND_UNITY_DISAMBIGUATION_2026-08-10.md) | The verified 87-value job catalog and the Arkansas-versus-RRH Unity rule. |
 | [`RRH_UNIFIED_REVIEW_BRAND_BROWSER_HARDENING_2026-08-09.md`](RRH_UNIFIED_REVIEW_BRAND_BROWSER_HARDENING_2026-08-09.md) | The three-step UI, brand-aligned theme, browser matrix, release hardening. |
 | [`LINK_PREVIEW_METADATA_2026-08-11.md`](LINK_PREVIEW_METADATA_2026-08-11.md) | Page title, favicon, Open Graph/Twitter card, the build-time patch, and the production verification contract. |
+| [`AZURE_MIGRATION.md`](AZURE_MIGRATION.md) | Moving off Render: every setting and build argument, the one-instance rule, SQLite on a network share, the checked data move (`scripts/migrate_data.py`), and what people and QA notice. |
 
 ## 5. Historical — read for reasoning, not for current behaviour
 

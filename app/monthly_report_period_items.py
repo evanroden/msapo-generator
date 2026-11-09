@@ -16,6 +16,7 @@ import re
 from app.monthly_report_asset_review import preserve_asset_reviews
 from app.monthly_report_checks import stale_period_mentions, _MONTH_RE, _MONTHS, _DATE_RE, _MONTH_YEAR_RE
 from app.monthly_report_content_policy import contains_price
+from app.monthly_report_page_reference import page_identity
 
 PREFIX = "period-item:v1:"
 HISTORICAL = "Historical context: "
@@ -120,8 +121,8 @@ def unresolved_mentions(block, period, sources=()):
 
 def item_sources(block, item, sources):
     """Exact supported lineage only; unrelated filename/date guesses are absent."""
-    cited = {(parts[0], int(parts[1])) for r in block.references
-             if not r.startswith(PREFIX) and len(parts := r.split(":")) == 3 and parts[1].isdigit()}
+    cited = {identity for reference in block.references
+             if (identity := page_identity(reference)) is not None}
     labels = []
     for source in sources:
         for number, text in enumerate(source.page_texts, 1):
