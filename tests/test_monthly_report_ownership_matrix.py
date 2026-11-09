@@ -267,6 +267,39 @@ def test_narrow_policy_boundaries_do_not_turn_prior_month_facts_into_current_wor
     assert items["source_originals"]["version_conflict"] == "immutable_sha256"
 
 
+@pytest.mark.parametrize("item_id,decision,source_file,source_symbol", [
+    ("subcontractor_contacts", "existing_implementation",
+     "app/monthly_report_subcontractor_roster.py", "save_roster"),
+    ("subcontractor_status", "proposed_policy",
+     "app/monthly_report_subcontractor_roster.py", "apply_roster"),
+    ("capital_renewal", "existing_implementation",
+     "app/monthly_report_capital_master.py", "select_capital"),
+    ("training_requirements", "existing_implementation",
+     "app/monthly_report_training.py", "_requirement_columns"),
+    ("training_events", "existing_implementation",
+     "app/monthly_report_training_import.py", "review_training_event_sites"),
+])
+def test_november_merged_ownership_mechanisms_are_current(
+    item_id, decision, source_file, source_symbol,
+):
+    row = _items(_matrix())[item_id]
+    assert row["decision"] == decision
+    anchors = row["current_mechanism"]["anchors"]
+    assert any(a["path"] == source_file and source_symbol in a["symbols"]
+               for a in anchors)
+    if item_id in {"subcontractor_contacts", "subcontractor_status", "capital_renewal"}:
+        assert row["version_conflict"] == "standing_cas"
+    section = _section(_read(DOCUMENT), item_id)
+    assert source_file in section and source_symbol in section
+
+
+def test_merged_starting_report_reversal_is_not_marked_unmerged():
+    document = _read(DOCUMENT)
+    assert "#687" in document
+    assert "#687 remains unmerged" not in document
+    assert "is unmerged at the audited main" not in document
+
+
 @pytest.mark.parametrize("item_ids,obsolete_claim", [
     (("workflow_business_hours", "workflow_after_hours"), "still contains a global ENFRA standards path"),
     (("training_requirements",), "year-specific annual schema in PR #537 is not treated as merged"),
