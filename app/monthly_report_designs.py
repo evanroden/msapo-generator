@@ -28,7 +28,14 @@ def state(contract):
 
 def master_state():
     path = library._root() / "designs" / "master" / "manifest.json"
-    return library._read(path) if path.exists() else {"revision": 0, "default": "", "history": []}
+    current = library._read(path) if path.exists() else {"revision": 0, "default": "", "history": []}
+    revision = current.get("revision")
+    default = current.get("default")
+    if type(revision) is not int or revision < 0:
+        raise library.LibraryError("The company master revision is invalid; existing data was preserved.")
+    if not isinstance(default, str) or (default and not re.fullmatch(r"[0-9a-f]{64}", default)):
+        raise library.LibraryError("The company master reference is invalid; existing data was preserved.")
+    return current
 
 
 def _digest(profile):
