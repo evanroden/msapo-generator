@@ -23,7 +23,7 @@ def picture_marker(draft, block, index, prefix, caption_key):
 def render_picture_links(check, draft, prefix):
     # Overlong ordinary captions require the native closed-editor route below,
     # not an additional link to a field that may not be mounted yet.
-    if check.code == "photo_caption":
+    if check.code in {"photo_caption", "document_caption"}:
         return
     specs = {b.key: b for section in draft.sections if section.included for b in section.blocks}
     links = []
@@ -109,7 +109,7 @@ def _current_photo_caption(draft, target):
     if block is None or source is not None or index is None:
         return False
     from app.monthly_report_layout_checks import layout_checks
-    return any(check.code == "photo_caption" and target in check.targets
+    return any(check.code in {"photo_caption", "document_caption"} and target in check.targets
                for check in layout_checks(draft))
 
 
@@ -165,7 +165,7 @@ def photo_caption_request(prefix, draft, block, index):
 
 
 def render_photo_caption_links(check, draft, prefix):
-    if check.code != "photo_caption":
+    if check.code not in {"photo_caption", "document_caption"}:
         return
     from app.monthly_report_guided import _rich_text_scope
     for target in check.targets:

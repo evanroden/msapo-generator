@@ -167,3 +167,49 @@ def test_unrelated_table_or_photo_warning_never_advertises_a_text_field(monkeypa
     ui.render_text_warning_links(ReportCheck("pricing", "Price in photo", True, block.key),
                                  report, PREFIX)
     assert rendered == []
+
+
+def test_source_document_caption_routes_even_when_reviewed_editor_was_collapsed(monkeypatch):
+    """A source-page caption uses an occurrence, not a filename or page guess."""
+    from tests.test_monthly_report_caption_preflight import report_with_caption, check_captions
+    draft, assets, source = report_with_caption("Synthetic long source caption. " * 80)
+    (check,) = check_captions(draft)
+    assert check.code == "document_caption" and check.blocking
+    (target,) = check.targets
+    assert resolve_target(draft, target)[:2] == (draft.blocks[0], 1)
+    controls, messages = [], []
+    state = {PREFIX + "_draft": draft,
+             PREFIX + "_unrelated_text": "Retained pending synthetic notes"}
+    monkeypatch.setattr(ui, "st", SimpleNamespace(
+        session_state=state, caption=messages.append,
+        button=lambda label, **kw: controls.append((label, kw))))
+    monkeypatch.setattr(guided, "_rich_text_scope", lambda prefix: SCOPE)
+    assert ui._current_photo_caption(draft, target)
+    ui.render_photo_caption_links(check, draft, PREFIX)
+    assert len(controls) == 1
+    args = controls[0][1]
+    args["on_click"](*args["args"])
+    ui.consume_photo_caption(PREFIX, draft, SCOPE)
+    assert state[PREFIX + "_photos_improvements_editing"] is True
+    assert ui.photo_caption_request(PREFIX, draft, draft.blocks[0], 0) == ""
+    marker = ui.photo_caption_request(PREFIX, draft, draft.blocks[0], 1)
+    assert ('href="#' + ui.marker_id(PREFIX, target) + '"') in marker
+    assert state[PREFIX + "_unrelated_text"] == "Retained pending synthetic notes"
+    assert not messages
+
+
+def test_document_caption_removed_page_refuses_any_other_picture(monkeypatch):
+    from tests.test_monthly_report_caption_preflight import report_with_caption, check_captions
+    draft, _, source = report_with_caption("Another synthetic source caption. " * 90)
+    (check,) = check_captions(draft)
+    state = {PREFIX + "_draft": draft, PREFIX + "_unrelated_text": "Pending note"}
+    monkeypatch.setattr(ui, "st", SimpleNamespace(session_state=state))
+    monkeypatch.setattr(guided, "_rich_text_scope", lambda prefix: SCOPE)
+    ui.queue_photo_caption(PREFIX, check.targets[0], SCOPE)
+    # Source or its page evidence may disappear between click and the owner.
+    changed = replace(draft, sources=())
+    ui.consume_photo_caption(PREFIX, changed, SCOPE)
+    assert PREFIX + "_photo_caption_navigation_open" not in state
+    assert PREFIX + "_photos_improvements_editing" not in state
+    assert "unavailable" in state[PREFIX + "_photo_caption_navigation_notice"]
+    assert state[PREFIX + "_unrelated_text"] == "Pending note"
