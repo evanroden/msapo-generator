@@ -66,7 +66,7 @@ def test_generic_chart_or_contact_alone_does_not_add_phantom_page(chart, contact
 
 @requires_libreoffice
 def test_real_generic_pdf_keeps_contact_table_off_chart_page(tmp_path, monkeypatch):
-    import fitz
+    import pymupdf as fitz
     from app import pdf_converter
 
     monkeypatch.setattr(pdf_converter, "OUTPUT_DIR", tmp_path)

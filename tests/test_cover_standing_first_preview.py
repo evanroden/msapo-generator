@@ -6,7 +6,7 @@ This is not native-browser or real-renderer acceptance. No real report is read.
 from concurrent.futures import Future
 from threading import BoundedSemaphore
 
-import fitz
+import pymupdf as fitz
 from streamlit.testing.v1 import AppTest
 
 from app import monthly_report_library as library
