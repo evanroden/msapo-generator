@@ -187,3 +187,48 @@ def test_saved_source_review_reopens_after_legacy_cache_repair(profile):
     reopened = library.load_snapshot(profile.contract, profile.key, period)
     assert reopened.draft == draft
     assert library.load_snapshot_version(profile.contract, profile.key, period, 1).draft == draft
+
+
+def test_guided_quoted_csv_upload_then_fresh_reopen_keeps_manual_update(monkeypatch, tmp_path):
+    """Exercise the existing source uploader and saved-workspace reload."""
+    from io import BytesIO
+    import streamlit as st
+    from streamlit.testing.v1 import AppTest
+    from test_monthly_report_activity_intake_commit import APP, activity, draft, editor, setup_app
+
+    app, profile = setup_app(monkeypatch, tmp_path)
+    manual = "Synthetic human-authored October update."
+    editor(app).set_value(manual).run()
+    assert not app.exception
+    raw = csv_bytes(rows=(
+        ("0001", "2026-10-12", "Closed", "0", "Inspect; plan\nNext visit"),
+        ("0002", "2026-10-13", "Open", "", 'Await "seal"'),
+    ))
+    original_uploader = st.file_uploader
+
+    def upload(label, *args, **kwargs):
+        if label == "Add source files":
+            stream = BytesIO(raw)
+            stream.name = "synthetic-quoted-work-orders.csv"
+            return [stream]
+        return original_uploader(label, *args, **kwargs)
+
+    monkeypatch.setattr(st, "file_uploader", upload)
+    app.run()
+    assert not app.exception and activity(app).text == manual
+    contents = [value for key, value in app.session_state.filtered_state.items()
+                if key.endswith("_evidence") and isinstance(value, tuple)
+                and value and hasattr(value[0], "source")]
+    assert contents and contents[0][0].tables[0].columns == HEADERS
+    assert contents[0][0].tables[0].rows[0][-1] == "Inspect; plan\nNext visit"
+    before = draft(app)
+    assert before.sources and sources.source_bytes(profile, before.sources[0]) == raw
+    monkeypatch.setattr(st, "file_uploader", original_uploader)
+
+    reopened = AppTest.from_string(APP, default_timeout=45).run()
+    assert not reopened.exception and activity(reopened).text == manual
+    resumed = [value for key, value in reopened.session_state.filtered_state.items()
+               if key.endswith("_evidence") and isinstance(value, tuple)
+               and value and hasattr(value[0], "source")]
+    assert resumed and resumed[0][0].tables == contents[0][0].tables
+    assert draft(reopened).sources == before.sources
