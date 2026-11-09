@@ -50,7 +50,11 @@ def test_august_removed_symbols_have_no_remaining_runtime_source_references():
     Historical docs are deliberately excluded: section 5.1 records the prior
     names as audit evidence and is not an executable consumer. This test itself
     records the removed names in negative assertions, so exclude this file.
+
+    Names are matched as whole identifiers: an unrelated longer name that merely
+    contains one (``test_existing_path_...``) is not a reference to it.
     """
+    import re
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
@@ -76,6 +80,7 @@ def test_august_removed_symbols_have_no_remaining_runtime_source_references():
                 continue
             body = path.read_text(encoding="utf-8", errors="replace")
             for symbol in former_symbols:
-                if symbol in body:
+                whole = r"(?<![A-Za-z0-9_])" + re.escape(symbol) + r"(?![A-Za-z0-9_])"
+                if re.search(whole, body):
                     offenders.append(f"{path.relative_to(root)}: {symbol}")
     assert not offenders, f"Orphaned symbol still referenced: {offenders[:12]}"

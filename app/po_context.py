@@ -965,9 +965,7 @@ def build_po_context(
         warnings.append(
             "The attachment package must contain the original quote and one MSAPO form PDF."
         )
-    # 160 is Smartsheet's practical single-line cell limit for this column. The
-    # same number is repeated in po_rules.asset_id_is_numeric; they are not
-    # linked, so a change needs both.
+    # 160 is Smartsheet's practical single-line cell limit for this column.
     if len(asset_id) > 160:
         warnings.append("The selected full Asset ID is unexpectedly long.")
 
