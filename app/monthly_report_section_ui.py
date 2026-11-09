@@ -494,20 +494,33 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 plan["unsupported_reviewed"] = preserved
                 if not preserved:
                     if section.key == "cover":
-                        count = sum(i.kind == "unsupported" for i in section.items)
-                        st.caption(f"{count} unread cover drawing{'s' if count != 1 else ''} · {source_name}")
-                    blocking.append(
-                        "A Word diagram in " + section.title + " could not be preserved. " +
-                        ("The file exceeds the native-artwork processing limit. Use an available ENFRA template "
-                         "or keep the original and upload a smaller test copy; replacing the upload starts a new review."
-                         if section.key == "cover" and native_art_size_limited else
-                         "A new cover photograph changes only the photograph; it cannot replace "
-                         "this unread drawing. Repair that artwork in the original Word file and "
-                         "upload it again. " + cover_recovery
-                         if section.key == "cover" else
-                         "Use its original-page preview or the clear replacement upload; "
-                         "it will not be silently left out.")
-                    )
+                        unread = tuple(i for i in section.items if i.kind == "unsupported")
+                        if native_art_size_limited:
+                            blocking.append(
+                                "This source exceeds the native-artwork inspection budget, not necessarily "
+                                "the Word upload limit. Its cover cannot be certified from the truncated "
+                                "inspection. Choose the independent ENFRA template, keep an existing "
+                                "report cover, or retry with a smaller Word source. The original "
+                                "upload and your other section edits are retained. " + cover_recovery
+                            )
+                        else:
+                            for item in unread[:4]:
+                                st.caption(f"{item.id} · {item.note}")
+                            if len(unread) > 4:
+                                st.caption(f"{len(unread) - 4} additional cover objects need review.")
+                            blocking.append(
+                                f"{len(unread)} specific cover object(s) are not safely importable. "
+                                "A new cover photograph does not replace those objects. "
+                                "Replace the identified object in Word and re-upload it, or "
+                                "explicitly continue using a different saved cover/template. "
+                                + cover_recovery
+                            )
+                    else:
+                        blocking.append(
+                            "A Word diagram in " + section.title + " could not be preserved. "
+                            "Use its original-page preview or the clear replacement upload; "
+                            "it will not be silently left out."
+                        )
                 else:
                     st.caption("Source drawings are retained in this section, "
                                "either as safe original-page images or named replacements.")
@@ -1289,9 +1302,12 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             # Even deliberately excluded foreign content would remain inside a
             # new profile's uploaded native design. A contribution omission or
             # an older staged approval cannot certify that design's artwork.
-            message = ("The cover artwork in " + (upload.name if upload is not None else "the saved original") +
-                       " is unread or has no confirmed role. Repair it in the original Word file and upload it again, "
-                       "or open an existing report with a saved cover design. This upload would also supply a new report’s page design.")
+            unread = next((item for item in cover_section.items if item.kind == "unsupported"), None)
+            detail = (f"{unread.id} · {unread.note} " if unread is not None else
+                      "Cover image identity has no confirmed photograph or logo role. ")
+            message = (detail + "Choose the independent ENFRA template or keep an existing saved "
+                       "report cover to continue without this source design. The original upload "
+                       "and already edited body sections remain available.")
             if native_art_size_limited:
                 message = ("This upload exceeds the native-artwork processing limit, so its page design cannot yet be used. "
                            "Choose an available ENFRA template above, or keep the original and upload a smaller test copy. "
