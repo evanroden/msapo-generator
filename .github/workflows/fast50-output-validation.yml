@@ -1,0 +1,60 @@
+name: Fast 50 output acceptance
+on:
+  push:
+    branches: [validation/fast50-output-20261110]
+permissions:
+  contents: read
+jobs:
+  output-checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      FONTCONFIG_FILE: ${{ github.workspace }}/runtime/fonts.conf
+      ANTHROPIC_API_KEY: test-key-not-used
+      MSAPO_SHA: 8d214ef271b594c8bd8b85374b72fff84ef6c8f2
+      OUTPUT_NODE_IDS: >-
+        ["tests/test_monthly_report_capacity_inclusion.py::test_capacity_selection_in_pdf[False]", "tests/test_monthly_report_capacity_inclusion.py::test_capacity_selection_in_pdf[True]", "tests/test_monthly_report_contact_headers.py::test_actual_pdf_contacts_keep_real_headers_across_overflow[False]", "tests/test_monthly_report_contact_headers.py::test_actual_pdf_contacts_keep_real_headers_across_overflow[True]", "tests/test_monthly_report_training_year_outputs.py::test_annual_actual_pdf_retains_year_cells_and_original[2026-False]", "tests/test_monthly_report_training_year_outputs.py::test_annual_actual_pdf_retains_year_cells_and_original[2026-True]", "tests/test_monthly_report_training_year_outputs.py::test_annual_actual_pdf_retains_year_cells_and_original[2027-False]", "tests/test_monthly_report_training_year_outputs.py::test_annual_actual_pdf_retains_year_cells_and_original[2027-True]", "tests/test_monthly_report_ar_section_ten.py::test_ar_section_ten_real_pdf_preserves_titles_after_conversion", "tests/test_monthly_report_ar_section_ten.py::test_ar_measured_native_ten_is_visible_in_pdf_raster", "tests/test_monthly_report_mbcx_pdf_geometry.py::test_real_word_pdf_preserves_every_mbcx_corner_and_next_section", "tests/test_monthly_scorecard_pdf.py::test_actual_scorecard_pdf_keeps_first_middle_last_pages", "tests/test_water_monthly_update_outputs.py::test_water_actual_pdf_output_and_empty_update_has_no_extra_page[True-False-False]", "tests/test_water_monthly_update_outputs.py::test_water_actual_pdf_output_and_empty_update_has_no_extra_page[True-False-True]", "tests/test_water_monthly_update_outputs.py::test_water_actual_pdf_output_and_empty_update_has_no_extra_page[False-True-False]", "tests/test_water_monthly_update_outputs.py::test_water_actual_pdf_output_and_empty_update_has_no_extra_page[False-True-True]", "tests/test_water_monthly_update_outputs.py::test_water_actual_pdf_output_and_empty_update_has_no_extra_page[True-True-False]", "tests/test_water_monthly_update_outputs.py::test_water_actual_pdf_output_and_empty_update_has_no_extra_page[True-True-True]", "tests/test_water_monthly_update_outputs.py::test_water_actual_pdf_output_and_empty_update_has_no_extra_page[False-False-False]", "tests/test_water_monthly_update_outputs.py::test_water_actual_pdf_output_and_empty_update_has_no_extra_page[False-False-True]", "tests/test_monthly_report_work_order_lane_integration.py::test_qualified_site_tables_review_reopen_and_export_beside_annual_totals", "tests/test_monthly_report_work_order_lane_integration.py::test_native_title_band_review_exports_first_last_calls_and_multiline_task", "tests/test_monthly_report_work_order_review_flow.py::test_reviewed_source_rows_and_totals_survive_actual_word_pdf_export", "tests/test_cover_logo_aspect.py::test_pdf_logo_circle_is_round[None-size0-brand_logo]", "tests/test_cover_logo_aspect.py::test_pdf_logo_circle_is_round[None-size0-client_logo]", "tests/test_cover_logo_aspect.py::test_pdf_logo_circle_is_round[None-size1-brand_logo]", "tests/test_cover_logo_aspect.py::test_pdf_logo_circle_is_round[None-size1-client_logo]", "tests/test_cover_logo_aspect.py::test_pdf_logo_circle_is_round[None-size2-brand_logo]", "tests/test_cover_logo_aspect.py::test_pdf_logo_circle_is_round[None-size2-client_logo]", "tests/test_cover_logo_aspect.py::test_pdf_logo_circle_is_round[cover-size0-brand_logo]", "tests/test_cover_logo_aspect.py::test_pdf_logo_circle_is_round[cover-size0-client_logo]", "tests/test_cover_logo_aspect.py::test_pdf_logo_circle_is_round[cover-size1-brand_logo]", "tests/test_cover_logo_aspect.py::test_pdf_logo_circle_is_round[cover-size1-client_logo]", "tests/test_cover_logo_aspect.py::test_pdf_logo_circle_is_round[cover-size2-brand_logo]", "tests/test_cover_logo_aspect.py::test_pdf_logo_circle_is_round[cover-size2-client_logo]", "tests/test_monthly_report_alternate_cover_photo_choice.py::test_selected_alternate_photo_reaches_live_preview_and_generated_word_pdf", "tests/test_monthly_report_capacity_text_tabs.py::test_native_pdf_retains_measure_positions_and_original_source", "tests/test_monthly_report_capital_replay_outputs.py::test_corrected_capital_actual_word_pdf_preserves_cells_once[False]", "tests/test_monthly_report_capital_replay_outputs.py::test_corrected_capital_actual_word_pdf_preserves_cells_once[True]", "tests/test_monthly_report_generic_issue_rows.py::test_real_native_pdf_preserves_both_generic_issue_rows_without_prices", "tests/test_proposal_import_decision_evidence.py::test_generated_pdf_retains_conflicting_literals_without_prices", "tests/test_training_imported_table_outputs.py::test_edited_source_values_survive_preview_snapshot_and_word_pdf[plain]", "tests/test_training_imported_table_outputs.py::test_edited_source_values_survive_preview_snapshot_and_word_pdf[native]", "tests/test_training_requirement_identity.py::test_actual_pdf_keeps_site_statuses_and_shared_history", "tests/test_training_review_outputs.py::test_reviewed_current_and_historical_rows_render_once_with_truthful_labels[False]", "tests/test_training_review_outputs.py::test_reviewed_current_and_historical_rows_render_once_with_truthful_labels[True]"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 8d214ef271b594c8bd8b85374b72fff84ef6c8f2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - name: Install locked dependencies and production document renderers
+        run: |
+          sudo python3 scripts/ci_ubuntu_mirror_priority.py
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-calc fontconfig fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-crosextra-carlito fonts-crosextra-caladea fonts-texgyre fonts-opensymbol fonts-urw-base35
+          python -m pip install -r requirements-dev.lock
+          python runtime/check_renderer.py
+      - name: Run the 46 output checks skipped locally
+        run: |
+          python - <<'PYTEST'
+          import json, os, subprocess, sys
+          nodes = json.loads(os.environ['OUTPUT_NODE_IDS'])
+          assert len(nodes) == len(set(nodes)) == 46
+          observed = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          assert observed == os.environ['MSAPO_SHA'], observed
+          print('Testing production commit:', observed, flush=True)
+          sys.exit(subprocess.call([sys.executable, '-m', 'pytest', '-q', *nodes, '--junitxml=fast50-output-results.xml', '--durations=15']))
+          PYTEST
+      - name: Require all 46 output checks to run without skips
+        run: |
+          python - <<'VERIFY'
+          import xml.etree.ElementTree as ET
+          root = ET.parse('fast50-output-results.xml').getroot()
+          cases = list(root.iter('testcase'))
+          assert len(cases) == 46, len(cases)
+          assert not any(c.find(kind) is not None for c in cases for kind in ('skipped', 'failure', 'error'))
+          print('46 output checks passed without skips')
+          VERIFY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fast50-output-results-8d214ef2
+          path: fast50-output-results.xml
+          if-no-files-found: warn
+          retention-days: 14
