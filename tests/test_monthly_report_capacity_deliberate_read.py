@@ -155,8 +155,8 @@ def test_capacity_native_picker_matches_supported_formats_and_upload_ceiling(pro
     picker, = app.get("file_uploader")
     assert picker.proto.max_upload_size_mb == 128
     assert {item.casefold() for item in picker.proto.type} == capacity.SUPPORTED
-    assert "DOCX: up to 128 MB" in picker.proto.help
-    assert "Other supported files: up to 30 MB" in picker.proto.help
+    assert "DOCX: up to 128 MiB" in picker.proto.help
+    assert "Other supported files: up to 30 MiB" in picker.proto.help
     assert app.session_state["test_block"] == block
     assert capacity.load_capacity(profile.contract) == before
 

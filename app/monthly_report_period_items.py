@@ -190,15 +190,19 @@ def apply_exclusions(block, period):
 def restore_excluded(block, period, text, *, expected_fingerprint):
     if block.fingerprint != expected_fingerprint:
         raise ValueError("This wording changed. Check the current item before restoring it.")
-    if not _manual(block) or text not in {value["text"] for value in exclusions(block, period)}:
+    # Each click restores one removal. A second identical line may have a
+    # separate earlier exclusion receipt, and deleting all receipts would
+    # make that other line permanently unrecoverable.
+    latest = next((value for value in exclusions(block, period)
+                   if value["text"] == text), None)
+    if not _manual(block) or latest is None:
         raise ValueError("This item is not excluded from this report.")
-    removed = {_record(value) for value in decisions(block, period)
-               if value.get("action") == "exclude" and value.get("text") == text}
+    removed = _record(latest)
     current_count = sum(line == text for line in block.text.splitlines())
-    allowed = next(value["remaining"] for value in exclusions(block, period) if value["text"] == text)
+    allowed = latest["remaining"]
     restored = block.text
     if current_count <= allowed:
         restored = "\n".join(filter(None, (block.text.rstrip("\r\n"), text)))
     return preserve_asset_reviews(block, replace(block, text=restored,
-        references=tuple(ref for ref in block.references if ref not in removed),
+        references=tuple(ref for ref in block.references if ref != removed),
         reviewed_fingerprint="", client_reviewed_fingerprint=""))

@@ -197,7 +197,7 @@ def test_pdf_failure_retains_docx_and_removes_partial_output(monkeypatch, tmp_pa
 
 @requires_libreoffice
 def test_real_pdf_has_expected_pages_cover_and_chrome(draft):
-    import fitz
+    import pymupdf as fitz
 
     package = generate_report(draft)
     assert package.pdf, package.pdf_error

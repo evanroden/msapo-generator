@@ -9,7 +9,7 @@ import subprocess
 from zipfile import ZipFile, ZIP_DEFLATED
 
 from docx import Document
-import fitz
+import pymupdf as fitz
 import pytest
 
 from app import memory

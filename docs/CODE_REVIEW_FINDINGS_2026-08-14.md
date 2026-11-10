@@ -5,7 +5,7 @@ branch: claude/unspecified-issue-wcx90t
 base_commit: bc9e92d05e0f0a6a7c3fb26b76927b00478609e1
 date: 2026-08-14
 change_type: review_and_annotation
-status: partial_review_complete_findings_unactioned
+status: bugs_reconciled_2026_11_09_dead_code_and_redundancy_pending
 coverage: 17 of 29 app modules reviewed; 12 not reviewed (session limit)
 ---
 
@@ -17,8 +17,11 @@ A line-by-line review of the application, with LLM-ready comments written into
 the code in place. This document is the part that could not go in the code: the
 defects, the dead-code candidates, and the duplication.
 
-**Nothing in sections 4-6 has been acted on.** The annotation commit changed no
-executable code and deleted nothing, by design -- see §3.
+**Historical, as of the annotation pass:** nothing in sections 4-6 was acted on
+by that 14 August review. Subsequent repairs landed; the current-main status of
+each of the 23 bugs is recorded in **§4.1 (9 November 2026)**. Sections 5-6
+remain historical, unverified candidate inventories for N16. The annotation
+commit itself changed no executable code and deleted nothing -- see §3.
 
 ### 1.1 The one thing to read if you read nothing else
 
@@ -84,10 +87,65 @@ change at all. The per-file forbidden list, the three pinned substring counts in
 `tests/test_device_identity.py`, `tests/test_expense_draft_state.py` and
 `tests/test_public_repository_hygiene.py`.
 
-## 4. Bugs found (23) -- none fixed here
+## 4. Bugs found (23) -- original report and current-main dispositions
 
-Each was reported rather than fixed, so that a behaviour change never rides
-along inside a comment commit. `failure_scenario` is the reproduction.
+The 14 August reviewer *reported rather than fixed* these findings; each
+original `failure_scenario` remains below for historical evidence. The later
+reconciliation immediately below states whether the fault still exists.
+
+### 4.1 Current-main reconciliation — 9 November 2026 (N15)
+
+This is a **later disposition ledger**, not a claim that the original
+14 August annotation pass repaired these defects. All 23 originally reported
+bugs were checked against main `9cc96e6265fbf0ce40dbacf8d013cdc6b612e549`, the subsequent remediation
+history and the current regression code. **22 are fixed or hardened; one is
+not reproducible as the originally described correctness error. No unfixed
+product defect from this list was established by this audit.** "Fixed"
+means the corresponding code path and regression now exist on main, **not**
+that an authentic production/browser replay was performed in this audit.
+
+| # | Original finding (August location) | Current disposition | Fix/evidence now on main |
+| ---: | --- | --- | --- |
+| 1 | Corrected site address discarded (`web_ui.py:2639`) | **Fixed** | Aug 17 `f16aa131`; current `web_ui.py` passes reviewed `facility_address` to `build_msapo_pdf`, with site/facility overrides. |
+| 2 | Transparent palette receipt flattened to black (`expense_report.py:1252`) | **Fixed** | Aug 17 `8f37db6c`; current `_compact_receipt_image` converts transparent P/PA images through alpha before flattening. |
+| 3 | "Needed from you" remains after correction (`web_ui.py:2214`) | **Fixed** | Aug 17 `f16aa131`; `current_needs` is saved rather than the monotonic OR, with only one-rerun placement retention. |
+| 4 | Explicit contract/site deselection ignored (`web_ui.py:820`) | **Fixed** | Aug 17 `f16aa131`; `_routing_snapshot` recognizes both explicit placeholders. |
+| 5 | Re-selecting seeded approver erases email (`expense_ui.py:1653`) | **Fixed** | Aug 17 `f16aa131`, later director-routing refinements; `_approver_options` preserves current/configured name-email identity and `_recall_approver_email` restores the selected pair. |
+| 6 | Manual Smartsheet rows ignore value mappings (`smartsheet.py:1020`) | **Fixed** | Aug 17 `f16aa131`, augmented Aug 26 `226b12ed`; `handoff_rows` and prefilled URL use `_mapped_value`, with fail-closed mapped-value checks. |
+| 7 | Skipped optional prefill values hidden (`smartsheet_inline.py:217`) | **Fixed** | Aug 17 `f16aa131`; a warning appears before the link, and manual troubleshooting expands when values are skipped. |
+| 8 | Mileage uses half-even rather than workbook rounding (`expense_report.py:425`) | **Fixed** | Aug 17 `f16aa131`; `mileage_reimbursement` passes `ROUND_HALF_UP`, matching the sheet formula. |
+| 9 | Mixed complete unit plus spare parts classified as materials (`po_rules.py:420`) | **Fixed** | Aug 17 `f16aa131`; `infer_purchase_route` uses the Group A matcher without a document-wide parts veto. |
+| 10 | Warranty sentence truncates actual scope (`po_rules.py:239`) | **Fixed** | Prior focused `458bfd9` correction identified in §1.1; the later Aug 17 remediation preserves scoped boilerplate distinctions. `tests/test_scope_region.py` covers the boundary. |
+| 11 | Optional Smartsheet note vanishes after input (`web_ui.py:2367`) | **Fixed** | Aug 19 `997a15cb`; the note and its reveal control remain visible across reruns; regression in `tests/test_review_bug_fixes_2026_08_18.py`. |
+| 12 | Corrupt signature font raises uncaught Pillow error (`expense_ui.py:694`) | **Fixed** | Aug 19 `35c97ed8`; `employee_signature_png` catches `OSError` from `ImageFont.truetype`, raises `ExpenseReportError` with the original error as `__cause__`; the UI already catches `ExpenseReportError`. Two existing regression tests prove the wrapper/cause. The UI's narrower catch is **not** an outstanding font-load failure. |
+| 13 | UTC/container report date becomes tomorrow (`expense_ui.py:1693`) | **Fixed** | Aug 19 `7f51b8f9`, hardened Aug 26 `226b12ed`; `_seed_profile` uses `operator_today(browser_timezone)` with deployment fallback. |
+| 14 | Receipt cleanup boolean precedence clears non-expense keys (`expense_ui.py:2334`) | **Fixed (latent guard)** | Aug 19 `35c97ed8`; both branches have `(receipt_id in key or token in key) and key.startswith("expense_")`, pinned by regression. |
+| 15 | Re-selected mirrored receipt disappears without notice (`expense_ui.py:277`) | **Fixed** | Aug 19 `65623fce`, lifecycle refinement Aug 26 `226b12ed`; `_merge_receipt_sources` returns dropped names, and `_new_receipt_uploads` distinguishes new selections from ordinary reruns. |
+| 16 | Empty attachment name omitted from duplicate detection (`smartsheet.py:1096`) | **Fixed** | Aug 19 `b885f2c3`; preflight duplicate registration and rejection covered in `tests/test_review_bug_fixes_2026_08_18.py`. |
+| 17 | Submission DB lacks `/test1` persistent fallback (`smartsheet_store.py:91`) | **Fixed** | Aug 19 `b885f2c3`; `SubmissionStore.from_environment` checks `EPC_DATA_DIR`, then mounted `/test1`, matching memory storage. |
+| 18 | Green success banner shown while handoff blocked (`smartsheet_inline.py:89`) | **Fixed** | Aug 19 `997a15cb`; readiness gate runs before `st.success`, with blocked-summary regressions. |
+| 19 | Split receipt error references non-existent card number (`expense_report.py:534`) | **Fixed** | Aug 19 `7f51b8f9`; source-receipt index plus optional line number, with one-vs-multiple-receipt tests. |
+| 20 | Receipt retry sleeps after last attempt / ignores transport errors (`receipt_analyzer.py:424`) | **Fixed** | Aug 19 `b885f2c3`; `_call_with_retry` delegates to bounded `request_with_retry`; tests cover final-attempt and transient/non-transient errors. |
+| 21 | Raw 60-row slice consumes unusable rows and note claims 60 shown (`receipt_analyzer.py:508`) | **Not reproducible as a remaining misleading-output bug** | Aug 19 `b885f2c3` corrected the note to distinguish `60 examined` from the **actual** usable-row count. The raw 60-row scan cap intentionally remains for bounded processing; `tests/test_review_bug_fixes_2026_08_18.py` asserts both the accurate note and the cap. It is not a promise to import all rows from unbounded model output. |
+| 22 | Empty .eml attachment set still produces a ready-looking draft (`eml_builder.py:150`) | **Fixed (defense in depth)** | Aug 19 `b885f2c3`; `build_eml` rejects empty attachments; test exists. Historical call chain already validated attachments, so this was not demonstrated as a live reachable failure. |
+| 23 | Corrected vendor invalidates PDF but prints uncorrected vendor (`po_context.py:435`) | **Fixed** | Aug 17 `f16aa131`; current `web_ui.py` passes `vendor_display` into `build_msapo_pdf`. The historical warning in `po_context._document_signature`'s docstring predates that repair and should not be treated as current behavior. |
+
+**N15 verification boundary.** The reconciliation used current-main source,
+the cited change commits and existing synthetic regression implementations.
+The exact requested repository suite
+`python -m pytest -q tests/test_expense_disclosure.py tests/test_web_ui_helpers.py tests/test_smartsheet_handoff_entrypoint.py tests/test_eml_builder.py tests/test_docs_index.py`
+was **not executed** in this environment (the Git checkout could not be fetched;
+local Python is 3.13.5, not the repo's required 3.12). Consequently there are
+**no new pytest pass/fail counts** and no new real-device/served claims.
+The original reviewer also did not browser-replay these defects (§8). A new
+product-code patch or speculative signature UI exception handler would duplicate
+the already-tested wrapper, so this reconciliation only updates this document.
+
+**N16 boundary — untouched candidate inventories.** The original **21 dead-code
+candidates (§5)** and **16 redundancy candidates (§6)** remain *historical,
+unrevalidated candidates*, not 2026-11-09 confirmations. N15 neither deletes
+nor consolidates them; N16 must inspect current-main callers, re-exports,
+source-text tests and real usage before assigning live status or editing code.
 
 ### 4.2 HIGH (2)
 

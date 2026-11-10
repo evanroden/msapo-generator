@@ -6,7 +6,7 @@ is published. It tests a real physical Word table and actual LibreOffice PDF.
 from io import BytesIO
 import re
 
-import fitz
+import pymupdf as fitz
 import pytest
 from docx import Document
 from docx.oxml.ns import qn

@@ -115,7 +115,10 @@ def work_order_evidence(content: SourceContent, period: ReportPeriod,
             # same-site duplicate/conflict rules without collapsing siblings
             # from another selected site. Missing site retains one unassigned
             # cohort and still requires explicit site confirmation below.
-            scoped_identity = (site_key, identity)
+            # Different case at the same site is an ambiguous duplicate,
+            # not a new work order. Retain the literal ID in each recorded
+            # value so conflicting source spellings cannot pick a winner.
+            scoped_identity = (site_key, identity.casefold())
             value = (identity, when.isoformat(), "Completed" if state in _COMPLETE else "Open")
             if scoped_identity in observations and observations[scoped_identity] != value:
                 conflicts.add(scoped_identity)

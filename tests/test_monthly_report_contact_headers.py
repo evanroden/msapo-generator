@@ -76,7 +76,7 @@ def assert_contact_table(raw, rows):
 
 
 def assert_contact_pdf(raw, rows):
-    import fitz
+    import pymupdf as fitz
     with fitz.open(stream=raw, filetype="pdf") as pdf:
         texts = [page.get_text() for page in pdf]
         compact = ["".join(text.split()) for text in texts]

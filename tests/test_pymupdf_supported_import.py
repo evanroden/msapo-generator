@@ -13,7 +13,29 @@ import pymupdf
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE_DIRS = ("app", "scripts", "pages", "runtime")
+SOURCE_DIRS = ("app", "scripts", "pages", "runtime", "tests")
+
+
+def _deprecated_fitz_lines(tree: ast.AST) -> list[int]:
+    """Catch legacy imports and unbound fitz calls without rejecting supported aliases."""
+    deprecated: list[int] = []
+    supported_alias = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for name in node.names:
+                if name.name == "fitz" or name.name.startswith("fitz."):
+                    deprecated.append(node.lineno)
+                if name.name == "pymupdf" and name.asname == "fitz":
+                    supported_alias = True
+        elif isinstance(node, ast.ImportFrom):
+            if node.module == "fitz" or (node.module or "").startswith("fitz."):
+                deprecated.append(node.lineno)
+    if not supported_alias:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+                if node.value.id == "fitz":
+                    deprecated.append(node.lineno)
+    return sorted(set(deprecated))
 
 
 def test_application_and_qa_use_supported_pymupdf_import_path():
@@ -21,16 +43,16 @@ def test_application_and_qa_use_supported_pymupdf_import_path():
     for folder in SOURCE_DIRS:
         for path in sorted((ROOT / folder).rglob("*.py")):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    for name in node.names:
-                        if name.name == "fitz" or name.name.startswith("fitz."):
-                            deprecated.append(f"{path.relative_to(ROOT)}:{node.lineno}")
-                elif isinstance(node, ast.ImportFrom):
-                    if node.module == "fitz" or (node.module or "").startswith("fitz."):
-                        deprecated.append(f"{path.relative_to(ROOT)}:{node.lineno}")
-    assert not deprecated, "Use `import pymupdf` instead of deprecated `fitz`: " + ", ".join(deprecated)
+            for line in _deprecated_fitz_lines(tree):
+                deprecated.append(f"{path.relative_to(ROOT)}:{line}")
+    assert not deprecated, "Use supported PyMuPDF imports instead of deprecated fitz: " + ", ".join(deprecated)
 
+
+def test_guard_rejects_legacy_imports_and_unbound_fitz_calls():
+    for source in ("import fitz\nfitz.open()\n", "from fitz import open\n",
+                   "from fitz.fitz import Document\n", "fitz.open()\n"):
+        assert _deprecated_fitz_lines(ast.parse(source))
+    assert not _deprecated_fitz_lines(ast.parse("import pymupdf as fitz\nfitz.open()\n"))
 
 def test_supported_pymupdf_namespace_opens_and_rasterizes_pdf():
     assert pymupdf.mupdf.FzErrorBase

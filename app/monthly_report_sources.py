@@ -25,10 +25,11 @@ import pymupdf as fitz
 from lxml.etree import XMLSyntaxError
 from openpyxl import load_workbook
 
-from app import monthly_report_library as library, ocr
+from app import monthly_report_library as library, monthly_report_import as docx_import, ocr
 from app.monthly_report_docx import ReportImage, normalize_report_image
 from app.monthly_report_import import inspect_docx, read_import_image
 from app.monthly_report_model import ReportProfile, ReportSource, ResolvedBlock
+from app.monthly_report_upload_limits import byte_limit_label, source_size_error
 
 
 CLASSIFICATIONS = (
@@ -45,6 +46,10 @@ MAX_CACHED_PAGE_IMAGE_BYTES = 60 * 1024 * 1024  # A single included page cannot 
 MAX_VISION_PAGES = ocr._MAX_PDF_PAGES
 MAX_TABLE_CELLS = 200_000
 MAX_TABLE_ROWS = 20_000
+MAX_WORKBOOK_PARTS = 2000
+MAX_WORKBOOK_BYTES = 80 * 1024 * 1024
+MAX_WORKBOOK_PART_BYTES = 32 * 1024 * 1024
+MAX_WORKSHEETS = 30
 SUPPORTED = ocr.SUPPORTED_IMAGE_SUFFIXES | {".pdf", ".docx", ".xlsx", ".csv", ".eml", ".msg", ".txt"}
 PAGE_DESTINATIONS = ("vendor_reports", "water_reports", "mbcx_report", "utility_analysis", "improvements")
 
@@ -70,17 +75,22 @@ def _path(profile: ReportProfile, digest: str, suffix: str) -> Path:
     return library._profile_path(profile.contract, profile.key) / "sources" / (digest + suffix)
 
 
+def file_size_limit(suffix: str) -> int:
+    """One file-type admission rule for upload, stored reads, and UI guidance."""
+    return docx_import.MAX_DOCX_BYTES if suffix.casefold() == ".docx" else MAX_FILE_BYTES
+
+
 def source_bytes(profile: ReportProfile, source: ReportSource) -> bytes:
     path = _path(profile, source.sha256, source.suffix)
-    limit = 128 * 1024 * 1024 if source.suffix == ".docx" else MAX_FILE_BYTES
+    limit = file_size_limit(source.suffix)
     if path.stat().st_size > limit:
-        raise ValueError("Saved source exceeds the file limit.")
+        raise ValueError("Saved source exceeds the file limit. " + source_size_error(source.suffix, limit))
     # The original may change between stat and open. Bound the actual read
     # before hashing; never accept a truncated prefix as the saved original.
     with path.open("rb") as stream:
         raw = stream.read(limit + 1)
     if len(raw) > limit:
-        raise ValueError("Saved source exceeds the file limit.")
+        raise ValueError("Saved source exceeds the file limit. " + source_size_error(source.suffix, limit))
     if hashlib.sha256(raw).hexdigest() != source.sha256:
         raise ValueError("A source file failed its integrity check.")
     return raw
@@ -313,7 +323,7 @@ def _msg(raw: bytes) -> tuple[str, tuple[tuple[str, bytes], ...], tuple[str, ...
             if not msg.exists(path):
                 return b""
             if msg.get_size(path) > MAX_FILE_BYTES:
-                raise ValueError("MSG attachment/property exceeds 30 MB.")
+                raise ValueError(f"MSG attachment/property exceeds {byte_limit_label(MAX_FILE_BYTES)}. Use a smaller attachment copy.")
             return msg.openstream(path).read()
         def string(prefix, tag):
             unicode = read([*prefix, "__substg1.0_" + tag + "001F"])
@@ -360,17 +370,20 @@ def _table(name, records, *, strict_columns=False) -> SourceTable:
     for record in records:
         row = tuple(_cell(v) for v in record)
         cells += len(row)
+        filled = any(c != "" for c in row)
+        if strict_columns and filled and rows and len(row) != len(rows[0]):
+            # A bare '12,345.67' in a comma-separated file becomes two
+            # cells and could move a price into a nonprice client column.
+            # Do not guess how to rejoin columns or silently trim cells.
+            # Checked before the budget: a separator its own rows contradict
+            # is malformed, so it cannot veto the consistent reading by size.
+            raise ValueError(
+                "CSV rows have different column counts. Quote any values "
+                "containing commas (for example, a monetary amount), then upload again."
+            )
         if len(rows) >= MAX_TABLE_ROWS or cells > MAX_TABLE_CELLS or len(row) > 200:
             raise ValueError("Spreadsheet exceeds the row/column review budget; export a smaller date range.")
-        if any(c != "" for c in row):
-            if strict_columns and rows and len(row) != len(rows[0]):
-                # A bare '12,345.67' in a comma-separated file becomes two
-                # cells and could move a price into a nonprice client column.
-                # Do not guess how to rejoin columns or silently trim cells.
-                raise ValueError(
-                    "CSV rows have different column counts. Quote any values "
-                    "containing commas (for example, a monetary amount), then upload again."
-                )
+        if filled:
             rows.append(row)
     if not rows:
         raise ValueError("Spreadsheet has no nonempty rows.")
@@ -396,6 +409,66 @@ def _csv_unicode_encoding(raw: bytes) -> str | None:
     return None
 
 
+def _csv_table(text: str) -> SourceTable:
+    """Select only a uniquely consistent CSV dialect within the review budget.
+
+    Sniffer can reject a valid delimiter when quoted cells contain that same
+    separator or a newline. Probe the four already-supported separators with
+    strict RFC-style double-quote handling over the *whole* source instead of
+    treating a failed sample sniff as proof of comma CSV. A one-column table
+    is legitimate only if every dialect agrees and none reports malformed
+    rows; it is not a fallback for an inconsistent multi-column export.
+    """
+    candidates = []
+    single_column = None
+    malformed = False
+    over_budget = None
+    inconsistent_columns = None
+    for delimiter in (",", ";", "\t", "|"):
+        try:
+            table = _table("CSV", csv.reader(
+                StringIO(text, newline=""), delimiter=delimiter,
+                quotechar='"', doublequote=True, strict=True,
+            ), strict_columns=True)
+        except csv.Error:
+            malformed = True
+            continue
+        except ValueError as exc:
+            if "review budget" in str(exc):
+                # An alternate separator cannot bypass row/cell/column limits.
+                over_budget = exc
+            elif "different column counts" in str(exc):
+                inconsistent_columns = exc
+                malformed = True
+            else:
+                malformed = True
+            continue
+        if len(table.columns) > 1:
+            candidates.append((delimiter, table))
+        elif single_column is None:
+            single_column = table
+    if over_budget is not None:
+        raise over_budget
+    if len(candidates) == 1:
+        return candidates[0][1]
+    if len(candidates) > 1:
+        labels = {",": "comma", ";": "semicolon", "\t": "tab", "|": "pipe"}
+        choices = ", ".join(labels[delimiter] for delimiter, _ in candidates)
+        raise ValueError(
+            f"CSV delimiter is ambiguous ({choices}). Export with one consistent "
+            "delimiter and quote values that contain separators, then upload again."
+        )
+    if inconsistent_columns is not None:
+        raise inconsistent_columns
+    if malformed or single_column is None:
+        raise ValueError(
+            "CSV delimiter or quoting could not be determined from consistent "
+            "columns. Export with one delimiter and quote fields containing "
+            "separators or newlines, then upload again."
+        )
+    return single_column
+
+
 def _spreadsheet(raw: bytes, suffix: str) -> tuple[SourceTable, ...]:
     if suffix == ".csv":
         encoding = _csv_unicode_encoding(raw)
@@ -409,22 +482,20 @@ def _spreadsheet(raw: bytes, suffix: str) -> tuple[SourceTable, ...]:
                 text = raw.decode("utf-8-sig")
             except UnicodeDecodeError:
                 text = raw.decode("cp1252")
-        sample = text[:8192]
-        try:
-            dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
-        except csv.Error:
-            dialect = csv.excel
-        return (_table("CSV", csv.reader(StringIO(text), dialect, strict=True),
-                       strict_columns=True),)
+        return (_csv_table(text),)
     from app.monthly_report_xlsx_currency import currency_evidence_value, preserve_currency_number_types
     # Bound ZIP/XML before openpyxl reads shared strings or worksheet dimensions.
     from zipfile import ZipFile
     with ZipFile(BytesIO(raw)) as z:
         infos = z.infolist()
-        if (len(infos) > 2000 or sum(i.file_size for i in infos) > 80 * 1024 * 1024
-                or any(i.file_size > 32 * 1024 * 1024 for i in infos)
-                or len({i.filename for i in infos}) != len(infos)):
-            raise ValueError("Expanded workbook exceeds the safe parsing budget.")
+        if len({i.filename for i in infos}) != len(infos):
+            raise ValueError("Workbook contains duplicate package parts. Export a fresh XLSX or CSV copy.")
+        if len(infos) > MAX_WORKBOOK_PARTS:
+            raise ValueError(f"Workbook exceeds {MAX_WORKBOOK_PARTS:,} package parts. Upload the required sheets separately.")
+        if sum(i.file_size for i in infos) > MAX_WORKBOOK_BYTES:
+            raise ValueError(f"Expanded workbook exceeds the {byte_limit_label(MAX_WORKBOOK_BYTES)} safe parsing budget. Upload the required sheets separately.")
+        if any(i.file_size > MAX_WORKBOOK_PART_BYTES for i in infos):
+            raise ValueError(f"A workbook part exceeds the {byte_limit_label(MAX_WORKBOOK_PART_BYTES)} safe parsing budget. Export the required cells as CSV or a smaller workbook.")
     try:
         workbook = load_workbook(BytesIO(raw), read_only=True, data_only=True, keep_links=False)
     except (XMLParseError, XMLSyntaxError) as exc:
@@ -432,8 +503,8 @@ def _spreadsheet(raw: bytes, suffix: str) -> tuple[SourceTable, ...]:
     except TypeError as exc:
         raise ValueError("Workbook structure could not be read. Export a fresh XLSX or CSV copy.") from exc
     try:
-        if len(workbook.worksheets) > 30:
-            raise ValueError("Workbook exceeds 30 worksheets; upload the required sheets separately.")
+        if len(workbook.worksheets) > MAX_WORKSHEETS:
+            raise ValueError(f"Workbook exceeds {MAX_WORKSHEETS:,} worksheets; upload the required sheets separately.")
         preserve_currency_number_types(workbook)
         tables, total = [], 0
         for sheet in workbook.worksheets:
@@ -474,7 +545,7 @@ def _cached_extraction(data, digest, suffix):
             raise ValueError("Invalid source extraction cache sequence.")
         return value
 
-    for name in ("client_page_policy", "native_action_policy", "vendor_passage_policy"):
+    for name in ("client_page_policy", "native_action_policy", "vendor_passage_policy", "csv_dialect_policy"):
         if type(data.get(name, 0)) is not int or data.get(name, 0) < 0:
             raise ValueError("Invalid source extraction cache policy.")
     record = data["source"]
@@ -544,9 +615,13 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
     from app.monthly_report_content_policy import suggested_pages
     filename = Path(filename.replace("\\", "/")).name
     suffix = Path(filename).suffix.casefold()
-    limit = 128 * 1024 * 1024 if suffix == ".docx" else MAX_FILE_BYTES
-    if suffix not in SUPPORTED or not raw or len(raw) > limit:
-        raise ValueError("Choose a supported nonempty file within its upload limit (30 MB; DOCX 128 MB).")
+    if suffix not in SUPPORTED:
+        raise ValueError("Unsupported file type. Choose PDF, DOCX, XLSX, CSV, EML, MSG, TXT or a supported image.")
+    if not raw:
+        raise ValueError("This source file is empty. Choose a nonempty copy.")
+    limit = file_size_limit(suffix)
+    if len(raw) > limit:
+        raise ValueError(source_size_error(suffix, limit))
     digest = hashlib.sha256(raw).hexdigest()
     path, cache = _path(profile, digest, suffix), _path(profile, digest, ".json")
     attachments = ()
@@ -561,8 +636,15 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
             # Cache damage is recoverable; a stale/foreign QA namespace is not.
             library._qa_path_guard(cache)
             content = None
-        # Keep signed-Unicode migration independent of structural cache validation.
-        if (content is not None and (not unicode_csv or data.get("csv_unicode_policy") == 1)
+        # Only previously cached one-column CSVs can retain the old failed
+        # Sniffer fallback; already-correct multi-column caches stay warm.
+        # This disposable-extraction refresh never alters saved human edits.
+        old_csv_one_column = (suffix == ".csv" and content is not None
+                              and data.get("csv_dialect_policy") != 1
+                              and any(len(table.columns) == 1 for table in content.tables))
+        # Keep signed-Unicode migration independent of the delimiter policy.
+        if (content is not None and not old_csv_one_column
+                and (not unicode_csv or data.get("csv_unicode_policy") == 1)
                 and (suffix != ".xlsx" or (type(data.get("xlsx_currency_policy")) is int
                                           and data["xlsx_currency_policy"] == 1))
                 and (suffix != ".pdf" or data.get("vendor_passage_policy", 0) >= 7)):
@@ -588,14 +670,14 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
             if pdf.is_encrypted and not pdf.authenticate(""):
                 raise ValueError("PDF needs a password. Upload an unlocked copy.")
             if len(pdf) > MAX_PAGES:
-                raise ValueError("PDF exceeds 500 pages; select a smaller document range.")
+                raise ValueError(f"PDF exceeds {MAX_PAGES:,} pages; select a smaller document range.")
             for number, page in enumerate(pdf, 1):
                 text = page.get_text().strip()
                 if ocr._page_needs_ocr(page, native_text=text):
                     needs_vision.append(number)
                 page_texts.append(text)
                 if sum(map(len, page_texts)) > ocr._MAX_EXTRACTED_CHARS:
-                    raise ValueError("PDF text exceeds 400,000 characters; select a smaller document range.")
+                    raise ValueError(f"PDF text exceeds {ocr._MAX_EXTRACTED_CHARS:,} characters; select a smaller document range.")
                 from app.monthly_report_vendor_passages import block_spans, MAX_VENDOR_BLOCK_SPANS
                 if not span_budget_exceeded:
                     spans = block_spans(page, text, number)
@@ -636,7 +718,7 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
         page_texts = [text]
         notices.extend(extra)
     if sum(map(len, page_texts)) > ocr._MAX_EXTRACTED_CHARS:
-        raise ValueError("Source text exceeds 400,000 characters; split the input before reading.")
+        raise ValueError(f"Source text exceeds {ocr._MAX_EXTRACTED_CHARS:,} characters; split the input before reading.")
     source = ReportSource(digest, filename, digest, suffix, page_texts=tuple(page_texts),
                           pdf_text_blocks=tuple(pdf_text_blocks),
                           selected_pages=tuple(range(1, len(page_texts)+1)), needs_vision=tuple(needs_vision), notices=tuple(notices))
@@ -647,7 +729,8 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
     library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1,
         "native_action_policy": 1, "vendor_passage_policy": 7,
         **({"xlsx_currency_policy": 1} if suffix == ".xlsx" else {}),
-        **({"csv_unicode_policy": 1} if unicode_csv else {}), **asdict(content)}))
+        **({"csv_unicode_policy": 1} if unicode_csv else {}),
+        **({"csv_dialect_policy": 1} if suffix == ".csv" else {}), **asdict(content)}))
     return content, attachments
 
 
@@ -692,8 +775,11 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
             else:
                 messages.append(f"Duplicate skipped: {filename}")
             continue
-        if len(sources) >= MAX_SOURCES or sizes + len(raw) > MAX_REPORT_BYTES:
-            messages.append(f"Not read: {filename}. Report limit is 50 source files / 180 MB including attachments.")
+        if len(sources) >= MAX_SOURCES:
+            messages.append(f"Not read: {filename}. Report limit is {MAX_SOURCES:,} source files including attachments. Remove unused sources before adding more.")
+            continue
+        if sizes + len(raw) > MAX_REPORT_BYTES:
+            messages.append(f"Not read: {filename}. Report limit is {byte_limit_label(MAX_REPORT_BYTES)} of source files including attachments. Remove unused sources or use a smaller copy.")
             continue
         suffix = Path(filename).suffix.casefold()
         if suffix not in SUPPORTED or depth > 1:
@@ -707,7 +793,7 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
             content, attachments = ingest(profile, filename, raw)
             added = sum(map(len, content.source.page_texts))
             if text_size + added > MAX_REPORT_TEXT:
-                raise ValueError("Total extracted text exceeds 800,000 characters. Remove unused sources or split the report.")
+                raise ValueError(f"Total extracted text exceeds {MAX_REPORT_TEXT:,} characters. Remove unused sources or split the report.")
         except (ValueError, OSError, LookupError, csv.Error, RuntimeError, BadZipFile,
                 zlib.error, fitz.mupdf.FzErrorBase) as exc:
             # Only newly rejected and content-addressed bytes may be cleaned.

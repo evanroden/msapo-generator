@@ -151,6 +151,78 @@ def fill_training(page, number):
     expect(page.get_by_role("textbox", name="Hours (optional)", exact=True)).to_have_value("")
 
 
+
+def native_control_inventory(page):
+    """Record actual visible native widgets, not AppTest's hidden mounted controls."""
+    return page.evaluate("""() => {
+      const app = document.querySelector('[data-testid="stApp"]');
+      if (!app) throw new Error('Monthly control inventory missing stApp');
+      const visible = element => {
+        if (!element.getClientRects().length) return false;
+        for (let node = element; node && node !== app; node = node.parentElement) {
+          if (node.hidden || node.inert || node.getAttribute('aria-hidden') === 'true') return false;
+          const style = getComputedStyle(node);
+          if (style.display === 'none' || style.visibility === 'hidden') return false;
+        }
+        return true;
+      };
+      const types = {
+        buttons: '[data-testid="stButton"] button, [data-testid="stFormSubmitButton"] button',
+        downloads: '[data-testid="stDownloadButton"] button',
+        text_inputs: '[data-testid="stTextInput"] input',
+        text_areas: '[data-testid="stTextArea"] textarea',
+        checkboxes: '[data-testid="stCheckbox"] input[type="checkbox"]',
+        date_inputs: '[data-testid="stDateInput"] input',
+        selectboxes: '[data-testid="stSelectbox"] [role="combobox"]',
+        multiselects: '[data-testid="stMultiSelect"] [role="combobox"]',
+        expanders: '[data-testid="stExpander"] summary',
+        file_uploads: '[data-testid="stFileUploader"]',
+      };
+      const result = {};
+      for (const [kind, selector] of Object.entries(types)) {
+        const controls = [...app.querySelectorAll(selector)].filter(visible);
+        result[kind] = {
+          count: controls.length,
+          disabled: controls.filter(node => node.disabled || node.getAttribute('aria-disabled') === 'true').length,
+          labels: controls.map(node => {
+            const nativeLabel = node.labels ? [...node.labels].map(label => label.innerText).join(' ') : '';
+            return (node.getAttribute('aria-label') || nativeLabel || node.innerText || '')
+              .replace(/\\s+/g, ' ').trim().slice(0, 120);
+          }),
+        };
+      }
+      return result;
+    }""")
+
+
+def visible_control_inventory(page):
+    """Count actual visible native controls, not captions or hidden source forms."""
+    return page.evaluate(r"""() => {
+      const visible = el => {
+        const css = getComputedStyle(el), rect = el.getBoundingClientRect();
+        return css.display !== 'none' && css.visibility !== 'hidden'
+          && rect.width > 0 && rect.height > 0
+          && !el.closest('[aria-hidden="true"],[inert]');
+      };
+      const found = [...document.querySelectorAll(
+        'button,input:not([type="hidden"]),textarea,select,details>summary'
+      )].filter(visible).filter(el =>
+        !el.textContent.includes('Refresh synthetic observation'));
+      const items = found.map(el => {
+        const tag = el.tagName.toLowerCase();
+        const kind = tag === 'input' ? (el.type || 'text') : tag;
+        const name = (el.getAttribute('aria-label')
+          || (el.labels?.length ? el.labels[0].textContent : '')
+          || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 110);
+        return {kind, name, disabled: Boolean(el.disabled),
+          expanded: el.getAttribute('aria-expanded')};
+      });
+      const by_kind = {};
+      for (const item of items) by_kind[item.kind] = (by_kind[item.kind] || 0) + 1;
+      return {total: items.length, by_kind, items};
+    }""")
+
+
 def exercise(engine, name, record):
     browser = engine.launch(headless=True)
     context = browser.new_context(viewport={"width": 1440, "height": 1000}, accept_downloads=False)
@@ -170,22 +242,43 @@ def exercise(engine, name, record):
     page.add_init_script(collector.replace("http://127.0.0.1:8529", f"http://127.0.0.1:{PORT}"))
     page.set_default_timeout(30000)
     page.on("pageerror", lambda error: errors.append(str(error)))
-    def capture(stage):
-        record["steps"].append({"stage": stage, "receipt": receipt(page)})
+    def capture(stage, *, started=True):
+        # The fixture publishes its receipt only once a report exists. The three
+        # "fresh-" stages run before Start, so they record that there is none.
+        if started:
+            current = receipt(page)
+        else:
+            settled(page)
+            expect(page.locator(RECEIPT)).to_have_count(0)
+            current = None
+        record["steps"].append({"stage": stage, "receipt": current,
+                                "browser_title": page.title(),
+                                "visible_controls": native_control_inventory(page),
+                                "control_inventory": visible_control_inventory(page)})
         page.screenshot(path=str(OUT / f"{name}-{stage}.png"), full_page=False)
     try:
         record["phase"] = "ordinary empty report"
         page.goto(URL, wait_until="domcontentloaded")
-        page.get_by_role("button", name=CONTRACT, exact=True).click()
+        expect(page).to_have_title("Monthly report · ENFRA Process Control", timeout=30000)
+        contract = page.get_by_role("button", name=CONTRACT, exact=True)
+        expect(contract).to_be_visible()
+        capture("fresh-contract-discovery", started=False)
+        contract.click()
         site = page.get_by_role("checkbox", name=SITE, exact=True)
+        expect(site).to_be_visible()
+        capture("fresh-site-selection", started=False)
         site.locator("xpath=ancestor::label[1]").click()
         select(page, "Reporting month", "September")
         select(page, "Reporting year", "2026")
-        page.get_by_role("button", name="Use ENFRA template", exact=True).click()
+        # No choice click when the ENFRA template is the only option.
+        expect(page.get_by_role("button", name="Use ENFRA template", exact=True)).to_have_count(0)
         actor = page.get_by_role("textbox", name="Your name", exact=True)
         actor.fill(ACTOR)
         actor.press("Tab")
-        page.get_by_role("button", name="Start this report", exact=True).click()
+        start = page.get_by_role("button", name="Start this report", exact=True)
+        expect(start).to_be_enabled()
+        capture("fresh-start-ready", started=False)
+        start.click()
         expect(page.locator(PANEL)).to_be_visible(timeout=45000)
         settled(page)
         initial = receipt(page)

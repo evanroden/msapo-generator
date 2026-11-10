@@ -1388,6 +1388,16 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
         _remove_unapproved_master_watermark_text(document)
     body = document.element.body
     original = list(body)
+    # A native divider is an inspected output occurrence, not a media hash.
+    # Capture proven roots before body cleanup; shared/adjacent source pictures
+    # remain untouched. Retain the scorecard seam cleanup added on main.
+    divider_positions = {item.position for item in inspection.items
+                         if item.kind == "image" and item.part == "word/document.xml"
+                         and item.note == "Native divider artwork"
+                         and 0 < item.position <= len(original)}
+    divider_photo_roots = [node for index, node in enumerate(original, 1)
+                           if index in divider_positions
+                           and _is_native_divider_background(node, _text(node))]
     scorecard_dividers = [original[item.position - 1] for item in inspection.items
                           if item.kind == "image" and item.section == "scorecards"
                           and item.part == "word/document.xml" and item.note == "Native divider artwork"
@@ -2513,6 +2523,10 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                 properties.append(OxmlElement("w:pageBreakBefore"))
                 paragraph.append(properties)
                 target.addprevious(paragraph)
+    # Occurrence-local transformation after #754-era native output assembly
+    # and scorecard seam processing. Preserve original shared image parts.
+    from app.monthly_report_divider_monochrome import monochrome_divider_photos
+    monochrome_divider_photos(document, divider_photo_roots)
     from app.monthly_report_divider_numerals import fit_proposals_numeral
     fit_proposals_numeral(document, section_key=section_key)
     from app.monthly_report_native_design import name_report_in_contents_notice

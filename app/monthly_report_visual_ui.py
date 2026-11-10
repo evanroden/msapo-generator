@@ -889,9 +889,10 @@ def edit_photos(draft, block, prefix, assets, field, *, show_preview=True):
                     args=(request_key, {"kind": "remove", "identity": identity,
                         "action": {"identity": identity, "index": n, "asset": block.asset_hashes[n]}}))
         if changed is None and not additions and kind != "done" and not edit_all:
-            from app.monthly_report_correction_ui import picture_marker
+            from app.monthly_report_correction_ui import picture_marker, photo_caption_request
             for n, marker, caption_key in correction_slots:
-                marker.markdown(picture_marker(draft, block, n, prefix, caption_key), unsafe_allow_html=True)
+                marker.markdown(picture_marker(draft, block, n, prefix, caption_key) +
+                                photo_caption_request(prefix, draft, block, n), unsafe_allow_html=True)
         render_add(block)
     if show_preview:
         with right:

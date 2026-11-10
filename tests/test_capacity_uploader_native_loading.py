@@ -61,8 +61,12 @@ def test_capacity_reserves_before_its_same_native_input_without_state_changes(pr
     assert picker.key == "test_capacity_upload"
     assert picker.proto.max_upload_size_mb == 128
     assert {item.casefold() for item in picker.proto.type} == capacity.SUPPORTED
-    assert picker.proto.help == ("DOCX: up to 128 MB. Other supported files: up to 30 MB. "
-                                 "Use capacity values for the relevant sites.")
+    # The route now states its real limits; keep the exact figures pinned here
+    # and the full wording in one place (the guidance helper).
+    from app.monthly_report_upload_guidance import capacity_upload_options
+    assert picker.proto.help == capacity_upload_options()["help"]
+    assert picker.proto.help.startswith("DOCX: up to 128 MiB. ")
+    assert "Other supported files: up to 30 MiB." in picker.proto.help
     panel, = [item for item in app.expander if item.label == "Capacity source and reusable data"]
     assert panel.proto.expanded is True
     assert _path(panel, picker) is not None

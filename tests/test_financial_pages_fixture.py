@@ -128,7 +128,7 @@ def test_hosted_workflow_requires_actual_pdf_and_no_native_bypass():
 def test_output_oracle_uses_input_page_identity_not_report_asset_claims(tmp_path,mutation):
     from io import BytesIO
     from docx import Document
-    import fitz
+    import pymupdf as fitz
     from scripts.workspace_financial_pages import make_source
     from scripts.qa_financial_pages import independent_page_pixels,verify_outputs
     source=make_source(tmp_path,vendor=True);images=independent_page_pixels(source)

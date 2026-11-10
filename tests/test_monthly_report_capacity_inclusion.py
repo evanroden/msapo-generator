@@ -173,7 +173,7 @@ from conftest import requires_libreoffice
 @requires_libreoffice
 @pytest.mark.parametrize("included", [False, True])
 def test_capacity_selection_in_pdf(profile, included):
-    import fitz
+    import pymupdf as fitz
     from app.monthly_report_docx import assemble_docx, _convert_report_pdf
     current = _output_draft(profile, included)
     raw = assemble_docx(current, acknowledged_fingerprint=current.fingerprint)

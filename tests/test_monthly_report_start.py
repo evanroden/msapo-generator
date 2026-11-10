@@ -93,7 +93,7 @@ def test_first_report_general_template_and_named_group_can_be_resumed(monkeypatc
     next(w for w in app.text_input if w.label == "Name for this group (optional)").set_value("Synthetic Region").run()
     next(w for w in app.checkbox if w.label == "This is a regional report").check().run()
     assert not any(w.label == "Starting point" for w in app.radio)
-    next(w for w in app.button if w.key and "report_start_card_use-the-general" in w.key).click().run()
+    assert not any(w.key and "report_start_card_" in w.key for w in app.button)
     next(w for w in app.text_input if w.label == "Your name").set_value("Synthetic Editor").run()
     next(b for b in app.button if b.label == "Start this report").click().run()
     assert not app.exception
@@ -146,12 +146,12 @@ def test_from_scratch_regional_report_generates_and_next_month_keeps_design(monk
     from streamlit.testing.v1 import AppTest
     from test_monthly_report_ui import ROOT, choose_report
     from app.contracts import RRH_CONTRACT
-    import fitz
+    import pymupdf as fitz
     app = monthly(monkeypatch, tmp_path, saved=False)
     next(w for w in app.text_input if w.label == "Site name").set_value("Synthetic Cedar; Synthetic Harbor; Synthetic Meadow").run()
     next(w for w in app.text_input if w.label == "Name for this group (optional)").set_value("Synthetic Lakes Region").run()
     next(w for w in app.checkbox if w.label == "This is a regional report").check().run()
-    next(b for b in app.button if b.label == "Use ENFRA template").click().run()
+    assert not any(b.label == "Use ENFRA template" for b in app.button)
     next(w for w in app.text_input if w.label == "Your name").set_value("Synthetic Editor").run()
     next(b for b in app.button if b.label == "Start this report").click().run()
     assert not any(w.label.startswith("Include ") and w.label != "Include thermal capacity" for w in app.checkbox)
@@ -196,3 +196,28 @@ def test_from_scratch_regional_report_generates_and_next_month_keeps_design(monk
     assert not any(w.label == "I checked the standing information for these sites" for w in next_app.checkbox)
     assert not any(r.label == "Report steps" for r in next_app.radio)
     assert any(w.label == "Activity summary" for w in next_app.text_area)
+
+def test_single_available_template_skips_a_choice_and_starts_normally(monkeypatch, tmp_path):
+    """Synthetic newcomer path: a single design is not another decision."""
+    from app import monthly_report_start_ui as start_ui
+    from app import monthly_report_designs as designs
+    monkeypatch.setattr(start_ui, "recommended_designs", lambda *_: ())
+    # The real empty-library shape: later screens read "revision" as well.
+    monkeypatch.setattr(designs, "master_state",
+                        lambda: {"revision": 0, "default": "", "history": []})
+    app = monthly(monkeypatch, tmp_path, saved=False)
+    next(field for field in app.text_input if field.label == "Site name").set_value(
+        "Synthetic One-Choice Site").run()
+    assert not app.exception
+    assert not any((b.key or "").startswith("report_start_card_") for b in app.button)
+    assert not any(b.label == "Use ENFRA template" for b in app.button)
+    assert any("ENFRA template selected" in note.value for note in app.caption)
+    actor = next(w for w in app.text_input if w.label == "Your name")
+    start = next(w for w in app.button if w.label == "Start this report")
+    assert start.disabled
+    actor.set_value("Synthetic Editor").run()
+    start = next(w for w in app.button if w.label == "Start this report")
+    assert not start.disabled
+    start.click().run()
+    assert not app.exception
+    assert next(w for w in app.text_input if w.label == "Prepared by").value == "Synthetic Editor"

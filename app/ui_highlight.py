@@ -94,6 +94,10 @@ def highlight_needed_fields(widget_keys: Iterable[str]) -> None:
     # declarations into the static stylesheet would make the bar permanent and
     # there would be no state to turn it off.
     #
+    # This mark is a left bar, not a full outline. An outline in the same
+    # colour as the focus ring would make "needs input" indistinguishable from
+    # "currently editing"; the transient bar is deliberately different.
+    #
     # --enfra-yellow is defined in web_ui.CUSTOM_CSS, which is emitted earlier
     # in the same document. If that definition ever moves into a scope this
     # element is not inside, the custom property resolves to nothing and the

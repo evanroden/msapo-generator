@@ -457,7 +457,7 @@ def test_actual_guided_upload_edit_save_history_reopen_replay_and_clear(tmp_path
 
 @requires_libreoffice
 def test_real_native_pdf_gates_currency_and_retains_technical_numbers(tmp_path, monkeypatch):
-    import fitz
+    import pymupdf as fitz
     from app import pdf_converter
 
     profile, content, original, draft = output_fixture()

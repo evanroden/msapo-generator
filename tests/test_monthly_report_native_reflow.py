@@ -125,7 +125,7 @@ def test_rewritten_sections_render_without_blank_tail_pages(tmp_path, monkeypatc
     # Each render owns its temporary output; no persistent PDFs between test runs.
     monkeypatch.setattr(pdf_converter, "OUTPUT_DIR", tmp_path)
     convert_to_pdf = pdf_converter.convert_to_pdf
-    import fitz
+    import pymupdf as fitz
     source, draft = scenario(tmp_path)
     raw = build_native_docx(draft, source, section_key=section, master=True, asset_loader=lambda _: chart())
     path = tmp_path / (section + '.docx'); path.write_bytes(raw)
@@ -172,7 +172,7 @@ def test_additional_chart_pages_use_the_same_section_geometry(tmp_path):
 @requires_libreoffice
 def test_multiple_technical_pages_have_no_overlap_or_trailing_blank(tmp_path):
     from app.pdf_converter import convert_to_pdf
-    import fitz
+    import pymupdf as fitz
     source, draft = scenario(tmp_path)
     charts = replace(draft.blocks[0], asset_hashes=('first.png', 'second.png', 'third.png'))
     draft = replace(draft, blocks=(charts, *draft.blocks[1:]))

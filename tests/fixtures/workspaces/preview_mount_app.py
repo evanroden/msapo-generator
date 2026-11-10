@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-import fitz
+import pymupdf as fitz
 import streamlit as st
 
 from app import monthly_report_preview_view as preview_view

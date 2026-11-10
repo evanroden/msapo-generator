@@ -1,7 +1,7 @@
 """A first source cannot relocate an already mounted native section control."""
 from io import BytesIO
 
-import fitz
+import pymupdf as fitz
 from streamlit.testing.v1.element_tree import Block
 
 from app import monthly_report_active_work as active, monthly_report_sources as sources

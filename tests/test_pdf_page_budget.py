@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from unittest import mock
 
-import fitz
+import pymupdf as fitz
 import pytest
 
 import app.ocr as ocr

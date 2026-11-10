@@ -2,7 +2,7 @@
 from dataclasses import replace
 from io import BytesIO
 
-import fitz
+import pymupdf as fitz
 from PIL import Image
 import pytest
 

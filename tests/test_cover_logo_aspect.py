@@ -116,7 +116,7 @@ from tests.conftest import requires_libreoffice
 @pytest.mark.parametrize('size',[(400,100),(100,400),(200,200)])
 @pytest.mark.parametrize('section',[None,'cover'])
 def test_pdf_logo_circle_is_round(tmp_path,monkeypatch,role,size,section):
-    import fitz
+    import pymupdf as fitz
     from app import pdf_converter
     from app.monthly_report_render_compat import rendering_docx
     monkeypatch.setenv('EPC_DATA_DIR',str(tmp_path/'store'))

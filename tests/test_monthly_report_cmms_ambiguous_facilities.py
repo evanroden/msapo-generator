@@ -470,7 +470,7 @@ def test_guided_mapping_correction_word_save_reopen_and_history_preserve_manual_
 
 @requires_libreoffice
 def test_real_native_pdf_preserves_unresolved_and_explicit_site_evidence(tmp_path, monkeypatch):
-    import fitz
+    import pymupdf as fitz
     from app import pdf_converter
 
     selected = profile()

@@ -4,7 +4,7 @@ from dataclasses import replace
 from datetime import date
 from io import BytesIO
 
-import fitz
+import pymupdf as fitz
 
 from app import monthly_report_sources as sources, monthly_report_upload_ui as ui
 from app.monthly_report_content_policy import page_allowed

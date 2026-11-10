@@ -2,7 +2,7 @@
 from dataclasses import replace
 import json
 
-import fitz
+import pymupdf as fitz
 
 from app import monthly_report_sources as sources
 from app.monthly_report_model import ReportSource, synthetic_profiles

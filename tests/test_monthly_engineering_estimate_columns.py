@@ -239,7 +239,7 @@ def test_source_import_save_reload_and_native_word_keep_engineering_cells(monkey
 
 @requires_libreoffice
 def test_actual_native_pdf_keeps_load_values_without_prices(monkeypatch, tmp_path):
-    import fitz
+    import pymupdf as fitz
 
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "data"))
     path = _source_file(tmp_path)

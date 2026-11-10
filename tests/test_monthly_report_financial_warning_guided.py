@@ -1,6 +1,6 @@
 """Financial owner navigation through the actual guided capture/save boundary."""
 from dataclasses import replace
-import fitz
+import pymupdf as fitz
 import pytest
 from app import monthly_report_sources as sources
 from app.monthly_report_mbcx_financial_pages import review_pages,page_review_fingerprint,SEMANTICS

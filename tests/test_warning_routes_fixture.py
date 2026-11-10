@@ -212,7 +212,7 @@ def test_real_output_oracle_rejects_missing_or_wrong_material(tmp_path,scenario)
     from docx import Document
     from docx.shared import Inches
     from PIL import Image
-    import fitz
+    import pymupdf as fitz
     from scripts.qa_warning_routes import verify_outputs
     from scripts.workspace_warning_routes import PENDING,CAPTIONS,_pdf
     original=_pdf('ENFRA client report. Verified savings: $125.',financial=True)

@@ -3,7 +3,7 @@ from zipfile import ZipFile, ZIP_DEFLATED
 
 from lxml import etree
 from PIL import Image
-import fitz
+import pymupdf as fitz
 import pytest
 
 from app.monthly_report_render_compat import rendering_docx

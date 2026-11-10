@@ -8,7 +8,7 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[3]))
 from datetime import date
 from hashlib import sha256
-import fitz
+import pymupdf as fitz
 import streamlit as st
 import requests
 from openpyxl import load_workbook
