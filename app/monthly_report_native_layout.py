@@ -1493,6 +1493,28 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             items[item.position].append(item)
     section_by_pos, section, headings = {}, "cover", set()
     blocks = {block.key: block for block in draft.blocks}
+    preview_cover_end = first_word_end or len(original)
+    if section_key == "cover":
+        # An explicitly selected cover photograph may occupy the immediately
+        # adjoining, picture-only Word section. Keep that verified panel in the
+        # cover preview, but never broaden the preview to later report content.
+        from app.monthly_report_start_import import cover_photo_candidates
+        photo = blocks.get("cover_photo")
+        if photo is not None and photo.source != "Omit" and photo.asset_hashes:
+            selected_panels = [
+                item for item in cover_photo_candidates(inspection.items)
+                if item.position > preview_cover_end
+                and source_ref(item) in photo.references
+                and image_matches(item, "cover_photo", photo.asset_hashes)
+            ]
+            if selected_panels:
+                last_selected = max(item.position for item in selected_panels)
+                preview_cover_end = next(
+                    (position for position, element in enumerate(original, 1)
+                     if position >= last_selected
+                     and (element.tag == qn("w:sectPr")
+                          or element.find(".//" + qn("w:sectPr")) is not None)),
+                    len(original))
     supplied_notes = {item.note: item for item in inspection.items
                       if item.note.startswith(("footnote:", "endnote:")) and item.text.strip()
                       and any(block.source != "Omit" and source_ref(item) in block.references
@@ -1608,16 +1630,17 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                 elif role in ("brand_logo", "client_logo"):
                     logo_replacements.append((node, image.px_width, image.px_height))
                 continue
-            # Authorize this new repair by the exact selected occurrence,
-            # before the legacy shared-media role heuristic can override it.
-            photo = blocks.get("cover_photo")
             occurrence = source_node_items.get(node)
+            # Source identity, not another photo's media role, owns the selected
+            # frame. Count it as emitted to avoid a second insertion below.
+            photo = blocks.get("cover_photo")
             if photo and photo.source != "Omit" and photo.asset_hashes and occurrence is not None:
                 reference = source_ref(occurrence)
                 explicit = {block.key for block in draft.blocks if reference in block.references}
                 if (explicit == {"cover_photo"}
                         and image_digest(str(source_path), image_cache_identity, occurrence, False) in photo.asset_hashes):
                     _fit_unchanged_cover_photo(node, source_path, occurrence, document.part)
+                    retained_images["cover_photo"].add(photo.asset_hashes[0])
                     continue
             if occurrence is not None:
                 reference = source_ref(occurrence)
@@ -1643,6 +1666,11 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             role = next(iter(exact_roles)) if len(exact_roles) == 1 and exact_roles <= cover_slots else roles.get(target)
             if role == "company_slogan":
                 continue  # Reviewed, immutable company furniture; never a client mark.
+            chosen_photo = blocks.get("cover_photo")
+            if (role == "cover_photo" and not exact_roles and chosen_photo is not None
+                    and any(source_ref(item) in chosen_photo.references
+                            for item in cover_items if item is not occurrence)):
+                continue  # The operator chose another exact occurrence; this one keeps its artwork.
             block = blocks.get(role)
             if block and block.source != "Omit" and block.asset_hashes:
                 if ((role == "client_logo" and unchanged_client_brand)
@@ -1792,7 +1820,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
         if element.tag == qn('w:sectPr'):
             continue
         section_ends[sec] = element
-        if section_key and (sec != section_key or (section_key == "cover" and position > (first_word_end or len(original)))):
+        if section_key and (sec != section_key or (section_key == "cover" and position > preview_cover_end)):
             body.remove(element)
             continue
         group = items[position]
@@ -2324,7 +2352,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     if section_key:
         selected_positions = [position for position, sec in section_by_pos.items()
                               if sec == section_key and original[position - 1].tag != qn("w:sectPr")
-                              and (section_key != "cover" or position <= (first_word_end or len(original)))]
+                              and (section_key != "cover" or position <= preview_cover_end)]
         closing = None
         if selected_positions:
             for element in original[max(selected_positions) - 1:]:

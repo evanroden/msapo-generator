@@ -267,6 +267,34 @@ def cover_photo_candidates(items, *, native_furniture_ids=()):
     return tuple(item for item in possible if item.word_section in cover_sections and item.position < stop)
 
 
+def cover_photo_choice_pending(items, plan, *, native_furniture_ids=()):
+    """No automatic approval when a plausible source photo has no decision.
+
+    Choosing an imported occurrence, an explicit No-photo receipt scoped to
+    these exact candidates, or a deliberate replacement is sufficient. A
+    template/whole-cover omission never claims to have recovered the photo.
+    """
+    if plan.get("omit"):
+        return False
+    candidates = cover_photo_candidates(items, native_furniture_ids=native_furniture_ids)
+    if not candidates:
+        return False
+    identities = tuple(item.id for item in candidates)
+    selected = [identity for identity in plan.get("selected", ())
+                if plan.get("destinations", {}).get(identity) == "cover_photo"]
+    if (len(selected) == 1 and selected[0] in identities
+            and not plan.get("cover_photo_omitted")):
+        return False
+    if (plan.get("cover_photo_omitted")
+            and tuple(plan.get("cover_photo_source_ids", ())) == identities
+            and not selected):
+        return False
+    if (not plan.get("cover_photo_omitted")
+            and any(slot == "cover_photo" for slot, _ in plan.get("new_assets", ()))):
+        return False
+    return True
+
+
 def unresolved_cover_artwork(items, *, native_furniture_ids=()):
     """Visible cover rasters with neither a photo choice nor a known logo role.
 
@@ -600,11 +628,35 @@ def _build_starting_import(path, inspection, plans, *, source_view=None, _operat
             ids = {item.original_id for item in context.inventory.occurrences} if context else set()
             if plan.get("omit") or any(ids.intersection(other.get("selected", ())) for other in plans):
                 raise ValueError("Native artwork preservation conflicts with this exact occurrence's omission or mapping.")
+    # An approved automatic plan can still have skipped an ambiguous source
+    # photograph. Both Starting Report routes must fail closed at the same
+    # builder boundary, including when a UI widget was unmounted on rerun.
+    # An explicit No-photo intent (even one with stale scope or conflicting
+    # selection) goes to the stricter source/candidate validator below.
+    from app.monthly_report_native_art_review import native_cover_furniture_ids
+    cover = next((s for s in section_reviews(inspection, source_view=source_view)
+                  if s.key == "cover"), None)
+    furniture_ids = native_cover_furniture_ids(inspection.items) if source_view is not None else ()
+    photo_choice_pending = cover is not None and any(
+        plan.get("key") == "cover" and plan.get("automatic")
+        and plan.get("source_site_relation") == "same"
+        and plan.get("source_sha256") == inspection.sha256
+        and not plan.get("cover_photo_omitted")
+        and cover_photo_choice_pending(cover.items, plan, native_furniture_ids=furniture_ids)
+        for plan in plans)
+
+    def photo_choice_refusal():
+        return ValueError(
+            "Choose a cover photograph from this Starting Report, or explicitly "
+            "select No cover photograph before continuing. The original is unchanged.")
+
     def contributes(plan):
         return not plan.get("omit") and bool(plan.get("selected") or plan.get("new_assets")
                                              or plan.get("preserved_assets") or plan.get("cover_photo_omitted")
                                              or plan.get("native_art_review"))
     if not any(contributes(plan) for plan in plans):
+        if photo_choice_pending:
+            raise photo_choice_refusal()
         return MappedImport((), (), (), ()), ()
     # Unrelated/old sections intentionally carry no data. The original keeps
     # their unsupported objects, but they are not new target-site exceptions.
@@ -612,6 +664,10 @@ def _build_starting_import(path, inspection, plans, *, source_view=None, _operat
     mapped, mappings = (build_section_import(path, inspection, active, profile=profile, period=period) if source_view is None else
                         _build_section_import(path, inspection, active, source_view=source_view, _operation=_operation,
                                               profile=profile, period=period))
+    # Every refusal above and inside the section build keeps its own message;
+    # only an import those checks accept then stops for the photo decision.
+    if photo_choice_pending:
+        raise photo_choice_refusal()
     automatic_refs = {f"docx:{inspection.sha256}:{identity}" for p in active if p.get("automatic")
                       for identity in p.get("selected", ())}
     # A source-bound Word diagram screenshot was rendered, not human-certified
