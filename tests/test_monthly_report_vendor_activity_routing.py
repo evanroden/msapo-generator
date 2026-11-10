@@ -42,7 +42,7 @@ def test_legacy_vendor_pages_are_not_moved_or_cloned_automatically(monkeypatch, 
 
 
 def test_priced_vendor_pages_still_require_exclusion(monkeypatch, tmp_path):
-    import fitz
+    import pymupdf as fitz
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
     profile = synthetic_profiles()[0]
     with fitz.open() as pdf:

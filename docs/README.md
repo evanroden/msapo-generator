@@ -6,6 +6,10 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 # Documentation index
 
+[Monthly Report ownership and carryover decisions](monthly_report_ownership_matrix.md) — audited contract, site and report behavior; explicit requirements, proposals and unresolved choices; synthetic scope examples and a migration proposal that preserves originals and history. This decision record does not approve policy changes or a production migration.
+
+[Accounts Receivable schema discovery](MONTHLY_RECEIVABLE_SCHEMA_REVIEW.md) — source-bound read-only invoice-field inventory; owner financial-source policy recorded in #458, with field-level eligibility and AR Aging implementation still outstanding.
+
 [Directory original retention verification](DIRECTORY_RETENTION_291.md) - synthetic lifecycle/race regressions, reproducible retrospective policy comparison, and completed native served acceptance with scope limits.
 
 [Annual Training requirements](MONTHLY_TRAINING_YEARS.md) — explicit matrix year, legacy unknown-year preservation, deliberate annual transition, and unchanged separation from completed monthly sessions.
@@ -19,6 +23,8 @@ maintained: manually, pinned by tests/test_docs_index.py
 [Monthly deterministic assembly boundary](monthly_report_assembly_boundary.md) — accepted-source review, synthetic saved-state and pinned-design checks, structural comparison limits and remaining served acceptance.
 
 [Shared report templates for agents](SHARED_REPORT_TEMPLATES.md) — immutable original DOCX references, 512 MiB uploads, and verified UI/CLI downloads. Storage does not install a master or alter reports; verify shared access before claiming availability.
+
+[Monthly upload limits](MONTHLY_UPLOAD_LIMITS.md) — route-specific file, expanded-package, media and parsing budgets, exact units, and the distinction between template storage and report import.
 
 [Shared authentic-report testing and read-only persistence witness](SHARED_FIXTURE_TESTING_2026-10-13.md) — merged shared no-login DOCX testing and the manual-only PR #214 hash verifier. Its tool is ready, but no specific existing original has been compared before and after two served Render builds. The fixture route is discoverable/not confidential; actual owner reports and Word/PDF acceptance remain open.
 

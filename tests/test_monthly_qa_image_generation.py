@@ -9,7 +9,7 @@ from dataclasses import replace
 from io import BytesIO
 from zipfile import ZipFile
 
-import fitz
+import pymupdf as fitz
 import pytest
 
 from app import monthly_report_library as library, monthly_report_sources as sources

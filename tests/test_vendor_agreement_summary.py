@@ -25,8 +25,11 @@ st.session_state['same']=result==(original,)
 ''').run()
     assert not app.exception
     assert app.session_state['same']
+    # Cards now render imported labels literally, so the Markdown source carries
+    # the display-only escapes; the saved table is still compared unchanged above.
+    from app.monthly_report_ui_text import literal
     text=' '.join(x.value for x in app.markdown)
-    assert 'Example Hospital: Example Vendor' in text and 'MSA: X' in text
-    assert 'Example Hospital: Other Vendor' in text and 'MSA: Not provided' in text
+    assert literal('Example Hospital: Example Vendor') in text and literal('MSA: X') in text
+    assert literal('Example Hospital: Other Vendor') in text and literal('MSA: Not provided') in text
     app.run()
     assert app.session_state['same'] and not app.exception

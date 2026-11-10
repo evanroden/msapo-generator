@@ -363,7 +363,7 @@ def test_actual_docx_has_one_requirement_and_each_original_status(profile):
 
 @requires_libreoffice
 def test_actual_pdf_keeps_site_statuses_and_shared_history(profile, tmp_path, monkeypatch):
-    import fitz
+    import pymupdf as fitz
     from app import pdf_converter
     from app.monthly_report_docx import assemble_docx
 

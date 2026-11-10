@@ -143,7 +143,7 @@ def test_pricing_and_image_review_enforced_at_export_and_invalidated():
 
 
 def test_pdf_defaults_exclude_prices_legal_blank_and_signature_pages(tmp_path, monkeypatch):
-    import fitz
+    import pymupdf as fitz
     monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path))
     profile = synthetic_profiles()[0]
     with fitz.open() as pdf:

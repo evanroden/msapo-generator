@@ -3,7 +3,7 @@
 from dataclasses import replace
 from io import BytesIO
 
-import fitz
+import pymupdf as fitz
 import pytest
 from streamlit.testing.v1 import AppTest
 

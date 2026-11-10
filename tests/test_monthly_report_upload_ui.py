@@ -169,7 +169,7 @@ def test_guided_page_review_keeps_omits_and_invalidates_caption(monkeypatch, tmp
 
 
 def test_priced_page_cannot_be_included_by_guided_action(monkeypatch, tmp_path):
-    import fitz
+    import pymupdf as fitz
     with fitz.open() as pdf:
         page = pdf.new_page()
         page.insert_text((50, 50), "Inspected equipment. Invoice amount: $500")

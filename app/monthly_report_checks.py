@@ -148,6 +148,11 @@ def _annual_work_order_month_cells(key, table):
 
 def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck, ...]:
     checks = []
+    from app.monthly_report_receivable_intake import check_review_binding
+    receivable_problem = check_review_binding(draft)
+    if receivable_problem is not None:
+        checks.append(ReportCheck("receivable_source", receivable_problem,
+                                  True, "accounts_receivable"))
     from app.monthly_report_designs import is_master
     native_master = is_master(draft.profile)
     sections = included_sections(draft.sections)

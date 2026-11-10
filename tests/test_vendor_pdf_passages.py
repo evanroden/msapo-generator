@@ -2,7 +2,7 @@
 from dataclasses import replace, asdict
 from hashlib import sha256
 import json
-import fitz
+import pymupdf as fitz
 import pytest
 from app import monthly_report_sources as sources
 from app.monthly_report_model import synthetic_profiles, ReportSource

@@ -67,7 +67,7 @@ def test_ambiguous_artwork_is_left_unchanged(mutation):
 
 
 def test_physical_pdf_gap_is_filled_without_losing_photo(tmp_path,monkeypatch):
-    import fitz
+    import pymupdf as fitz
     from conftest import libreoffice_can_convert
     from app import pdf_converter
     if not libreoffice_can_convert(): pytest.skip('LibreOffice writer/calc unavailable')

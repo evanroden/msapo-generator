@@ -137,6 +137,6 @@ def test_native_current_link_reaches_exported_pdf_annotation(tmp_path):
                              '--headless', '--convert-to', 'pdf', '--outdir', str(tmp_path), str(output)],
                             capture_output=True, timeout=45)
     assert result.returncode == 0, result.stderr.decode(errors='replace')
-    import fitz
+    import pymupdf as fitz
     with fitz.open(output.with_suffix('.pdf')) as pdf:
         assert TARGET in [link.get('uri') for page in pdf for link in page.get_links()]

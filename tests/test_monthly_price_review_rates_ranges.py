@@ -13,7 +13,7 @@ from pathlib import Path
 from zipfile import ZipFile
 
 from docx import Document
-import fitz
+import pymupdf as fitz
 import pytest
 
 from app import monthly_report_library as library

@@ -83,7 +83,7 @@ def _paragraph(position, original, items, styles, section):
     return group[0]
 
 
-def _match(block, context, *, ignored=()):
+def _match(block, context, *, ignored=(), allow_single_trailing_note=False):
     lines = block.text.splitlines()
     nonblank = [index for index, line in enumerate(lines) if line.strip() and index not in ignored]
     selected, consumed, rewrites = [], set(), []
@@ -105,8 +105,16 @@ def _match(block, context, *, ignored=()):
             rewrites.append((item.position, value))
     # Every inspected paragraph is supplied, once, in order, as a complete
     # trailing body run. Native footnotes have a separate, proved attachment.
-    if not selected or selected != nonblank[-len(selected):]:
+    if not selected:
         return None
+    if selected != nonblank[-len(selected):]:
+        # A two-table proposal source can retain exact, uniquely matched
+        # labels while keeping one *additional* current-only note visible.
+        # Do not extend this to arbitrary/interleaved prose, capacity flows,
+        # repeated labels or the separate multi-table native-note proof.
+        if (not allow_single_trailing_note
+                or selected != nonblank[-len(selected) - 1:-1]):
+            return None
     return SuppliedTableFlow(tuple(context), "\n".join(
         line for index, line in enumerate(lines) if index not in consumed and index not in ignored
         ).strip(), tuple(rewrites))
@@ -259,7 +267,9 @@ def supplied_native_table_flows(draft, original, items, section_by_pos, native_t
                 if valid and pattern == ["text", "text", "table", "text", "table"]:
                     ignored = _native_note_suffix(proposals, tables, pending[1], original,
                                                   supplied_notes, source_ref, source_document)
-                    flow = _match(proposals, context, ignored=ignored)
+                    flow = _match(proposals, context, ignored=ignored,
+                                  allow_single_trailing_note=(len(tables) == 2
+                                      and not ignored and not proposals.references))
                     if flow is not None:
                         result[proposals.key] = flow
     return result

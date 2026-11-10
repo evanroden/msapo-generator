@@ -350,7 +350,7 @@ def _ocr_request(content: list[dict], *, until: float | None = None) -> str:
             lambda timeout: client.messages.create(
                 model=ANTHROPIC_MODEL, max_tokens=8192, timeout=timeout,
                 messages=[{"role": "user", "content": content}],
-            ), until=until,
+            ), until=until, model_name=ANTHROPIC_MODEL,
         )
     return complete_response_text(message)
 

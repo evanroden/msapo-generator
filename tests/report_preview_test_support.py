@@ -3,7 +3,7 @@ from concurrent.futures import Future
 import json
 from threading import BoundedSemaphore
 
-import fitz
+import pymupdf as fitz
 
 from app import monthly_report_section_preview_ui as ui
 from app.monthly_report_preview import ReportPreview

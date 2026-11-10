@@ -293,3 +293,76 @@ def test_all_browser_filesystem_waits_preserve_event_dispatch():
         assert {'dispatch_events', 'label'} <= keywords.keys()
         assert isinstance(keywords['dispatch_events'], ast.Attribute)
         assert keywords['dispatch_events'].attr == 'wait_for_timeout'
+
+
+def test_distinct_label_seed_does_not_replace_original(root):
+    from app.monthly_report_shared_fixtures import SharedFixtureLibrary
+    library = SharedFixtureLibrary(root)
+    original = library.list().fixtures[0]
+    before = library.download(original.fixture_id)
+    second = qa.seed(root, second=True)
+    assert second['fixture_id'] != original.fixture_id
+    assert second['original_sha256'] != original.original_sha256
+    assert second['friendly_name'] != original.metadata.friendly_name
+    assert len(library.list().fixtures) == 2
+    assert library.download(original.fixture_id) == before
+
+
+def test_selected_fixture_never_relabels_the_active_source_through_reload_reset(root, monkeypatch):
+    import requests
+    from app.monthly_report_shared_fixtures import SharedFixtureLibrary
+    monkeypatch.setattr(requests.sessions.Session, 'request',
+                        lambda *_a, **_k: pytest.fail('External reader forbidden'))
+    library = SharedFixtureLibrary(root)
+    first = library.list().fixtures[0]
+    second = qa.seed(root, second=True)
+    token = qa.new_cookie()
+    app = native(token)
+    app.selectbox(key='_shared_fixture_selection').set_value(first.fixture_id).run()
+    click(app, 'Start fresh test with this fixture')
+    before = qa.snapshot(root, token)
+    expected_a = 'Current test: ' + first.metadata.friendly_name + ' · October 2026'
+    assert expected_a in [item.value for item in app.caption]
+    app.selectbox(key='_shared_fixture_selection').set_value(second['fixture_id']).run()
+    assert not app.exception
+    assert expected_a in [item.value for item in app.caption]
+    assert qa.snapshot(root, token)['namespace_files'] == before['namespace_files']
+    reloaded = native(token)
+    assert expected_a in [item.value for item in reloaded.caption]
+    reloaded.selectbox(key='_shared_fixture_selection').set_value(second['fixture_id']).run()
+    click(reloaded, 'Start fresh test with this fixture')
+    expected_b = 'Current test: ' + second['friendly_name'] + ' · October 2026'
+    assert expected_b in [item.value for item in reloaded.caption]
+    assert qa.snapshot(root, token)['source_sha256'] == second['original_sha256']
+    final = native(token)
+    assert expected_b in [item.value for item in final.caption]
+    click(final, 'Reset this test workspace')
+    assert not any(item.value.startswith('Current test:') for item in final.caption)
+    assert qa.snapshot(root, token)['source_sha256'] is None
+    assert qa.snapshot(root, token)['originals'] == before['originals']
+
+
+def test_native_label_journey_retains_real_reload_controls_and_identity_checks():
+    import ast
+    import inspect
+    assert qa.SCENARIOS == ('source-failure', 'return-during-rollback',
+                           'partial-crash', 'corrupt-journal', 'quota', 'active-selection')
+    tree = ast.parse(inspect.getsource(qa.active_selection_journey))
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
+    assert sum(isinstance(node.func, ast.Attribute) and node.func.attr == 'reload'
+               for node in calls) == 2
+    waits = [node for node in calls if isinstance(node.func, ast.Name) and node.func.id == 'wait_until']
+    assert len(waits) == 1
+    assert any(k.arg == 'dispatch_events' for k in waits[0].keywords)
+    text = inspect.getsource(qa.active_selection_journey)
+    assert '"Current test: "' in text and '"namespace_files"' in text
+    assert '"coworker_A_unchanged"' in text and '"originals_unchanged"' in text
+    # Shelf selection can reset on native Start, independently of active lineage.
+    # Require a fresh B selection before demanding its fixture/hash-scoped
+    # download control, without another Start or changing the run's bytes.
+    started = text.split('    start(page)\n    active_label(expected_b)', 1)[1].split(
+        '    page.reload(', 1)[0]
+    assert started.index('select_fixture(page, second)') < started.index(
+        'download_original(page, "started-B", second)')
+    assert 'active_label(expected_b)' in started
+    assert '"namespace_files"' in started

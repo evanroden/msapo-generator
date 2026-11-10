@@ -35,6 +35,10 @@ REQUEST_TIMEOUT_SECONDS = min(
 )
 
 
+class ModelUnavailableError(RuntimeError):
+    """The configured Anthropic model could not be found by the API."""
+
+
 class IncompleteResponseError(RuntimeError):
     """Do not treat partial model output as a successful document reading."""
 
@@ -64,6 +68,7 @@ def request_with_retry(
     until: float,
     attempts: int = 3,
     backoff: float = 3.0,
+    model_name: str | None = None,
 ) -> T:
     for attempt in range(attempts):
         remaining = until - time.monotonic()
@@ -78,6 +83,17 @@ def request_with_retry(
                 )
             )
         except (anthropic.APIConnectionError, anthropic.APIStatusError) as exc:
+            if (
+                model_name
+                and isinstance(exc, anthropic.APIStatusError)
+                and exc.status_code == 404
+            ):
+                raise ModelUnavailableError(
+                    f"Anthropic returned HTTP 404 for configured model {model_name!r}. "
+                    "The model may be unavailable or retired. Check the "
+                    "ANTHROPIC_MODEL environment setting (including Render dashboard "
+                    "overrides), select an available model, and retry."
+                ) from exc
             retryable = isinstance(exc, anthropic.APIConnectionError) or (
                 exc.status_code == 429 or exc.status_code >= 500
             )

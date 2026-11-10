@@ -262,7 +262,7 @@ from tests.conftest import requires_libreoffice
 
 @requires_libreoffice
 def test_real_pdf_renders_shared_vendor_contact_once_without_other_sites(monkeypatch, tmp_path):
-    import fitz
+    import pymupdf as fitz
     from app import pdf_converter
     from app.monthly_report_docx import _build_docx
     from app.monthly_report_model import ReportDraft

@@ -13,7 +13,7 @@ from hashlib import sha256
 from pathlib import Path
 import json, shutil, subprocess, zipfile
 
-import fitz
+import pymupdf as fitz
 from docx import Document
 from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH

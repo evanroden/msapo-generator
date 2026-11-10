@@ -13,7 +13,7 @@ from zipfile import ZipFile
 from docx import Document
 from docx.oxml.ns import qn
 from docx.shared import Inches
-import fitz
+import pymupdf as fitz
 from PIL import Image
 import pytest
 from streamlit.testing.v1 import AppTest

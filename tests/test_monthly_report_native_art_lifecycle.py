@@ -105,7 +105,7 @@ def test_manifest_receipt_tamper_rejected_by_reload_replay_native(sample):
 
 def test_preservation_does_not_approve_assets_or_waive_pricing_and_pdf_retry(sample, monkeypatch, tmp_path):
     from app import monthly_report_docx as word, monthly_report_render_jobs as jobs, pdf_converter
-    import fitz
+    import pymupdf as fitz
     path, view, profile, period, inventory, receipt = sample
     draft, loader = save_sample(sample)
     with pytest.raises(ValueError, match='picture'):

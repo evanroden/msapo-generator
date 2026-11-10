@@ -37,7 +37,8 @@ def include(app, *titles):
 def test_first_template_has_every_section_visible_with_one_editing_home(monkeypatch, tmp_path):
     app = monthly(monkeypatch, tmp_path, saved=False)
     next(value for value in app.text_input if value.label == "Site name").set_value("Synthetic First Site").run()
-    next(value for value in app.button if value.label == "Use ENFRA template").click().run()
+    # The ENFRA template is the only starting point here, so no choice is offered.
+    assert not any(value.label == "Use ENFRA template" for value in app.button)
     next(value for value in app.text_input if value.label == "Your name").set_value("Synthetic Editor").run()
     next(value for value in app.button if value.label == "Start this report").click().run()
     step(app, 2)

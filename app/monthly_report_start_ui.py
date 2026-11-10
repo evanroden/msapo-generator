@@ -251,6 +251,11 @@ def starting_choice(profile, profiles, period, prepared, field):
     if master.get("default"):
         selected = "Use the general ENFRA monthly report template"
         st.caption("No starting report is needed. ENFRA master design version " + str(master["revision"]) + " is applied automatically.")
+    elif len(choices) == 1:
+        # When no saved design exists, there is nothing to choose between.
+        # Show attribution and Start immediately; retain real design choices.
+        selected = choices[0]
+        st.caption("ENFRA template selected. Enter your name to start.")
     else:
         choice_key = field("report_start_choice_" + profile.key, "")
         selected = st.session_state[choice_key]

@@ -161,7 +161,7 @@ def test_source_scope_blocker_survives_snapshot_and_correction_clears_only_its_i
 
 
 def test_unresolved_site_remains_inspectable_in_private_watermarked_preview(report, monkeypatch, tmp_path):
-    import fitz
+    import pymupdf as fitz
     from app import monthly_report_preview as preview
 
     draft, _, _ = report

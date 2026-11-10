@@ -443,7 +443,7 @@ def test_duplicate_reviewed_blank_site_measurements_still_require_resolution(pro
 
 @requires_libreoffice
 def test_native_pdf_retains_measure_positions_and_original_source(profile, tmp_path, monkeypatch):
-    import fitz
+    import pymupdf as fitz
     from app import pdf_converter
 
     inspection = inspected(profile, LEADING_BLANK)

@@ -430,7 +430,7 @@ def test_generated_docx_retains_conflicting_literals_without_prices(tmp_path, mo
 
 @requires_libreoffice
 def test_generated_pdf_retains_conflicting_literals_without_prices(tmp_path, monkeypatch):
-    import fitz
+    import pymupdf as fitz
     from app import pdf_converter
     from app.monthly_report_docx import assemble_docx
 

@@ -13,7 +13,7 @@ from zipfile import ZipFile
 
 from docx import Document
 from docx.shared import Inches
-import fitz
+import pymupdf as fitz
 from PIL import Image, ImageCms, ImageDraw, PngImagePlugin
 import pytest
 

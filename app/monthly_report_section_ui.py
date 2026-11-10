@@ -12,9 +12,11 @@ from app import monthly_report_library as library
 from app.monthly_report_content_policy import contains_price, table_has_pricing
 from app.monthly_report_docx import normalize_report_image
 from app.monthly_report_cover_images import image_byte_limit, read_picture_upload, normalize_cover_photo
-from app.monthly_report_upload_limits import uploader_limit_mib, byte_limit_label
+from app.monthly_report_upload_limits import uploader_limit_mib, byte_limit_label, docx_size_error
 from app.monthly_report_editor import _grid, _key, _signature
 from app.monthly_report_import import imported_draft
+from app import monthly_report_import as docx_import
+from app.monthly_report_upload_guidance import starting_upload_options
 from app.monthly_report_import_ui import _stage
 from app.monthly_report_model import (
     Facility,
@@ -194,6 +196,20 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                   independent_template=False, native_art_size_limited=False):
     p = prefix + "_section_" + section.key
     old = plans.get(section.key, {})
+    if section.key == "other":
+        targets = ("", *(spec.key for spec in known_sections()))
+        target_key = field(p + "_target", old.get("target", ""))
+        if st.session_state[target_key] not in targets:
+            st.session_state[target_key] = ""
+        # An older staged plan or a pending widget change cannot approve an
+        # unresolved destination just because its review card is closed.
+        if not old.get("omit") and (
+                old.get("target") not in targets[1:]
+                or st.session_state[target_key] != old.get("target")):
+            old["approved"] = False
+            old["approval_stamp"] = ""
+            # Closed-card widget cleanup must not resurrect the old choice.
+            old["target"] = st.session_state[target_key]
     # Streamlit includes an expander's label in its identity, even with a key.
     # A changing "Ready" suffix would close it and discard its active widgets.
     text_only_period_review = (bool(old.get("period_review_items"))
@@ -250,6 +266,11 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 "period_review_label": period.label,
                 "source_sha256": old.get("source_sha256", ""),
                 "source_site_relation": old.get("source_site_relation", ""),
+                "content_role_required": list(old.get("content_role_required", ())),
+                "content_role_reviews": dict(old.get("content_role_reviews", {})),
+                "content_role_aggregate": dict(old.get("content_role_aggregate", {})),
+                "table_role_required": list(old.get("table_role_required", ())),
+                "table_role_reviews": dict(old.get("table_role_reviews", {})),
                 "automatic_logo_skips": {role:list(ids) for role,ids in old.get("automatic_logo_skips", {}).items()},
                 "automatic_divider_skips": {role:list(ids) for role,ids in old.get("automatic_divider_skips", {}).items()},
                 "cover_photo_omitted": old.get("cover_photo_omitted", False),
@@ -306,7 +327,11 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 st.caption("This section stays in the report. The uploaded content remains in the saved original for reference.")
         else:
             from app.monthly_report_word_pages_ui import chart_page_review
-            if chart_page_review(section, path, period, p, field, old, plan, blocking):
+            from app.monthly_report_source_table_roles import source_table_role, review_source_table
+            marked_tables = any(source_table_role(item) for item in section.items)
+            if marked_tables and section.key == "organization":
+                st.info("This section has marked table instructions or examples. Review those tables below; copying their complete pages would retain the source values.")
+            if not marked_tables and chart_page_review(section, path, period, p, field, old, plan, blocking):
                 # A deliberate complete-page selection replaces automatic
                 # diagram capture; never combine two full-page copies.
                 plan["auto_native_diagrams"] = False
@@ -328,11 +353,12 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 # as this month's activity. It remains in the retained original.
                 items = [i for i in items if i.kind == "image" or i.suggested_slot == "footer_text"]
             elif section.key == "other":
-                target = st.selectbox("Where should this content appear?", ["", *[s.key for s in known_sections()]],
-                                      format_func=lambda k: next((s.title for s in known_sections() if s.key == k), "Choose a report section"), key=field(p + "_target", old.get("target", "")))
+                target = st.selectbox("Where should this content appear?", targets,
+                                      format_func=lambda k: next((s.title for s in known_sections() if s.key == k), "Choose a report section"), key=target_key)
                 plan["target"] = target
-                if not target:
+                if target not in targets[1:]:
                     blocking.append("Choose a section above, or leave this additional content out of the draft.")
+            from app.monthly_report_source_content_roles import render_role_texts, source_text_role
             texts = [i for i in items if i.kind == "text"]
             if old.get("period_review_items"):
                 # Period review may not bring explicitly old prose back merely
@@ -342,7 +368,11 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 # approval until the user removes that price explicitly.
                 retained_ids = old.get("combined_text_ids") or (
                     *old.get("selected", ()), *old.get("period_review_items", ()))
-                texts = [i for i in texts if i.id in retained_ids]
+                texts = [i for i in texts if i.id in retained_ids or source_text_role(i)]
+            role_texts = render_role_texts(
+                texts, inspection, p, field, old, plan, blocking, editing=action == actions[1])
+            if role_texts:
+                texts = []
             if texts:
                 prior_texts = old.get("texts", {})
                 if old.get("combined_text_ids"):
@@ -379,6 +409,12 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                     st.warning("Check older dates in this section. Keep valid ongoing history; update only the parts that refer to this month’s work.")
             for n, item in enumerate((i for i in items if i.kind == "table"), 1):
                 table, removed = table_without_prices(item)
+                if source_table_role(item):
+                    table = review_source_table(item, table, n, inspection, p, field, old, plan, blocking)
+                    if table is not None:
+                        plan["tables"][item.id] = table
+                        plan["selected"].append(item.id)
+                    continue
                 table = old.get("tables", {}).get(item.id, table)
                 if table:
                     from app.monthly_report_table_review_ui import review_table_headings
@@ -494,20 +530,36 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 plan["unsupported_reviewed"] = preserved
                 if not preserved:
                     if section.key == "cover":
-                        count = sum(i.kind == "unsupported" for i in section.items)
-                        st.caption(f"{count} unread cover drawing{'s' if count != 1 else ''} · {source_name}")
-                    blocking.append(
-                        "A Word diagram in " + section.title + " could not be preserved. " +
-                        ("The file exceeds the native-artwork processing limit. Use an available ENFRA template "
-                         "or keep the original and upload a smaller test copy; replacing the upload starts a new review."
-                         if section.key == "cover" and native_art_size_limited else
-                         "A new cover photograph changes only the photograph; it cannot replace "
-                         "this unread drawing. Repair that artwork in the original Word file and "
-                         "upload it again. " + cover_recovery
-                         if section.key == "cover" else
-                         "Use its original-page preview or the clear replacement upload; "
-                         "it will not be silently left out.")
-                    )
+                        unread = tuple(i for i in section.items if i.kind == "unsupported")
+                        if native_art_size_limited:
+                            blocking.append(
+                                "This source exceeds the native-artwork processing limit, not necessarily "
+                                "the Word upload limit. Its cover cannot be certified by this "
+                                "inspection. Choose an available independent ENFRA template, keep an "
+                                "existing report cover, or retry with a smaller Word source. "
+                                "Replacing the upload starts a new review; the original remains "
+                                "available. " + cover_recovery
+                            )
+                        else:
+                            for item in unread[:4]:
+                                st.caption(f"{item.id} · {item.note}")
+                            if len(unread) > 4:
+                                st.caption(f"{len(unread) - 4} additional cover objects need review.")
+                            blocking.append(
+                                f"{len(unread)} specific cover object(s) could not be preserved. "
+                                "A new cover photograph changes only the photograph; it cannot replace "
+                                "these unread drawings. Repair that artwork in the original Word file "
+                                "by exporting or replacing each identified object as PNG/JPEG, "
+                                "then select the corrected DOCX in Starting report and analyze again. "
+                                "When available, an existing saved cover or independent ENFRA "
+                                "template is a separate fallback. " + cover_recovery
+                            )
+                    else:
+                        blocking.append(
+                            "A Word diagram in " + section.title + " could not be preserved. "
+                            "Use its original-page preview or the clear replacement upload; "
+                            "it will not be silently left out."
+                        )
                 else:
                     st.caption("Source drawings are retained in this section, "
                                "either as safe original-page images or named replacements.")
@@ -626,6 +678,7 @@ def _starting_review_sections(sections, plans, diagram_failures):
         if (plan.get("approved") and not questions
                 and not (section.key == "cover" and plan.get("omit")
                          and not plan.get("automatic_identical_cover_reuse"))
+                and not (section.key == "other" and plan.get("source_site_relation") == "same")
                 and not plan.get("period_review_items")):
             continue
         if (section.key in diagram_failures and questions
@@ -767,14 +820,14 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                          expanded=bool(st.session_state.get(prefix + "_stage")
                                        or st.session_state.get(prefix + "_failed_digest"))):
             st.caption("Upload an earlier or unfinished Word report.")
-            upload = st.file_uploader("Starting report", type=["docx"], max_upload_size=128,
-                                      key=prefix + "_upload")
+            upload = st.file_uploader("Starting report", type=["docx"],
+                                      key=prefix + "_upload", **starting_upload_options())
             _open_saved_original()
     else:
         st.subheader("Start with a report")
         st.caption("Upload an earlier or unfinished Word report.")
-        upload = st.file_uploader("Starting report", type=["docx"], max_upload_size=128,
-                                  key=prefix + "_upload")
+        upload = st.file_uploader("Starting report", type=["docx"],
+                                  key=prefix + "_upload", **starting_upload_options())
     # File selection is the Analyze action. The exact content hash, never
     # its reusable filename or a widget rerun, determines whether a new
     # source must be inspected. An error leaves the existing staged draft
@@ -874,7 +927,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                      and "source byte budget" in str(exc))):
                 native_art_size_limited = True
                 st.warning(
-                    f"This file is within the 128 MiB upload limit, but automatic native-artwork "
+                    f"This file is within the {byte_limit_label(docx_import.MAX_DOCX_BYTES)} upload limit, but automatic native-artwork "
                     f"interpretation is limited to {byte_limit_label(MAX_VIEW_SOURCE_BYTES)}. "
                     "This is a processing limit, not evidence that the artwork is damaged. "
                     "Your original and current review are unchanged. Use an available independent "
@@ -1259,14 +1312,8 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                           source_view=source_view, profile=candidate)
     with st.expander("Review what will be carried across (optional)", key=p + "_check_import", on_change="rerun") as details:
         if details.open:
-            for section in sections:
-                if section not in questions:
-                    plan = plans[section.key]
-                    has_content = any(plan.get(key) for key in ("selected", "new_assets", "preserved_assets"))
-                    status = "ready" if has_content else "starts blank"
-                    if not plan.get("approved") or plan.get("questions"):
-                        status = "needs review"
-                    st.caption(section.title + " · " + status)
+            from app.monthly_report_carryover_summary import render_carryover_summary
+            render_carryover_summary(sections, plans)
     remaining = [s.title for s in sections if not plans.get(s.key, {}).get("approved")]
     todo = [*missing, *(["Review these sections: " + "; ".join(remaining) + "."] if remaining else [])]
     if (cover_section is not None and analysis.site_relation == "same"
@@ -1296,9 +1343,16 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             # Even deliberately excluded foreign content would remain inside a
             # new profile's uploaded native design. A contribution omission or
             # an older staged approval cannot certify that design's artwork.
+            unread = next((item for item in cover_section.items if item.kind == "unsupported"), None)
+            detail = (f"{unread.id} · {unread.note} " if unread is not None else
+                      "Cover image identity has no confirmed photograph or logo role. ")
             message = ("The cover artwork in " + (upload.name if upload is not None else "the saved original") +
-                       " is unread or has no confirmed role. Repair it in the original Word file and upload it again, "
-                       "or open an existing report with a saved cover design. This upload would also supply a new report’s page design.")
+                       " is unread or has no confirmed role. " + detail +
+                       "Repair it in the original Word file by exporting or replacing the identified "
+                       "object as PNG/JPEG, then choose the corrected DOCX in Starting report and analyze again. "
+                       "An existing saved cover or verified ENFRA template may be available "
+                       "as a separate explicit fallback. The original upload and already "
+                       "edited body sections remain available.")
             if native_art_size_limited:
                 message = ("This upload exceeds the native-artwork processing limit, so its page design cannot yet be used. "
                            "Choose an available ENFRA template above, or keep the original and upload a smaller test copy. "
@@ -1323,8 +1377,8 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             # Continue may reuse immutable normalized bytes from this exact
             # render, but source identity and mutable saved state are checked
             # again, then profile/snapshot CAS protects final publication.
-            if path.stat().st_size > 128 * 1024 * 1024:
-                raise ValueError("Original DOCX exceeds the import limit.")
+            if path.stat().st_size > docx_import.MAX_DOCX_BYTES:
+                raise ValueError(docx_size_error(docx_import.MAX_DOCX_BYTES))
             with path.open("rb") as stream:
                 if hashlib.file_digest(stream, "sha256").hexdigest() != inspection.sha256:
                     raise ValueError("Original DOCX changed during review. Analyze it again.")

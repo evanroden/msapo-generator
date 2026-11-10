@@ -22,6 +22,12 @@ def _renders_photo_pages(profile):
         return False  # the design error itself is reported when generating
 
 
+def _first_wide_row(rows, width):
+    """Return the first 1-based row number and its unmodified cell count."""
+    return next(((number, len(row)) for number, row in enumerate(rows, 1)
+                 if len(row) > width), None)
+
+
 def layout_checks(draft):
     from app.monthly_report_checks import ReportCheck
     from app.monthly_report_visuals import org_chart_problem, photo_caption_problems
@@ -41,13 +47,16 @@ def layout_checks(draft):
                 from app.monthly_report_asset_layout import (
                     document_page_indexes, document_caption_problems)
                 if document_page_indexes(block, draft.sources):
-                    from app.monthly_report_correction_targets import picture_target
+                    from app.monthly_report_correction_targets import document_picture_target
                     for index in document_caption_problems(block, draft.sources):
+                        # A missing/ambiguous owner still blocks Generate, but
+                        # must not advertise an unrelated photo-caption editor.
+                        target = document_picture_target(draft, block, index)
                         checks.append(ReportCheck(
                             "document_caption",
                             f"Shorten the source-page caption for picture {index + 1} "
                             f"in {_label(spec.key)} to at most three lines before generating.",
-                            True, block.key, (picture_target(draft, block, index),)))
+                            True, block.key, (target,) if target is not None else ()))
             if block.org_nodes:
                 problem = org_chart_problem(block.org_nodes)
                 if problem:
@@ -59,17 +68,23 @@ def layout_checks(draft):
                     from app.monthly_report_asset_layout import picture_runs, photo_run
                     problems = (indexes[local] for is_document, indexes in picture_runs(block, draft.sources)
                                 if not is_document for local in photo_caption_problems(photo_run(block, indexes)))
+                    from app.monthly_report_correction_targets import picture_target
                     for index in problems:
                         checks.append(ReportCheck(
                             "photo_caption",
                             f"Shorten photo caption {index + 1} in {_label(spec.key)}, or choose fewer "
                             f"photos per page. At {block.photos_per_page} per page a caption can use "
-                            "at most four lines.", True, block.key))
-            if spec.columns and any(len(row) > len(spec.columns) for row in block.rows):
-                checks.append(ReportCheck(
-                    "table_columns",
-                    f"A row in {_label(spec.key)} has more cells than its {len(spec.columns)} columns. "
-                    "Remove the extra cells or move them into the right column.", True, block.key))
+                            "at most four lines.", True, block.key,
+                            (picture_target(draft, block, index),)))
+            if spec.columns:
+                wide_row = _first_wide_row(block.rows, len(spec.columns))
+                if wide_row is not None:
+                    row_number, cells = wide_row
+                    checks.append(ReportCheck(
+                        "table_columns",
+                        f"Row {row_number} in {_label(spec.key)} has {cells} cells but only "
+                        f"{len(spec.columns)} columns. Correct the row before creating the report.",
+                        True, block.key))
             for table_number, table in enumerate(block.extra_tables, 1):
                 # The Word writer silently omits imported tables with no
                 # headings, even when their rows contain real source values.
@@ -82,10 +97,14 @@ def layout_checks(draft):
                         "has source rows but no column headings. Add headings "
                         "or leave this table out before creating the report.",
                         True, block.key))
-                if filled and table.columns and any(len(row) > len(table.columns) for row in table.rows):
-                    checks.append(ReportCheck(
-                        "table_columns",
-                        f"A row in an added table in {_label(spec.key)} has more cells than its "
-                        f"{len(table.columns)} columns. Remove the extra cells or add the missing column.",
-                        True, block.key))
+                if filled and table.columns:
+                    wide_row = _first_wide_row(table.rows, len(table.columns))
+                    if wide_row is not None:
+                        row_number, cells = wide_row
+                        checks.append(ReportCheck(
+                            "table_columns",
+                            f"Imported table {table_number}, row {row_number} in {_label(spec.key)} "
+                            f"has {cells} cells but {len(table.columns)} columns. Add a heading or "
+                            "correct the row before creating the report.",
+                            True, block.key))
     return checks

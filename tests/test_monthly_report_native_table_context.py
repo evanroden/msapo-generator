@@ -348,3 +348,81 @@ def test_quote_specific_current_notes_keep_their_authored_labels(tmp_path):
     lines = [p.text for p in result.paragraphs if p.text.strip()]
     start = lines.index("Rejected Quotes")
     assert tuple(lines[start:start + len(expected)]) == expected
+
+
+@pytest.mark.parametrize("blank_before_table", [False, True])
+@pytest.mark.parametrize("trailing_current_note", [False, True])
+def test_diagnostic_proposal_labels_once_with_trailing_note(
+        tmp_path, blank_before_table, trailing_current_note):
+    """The diagnostic branch's four synthetic cases remain distinct."""
+    from hashlib import sha256
+
+    path, draft = scenario(tmp_path)
+    source = Document(path)
+    if blank_before_table:
+        for table in source.tables[:2]:
+            table._tbl.addprevious(OxmlElement("w:p"))
+        source.save(path)
+    raw_digest = sha256(path.read_bytes()).hexdigest()
+    inspection = inspect_docx(path)
+    tables = tuple(replace(table_without_prices(item)[0],
+                           reference=f"docx:{inspection.sha256}:{item.id}")
+                   for item in inspection.items
+                   if item.kind == "table" and item.section == "proposals")
+    assert len(tables) == 2
+    block = draft.blocks[0]
+    note = "Synthetic trailing technical note."
+    block = replace(block, extra_tables=tables,
+                    text=block.text + ("\n\n" + note if trailing_current_note else ""))
+    result = build_native_docx(replace(draft, blocks=(block, draft.blocks[1])),
+                               path, section_key="proposals")
+    document = Document(BytesIO(result))
+    text = _text(document.element)
+    assert text.count("Rejected Quotes") == 1
+    assert text.count("Pending Quotes") == 1
+    assert (note in text) == trailing_current_note
+    assert len(document.tables) == 2
+    assert [ _text(before(table._tbl)[-1]) for table in document.tables ] == [
+        "Rejected Quotes", "Pending Quotes"]
+    assert sha256(path.read_bytes()).hexdigest() == raw_digest
+
+
+@pytest.mark.parametrize("blank_before_table", [False, True])
+def test_diagnostic_trailing_proposal_note_pdf_has_unique_labels(
+        tmp_path, blank_before_table):
+    """Real conversion must not reinstate both native and authored headings."""
+    from hashlib import sha256
+    from pathlib import Path
+    import shutil
+    import subprocess
+    import pymupdf as fitz
+
+    if not shutil.which("libreoffice"):
+        pytest.skip("LibreOffice is required for native Word-to-PDF output")
+    path, draft = scenario(tmp_path)
+    source = Document(path)
+    if blank_before_table:
+        for table in source.tables[:2]:
+            table._tbl.addprevious(OxmlElement("w:p"))
+        source.save(path)
+    original_sha = sha256(path.read_bytes()).hexdigest()
+    inspection = inspect_docx(path)
+    tables = tuple(replace(table_without_prices(item)[0],
+                           reference=f"docx:{inspection.sha256}:{item.id}")
+                   for item in inspection.items
+                   if item.kind == "table" and item.section == "proposals")
+    block = replace(draft.blocks[0], extra_tables=tables,
+                    text=draft.blocks[0].text + "\n\nSynthetic trailing technical note.")
+    payload = build_native_docx(replace(draft, blocks=(block, draft.blocks[1])),
+                                path, section_key="proposals")
+    exported = tmp_path / "synthetic-native.docx"
+    exported.write_bytes(payload)
+    subprocess.run(["libreoffice", "-env:UserInstallation=" + (tmp_path / "office").as_uri(),
+                    "--headless", "--convert-to", "pdf", "--outdir", str(tmp_path), str(exported)],
+                   check=True, capture_output=True, timeout=120)
+    with fitz.open(tmp_path / "synthetic-native.pdf") as pdf:
+        pdf_text = " ".join(page.get_text() for page in pdf)
+    assert pdf_text.count("Rejected Quotes") == 1
+    assert pdf_text.count("Pending Quotes") == 1
+    assert "Synthetic trailing technical note." in pdf_text
+    assert sha256(path.read_bytes()).hexdigest() == original_sha

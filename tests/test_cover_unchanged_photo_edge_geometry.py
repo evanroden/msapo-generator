@@ -53,7 +53,7 @@ from tests.conftest import requires_libreoffice
 @requires_libreoffice
 @pytest.mark.parametrize('orientation', [5, 6, 7, 8])
 def test_actual_pdf_oriented_photo_keeps_original_subject_and_visual_axes(tmp_path, monkeypatch, orientation):
-    import fitz
+    import pymupdf as fitz
     from app import pdf_converter
     from app.monthly_report_render_compat import rendering_docx
     monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path/'store'))
