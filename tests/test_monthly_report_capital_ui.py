@@ -184,3 +184,28 @@ def test_approval_rejects_prices_without_publishing(monkeypatch, tmp_path):
     assert load_capital_master(p.contract).revision == 0
     assert app.session_state["block"] == block
     assert any("monetary" in item.value.lower() for item in app.warning)
+
+
+def test_reordered_rows_keep_their_own_capital_identity(monkeypatch, tmp_path):
+    from app.monthly_report_capital_ui import reviewed_capital_items, use_approved_capital
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    north = profile("Synthetic Contract A")
+    master = approve(north, (
+        CapitalItem("north-pump", "High", "Replace pump", asset="Pump A", site_keys=("north",)),
+        CapitalItem("north-roof", "Medium", "Replace roof", asset="Roof B", site_keys=("north",)),
+    ))
+    current = draft(north)
+    used = use_approved_capital(current, ResolvedBlock("capital_renewal", "This month"), master)
+    # Same facility on both rows, so the facility sequence is unchanged by the swap.
+    swapped = replace(used, rows=tuple(reversed(used.rows)))
+    items, removed = reviewed_capital_items(replace(current, blocks=(swapped,)), swapped, master)
+    by_text = {item.recommendation: item for item in items}
+    assert (by_text["Replace pump"].key, by_text["Replace pump"].asset) == ("north-pump", "Pump A")
+    assert (by_text["Replace roof"].key, by_text["Replace roof"].asset) == ("north-roof", "Roof B")
+    assert removed == ()
+    # Editing one recommendation in place still keeps that row's identity.
+    edited = replace(used, rows=(used.rows[0][:2] + ("Replace pump motor",), used.rows[1]))
+    items, removed = reviewed_capital_items(replace(current, blocks=(edited,)), edited, master)
+    by_text = {item.recommendation: item for item in items}
+    assert (by_text["Replace pump motor"].key, by_text["Replace pump motor"].asset) == ("north-pump", "Pump A")
+    assert removed == ()

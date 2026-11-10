@@ -73,18 +73,31 @@ def reviewed_capital_items(draft, block, master):
     unused = list(occurrences)
     matched = set()
     proposed = {}
-    for position, row in enumerate(block.rows):
-        site = _site(profile, row[0])
-        priority, recommendation = row[1].strip(), row[2].strip()
-        if not priority or not recommendation:
+    sites = []
+    for row in block.rows:
+        sites.append(_site(profile, row[0]))
+        if not row[1].strip() or not row[2].strip():
             raise ValueError("Every approved capital entry needs a priority and recommendation.")
-        source = (occurrences[position] if same_order else
-                  next((occ for occ in unused
-                        if occ.site_key == site.key and
-                        (occ.site_title, occ.item.priority, occ.item.recommendation) == tuple(row)), None))
+    # Identity by content first: a row equal to an approved occurrence keeps that
+    # occurrence even after rows of one facility were reordered. Position is only
+    # the fallback for edited text, and only while the facility sequence holds.
+    sources = [None] * len(block.rows)
+    for position, (row, site) in enumerate(zip(block.rows, sites)):
+        exact = next((occ for occ in unused if occ.site_key == site.key and
+                      (occ.site_title, occ.item.priority, occ.item.recommendation) == tuple(row)), None)
+        if exact is not None:
+            sources[position] = exact
+            unused.remove(exact)
+    if same_order:
+        for position, site in enumerate(sites):
+            fallback = occurrences[position]
+            if sources[position] is None and fallback in unused and fallback.site_key == site.key:
+                sources[position] = fallback
+                unused.remove(fallback)
+    for position, (row, site) in enumerate(zip(block.rows, sites)):
+        priority, recommendation = row[1].strip(), row[2].strip()
+        source = sources[position]
         if source is not None:
-            if source in unused:
-                unused.remove(source)
             matched.add((site.key, source.item.key))
         old = source.item if source else None
         has_details = old is not None and any(
