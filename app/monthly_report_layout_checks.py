@@ -47,13 +47,16 @@ def layout_checks(draft):
                 from app.monthly_report_asset_layout import (
                     document_page_indexes, document_caption_problems)
                 if document_page_indexes(block, draft.sources):
-                    from app.monthly_report_correction_targets import picture_target
+                    from app.monthly_report_correction_targets import document_picture_target
                     for index in document_caption_problems(block, draft.sources):
+                        # A missing/ambiguous owner still blocks Generate, but
+                        # must not advertise an unrelated photo-caption editor.
+                        target = document_picture_target(draft, block, index)
                         checks.append(ReportCheck(
                             "document_caption",
                             f"Shorten the source-page caption for picture {index + 1} "
                             f"in {_label(spec.key)} to at most three lines before generating.",
-                            True, block.key, (picture_target(draft, block, index),)))
+                            True, block.key, (target,) if target is not None else ()))
             if block.org_nodes:
                 problem = org_chart_problem(block.org_nodes)
                 if problem:
@@ -65,12 +68,14 @@ def layout_checks(draft):
                     from app.monthly_report_asset_layout import picture_runs, photo_run
                     problems = (indexes[local] for is_document, indexes in picture_runs(block, draft.sources)
                                 if not is_document for local in photo_caption_problems(photo_run(block, indexes)))
+                    from app.monthly_report_correction_targets import picture_target
                     for index in problems:
                         checks.append(ReportCheck(
                             "photo_caption",
                             f"Shorten photo caption {index + 1} in {_label(spec.key)}, or choose fewer "
                             f"photos per page. At {block.photos_per_page} per page a caption can use "
-                            "at most four lines.", True, block.key))
+                            "at most four lines.", True, block.key,
+                            (picture_target(draft, block, index),)))
             if spec.columns:
                 wide_row = _first_wide_row(block.rows, len(spec.columns))
                 if wide_row is not None:

@@ -274,7 +274,8 @@ def exercise(browser, name, base, record):
         select(page, "Reporting month", "October", record=record)
         select(page, "Reporting year", "2026")
         require_frontend_delivery(record)
-        page.get_by_role("button", name="Use ENFRA template", exact=True).click()
+        # No choice click when the ENFRA template is the only option.
+        expect(page.get_by_role("button", name="Use ENFRA template", exact=True)).to_have_count(0)
         actor = page.get_by_role("textbox", name="Your name", exact=True)
         actor.fill(ACTOR)
         actor.press("Tab")

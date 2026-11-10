@@ -42,9 +42,11 @@ def test_exact_reported_semicolon_sniffer_failure_is_five_columns(profile):
         b"001;2026-09-12;Closed;0;Inspect pump\r\n"
         b'002;2026-09-13;Open;;"Not completed; parts pending"\r\n'
     )
-    # Baseline on main: Sniffer raises and its comma default makes one column.
-    with pytest.raises(csv.Error):
-        csv.Sniffer().sniff(raw.decode()[:8192], delimiters=",;\t|")
+    # Before this repair, ingestion asked csv.Sniffer for the dialect and fell
+    # back to comma, making one column, when the Sniffer rejected this file.
+    # Whether the Sniffer rejects it depends on the Python patch release (it
+    # raises on 3.12.3 and not on 3.12.16), so this test asserts only what the
+    # application now does with the file.
     content, _ = sources.ingest(profile, "reported.csv", raw)
     assert content.tables[0].columns == HEADERS
     assert content.tables[0].rows == (
@@ -232,3 +234,14 @@ def test_guided_quoted_csv_upload_then_fresh_reopen_keeps_manual_update(monkeypa
                and value and hasattr(value[0], "source")]
     assert resumed and resumed[0][0].tables == contents[0][0].tables
     assert draft(reopened).sources == before.sources
+
+
+def test_separator_contradicted_by_its_own_rows_cannot_veto_by_budget(profile):
+    # A semicolon file whose note holds 202 commas: read as comma CSV, the
+    # second row has 203 cells but the header has one, so that separator is
+    # disproven. It must not reject the only consistent reading by budget.
+    readings = ",".join(str(n) for n in range(202))
+    raw = ("Work order;Note\r\n" + "001;" + readings + "\r\n").encode()
+    content, _ = sources.ingest(profile, "readings.csv", raw)
+    assert content.tables[0].columns == ("Work order", "Note")
+    assert content.tables[0].rows == (("001", readings),)
