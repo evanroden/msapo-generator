@@ -497,11 +497,12 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                         unread = tuple(i for i in section.items if i.kind == "unsupported")
                         if native_art_size_limited:
                             blocking.append(
-                                "This source exceeds the native-artwork inspection budget, not necessarily "
-                                "the Word upload limit. Its cover cannot be certified from the truncated "
-                                "inspection. Choose the independent ENFRA template, keep an existing "
-                                "report cover, or retry with a smaller Word source. The original "
-                                "upload and your other section edits are retained. " + cover_recovery
+                                "This source exceeds the native-artwork processing limit, not necessarily "
+                                "the Word upload limit. Its cover cannot be certified by this "
+                                "inspection. Choose an available independent ENFRA template, keep an "
+                                "existing report cover, or retry with a smaller Word source. "
+                                "Replacing the upload starts a new review; the original remains "
+                                "available. " + cover_recovery
                             )
                         else:
                             for item in unread[:4]:
@@ -509,9 +510,10 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                             if len(unread) > 4:
                                 st.caption(f"{len(unread) - 4} additional cover objects need review.")
                             blocking.append(
-                                f"{len(unread)} specific cover object(s) are not safely importable. "
-                                "A new cover photograph does not replace those objects. "
-                                "Export or replace each identified object as PNG/JPEG in Word, "
+                                f"{len(unread)} specific cover object(s) could not be preserved. "
+                                "A new cover photograph changes only the photograph; it cannot replace "
+                                "these unread drawings. Repair that artwork in the original Word file "
+                                "by exporting or replacing each identified object as PNG/JPEG, "
                                 "then select the corrected DOCX in Starting report and analyze again. "
                                 "When available, an existing saved cover or independent ENFRA "
                                 "template is a separate fallback. " + cover_recovery
@@ -1306,8 +1308,10 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             unread = next((item for item in cover_section.items if item.kind == "unsupported"), None)
             detail = (f"{unread.id} · {unread.note} " if unread is not None else
                       "Cover image identity has no confirmed photograph or logo role. ")
-            message = (detail + "Export or replace the identified object as PNG/JPEG in Word, "
-                       "then choose the corrected DOCX in Starting report and analyze again. "
+            message = ("The cover artwork in " + (upload.name if upload is not None else "the saved original") +
+                       " is unread or has no confirmed role. " + detail +
+                       "Repair it in the original Word file by exporting or replacing the identified "
+                       "object as PNG/JPEG, then choose the corrected DOCX in Starting report and analyze again. "
                        "An existing saved cover or verified ENFRA template may be available "
                        "as a separate explicit fallback. The original upload and already "
                        "edited body sections remain available.")
