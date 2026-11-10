@@ -291,3 +291,25 @@ def test_mismatched_original_asof_and_days_past_due_are_never_inferred(monkeypat
                    rows=(update(source_row, cells=(*source_row.cells, "2026-09-30")),))
     with pytest.raises(ValueError, match="as-of date"):
         _review_row(draft, extra, extra.rows[0], {}, date(2026, 10, 28))
+
+
+def test_currency_formatted_xlsx_amounts_are_read_without_retyping():
+    from decimal import Decimal
+    from openpyxl import Workbook
+    book = Workbook()
+    sheet = book.active
+    sheet.append(["Invoice #", "Invoice Amount"])
+    cases = (('"$"#,##0.00', 500), ("[$USD-409]#,##0.00", 1234.5), ("$#,##0.00", -12.25),
+             ("#,##0.00 [$€-407]", 99.5), ("$#,##0.000", 1.125))
+    for number, (number_format, value) in enumerate(cases, 1):
+        sheet.append([f"SYN-{number}", value])
+        sheet.cell(row=number + 1, column=2).number_format = number_format
+    raw = BytesIO()
+    book.save(raw)
+    amounts = [row[1] for row in source_api._spreadsheet(raw.getvalue(), ".xlsx")[0].rows]
+    assert amounts[:3] == ["500 $", "1234.5 USD", "-12.25 $"]
+    assert [_money(value) for value in amounts[:3]] == [Decimal("500"), Decimal("1234.5"), Decimal("-12.25")]
+    # Another currency, or more precision than cents, still needs a correction.
+    for value in amounts[3:]:
+        with pytest.raises(ValueError, match="explicit numeric correction"):
+            _money(value)

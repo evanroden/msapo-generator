@@ -46,6 +46,10 @@ _STATES = {
     "pending": "Pending",
 }
 _MONEY = re.compile(r"^[+-]?(?:\$)?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?$")
+# XLSX intake renders a currency-formatted cell as "<number> <marker>"
+# (monthly_report_xlsx_currency.currency_evidence_value). Only US-dollar
+# markers are read here; any other currency still needs a correction.
+_XLSX_USD = re.compile(r"^([+-]?\d+(?:\.\d+)?) (?:\$|USD)$")
 _INVOICE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _./#-]{0,71}$")
 _ISO = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _RECEIPT_LINK = "receivable:v1:"
@@ -75,6 +79,9 @@ def _money(value):
     negative = raw.startswith("(") and raw.endswith(")")
     if negative:
         raw = raw[1:-1].strip()
+    xlsx = _XLSX_USD.fullmatch(raw)
+    if xlsx:
+        raw = xlsx.group(1)
     if not _MONEY.fullmatch(raw):
         raise ValueError("A monetary cell needs an explicit numeric correction; no balance was inferred.")
     try:
