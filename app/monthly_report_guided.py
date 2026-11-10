@@ -1172,6 +1172,9 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
                 block = _edit_content(spec, block, state, prefix, assets, field, draft,
                                       manage_saved_pictures=not page_managed,
                                       page_actions_open=pages_open)
+        if spec.key == "capital_renewal":
+            from app.monthly_report_capital_ui import render_capital_master
+            block = render_capital_master(draft, block, prefix)
         if spec.key in MONTHLY_EDIT_KEYS:
             block = _review_carried_update(block, period, prefix)
         blocks[spec.key] = block
