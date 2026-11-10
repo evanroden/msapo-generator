@@ -42,6 +42,24 @@ def picture_target(draft, block, index, *, source=None, page=0):
         photo_disclosure_identity(block, index, scope=report_identity(draft)))
 
 
+def document_picture_target(draft, block, index):
+    """Bind a source-page caption to its exact PDF page and photo occurrence."""
+    from app.monthly_report_asset_instances import asset_instances
+    from app.monthly_report_asset_layout import document_page_indexes
+    from app.monthly_report_page_reference import page_identity
+    if index not in document_page_indexes(block, draft.sources):
+        return None
+    pages = {page_identity(ref) for ref in asset_instances(block)[index].references}
+    pages.discard(None)
+    if len(pages) != 1:
+        return None
+    source_id, page = next(iter(pages))
+    matches = [source for source in draft.sources if source.id == source_id]
+    if len(matches) != 1:
+        return None
+    return picture_target(draft, block, index, source=matches[0], page=page)
+
+
 def source_target(draft, source, *, page=0):
     return CorrectionTarget(report_identity(draft), source_id=source.id,
         source_hash=source.sha256, source_revision=source.fingerprint, page=page)
