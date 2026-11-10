@@ -25,6 +25,7 @@ def partial_report(monkeypatch, tmp_path):
     profile = ReportProfile(
         first.contract, "two-sites", "Synthetic two-site report",
         (Facility("north", "Synthetic North"), Facility("south", "Synthetic South")),
+        scope_type="multi_site",
     )
     draft = ReportDraft(profile, ReportPeriod(2026, 9), "Synthetic Editor", default_sections(), ())
     copied, missing = directory.contact_block(first, profile.facilities, {"north": "north"})
