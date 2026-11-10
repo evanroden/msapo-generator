@@ -458,6 +458,11 @@ def exercise(engine, name, scenario, output):
             a_before = snapshot(base, cookies["a"])
             assert a_before["source_sha256"] == record["fixture"]["original_sha256"]
             capture("native-stage-and-disclosure", page)
+            if scenario == "active-selection":
+                # Start can remount the shelf on its first-listed fixture, which
+                # is B whenever B's random id sorts ahead of A's. Reselect the
+                # staged fixture for this download; selection is not a Start.
+                select_fixture(page, record["fixture"])
             download_original(page, "before-fault")
             if scenario == "active-selection":
                 active_selection_journey(base, cookies, page, record, session, start,
