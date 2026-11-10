@@ -925,7 +925,11 @@ def inspect_docx(path: Path) -> DocxInspection:
                                               "Unmapped native SmartArt: complete local text-only drawing could not be established." if diagram else
                                               "Native divider artwork" if detected and detected != "unmatched" else
                                               "Native Word drawing: preserve and review its complete page layout, or add a replacement picture. Nothing is executed during inspection.")
-                                    if not native_role and part == "word/document.xml" and word_section <= 2 and section in ("", "cover"):
+                                    # Recognized divider artwork is matched by exact note
+                                    # elsewhere; it is not an unreadable cover object.
+                                    if (not native_role and note != "Native divider artwork"
+                                            and part == "word/document.xml" and word_section <= 2
+                                            and section in ("", "cover")):
                                         note += " " + _cover_unreadable_object_note(
                                             element, word_section=word_section, position=position)
                                         if divergent_native:
