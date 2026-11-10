@@ -209,3 +209,25 @@ def test_reordered_rows_keep_their_own_capital_identity(monkeypatch, tmp_path):
     by_text = {item.recommendation: item for item in items}
     assert (by_text["Replace pump motor"].key, by_text["Replace pump motor"].asset) == ("north-pump", "Pump A")
     assert removed == ()
+
+def test_approved_caption_shows_prepared_by_markdown_and_url_literally(monkeypatch, tmp_path):
+    from app.monthly_report_ui_text import literal
+
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    p = profile("Synthetic Contract B")
+    rows = ResolvedBlock("capital_renewal", "This month",
+                         rows=(("Synthetic B North", "Medium", "Renew roof"),))
+    actor = "Synthetic *Reviewer_Name* [Ops](https://example.test/ops) https://example.test/profile"
+    app = start(p, rows)
+    app.session_state["draft"] = replace(app.session_state["draft"], prepared_by=actor)
+    app.run()
+    check(app, "I reviewed these capital recommendations and approve a new contract version").check().run()
+    button(app, "Save approved Capital Renewal version").click().run()
+    assert not app.exception
+    assert load_capital_master(p.contract).actor == actor
+    app.run()
+    assert not app.exception
+    assert any(
+        item.value == f"Contract-approved version 1 · 1 items · approved by {literal(actor)}."
+        for item in app.caption
+    )
