@@ -1526,22 +1526,6 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                        for section in draft.sections for spec in section.blocks}
 
     brand = blocks.get("brand_logo")
-    # A native design can be the same Starting Report used for a deliberate
-    # alternate-photo import. Bind that decision to its source occurrence:
-    # unselected photo candidates are not replacement frames.
-    selected_cover_photo_ids, competing_cover_photo_ids = set(), set()
-    if source_view is None:
-        from app.monthly_report_start_import import cover_photo_candidates
-        photo = blocks.get("cover_photo")
-        if photo is not None and photo.source != "Omit" and photo.asset_hashes:
-            candidates = cover_photo_candidates(inspection.items)
-            selected_cover_photo_ids = {
-                item.id for item in candidates
-                if source_ref(item) in photo.references
-                and image_matches(item, "cover_photo", photo.asset_hashes)
-            }
-            if len(selected_cover_photo_ids) == 1:
-                competing_cover_photo_ids = {item.id for item in candidates} - selected_cover_photo_ids
     cover_roles = {}
     unchanged_master_brand = unchanged_client_brand = False
     if source_view is None:
@@ -1646,19 +1630,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                 elif role in ("brand_logo", "client_logo"):
                     logo_replacements.append((node, image.px_width, image.px_height))
                 continue
-            # Do not silently retain a second selectable photo when the
-            # operator selected one exact cover occurrence. Drop only its own
-            # standalone drawing; a grouped/native drawing is not safe to edit.
             occurrence = source_node_items.get(node)
-            if occurrence is not None and occurrence.id in competing_cover_photo_ids:
-                drawing = next((parent for parent in node.iterancestors()
-                                if parent.tag in (qn("w:drawing"), qn("w:pict"))), None)
-                if (drawing is None or drawing.getparent() is None
-                        or sum(image.tag in (qn("a:blip"), "{urn:schemas-microsoft-com:vml}imagedata")
-                               for image in drawing.iter()) != 1):
-                    raise NativeLayoutError("A competing native cover photo cannot be removed without altering other artwork.")
-                drawing.getparent().remove(drawing)
-                continue
             # Source identity, not another photo's media role, owns the selected
             # frame. Count it as emitted to avoid a second insertion below.
             photo = blocks.get("cover_photo")
@@ -1694,6 +1666,11 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             role = next(iter(exact_roles)) if len(exact_roles) == 1 and exact_roles <= cover_slots else roles.get(target)
             if role == "company_slogan":
                 continue  # Reviewed, immutable company furniture; never a client mark.
+            chosen_photo = blocks.get("cover_photo")
+            if (role == "cover_photo" and not exact_roles and chosen_photo is not None
+                    and any(source_ref(item) in chosen_photo.references
+                            for item in cover_items if item is not occurrence)):
+                continue  # The operator chose another exact occurrence; this one keeps its artwork.
             block = blocks.get(role)
             if block and block.source != "Omit" and block.asset_hashes:
                 if ((role == "client_logo" and unchanged_client_brand)

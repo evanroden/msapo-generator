@@ -26,6 +26,7 @@ from app.monthly_report_start_import import (
 )
 from app.monthly_report_setup import new_month_draft
 from test_monthly_report_start_import import PERIOD, save_start, start_app
+from tests.conftest import requires_libreoffice
 
 
 def raster(size, *, color, circle=False, transparent=False):
@@ -304,7 +305,11 @@ def test_pinned_starting_report_native_design_uses_exact_selected_photo(monkeypa
     preview = section_preview_docx(native_draft, "cover", loader)
     word = _build_docx(native_draft, asset_loader=loader)
     for output in (preview, word):
-        _assert_selected_only(output)
+        # A pinned native design keeps the Starting Report's other photograph
+        # as fixed artwork: choosing the cover photo does not authorize editing
+        # an independent sibling (tests/test_cover_photo_occurrence_and_extent.py).
+        # The chosen photograph appears exactly once and is not re-emitted.
+        assert _cover_photo_counts(output) == (1, 1)
         crop, frame = photo_geometry(output, photograph)
         assert crop["t"] == pytest.approx(.10, abs=.00001)
         assert crop["b"] == pytest.approx(.15, abs=.00001)
