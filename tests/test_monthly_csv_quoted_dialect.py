@@ -42,9 +42,11 @@ def test_exact_reported_semicolon_sniffer_failure_is_five_columns(profile):
         b"001;2026-09-12;Closed;0;Inspect pump\r\n"
         b'002;2026-09-13;Open;;"Not completed; parts pending"\r\n'
     )
-    # Baseline on main: Sniffer raises and its comma default makes one column.
-    with pytest.raises(csv.Error):
-        csv.Sniffer().sniff(raw.decode()[:8192], delimiters=",;\t|")
+    # Before this repair, ingestion asked csv.Sniffer for the dialect and fell
+    # back to comma, making one column, when the Sniffer rejected this file.
+    # Whether the Sniffer rejects it depends on the Python patch release (it
+    # raises on 3.12.3 and not on 3.12.16), so this test asserts only what the
+    # application now does with the file.
     content, _ = sources.ingest(profile, "reported.csv", raw)
     assert content.tables[0].columns == HEADERS
     assert content.tables[0].rows == (
