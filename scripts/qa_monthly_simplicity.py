@@ -214,8 +214,16 @@ def exercise(engine, name, record):
     page.add_init_script(collector.replace("http://127.0.0.1:8529", f"http://127.0.0.1:{PORT}"))
     page.set_default_timeout(30000)
     page.on("pageerror", lambda error: errors.append(str(error)))
-    def capture(stage):
-        record["steps"].append({"stage": stage, "receipt": receipt(page),
+    def capture(stage, *, started=True):
+        # The fixture publishes its receipt only once a report exists. The three
+        # "fresh-" stages run before Start, so they record that there is none.
+        if started:
+            current = receipt(page)
+        else:
+            settled(page)
+            expect(page.locator(RECEIPT)).to_have_count(0)
+            current = None
+        record["steps"].append({"stage": stage, "receipt": current,
                                 "browser_title": page.title(),
                                 "visible_controls": native_control_inventory(page)})
         page.screenshot(path=str(OUT / f"{name}-{stage}.png"), full_page=False)
@@ -223,10 +231,13 @@ def exercise(engine, name, record):
         record["phase"] = "ordinary empty report"
         page.goto(URL, wait_until="domcontentloaded")
         expect(page).to_have_title("Monthly report · ENFRA Process Control", timeout=30000)
-        capture("fresh-contract-discovery")
-        page.get_by_role("button", name=CONTRACT, exact=True).click()
-        capture("fresh-site-selection")
+        contract = page.get_by_role("button", name=CONTRACT, exact=True)
+        expect(contract).to_be_visible()
+        capture("fresh-contract-discovery", started=False)
+        contract.click()
         site = page.get_by_role("checkbox", name=SITE, exact=True)
+        expect(site).to_be_visible()
+        capture("fresh-site-selection", started=False)
         site.locator("xpath=ancestor::label[1]").click()
         select(page, "Reporting month", "September")
         select(page, "Reporting year", "2026")
@@ -234,8 +245,10 @@ def exercise(engine, name, record):
         actor = page.get_by_role("textbox", name="Your name", exact=True)
         actor.fill(ACTOR)
         actor.press("Tab")
-        capture("fresh-start-ready")
-        page.get_by_role("button", name="Start this report", exact=True).click()
+        start = page.get_by_role("button", name="Start this report", exact=True)
+        expect(start).to_be_enabled()
+        capture("fresh-start-ready", started=False)
+        start.click()
         expect(page.locator(PANEL)).to_be_visible(timeout=45000)
         settled(page)
         initial = receipt(page)
