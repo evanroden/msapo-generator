@@ -108,11 +108,14 @@ def test_real_gallery_no_photo_save_removes_visible_and_package_photo_from_nativ
 
 def test_absent_or_default_unselected_gallery_is_not_an_explicit_no_photo(tmp_path):
     source, _, _ = cover_source(tmp_path)
+    original = source.read_bytes()
     inspection, plans = photo_omission_plan(source)
     plans["cover"].pop("cover_photo_omitted")
-    mapped, _ = build_starting_import(source, inspection, plans.values())
-    assert not any(block.key == "cover_photo" for block in mapped.blocks)
-    assert not any(block.source == "Omit" for block in mapped.blocks)
+    # Not selecting a visible source photograph is not the native No-photo
+    # action. Do not silently continue with no photo in either import path.
+    with pytest.raises(ValueError, match="Choose a cover photograph"):
+        build_starting_import(source, inspection, plans.values())
+    assert source.read_bytes() == original
 
 
 @pytest.mark.parametrize("tamper", ["hash", "candidates", "selected"])
