@@ -1,13 +1,11 @@
 """Contract-wide contact UI integration, with synthetic records only."""
 
-from dataclasses import replace
 
 import pytest
 from streamlit.testing.v1 import AppTest
 
 from app import monthly_report_directory as directory
 from app import monthly_report_directory_batch as batch
-from app.monthly_report_model import ReportPeriod, SectionSpec, synthetic_draft, synthetic_profiles
 
 
 DIRECTORY_APP = """
@@ -15,15 +13,6 @@ from app.monthly_report_directory_ui import render_directory
 from app.monthly_report_ui import _field
 render_directory(_field)
 """
-
-CONTACTS_APP = """
-import streamlit as st
-from app.monthly_report_directory_ui import review_contacts
-from app.monthly_report_ui import _field
-st.session_state["synthetic_draft"] = review_contacts(
-    st.session_state["synthetic_draft"], "synthetic", _field, {})
-"""
-
 
 def seed_contract_contacts(monkeypatch, tmp_path, *, contract="Synthetic Contract"):
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
@@ -60,40 +49,6 @@ def test_contract_only_saved_directory_review_and_save_retains_contacts(monkeypa
     assert saved.contract_contacts == initial.contract_contacts
     assert directory.load_directory(initial.contract, 1) == initial
     assert any("Directory saved" in message.value for message in app.success)
-
-
-def test_contract_only_contacts_apply_and_undo_without_site_selection_or_membership_change(monkeypatch, tmp_path):
-    profile = synthetic_profiles()[1]
-    initial = seed_contract_contacts(monkeypatch, tmp_path, contract=profile.contract)
-    draft = synthetic_draft(profile, ReportPeriod(2026, 9))
-    draft = replace(draft, sections=(SectionSpec("organization", "3", "Organization", (directory.CONTACT_SPEC,)),),
-                    blocks=(), prepared_by="Synthetic Reviewer")
-    app = AppTest.from_string(CONTACTS_APP)
-    app.session_state["synthetic_draft"] = draft
-    app.run()
-    assert not app.exception
-    assert not app.selectbox and not app.multiselect
-    assert not app.warning
-    assert any("contract-wide contacts only" in caption.value for caption in app.caption)
-    assert any(profile.contract + " (contract-wide)" in str(frame.value) for frame in app.dataframe)
-    assert next(button for button in app.button if button.label == "Use reviewed contact table").disabled
-    next(box for box in app.checkbox if box.label ==
-         "Replace this report’s contact matrix with this reviewed directory table").check().run()
-    next(button for button in app.button if button.label == "Use reviewed contact table").click().run()
-    assert not app.exception
-    applied = app.session_state["synthetic_draft"]
-    assert applied.profile == draft.profile
-    assert applied.profile.facilities == draft.profile.facilities
-    block = next(block for block in applied.blocks if block.key == "contact_matrix")
-    assert len(block.rows) == 1
-    assert block.rows[0][0] == profile.contract + " (contract-wide)"
-    assert block.rows[0][2] == initial.contract_contacts[0].name
-    assert not any(reference.startswith("directory-site:") for reference in block.references)
-    assert directory.load_directory(profile.contract) == initial
-    next(button for button in app.button if button.label == "Undo contact table update").click().run()
-    assert not app.exception
-    assert app.session_state["synthetic_draft"] == draft
-    assert directory.load_directory(profile.contract) == initial
 
 
 @pytest.mark.parametrize("actor", ["", "   "])

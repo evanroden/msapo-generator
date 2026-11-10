@@ -7,7 +7,7 @@ import re
 import streamlit as st
 
 from app import contracts, monthly_report_directory as directory
-from app.monthly_report_editor import _grid, _preview, _signature
+from app.monthly_report_editor import _grid, _signature
 from app.monthly_report_ui_text import literal
 
 
@@ -409,66 +409,8 @@ def choose_facilities(contract, prefix, field):
     return tuple(active[k].facility for k in selected)
 
 
-def review_contacts(draft, prefix, field, assets):
-    if not draft.prepared_by.strip():
-        st.caption("Enter your name in Report before comparing contacts with the saved site directory.")
-        return draft
-    state = directory.load_directory(draft.profile.contract)
-    if not state:
-        return draft
-    with st.expander("Compare contacts with the saved site directory"):
-        current = next((b for b in draft.blocks if b.key == "contact_matrix"), None)
-        links = {r.split(":")[1]: r.split(":")[2] for r in current.references if r.startswith("directory-site:") and len(r.split(":")) == 3} if current else {}
-        active = {s.key: s for s in state.sites if s.active}
-        suggestions = directory.suggest_contact_bindings(state, draft.profile.facilities, links)
-        if state.sites:
-            st.caption("Matching site names are suggested below. Check the sites and people before using these contacts in your report.")
-        else:
-            st.caption("This directory contains contract-wide contacts only. They do not select or identify this report’s sites.")
-        bindings = {}
-        for facility in draft.profile.facilities if state.sites else ():
-            default = suggestions.get(facility.key, "")
-            key = field(prefix + "_directory_link_" + facility.key, default if default in active else "")
-            if st.session_state[key] not in ("", *active):
-                st.session_state[key] = ""
-            bindings[facility.key] = st.selectbox("Directory site for " + literal(facility.title), ["", *active],
-                                                format_func=lambda k: active[k].title if k else "Choose the matching site", key=key)
-        try:
-            candidate, missing = directory.contact_block(state, draft.profile.facilities, bindings)
-        except ValueError as exc:
-            st.error(literal(exc))
-            return draft
-        if missing:
-            st.warning("Choose a directory match for: " + literal("; ".join(missing)) + ". Report membership will not be changed.")
-        left, right = st.columns(2)
-        with left:
-            st.write("Contacts currently in this report")
-            _preview(current, assets, draft.profile)
-        with right:
-            st.write(f"Directory contacts · revision {state.revision}")
-            st.dataframe([dict(zip((c.title for c in directory.CONTACT_SPEC.columns), row)) for row in candidate.rows], hide_index=True)
-        signature = _signature((asdict(current) if current else None, asdict(candidate), missing))
-        confirmed = st.checkbox("Replace this report’s contact matrix with this reviewed directory table", key=prefix + "_contacts_ok_" + signature)
-        st.caption("This is an explicit replacement in this report only. It does not change shared report defaults, org charts, membership or the source workbook. Save progress to pin it for next month.")
-        if st.button("Use reviewed contact table", key=prefix + "_use_contacts", disabled=not (confirmed and candidate.rows and not missing)):
-            st.session_state[prefix + "_contacts_undo"] = (current, draft.sections)
-            draft = directory.apply_contacts(draft, candidate)
-            _resume_contacts(draft, prefix)
-        undo = st.session_state.get(prefix + "_contacts_undo")
-        if undo and st.button("Undo contact table update", key=prefix + "_undo_contacts"):
-            blocks = {b.key: b for b in draft.blocks}
-            if undo[0]:
-                blocks["contact_matrix"] = undo[0]
-            else:
-                blocks.pop("contact_matrix", None)
-            draft = replace(draft, blocks=tuple(blocks.values()), sections=undo[1])
-            st.session_state.pop(prefix + "_contacts_undo", None)
-            _resume_contacts(draft, prefix)
-    return draft
-
-
 def _resume_contacts(draft, prefix):
-    # An explicit replacement/undo resets only that contact editor's ephemeral
+    # Applying directory contacts resets only that contact editor's ephemeral
     # delta; otherwise an old data_editor value could overwrite the new table.
     changed = (prefix + "_edit_contact_matrix_", prefix + "_contacts_contact_matrix_")
     st.session_state["report_draft_mirror"] = {k:v for k,v in st.session_state.get("report_draft_mirror", {}).items() if not k.startswith(changed)}
