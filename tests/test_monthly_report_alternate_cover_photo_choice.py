@@ -4,11 +4,13 @@ Synthetic cover marks, two plausible photo occurrences, and later section art.
 No client originals, branding assets, or private screenshots are used.
 """
 
+from dataclasses import replace
 from io import BytesIO
 
 from docx import Document
 from docx.enum.section import WD_SECTION
 from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from docx.shared import Inches
 from PIL import Image, ImageDraw
 import pytest
@@ -186,16 +188,106 @@ def test_first_photo_choice_survives_continue_reopen_and_next_month(monkeypatch,
     assert path.read_bytes() == original
 
 
-from tests.conftest import requires_libreoffice
+def _near(value, target, tolerance=15):
+    return all(abs(a - b) <= tolerance for a, b in zip(value, target))
+
+
+def _cover_photo_counts(raw):
+    """Inspect decoded pixels, not media hashes (template preview re-encodes)."""
+    document = Document(BytesIO(raw))
+    chosen = competing = 0
+    for picture in document.element.iter(qn("pic:pic")):
+        blip = next((node for node in picture.iter(qn("a:blip"))
+                     if node.get(qn("r:embed"))), None)
+        if blip is None:
+            continue
+        media = document.part.related_parts[blip.get(qn("r:embed"))].blob
+        with Image.open(BytesIO(media)) as opened:
+            pixels = opened.convert("RGB")
+            center = pixels.getpixel((int(pixels.width * .57), int(pixels.height * .5)))
+            corner = pixels.getpixel((int(pixels.width * .05), int(pixels.height * .05)))
+        chosen += _near(center, (23, 63, 73)) and _near(corner, (218, 231, 237))
+        competing += _near(center, (175, 66, 105)) and _near(corner, (175, 66, 105))
+    return chosen, competing
+
+
+def _assert_selected_only(raw):
+    assert _cover_photo_counts(raw) == (1, 0), (
+        "The chosen circle photograph must appear once and the magenta "
+        "alternate must not appear.")
+
+
+def _assert_real_pdf_photo(raw):
+    import pymupdf as fitz
+
+    circles = []
+    alternate_found = False
+    with fitz.open(stream=raw, filetype="pdf") as pdf:
+        # Both the generated report and the live cover preview place the
+        # photograph on the cover; later maintenance pages are irrelevant.
+        for page in list(pdf)[:3]:
+            pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+            pixels = Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
+            points = []
+            for y in range(0, pixels.height, 2):
+                for x in range(0, pixels.width, 2):
+                    value = pixels.getpixel((x, y))
+                    if _near(value, (23, 63, 73), 12):
+                        points.append((x, y))
+                    if _near(value, (175, 66, 105), 10):
+                        alternate_found = True
+            if points:
+                circles.append(points)
+    assert circles, "The chosen photograph must be visible in the rendered PDF."
+    assert not alternate_found, "The unselected magenta photograph reached the PDF."
+    for points in circles:
+        width = max(x for x, _ in points) - min(x for x, _ in points) + 1
+        height = max(y for _, y in points) - min(y for _, y in points) + 1
+        assert abs(width - height) <= 4, "The selected circle is stretched in the PDF."
 
 
 @requires_libreoffice
-def test_selected_alternate_photo_has_matching_preview_word_and_actual_pdf_crop(monkeypatch, tmp_path):
-    import fitz
+def test_selected_alternate_photo_reaches_live_preview_and_generated_word_pdf(monkeypatch, tmp_path):
     from app import pdf_converter
-    from app.monthly_report_native_layout import build_native_docx
+    from app.monthly_report_asset_review import approve_all_assets
+    from app.monthly_report_docx import generate_report
+    from app.monthly_report_preview import preview_section, section_preview_docx
+
+    path, _ = source(tmp_path)
+    original = path.read_bytes()
+    app = setup_app(monkeypatch, tmp_path, path, alternate=True)
+    next(b for b in app.button if b.label == "Choose picture 1").click().run()
+    draft = save_start(app)
+    loader = lambda ref: library.read_asset(draft.profile.contract, draft.profile.key, ref)
+    # The Generate action requires explicit picture review and completed
+    # sections. Keep the imported maintenance section; leave unfinished
+    # sections out, as an editor would before publishing.
+    reviewed = replace(
+        draft,
+        sections=tuple(replace(section, included=section.key == "maintenance")
+                       for section in draft.sections),
+        blocks=tuple(approve_all_assets(block) if block.asset_hashes else block
+                     for block in draft.blocks),
+    )
+    monkeypatch.setattr(pdf_converter, "OUTPUT_DIR", tmp_path)
+    preview_docx = section_preview_docx(reviewed, "cover", loader)
+    _assert_selected_only(preview_docx)
+    preview_pdf = preview_section(reviewed, "cover", loader)
+    _assert_real_pdf_photo(preview_pdf.pdf)
+
+    package = generate_report(reviewed, acknowledged_fingerprint=reviewed.fingerprint,
+                              asset_loader=loader)
+    assert package.pdf and not package.pdf_error
+    _assert_selected_only(package.docx)
+    _assert_real_pdf_photo(package.pdf)
+    assert path.read_bytes() == original
+
+
+def test_pinned_starting_report_native_design_uses_exact_selected_photo(monkeypatch, tmp_path):
+    """Installing this source as a site design makes the native path reachable."""
+    from app import monthly_report_designs as designs
+    from app.monthly_report_docx import _build_docx
     from app.monthly_report_preview import section_preview_docx
-    from app.monthly_report_render_compat import rendering_docx
     from test_cover_unchanged_photo_geometry import photo_geometry
 
     path, photograph = source(tmp_path)
@@ -203,34 +295,18 @@ def test_selected_alternate_photo_has_matching_preview_word_and_actual_pdf_crop(
     app = setup_app(monkeypatch, tmp_path, path, alternate=True)
     next(b for b in app.button if b.label == "Choose picture 1").click().run()
     draft = save_start(app)
-    photo = next(b for b in draft.blocks if b.key == "cover_photo")
     loader = lambda ref: library.read_asset(draft.profile.contract, draft.profile.key, ref)
-    selected = loader(photo.asset_hashes[0])
-    word = build_native_docx(draft, path, asset_loader=loader)
-    preview = section_preview_docx(draft, "cover", loader)
-    crop, frame = photo_geometry(word, selected)
-    preview_crop, preview_frame = photo_geometry(preview, selected)
-    assert crop == preview_crop
-    assert frame == preview_frame
-    assert crop["t"] == pytest.approx(.10, abs=.00001)
-    assert crop["b"] == pytest.approx(.15, abs=.00001)
-    assert 720 * (1 - crop["l"] - crop["r"]) / (480 * (1 - crop["t"] - crop["b"])) == pytest.approx(frame[0] / frame[1], rel=.001)
-    monkeypatch.setattr(pdf_converter, "OUTPUT_DIR", tmp_path)
-    output = tmp_path / "synthetic-preview.docx"
-    output.write_bytes(rendering_docx(word))
-    pdf_path = pdf_converter.convert_to_pdf(output)
-    found = False
-    with fitz.open(pdf_path) as pdf:
-        for page in pdf:
-            pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
-            image = Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
-            pixels = [(x, y) for y in range(image.height) for x in range(image.width)
-                      if all(abs(channel - target) < 5 for channel, target
-                             in zip(image.getpixel((x, y)), (23, 63, 73)))]
-            if pixels:
-                found = True
-                width = max(x for x, _ in pixels) - min(x for x, _ in pixels) + 1
-                height = max(y for _, y in pixels) - min(y for _, y in pixels) + 1
-                assert abs(width - height) <= 4
-    assert found, "Selected synthetic cover photograph must appear in the real PDF"
+    assert designs.source_for(draft.profile) is None
+    pinned = designs.install(path, draft.profile, actor="Synthetic Editor", expected_revision=0)
+    assert designs.source_for(pinned).read_bytes() == original
+    native_draft = replace(draft, profile=pinned)
+
+    preview = section_preview_docx(native_draft, "cover", loader)
+    word = _build_docx(native_draft, asset_loader=loader)
+    for output in (preview, word):
+        _assert_selected_only(output)
+        crop, frame = photo_geometry(output, photograph)
+        assert crop["t"] == pytest.approx(.10, abs=.00001)
+        assert crop["b"] == pytest.approx(.15, abs=.00001)
+        assert frame == (Inches(6), Inches(3))
     assert path.read_bytes() == original

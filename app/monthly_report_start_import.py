@@ -595,6 +595,18 @@ def _build_starting_import(path, inspection, plans, *, source_view=None, _operat
     plans = tuple(plans)
     if not all(p.get("approved") for p in plans):
         raise ValueError("Resolve the remaining starting-report questions before continuing.")
+    # Check before contribution filtering: Omit cannot erase its conflicting
+    # preservation record or move an exact target into an inactive plan.
+    for plan in plans:
+        review = plan.get("native_art_review")
+        if review is not None:
+            if source_view is None or profile is None or period is None:
+                raise ValueError("Native artwork preservation requires its verified source view and report scope.")
+            from app.monthly_report_native_art_review import _verify_native_art_review
+            context = _verify_native_art_review(path, source_view, profile, period, review)
+            ids = {item.original_id for item in context.inventory.occurrences} if context else set()
+            if plan.get("omit") or any(ids.intersection(other.get("selected", ())) for other in plans):
+                raise ValueError("Native artwork preservation conflicts with this exact occurrence's omission or mapping.")
     # An approved automatic plan can still have skipped an ambiguous source
     # photograph. Both Starting Report routes must fail closed at the same
     # builder boundary, including when a UI widget was unmounted on rerun.
@@ -615,18 +627,6 @@ def _build_starting_import(path, inspection, plans, *, source_view=None, _operat
                 raise ValueError(
                     "Choose a cover photograph from this Starting Report, or explicitly "
                     "select No cover photograph before continuing. The original is unchanged.")
-    # Check before contribution filtering: Omit cannot erase its conflicting
-    # preservation record or move an exact target into an inactive plan.
-    for plan in plans:
-        review = plan.get("native_art_review")
-        if review is not None:
-            if source_view is None or profile is None or period is None:
-                raise ValueError("Native artwork preservation requires its verified source view and report scope.")
-            from app.monthly_report_native_art_review import _verify_native_art_review
-            context = _verify_native_art_review(path, source_view, profile, period, review)
-            ids = {item.original_id for item in context.inventory.occurrences} if context else set()
-            if plan.get("omit") or any(ids.intersection(other.get("selected", ())) for other in plans):
-                raise ValueError("Native artwork preservation conflicts with this exact occurrence's omission or mapping.")
     def contributes(plan):
         return not plan.get("omit") and bool(plan.get("selected") or plan.get("new_assets")
                                              or plan.get("preserved_assets") or plan.get("cover_photo_omitted")
