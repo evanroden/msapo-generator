@@ -12,7 +12,8 @@ def test_ordinary_earlier_unsaved_month_has_empty_omitted_water_without_hydrated
     assert not any(isinstance(v, ReportDraft) for v in app.session_state.filtered_state.values())
     next(w for w in app.checkbox if w.label == "United Memorial Medical Center").check().run()
     app.selectbox("report_month_number").set_value(10).run()
-    next(b for b in app.button if b.label == "Use ENFRA template").click().run()
+    # The ENFRA template is the only starting point here, so no choice is offered.
+    assert not any(b.label == "Use ENFRA template" for b in app.button)
     next(w for w in app.text_input if w.label == "Your name").set_value("Synthetic Fresh Water Reviewer").run()
     next(b for b in app.button if b.label == "Start this report").click().run()
     assert not app.exception
