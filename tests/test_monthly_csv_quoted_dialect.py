@@ -234,3 +234,14 @@ def test_guided_quoted_csv_upload_then_fresh_reopen_keeps_manual_update(monkeypa
                and value and hasattr(value[0], "source")]
     assert resumed and resumed[0][0].tables == contents[0][0].tables
     assert draft(reopened).sources == before.sources
+
+
+def test_separator_contradicted_by_its_own_rows_cannot_veto_by_budget(profile):
+    # A semicolon file whose note holds 202 commas: read as comma CSV, the
+    # second row has 203 cells but the header has one, so that separator is
+    # disproven. It must not reject the only consistent reading by budget.
+    readings = ",".join(str(n) for n in range(202))
+    raw = ("Work order;Note\r\n" + "001;" + readings + "\r\n").encode()
+    content, _ = sources.ingest(profile, "readings.csv", raw)
+    assert content.tables[0].columns == ("Work order", "Note")
+    assert content.tables[0].rows == (("001", readings),)

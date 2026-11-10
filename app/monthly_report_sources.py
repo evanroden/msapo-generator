@@ -360,17 +360,20 @@ def _table(name, records, *, strict_columns=False) -> SourceTable:
     for record in records:
         row = tuple(_cell(v) for v in record)
         cells += len(row)
+        filled = any(c != "" for c in row)
+        if strict_columns and filled and rows and len(row) != len(rows[0]):
+            # A bare '12,345.67' in a comma-separated file becomes two
+            # cells and could move a price into a nonprice client column.
+            # Do not guess how to rejoin columns or silently trim cells.
+            # Checked before the budget: a separator its own rows contradict
+            # is malformed, so it cannot veto the consistent reading by size.
+            raise ValueError(
+                "CSV rows have different column counts. Quote any values "
+                "containing commas (for example, a monetary amount), then upload again."
+            )
         if len(rows) >= MAX_TABLE_ROWS or cells > MAX_TABLE_CELLS or len(row) > 200:
             raise ValueError("Spreadsheet exceeds the row/column review budget; export a smaller date range.")
-        if any(c != "" for c in row):
-            if strict_columns and rows and len(row) != len(rows[0]):
-                # A bare '12,345.67' in a comma-separated file becomes two
-                # cells and could move a price into a nonprice client column.
-                # Do not guess how to rejoin columns or silently trim cells.
-                raise ValueError(
-                    "CSV rows have different column counts. Quote any values "
-                    "containing commas (for example, a monetary amount), then upload again."
-                )
+        if filled:
             rows.append(row)
     if not rows:
         raise ValueError("Spreadsheet has no nonempty rows.")
