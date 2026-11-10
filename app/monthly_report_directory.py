@@ -1202,7 +1202,14 @@ def apply_contacts(draft, block):
     if any(len(row) != 5 for row in block.rows):
         review("the shared contact table has an unexpected column layout.")
     current = next((b for b in draft.blocks if b.key == "contact_matrix"), None)
-    if (current and current.source == "Omit") or any(not s.included for s, _ in destinations):
+    # A new report starts with an empty, unreviewed "Omit" contact block. Only an
+    # omission that holds content or review provenance is a deliberate choice
+    # (the same test apply_defaults uses before it fills a report).
+    deliberate_omit = current is not None and current.source == "Omit" and bool(
+        current.references or current.reviewed_fingerprint or current.client_reviewed_fingerprint
+        or current.text.strip() or current.rows or any(t.rows for t in current.extra_tables)
+        or current.asset_hashes or current.org_nodes)
+    if deliberate_omit or any(not s.included for s, _ in destinations):
         review("this report intentionally omits its contact section.")
     if current and any(ref.startswith(("directory-pending-correction:", "directory-add-intent:"))
                        for ref in current.references):
@@ -1445,7 +1452,12 @@ def apply_defaults(draft):
     block, _ = contact_block(state, draft.profile.facilities, bindings)
     if not block.rows:
         return draft
-    return apply_contacts(draft, replace(block, source="Library"))
+    try:
+        return apply_contacts(draft, replace(block, source="Library"))
+    except ValueError:
+        # Apply refuses rather than replace report-owned content; a default
+        # fill then leaves the report as it is.
+        return draft
 
 
 def refresh_directory_contacts(draft):
@@ -1494,4 +1506,8 @@ def refresh_directory_contacts(draft):
             return draft
     except (ValueError, OSError):
         return draft
-    return apply_contacts(draft, replace(replacement, source='Library'))
+    try:
+        return apply_contacts(draft, replace(replacement, source='Library'))
+    except ValueError:
+        # A refused Apply keeps the report unchanged, like every check above.
+        return draft
