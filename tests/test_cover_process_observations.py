@@ -285,7 +285,12 @@ def test_workflow_only_adds_bounded_always_collection_without_changing_caps_or_c
     line='          set -o pipefail; sudo python3 scripts/workspace_cover_process_observations.py --emit test-artifacts/cover-service-data/cover-memory-phases.jsonl | python scripts/workspace_cover_process_observations.py --receive test-artifacts/cover-service/cover-memory-phases.jsonl\n'
     assert text.count(line)==1
     assert '      - name: Retain final service diagnostics\n        if: always()' in text
-    original=text.replace(line,'')
+    # Approved later edit (#820): a workflow-level concurrency block only.
+    concurrency=("concurrency:\n"
+        "  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && github.ref || github.run_id }}\n"
+        "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n\n")
+    assert text.count(concurrency)==1
+    original=text.replace(line,'').replace(concurrency,'')
     assert hashlib.sha256(original.encode()).hexdigest()=='ac3a7d457adefb6f675f3a53d85bea0b0d3a9ffc835deaf01c0330f7818b9dfd'
     assert '--memory=512m --memory-swap=512m --cpus=0.5' in original
     assert 'timeout 660 python scripts/qa_cover_recovery_service.py' in original

@@ -32,6 +32,16 @@ def validate_partition(text):
     restored = restored.replace(marker, '            test-artifacts/water-page-journey/\n            test-artifacts/report-row-cards/\n'+marker)
     reconstructed = text.replace(jobs['synthetic-dom'],restored).replace(EXPECTED_JOB,'')
     reconstructed = reconstructed.replace('# This lane retains its own 8-minute native ceiling; DOM remains25.', '# Native aggregate allowance rises from 25 to 33 minutes across these two jobs.')
+    # Approved later edit (#820): pushes keep their active run instead of
+    # cancelling it. Reverse only that concurrency block; every other byte
+    # of the original workflow is still compared below.
+    reconstructed = reconstructed.replace(
+        "concurrency:\n"
+        "  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && github.ref || github.run_id }}\n"
+        "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n",
+        "concurrency:\n"
+        "  group: adaptive-dom-${{ github.event.pull_request.number || github.ref }}\n"
+        "  cancel-in-progress: true\n")
     assert hashlib.sha256(reconstructed.encode()).hexdigest() == ORIGINAL_WORKFLOW_SHA256
     return jobs
 
