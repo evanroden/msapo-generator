@@ -93,7 +93,7 @@ def selected_directory_sites(state, facilities):
     return tuple(result)
 
 
-def render_selected_directory(contract, facilities, actor, prefix):
+def render_selected_directory(contract, facilities, actor, prefix, draft=None):
     """Return a replacement report block only after an explicit shared save."""
     with st.expander("Contract and site directory"):
         if not actor.strip():
@@ -129,6 +129,10 @@ def render_selected_directory(contract, facilities, actor, prefix):
                 report_contacts, missing = directory.contact_block(proposed, facilities, bindings)
                 if missing:
                     raise ValueError("Cannot save contacts for unmatched sites: " + "; ".join(missing))
+                # Apply can be refused when the report has independent contact
+                # content. Check before committing the shared directory update.
+                if draft is not None:
+                    directory.apply_contacts(draft, report_contacts)
                 directory.save_directory(
                     contract, merged,
                     expected_revision=revision, actor=actor, confirmed=True,
@@ -138,7 +142,7 @@ def render_selected_directory(contract, facilities, actor, prefix):
                 return report_contacts
         except (ValueError, OSError) as exc:
             st.error(literal(exc))
-            st.caption("No contacts were replaced. Reload the current directory before trying again.")
+            st.caption("No contacts or shared directory changes were saved. Keep the report unchanged, or review its existing contact content and retry.")
 
 
 def _suggested_site(site, existing, site_aliases=None, saved_keys=()):
