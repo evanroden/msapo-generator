@@ -184,3 +184,66 @@ def test_approval_rejects_prices_without_publishing(monkeypatch, tmp_path):
     assert load_capital_master(p.contract).revision == 0
     assert app.session_state["block"] == block
     assert any("monetary" in item.value.lower() for item in app.warning)
+
+
+
+def _identity_fixture(monkeypatch, tmp_path):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    p = profile("Synthetic Contract A")
+    master = approve(p, (
+        CapitalItem("pump", "High", "Replace pump", asset="P-101",
+                    site_keys=("north",), extra_fields=(("Location", "Basement"),)),
+        CapitalItem("roof", "Medium", "Renew roof", asset="R-201",
+                    site_keys=("north",), extra_fields=(("Location", "Roof"),)),
+    ))
+    from app.monthly_report_capital_master import capital_report_block, select_capital
+    block = capital_report_block(p, select_capital(p, master, PERIOD))
+    return p, master, block
+
+
+def test_same_site_reordering_preserves_capital_ids_assets_and_details(monkeypatch, tmp_path):
+    from app.monthly_report_capital_ui import reviewed_capital_items
+    p, master, block = _identity_fixture(monkeypatch, tmp_path)
+    reordered = replace(block, rows=tuple(reversed(block.rows)))
+    items, removed = reviewed_capital_items(draft(p, reordered), reordered, master)
+    assert {item.key: item for item in items} == {item.key: item for item in master.items}
+    assert not removed
+
+
+def test_single_changed_row_preserves_identity_after_exact_matches(monkeypatch, tmp_path):
+    from app.monthly_report_capital_ui import reviewed_capital_items
+    p, master, block = _identity_fixture(monkeypatch, tmp_path)
+    changed = replace(block, rows=(block.rows[1],
+                                  (block.rows[0][0], "Critical", "Replace pump now")))
+    items, removed = reviewed_capital_items(draft(p, changed), changed, master)
+    by_id = {item.key: item for item in items}
+    assert by_id["roof"] == master.items[1]
+    assert by_id["pump"] == replace(master.items[0], priority="Critical",
+                                    recommendation="Replace pump now")
+    assert not removed
+
+
+def test_ambiguous_same_site_edits_require_identity_review(monkeypatch, tmp_path):
+    import pytest
+    from app.monthly_report_capital_ui import reviewed_capital_items
+    p, master, block = _identity_fixture(monkeypatch, tmp_path)
+    changed = replace(block, rows=(
+        (block.rows[0][0], "Critical", "Renew roof now"),
+        (block.rows[1][0], "High", "Replace pump now"),
+    ))
+    with pytest.raises(ValueError, match="IDs cannot be verified"):
+        reviewed_capital_items(draft(p, changed), changed, master)
+    assert load_capital_master(p.contract) == master
+
+
+def test_orphan_detail_identity_cannot_be_silently_discarded(monkeypatch, tmp_path):
+    import pytest
+    from app.monthly_report_capital_ui import reviewed_capital_items
+    p, master, block = _identity_fixture(monkeypatch, tmp_path)
+    table = block.extra_tables[0]
+    changed = replace(block, extra_tables=(replace(
+        table, rows=(*table.rows, (p.facilities[0].title, "unknown-id",
+                                  "Location", "Do not lose this"))),))
+    with pytest.raises(ValueError, match="no verified main-table row"):
+        reviewed_capital_items(draft(p, changed), changed, master)
+    assert load_capital_master(p.contract) == master
