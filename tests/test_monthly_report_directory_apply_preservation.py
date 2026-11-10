@@ -7,7 +7,7 @@ import pytest
 from app import monthly_report_directory as directory, monthly_report_library as library
 from app.monthly_report_model import (
     ColumnSpec, Facility, ReportDraft, ReportPeriod, ReportProfile, ReportTable,
-    default_sections,
+    ResolvedBlock, default_sections,
 )
 
 
@@ -162,3 +162,64 @@ def test_foreign_contract_directory_is_never_applied(partial_report):
     foreign, _ = directory.contact_block(other, draft.profile.facilities, {"south": "south"})
     with pytest.raises(ValueError, match="contract"):
         directory.apply_contacts(draft, foreign)
+
+
+def test_explicit_save_keeps_typed_rows_after_directory_rows_across_two_sites(monkeypatch, tmp_path):
+    """Owner decision (b), 10 Nov 2026, for "Save contacts to directory and report"."""
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "explicit-save"))
+    state = directory.save_directory(
+        "Synthetic Explicit Contract", (
+            directory.DirectorySite("north", "Synthetic North", contacts=(
+                directory.DirectoryContact("Director", "North Director", "202-555-0101"),
+                directory.DirectoryContact("Engineer", "North Engineer", "202-555-0102"),
+            )),
+            directory.DirectorySite("south", "Synthetic South", contacts=(
+                directory.DirectoryContact("Director", "South Director", "202-555-0103"),
+            )),
+        ), expected_revision=0, actor="Synthetic Editor", confirmed=True,
+    )
+    profile = ReportProfile(
+        state.contract, "two-sites", "Synthetic two-site report",
+        (Facility("north", "Synthetic North"), Facility("south", "Synthetic South")),
+        scope_type="multi_site",
+    )
+    typed = (
+        ("Synthetic North", "Night Lead", "Typed Person One", "202-555-0111", "one@example.invalid"),
+        ("Synthetic South", "Day Lead", "Typed Person Two", "202-555-0112", "two@example.invalid"),
+    )
+    draft = ReportDraft(profile, ReportPeriod(2026, 9), "Synthetic Editor", default_sections(), ())
+    draft = directory.apply_contacts(draft, ResolvedBlock("contact_matrix", "This month", rows=typed))
+    incoming, missing = directory.contact_block(state, profile.facilities, {"north": "north", "south": "south"})
+    assert missing == () and len(incoming.rows) == 3
+
+    # The automatic paths still leave rows typed into the report alone.
+    with pytest.raises(ValueError, match="verified directory identity"):
+        directory.apply_contacts(draft, incoming)
+    assert directory.apply_defaults(draft) == draft
+
+    saved = directory.apply_contacts(draft, incoming, keep_report_rows=True)
+    contacts = _contact(saved)
+    assert contacts.rows == (*incoming.rows, *typed)
+    assert set(incoming.references) <= set(contacts.references)
+
+
+def test_explicit_save_keeps_row_for_newly_covered_site_and_other_refusals(partial_report):
+    first, draft = partial_report
+    old = _contact(draft)
+    draft = replace(draft, blocks=(replace(old, rows=(*old.rows, _local_row())),))
+    incoming = _candidate(_next_directory(first, add_south=True), draft, add_south=True)
+    saved = directory.apply_contacts(draft, incoming, keep_report_rows=True)
+    assert _contact(saved).rows == (*incoming.rows, _local_row())
+
+    omitted = replace(old, source="Omit", text="Intentionally omitted; retain note.")
+    with pytest.raises(ValueError, match="omit"):
+        directory.apply_contacts(replace(draft, blocks=(omitted,)), incoming, keep_report_rows=True)
+    other = directory.save_directory(
+        "Unrelated Synthetic Contract", (
+            directory.DirectorySite("south", "Synthetic South", contacts=(
+                directory.DirectoryContact("Director", "Foreign Person"),)),
+        ), expected_revision=0, actor="Synthetic Editor", confirmed=True,
+    )
+    foreign, _ = directory.contact_block(other, draft.profile.facilities, {"south": "south"})
+    with pytest.raises(ValueError, match="contract"):
+        directory.apply_contacts(draft, foreign, keep_report_rows=True)

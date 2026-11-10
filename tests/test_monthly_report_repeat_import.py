@@ -16,8 +16,17 @@ CONTACT = ("Synthetic North", "Manager", "Synthetic Editor", "202-555-0100", "re
 
 
 def draft_with_contacts():
+    from app import monthly_report_library as library
+
     base = imported_draft(synthetic_profiles()[0], PERIOD, "Synthetic Editor", MappedImport((), (), (), ()))
-    contacts = ResolvedBlock("contact_matrix", "This month", rows=(CONTACT,), references=("directory:synthetic:1",))
+    # Directory Apply never turns an omitted section on and refuses another
+    # contract's directory. The author includes the contact section first, and
+    # the reviewed table cites this contract's own directory, as contact_block() does.
+    base = replace(base, sections=tuple(
+        replace(section, included=True) if any(b.key == "contact_matrix" for b in section.blocks) else section
+        for section in base.sections))
+    reference = f"directory:{library._contract_directory(base.profile.contract)}:1"
+    contacts = ResolvedBlock("contact_matrix", "This month", rows=(CONTACT,), references=(reference,))
     contacts = replace(contacts, client_reviewed_fingerprint=contacts.fingerprint)
     return apply_contacts(base, contacts)
 

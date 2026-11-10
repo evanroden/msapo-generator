@@ -1175,12 +1175,19 @@ def contact_block(state: DirectoryState, facilities: tuple[Facility, ...], bindi
     return ResolvedBlock("contact_matrix", "This month", rows=tuple(rows), references=(reference, *links)), tuple(missing)
 
 
-def apply_contacts(draft, block):
+def apply_contacts(draft, block, *, keep_report_rows=False):
     """Apply reviewed shared rows without replacing independent report content.
 
     Exact historical directory references and row positions prove which rows
     belong to the shared directory. An unproved edit is a review choice, not
     permission to discard it. This guard also runs before the sidebar save.
+
+    keep_report_rows is for the explicit "Save contacts to directory and
+    report" only (owner decision, 10 Nov 2026): rows the directory cannot prove
+    it owns are kept, in their order, after the directory rows, instead of
+    pausing the save. Nothing typed into the report is lost; stale rows are
+    removed by hand. Automatic fills and refreshes never pass it, so they still
+    leave report-owned rows untouched. People are never matched by name.
     """
     destinations = [(section, spec) for section in draft.sections for spec in section.blocks
                     if spec.key == "contact_matrix"]
@@ -1251,7 +1258,7 @@ def apply_contacts(draft, block):
             if (len(current.rows) < len(baseline)
                     or any(tuple(row[:5]) != expected for row, expected in zip(current.rows, baseline))):
                 review("directory-owned rows were edited or reordered in this report.")
-        elif current.rows:
+        elif current.rows and not keep_report_rows:
             review("existing contact rows have no verified directory identity.")
 
         report_rows = current.rows[len(baseline):]
@@ -1259,7 +1266,7 @@ def apply_contacts(draft, block):
                      if ref.startswith("directory-site:") and len(ref.split(":")) == 3}
         new_links = {ref.split(":")[1]: ref.split(":")[2] for ref in block.references
                      if ref.startswith("directory-site:") and len(ref.split(":")) == 3}
-        if report_rows and (set(new_links) - set(old_links)):
+        if report_rows and (set(new_links) - set(old_links)) and not keep_report_rows:
             review("a newly covered site also has report-only rows; review the scope.")
         if any(key in new_links and new_links[key] != site for key, site in old_links.items()):
             review("a saved site identity changed.")

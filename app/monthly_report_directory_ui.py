@@ -111,7 +111,7 @@ def render_selected_directory(contract, facilities, actor, prefix, draft=None):
             message = st.session_state.pop(prefix + "_directory_saved_message", "")
             if message:
                 st.success(message)
-            st.caption("Contacts for the sites selected above. Saving updates this report’s contact table and the shared directory; other reports keep their saved contacts.")
+            st.caption("Contacts for the sites selected above. Saving updates this report’s contact table and the shared directory; other reports keep their saved contacts. Contacts typed into this report stay, listed after the directory’s contacts.")
             rows = _grid(key + "_sites", [{"Site": s.title, "Address": s.address} for s in sites],
                          hide_index=True, disabled=["Site"])
             addresses = {s.key: str(row.get("Address") or "").strip() for s, row in zip(sites, rows)}
@@ -129,10 +129,11 @@ def render_selected_directory(contract, facilities, actor, prefix, draft=None):
                 report_contacts, missing = directory.contact_block(proposed, facilities, bindings)
                 if missing:
                     raise ValueError("Cannot save contacts for unmatched sites: " + "; ".join(missing))
-                # Apply can be refused when the report has independent contact
-                # content. Check before committing the shared directory update.
+                # Apply can still be refused (for example an omitted contact
+                # section); check before committing the shared directory update.
+                # Contacts typed into the report are kept after the directory rows.
                 if draft is not None:
-                    directory.apply_contacts(draft, report_contacts)
+                    directory.apply_contacts(draft, report_contacts, keep_report_rows=True)
                 directory.save_directory(
                     contract, merged,
                     expected_revision=revision, actor=actor, confirmed=True,
