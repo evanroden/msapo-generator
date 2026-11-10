@@ -217,7 +217,8 @@ def test_org_and_contacts_are_editable_and_survive_navigation(monkeypatch, tmp_p
     next(w for w in app.text_input if w.label == "Site name").set_value(
         "Synthetic Editable Site"
     ).run()
-    next(w for w in app.button if w.key and "report_start_card_use-the-general" in w.key).click().run()
+    # The ENFRA template is the only starting point here, so no choice is offered.
+    assert not any(w.key and "report_start_card_" in w.key for w in app.button)
     next(w for w in app.text_input if w.label == "Your name").set_value(
         "Synthetic Editor"
     ).run()
