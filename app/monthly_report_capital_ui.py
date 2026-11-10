@@ -70,7 +70,30 @@ def reviewed_capital_items(draft, block, master):
                   and len(block.rows) == len(occurrences)
                   and tuple(row[0] for row in block.rows) ==
                   tuple(occ.site_title for occ in occurrences))
+    # Match unchanged content before considering edits. Position alone is not
+    # identity: the native editor can reorder two entries for the same site.
+    sources = {}
     unused = list(occurrences)
+    for position, row in enumerate(block.rows):
+        exact = next((occ for occ in unused
+                      if (occ.site_title, occ.item.priority,
+                          occ.item.recommendation) == tuple(row)), None)
+        if exact is not None:
+            sources[position] = exact
+            unused.remove(exact)
+    if same_order:
+        for site_key in selected:
+            pending = [position for position, row in enumerate(block.rows)
+                       if position not in sources and _site(profile, row[0]).key == site_key]
+            candidates = [occ for occ in unused if occ.site_key == site_key]
+            if pending and candidates:
+                if len(pending) != 1 or len(candidates) != 1:
+                    raise ValueError(
+                        "Several capital rows changed at the same site; their IDs cannot be "
+                        "verified. Restore the approved rows and review one change at a time.")
+                sources[pending[0]] = candidates[0]
+                unused.remove(candidates[0])
+    consumed_details = set()
     matched = set()
     proposed = {}
     for position, row in enumerate(block.rows):
@@ -78,14 +101,10 @@ def reviewed_capital_items(draft, block, master):
         priority, recommendation = row[1].strip(), row[2].strip()
         if not priority or not recommendation:
             raise ValueError("Every approved capital entry needs a priority and recommendation.")
-        source = (occurrences[position] if same_order else
-                  next((occ for occ in unused
-                        if occ.site_key == site.key and
-                        (occ.site_title, occ.item.priority, occ.item.recommendation) == tuple(row)), None))
+        source = sources.get(position)
         if source is not None:
-            if source in unused:
-                unused.remove(source)
             matched.add((site.key, source.item.key))
+            consumed_details.add((row[0], source.item.key))
         old = source.item if source else None
         has_details = old is not None and any(
             table.rows and table.columns == DETAILS for table in block.extra_tables)
@@ -115,6 +134,10 @@ def reviewed_capital_items(draft, block, master):
             raise ValueError("A capital row identity conflicts across selected sites.")
         proposed[candidate.key] = candidate
 
+    if set(detail_rows) - consumed_details:
+        raise ValueError(
+            "Capital details have no verified main-table row. Review their facility and "
+            "Capital ID before approval; no detail fields were discarded.")
     if any(not occ.item.site_keys and (occ.site_key, occ.item.key) not in matched
            for occ in occurrences):
         raise ValueError("A contract-wide capital entry cannot be removed from one report.")
