@@ -12,6 +12,7 @@ from app.monthly_report_capital_master import (
     save_capital_master, select_capital,
 )
 from app.monthly_report_content_policy import table_has_pricing
+from app.monthly_report_ui_text import literal
 
 
 MAIN = ("Facility", "Priority", "Recommendation")
@@ -174,12 +175,12 @@ def render_capital_master(draft, block, prefix):
         try:
             master = load_capital_master(draft.profile.contract)
         except (ValueError, OSError) as exc:
-            st.warning("Approved capital is unavailable; report edits were kept: " + str(exc))
+            st.warning("Approved capital is unavailable; report edits were kept: " + literal(str(exc)))
             return block
         baseline_key = key + "_expected_revision"
         baseline = st.session_state.setdefault(baseline_key, master.revision)
         if master.revision:
-            st.caption(f"Contract-approved version {master.revision} · {len(master.items)} items · approved by {master.actor}.")
+            st.caption(f"Contract-approved version {master.revision} · {len(master.items)} items · approved by {literal(master.actor)}.")
         else:
             st.caption("No Capital Renewal list is approved for this contract.")
         st.caption("Report edits are separate from approved contract versions.")
@@ -202,7 +203,7 @@ def render_capital_master(draft, block, prefix):
                     chosen = use_approved_capital(
                         draft, block, master, replace_existing=bool(replace_ok))
                 except (ValueError, OSError) as exc:
-                    st.warning("This report is unchanged: " + str(exc))
+                    st.warning("This report is unchanged: " + literal(str(exc)))
                 else:
                     st.success(f"Copied approved version {master.revision} into this report only.")
                     st.session_state[prefix + "_period_editor_refresh"] = True
@@ -225,7 +226,7 @@ def render_capital_master(draft, block, prefix):
                     draft.profile, items, expected_revision=baseline,
                     actor=draft.prepared_by, confirmed=True, removed_ids=removed)
             except (ValueError, OSError) as exc:
-                st.warning("Approved capital list was not changed: " + str(exc))
+                st.warning("Approved capital list was not changed: " + literal(str(exc)))
             else:
                 st.session_state[baseline_key] = saved.revision
                 st.success(f"Approved contract version {saved.revision}. This report and its pinned revision are unchanged.")
