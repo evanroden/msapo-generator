@@ -35,6 +35,9 @@ def check_spec(spec: dict) -> None:
     assert set(spec["required_properties"]).isdisjoint(spec["forbidden_properties"])
     allowed = set(spec["allowed_codes"])
     assert allowed
+    assert "SYNTHETIC_FAILURE" in spec["allowed_reason_codes"]
+    assert all(REASON.fullmatch(code) for code in spec["allowed_reason_codes"])
+    assert len(spec["allowed_reason_codes"]) == len(set(spec["allowed_reason_codes"]))
     for rule in spec["rules"]:
         assert set(rule["event_codes"]) <= allowed
         assert rule["kind"] in ("count", "p95_duration_ms")
@@ -60,7 +63,8 @@ def validate_event(spec: dict, event: dict) -> bool:
         return False
     if not SHA.fullmatch(event["build_sha"]) or not DIGEST.fullmatch(event["image_digest"]):
         return False
-    if "reason_code" in event and not REASON.fullmatch(event["reason_code"]):
+    if "reason_code" in event and (not REASON.fullmatch(event["reason_code"])
+                                    or event["reason_code"] not in spec["allowed_reason_codes"]):
         return False
     for key, accepted in (("backend_kind", BACKENDS), ("resource_kind", RESOURCES),
                           ("phase", PHASES), ("operation", OPERATIONS)):
@@ -121,6 +125,7 @@ def simulate(spec: dict) -> int:
         tests += 1
     for invalid in (
         dict(base, reason_code="email@example.com"),
+        dict(base, reason_code="PRIVATE_LAST_NAME"),
         dict(base, correlation_id="user-or-document-id"),
         dict(base, build_sha="private-document"),
         dict(base, image_digest="https://signed.example/path"),
