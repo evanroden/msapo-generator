@@ -21,12 +21,29 @@ URL = f"http://127.0.0.1:{PORT}"
 NAME = "data-native-capital-receipt"
 MARKER = "CAP-NATIVE-ROW-301"
 
-def settled(page):
-    page.wait_for_function("""name => {
-      const node=document.querySelector('[' + name + ']');
-      return Boolean(node &&
-        document.querySelector('[data-testid=stApp]')?.getAttribute('data-test-script-state')==='notRunning');
-    }""", arg=NAME, timeout=35000)
+def settled(page, *, key=None, primary=None, imported=None, contains=None,
+            saved=False, revision=None):
+    # A previous receipt can still be visible immediately after a native
+    # click. Require the expected authoritative transition, not merely idle.
+    page.wait_for_function("""args => {
+      const node=document.querySelector('[' + args.name + ']');
+      if (!node || document.querySelector('[data-testid=stApp]')
+          ?.getAttribute('data-test-script-state')!=='notRunning') return false;
+      const data=JSON.parse(node.getAttribute(args.name));
+      if (args.key) {
+        const block=data.working?.[args.key];
+        if (!block) return false;
+        if (args.primary !== null && block.rows.length !== args.primary) return false;
+        if (args.imported !== null &&
+            block.extra?.[0]?.rows.length !== args.imported) return false;
+        if (args.contains && !JSON.stringify(block).includes(args.contains)) return false;
+      }
+      if (args.saved && JSON.stringify(data.working)!==JSON.stringify(data.saved)) return false;
+      if (args.revision !== null && data.revision!==args.revision) return false;
+      return true;
+    }""", arg={"name": NAME, "key":key,"primary":primary,
+               "imported":imported,"contains":contains,"saved":saved,
+               "revision":revision}, timeout=35000)
     assert page.get_by_test_id("stException").count() == 0
     return json.loads(page.locator("[" + NAME + "]").get_attribute(NAME))
 
@@ -68,7 +85,7 @@ def exercise(browser, name):
     page.on("pageerror",lambda error:report["page_errors"].append(str(error)))
     try:
         page.goto(URL,wait_until="domcontentloaded")
-        initial=settled(page)
+        initial=settled(page, key="capital_renewal", primary=1, imported=2)
         assert len(initial["working"]["capital_renewal"]["rows"]) == 1
         capital=page.locator(".st-key-native_capital_renewal")
         end=page.locator(".st-key-native_end_of_life")
@@ -84,7 +101,7 @@ def exercise(browser, name):
         expect(decisions).to_have_count(2)
         decisions.nth(1).fill(MARKER)
         capital.get_by_role("button",name="Close editing",exact=True).click()
-        state=settled(page)["working"]["capital_renewal"]
+        state=settled(page, key="capital_renewal", primary=0, imported=2, contains=MARKER)["working"]["capital_renewal"]
         assert state["rows"] == []
         assert state["extra"][0]["columns"] == ["Asset","Decision","Decision",""]
         assert state["extra"][0]["rows"][0][2] == MARKER
@@ -95,9 +112,9 @@ def exercise(browser, name):
         capital.get_by_role("button",name="Close editing",exact=True).click()
         # Remove/Undo retains only the removed imported sibling.
         capital.get_by_role("button",name="Remove capital item",exact=True).last.click()
-        assert len(settled(page)["working"]["capital_renewal"]["extra"][0]["rows"]) == 1
+        assert len(settled(page, key="capital_renewal", imported=1)["working"]["capital_renewal"]["extra"][0]["rows"]) == 1
         capital.get_by_role("button",name="Undo last removal",exact=True).click()
-        recovered=settled(page)["working"]["capital_renewal"]
+        recovered=settled(page, key="capital_renewal", imported=2, contains=MARKER)["working"]["capital_renewal"]
         assert len(recovered["extra"][0]["rows"]) == 2
         assert recovered["extra"][0]["rows"][0][2] == MARKER
         # Existing replacement schema with type=date still accepts a year.
@@ -106,14 +123,14 @@ def exercise(browser, name):
         assert timing.get_attribute("type") == "text"
         timing.fill("2029")
         end.get_by_role("button",name="Close editing",exact=True).click()
-        assert settled(page)["working"]["end_of_life"]["rows"][0][-1] == "2029"
+        assert settled(page, key="end_of_life", contains='"2029"')["working"]["end_of_life"]["rows"][0][-1] == "2029"
         page.get_by_role("button",name="Save synthetic report",exact=True).click()
-        saved=settled(page)
+        saved=settled(page, key="capital_renewal", primary=0, imported=2, contains=MARKER, saved=True, revision=1)
         assert saved["working"] == saved["saved"] and saved["revision"] == 1
         page.screenshot(path=str(path/"desktop-saved.png"),full_page=True)
         page.set_viewport_size({"width":545,"height":757})
         page.reload(wait_until="domcontentloaded")
-        reopened=settled(page)
+        reopened=settled(page, key="capital_renewal", primary=0, imported=2, contains=MARKER, saved=True, revision=1)
         assert reopened["working"] == saved["working"]
         capital=page.locator(".st-key-native_capital_renewal")
         capital.get_by_role("button",name="Edit capital item",exact=True).first.click()
