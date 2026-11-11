@@ -34,7 +34,8 @@ two decoded native section preview pages should be available in a median
 time by at least 25% versus bypassing assembly reuse, with unchanged
 native DOCX bytes, page geometry and first-two raster hashes.
 
-On the **separate uncapped CI browser runner**, propose median 15 s from
+For the **headless CI browser with the backend capped at 512 MiB / 0.5 CPU**,
+propose median 15 s from
 native known-value report-load press to the first decoded section image,
 and median 8 s from native source upload selection through requested
 decoded thumbnail. Headless Chromium/WebKit are *not* Render or physical
@@ -91,7 +92,13 @@ All generated assets are invented. No client data or paid reader is used.
    page-thumbnail clicks **per Chromium/WebKit**. It also records a
    real edited Activity revision, checks the saved input and waits for
    a current decoded image. It writes JSON and first-failure screenshots
-   to the synthetic test-artifacts folder.
+   to the synthetic test-artifacts folder. The workflow repeats the same
+   browser journey against the **same production Docker image** running
+   the real isolated fixture with 512 MiB memory and 0.5 CPU. The browser
+   itself remains on the host. Those receipts are separated into
+   browser-uncapped.json and browser-capped.json, with Docker cgroup CPU,
+   memory peak and OOM event diagnostics. The capped server serves the
+   real application under test; no converted mock page is injected.
 
 4. Opening a PR changing the measurement files triggers
    the Monthly preview latency evidence workflow. Its independent
@@ -113,10 +120,12 @@ All generated assets are invented. No client data or paid reader is used.
 ## Scope of the measurements and remaining acceptance
 
 The backend starts *after* browser upload bytes reach Python: it excludes
-network transfer, browser scripting and visual paint. The browser script
-captures those user-visible ends on localhost, but it runs on a separate,
-uncapped CI host; numbers from the two jobs must not be added together or
-presented as a 512 MiB browser session. The browser may spend time in
+network transfer, browser scripting and visual paint. Browser scripts
+capture those user-visible ends on localhost. One server uses uncapped CI
+resources; one uses the actual production image capped to 512 MiB / 0.5
+CPU while browsers themselves run on the host. Never add overlapping
+backend phase times to user-visible browser elapsed times or claim
+these are measurements from production Render/physical Safari. The browser may spend time in
 intentional user-interface navigation between upload and requested image,
 so that timing is an actual end-user journey rather than a pure backend
 service latency. Warm source samples use durable content-addressed
