@@ -276,7 +276,7 @@ def test_saved_status_only_ar_word_and_real_pdf_exclude_invoice_amounts(monkeypa
             'docx_sha256': sha256(package.docx).hexdigest(),
             'pdf_sha256': sha256(package.pdf).hexdigest(),
             'page_count': len(rendered),
-            'source_amounts_included': False,
+            'expected_client_content': 'invoice identity, status and dated aging only; no monetary figures',
         }
         (target / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
     for text in (word_text, pdf_text):
