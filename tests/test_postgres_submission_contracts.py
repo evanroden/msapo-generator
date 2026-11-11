@@ -18,7 +18,7 @@ class Cursor:
         self.executions.append((sql, params))
 
     def fetchone(self):
-        return next(self.rows)
+        return next(self.rows, None)
 
     def close(self):
         self.closed = True
@@ -192,7 +192,7 @@ def test_record_row_must_not_replace_existing_different_remote_row():
 
 
 def test_attachment_requires_known_remote_row():
-    store, conn = adapter(rowcount=1)
+    store, conn = adapter((["old"],), rowcount=1)
     store.record_attachment("key", "lease", "fingerprint")
     sql, params = conn.cur.executions[0]
     assert "AND row_id IS NOT NULL FOR UPDATE" in sql
