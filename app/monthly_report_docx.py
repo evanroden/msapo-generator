@@ -546,6 +546,9 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
                 document.add_heading("Carried-forward items", 2)
             for item in carried:
                 _text(document, report_text(item))
+        if section.key == "issues":
+            from app.monthly_report_issue_evidence_render import append_issue_evidence
+            append_issue_evidence(document, draft)
     return _save(document)
 
 
