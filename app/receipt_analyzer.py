@@ -32,6 +32,8 @@ from typing import Any
 
 import anthropic
 
+from app.ai_provider import anthropic_client, require_configured_provider
+
 from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
 from app.api_retry import (
     OPERATION_BUDGET_SECONDS,
@@ -249,6 +251,7 @@ def prepare_receipt_content(file_bytes: bytes, filename: str) -> list[dict[str, 
             "Automatic receipt reading is not configured. Complete the required "
             "receipt fields manually."
         )
+    require_configured_provider()
     if not file_bytes:
         raise ReceiptAnalysisError("The receipt file is empty.")
 
@@ -294,7 +297,10 @@ def analyze_receipt(file_bytes: bytes, filename: str) -> ReceiptAnalysis:
 
 def analyze_prepared_receipt(content: list[dict[str, Any]]) -> ReceiptAnalysis:
     """Network-only phase: safe to run in a worker without Streamlit/PDF APIs."""
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY, max_retries=0, timeout=REQUEST_TIMEOUT_SECONDS)
+    client = anthropic_client(
+        factory=anthropic.Anthropic, api_key=ANTHROPIC_API_KEY,
+        timeout=REQUEST_TIMEOUT_SECONDS,
+    )
     until = time.monotonic() + OPERATION_BUDGET_SECONDS
     parse_error: ReceiptAnalysisError | None = None
     # Two SHAPE attempts wrapping the transport retries inside
