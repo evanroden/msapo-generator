@@ -634,6 +634,13 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
     from app.monthly_report_correction_ui import render_inline_block_repairs
     block = render_inline_block_repairs(spec, block, prefix)
     if draft is not None and spec.type == "image_grid":
+        # The existing photo slider rejects saved values outside its 1–6
+        # options before Review can display a correction. Keep the exact
+        # block and its photos intact until the explicit fix above is chosen.
+        if type(block.photos_per_page) is not int or not 1 <= block.photos_per_page <= 6:
+            st.caption("This photo grid has an invalid saved page density. "
+                       "Choose the correction above before editing its captions.")
+            return block
         from app.monthly_report_visual_ui import edit_photos
         return edit_photos(draft, block, prefix, assets, field, show_preview=False)
     key = prefix + "_edit_" + spec.key
