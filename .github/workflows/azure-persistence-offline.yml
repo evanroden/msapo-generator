@@ -5,6 +5,8 @@ on:
     paths:
       - 'app/managed_persistence.py'
       - 'app/managed_blob_objects.py'
+      - 'app/postgres_submission_store.py'
+      - 'tests/test_postgres_submission_contracts.py'
       - 'tests/test_managed_persistence_contracts.py'
       - '.github/workflows/azure-persistence-offline.yml'
   workflow_dispatch:
@@ -24,4 +26,4 @@ jobs:
       - name: Install narrow test dependency
         run: python -m pip install 'pytest>=8,<9'
       - name: Exercise isolated transactional and object contracts
-        run: python -m pytest -q tests/test_managed_persistence_contracts.py
+        run: python -m pytest -q tests/test_managed_persistence_contracts.py tests/test_postgres_submission_contracts.py
