@@ -5,6 +5,7 @@ on:
     paths:
       - 'scripts/qa_monthly_preview_latency_e2e.py'
       - 'scripts/qa_monthly_preview_browser_latency.py'
+      - 'tests/test_monthly_preview_latency_lifecycle.py'
       - 'docs/MONTHLY_PREVIEW_LATENCY_E2E.md'
       - '.github/workflows/monthly-preview-latency.yml'
   push:
@@ -81,6 +82,10 @@ jobs:
           python scripts/patch_streamlit_frontend.py
           python scripts/patch_streamlit_date_input.py
           python -m playwright install --with-deps chromium webkit
+      - name: Focused owner/revision, store and stale-worker correctness
+        timeout-minutes: 6
+        run: |
+          python -m pytest -q             tests/test_monthly_preview_latency_lifecycle.py             tests/test_monthly_report_preview_resources.py             tests/test_monthly_report_preview_store.py             tests/test_monthly_report_section_assembly_cache.py
       - name: Measure actual source upload/gallery and real section first decoded image
         timeout-minutes: 12
         env:
