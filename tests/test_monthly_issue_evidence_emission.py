@@ -136,6 +136,8 @@ def test_missing_original_unreviewed_page_and_price_caption_refuse_without_loss(
 
     priced = replace(first, captions=tuple((n, "$1,200 unit price" if n == 1 else caption)
                                           for n, caption in first.captions))
+    priced = replace(priced, client_page_reviews=tuple(
+        (n, page_fingerprint(priced, n)) for n in (1, 3, 5)))
     bad = replace(draft, sources=(priced, second),
         follow_ups=(replace(draft.follow_ups[0], references=(
             sources.source_reference(priced, 1),)), draft.follow_ups[1]))
@@ -199,6 +201,18 @@ def test_existing_source_site_date_gates_remain_unweakened(monkeypatch, tmp_path
         follow_ups=(replace(draft.follow_ups[0], references=tuple(
             sources.source_reference(dated, n) for n in (1, 3, 5))), draft.follow_ups[1]))
     assert any(check.code == "source_period" for check in preflight(dated_draft))
+
+
+def test_cross_issue_page_cannot_print_twice_or_reassign_owner(monkeypatch, tmp_path):
+    draft, _ = _setup(monkeypatch, tmp_path)
+    first = draft.follow_ups[0].references[0]
+    contested = replace(draft, follow_ups=(
+        draft.follow_ups[0],
+        replace(draft.follow_ups[1],
+                references=(first, *draft.follow_ups[1].references))))
+    with pytest.raises(ValueError, match="multiple issues"):
+        selected_issue_pages(contested)
+    assert len(selected_issue_pages(draft)) == 6
 
 
 def test_native_anchor_insert_does_not_reassign_water_or_omit_issues(monkeypatch, tmp_path):
