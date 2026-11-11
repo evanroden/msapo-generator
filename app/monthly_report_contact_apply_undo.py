@@ -21,6 +21,19 @@ def _directory_refs(refs: tuple[str, ...]) -> tuple[str, ...]:
                  if ref.startswith(("directory:", "directory-site:")))
 
 
+def retire_inactive_directory_undo_receipts(session, active_key: str) -> None:
+    """Discard report-local Undo controls for previously visited reports/months.
+
+    Guided workspaces use different prefixes per contract, report and month;
+    comparing a receipt to the *current* profile alone never sees an old key.
+    Do not touch native row Undo or other unrelated session records.
+    """
+    for key in tuple(session):
+        if (isinstance(key, str) and key.endswith("_directory_apply_undo")
+                and key != active_key):
+            session.pop(key, None)
+
+
 def _report_scope(profile: ReportProfile) -> tuple:
     # The title, layout and presentation metadata are independent report
     # edits. Bind Undo to the contract/report/site identities instead.
