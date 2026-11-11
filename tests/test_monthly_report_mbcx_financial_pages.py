@@ -59,6 +59,31 @@ def test_vendor_total_veto(monkeypatch,tmp_path,text):
     with pytest.raises(ValueError,match='vendor'):reviewed(p,c)
 
 
+@pytest.mark.parametrize('text', [
+    'ENFRA client report.\\nVendor: Acme Services\\nInvoice total: $1,200.',
+    'ENFRA client report.\\nSupplier: Parts Ltd\\nInvoice amount due: $800.',
+    'ENFRA client report.\\nSubcontractor = North Works\\nInvoice balance due: $60.',
+])
+def test_separated_vendor_field_and_invoice_total_are_denied(monkeypatch, tmp_path, text):
+    p, content, original = setup(monkeypatch, tmp_path, text)
+    from app.monthly_report_sources import source_bytes
+    assert source_bytes(p, content.source) == original
+    assert api().known_vendor_total(content.source, 1)
+    with pytest.raises(ValueError, match='vendor-invoice total'):
+        reviewed(p, content)
+    assert content.source.financial_page_reviews == ()
+    assert content.source.financial_source_review is None
+
+
+def test_vendor_metadata_alone_does_not_veto_client_savings(monkeypatch, tmp_path):
+    text = ('ENFRA client MBCx report. Vendor: Acme maintenance. '
+            'Invoice reference INV-12. Verified annual savings total: $125.')
+    p, content, _ = setup(monkeypatch, tmp_path, text)
+    assert not api().known_vendor_total(content.source, 1)
+    accepted = reviewed(p, content)
+    assert page_allowed(accepted.source, 1, profile=p, destination='mbcx_report')
+
+
 def test_unknown_financial_semantics_rejected(monkeypatch,tmp_path):
     p,c,_=setup(monkeypatch,tmp_path);m=api()
     with pytest.raises(ValueError):m.review_pages(p,c,(1,),source_confirmed=True,visual_fingerprints=((1,m.page_review_fingerprint(c.source,1)),),financial_semantics='unknown')
