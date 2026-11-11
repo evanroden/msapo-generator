@@ -13,6 +13,8 @@ Check: source administrator and destination repository-creation rights; transfer
 **Preferred supported method by target:**
 
 1. Ordinary Enterprise Cloud organization on github.com, when transfer permitted: native GitHub repository transfer from the personal account. Preserves repository identity and Git commits, issue/PR/review conversations, wiki, stars/watchers and attached Git LFS objects. Hooks/secrets/deploy keys are associated with the moved repository, but MUST be re-audited against destination permissions; assignees outside the receiving organization can be cleared. Native GitHub.com transfers cannot target a different GitHub host or cross an incompatible managed-user boundary. Preserve a separate Actions evidence ledger; the transfer documentation does not guarantee indefinite historical run/check/artifact accessibility.
+**Visibility and retained-history prerequisite:** the source repository is public. A native transfer preserves repository data and does **not** by itself constitute approval to make the source code or history private. Before an authorized transfer, ENFRA must approve the destination visibility transition, its timing, the original owner's continuing collaborator access, public fork exposure, and secret-scanning results. Changing visibility after transfer does not erase publicly distributed commits, existing forks, cached artifacts or leaked credentials; treat classified history findings through a separately approved remediation/rotation process. Never change source visibility in this preparation.
+
 2. GHE.com or separate supported Enterprise Cloud location: GitHub Enterprise Importer (GEI), but first address source ownership. **GEI does not directly migrate repositories owned by personal user accounts.** To use GEI, a separately authorized initial transfer into an approved GitHub.com source organization is required. Conduct a trial, validate losses and approve a short final write pause; GEI does not support delta migrations. Do not create a staging org or transfer it during this preparation.
 3. GitHub Enterprise Server: use the version-appropriate ghe-migrator organization-source export and target import, with an authorized intermediate source organization if necessary, GHES site-admin approval and trial. GitHub Enterprise Importer does not support this inbound GitHub.com→GHES path. Confirm capabilities in the exact GHES version; record missing metadata before approval.
 4. Git mirror / ordinary Git import: tracks commits, tags/branches and repository files ONLY. It does NOT transfer issues, PRs, reviews, Actions logs/artifacts, rulesets or permissions. Treat as an unacceptable sole method for MSAPO; use only with separately authorized metadata export/recreation and explicit loss acceptance.
@@ -86,6 +88,23 @@ From a separate temporary, read-only clone scan refs and code:
     git log --all --name-only --format='%H' | grep -Ei '(\.env|secret|credentials|private.?key|\.pem$|\.p12$|customer|receipt|invoice)' || true
 
 Review matches with an approved scanner and a human classification decision; path names are leads, not proof of leaked secrets. GitHub Actions artifact logs may contain data, and secrets may exist in old commits: handle history and exports under restricted permissions. **No history rewrite or delete in this preparation.**
+
+### After-migration verification commands (execute ONLY following A12 authorization)
+
+Store outputs in the approved **restricted** reconciliation workspace; use a correctly configured authenticated destination GitHub CLI host, particularly for GHE.com or GHES. These commands are *read-only*. Generate complete `source-ref.tsv` **before** the final freeze and `target-ref.tsv` after import. A native transfer on GitHub.com moves the source identity, so validate the same repository ID and do **not** assume the old owner path remains an independent clone.
+
+    # Authorized operator substitutes the approved destination path/host privately.
+    SRC_GIT=https://github.com/evanroden/msapo-generator.git
+    # DEST_GIT set via ENFRA restricted change record; never commit its value.
+    git ls-remote --heads --tags "$SRC_GIT" | LC_ALL=C sort > source-ref.tsv
+    git ls-remote --heads --tags "$DEST_GIT" | LC_ALL=C sort > target-ref.tsv
+    diff -u source-ref.tsv target-ref.tsv
+    # A nonzero diff blocks sign-off until each exception is identified and accepted.
+    # Source count reference: 762 branches, 0 tags at preparation audit (moving).
+
+For a same-host transfer, verify `gh api "repos/$DEST_OWNER/$DEST_REPO" --jq '.id'` equals the recorded source repository ID `1166801522`; verify sampled critical PR numbers (#270 issue; #827/#828/#844/#849/#850 PRs), review/comment bodies, associated authors and attachments. For import, use the restricted old→new crosswalk rather than equality of numeric IDs. Compare state-grouped issue/PR counts, open PR head SHAs, labels/milestones, release-asset hashes and the captured workflow-run→commit index. Reconcile data that is not migrated instead of presenting missing historical Actions checks as new passes.
+
+Verify actual target rule enforcement **as an unauthorized/insufficiently entitled test identity** (read/write/deploy denied), approved CODEOWNERS group resolution, required check names and trusted apps, prod environment approvals, runner reachability, correct OIDC issuer/audience/subject and one permitted deployment path. Any import-side ruleset bypass must be temporary, approved by the enterprise administrator and removed/verified after import. Confirm that the source auto-deploy path is disabled **externally** before enabling any target production workflow, and verify both remote deployment systems' actual state. Static JSON flags and local tests do not establish this.
 
 ## 4. Open PRs and timing
 
