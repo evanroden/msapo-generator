@@ -80,7 +80,9 @@ def add_requirement_form(page, name):
     field = page.get_by_role("textbox", name="Requirement name", exact=True)
     expect(field).to_be_visible()
     field.fill(name)
+    field.press("Tab")  # Deliver the native input before its button becomes enabled.
     expect(field).to_have_value(name)
+    expect(page.get_by_role("button", name="Add requirement", exact=True)).to_be_enabled(timeout=20000)
     return field
 
 
@@ -118,8 +120,6 @@ def verify_output(word, pdf):
     for requirement in REQUIREMENTS:
         assert word_text.count(requirement) == 1, ("DOCX requirement missing or repeated", requirement)
         assert requirement in pdf_text, ("PDF requirement missing", requirement)
-    for label in ("Synthetic requirement from editor A", "Synthetic requirement from editor B"):
-        assert label not in "Synthetic safety refresher", "A standing requirement became a monthly event"
     assert word_text.count("Synthetic safety refresher") == 1
     assert pdf_text.count("Synthetic safety refresher") == 1
 
@@ -220,7 +220,7 @@ def journey():
             evidence["stages"].append({"stage": "A commits first", "standing": first_revision})
 
             perform_add(b)
-            expect(b.get_by_text("Training was updated elsewhere.", exact=False)).to_be_visible(timeout=30000)
+            expect(b.locator('[data-testid="stAlert"]').filter(has_text="Training was updated elsewhere").first).to_be_visible(timeout=30000)
             expect(field_b).to_have_value(REQUIREMENTS[1])
             assert snapshot_store(token)[0] == first_revision, "Stale B overwrote the shared revision"
             expect(b.get_by_role("button", name="Reload saved training matrix", exact=True)).to_be_visible()
