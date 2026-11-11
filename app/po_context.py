@@ -498,15 +498,22 @@ def _active_quote_attachment(
     if upload_valid:
         return (uploaded_name, uploaded_bytes), warnings
 
-    if (
-        quote_source == "upload"
-        and isinstance(uploaded_bytes, bytes)
-        and uploaded_bytes
-        and not extracted_text
-    ):
-        warnings.append(
-            "The current uploaded file was not successfully extracted; the prior analysis may not describe it."
-        )
+    # An explicit upload promises that the original vendor file is the first
+    # attachment. If its bytes, hash, name or extracted text cannot be proven,
+    # a text substitute may still be shown for inspection, but it must NOT
+    # become a submit-ready package. Paste text is a distinct, explicit source
+    # choice and keeps its normal text attachment behavior.
+    if quote_source == "upload":
+        if not extracted_text:
+            warnings.append(
+                "The current uploaded file was not successfully extracted; "
+                "re-upload the quote or switch to Paste text and regenerate."
+            )
+        else:
+            warnings.append(
+                "The original uploaded quote no longer matches the reviewed "
+                "source; re-upload it or switch to Paste text and regenerate."
+            )
     if quote_text:
         return ("Vendor Quote.txt", quote_text.encode("utf-8")), warnings
     return None, warnings
