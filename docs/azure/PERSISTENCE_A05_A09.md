@@ -29,7 +29,7 @@ Monthly QA context. Verify both independently.
 | Source and owner | State and write semantics | Proposed durable destination |
 |---|---|---|
 | `epc_memory.db` — `app/memory.py` | SQLite, incremental per-contract/site/browser learning; tables `admin_emails`, `contacts`, `vendor_contacts`, `vendor_contact_events`, `device_requesters`, `device_requester_events`, `device_account_managers`, `device_account_manager_events`, `device_expense_profiles`, `device_expense_employees`, `expense_approvers`, `expense_approver_events`, `device_report_preparers`, `device_report_preferences`; schema migrations and legacy reads | A05-approved relational tables, every current exact key/count/routing column and identity hash retained; adapter NOT yet wired |
-| `smartsheet_submissions.db` — `app/smartsheet_store.py` | SQLite `submissions` table keyed by exact submission fingerprint, lease/token, attached JSON, attempts, remote row ID as **text**, `uncertain` and attachment partial state. SQLite `BEGIN IMMEDIATE` + ownership checks prevent duplicate PO creation | PostgreSQL `epc_submission_claims` candidate; production adapter and real PostgreSQL concurrency tests are still blockers |
+| `smartsheet_submissions.db` — `app/smartsheet_store.py` | SQLite `submissions` table keyed by exact submission fingerprint, lease/token, attached JSON, attempts, remote row ID as **text**, `uncertain` and attachment partial state. SQLite `BEGIN IMMEDIATE` + ownership checks prevent duplicate PO creation | PostgreSQL `epc_submission_claims` candidate; isolated `app/postgres_submission_store.py` adapter exists but activation and real PostgreSQL concurrency tests remain blockers |
 | `monthly_reports/library/<contract-hash>/<profile>/manifest.json` — `monthly_report_library.py` | Revisioned profile head, `history/*.json`, current slot assignments, audit records, per-slot versions, expected revision and `.write-lock` | `epc_record_heads` + immutable `epc_record_versions`; exact JSON bytes and revision numbers, database CAS |
 | `monthly_reports/snapshots/<contract-hash>/<profile>/<period>.json` | Saved full drafts, omissions, open issues, entered editor, provenance, approved page and source decisions; `history/<period>-<revision>.json` | Scoped `snapshot` head + versions (never treat snapshots as disposable) |
 | `monthly_reports/active_work/<browser-hash>/.../manifest` and assets — `monthly_report_active_work.py` | Unfinished per-browser, contract, profile, period state with revision, generation, recovery and tombstones | Per-user-scoped transactional active work + durable referenced objects; preserve explicit discard and stale-generation protections |
@@ -121,8 +121,10 @@ all attachments are checked. Reconcile with #830/#847 and P20 before wiring.
    and shared/individual standing-content rules. Backend calls must validate
    those scopes *before* reads and writes, not merely accept a caller-supplied
    `RecordKey`.
-3. Finish adapters for `memory.py`'s 14 tables and Smartsheet's complete
-   `SubmissionStore` API; prove claim collisions, lease fencing, row/attachment
+3. Finish managed adapters for `memory.py`'s 14 tables and activate the
+   isolated, proposed `app/postgres_submission_store.py` only after integrating
+   the pre-POST `mark_creating` protocol into `app.smartsheet` and #847;
+   prove claim collisions, lease fencing, row/attachment
    recovery and actual POST crash windows. Do not activate direct Smartsheet API
    submission; checked-in Render remains disabled.
 4. Rewrite all authoritative Monthly JSON and file caller paths to a
@@ -166,11 +168,13 @@ feature PR heads before selecting any production source SHA.
 
 ## 6. Current evidence, test commands and blockers
 
-Focused tests in `tests/test_managed_persistence_contracts.py` use a mocked
-transactional connection and in-memory Blob client. Run:
+Focused tests in `tests/test_managed_persistence_contracts.py` and
+`tests/test_postgres_submission_contracts.py` use a mocked transactional
+connection and in-memory Blob client. Run:
 
 ```sh
 python -m pytest -q tests/test_managed_persistence_contracts.py \
+  tests/test_postgres_submission_contracts.py \
   tests/test_smartsheet_store.py tests/test_sqlite_storage.py
 ```
 
@@ -181,7 +185,7 @@ a live server, Azure Blob behavior, Azure App Service compatibility or
 production acceptance. Separate real-service and journey tests are required.
 
 Remaining hard blockers: ENFRA service and IAM approval; complete memory
-schema mapping; native Smartsheet PostgreSQL adapter and #847 integration;
+schema mapping; inactive PostgreSQL Smartsheet adapter still needs real-service validation and #847 integration;
 end-to-end Monthly path replacement including source importer, cover/gallery,
 designs/standing content, active work and history; per-user/cross-contract
 authorization; A09 dry-run importer/reconciliation; backup/restore and
