@@ -114,3 +114,16 @@ def test_title_only_without_a_system_identity_remains_distinct(profile):
     assert len(_site_rows(saved, "north")) == 2
     assert {row[-1] for row in _site_rows(saved, "north")} == {
         "Boiler 1", "Boiler 2"}
+
+
+def test_blank_service_does_not_erase_the_only_equipment_title(profile):
+    """A physical header without data cannot establish distinct identity."""
+    raw = (b"Facility,Service,Required capacity,Available capacity,Units,Title\n"
+           b"North Facility,,100,200,lb/hr,Boiler 1\n"
+           b"North Facility,,100,200,lb/hr,Boiler 2\n")
+    candidate = inspect(profile, raw, "blank-service.csv")
+    assert capacity.duplicate_capacity_rows(candidate.tables) == ()
+    saved = save(profile, candidate, 0)
+    assert len(_site_rows(saved, "north")) == 2
+    assert {row[-1] for row in _site_rows(saved, "north")} == {
+        "Boiler 1", "Boiler 2"}
