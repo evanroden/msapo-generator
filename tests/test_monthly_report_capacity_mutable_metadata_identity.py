@@ -101,3 +101,16 @@ def test_physical_system_and_unit_still_distinguish_valid_measurements(profile):
     assert capacity.duplicate_capacity_rows(candidate.tables) == ()
     result = save(profile, candidate, 0)
     assert len(_site_rows(result, "north")) == 3
+
+
+def test_title_only_without_a_system_identity_remains_distinct(profile):
+    """Do not collapse two facilities' units based only on equal readings."""
+    raw = (b"Facility,Required capacity,Available capacity,Units,Title\n"
+           b"North Facility,100,200,lb/hr,Boiler 1\n"
+           b"North Facility,100,200,lb/hr,Boiler 2\n")
+    candidate = inspect(profile, raw, "title-only.csv")
+    assert capacity.duplicate_capacity_rows(candidate.tables) == ()
+    saved = save(profile, candidate, 0)
+    assert len(_site_rows(saved, "north")) == 2
+    assert {row[-1] for row in _site_rows(saved, "north")} == {
+        "Boiler 1", "Boiler 2"}
