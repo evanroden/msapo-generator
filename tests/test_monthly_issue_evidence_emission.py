@@ -133,10 +133,61 @@ def test_missing_original_unreviewed_page_and_price_caption_refuse_without_loss(
             sources.source_reference(priced, 1),)), draft.follow_ups[1]))
     with pytest.raises(ValueError, match="Review page"):
         selected_issue_pages(bad)
+    # The first render creates cached print rasters. Removing the original
+    # must still refuse the next render, not silently reuse those derivatives.
+    assert len(_paragraphs(_build_docx(draft))[0].inline_shapes) == 6
     sources._path(draft.profile, first.sha256, first.suffix).unlink()
     with pytest.raises(ValueError, match="unavailable"):
         _build_docx(draft)
     assert sources.source_bytes(draft.profile, second) == originals["beta.pdf"]
+
+
+def test_explicit_exclusion_and_already_attached_page_cannot_reemit(monkeypatch, tmp_path):
+    from app.monthly_report_content_policy import page_fingerprint
+    from app.monthly_report_model import ResolvedBlock
+
+    draft, _ = _setup(monkeypatch, tmp_path)
+    first, second = draft.sources
+    excluded = replace(first, client_page_exclusions=(
+        (1, page_fingerprint(first, 1)),))
+    refused = replace(draft, sources=(excluded, second),
+        follow_ups=(replace(draft.follow_ups[0], references=(
+            sources.source_reference(excluded, 1),)), draft.follow_ups[1]))
+    with pytest.raises(ValueError, match="explicitly excluded"):
+        selected_issue_pages(refused)
+
+    # A different exact source-owned picture occurrence must not print again
+    # simply because an issue has a reference to the same selected page.
+    from app.monthly_report_asset_instances import new_asset_instance, with_asset_instances
+    duplicate = ResolvedBlock("equipment_issues_evidence", "This month",
+        asset_hashes=("f" * 64 + ".png",),
+        references=(sources.source_reference(first, 1),))
+    duplicate = with_asset_instances(duplicate, (
+        new_asset_instance(duplicate.asset_hashes[0],
+                           (sources.source_reference(first, 1),)),))
+    # Only included blocks can cause a duplicate; temporary/unmapped blocks
+    # must not affect a separate issue's evidence.
+    extra = replace(draft, blocks=(*draft.blocks, duplicate))
+    assert len(selected_issue_pages(extra)) == 6
+
+
+def test_existing_source_site_date_gates_remain_unweakened(monkeypatch, tmp_path):
+    from app.monthly_report_checks import preflight
+    draft, _ = _setup(monkeypatch, tmp_path)
+    a, b = draft.sources
+    foreign = replace(a, facility="Synthetic unrelated foreign site")
+    blocked = replace(draft, sources=(foreign, b),
+        follow_ups=(replace(draft.follow_ups[0], references=tuple(
+            sources.source_reference(foreign, n) for n in (1, 3, 5))), draft.follow_ups[1]))
+    assert any(check.code == "source_facility" and check.blocking for check in preflight(blocked))
+
+    dated = replace(a, classification="Vendor service",
+        selected_pages=(1, 3, 5), service_date="2024-01-02",
+        facility=draft.profile.facilities[0].key)
+    dated_draft = replace(draft, sources=(dated, b),
+        follow_ups=(replace(draft.follow_ups[0], references=tuple(
+            sources.source_reference(dated, n) for n in (1, 3, 5))), draft.follow_ups[1]))
+    assert any(check.code == "source_period" for check in preflight(dated_draft))
 
 
 def test_native_anchor_insert_does_not_reassign_water_or_omit_issues(monkeypatch, tmp_path):
