@@ -19,6 +19,10 @@ _GUID = re.compile(r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\Z")
 _OID = ("oid", "http://schemas.microsoft.com/identity/claims/objectidentifier")
 _TID = ("tid", "http://schemas.microsoft.com/identity/claims/tenantid")
 _ROLE = ("roles", "http://schemas.microsoft.com/ws/2008/06/identity/claims/role")
+# Set True only in the reviewed A05 data-layer authorization integration.
+# An environment setting alone must never activate legacy shared data paths.
+RESOURCE_BOUNDARIES_INTEGRATED = False
+
 # Values are proposed, not yet ENFRA-approved Entra app-role IDs.
 ACTION_ROLES = {
     "report.open": frozenset({"MSAPO.ReportReader", "MSAPO.ReportEditor"}),
@@ -168,7 +172,8 @@ def require_streamlit_entry() -> Principal | None:
     import streamlit as st
     try:
         principal = entry_principal(st.context.headers, environment)
-        if principal is None or environment.get("MSAPO_AUTHZ_DATA_BOUNDARY_READY") != "verified":
+        if (principal is None or not RESOURCE_BOUNDARIES_INTEGRATED
+                or environment.get("MSAPO_AUTHZ_DATA_BOUNDARY_READY") != "verified"):
             # An entry check is not enough: current legacy storage is shared.
             raise AccessDenied("Access denied")
         key = "_msapo_azure_identity_key"
