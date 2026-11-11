@@ -198,8 +198,12 @@ def _summary(columns, row, noun, index, prose=None):
     if identifiers:
         st.caption(" · ".join(f"{_source_display(column)}: {_source_display(value)}"
                               for column, value in identifiers))
+    # Prior grid editing displayed capital priority and replacement timing for
+    # every row. Preserve that visibility in collapsed native cards instead of
+    # forcing operators to open each renewal/replacement occurrence.
     decisions = [(column, value) for column, value in values if any(
-        word in column.casefold() for word in ("status", "decision"))]
+        word in column.casefold() for word in
+        ("status", "decision", "priority", "replacement timing"))]
     if decisions:
         st.caption(" · ".join(f"{_source_display(column)}: {_source_display(value or 'Not recorded')}"
                               for column, value in decisions))
