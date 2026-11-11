@@ -118,6 +118,13 @@ def edit_org_chart(draft, block, prefix, assets, field, *, show_preview=True):
                 )
                 _install(draft, prefix, new, clear=p + "_person_")
         return block
+    # Duplicate or empty saved node IDs cannot safely mount the ordinary
+    # per-ID native widgets. Recover physical positions first, with explicit
+    # manager mapping; otherwise equal keys would collide and drop edits.
+    from app.monthly_report_org_warning import repair_duplicate_positions
+    block, identity_editor = repair_duplicate_positions(block, prefix)
+    if identity_editor:
+        return block
     left, right = st.columns([1, 1]) if show_preview else (st.container(), None)
     nodes = []
     remove_key = None
