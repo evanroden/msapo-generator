@@ -4,6 +4,8 @@ from dataclasses import replace
 
 import pytest
 
+from tests.conftest import requires_libreoffice
+
 from app import monthly_report_contact_apply_undo as undo
 from app import monthly_report_directory as directory
 from app import monthly_report_library as library
@@ -226,6 +228,7 @@ def test_actual_docx_after_apply_and_undo_keeps_correct_contacts(scenario, tmp_p
         assert "Synthetic North Person" in cells
 
 
+@requires_libreoffice
 @pytest.mark.parametrize("native", [False, True])
 def test_actual_pdf_after_apply_and_undo_keeps_correct_contacts(
     scenario, tmp_path, monkeypatch, native,
@@ -235,12 +238,9 @@ def test_actual_pdf_after_apply_and_undo_keeps_correct_contacts(
     from app.monthly_report_native_layout import build_native_docx
     from tests.test_monthly_report_contact_headers import native_contact_source
     from tests.test_monthly_report_generic_contact_page import _draft
-    from tests.conftest import requires_libreoffice
     import pymupdf as fitz
 
-    # Same conditional as other actual PDF tests; no mocked conversion.
-    if not pdf_converter.available():
-        pytest.skip("LibreOffice not installed")
+    # Uses real LibreOffice conversion, not a mocked PDF service.
     monkeypatch.setattr(pdf_converter, "OUTPUT_DIR", tmp_path)
     _, _, before, incoming = scenario
     applied = directory.apply_contacts(before, incoming)
