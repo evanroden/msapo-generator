@@ -146,4 +146,5 @@ def render_page_gallery(draft, options, selected, p, widget_key, identity, field
                     st.caption("Large preview unavailable. Reopen Manage source files; selection is unchanged.")
                     continue
                 st.image(picture.data, width="stretch",
-                         caption=label + " · Preview only; use fullscreen to inspect details.")
+                         caption=label + " · Preview only; use fullscreen to examine small details.")
+                st.caption(label + " · Preview only; original and issue links are unchanged.")
