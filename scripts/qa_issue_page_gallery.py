@@ -97,7 +97,7 @@ def browser_task(browser_type, name):
     record = {"synthetic_only": True, "actual_route": "Monthly QA prefill, native file upload and issue editor",
               "inputs": {ALPHA: sha256(alpha).hexdigest(), BETA: sha256(beta).hexdigest()},
               "steps": [], "external": external, "errors": errors,
-              "limits": ["No physical-device or production acceptance", "This journey does not approve or embed evidence pages"]}
+              "limits": ["No physical-device or production acceptance", "This journey checks selection and previews, not the separate report output gate"]}
     try:
         page.goto(qa.URL, wait_until="domcontentloaded")
         page.get_by_role("button", name="Load known-value report", exact=True).click()
@@ -143,7 +143,12 @@ def browser_task(browser_type, name):
         assert_tags(issue, expected)
         issue.get_by_role("button", name=f"Preview {ALPHA} · page 5", exact=True).click()
         expect(issue.get_by_text(f"{ALPHA} · page 5 · Preview only; original and issue links are unchanged.", exact=True)).to_be_visible()
-        expect(issue.get_by_test_id("stImage").locator("img")).to_be_visible()
+        # More than one bounded thumbnail is intentionally visible. Target the
+        # enlarged page-five image by its exact caption, not a generic image
+        # locator which becomes ambiguous once preview candidates are shown.
+        expect(issue.get_by_test_id("stImage").filter(
+            has_text=f"{ALPHA} · page 5 · Preview only; use fullscreen to examine small details."
+        ).locator("img")).to_be_visible()
         record["steps"].append({"stage": "file-identity-page-five-preview", "selected": tags(issue)})
 
         # Use the actual shared-history action, not a fixture save wrapper.
