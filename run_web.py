@@ -19,9 +19,10 @@ script and some tooling do) from rendering a UI as an import side effect.
 """
 
 if __name__ == "__main__":
-    # Authentication must precede loading the UI or reading any user data.
+    # Authenticate before importing user-data-bearing workflow modules.
     from app.azure_identity import require_streamlit_entry
+
     require_streamlit_entry()
     from app.web_ui import main
-from app.azure_identity import require_streamlit_entry
+
     main()
