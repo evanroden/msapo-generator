@@ -15,6 +15,11 @@ SEMANTICS = 'client_enfra_no_vendor_totals'
 FINANCIAL_RECEIPT = 'financial:v1:'
 _VENDOR_INVOICE = re.compile(r'\b(?:vendor|supplier|subcontractor)\s+invoice\b', re.I)
 _TOTAL_LABEL = re.compile(r'\b(?:total|amount\s+due|balance\s+due)\b', re.I)
+# Source PDFs often split the payee and invoice total into separate fields.
+# Both labels must be explicit; a bare vendor name or generic ENFRA savings
+# total does not itself establish a vendor invoice total.
+_VENDOR_FIELD = re.compile(r'\b(?:vendor|supplier|subcontractor)\s*[:=]\s*\S+', re.I)
+_INVOICE_TOTAL = re.compile(r'\binvoice\s+(?:total|amount(?:\s+due)?|balance(?:\s+due)?)\b', re.I)
 
 
 def scope_for(profile):
@@ -31,7 +36,9 @@ def page_review_fingerprint(source,number):
 
 def known_vendor_total(source,number):
     text = ' '.join((source.page_texts[number-1] + ' ' + dict(source.captions).get(number,'')).split())
-    return bool(_VENDOR_INVOICE.search(text) and _TOTAL_LABEL.search(text))
+    return bool(_TOTAL_LABEL.search(text) and (
+        _VENDOR_INVOICE.search(text) or
+        (_VENDOR_FIELD.search(text) and _INVOICE_TOTAL.search(text))))
 
 
 
