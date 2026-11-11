@@ -304,7 +304,7 @@ def test_fixed_table_width_correction_retains_physical_columns_and_all_source_ce
         return ["", "Replacement"][len(fields) - 1]
     monkeypatch.setattr(columns, "st", SimpleNamespace(
         session_state=state, markdown=lambda *a, **kw: None, warning=lambda *a: None,
-        text_input=text_input, button=lambda *a, **kw: True))
+        text_input=text_input, button=lambda *a, **kw: True, rerun=lambda: None))
     assert columns.fixed_width_defect(spec, table) == 2
     columns.edit_fixed_column_schema(
         ReportCheck("table_columns", "Row 1 in work orders has 3 cells but only 1 columns.",

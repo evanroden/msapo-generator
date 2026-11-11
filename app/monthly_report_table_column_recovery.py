@@ -108,3 +108,7 @@ def edit_fixed_column_schema(check, draft, prefix, field):
             if item is section else item for item in original.sections)
         st.session_state[prefix + "_draft"] = replace(original, sections=sections)
         st.session_state[prefix + "_period_editor_refresh"] = True
+        # This Review action runs after ordinary editors were captured. Stop
+        # this render before the outer workflow writes its older local draft
+        # back to session state; the next render uses the repaired schema.
+        st.rerun()
