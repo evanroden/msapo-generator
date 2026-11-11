@@ -187,6 +187,14 @@ def main():
             draft, assets, size = _fixture(directory)
             checkpoint('fixture-ready')
             result['source_bytes'] = size
+            # Measure the actual current preflight heuristic, not raw source size.
+            from app.monthly_report_docx import estimate_bytes
+            from app.monthly_report_size_forecast import forecast_output_sizes
+            predicted_input = estimate_bytes(draft, assets.__getitem__)
+            forecast = forecast_output_sizes(predicted_input, libreoffice_available=True)
+            result['preflight_heuristic_bytes'] = predicted_input
+            result['word_forecast'] = [forecast.word.low, forecast.word.high]
+            result['pdf_forecast'] = [forecast.pdf.low, forecast.pdf.high]
             for owner in ('synthetic-visitor-one', 'synthetic-visitor-two'):
                 checkpoint(owner + '-start')
                 tick = monotonic()
@@ -238,6 +246,9 @@ def main():
                 result['final_pages'] = len(pdf)
             result['final_docx_bytes'] = len(package.docx)
             result['final_pdf_bytes'] = len(package.pdf)
+            result['word_forecast_inside'] = forecast.word.low <= len(package.docx) <= forecast.word.high
+            result['pdf_forecast_inside'] = forecast.pdf.low <= len(package.pdf) <= forecast.pdf.high
+            assert result['word_forecast_inside'] and result['pdf_forecast_inside'], 'Native size forecast did not bracket the actual output'
             # Only the explicitly invented, source-row-sanitized fixture is
             # retained as CI evidence. Copy the output from the stopped Docker
             # container after memory-capped execution; never publish client files.
