@@ -343,3 +343,24 @@ def test_undo_preserves_later_report_title_and_independent_section_title(scenari
     assert next(s for s in restored.sections if s.key == activity.key).title == (
         "Independent revised section title")
     assert contacts(restored).rows == contacts(before).rows
+
+
+def test_receipts_from_other_report_or_month_are_retired_without_touching_row_undo(scenario):
+    _, _, before, incoming = scenario
+    applied = directory.apply_contacts(before, incoming)
+    receipt = undo.capture_directory_apply(before, applied, len(incoming.rows))
+    old_key = "report_guided_original_month_directory_apply_undo"
+    active_key = "report_guided_new_month_directory_apply_undo"
+    state = {
+        old_key: receipt,
+        active_key: receipt,
+        "report_guided_new_month_row_undo": {"untouched": True},
+        "report_guided_new_month_directory_undo_unavailable": "unrelated",
+    }
+    undo.retire_inactive_directory_undo_receipts(state, active_key)
+    assert old_key not in state
+    assert state[active_key] is receipt
+    assert state["report_guided_new_month_row_undo"] == {"untouched": True}
+    assert state["report_guided_new_month_directory_undo_unavailable"] == "unrelated"
+    undo.retire_inactive_directory_undo_receipts(state, active_key)
+    assert state[active_key] is receipt
