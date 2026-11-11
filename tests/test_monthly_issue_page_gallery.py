@@ -138,6 +138,19 @@ def test_missing_original_keeps_selection_and_warns_without_rewriting(tmp_path, 
     assert sources.source_bytes(before.profile, beta) == originals[1]
 
 
+def test_cached_thumbnail_cannot_hide_missing_saved_original(tmp_path, monkeypatch):
+    app, (alpha, beta), originals = setup_app(tmp_path, monkeypatch)
+    before = app.session_state["draft"]
+    assert list(tmp_path.rglob("1-preview.json"))
+    sources._path(before.profile, alpha.sha256, alpha.suffix).unlink()
+    app.run()
+    assert not app.exception
+    assert any("Restore the saved original" in warning.value for warning in app.warning)
+    assert app.session_state["draft"] == before
+    assert gallery_checkbox(app, "Include alpha-equipment.pdf · page 1 as issue evidence").value
+    assert sources.source_bytes(before.profile, beta) == originals[1]
+
+
 def test_stale_gallery_checkbox_does_not_retarget_a_new_month(tmp_path, monkeypatch):
     app, (alpha, beta), _ = setup_app(tmp_path, monkeypatch)
     old = app.session_state["draft"]
