@@ -6,7 +6,7 @@
 
 - Existing Render [synthetic isolated Monthly QA run 43032816730](https://github.com/evanroden/msapo-generator/actions/runs/43032816730), attempt 2, was successful at SHA 57c5cd87e3e441dfea3cddbc666248f8e469d986; artifact: monthly-isolated-live-evidence. This is not AUTH01, AUTH02 or AUTH03 acceptance.
 - Existing Tests workflow runs all pytest with LibreOffice/fonts, verifies container APP_GIT_COMMIT, starts a healthy container, exports synthetic DOCX/PDF, and separately performs capped resource testing. It does not certify Azure.
-- A10 added focused tests for document semantics, page order, geometry, font and artwork, grayscale, output metadata tolerance, absent artifacts, SHA/digest/fixture matching, and fail-closed target isolation. The independent local environment ran all 12 tests successfully. GitHub exact-head CI remains necessary.
+- A10 added focused tests for document semantics, page order, geometry, font and artwork, grayscale, output metadata tolerance, absent artifacts, SHA/digest/fixture matching, and fail-closed target isolation. The independent local environment ran all 15 tests successfully. GitHub exact-head CI remains necessary.
 - Native Microsoft Word layout, private originals, Entra negative cases, physical-device checks, live Azure storage, tenant access, and matched-digest Azure comparison are NOT RUN.
 
 ## Classification and method
@@ -41,7 +41,7 @@ A separate restricted isolation.json (not a substitute for verified Azure grants
       --isolation-json "$RESTRICTED_ISOLATION_JSON" \
       --output "$PRIVATE_EVIDENCE_DIR/authenticated-staging.json"
 
-This smoke is **not** a complete security test. With different authorized, wrong-tenant, unassigned and restricted-role contexts, separately verify signed-out routes; report/original/preview/download access; direct URL and WebSocket access; login/logout/session expiration; concurrent users and tabs; contract/site isolation. Capture observed outcomes rather than inferring them from the app shell.
+This smoke also runs a signed-out browser context and direct WebSocket handshake to require an actual Entra challenge or explicit denial; a blank page alone is not a PASS. This smoke is **not** a complete security test. With different authorized, wrong-tenant, unassigned and restricted-role contexts, separately verify signed-out routes; report/original/preview/download access; direct URL and WebSocket access; login/logout/session expiration; concurrent users and tabs; contract/site isolation. Capture observed outcomes rather than inferring them from the app shell.
 
 ### Paired DOCX/PDF semantic, geometry and visual parity
 
@@ -56,7 +56,7 @@ Use identically named private local files for the same fixture, e.g. container/m
       --require monthly.docx --require monthly.pdf \
       --output "$PRIVATE_EVIDENCE_DIR/paired-parity.json"
 
-Use --require separately for each expected DOCX/PDF format actually supported by Monthly/PO/Expense. Code 0=PASS, 2=FAIL, 3=NOT RUN (missing paired files), 4=BLOCKED (identity/evidence). Word comparison covers body/header/footer words, tables, font declarations, OOXML geometry, embedded media, embedded attachments and grayscale. PDF covers page order/count, text, spans/fonts/captions, page and text coordinates, image counts, embedded attachment bytes, chromatic fractions and bounded per-page rendered-pixel differences. Timestamp/OOXML ZIP and PDF metadata differences do not alone fail parity. Results are hashed/summary-only; actual text, screenshots and documents stay in approved private evidence storage.
+Use --require separately for each expected DOCX/PDF format actually supported by Monthly/PO/Expense. Code 0=PASS, 2=FAIL, 3=NOT RUN (missing paired files), 4=BLOCKED (identity/evidence). Word comparison covers body/header/footer words, tables, direct/effective font styles, OOXML geometry, ordered media references, embedded media, embedded attachments and grayscale. PDF covers page order/count, text, spans/fonts/captions, page and text coordinates, image counts, embedded attachment bytes, chromatic fractions and bounded per-page rendered-pixel differences. Timestamp/OOXML ZIP and PDF metadata differences do not alone fail parity. Results are hashed/summary-only; actual text, screenshots and documents stay in approved private evidence storage.
 
 For authentic acceptance, use **restricted authorized originals only**, and keep them outside public GitHub/CI: AUTH01 prior month same sites; AUTH02 different site under same contract; AUTH03 incomplete correct target month. Verify first gesture, import scope, prepared-by, edit, save/reopen, original preservation, every DOCX/PDF page, object/page order, tables, captions, artwork and grayscale. LibreOffice-generated PDF is not native Microsoft Word acceptance. Native Word and physical iOS/Safari remain NOT RUN until physically observed.
 
@@ -92,3 +92,12 @@ For authentic acceptance, use **restricted authorized originals only**, and keep
 Each private before/after row must include date/time UTC, exact SHA, immutable digest, environment, allowed data classification, fixture hash, first action/result, persisted correction, downloaded artifact hashes, compare report, reproduction, observed failure classification and rollback/recovery evidence. Publish only sanitized boolean/hash/count summaries. Synthetic evidence is not authentic acceptance. A screenshot of the app shell or a successful process exit is insufficient.
 
 **Decision: NO GO.** Azure staging, its storage/identity contracts and the approved immutable candidate are not present in A01 evidence. Do not enable a new Smartsheet provider, alter production access controls, migrate real customer data, merge concurrent P20 repair paths without ownership review, or change production traffic. Product bugs belong in separate P20 repair PRs; Azure-only gaps in coordinated A04–A10 PRs, with failing-before/passing-after evidence.
+
+
+## 11 November 2026 independent local evidence update
+
+On an independent Python 3.13 environment, 15 synthetic focused unit tests passed (tests/test_azure_acceptance_parity.py + tests/test_qa_azure_authenticated.py). This is a harness self-test, not a project-wide exact-PR CI result.
+
+A locally constructed 30-page/4.8 MB synthetic DOCX (six noisy-image examples, repeated tables and captions) converted twice with installed LibreOffice. Each output had 30 PDF pages and approximately 5.5 MB. Conversion times were 2.17s and 1.94s; peak descendant process RSS recorded approximately 201 MiB. The two PDF binaries differed, while all semantic, geometry, font, caption, attachment, grayscale and visual checks passed (maximum per-page mean pixel error 0.0). The fixture was **not generated by MSAPO**, and neither pass ran on Azure. Results do not establish App Service capacity, performance SLO or authentic-source Word fidelity.
+
+The self-test evidence bundle also contains intentional page-geometry FAIL and missing-artifact NOT RUN cases, plus a difference render and JUnit outcome. All SHA/digest identifiers in local parity examples are simulated and must never be interpreted as a served image or customer acceptance.
