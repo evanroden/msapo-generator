@@ -136,6 +136,9 @@ def render_receivable_intake(draft, blocks, prefix):
         if saved:
             st.caption("Saved review: as of " + saved["as_of"] +
                        " · corrections remain editable. Original cells above are unchanged.")
+        elif current is not None and any(ref.startswith(_RECEIPT_LINK) for ref in current.references):
+            st.warning("The previous invoice review does not match this report, source or table. "
+                       "Recheck the original rows and enter a new as-of date; no approval was reused.")
         with st.form(key + "_review_" + stamp):
             as_of = st.text_input("Aging as of date (YYYY-MM-DD)",
                                   value=saved["as_of"] if saved else "",
