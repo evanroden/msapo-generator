@@ -424,8 +424,16 @@ def render_source_recovery_links(check, draft, prefix):
                     ids += (parts[0],)
         ids = tuple(dict.fromkeys(ids))
     if not ids:
-        st.caption("No unique original source can be selected from this warning. Keep the "
-                   "linked content unchanged until its provenance is restored or explicitly remove it.")
+        st.caption("No unique original source can be selected from this warning. "
+                   "Re-upload the correct original or explicitly leave out its "
+                   "dependent content; a same-name file is not automatically trusted.")
+        st.button("Open Manage source files for missing original",
+            key=prefix + "_recover_ambiguous_source_" + sha256(
+                (report_identity(draft) + "\\0" + check.code + "\\0" +
+                 check.block_key + "\\0" + repr(check.targets) +
+                 check.message).encode()).hexdigest(),
+            on_click=_open_manager,
+            args=(prefix + "_batch_files_open", prefix + "_evidence_selected", ""))
         return
     for source_id in ids:
         identity = known.get(source_id)
