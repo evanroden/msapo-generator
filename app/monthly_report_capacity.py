@@ -551,8 +551,10 @@ def _row_key(table, row, site):
         # column identifies the row. Where Title is the *sole* unit label,
         # removing it would silently conflate different pieces of equipment.
         if _normal(column) in {"title", "report title", "source title"} and any(
-                re.search(r"\b(?:plant|equipment|asset|system|service|category|name|identifier|id|tag|type)\b",
-                          heading, re.I) for heading in table.columns):
+                i != table.site_column and i < len(row) and str(row[i]).strip()
+                and re.search(r"\b(?:plant|equipment|asset|system|service|category|name|identifier|id|tag|type)\b",
+                              heading, re.I)
+                for i, heading in enumerate(table.columns)):
             return False
         # "Capacity type" names the service; "Capacity (kW)" measures it.
         # Explicit identity labels take precedence over measurement vocabulary,
