@@ -499,3 +499,169 @@ def render_followup_identity_recovery(check, draft, prefix):
             return
         st.session_state[prefix + "_draft"] = repaired
         st.rerun()
+
+
+# Report-structure and follow-up recovery actions are explicit and positional.
+# They intentionally do not route by a nonunique section/block or item key.
+def _apply_review_recovery(prefix, displayed, action, *, target="", position=-1):
+    from dataclasses import replace
+    from app.monthly_report_model import ReportFollowUp
+    state = st.session_state
+    current = state.get(prefix + "_draft")
+    if current is None or current.fingerprint != displayed.fingerprint:
+        state[prefix + "_warning_recovery_notice"] = (
+            "The report changed before this correction. Your edits are retained; "
+            "review the current warning and repeat the action.")
+        return
+    if action == "include_section":
+        matches = [s for s in current.sections if s.key == target]
+        if len(matches) != 1 or matches[0].included:
+            state[prefix + "_warning_recovery_notice"] = "That section changed; choose the current section."
+            return
+        sections = tuple(replace(s, included=True) if s.key == target else s
+                         for s in current.sections)
+        profile = replace(current.profile, excluded_sections=tuple(
+            key for key in current.profile.excluded_sections if key != target))
+        result = replace(current, sections=sections, profile=profile)
+    elif action == "omit_followup":
+        if not 0 <= position < len(current.follow_ups):
+            return
+        item = current.follow_ups[position]
+        if item.key != target or not item.included or sum(
+                i.key == target for i in current.follow_ups) != 1:
+            state[prefix + "_warning_recovery_notice"] = "That item changed; review its current row."
+            return
+        items = tuple(replace(i, included=False, reviewed_fingerprint="")
+                      if n == position else i
+                      for n, i in enumerate(current.follow_ups))
+        result = replace(current, follow_ups=items)
+    elif action == "dedupe_sections":
+        seen, sections = set(), []
+        for section in current.sections:
+            if section.key in seen:
+                if section != next(s for s in sections if s.key == section.key):
+                    state[prefix + "_warning_recovery_notice"] = (
+                        "These sections differ. Retained both; re-import a corrected "
+                        "section definition instead of losing either.")
+                    return
+                continue
+            seen.add(section.key)
+            sections.append(section)
+        result = replace(current, sections=tuple(sections))
+    elif action == "dedupe_blocks":
+        seen, blocks = {}, []
+        for block in current.blocks:
+            previous = seen.get(block.key)
+            if previous is not None:
+                if block != previous:
+                    state[prefix + "_warning_recovery_notice"] = (
+                        "These blocks have different content. Retained both; restore "
+                        "a corrected source rather than discarding either edit.")
+                    return
+                continue
+            seen[block.key] = block
+            blocks.append(block)
+        result = replace(current, blocks=tuple(blocks))
+    else:
+        return
+    if result != current:
+        state[prefix + "_draft"] = result
+        state[prefix + "_period_editor_refresh"] = True
+
+
+def render_structure_and_followup_recovery(check, draft, prefix):
+    if not check.blocking:
+        return
+    code = check.code
+    from collections import Counter
+    from app.monthly_report_followups import output_followups, MAX_INCLUDED_FOLLOWUPS
+    if code == "sections":
+        if any(s.included for s in draft.sections):
+            return
+        eligible = [(n, s) for n, s in enumerate(draft.sections)
+                    if sum(other.key == s.key for other in draft.sections) == 1]
+        if not eligible:
+            st.caption("No uniquely owned section can be selected. Restore the "
+                       "original report structure before including content.")
+            return
+        position = st.selectbox("Section to include in this report",
+                                [n for n, _ in eligible],
+                                format_func=lambda n: draft.sections[n].title or
+                                draft.sections[n].key.replace("_", " ").capitalize(),
+                                key=prefix + "_warning_include_section_" + draft.fingerprint)
+        section = draft.sections[position]
+        st.button("Include this selected section", key=prefix +
+                  "_warning_include_section_confirm_" + draft.fingerprint,
+                  on_click=_apply_review_recovery,
+                  args=(prefix, draft, "include_section"),
+                  kwargs={"target": section.key})
+    elif code == "follow_up_section":
+        matches = [(n, item) for n, item in enumerate(draft.follow_ups)
+                   if item.key == check.block_key and item.included]
+        if len(matches) != 1:
+            st.caption("This item has no unique identity; repair colliding item identities first.")
+            return
+        index, item = matches[0]
+        section_key = "issues" if item.category == "issue" else "proposals"
+        options = [s for s in draft.sections if s.key == section_key]
+        if len(options) == 1 and not options[0].included:
+            st.button("Include " + section_key + " section", key=prefix +
+                      "_warning_missing_section_" + check.block_key + "_" + draft.fingerprint,
+                      on_click=_apply_review_recovery,
+                      args=(prefix, draft, "include_section"),
+                      kwargs={"target": section_key})
+        st.button("Leave this exact item out of this report", key=prefix +
+                  "_warning_omit_followup_" + check.block_key + "_" + draft.fingerprint,
+                  on_click=_apply_review_recovery,
+                  args=(prefix, draft, "omit_followup"),
+                  kwargs={"position": index, "target": item.key})
+    elif code == "follow_up_limit":
+        if len(output_followups(draft)) <= MAX_INCLUDED_FOLLOWUPS:
+            return
+        if check.block_key not in ("equipment_issues", "proposals"):
+            return
+        category = "issue" if check.block_key == "equipment_issues" else "proposal"
+        items = [(n, item) for n, item in enumerate(draft.follow_ups)
+                 if item.included and item.category == category and
+                 sum(other.key == item.key for other in draft.follow_ups) == 1]
+        if not items:
+            st.caption("No uniquely identified item can be left out here. "
+                       "Repair duplicate row identities first.")
+            return
+        selection = st.selectbox("Select a " + category + " to leave out",
+                                 [n for n, _ in items],
+                                 format_func=lambda n: ("Row " + str(n + 1) + " · " +
+                                     (draft.follow_ups[n].text[:90] or "Unfinished row")),
+                                 key=prefix + "_warning_limit_select_" +
+                                 category + "_" + draft.fingerprint)
+        item = draft.follow_ups[selection]
+        st.button("Leave out only this " + category + " · row " + str(selection + 1),
+                  key=prefix + "_warning_limit_confirm_" + category + "_" + draft.fingerprint,
+                  on_click=_apply_review_recovery,
+                  args=(prefix, draft, "omit_followup"),
+                  kwargs={"position": selection, "target": item.key})
+    elif code in ("duplicate_sections", "duplicate_blocks"):
+        entries = draft.sections if code == "duplicate_sections" else draft.blocks
+        collisions = {key for key, n in Counter(item.key for item in entries).items() if n > 1}
+        if not collisions:
+            return
+        groups = {key: [(n, item) for n, item in enumerate(entries) if item.key == key]
+                  for key in collisions}
+        same = all(all(item == group[0][1] for _, item in group)
+                   for group in groups.values())
+        for key, group in sorted(groups.items()):
+            st.caption(key.replace("_", " ") + " · conflicting positions " +
+                       ", ".join(str(n + 1) for n, _ in group) +
+                       (" · identical records" if all(item == group[0][1] for _, item in group)
+                        else " · different records; none will be discarded"))
+        if same:
+            st.button("Remove only byte-identical duplicate " +
+                      ("section" if code == "duplicate_sections" else "block") +
+                      " records", key=prefix + "_warning_dedupe_" + code + "_" + draft.fingerprint,
+                      on_click=_apply_review_recovery,
+                      args=(prefix, draft, "dedupe_sections" if code == "duplicate_sections"
+                            else "dedupe_blocks"))
+        else:
+            st.caption("These records differ. Keep the current draft and "
+                       "restore an original with unique structural identities; "
+                       "no matching-name record can be silently selected.")
