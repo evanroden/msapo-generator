@@ -492,3 +492,32 @@ def test_missing_source_warning_carries_exact_absent_id_even_with_duplicate_name
     assert len(seen["buttons"]) == 1
     assert seen["buttons"][0][1]["args"][-1] == ""
     assert missing in seen["captions"][0]
+
+
+def test_required_chart_builder_target_retains_report_and_needs_explicit_start(monkeypatch):
+    from app.monthly_report_org_warning import (
+        queue_required_chart, required_chart_start_marker)
+    from app.monthly_report_model import ResolvedBlock
+    from app import monthly_report_org_warning as org
+    from app import monthly_report_guided as guided
+    from types import SimpleNamespace
+    block = ResolvedBlock("org_chart", "This month")
+    report = synthetic_draft(block)
+    state = {"p_draft": report}
+    monkeypatch.setattr(org, "st", SimpleNamespace(session_state=state))
+    monkeypatch.setattr(guided, "_rich_text_scope", lambda prefix: "scope")
+    from app import monthly_report_organization_ui as organization
+    monkeypatch.setattr(organization, "_change_part",
+                        lambda prefix, active, key: state.__setitem__(active, key))
+    queue_required_chart("p", report.fingerprint, block.fingerprint, "scope")
+    assert state["p_organization_change"] == "org_chart"
+    assert state["p_draft"] == report
+    markup = required_chart_start_marker("p", block, "p_org_start")
+    assert 'data-field-kind="button"' in markup
+    assert "p_org_start" in markup
+    assert "enfra-page-correction-request" in markup
+    assert required_chart_start_marker("p", block, "p_org_start") == ""
+    state["p_required_chart_request"] = {
+        "scope": "scope", "revision": block.fingerprint, "nonce": "new"}
+    modified = replace(block, org_nodes=())
+    assert required_chart_start_marker("p", modified, "p_org_start") != ""

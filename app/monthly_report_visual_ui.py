@@ -101,6 +101,9 @@ def edit_org_chart(draft, block, prefix, assets, field, *, show_preview=True):
                 "Replace this report’s uploaded chart with the editable chart",
                 key=p + "_replace_ok",
             )
+            from app.monthly_report_org_warning import required_chart_start_marker
+            st.markdown(required_chart_start_marker(prefix, block, p + "_start"),
+                        unsafe_allow_html=True)
             if st.button(
                 "Start an editable org chart", key=p + "_start", disabled=not confirm or bool(problem)
             ):

@@ -322,3 +322,75 @@ def render_chart_text_safety(check, draft, prefix):
                           on_click=queue_chart_text_safety,
                           args=(prefix, block.key, block.fingerprint,
                                 index, field, check.code, _rich_text_scope(prefix)))
+
+
+def render_required_chart_link(check, draft, prefix):
+    """Required chart without nodes/page: open its existing builder, not a section."""
+    if not check.blocking or check.code != "required" or check.block_key != "org_chart":
+        return
+    sections = [section for section in draft.sections if section.included
+                for spec in section.blocks
+                if spec.key == "org_chart" and spec.required]
+    blocks = [block for block in draft.blocks if block.key == "org_chart"]
+    if len(sections) != 1 or len(blocks) > 1:
+        st.caption("The team chart has no unique report owner. Recover the original "
+                   "chart structure before selecting a replacement.")
+        return
+    if not draft.prepared_by.strip():
+        st.markdown("[Enter Prepared by first](#report-prepared-by)")
+        return
+    from app.monthly_report_model import ResolvedBlock
+    block = blocks[0] if blocks else ResolvedBlock("org_chart", "This month")
+    from app.monthly_report_guided import _rich_text_scope
+    st.button("Open the required team chart builder",
+              key=prefix + "_warning_required_chart_" + draft.fingerprint,
+              on_click=queue_required_chart,
+              args=(prefix, draft.fingerprint, block.fingerprint,
+                    _rich_text_scope(prefix)))
+
+
+def queue_required_chart(prefix, report_revision, block_revision, scope):
+    from app.monthly_report_guided import _rich_text_scope
+    from app.monthly_report_organization_ui import _change_part
+    from app.monthly_report_model import ResolvedBlock
+    state = st.session_state
+    draft = state.get(prefix + "_draft")
+    if draft is None or draft.fingerprint != report_revision or scope != _rich_text_scope(prefix):
+        state[prefix + "_chart_warning_notice"] = (
+            "The required team chart changed. Review its current warning.")
+        return
+    matches = [b for b in draft.blocks if b.key == "org_chart"]
+    if len(matches) > 1:
+        return
+    block = matches[0] if matches else ResolvedBlock("org_chart", "This month")
+    if block.fingerprint != block_revision or block.org_nodes:
+        state[prefix + "_chart_warning_notice"] = (
+            "The chart already changed. Nothing was selected or approved.")
+        return
+    _change_part(prefix, prefix + "_organization_change", "org_chart")
+    state[prefix + "_required_chart_request"] = {
+        "scope": scope, "revision": block_revision, "nonce": uuid4().hex}
+
+
+def required_chart_start_marker(prefix, block, native_key):
+    """One native Start chart control; unfolding it does not include a chart."""
+    from app.monthly_report_guided import _rich_text_scope
+    from app.monthly_report_correction_ui import native_warning_marker, _identity
+    request = st.session_state.get(prefix + "_required_chart_request")
+    if not isinstance(request, dict) or request.get("scope") != _rich_text_scope(prefix):
+        return ""
+    if request.get("revision") != block.fingerprint or block.org_nodes:
+        st.session_state.pop(prefix + "_required_chart_request", None)
+        st.session_state[prefix + "_chart_warning_notice"] = (
+            "That chart builder changed. Open its current native editor.")
+        return ""
+    marker = native_warning_marker(prefix, "required", block.key,
+                                   block.fingerprint, native_key, kind="button")
+    import re
+    match = re.search(r'id="(report-correction-[a-f0-9]{64})"', marker)
+    if not match:
+        return ""
+    st.session_state.pop(prefix + "_required_chart_request", None)
+    return marker + ('<a class="enfra-page-correction-request" data-report-identity="' +
+        _identity(prefix) + '" data-token="' + escape(request["nonce"], quote=True) +
+        '" href="#' + match.group(1) + '" hidden></a>')

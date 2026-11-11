@@ -1896,6 +1896,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 from app.monthly_report_org_warning import render_chart_links, render_chart_text_safety
                 render_chart_links(check, draft, prefix)
                 render_chart_text_safety(check, draft, prefix)
+                from app.monthly_report_org_warning import render_required_chart_link
+                render_required_chart_link(check, draft, prefix)
         from app.monthly_report_correction_ui import render_footer_repair_editor
         render_footer_repair_editor(draft, checks, prefix, field)
         from app.monthly_report_org_warning import finish_chart_notice
