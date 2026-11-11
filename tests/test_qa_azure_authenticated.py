@@ -56,3 +56,16 @@ def test_signed_out_requires_actual_denial_not_blank_ui():
         (401, base + "/?workflow=monthly", False, True),
     ):
         assert not signed_out_denial(status, url, base, served_marker=marker, websocket_opened=socket)
+
+
+def test_upgrade_probe_needs_an_auth_challenge_not_network_or_csp_failure():
+    from scripts.qa_azure_authenticated import websocket_handshake_denied
+    origin = "https://stage.example.invalid"
+    assert websocket_handshake_denied(401, origin, origin)
+    assert websocket_handshake_denied(403, origin, origin)
+    assert websocket_handshake_denied(302, origin + "/.auth/login/aad", origin)
+    assert websocket_handshake_denied(302, "https://login.microsoftonline.com/tenant/oauth2", origin)
+    for status, redirect in ((101, ""), (400, ""), (200, ""),
+                             (302, "https://unrelated.example.invalid/login"),
+                             (302, origin + "/other")):
+        assert not websocket_handshake_denied(status, redirect, origin)
