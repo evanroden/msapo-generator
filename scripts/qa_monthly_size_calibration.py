@@ -10,11 +10,16 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 import tempfile
+from pathlib import Path
 from dataclasses import replace
 from io import BytesIO
 
 from PIL import Image
+
+# Scripts invoked as "python scripts/..." must resolve the repository root.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.monthly_report_asset_review import approve_all_assets
 from app.monthly_report_docx import estimate_bytes, generate_report
