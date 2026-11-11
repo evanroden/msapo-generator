@@ -122,27 +122,36 @@ def edit_org_chart(draft, block, prefix, assets, field, *, show_preview=True):
     nodes = []
     remove_key = None
     with left:
-        for node in block.org_nodes:
+        from app.monthly_report_org_warning import chart_field_markup
+        request = st.session_state.get(prefix + "_chart_warning_request", {})
+        for index, node in enumerate(block.org_nodes):
             key = p + "_person_" + node.key
             with st.expander(
                 node.name or node.role or "New position",
-                # Existing people start as summaries, even in a small chart.
-                # A newly added blank position opens so its required fields
-                # remain immediately discoverable and keyboard accessible.
-                expanded=not (node.name or node.role),
+                # Expand only the exact requested node, not every same-named person.
+                expanded=(not (node.name or node.role) or
+                          (isinstance(request, dict)
+                           and request.get("block") == block.key
+                           and request.get("revision") == block.fingerprint
+                           and request.get("index") == index)),
             ):
+                name_key = field(key + "_name", node.name)
+                st.markdown(chart_field_markup(prefix, block, index, "name", name_key),
+                            unsafe_allow_html=True)
                 name = st.text_input(
-                    "Name", key=field(key + "_name", node.name), max_chars=100
+                    "Name", key=name_key, max_chars=100
                 )
+                role_key = field(key + "_role", node.role)
+                st.markdown(chart_field_markup(prefix, block, index, "role", role_key),
+                            unsafe_allow_html=True)
                 role = st.text_input(
-                    "Role / position",
-                    key=field(key + "_role", node.role),
-                    max_chars=100,
+                    "Role / position", key=role_key, max_chars=100,
                 )
+                team_key = field(key + "_team", node.team)
+                st.markdown(chart_field_markup(prefix, block, index, "team", team_key),
+                            unsafe_allow_html=True)
                 team = st.text_input(
-                    "Site or team (optional)",
-                    key=field(key + "_team", node.team),
-                    max_chars=100,
+                    "Site or team (optional)", key=team_key, max_chars=100,
                 )
                 choices = ["", *[n.key for n in block.org_nodes if n.key != node.key]]
                 labels = {
@@ -150,14 +159,14 @@ def edit_org_chart(draft, block, prefix, assets, field, *, show_preview=True):
                     or "New position"
                     for n in block.org_nodes
                 }
+                manager_key = field(
+                    key + "_manager", node.reports_to if node.reports_to in choices else "")
+                st.markdown(chart_field_markup(prefix, block, index, "manager", manager_key),
+                            unsafe_allow_html=True)
                 parent = st.selectbox(
-                    "Reports to",
-                    choices,
+                    "Reports to", choices,
                     format_func=lambda k: labels.get(k, "No manager in this chart"),
-                    key=field(
-                        key + "_manager",
-                        node.reports_to if node.reports_to in choices else "",
-                    ),
+                    key=manager_key,
                 )
                 nodes.append(
                     replace(node, name=name, role=role, team=team, reports_to=parent)
