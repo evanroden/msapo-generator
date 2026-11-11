@@ -292,6 +292,18 @@ def estimate_bytes(draft: ReportDraft, asset_loader: Callable[[str], bytes] | No
     )
 
 
+def estimated_output_ranges(estimated_bytes: int) -> tuple[tuple[int, int], tuple[int, int]]:
+    """Broad Word/PDF allowances around tracked bytes, not a trial render.
+
+    The existing estimate counts source artwork and approximated page images,
+    but packaged Word graphics and PDF compression can differ substantially.
+    These ranges are deliberately provisional; finished sizes remain exact.
+    """
+    tracked = max(1, estimated_bytes)
+    return ((max(1, tracked // 10), tracked * 7),
+            (max(1, tracked // 20), tracked * 6))
+
+
 def _picture(document, raw: bytes, *, width: float = 7, height: float = 8,
              inset: float = 0, page_break_before: bool = False) -> None:
     paragraph = document.add_paragraph()
