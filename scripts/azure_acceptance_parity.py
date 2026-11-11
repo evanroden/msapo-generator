@@ -12,7 +12,7 @@ from io import BytesIO
 import json
 from pathlib import Path
 import re
-from zipfile import ZipFile
+from zipfile import ZipFile, BadZipFile
 
 from lxml import etree
 import pymupdf as fitz
@@ -57,9 +57,13 @@ def word_fingerprint(blob: bytes) -> dict:
                 fonts.append((etree.QName(elem).localname, tuple(sorted(elem.attrib.items()))))
             for elem in root.xpath(".//w:pgSz|.//w:pgMar|.//w:tblW|.//w:tcW|.//w:gridCol|.//w:ind|.//w:spacing", namespaces=_NS):
                 geometry.append((etree.QName(elem).localname, tuple(sorted(elem.attrib.items()))))
-        media = [z.read(p) for p in z.namelist() if p.startswith("word/media/") and not p.endswith("/")]
-        colors = Counter()
-        for item in media:
+        media_paths = [p for p in z.namelist() if p.startswith("word/media/") and not p.endswith("/")]
+        embedding_paths = [p for p in z.namelist() if p.startswith("word/embeddings/") and not p.endswith("/")]
+        embedded_hashes = sorted(hashed(z.read(p)) for p in embedding_paths)
+        colors, media_hashes = Counter(), []
+        for media_path in media_paths:
+            item = z.read(media_path)
+            media_hashes.append(hashed(item))
             try:
                 with Image.open(BytesIO(item)) as im:
                     sample = im.convert("RGB")
@@ -71,8 +75,10 @@ def word_fingerprint(blob: bytes) -> dict:
                 colors["unreadable"] += 1
         return {"text": hashed("\x1f".join(text)), "tables": hashed(repr(tables)),
                 "table_count": len(tables), "fonts": hashed(repr(fonts)),
-                "geometry": hashed(repr(geometry)), "media": sorted(hashed(b) for b in media),
-                "media_count": len(media), "chromatic_fraction": round(colors["chromatic"] / max(1, colors["total"]), 4),
+                "geometry": hashed(repr(geometry)), "media": sorted(media_hashes),
+                "media_count": len(media_paths), "attachments": embedded_hashes,
+                "attachment_count": len(embedding_paths),
+                "chromatic_fraction": round(colors["chromatic"] / max(1, colors["total"]), 4),
                 "unreadable_media": colors["unreadable"]}
 
 
@@ -110,9 +116,11 @@ def compare_word(a: bytes, b: bytes) -> dict:
             "fonts": outcome(x["fonts"], y["fonts"]),
             "geometry": outcome(x["geometry"], y["geometry"]),
             "artwork": outcome((x["media"], x["unreadable_media"]), (y["media"], y["unreadable_media"])),
+            "attachments": outcome(x["attachments"], y["attachments"]),
             "grayscale": outcome(x["chromatic_fraction"], y["chromatic_fraction"]),
             "counts": {"baseline_tables": x["table_count"], "azure_tables": y["table_count"],
-                       "baseline_artwork": x["media_count"], "azure_artwork": y["media_count"]}}
+                       "baseline_artwork": x["media_count"], "azure_artwork": y["media_count"],
+                       "baseline_attachments": x["attachment_count"], "azure_attachments": y["attachment_count"]}}
 
 
 def compare_pdf(a: bytes, b: bytes, *, max_mean_pixel_error: float = 1.5) -> dict:
@@ -123,6 +131,8 @@ def compare_pdf(a: bytes, b: bytes, *, max_mean_pixel_error: float = 1.5) -> dic
     errors = []
     with fitz.open(stream=a, filetype="pdf") as base, fitz.open(stream=b, filetype="pdf") as azure:
         page_count = {"baseline": len(base), "azure": len(azure)}
+        base_attachments = sorted(hashed(base.embfile_get(i)) for i in range(base.embfile_count()))
+        azure_attachments = sorted(hashed(azure.embfile_get(i)) for i in range(azure.embfile_count()))
         for i in range(min(len(base), len(azure))):
             left = pdf_page_fingerprint(base[i])
             right = pdf_page_fingerprint(azure[i])
@@ -138,6 +148,7 @@ def compare_pdf(a: bytes, b: bytes, *, max_mean_pixel_error: float = 1.5) -> dic
               "fonts_captions": "PASS" if same_pages and comparisons["captions_and_fonts"] else "FAIL",
               "geometry": "PASS" if same_pages and comparisons["span_geometry"] and comparisons["page_size"] else "FAIL",
               "artwork_count": "PASS" if same_pages and comparisons["image_count"] else "FAIL",
+              "attachments": outcome(base_attachments, azure_attachments),
               "grayscale": "PASS" if same_pages and comparisons["chromatic_fraction"] else "FAIL",
               "page_counts": page_count}
     result["visual"] = ("PASS" if same_pages and all(
@@ -154,9 +165,9 @@ def load_identity(path: Path, expected_sha: str, expected_environment: str) -> d
         raise ValueError("Incorrect environment; refuse production or mislabeled target")
     if record.get("dataset_classification") != "synthetic":
         raise ValueError("Only synthetic data can be compared in public CI")
-    if not DIGEST.fullmatch(record.get("image_digest", "")):
+    if not isinstance(record.get("image_digest"), str) or not DIGEST.fullmatch(record["image_digest"]):
         raise ValueError("Verified image digest absent")
-    if not re.fullmatch(r"[a-zA-Z0-9_-]{8,72}", record.get("fixture_id", "")):
+    if not isinstance(record.get("fixture_id"), str) or not re.fullmatch(r"[a-zA-Z0-9_-]{8,72}", record["fixture_id"]):
         raise ValueError("Invalid fixture identity")
     return record
 
@@ -188,7 +199,7 @@ def compare_bundle(baseline: Path, azure: Path, *, sha: str, baseline_identity: 
             findings[key] = {"format": target.suffix.lower(), "status": "PASS" if all(v == "PASS" for v in verdicts) else "FAIL",
                              "checks": checks, "baseline_sha256": hashed(a.read_bytes()),
                              "azure_sha256": hashed(b.read_bytes())}
-        except (ValueError, OSError, RuntimeError, etree.XMLSyntaxError) as err:
+        except (ValueError, OSError, RuntimeError, BadZipFile, etree.XMLSyntaxError) as err:
             findings[key] = {"format": target.suffix.lower(), "status": "FAIL", "reason": type(err).__name__}
     statuses = [v["status"] for v in findings.values()]
     verdict = "FAIL" if "FAIL" in statuses else "NOT_RUN" if "NOT_RUN" in statuses else "PASS"
