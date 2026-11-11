@@ -373,6 +373,13 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
             "An included item refers to a source file that is no longer in this draft. "
             "Restore the original source file or remove its linked report content.", True, key))
     from app.monthly_report_correction_targets import source_target
+    from app.monthly_report_page_reference import page_identity
+    issue_page_sources = {
+        identity[0] for issue in draft.follow_ups
+        if issue.category == "issue" and issue.included
+        for ref in issue.references
+        if (identity := page_identity(ref)) is not None
+    }
     for source in draft.sources:
         facility = source.facility.strip().casefold()
         foreign_included = bool(facility and facility not in names and source.id in included_sources)
@@ -389,7 +396,7 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                 "Choose the exact sites in its source details, or remove the linked content.", True, source.id,(source_target(draft,source),)))
         # Classification and intake selections do not remove already-included
         # text/tables. They must not bypass the required foreign-site check.
-        if source.classification == "Reference only" or not source.selected_pages:
+        if (source.classification == "Reference only" or not source.selected_pages) and source.id not in issue_page_sources:
             continue
         from app.monthly_report_source_scope import contribution_dates_bound
         # Verified row/totals dates already bind every included use to this
