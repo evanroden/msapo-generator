@@ -44,6 +44,7 @@ resource metricRule 'Microsoft.Insights/metricAlerts@2018-03-01' = if (deployRul
         {
           name: 'metricThreshold'
           criterionType: 'StaticThresholdCriterion'
+          name: 'metricThreshold'
           metricName: metricName
           metricNamespace: metricNamespace
           timeAggregation: aggregation
