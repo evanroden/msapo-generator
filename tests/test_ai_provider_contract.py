@@ -216,3 +216,24 @@ def test_disabled_provider_keeps_local_text_reading_available(monkeypatch):
     # The same file model and deterministic assembly remain importable.
     assert callable(monthly_report_ai.normalize_facts)
     assert callable(receipt_analyzer.normalize_receipt_response)
+
+
+def test_disabled_pdf_reader_refuses_before_fallback_raster(monkeypatch):
+    monkeypatch.setenv("EPC_AI_PROVIDER", "disabled")
+    monkeypatch.setattr(ocr, "ANTHROPIC_API_KEY", "synthetic-key")
+    monkeypatch.setattr(
+        ocr, "_ocr_pdf_via_page_images",
+        lambda *args, **kwargs: pytest.fail("provider refusal cannot raster-fallback"),
+    )
+    with pytest.raises(AIProviderConfigurationError):
+        ocr.extract_text_from_pdf(_scan_pdf())
+
+
+def test_disabled_host_diagnostic_skips_outbound_probe(monkeypatch):
+    from scripts import host_check
+    monkeypatch.setenv("EPC_AI_PROVIDER", "disabled")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "synthetic-key")
+    monkeypatch.setattr(anthropic, "Anthropic", _never_contact_provider)
+    report = host_check.Report()
+    host_check.check_anthropic(report)
+    assert report.failures == 0
