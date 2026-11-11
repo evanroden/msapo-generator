@@ -60,14 +60,42 @@ def candidates(draft, key, code):
     if block.source == "Omit":
         return ()
     targets = []
+    primary_specs = [spec for section in draft.sections if section.included
+                     for spec in section.blocks if spec.key == key]
+    primary = primary_specs[0] if len(primary_specs) == 1 else None
+    if len(primary_specs) > 1:
+        return ()  # Duplicate owners must be resolved before editing any row.
+    from app.monthly_report_content_policy import (
+        ambiguous_price_columns, table_price_columns, table_has_pricing)
     for number, table in ((-1, None), *enumerate(block.extra_tables)):
         rows = block.rows if table is None else table.rows
         reference = "" if table is None else table.reference
+        headings = (tuple(spec.title for spec in primary.columns) if table is None
+                    and primary is not None else () if table is None else table.columns)
+        price_columns = set(table_price_columns(headings, rows)) if code == "pricing" else set()
+        ambiguous = set(ambiguous_price_columns(headings, rows)) if code == "pricing" else set()
         for n, row in enumerate(rows):
-            for column, value in enumerate(row):
-                if unsafe(value, code):
-                    targets.append(CellTarget(report_identity(draft), key, block.fingerprint,
-                        number, reference, n, column, value, code))
+            direct = {c for c, value in enumerate(row) if unsafe(value, code)}
+            flagged = set(direct)
+            if code == "pricing":
+                # The existing price gate can detect an amount spread across
+                # separate table cells (e.g. Total | 500) even if neither cell
+                # alone matches contains_price. Bind the exact physical amount
+                # position rather than asking to edit unrelated report text.
+                row_flagged = table_has_pricing(headings, (row,),
+                    work_orders=bool(primary and table is None
+                                    and primary.type == "work_order_grid"))
+                if row_flagged:
+                    flagged.update(c for c in price_columns | ambiguous
+                                   if c < len(row) and str(row[c]).strip())
+                    if not flagged:
+                        numeric = [c for c, value in enumerate(row)
+                                   if re.search(r"\\d", str(value))]
+                        if numeric:
+                            flagged.add(numeric[-1])
+            for column in sorted(flagged):
+                targets.append(CellTarget(report_identity(draft), key, block.fingerprint,
+                    number, reference, n, column, row[column], code))
     return tuple(targets)
 
 
@@ -92,7 +120,7 @@ def resolve(draft, target):
     row = rows[target.row]
     if not 0 <= target.column < len(row) or row[target.column] != target.value:
         return None
-    if not unsafe(target.value, target.code):
+    if target not in candidates(draft, target.block, target.code):
         return None
     return block
 
