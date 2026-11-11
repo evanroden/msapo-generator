@@ -45,7 +45,10 @@ if 'warning-native_draft' not in st.session_state:
     st.session_state['warning-native_draft'] = draft(
         (ResolvedBlock('work_orders','This month',rows=(('Pump','Maintained'),)),),
         (excluded,))
-current = st.session_state['warning-native_draft']
+if PREFIX+'_draft' not in st.session_state:
+    st.session_state[PREFIX+'_draft'] = st.session_state['warning-native_draft']
+current = st.session_state[PREFIX+'_draft']
+st.session_state['warning-native_draft'] = current
 for check in preflight(current):
     render_structure_and_followup_recovery(check,current,PREFIX)
 """
@@ -146,5 +149,5 @@ render_source_recovery_links(check,current,PREFIX)
     action(app, "Open Manage source files · source lost-source-a").click().run()
     assert not app.exception
     assert app.session_state["warning-native_batch_files_open"] is True
-    assert app.session_state["warning-native_evidence_selected"] == ""
+    assert app.session_state.get("warning-native_evidence_selected", "") == ""
     assert app.session_state["warning-native_draft"].sources == ()
