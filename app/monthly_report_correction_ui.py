@@ -365,7 +365,9 @@ def render_source_recovery_links(check, draft, prefix):
                    "the same name is not automatically the same source.")
         st.button("Open Manage source files · " + label,
             key=prefix + "_recover_source_" + sha256(
-                (report_identity(draft) + "\\0" + check.code + "\\0" + source_id).encode()).hexdigest(),
+                (report_identity(draft) + "\\0" + check.code + "\\0" +
+                 check.block_key + "\\0" + source_id + "\\0" +
+                 repr(check.targets) + "\\0" + check.message).encode()).hexdigest(),
             on_click=_open_manager,
             args=(prefix + "_batch_files_open", prefix + "_evidence_selected",
                   source_id if identity else ""))
