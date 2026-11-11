@@ -250,3 +250,115 @@ def render_text_warning_links(check, draft, prefix):
     st.markdown('<a class="enfra-picture-correction-link" data-report-identity="' +
         _identity(prefix) + '" href="#' + destination +
         '">Edit this exact report text</a>', unsafe_allow_html=True)
+
+
+# Exact native controls for non-photo blockers. The revision is part of the
+# marker: a stale warning must never open a newer sibling or reused widget.
+def native_warning_marker(prefix, code, owner, revision, field_key, *, kind="button"):
+    if kind not in ("button", "input", "textarea", "combobox"):
+        raise ValueError("Unsupported native correction field")
+    address = sha256((prefix + "\\0" + code + "\\0" + owner + "\\0" + revision).encode()).hexdigest()
+    return ('<span class="enfra-picture-correction" id="report-correction-' + address +
+            '" data-report-identity="' + _identity(prefix) +
+            '" data-field-kind="' + kind + '" data-field-key="' +
+            escape(field_key, quote=True) + '" aria-hidden="true"></span>')
+
+
+def render_native_warning_links(check, draft, prefix):
+    """Only link a current, unique owner that has an authoritative native field."""
+    if not check.blocking:
+        return
+    from app.monthly_report_correction_targets import report_identity
+    code, owner = check.code, check.block_key
+    if code == "prepared_by":
+        if draft.prepared_by.strip():
+            return
+        owner, revision, label = "report", report_identity(draft), "Enter Prepared by"
+    elif code in {"carried_period", "photo_layout", "source", "library_save"}:
+        matches = [block for block in draft.blocks if block.key == owner]
+        if len(matches) != 1 or matches[0].source == "Omit":
+            return
+        block = matches[0]
+        if code == "carried_period":
+            from app.monthly_report_setup import carried_period
+            if not carried_period(block, draft.period):
+                return
+        elif code == "photo_layout":
+            if type(block.photos_per_page) is int and 1 <= block.photos_per_page <= 6:
+                return
+        elif code == "source":
+            allowed = [spec for section in draft.sections if section.included
+                       for spec in section.blocks if spec.key == owner]
+            if len(allowed) != 1 or block.source in allowed[0].allowed_sources:
+                return
+        elif not block.pending_library_save:
+            return
+        revision, label = block.fingerprint, {
+            "carried_period": "Confirm or correct this carried update",
+            "photo_layout": "Correct this block's photo layout",
+            "source": "Correct this block's source choice",
+            "library_save": "Keep this block in this report without replacing the library",
+        }[code]
+    else:
+        return
+    destination = "report-correction-" + sha256(
+        (prefix + "\\0" + code + "\\0" + owner + "\\0" + revision).encode()).hexdigest()
+    st.markdown('<a class="enfra-picture-correction-link" data-report-identity="' +
+                _identity(prefix) + '" href="#' + destination + '">' +
+                escape(label) + '</a>', unsafe_allow_html=True)
+
+
+def render_source_recovery_links(check, draft, prefix):
+    """A lost original has no live page editor; open its one source manager."""
+    if not check.blocking or check.code not in {
+            "source_missing", "client_source_missing", "unavailable_source"}:
+        return
+    from app.monthly_report_source_manager_ui import _open_manager
+    from app.monthly_report_model import used_source_ids
+    from dataclasses import replace
+    from app.monthly_report_correction_targets import report_identity
+    known = {source.id: source for source in draft.sources}
+    if check.code == "unavailable_source":
+        ids = tuple(dict.fromkeys(getattr(target, "source_id", "")
+                                  for target in check.targets if getattr(target, "source_id", "")))
+    elif check.code == "source_missing":
+        targets = [block for block in draft.blocks if block.key == check.block_key]
+        items = [item for item in draft.follow_ups if item.key == check.block_key]
+        if len(targets) + len(items) != 1:
+            ids = ()
+        else:
+            refs = used_source_ids(replace(draft,
+                blocks=tuple(targets), follow_ups=tuple(items)))
+            ids = tuple(sorted(refs - set(known)))
+    else:
+        # The preflight check already records the exact picture occurrences.
+        # A missing original must not be recovered by selecting equal bytes.
+        ids = ()
+        from app.monthly_report_correction_targets import resolve_target
+        for target in check.targets:
+            resolved = resolve_target(draft, target)
+            if resolved is None:
+                continue
+            block, index, _ = resolved
+            from app.monthly_report_asset_review import asset_context
+            for reference in asset_context(block, index):
+                parts = reference.split(":")
+                if len(parts) == 3 and parts[1].isdigit() and parts[0] not in known:
+                    ids += (parts[0],)
+        ids = tuple(dict.fromkeys(ids))
+    if not ids:
+        st.caption("No unique original source can be selected from this warning. Keep the "
+                   "linked content unchanged until its provenance is restored or explicitly remove it.")
+        return
+    for source_id in ids:
+        identity = known.get(source_id)
+        label = identity.filename if identity else "source " + source_id
+        st.caption("Original required: " + label + ". Re-upload the original source, "
+                   "or deliberately remove/relink its dependent content. A new file with "
+                   "the same name is not automatically the same source.")
+        st.button("Open Manage source files · " + label,
+            key=prefix + "_recover_source_" + sha256(
+                (report_identity(draft) + "\\0" + check.code + "\\0" + source_id).encode()).hexdigest(),
+            on_click=_open_manager,
+            args=(prefix + "_batch_files_open", prefix + "_evidence_selected",
+                  source_id if identity else ""))
