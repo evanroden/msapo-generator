@@ -24,6 +24,10 @@ _ROLE = ("roles", "http://schemas.microsoft.com/ws/2008/06/identity/claims/role"
 RESOURCE_BOUNDARIES_INTEGRATED = False
 
 # Values are proposed, not yet ENFRA-approved Entra app-role IDs.
+# This cannot be enabled by configuration alone. A05 must make a reviewed
+# code change once every persisted data path authorizes per resource.
+RESOURCE_BOUNDARIES_INTEGRATED = False
+
 ACTION_ROLES = {
     "report.open": frozenset({"MSAPO.ReportReader", "MSAPO.ReportEditor"}),
     "report.edit": frozenset({"MSAPO.ReportEditor"}),
@@ -178,8 +182,10 @@ def require_streamlit_entry() -> Principal | None:
     try:
         principal = entry_principal(st.context.headers, environment)
         if (principal is None or not RESOURCE_BOUNDARIES_INTEGRATED
+                or not _resource_boundaries_implemented()
                 or environment.get("MSAPO_AUTHZ_DATA_BOUNDARY_READY") != "verified"):
-            # An entry check is not enough: current legacy storage is shared.
+            # Both code-validated A05 storage guards and an intentional
+            # deployment readiness value are required. Neither suffices alone.
             raise AccessDenied("Access denied")
         key = "_msapo_azure_identity_key"
         if st.session_state.get(key) not in (None, principal.key):
