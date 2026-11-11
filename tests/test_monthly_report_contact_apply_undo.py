@@ -326,3 +326,20 @@ def test_empty_omit_placeholder_undo_preserves_new_report_rows_and_notes(scenari
     assert contacts(directory.apply_contacts(
         restored, incoming, keep_report_rows=True)).rows == (
             *incoming.rows, authored)
+
+
+def test_undo_preserves_later_report_title_and_independent_section_title(scenario):
+    _, _, before, incoming = scenario
+    applied = directory.apply_contacts(before, incoming)
+    receipt = undo.capture_directory_apply(before, applied, len(incoming.rows))
+    later_profile = replace(applied.profile, title="Independent revised report title")
+    activity = next(section for section in applied.sections
+                    if section.key != "organization")
+    changed = replace(applied, profile=later_profile, sections=tuple(
+        replace(section, title="Independent revised section title")
+        if section.key == activity.key else section for section in applied.sections))
+    restored = undo.undo_directory_apply(changed, receipt)
+    assert restored.profile == later_profile
+    assert next(s for s in restored.sections if s.key == activity.key).title == (
+        "Independent revised section title")
+    assert contacts(restored).rows == contacts(before).rows
