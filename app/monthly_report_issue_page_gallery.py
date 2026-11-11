@@ -101,6 +101,15 @@ def render_page_gallery(draft, options, selected, p, widget_key, identity, field
             format_func=lambda n: f"Pages {n + 1}–{min(n + PAGE_SIZE, len(pages))} of {len(pages)}")
             if len(ranges) > 1 else 0)
         shown = pages[start:start + PAGE_SIZE]
+        # A cached derivative is not proof that the immutable saved original
+        # is still present. Check it once per visible file/page group before
+        # displaying thumbnail bytes; never change the selection on failure.
+        original_available = True
+        if source.suffix in PREVIEWABLE:
+            try:
+                sources.source_bytes(draft.profile, source)
+            except (OSError, ValueError):
+                original_available = False
         preview_key = p + "_gallery_preview"
         preview_ref = st.session_state.get(preview_key)
         selected = set(selected)
@@ -122,7 +131,7 @@ def render_page_gallery(draft, options, selected, p, widget_key, identity, field
                           identity, registration["token"]),
                 )
                 picture = None
-                if source.suffix in PREVIEWABLE:
+                if source.suffix in PREVIEWABLE and original_available:
                     try:
                         picture = sources.page_image(
                             draft.profile, sources.SourceContent(source), number,
@@ -131,6 +140,10 @@ def render_page_gallery(draft, options, selected, p, widget_key, identity, field
                         st.warning("Preview unavailable for " + label +
                                    ". Restore the original or reopen Manage source files. "
                                    "Your evidence selection was not changed.")
+                elif source.suffix in PREVIEWABLE:
+                    st.warning("Preview unavailable for " + label +
+                               ". Restore the saved original in Manage source files. "
+                               "Your evidence selection was not changed.")
                 else:
                     st.caption("No raster thumbnail for " + label +
                                ". Inspect the original in Manage source files.")
