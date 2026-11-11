@@ -139,9 +139,17 @@ def render_chart_links(check, draft, prefix):
                       on_click=resolve_representation,
                       args=(prefix, block.key, block.fingerprint, choice))
     else:
-        st.caption("The chart identity or shape is not editable through a unique "
-                   "native position. Keep both originals and restore a chart "
-                   "with unique position IDs before generating.")
+        keys = [node.key for node in block.org_nodes]
+        if not all(key and n == 1 for key, n in Counter(keys).items()):
+            st.button("Repair duplicate chart position identities",
+                      key=prefix + "_warning_duplicate_chart_" + block.fingerprint,
+                      on_click=queue_duplicate_chart,
+                      args=(prefix, block.key, block.fingerprint,
+                            check.message, _rich_text_scope(prefix)))
+        else:
+            st.caption("The chart identity or shape is not editable through a unique "
+                       "native position. Keep both originals and restore a chart "
+                       "with unique position IDs before generating.")
 
 
 def resolve_representation(prefix, block_key, revision, choice):
@@ -176,3 +184,86 @@ def finish_chart_notice(prefix):
     notice = st.session_state.pop(prefix + "_chart_warning_notice", None)
     if notice:
         st.warning(notice)
+
+
+def queue_duplicate_chart(prefix, key, revision, message, scope):
+    from app.monthly_report_guided import _rich_text_scope
+    from app.monthly_report_organization_ui import _change_part
+    draft = st.session_state.get(prefix + "_draft")
+    block = current_chart(draft, key, revision, message) if draft else None
+    if not block or scope != _rich_text_scope(prefix):
+        st.session_state[prefix + "_chart_warning_notice"] = (
+            "The chart identities changed before this action. Retained the current chart.")
+        return
+    ids = [n.key for n in block.org_nodes]
+    if all(n and v == 1 for n, v in Counter(ids).items()):
+        return
+    _change_part(prefix, prefix + "_organization_change", "org_chart")
+    st.session_state[prefix + "_duplicate_chart_recovery"] = revision
+
+
+def repair_duplicate_positions(block, prefix):
+    """Return (block, handled); chart fields have unique controls only afterward."""
+    keys = [item.key for item in block.org_nodes]
+    groups = Counter(keys)
+    if all(key and count == 1 for key, count in groups.items()):
+        return block, False
+    st.warning("Chart position identifiers are duplicated or blank. The exact "
+               "physical positions are shown below. Every person and role is retained; "
+               "ambiguous reporting lines need an explicit manager selection.")
+    p = prefix + "_org_identity_recovery_" + block.fingerprint
+    nodes = block.org_nodes
+    reserved = set(key for key, count in groups.items() if count == 1 and key)
+    replacements = []
+    for index, node in enumerate(nodes):
+        if node.key and groups[node.key] == 1:
+            replacements.append(node.key)
+            continue
+        candidate = "chart-position-" + str(index + 1) + "-" + sha256(
+            (block.fingerprint + ":position:" + str(index)).encode()).hexdigest()[:8]
+        while candidate in reserved:
+            candidate += "_"
+        reserved.add(candidate)
+        replacements.append(candidate)
+    selections = []
+    unresolved = False
+    for n, item in enumerate(nodes):
+        st.caption("Position " + str(n + 1) + " · " +
+                   (" / ".join(filter(None, (item.name, item.role))) or "Untitled") +
+                   " · original ID " + (item.key or "(blank)") +
+                   " · corrected ID " + replacements[n])
+        candidates = [i for i in range(len(nodes)) if i != n]
+        matches = [i for i, other in enumerate(nodes)
+                   if other.key and other.key == item.reports_to]
+        if not item.reports_to:
+            chosen = -1
+        elif len(matches) == 1:
+            chosen = matches[0]
+        else:
+            chosen = "review"
+        choices = ["review", -1, *candidates] if chosen == "review" else [-1, *candidates]
+        selection = st.selectbox("Reports to for position " + str(n + 1),
+            choices, index=choices.index(chosen),
+            format_func=lambda option: ("Choose manager explicitly" if option == "review"
+                else "No manager" if option == -1 else
+                "Position " + str(option + 1) + " · " +
+                (nodes[option].name or nodes[option].role or "(unnamed)")),
+            key=p + "_manager_" + str(n))
+        selections.append(selection)
+        unresolved = unresolved or selection == "review"
+    if st.button("Confirm unique position IDs and reviewed reporting lines",
+                 disabled=unresolved, key=p + "_confirm"):
+        updated = tuple(replace(node, key=replacements[n],
+                          reports_to=("" if manager == -1 else replacements[manager]))
+                        for n, (node, manager) in enumerate(zip(nodes, selections)))
+        from app.monthly_report_visuals import validate_org
+        try:
+            validate_org(updated)
+        except ValueError as exc:
+            st.warning(str(exc) + " Reporting lines must be corrected before applying.")
+            return block, True
+        st.session_state.pop(prefix + "_duplicate_chart_recovery", None)
+        st.session_state[prefix + "_period_editor_refresh"] = True
+        return replace(block, org_nodes=updated,
+                       reviewed_fingerprint="", client_reviewed_fingerprint=""), True
+    return block, True
