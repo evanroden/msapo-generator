@@ -74,13 +74,15 @@ def _exercise(browser_type, engine):
                 # Browser upload-to-useful-thumbnail includes the native
                 # clicks needed to reveal the requested evidence page.
                 alpha = gallery.source_pdf(f"latency-{sequence}-{engine}", 5)
+                beta = gallery.source_pdf(f"control-{sequence}-{engine}", 2)
                 manager = page.get_by_role("button", name="Manage source files", exact=True)
                 if manager.count():
                     manager.click()
                 uploader = page.get_by_test_id("stFileUploader").filter(has_text="Add source files")
                 upload_started = time.perf_counter()
                 uploader.locator('input[type="file"]').set_input_files([
-                    {"name": "synthetic-preview-latency.pdf", "mimeType": "application/pdf", "buffer": alpha}])
+                    {"name": "synthetic-preview-latency.pdf", "mimeType": "application/pdf", "buffer": alpha},
+                    {"name": "synthetic-preview-control.pdf", "mimeType": "application/pdf", "buffer": beta}])
                 expect(page.get_by_role("combobox", name="File to review", exact=True)).to_be_visible(timeout=90000)
                 page.get_by_role("button", name="Done with source files", exact=True).click()
                 issue = page.locator(gallery.ISSUES)
@@ -111,7 +113,8 @@ def _exercise(browser_type, engine):
                                 "native_upload_to_requested_decoded_thumbnail_seconds": round(thumbnail_seconds, 4),
                                 "edit_commit_to_current_section_seconds": round(time.perf_counter() - update_started, 4),
                                 "first_section_image": first, "thumbnail": thumb, "latest_section_image": latest,
-                                "manual_edit_retained": True, "upload_sha256": sha256(alpha).hexdigest()})
+                                "manual_edit_retained": True, "upload_sha256": sha256(alpha).hexdigest(),
+                                "second_upload_sha256": sha256(beta).hexdigest()})
             except Exception:
                 OUT.mkdir(parents=True, exist_ok=True)
                 page.screenshot(path=str(OUT / f"{engine}-{sequence + 1}-failure.png"))
