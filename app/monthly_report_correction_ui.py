@@ -302,14 +302,25 @@ def section_title_revision(section):
                         section.divider_asset, section.appendix)).encode()).hexdigest()
 
 
+def section_title_problems(section):
+    if not section.included:
+        return ()
+    from app.monthly_report_non_narrative_recovery import unsafe
+    return tuple(code for code in ("pricing", "placeholder", "text_character")
+                 if unsafe(section.title, code))
+
+
 def edit_missing_section_title(section, prefix, field):
-    """No editor for an existing literal title; repair only a blank included one."""
+    """Repair blank or unsafe headings without remapping original section IDs."""
     from dataclasses import replace
-    if not section.included or section.title.strip():
+    problems = section_title_problems(section)
+    if not section.included or (section.title.strip() and not problems):
         return section
     key = prefix + "_repair_section_title_" + section.key
-    st.markdown(native_warning_marker(prefix, "title", section.key,
-                                      section_title_revision(section), key, kind="input"),
+    revision = section_title_revision(section)
+    st.markdown("".join(native_warning_marker(
+                    prefix, code, section.key, revision, key, kind="input")
+                    for code in (("title",) if not section.title.strip() else problems)),
                 unsafe_allow_html=True)
     title = st.text_input("Title for section " + section.key.replace("_", " "),
                           value=section.title, key=field(key, section.title))
@@ -326,12 +337,16 @@ def render_native_warning_links(check, draft, prefix):
         if draft.prepared_by.strip():
             return
         owner, revision, label = "report", report_identity(draft), "Enter Prepared by"
-    elif code == "title":
+    elif code in {"title", "pricing", "placeholder", "text_character"}:
         matching = [section for section in draft.sections
-                    if section.key == owner and section.included and not section.title.strip()]
+                    if section.key == owner and section.included and
+                    ((code == "title" and not section.title.strip()) or
+                     code in section_title_problems(section))]
         if len(matching) != 1 or sum(item.key == owner for item in draft.sections) != 1:
             return
-        revision, label = section_title_revision(matching[0]), "Enter this section's title"
+        revision, label = section_title_revision(matching[0]), (
+            "Enter this section's title" if code == "title" else
+            "Correct unsafe text in this section title")
     elif code in {"carried_period", "photo_layout", "source", "library_save"}:
         matches = [block for block in draft.blocks if block.key == owner]
         if len(matches) != 1:
