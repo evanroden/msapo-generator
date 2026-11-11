@@ -6,6 +6,10 @@ remote AI, shared master, or live production writes are used.
 """
 from dataclasses import replace
 from io import BytesIO
+import hashlib
+import json
+import os
+from pathlib import Path
 
 from docx import Document
 import numpy as np
@@ -155,6 +159,31 @@ def test_scorecards_mbcx_and_water_keep_nine_occurrences_once_after_reopen(
         reopened, acknowledged_fingerprint=reopened.fingerprint,
         asset_loader=loader)
     assert package.docx and package.pdf, package.pdf_error
+
+    # In the focused hosted gate retain actual generated derivatives, source
+    # SHA receipts and environment rather than only a green pytest result.
+    if os.environ.get("MSAPO_JOINED_OUTPUT"):
+        target = Path(os.environ["MSAPO_JOINED_OUTPUT"])
+        target.mkdir(parents=True, exist_ok=True)
+        (target / "joined-synthetic.docx").write_bytes(package.docx)
+        (target / "joined-synthetic.pdf").write_bytes(package.pdf)
+        source_manifest = {}
+        for destination, label, _ in routes:
+            raw = original_files[destination]
+            (target / f"original-{label}.pdf").write_bytes(raw)
+            source_manifest[destination] = {
+                "file": f"original-{label}.pdf",
+                "sha256": hashlib.sha256(raw).hexdigest(),
+                "pages": 3,
+            }
+        (target / "manifest.json").write_text(json.dumps({
+            "synthetic_only": True,
+            "docx_sha256": hashlib.sha256(package.docx).hexdigest(),
+            "pdf_sha256": hashlib.sha256(package.pdf).hexdigest(),
+            "sources": source_manifest,
+            "reopened": reopened == draft,
+            "expected_section_order": ["scorecards", "mbcx", "water", "issues"],
+        }, indent=2))
 
     word = Document(BytesIO(package.docx))
     assert len(word.inline_shapes) == 9
