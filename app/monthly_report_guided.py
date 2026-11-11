@@ -680,6 +680,12 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
         for n, table in enumerate(block.extra_tables):
             from app.monthly_report_table_column_recovery import edit_missing_positions
             table = edit_missing_positions(table, block, n, prefix, field)
+            if not table.columns:
+                # A headerless imported table has no native grid schema yet.
+                # Keep every positional source cell until headings are explicitly
+                # confirmed; never round-trip an empty dataframe into its rows.
+                tables.append(table)
+                continue
             from app.monthly_report_table_review_ui import review_table_headings
             table = review_table_headings(table, key + f"_imported_{n}", field)
             if spec.key == "work_orders" or len(block.extra_tables) > 1:
