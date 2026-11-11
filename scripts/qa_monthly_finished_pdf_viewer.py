@@ -57,7 +57,7 @@ def assert_download_matches_view(raw: bytes, viewed_jpeg: bytes, expected: str):
     Comparing only captions or a different A/B JPEG digest misses a viewer
     that displays an older PDF while the download already serves new bytes.
     """
-    assert raw.startswith(b"%PDF-") and viewed_jpeg.startswith(b"\\xff\\xd8")
+    assert raw.startswith(b"%PDF-") and viewed_jpeg.startswith(bytes((0xFF, 0xD8)))
     with pymupdf.open(stream=raw, filetype="pdf") as doc:
         assert len(doc) == 1, "Synthetic viewer must display one PDF page."
         page = doc[0]
