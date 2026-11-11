@@ -219,6 +219,147 @@ def test_vendor_invoice_amounts_never_enter_client_word_output(monkeypatch):
     assert not any(c.blocking for c in preflight(report))
 
 
+def test_saved_status_only_ar_word_and_real_pdf_exclude_invoice_amounts(monkeypatch, tmp_path):
+    """Output acceptance: status and aging dates survive, monetary inputs do not."""
+    from app.monthly_report_docx import generate_report
+    from app.monthly_report_library import load_snapshot, save_snapshot
+    from zipfile import ZipFile
+    from lxml import etree
+    import pymupdf as fitz
+    import re
+
+    monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path))
+    report, block, _, _, original_bytes = prepared(monkeypatch)
+    saved = save_snapshot(report, expected_revision=0, entered_editor='Synthetic reviewer')
+    reopened = load_snapshot(report.profile.contract, report.profile.key, report.period)
+    assert reopened.revision == saved.revision
+    assert reopened.draft == report
+    assert check_review_binding(reopened.draft) is None
+    assert len(original_bytes) > 0
+
+    package = generate_report(reopened.draft,
+                              acknowledged_fingerprint=reopened.draft.fingerprint)
+    assert package.docx and package.pdf, package.pdf_error
+    with ZipFile(BytesIO(package.docx)) as archive:
+        visible = []
+        for name in archive.namelist():
+            if name.startswith('word/') and name.endswith('.xml'):
+                root = etree.fromstring(archive.read(name))
+                visible.extend(node.text or '' for node in root.iter()
+                               if node.tag.endswith('}t'))
+        word_text = ' '.join(visible)
+    with fitz.open(stream=package.pdf, filetype='pdf') as pages:
+        assert len(pages) >= 1
+        pdf_text = ' '.join(page.get_text() for page in pages)
+        for page in pages:
+            image = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5))
+            assert image.width > 0 and image.height > 0
+    for text in (word_text, pdf_text):
+        assert 'Invoice INV-101' in text
+        assert 'Partially paid' in text
+        assert 'aging as of 2026-10-28' in text
+        assert 'Credit' in text
+        assert 'due date needs review' in text
+        assert not re.search(r'(?<!\\d)(?:500|350|250|100|25)(?!\\d)', text)
+        assert '
+    report, _, _, _, _ = prepared(monkeypatch, filename="same-name.csv")
+    other = replace(report.sources[0], id="c" * 64, sha256="c" * 64)
+    report = replace(report, sources=(other,))
+    assert check_review_binding(report) is not None
+
+
+@pytest.mark.parametrize("bad_block", ("table", "narrative", "caption"))
+def test_other_sections_keep_strict_price_rejection(monkeypatch, bad_block):
+    report, _, _, _, _ = prepared(monkeypatch)
+    from app.monthly_report_model import ColumnSpec
+    extra = SectionSpec("maintenance", "5", "Synthetic maintenance", (
+        BlockSpec("vendor_reports", "table", columns=(
+            ColumnSpec("facility", "Facility"), ColumnSpec("item", "Item"),
+            ColumnSpec("status", "Status"))),))
+    if bad_block == "table":
+        suspicious = ResolvedBlock("vendor_reports", "This month",
+                                   rows=(("Demo North", "Vendor invoice total", "$125"),))
+    elif bad_block == "narrative":
+        suspicious = ResolvedBlock("vendor_reports", "This month",
+                                   text="Vendor invoice total $125")
+    else:
+        suspicious = ResolvedBlock("vendor_reports", "This month",
+                                   text="Photo caption: vendor invoice total $125")
+    extended = replace(report, sections=(*report.sections, extra),
+                       blocks=(*report.blocks, suspicious))
+    assert any(check.blocking and check.code == "pricing" for check in preflight(extended))
+    from app.monthly_report_docx import assemble_docx
+    with pytest.raises(ValueError):
+        assemble_docx(extended, acknowledged_fingerprint=extended.fingerprint)
+
+
+def test_vendor_amount_policy_is_not_a_hidden_contract_exception():
+    scope = FinancialScope("Synthetic contract", "north")
+    review = SourceFinancialReview("source-A", "a" * 64, scope, "vendor_invoice", "internal")
+    locator = "accounts_receivable:row:1"
+    content = sha256(b"synthetic vendor amount").hexdigest()
+    evidence = (MonetaryEvidence(review.source_id, review.fingerprint, locator, content,
+                                 "vendor_invoice_total"),)
+    decision = financial_permission(
+        purpose="monthly_export", scope=scope, locator=locator,
+        content_sha256=content, evidence=evidence, reviews=(review,),
+        current_sources=((review.source_id, review.source_sha256),))
+    assert not decision.allowed
+    assert "Vendor-invoice totals" in decision.reason
+
+
+@pytest.mark.parametrize("value", ("", "Unknown", "N/A", "not available", "—", "pending"))
+def test_unknown_money_is_explicitly_not_zero(value):
+    assert _money(value) is None
+    assert _money("0") == 0
+
+
+def test_mismatched_original_asof_and_days_past_due_are_never_inferred(monkeypatch):
+    from app.monthly_report_receivable_intake import _review_row
+    from app.monthly_report_receivable_schema import ReceivableColumn
+    from datetime import date
+    draft, content, review, edits, raw = fixture(monkeypatch)
+    source_row = review.rows[0]
+    from dataclasses import replace as update
+    source_role = ReceivableColumn(len(source_row.cells), "Days past due",
+                                   "days_past_due", False)
+    extra = update(review, columns=(*review.columns, source_role),
+                   rows=(update(source_row, cells=(*source_row.cells, "250")),))
+    with pytest.raises(ValueError, match="past due"):
+        _review_row(draft, extra, extra.rows[0], {}, date(2026, 10, 28))
+    source_role = ReceivableColumn(len(source_row.cells), "Aging as of",
+                                   "as_of_date", False)
+    extra = update(review, columns=(*review.columns, source_role),
+                   rows=(update(source_row, cells=(*source_row.cells, "2026-09-30")),))
+    with pytest.raises(ValueError, match="as-of date"):
+        _review_row(draft, extra, extra.rows[0], {}, date(2026, 10, 28))
+
+
+def test_currency_formatted_xlsx_amounts_are_read_without_retyping():
+    from decimal import Decimal
+    from openpyxl import Workbook
+    book = Workbook()
+    sheet = book.active
+    sheet.append(["Invoice #", "Invoice Amount"])
+    cases = (('"$"#,##0.00', 500), ("[$USD-409]#,##0.00", 1234.5), ("$#,##0.00", -12.25),
+             ("#,##0.00 [$€-407]", 99.5), ("$#,##0.000", 1.125))
+    for number, (number_format, value) in enumerate(cases, 1):
+        sheet.append([f"SYN-{number}", value])
+        sheet.cell(row=number + 1, column=2).number_format = number_format
+    raw = BytesIO()
+    book.save(raw)
+    amounts = [row[1] for row in source_api._spreadsheet(raw.getvalue(), ".xlsx")[0].rows]
+    assert amounts[:3] == ["500 $", "1234.5 USD", "-12.25 $"]
+    assert [_money(value) for value in amounts[:3]] == [Decimal("500"), Decimal("1234.5"), Decimal("-12.25")]
+    # Another currency, or more precision than cents, still needs a correction.
+    for value in amounts[3:]:
+        with pytest.raises(ValueError, match="explicit numeric correction"):
+            _money(value)
+ not in text
+        assert not re.search(r'(?i)invoice amount|aged dollar total|complete ar aging statement', text)
+    assert reopened.draft.blocks[0].rows == block.rows
+
+
 def test_same_filename_different_source_bytes_do_not_replay(monkeypatch):
     report, _, _, _, _ = prepared(monkeypatch, filename="same-name.csv")
     other = replace(report.sources[0], id="c" * 64, sha256="c" * 64)
