@@ -521,3 +521,24 @@ def test_mixed_primary_clear_then_imported_card_edit_survives_rerender(key, noun
     assert not app.exception and not app.dataframe
     button(app, 'Edit ' + noun).click().run()
     assert [widget.value for widget in app.text_area if widget.label == 'Notes'][1] == 'Second changed without blur'
+
+
+def test_last_onsite_primary_remove_undo_stays_available_with_imported_table():
+    spec, block = example('service_calls')
+    note = ReportTable(('Notes',), (('Keep imported onsite context',),),
+                       'synthetic-onsite-import-reference')
+    block = replace(block, extra_tables=(note,))
+    app = AppTest.from_string(SCRIPT.replace('INITIAL', repr(block)).replace('SPEC', repr(spec))).run()
+    assert not app.exception and not app.dataframe
+    button(app, 'Remove onsite call').click().run()
+    app.run()  # Acknowledge the empty primary table before the Undo action.
+    assert app.session_state['block'].rows == ()
+    assert app.session_state['block'].extra_tables == (note,)
+    button(app, 'Undo last removal').click().run()
+    result = app.session_state['block']
+    assert not app.exception and not app.dataframe
+    assert result.rows == block.rows
+    assert result.extra_tables == block.extra_tables
+    assert result.references == block.references
+    button(app, 'Edit onsite call').click().run()
+    assert field(app, 'Finish Date', 'date_input').value == date(2026, 9, 12)

@@ -449,7 +449,12 @@ def _table_key(spec, block, prefix):
 
 
 def primary_row_recovery_pending(spec, block, prefix):
-    record = st.session_state.get(_table_key(spec, block, prefix) + "_rows", {})
+    key = _table_key(spec, block, prefix)
+    if spec.key == "service_calls":
+        # Onsite editors retire their pre-projection widget identities.
+        # Recovery must inspect the same versioned key used by edit_row_cards.
+        key += "_onsite_context_v1"
+    record = st.session_state.get(key + "_rows", {})
     draft_token = record.get("draft_token")
     return bool(record.get("pending") or record.get("removed")
                 or (draft_token and record.get("active") == draft_token))
