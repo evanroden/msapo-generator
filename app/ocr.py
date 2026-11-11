@@ -19,7 +19,7 @@ from pathlib import Path
 
 import anthropic
 
-from app.ai_provider import anthropic_client
+from app.ai_provider import AIProviderConfigurationError, anthropic_client
 
 from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
 from app.api_retry import (
@@ -335,6 +335,8 @@ def _ocr_pdf(payload: bytes, *, until: float) -> str:
         # Changing representation cannot repair auth, rate limiting or outages.
         if exc.status_code not in (400, 413):
             raise
+    except AIProviderConfigurationError:
+        raise  # Provider refusal must not trigger even a local raster fallback.
     except ValueError:
         pass  # Local direct-document payload budget: try compact pages.
     text = _ocr_pdf_via_page_images(payload, until=until).strip()
