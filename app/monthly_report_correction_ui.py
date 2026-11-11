@@ -848,6 +848,9 @@ def render_footer_repair_editor(draft, checks, prefix, field):
         st.session_state[prefix + "_draft"] = replace(
             original, blocks=updated, address_line=edited)
         st.session_state[prefix + "_period_editor_refresh"] = True
+        # As with fixed-column Review edits, prevent the outer workflow from
+        # overwriting this confirmed value with its previous local draft.
+        st.rerun()
 
 
 def _resolve_unmounted_library(prefix, draft_identity, key, revision):
