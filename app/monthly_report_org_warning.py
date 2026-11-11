@@ -267,3 +267,58 @@ def repair_duplicate_positions(block, prefix):
         return replace(block, org_nodes=updated,
                        reviewed_fingerprint="", client_reviewed_fingerprint=""), True
     return block, True
+
+
+def queue_chart_text_safety(prefix, block_key, revision, index, field, code, scope):
+    """Stage only the exact unsafe node field, not a nearby summary."""
+    from app.monthly_report_non_narrative_recovery import unsafe
+    from app.monthly_report_guided import _rich_text_scope
+    from app.monthly_report_organization_ui import _change_part
+    current = st.session_state.get(prefix + "_draft")
+    matches = [b for b in current.blocks if b.key == block_key] if current else []
+    if len(matches) != 1 or matches[0].fingerprint != revision:
+        st.session_state[prefix + "_chart_warning_notice"] = (
+            "This chart changed before the correction. No field was edited.")
+        return
+    block = matches[0]
+    unique = len({n.key for n in block.org_nodes}) == len(block.org_nodes)
+    if (scope != _rich_text_scope(prefix) or block.source == "Omit" or not unique
+            or not 0 <= index < len(block.org_nodes)
+            or field not in ("name", "role", "team")
+            or not unsafe(getattr(block.org_nodes[index], field), code)):
+        st.session_state[prefix + "_chart_warning_notice"] = (
+            "The specified chart field is no longer unsafe or uniquely identified.")
+        return
+    _change_part(prefix, prefix + "_organization_change", "org_chart")
+    st.session_state[prefix + "_chart_warning_request"] = {
+        "block": block_key, "revision": revision, "message": code,
+        "index": index, "field": field, "scope": scope,
+        "nonce": uuid4().hex}
+
+
+def render_chart_text_safety(check, draft, prefix):
+    if not check.blocking or check.code not in ("pricing", "placeholder", "text_character"):
+        return
+    from app.monthly_report_non_narrative_recovery import unsafe
+    from app.monthly_report_guided import _rich_text_scope
+    blocks = [b for b in draft.blocks if b.key == check.block_key and b.org_nodes
+              and b.source != "Omit"]
+    if len(blocks) != 1:
+        return
+    block = blocks[0]
+    keys = [n.key for n in block.org_nodes]
+    if len(keys) != len(set(keys)) or any(not key for key in keys):
+        st.caption("Repair duplicate chart position IDs before editing unsafe text; "
+                   "no same-named position is selected automatically.")
+        return
+    for index, node in enumerate(block.org_nodes):
+        for field in ("name", "role", "team"):
+            if unsafe(getattr(node, field), check.code):
+                st.button("Correct chart position " + str(index + 1) + " · " + field +
+                          " · " + check.code,
+                          key=prefix + "_unsafe_chart_" + sha256(
+                              (block.fingerprint + ":" + str(index) + ":" +
+                               field + ":" + check.code).encode()).hexdigest(),
+                          on_click=queue_chart_text_safety,
+                          args=(prefix, block.key, block.fingerprint,
+                                index, field, check.code, _rich_text_scope(prefix)))
