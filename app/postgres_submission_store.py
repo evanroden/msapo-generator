@@ -134,8 +134,8 @@ class PostgresSubmissionStore:
             (self._lease_seconds(lease_seconds),),
         )
 
-    def mark_creating(self, submission_key, lease_token):
-        """Commit the danger marker immediately before any row-create HTTP POST."""
+    def mark_row_create_started(self, submission_key, lease_token):
+        """Commit the intent before row creation; matches pending PR #847's API."""
         with self._transaction() as cursor:
             cursor.execute(
                 "UPDATE epc_submission_claims "
@@ -149,6 +149,10 @@ class PostgresSubmissionStore:
                 raise SubmissionStoreError(
                     "Cannot begin remote creation without an owned pending claim."
                 )
+
+    def mark_creating(self, submission_key, lease_token):
+        """Compatibility spelling for the isolated adapter's early tests."""
+        self.mark_row_create_started(submission_key, lease_token)
 
     def record_row(self, submission_key, lease_token, row_id):
         # Text is intentional; Smartsheet row IDs cannot be JSON floats.
