@@ -846,3 +846,44 @@ def render_footer_repair_editor(draft, checks, prefix, field):
         st.session_state[prefix + "_draft"] = replace(
             original, blocks=updated, address_line=edited)
         st.session_state[prefix + "_period_editor_refresh"] = True
+
+
+def _resolve_unmounted_library(prefix, draft_identity, key, revision):
+    from dataclasses import replace
+    from app.monthly_report_correction_targets import report_identity
+    from app.monthly_report_model import layout_blocks
+    current = st.session_state.get(prefix + "_draft")
+    matches = [b for b in current.blocks if b.key == key] if current else []
+    specs = [spec for spec in layout_blocks() if spec.key == key]
+    if (current is None or report_identity(current) != draft_identity
+            or len(matches) != 1 or matches[0].fingerprint != revision
+            or not matches[0].pending_library_save or len(specs) != 1):
+        st.session_state[prefix + "_warning_recovery_notice"] = (
+            "The shared replacement changed before the choice. Nothing was changed.")
+        return
+    block = matches[0]
+    source = "Omit" if block.source == "Omit" else (
+        "Replace once" if "Replace once" in specs[0].allowed_sources else "This month")
+    changed = replace(block, source=source, pending_library_save=False)
+    st.session_state[prefix + "_draft"] = replace(current, blocks=tuple(
+        changed if value is block else value for value in current.blocks))
+    st.session_state[prefix + "_period_editor_refresh"] = True
+
+
+def render_unmounted_library_recovery(check, draft, prefix):
+    """Layout/cover blocks have no ordinary _edit_content owner."""
+    if not check.blocking or check.code != "library_save":
+        return
+    from app.monthly_report_model import layout_blocks
+    from app.monthly_report_correction_targets import report_identity
+    valid = {spec.key for spec in layout_blocks()}
+    if check.block_key not in valid:
+        return
+    matches = [b for b in draft.blocks if b.key == check.block_key and b.pending_library_save]
+    if len(matches) != 1:
+        return
+    st.button("Keep " + check.block_key.replace("_", " ") +
+              " in this report only; cancel shared-library replacement",
+              key=prefix + "_warning_unmounted_library_" + matches[0].fingerprint,
+              on_click=_resolve_unmounted_library,
+              args=(prefix, report_identity(draft), check.block_key, matches[0].fingerprint))
