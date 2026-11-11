@@ -91,6 +91,8 @@ def exercise(browser, name):
         end=page.locator(".st-key-native_end_of_life")
         assert capital.locator('[data-testid="stDataFrame"]').count()==0
         assert capital.locator('a[href="https://example.invalid"]').count()==0
+        assert "Priority: High" in capital.inner_text()
+        assert "Expected replacement timing: 2030" in end.inner_text()
         # Clear the final primary row and switch directly to an imported card.
         capital.get_by_role("button",name="Edit capital item",exact=True).last.click()
         capital.get_by_role("textbox",name="Facility",exact=True).fill("")
