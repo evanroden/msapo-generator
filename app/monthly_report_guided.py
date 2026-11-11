@@ -1468,8 +1468,18 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         # This is a report-only Undo. The shared directory revision remains
         # immutable; changes to the applied directory-owned rows refuse Undo.
         receipt = st.session_state.get(undo_key)
+        if isinstance(receipt, DirectoryApplyUndo) and (
+                receipt.profile.contract != draft.profile.contract
+                or receipt.profile.key != draft.profile.key
+                or receipt.period != draft.period):
+            # A report/month switch retires the old action permanently. It
+            # must not resurrect when the user later returns to that report.
+            st.session_state.pop(undo_key, None)
+            receipt = None
         if (isinstance(receipt, DirectoryApplyUndo)
-                and receipt.profile == draft.profile and receipt.period == draft.period):
+                and receipt.profile.contract == draft.profile.contract
+                and receipt.profile.key == draft.profile.key
+                and receipt.period == draft.period):
             st.caption("Undo affects this report only; saved shared contacts are unchanged.")
             if st.button("Undo last directory Apply in this report", key=prefix + "_undo_directory_apply"):
                 try:
