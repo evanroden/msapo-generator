@@ -269,6 +269,26 @@ def native_warning_marker(prefix, code, owner, revision, field_key, *, kind="but
             escape(field_key, quote=True) + '" aria-hidden="true"></span>')
 
 
+def section_title_revision(section):
+    """Only the blank title's structural slot, never a duplicate key, owns it."""
+    return sha256(repr((section.key, section.number, section.blocks,
+                        section.divider_asset, section.appendix)).encode()).hexdigest()
+
+
+def edit_missing_section_title(section, prefix, field):
+    """No editor for an existing literal title; repair only a blank included one."""
+    from dataclasses import replace
+    if not section.included or section.title.strip():
+        return section
+    key = prefix + "_repair_section_title_" + section.key
+    st.markdown(native_warning_marker(prefix, "title", section.key,
+                                      section_title_revision(section), key, kind="input"),
+                unsafe_allow_html=True)
+    title = st.text_input("Title for section " + section.key.replace("_", " "),
+                          value=section.title, key=field(key, section.title))
+    return replace(section, title=title) if title != section.title else section
+
+
 def render_native_warning_links(check, draft, prefix):
     """Only link a current, unique owner that has an authoritative native field."""
     if not check.blocking:
@@ -279,6 +299,12 @@ def render_native_warning_links(check, draft, prefix):
         if draft.prepared_by.strip():
             return
         owner, revision, label = "report", report_identity(draft), "Enter Prepared by"
+    elif code == "title":
+        matching = [section for section in draft.sections
+                    if section.key == owner and section.included and not section.title.strip()]
+        if len(matching) != 1 or sum(item.key == owner for item in draft.sections) != 1:
+            return
+        revision, label = section_title_revision(matching[0]), "Enter this section's title"
     elif code in {"carried_period", "photo_layout", "source", "library_save"}:
         matches = [block for block in draft.blocks if block.key == owner]
         if len(matches) != 1:

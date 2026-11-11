@@ -1588,9 +1588,19 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     render_section_preview(proposed_draft, "cover", proposed_assets, prefix, deferred=True)
         from app.monthly_report_section_help import editor_section_title
         for section in draft.sections:
-            title = editor_section_title(section)
+            title = editor_section_title(section) or section.key.replace("_", " ").capitalize()
             with workspace_section("monthly_" + section.key, title):
                 st.divider()
+                # A unique blank included section title is an editable field,
+                # never an invitation to normalize any existing literal heading.
+                if (section.included and not section.title.strip()
+                        and sum(s.key == section.key for s in draft.sections) == 1):
+                    from app.monthly_report_correction_ui import edit_missing_section_title
+                    before = section
+                    section = edit_missing_section_title(section, prefix, field)
+                    if section != before:
+                        draft = replace(draft, sections=tuple(
+                            section if item is before else item for item in draft.sections))
                 st.subheader(title, anchor="report-section-" + section.key,
                              help=editor_section_heading_help(section.key))
                 guidance = editor_section_guidance(section.key)

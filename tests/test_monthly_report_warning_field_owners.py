@@ -164,3 +164,33 @@ def test_nonblocking_or_noneditable_cases_do_not_get_false_native_target(monkeyp
     correction.render_native_warning_links(ReportCheck("prepared_by", "", False),
                                            replace(report, prepared_by=""), "scope")
     assert not seen["markup"]
+
+
+def test_unique_blank_section_title_has_direct_native_field_but_existing_literal_is_preserved(monkeypatch):
+    from app.monthly_report_model import SectionSpec
+    section = SectionSpec("activity", "2", "", ())
+    original = synthetic_draft()
+    report = replace(original, sections=(section,))
+    seen = _capture(monkeypatch, correction)
+    correction.render_native_warning_links(ReportCheck("title", "", True, "activity"),
+                                           report, "scope")
+    token = _link_target("".join(seen["markup"]))
+    seen = _capture(monkeypatch, correction, typed=("Literal heading",))
+    revised = correction.edit_missing_section_title(section, "scope", lambda key, value: key)
+    assert token == _marker_target("".join(seen["markup"]))
+    assert revised.title == "Literal heading"
+    assert revised.number == section.number and revised.blocks == section.blocks
+    seen = _capture(monkeypatch, correction)
+    assert correction.edit_missing_section_title(revised, "scope", lambda key, value: key) == revised
+    assert not seen["markup"]
+
+
+def test_duplicate_section_keys_refuse_title_link(monkeypatch):
+    from app.monthly_report_model import SectionSpec
+    a = SectionSpec("activity", "2", "", ())
+    b = SectionSpec("activity", "3", "", ())
+    report = replace(synthetic_draft(), sections=(a, b))
+    seen = _capture(monkeypatch, correction)
+    correction.render_native_warning_links(ReportCheck("title", "", True, "activity"),
+                                           report, "scope")
+    assert not seen["markup"]
