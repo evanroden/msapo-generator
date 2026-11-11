@@ -25,7 +25,7 @@ def pending_preparer(prefix, default=None, *, canonical=None):
     return st.session_state.get(stable, mirror.get(stable, fallback))
 
 
-def render_preparer(prefix, canonical, field):
+def render_preparer(prefix, canonical, field, draft=None):
     """Keep attribution separate from the current native editor incarnation.
 
     The stable slot remains available to report-details actions and navigation
@@ -63,6 +63,13 @@ def render_preparer(prefix, canonical, field):
             key for key in st.session_state.get("report_widget_keys", ()) if key != retired)
         st.session_state["report_draft_mirror"] = {
             key: value for key, value in mirror.items() if key != retired}
+    if draft is not None:
+        from app.monthly_report_correction_targets import report_identity
+        from app.monthly_report_correction_ui import native_warning_marker
+        st.markdown('<span id="report-prepared-by"></span>' +
+                    native_warning_marker(prefix, "prepared_by", "report",
+                                          report_identity(draft), native_key, kind="input"),
+                    unsafe_allow_html=True)
     prepared = st.text_input("Prepared by", value=pending, key=native_key,
                              help="Shown on this report; not a sign-in.")
     # Register only after native initialization; no redundant Session State seed.
