@@ -519,5 +519,29 @@ def test_required_chart_builder_target_retains_report_and_needs_explicit_start(m
     assert required_chart_start_marker("p", block, "p_org_start") == ""
     state["p_required_chart_request"] = {
         "scope": "scope", "revision": block.fingerprint, "nonce": "new"}
-    modified = replace(block, org_nodes=())
-    assert required_chart_start_marker("p", modified, "p_org_start") != ""
+    modified = replace(block, text="Another editor's changed content")
+    assert required_chart_start_marker("p", modified, "p_org_start") == ""
+    assert "p_required_chart_request" not in state
+    assert "changed" in state["p_chart_warning_notice"]
+
+
+def test_cross_cell_total_with_numeric_amount_has_one_exact_correction_owner():
+    from app import monthly_report_non_narrative_recovery as cells
+    from app.monthly_report_checks import preflight
+    table = ReportTable(("Description", "Value"),
+        (("Grand total", "500"), ("Pump 204", "550")), "same-imported-source")
+    block = ResolvedBlock("work_orders", "This month", extra_tables=(table,))
+    report = synthetic_draft(block)
+    assert any(check.code == "pricing" and check.block_key == "work_orders"
+               for check in preflight(report))
+    candidates = cells.candidates(report, "work_orders", "pricing")
+    assert len(candidates) == 1
+    assert (candidates[0].table, candidates[0].row, candidates[0].column,
+            candidates[0].value) == (0, 0, 1, "500")
+    assert cells.resolve(report, candidates[0]) == block
+    changed = replace(block, extra_tables=(replace(table, rows=(
+        ("Grand total", "Amount omitted"), table.rows[1])),))
+    later = replace(report, blocks=(changed,))
+    assert cells.resolve(later, candidates[0]) is None
+    assert not cells.candidates(later, "work_orders", "pricing")
+    assert report.blocks[0].extra_tables[0].rows[0][1] == "500"
