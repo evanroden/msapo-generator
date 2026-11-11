@@ -11,6 +11,7 @@ from dataclasses import replace
 from hashlib import sha256
 from io import BytesIO
 import gc
+import importlib.metadata
 import json
 import os
 from pathlib import Path
@@ -75,7 +76,8 @@ def _docx(pictures):
 
 def _summary(values):
     ordered = sorted(values)
-    result = {"n": len(ordered), "min_ms": round(ordered[0] * 1000, 3),
+    result = {"n": len(ordered), "samples_ms": [round(value * 1000, 3) for value in values],
+              "min_ms": round(ordered[0] * 1000, 3),
               "median_ms": round(statistics.median(ordered) * 1000, 3),
               "max_ms": round(ordered[-1] * 1000, 3)}
     if len(ordered) >= 20:
@@ -83,8 +85,9 @@ def _summary(values):
     return result
 
 
-def _image(profile, content):
-    number = (content.image_items[0][0] if content.image_items else 1)
+def _image(profile, content, number=None):
+    if number is None:
+        number = (content.image_items[0][0] if content.image_items else 1)
     image = sources.page_image(profile, content, number, preview=True)
     uri = source_thumbnail_uri(image)
     assert uri.startswith("data:image/") and len(uri) > 50
@@ -128,6 +131,12 @@ def _source_cases():
             preserved = {"source_sha256": content.source.sha256,
                          "source_pages_or_items": len(content.source.page_texts),
                          "first_thumbnail": thumb}
+            if suffix == ".pdf" and number == 0:
+                midpoint = (len(content.source.page_texts) + 1) // 2
+                last = len(content.source.page_texts)
+                checks = [_image(profile, content, page) for page in sorted({1, midpoint, last})]
+                assert len({entry["hash"] for entry in checks}) == len(checks)
+                preserved["first_middle_last_thumbnail_geometry_and_hash"] = checks
             del content, warm
             gc.collect()
         results.append({"workload": case, "source_bytes": len(raw),
@@ -257,14 +266,17 @@ def main():
     before_events = _memory_events()
     with tempfile.TemporaryDirectory(prefix="qa491-synthetic-") as temporary:
         os.environ["EPC_DATA_DIR"] = str(Path(temporary) / "runtime")
-        from app import monthly_report_library as library
         # All source/draft paths are synthetic; no durable or shared client data.
         started = perf_counter()
         cpu_started = process_time()
         result = {"boundary": "server_receipt_of_upload_bytes_to_thumbnail_data_uri_and_section_raster",
                   "environment": {"python": sys.version.split()[0],
                                   "platform": platform.platform(), "memory_limit_bytes": memory_limit,
-                                  "cpu_quota": cpu, "commit": os.environ.get("APP_GIT_COMMIT")
+                                  "cpu_quota": cpu,
+                                  "dependencies": {
+                                      name: importlib.metadata.version(name)
+                                      for name in ("PyMuPDF", "Pillow", "python-docx")
+                                  }, "commit": os.environ.get("APP_GIT_COMMIT")
                                   or os.environ.get("MSAPO_SHA") or "unreported"},
                   "sources": _source_cases(),
                   "concurrent_visitor_sources": _concurrent(),
@@ -273,6 +285,10 @@ def main():
         result["elapsed_seconds"] = round(perf_counter() - started, 3)
         result["cpu_seconds"] = round(process_time() - cpu_started, 3)
         result["rss_bytes_at_end"] = _current_rss()
+        try:
+            result["cgroup_peak_bytes"] = int(Path("/sys/fs/cgroup/memory.peak").read_text())
+        except (OSError, ValueError):
+            result["cgroup_peak_bytes"] = None
         result["peak_process_rss_bytes"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
         result["memory_events_delta"] = {key: value - before_events.get(key, 0)
                                           for key, value in _memory_events().items()}
