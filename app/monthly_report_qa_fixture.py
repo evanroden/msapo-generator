@@ -77,8 +77,13 @@ def _training_tables():
 
 def _standing_blocks(chosen):
     selected = directory.load_directory(CONTRACT)
-    contacts, missing = directory.contact_block(selected, chosen.facilities)
-    if missing or contacts is None:
+    expected_contacts, missing = directory.contact_block(selected, chosen.facilities)
+    standing = directory.apply_defaults(ReportDraft(
+        chosen, PERIOD, ACTOR, profile_sections(chosen), ()))
+    contacts = next((block for block in standing.blocks if block.key == "contact_matrix"), None)
+    if (missing or expected_contacts is None or contacts is None
+            or contacts.rows != expected_contacts.rows
+            or contacts.references != expected_contacts.references):
         raise ValueError("Synthetic QA contact fixture did not resolve its exact sites.")
     return (
         ResolvedBlock("org_chart", "This month", org_nodes=(
