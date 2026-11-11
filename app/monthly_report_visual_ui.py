@@ -149,19 +149,20 @@ def edit_org_chart(draft, block, prefix, assets, field, *, show_preview=True):
                 st.markdown(chart_field_markup(prefix, block, index, "name", name_key),
                             unsafe_allow_html=True)
                 name = st.text_input(
-                    "Name", key=name_key, max_chars=100
+                    "Name", key=name_key, max_chars=max(100, len(node.name))
                 )
                 role_key = field(key + "_role", node.role)
                 st.markdown(chart_field_markup(prefix, block, index, "role", role_key),
                             unsafe_allow_html=True)
                 role = st.text_input(
-                    "Role / position", key=role_key, max_chars=100,
+                    "Role / position", key=role_key, max_chars=max(100, len(node.role)),
                 )
                 team_key = field(key + "_team", node.team)
                 st.markdown(chart_field_markup(prefix, block, index, "team", team_key),
                             unsafe_allow_html=True)
                 team = st.text_input(
-                    "Site or team (optional)", key=team_key, max_chars=100,
+                    "Site or team (optional)", key=team_key,
+                    max_chars=max(100, len(node.team)),
                 )
                 choices = ["", *[n.key for n in block.org_nodes if n.key != node.key]]
                 labels = {
