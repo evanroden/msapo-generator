@@ -257,6 +257,7 @@ def test_saved_status_only_ar_word_and_real_pdf_exclude_invoice_amounts(monkeypa
             image = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5))
             assert image.width > 0 and image.height > 0
     for text in (word_text, pdf_text):
+        text = ' '.join(text.split())  # Word/PDF may wrap the same cell differently.
         assert 'Invoice INV-101' in text
         assert 'Partially paid' in text
         assert 'aging as of 2026-10-28' in text
