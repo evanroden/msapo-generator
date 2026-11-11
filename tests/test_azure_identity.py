@@ -154,7 +154,6 @@ def test_two_users_clear_session_without_inheriting_draft_and_ws_age_caps(monkey
         monkeypatch.setenv(key, value)
     monkeypatch.setattr(identity, "RESOURCE_BOUNDARIES_INTEGRATED", True)
     monkeypatch.setattr(identity, "_resource_boundaries_implemented", lambda: True)
-    monkeypatch.setattr(identity, "RESOURCE_BOUNDARIES_INTEGRATED", True)
     monkeypatch.setenv("MSAPO_AUTHZ_DATA_BOUNDARY_READY", "verified")
     monkeypatch.setattr(identity.time, "monotonic", lambda: 100.)
     a = identity.require_streamlit_entry()
