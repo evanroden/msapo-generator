@@ -155,19 +155,27 @@ class PostgresSubmissionStore:
         value = str(row_id)
         if not value:
             raise ValueError("Remote row ID is required.")
-        self._owned_update(
-            submission_key, lease_token,
-            "row_id = %s, status = 'pending', last_error = NULL, "
-            "updated_at = NOW()",
-            (value,),
-        )
+        with self._transaction() as cursor:
+            cursor.execute(
+                "UPDATE epc_submission_claims "
+                "SET row_id = %s, status = 'pending', last_error = NULL, "
+                "updated_at = NOW() "
+                "WHERE submission_key = %s AND lease_token = %s "
+                "AND lease_expires_at > NOW() "
+                "AND (row_id IS NULL OR row_id = %s)",
+                (value, submission_key, lease_token, value),
+            )
+            if cursor.rowcount != 1:
+                raise SubmissionStoreError(
+                    "Cannot replace a different Smartsheet row or an expired owner."
+                )
 
     def record_attachment(self, submission_key, lease_token, fingerprint):
         with self._transaction() as cursor:
             cursor.execute(
                 "SELECT attached_json FROM epc_submission_claims "
                 "WHERE submission_key = %s AND lease_token = %s "
-                "AND lease_expires_at > NOW() FOR UPDATE",
+                "AND lease_expires_at > NOW() AND row_id IS NOT NULL FOR UPDATE",
                 (submission_key, lease_token),
             )
             row = cursor.fetchone()
