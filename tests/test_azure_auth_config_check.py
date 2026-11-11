@@ -37,6 +37,7 @@ def test_enabled_and_anonymous_conditions_fail_closed():
         ("platform", "enabled", False),
         ("globalValidation", "requireAuthentication", False),
         ("globalValidation", "unauthenticatedClientAction", "AllowAnonymous"),
+        ("globalValidation", "redirectToProvider", "google"),
         ("globalValidation", "excludedPaths", ["/_stcore/health"]),
         ("httpSettings", "requireHttps", False),
     ]
@@ -68,6 +69,8 @@ def test_provider_tenant_audience_and_secret_reference_downgrade():
                "clientSecretSettingName", value=""),
         mutate("properties", "identityProviders", "azureActiveDirectory", "validation",
                "allowedAudiences", value=[]),
+        mutate("properties", "identityProviders", "azureActiveDirectory", "validation",
+               "allowedAudiences", value=[APP, "api://unexpected"]),
     ]:
         assert check(c), "unsafe control-plane auth configuration passed"
 
