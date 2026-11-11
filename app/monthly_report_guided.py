@@ -829,6 +829,14 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
                 section_title=section_title, editor_anchor=editor_anchor)
             block = _record_period_editor_transition(prefix, canonical_before, block, resolved, draft.period, editor_key)
     elif edit_tables and not row_cards and spec.type in ("table", "work_order_grid") and (block.rows or not block.extra_tables):
+        from app.monthly_report_table_column_recovery import fixed_width_defect
+        if fixed_width_defect(spec, block) > 0:
+            # The native grid can only display named columns; editing it now
+            # would irreversibly omit the trailing source cells. Review owns
+            # a positional schema repair and this canonical block is retained.
+            st.warning("Some saved rows have more cells than column headings. "
+                       "Use the exact column repair in Review; original cells stay unchanged.")
+            return block
         seed, config = _typed_table(spec, block.rows)
         if optional_table:
             seed = empty_text_seed(seed, spec)
@@ -1863,6 +1871,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 render_followup_identity_recovery(check, draft, prefix)
                 from app.monthly_report_correction_ui import render_structure_and_followup_recovery
                 render_structure_and_followup_recovery(check, draft, prefix)
+                from app.monthly_report_table_column_recovery import edit_fixed_column_schema
+                edit_fixed_column_schema(check, draft, prefix, field)
                 from app.monthly_report_org_warning import render_chart_links
                 render_chart_links(check, draft, prefix)
         from app.monthly_report_org_warning import finish_chart_notice
