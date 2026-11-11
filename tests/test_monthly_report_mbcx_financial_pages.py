@@ -60,9 +60,9 @@ def test_vendor_total_veto(monkeypatch,tmp_path,text):
 
 
 @pytest.mark.parametrize('text', [
-    'ENFRA client report.\\nVendor: Acme Services\\nInvoice total: $1,200.',
-    'ENFRA client report.\\nSupplier: Parts Ltd\\nInvoice amount due: $800.',
-    'ENFRA client report.\\nSubcontractor = North Works\\nInvoice balance due: $60.',
+    'ENFRA client report.\nVendor: Acme Services\nInvoice total: $1,200.',
+    'ENFRA client report.\nSupplier: Parts Ltd\nInvoice amount due: $800.',
+    'ENFRA client report.\nSubcontractor = North Works\nInvoice balance due: $60.',
 ])
 def test_separated_vendor_field_and_invoice_total_are_denied(monkeypatch, tmp_path, text):
     p, content, original = setup(monkeypatch, tmp_path, text)
