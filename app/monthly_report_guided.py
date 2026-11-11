@@ -1460,9 +1460,13 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     # explicit shared-save scope, contact widget identity and return value.
     from app.monthly_report_contact_apply_undo import (
         DirectoryApplyUndo, capture_directory_apply, undo_directory_apply,
+        retire_inactive_directory_undo_receipts,
     )
     from app.monthly_report_directory_ui import _resume_contacts
     undo_key = prefix + "_directory_apply_undo"
+    # Each selected report/month has a different prefix. Retire old actions
+    # before mounting this workspace, including when returning to a prior one.
+    retire_inactive_directory_undo_receipts(st.session_state, undo_key)
     with st.sidebar:
         updated_contacts = render_selected_directory(contract, profile.facilities, prepared, prefix, draft=draft)
         # This is a report-only Undo. The shared directory revision remains
