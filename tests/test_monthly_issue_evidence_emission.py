@@ -144,7 +144,6 @@ def test_missing_original_unreviewed_page_and_price_caption_refuse_without_loss(
 
 def test_explicit_exclusion_and_already_attached_page_cannot_reemit(monkeypatch, tmp_path):
     from app.monthly_report_content_policy import page_fingerprint
-    from app.monthly_report_model import ResolvedBlock
 
     draft, _ = _setup(monkeypatch, tmp_path)
     first, second = draft.sources
@@ -159,16 +158,20 @@ def test_explicit_exclusion_and_already_attached_page_cannot_reemit(monkeypatch,
     # A different exact source-owned picture occurrence must not print again
     # simply because an issue has a reference to the same selected page.
     from app.monthly_report_asset_instances import new_asset_instance, with_asset_instances
-    duplicate = ResolvedBlock("equipment_issues_evidence", "This month",
-        asset_hashes=("f" * 64 + ".png",),
-        references=(sources.source_reference(first, 1),))
-    duplicate = with_asset_instances(duplicate, (
-        new_asset_instance(duplicate.asset_hashes[0],
-                           (sources.source_reference(first, 1),)),))
-    # Only included blocks can cause a duplicate; temporary/unmapped blocks
-    # must not affect a separate issue's evidence.
-    extra = replace(draft, blocks=(*draft.blocks, duplicate))
-    assert len(selected_issue_pages(extra)) == 6
+    reference = sources.source_reference(first, 1)
+    picture = replace(draft.blocks[0], asset_hashes=("f" * 64 + ".png",),
+                      references=(reference,))
+    picture = with_asset_instances(picture, (
+        new_asset_instance(picture.asset_hashes[0], (reference,)),))
+    double_print = replace(draft, blocks=(picture,))
+    with pytest.raises(ValueError, match="already emitted"):
+        selected_issue_pages(double_print)
+    # An equal-byte human-uploaded picture is a separate occurrence; its hash
+    # alone cannot steal an issue evidence page or trigger duplicate ownership.
+    human = replace(draft.blocks[0], asset_hashes=("f" * 64 + ".png",))
+    human = with_asset_instances(human, (
+        new_asset_instance(human.asset_hashes[0]),))
+    assert len(selected_issue_pages(replace(draft, blocks=(human,)))) == 6
 
 
 def test_existing_source_site_date_gates_remain_unweakened(monkeypatch, tmp_path):
