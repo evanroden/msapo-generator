@@ -545,3 +545,50 @@ def test_cross_cell_total_with_numeric_amount_has_one_exact_correction_owner():
     assert cells.resolve(later, candidates[0]) is None
     assert not cells.candidates(later, "work_orders", "pricing")
     assert report.blocks[0].extra_tables[0].rows[0][1] == "500"
+
+
+def test_unsafe_primary_heading_repair_changes_only_exact_schema_position(monkeypatch):
+    from app.monthly_report_model import BlockSpec, ColumnSpec, SectionSpec
+    from types import SimpleNamespace
+    original = BlockSpec("work_orders", "table", columns=(
+        ColumnSpec("a", "Working"), ColumnSpec("b", "Example:")))
+    block = ResolvedBlock("work_orders", "This month",
+                          rows=(("P-20", "Inspect"),))
+    report = replace(synthetic_draft(block), sections=(
+        SectionSpec("activity", "2", "Activity", (original,)),))
+    state, warnings = {"p_draft": report}, []
+    monkeypatch.setattr(columns, "st", SimpleNamespace(
+        session_state=state, markdown=lambda *args, **kw: None,
+        text_input=lambda *args, **kw: "Action",
+        button=lambda *args, **kw: True,
+        warning=warnings.append, rerun=lambda: None))
+    columns.edit_unsafe_primary_heading(
+        ReportCheck("placeholder", "Unsafe heading", True, "work_orders"),
+        report, "p", lambda key, value: key)
+    newer = state["p_draft"]
+    assert newer.blocks == (block,)
+    assert newer.sections[0].blocks[0].columns[0] == original.columns[0]
+    assert newer.sections[0].blocks[0].columns[1].key == "b"
+    assert newer.sections[0].blocks[0].columns[1].title == "Action"
+    assert not warnings
+
+
+def test_pricing_heading_cannot_hide_numeric_monetary_column(monkeypatch):
+    from app.monthly_report_model import BlockSpec, ColumnSpec, SectionSpec
+    from types import SimpleNamespace
+    original = BlockSpec("work_orders", "table",
+                         columns=(ColumnSpec("amount", "Quoted amount: $50"),))
+    block = ResolvedBlock("work_orders", "This month", rows=(("100",),))
+    report = replace(synthetic_draft(block), sections=(
+        SectionSpec("activity", "2", "Activity", (original,)),))
+    state, warnings = {"p_draft": report}, []
+    monkeypatch.setattr(columns, "st", SimpleNamespace(
+        session_state=state, markdown=lambda *args, **kw: None,
+        text_input=lambda *args, **kw: "Status",
+        button=lambda *args, **kw: True,
+        warning=warnings.append, rerun=lambda: None))
+    columns.edit_unsafe_primary_heading(
+        ReportCheck("pricing", "Unsafe monetary heading", True, "work_orders"),
+        report, "p", lambda key, value: key)
+    assert state["p_draft"] == report
+    assert warnings and "monetary" in warnings[0]
