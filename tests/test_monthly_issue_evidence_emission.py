@@ -286,7 +286,7 @@ def test_actual_synthetic_native_design_pdf_preserves_each_marker_once(monkeypat
         text = "\\n".join(page.get_text() for page in opened)
         assert all(text.count(label) == 1 for label in expected)
         assert [text.index(label) for label in expected] == sorted(text.index(label) for label in expected)
-        assert sum(len(page.get_images(full=True)) for page in opened) >= 6
+        assert sum(len(page.get_image_info()) for page in opened) == 6
         assert "Synthetic old note" not in text
     assert all(sources.source_bytes(draft.profile, source) == originals[source.filename]
                for source in draft.sources)
@@ -306,5 +306,5 @@ def test_actual_pdf_has_ordered_evidence_pages_without_loss(monkeypatch, tmp_pat
             ("beta.pdf", 1), ("beta.pdf", 2), ("beta.pdf", 3))]
         assert all(full_text.count(label) == 1 for label in expected)
         assert [full_text.index(label) for label in expected] == sorted(full_text.index(label) for label in expected)
-        assert sum(len(page.get_images(full=True)) for page in opened) >= 6
+        assert sum(len(page.get_image_info()) for page in opened) == 6
     assert all(sources.source_bytes(draft.profile, s) == originals[s.filename] for s in draft.sources)
