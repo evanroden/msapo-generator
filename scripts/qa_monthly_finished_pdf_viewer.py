@@ -75,7 +75,7 @@ def check_engine(engine, name, width):
     details = {"browser": name, "width": width, "events": [],
                "artifacts": {}, "external_attempts": [], "errors": []}
     browser = engine.launch(headless=True)
-    context = browser.new_context(viewport={"width": width, "height": 780 if width < 600 else 900})
+    context = browser.new_context(accept_downloads=True, viewport={"width": width, "height": 780 if width < 600 else 900})
     def route(request):
         target = urlparse(request.request.url)
         if target.scheme in ("data", "blob") or (target.hostname == "127.0.0.1" and target.port == PORT):
