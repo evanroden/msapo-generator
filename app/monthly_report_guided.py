@@ -1882,8 +1882,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 render_cell_links(check, draft, prefix)
                 from app.monthly_report_table_column_recovery import edit_fixed_column_schema
                 edit_fixed_column_schema(check, draft, prefix, field)
-                from app.monthly_report_org_warning import render_chart_links
+                from app.monthly_report_org_warning import render_chart_links, render_chart_text_safety
                 render_chart_links(check, draft, prefix)
+                render_chart_text_safety(check, draft, prefix)
         from app.monthly_report_org_warning import finish_chart_notice
         finish_chart_notice(prefix)
         from app.monthly_report_non_narrative_recovery import finish_notice as finish_cell_notice
