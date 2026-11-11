@@ -251,7 +251,7 @@ def test_ar_section_ten_contents_follow_preceding_scorecard_attachment(
     changing its approved 10 identity, or rewriting the original source.
     """
     from app.monthly_report_contents_pagination import anchor_for
-    from app.monthly_report_model import included_sections
+    from app.monthly_report_model import BlockSpec, included_sections
     from docx.oxml.ns import qn
     from test_monthly_report_ar_section_ten import _twelve_section_draft
 
@@ -260,9 +260,17 @@ def test_ar_section_ten_contents_follow_preceding_scorecard_attachment(
     profile = base.profile
     source, block, original = _included_source(
         profile, "utility_analysis", "ar-preface", CENTERS[:3], {})
+    # The synthetic twelve-section fixture uses demo_* blocks rather than
+    # the standard section definitions. Add the actual Scorecard page slot
+    # explicitly or its source would be ignored by the renderer.
+    sections = tuple(
+        replace(section, blocks=(*section.blocks, BlockSpec(
+            "utility_analysis", "pdf_pages")))
+        if section.key == "scorecards" else section
+        for section in base.sections)
     revised = replace(
-        base,
-        blocks=tuple(b for b in base.blocks if b.key != "utility_analysis") + (block,),
+        base, sections=sections,
+        blocks=(*base.blocks, block),
         sources=(source,),
     )
     library.save_snapshot(revised, expected_revision=0)
@@ -296,7 +304,7 @@ def test_ar_section_ten_contents_follow_preceding_scorecard_attachment(
         assert outline[9][1] == "10. Accounts Receivable"
         assert outline[10][1] == "11. Pending & Declined Proposals"
         assert outline[11][1] == "12. Training Summary"
-        assert fields[f"PAGEREF {anchor_for('accounts_receivable')} \h"] == str(
+        assert fields[f"PAGEREF {anchor_for('accounts_receivable')} \\h"] == str(
             outline[9][2])
         assert "Accounts Receivable" in pdf[outline[9][2] - 1].get_text()
 
