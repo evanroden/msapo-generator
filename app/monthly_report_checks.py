@@ -318,9 +318,9 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
             if block and block.source != "Omit":
                 if not block.reviewed:
                     from app.monthly_report_ai_correction_targets import paragraph_target
-                checks.append(ReportCheck("review", f"Review the AI draft: {spec.key}.", True, spec.key,
-                    tuple(paragraph_target(draft, block, n, "review")
-                          for n in range(len(block.ai_paragraphs)))))
+                    checks.append(ReportCheck("review", f"Review the AI draft: {spec.key}.", True, spec.key,
+                        tuple(paragraph_target(draft, block, n, "review")
+                              for n in range(len(block.ai_paragraphs)))))
                 texts.append((spec.key, block.text, block))
                 # Include an immutable occurrence receipt when the problem
                 # is in a caption, not the adjacent narrative/table. Same
