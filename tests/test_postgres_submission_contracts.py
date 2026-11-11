@@ -179,3 +179,21 @@ def test_database_unavailable_never_looks_like_a_new_claim():
         raise OSError("database network down")
     with pytest.raises(SubmissionStoreError):
         PostgresSubmissionStore(outage).claim("key")
+
+
+def test_record_row_must_not_replace_existing_different_remote_row():
+    store, conn = adapter(rowcount=0)
+    with pytest.raises(SubmissionStoreError):
+        store.record_row("key", "lease", "different-id")
+    assert conn.rolled_back and not conn.committed
+    sql, params = conn.cur.executions[0]
+    assert "AND (row_id IS NULL OR row_id = %s)" in sql
+    assert params[0] == "different-id" and params[-1] == "different-id"
+
+
+def test_attachment_requires_known_remote_row():
+    store, conn = adapter(rowcount=1)
+    store.record_attachment("key", "lease", "fingerprint")
+    sql, params = conn.cur.executions[0]
+    assert "AND row_id IS NOT NULL FOR UPDATE" in sql
+    assert params == ("key", "lease")
