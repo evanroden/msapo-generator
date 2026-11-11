@@ -19,8 +19,14 @@ def saved(monkeypatch):
     return draft_from_dict(asdict(report)), content, review, edits
 
 
-def test_saved_invoice_corrections_restore_without_changing_original_cells(monkeypatch):
+def test_saved_invoice_corrections_restore_without_changing_original_cells(monkeypatch, tmp_path):
+    from app.monthly_report_library import save_snapshot, load_snapshot
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
     report, content, review, original = saved(monkeypatch)
+    saved_snapshot = save_snapshot(report, expected_revision=0, entered_editor="Synthetic reviewer")
+    restored = load_snapshot(report.profile.contract, report.profile.key, report.period)
+    assert restored.draft == report and restored.revision == saved_snapshot.revision
+    report = restored.draft
     receipt = saved_review_for_editor(report, report.blocks[0], content, 1, review)
     assert receipt is not None
     assert (receipt["as_of"], receipt["source_kind"]) == ("2026-10-28", "vendor_invoice")
