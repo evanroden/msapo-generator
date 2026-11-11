@@ -416,3 +416,24 @@ def test_row_removal_undo_refuses_changed_external_identity():
     button(app, 'Undo last removal').click().run()
     assert app.session_state['result'].rows == before.rows
     assert any('table changed since removal' in item.value for item in app.warning)
+
+
+def test_last_primary_row_can_be_restored_alongside_imported_table():
+    spec, block = example('capital_renewal', (('North', 'High', 'Inspect pump'),))
+    block = replace(block, extra_tables=(ReportTable(('Notes',), (('Keep imported detail',),)),))
+    app = AppTest.from_string(SCRIPT.replace('INITIAL', repr(block)).replace('SPEC', repr(spec))).run()
+    button(app, 'Remove capital item', 1).click().run()
+    app.run()
+    assert app.session_state['result'].rows == ()
+    button(app, 'Undo last removal').click().run()
+    assert app.session_state['result'].rows == block.rows
+    assert app.session_state['result'].extra_tables == block.extra_tables
+
+
+def test_replacement_timing_retains_free_text_for_legacy_date_schema():
+    spec, block = example('end_of_life', (('North', 'Pump', '2028-01-01'),))
+    spec = replace(spec, columns=(*spec.columns[:-1], replace(spec.columns[-1], type='date')))
+    app = AppTest.from_string(SCRIPT.replace('INITIAL', repr(block)).replace('SPEC', repr(spec))).run()
+    button(app, 'Edit replacement item').click().run()
+    field(app, 'Expected replacement timing').set_value('2029').run()
+    assert app.session_state['result'].rows[0][-1] == '2029'

@@ -440,6 +440,19 @@ def _render_fields(columns, fields, args, field, queue=_queue, *, prose=None):
     return keys
 
 
+def _table_key(spec, block, prefix):
+    from app.monthly_report_guided import _rich_text_scope
+
+    context = (spec.key, _rich_text_scope(prefix), block.references,
+               tuple(table.reference for table in block.extra_tables), spec.columns)
+    return prefix + "_row_cards_" + _signature(context)
+
+
+def primary_row_recovery_pending(spec, block, prefix):
+    record = st.session_state.get(_table_key(spec, block, prefix) + "_rows", {})
+    return bool(record.get("pending") or record.get("removed"))
+
+
 def edit_row_cards(spec, block, prefix, field, *, empty=None, notice=None):
     """Return the edited block.
 
@@ -447,19 +460,17 @@ def edit_row_cards(spec, block, prefix, field, *, empty=None, notice=None):
     no rows and no request is open; an open blank editor is not content.
     """
     from app.monthly_report_content_policy import ambiguous_price_columns
-    from app.monthly_report_guided import _rich_text_scope
     from app.monthly_report_table_review_ui import review_table_headings
     noun, add_label = CARD_TABLES[spec.key]
     prose = _request_prose if spec.key == "rfi_matrix" else None
-    context = (spec.key, _rich_text_scope(prefix), block.references,
-               tuple(table.reference for table in block.extra_tables), spec.columns)
-    key = prefix + "_row_cards_" + _signature(context)
+    key = _table_key(spec, block, prefix)
+    primary = bool(block.rows or not block.extra_tables or primary_row_recovery_pending(spec, block, prefix))
     if spec.key == "service_calls":
         # Retire pre-projection callbacks that could have opened a header as a call.
         key += "_onsite_context_v1"
     group = tuple(key + "_extra_" + str(index) + "_" + _signature(table.columns)
                   for index, table in enumerate(block.extra_tables))
-    if block.rows or not block.extra_tables:
+    if primary:
         group += (key + "_rows",)
     tables, table_keys = [], []
     for index, table in enumerate(block.extra_tables):
@@ -479,9 +490,10 @@ def edit_row_cards(spec, block, prefix, field, *, empty=None, notice=None):
         table_keys.append(table_key)
         tables.append(replace(table, rows=edited) if edited != table.rows else table)
     rows = block.rows
-    if rows or not block.extra_tables:
+    if primary:
         columns = tuple(column.title for column in spec.columns) or ("Facility", "Item", "Status")
-        rows = _edit_table(columns, rows, tuple(column.type for column in spec.columns), key + "_rows", noun, add_label, field,
+        rows = _edit_table(columns, rows, tuple("text" if spec.key == "end_of_life" and column.type == "date" else column.type
+                             for column in spec.columns), key + "_rows", noun, add_label, field,
                            onsite=spec.key == "service_calls", prose=prose, group=group)
         table_keys.append(key + "_rows")
     if empty and notice is not None:

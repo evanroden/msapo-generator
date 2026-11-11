@@ -638,6 +638,9 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
     optional_table = spec.key in EMPTY_TABLES
     from app.monthly_report_row_cards_ui import CARD_TABLES
     row_cards = spec.key in CARD_TABLES and (spec.type in ("table", "work_order_grid") or block.extra_tables)
+    if spec.key in ("capital_renewal", "end_of_life") and block.extra_tables and not block.rows:
+        from app.monthly_report_row_cards_ui import primary_row_recovery_pending
+        row_cards = row_cards and primary_row_recovery_pending(spec, block, prefix)
     if optional_table and row_cards:
         # Add request opens one request's named fields; that editor is never
         # report content until a field holds something.
