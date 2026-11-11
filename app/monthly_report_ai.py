@@ -10,6 +10,8 @@ import time
 
 import anthropic
 
+from app.ai_provider import anthropic_client
+
 from app import monthly_report_library as library
 from app.analysis_schema import AnalysisResponseError, _extract_json_object
 from app.api_retry import (
@@ -293,7 +295,7 @@ def request_json(content):
             "The document reader is not configured. Continue with entered text."
         )
     until = time.monotonic() + OPERATION_BUDGET_SECONDS
-    with anthropic.Anthropic(api_key=ANTHROPIC_API_KEY, max_retries=0) as client:
+    with anthropic_client(factory=anthropic.Anthropic, api_key=ANTHROPIC_API_KEY) as client:
         message = request_with_retry(
             lambda timeout: client.messages.create(
                 model=ANTHROPIC_MODEL,
