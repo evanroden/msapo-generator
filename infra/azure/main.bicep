@@ -3,7 +3,10 @@
 // Classic DOCKER| custom container, NOT Linux sitecontainers/sidecars.
 targetScope = 'resourceGroup'
 
-@allowed(['nonprod', 'prod'])
+@allowed([
+  'nonprod'
+  'prod'
+])
 param environment string
 param location string = resourceGroup().location
 param prefix string
@@ -21,7 +24,10 @@ param vnetIntegrationSubnetId string
 param appPrivateEndpointSubnetId string
 param appPrivateDnsZoneId string
 @description('ENFRA approval of P1v3 (~2 vCPU / 8 GiB) sizing pending measurement.')
-@allowed(['P1v3', 'P2v3'])
+@allowed([
+  'P1v3'
+  'P2v3'
+])
 param appServiceSku string = 'P1v3'
 @description('A03-qualified Azure Files bridge only; not safe until storage and SQLite tests pass.')
 param enableQualifiedFilesMount bool = false
@@ -77,8 +83,15 @@ resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
   name: planName
   location: location
   kind: 'linux'
-  sku: { name: appServiceSku, tier: 'PremiumV3', capacity: 1 }
-  properties: { reserved: true, perSiteScaling: false }
+  sku: {
+    name: appServiceSku
+    tier: 'PremiumV3'
+    capacity: 1
+  }
+  properties: {
+    reserved: true
+    perSiteScaling: false
+  }
 }
 
 resource app 'Microsoft.Web/sites@2024-04-01' = {
@@ -108,23 +121,74 @@ resource app 'Microsoft.Web/sites@2024-04-01' = {
       ftpsState: 'Disabled'
       scmIpSecurityRestrictionsUseMain: true
       appSettings: [
-        { name: 'WEBSITES_PORT', value: '8501' }
-        { name: 'WEBSITES_CONTAINER_START_TIME_LIMIT', value: '600' }
-        { name: 'WEBSITES_ENABLE_APP_SERVICE_STORAGE', value: 'false' }
-        { name: 'WEBSITE_HEALTHCHECK_MAXPINGFAILURES', value: '3' }
-        { name: 'EPC_DATA_DIR', value: dataDir }
-        { name: 'PDF_BACKEND', value: 'libreoffice' }
-        { name: 'ANTHROPIC_MODEL', value: aiModel }
-        { name: 'ANTHROPIC_API_KEY', value: kvRef.anthropic }
-        { name: 'EXPENSE_ACCOUNT_DIRECTORS_JSON', value: kvRef.directors }
-        { name: 'SMARTSHEET_FORM_URL', value: kvRef.formUrl }
-        { name: 'SMARTSHEET_FORM_FIELD_MAP_JSON', value: smartsheetFormFieldMapJson }
-        { name: 'SMARTSHEET_URL_PREFILL_ENABLED', value: 'true' }
-        { name: 'SMARTSHEET_PREFILL_MAX_URL_LENGTH', value: '7000' }
-        { name: 'SMARTSHEET_API_MODE', value: 'disabled' }
-        { name: 'SMARTSHEET_ALLOW_CUSTOM_API_BASE', value: 'false' }
-        { name: 'MICROSOFT_PROVIDER_AUTHENTICATION_SECRET', value: kvRef.authSecret }
-        { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: insights.properties.ConnectionString }
+        {
+          name: 'WEBSITES_PORT'
+          value: '8501'
+        }
+        {
+          name: 'WEBSITES_CONTAINER_START_TIME_LIMIT'
+          value: '600'
+        }
+        {
+          name: 'WEBSITES_ENABLE_APP_SERVICE_STORAGE'
+          value: 'false'
+        }
+        {
+          name: 'WEBSITE_HEALTHCHECK_MAXPINGFAILURES'
+          value: '3'
+        }
+        {
+          name: 'EPC_DATA_DIR'
+          value: dataDir
+        }
+        {
+          name: 'PDF_BACKEND'
+          value: 'libreoffice'
+        }
+        {
+          name: 'ANTHROPIC_MODEL'
+          value: aiModel
+        }
+        {
+          name: 'ANTHROPIC_API_KEY'
+          value: kvRef.anthropic
+        }
+        {
+          name: 'EXPENSE_ACCOUNT_DIRECTORS_JSON'
+          value: kvRef.directors
+        }
+        {
+          name: 'SMARTSHEET_FORM_URL'
+          value: kvRef.formUrl
+        }
+        {
+          name: 'SMARTSHEET_FORM_FIELD_MAP_JSON'
+          value: smartsheetFormFieldMapJson
+        }
+        {
+          name: 'SMARTSHEET_URL_PREFILL_ENABLED'
+          value: 'true'
+        }
+        {
+          name: 'SMARTSHEET_PREFILL_MAX_URL_LENGTH'
+          value: '7000'
+        }
+        {
+          name: 'SMARTSHEET_API_MODE'
+          value: 'disabled'
+        }
+        {
+          name: 'SMARTSHEET_ALLOW_CUSTOM_API_BASE'
+          value: 'false'
+        }
+        {
+          name: 'MICROSOFT_PROVIDER_AUTHENTICATION_SECRET'
+          value: kvRef.authSecret
+        }
+        {
+          name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+          value: insights.properties.ConnectionString
+        }
       ]
     }
   }
@@ -134,7 +198,10 @@ resource auth 'Microsoft.Web/sites/config@2024-04-01' = {
   parent: app
   name: 'authsettingsV2'
   properties: {
-    platform: { enabled: true, runtimeVersion: '~1' }
+    platform: {
+      enabled: true
+      runtimeVersion: '~1'
+    }
     globalValidation: {
       requireAuthentication: true
       unauthenticatedClientAction: 'RedirectToLoginPage'
@@ -184,14 +251,22 @@ resource appEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01' = {
     subnet: { id: appPrivateEndpointSubnetId }
     privateLinkServiceConnections: [{
       name: 'appservice'
-      properties: { privateLinkServiceId: app.id, groupIds: ['sites'] }
+      properties: {
+        privateLinkServiceId: app.id
+        groupIds: ['sites']
+      }
     }]
   }
 }
 resource appDns 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-05-01' = {
   name: 'default'
   parent: appEndpoint
-  properties: { privateDnsZoneConfigs: [{ name: 'app', properties: { privateDnsZoneId: appPrivateDnsZoneId } }] }
+  properties: {
+    privateDnsZoneConfigs: [{
+      name: 'app'
+      properties: { privateDnsZoneId: appPrivateDnsZoneId }
+    }]
+  }
 }
 resource diagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
   name: '${prefix}-${environment}-diagnostics'
@@ -199,11 +274,23 @@ resource diagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' 
   properties: {
     workspaceId: workspace.id
     logs: [
-      { category: 'AppServiceConsoleLogs', enabled: true }
-      { category: 'AppServiceHTTPLogs', enabled: true }
-      { category: 'AppServicePlatformLogs', enabled: true }
+      {
+        category: 'AppServiceConsoleLogs'
+        enabled: true
+      }
+      {
+        category: 'AppServiceHTTPLogs'
+        enabled: true
+      }
+      {
+        category: 'AppServicePlatformLogs'
+        enabled: true
+      }
     ]
-    metrics: [{ category: 'AllMetrics', enabled: true }]
+    metrics: [{
+        category: 'AllMetrics'
+        enabled: true
+      }]
   }
 }
 

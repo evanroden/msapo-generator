@@ -10,9 +10,9 @@ FOUNDATION = (INFRA / 'foundation.bicep').read_text()
 
 def test_classic_container_contract_and_minimal_replica():
     assert "linuxFxVersion: 'DOCKER|" in MAIN
-    assert "name: 'WEBSITES_PORT', value: '8501'" in MAIN
+    assert "name: 'WEBSITES_PORT'\n          value: '8501'" in MAIN
     assert "healthCheckPath: '/_stcore/health'" in MAIN
-    assert "name: 'WEBSITES_ENABLE_APP_SERVICE_STORAGE', value: 'false'" in MAIN
+    assert "name: 'WEBSITES_ENABLE_APP_SERVICE_STORAGE'\n          value: 'false'" in MAIN
     assert 'sitecontainers@' not in MAIN.lower()
     assert 'targetPort:' not in MAIN
     assert 'capacity: 1' in MAIN

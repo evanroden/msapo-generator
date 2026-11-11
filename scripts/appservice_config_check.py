@@ -90,7 +90,7 @@ def run(site, config, settings, auth, storage, plan):
     audit.check('linux' in site_type.lower() and 'container' in site_type.lower(), 'Linux container App Service')
     audit.check(bool(site_properties.get('httpsOnly')), 'HTTPS only')
     audit.check(str(site_properties.get('publicNetworkAccess') or '').lower() == 'disabled',
-                'private inbound networking (public access disabled)', warning=True)
+                'private inbound networking (public access disabled)')
     audit.check(int(plan_properties.get('numberOfWorkers') or (plan.get('sku') or {}).get('capacity') or 0) == 1, 'exactly one App Service plan worker')
     audit.check(str(plan.get('kind') or '').lower() in ('linux', 'elastic') or bool(plan_properties.get('reserved')),
                 'Linux App Service plan')

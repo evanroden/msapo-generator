@@ -1,7 +1,10 @@
 // Separate bootstrap: create registry and managed identity before pushing image.
 // A06 must push an immutable digest before main.bicep is evaluated for deployment.
 targetScope = 'resourceGroup'
-@allowed(['nonprod', 'prod'])
+@allowed([
+  'nonprod'
+  'prod'
+])
 param environment string
 param prefix string
 param location string = resourceGroup().location
@@ -40,14 +43,22 @@ resource acrEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01' = {
     subnet: { id: acrPrivateEndpointSubnetId }
     privateLinkServiceConnections: [{
       name: 'registry'
-      properties: { privateLinkServiceId: acr.id, groupIds: ['registry'] }
+      properties: {
+        privateLinkServiceId: acr.id
+        groupIds: ['registry']
+      }
     }]
   }
 }
 resource acrDns 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-05-01' = {
   name: 'default'
   parent: acrEndpoint
-  properties: { privateDnsZoneConfigs: [{ name: 'registry', properties: { privateDnsZoneId: acrPrivateDnsZoneId } }] }
+  properties: {
+    privateDnsZoneConfigs: [{
+      name: 'registry'
+      properties: { privateDnsZoneId: acrPrivateDnsZoneId }
+    }]
+  }
 }
 output acrLoginServer string = acr.properties.loginServer
 output runtimeIdentityPrincipalId string = identity.properties.principalId

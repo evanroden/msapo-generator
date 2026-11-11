@@ -53,6 +53,7 @@ def test_candidate_passes_but_warns_storage_qualification(capsys):
 @pytest.mark.parametrize('index,key,value', [
     (0, 'properties', {'httpsOnly': False, 'publicNetworkAccess': 'Enabled'}),
     (1, 'properties', {'linuxFxVersion': 'sitecontainers'}),
+    (0, 'properties', {'httpsOnly': True, 'publicNetworkAccess': 'Enabled'}),
     (2, 'WEBSITES_PORT', '80'),
     (2, 'EPC_DATA_DIR', '/test1'),
     (2, 'ANTHROPIC_API_KEY', SECRET),
