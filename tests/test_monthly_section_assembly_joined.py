@@ -93,10 +93,11 @@ def _included_source(profile, destination, label, colors, previous):
         revised = replace(content, source=source)
         additions = prepare_section_pages(
             profile, (revised,), destination, previous)
-    source = correct_scope(
-        revised.source, profile, (profile.facilities[0].key,))
-    source = replace(source, service_date="2026-09-12",
+    # Bind the scope receipt after the final factual metadata. Changing the
+    # site/date afterwards would make a formerly valid receipt stale.
+    source = replace(revised.source, service_date="2026-09-12",
                      facility=profile.facilities[0].key)
+    source = correct_scope(source, profile, (profile.facilities[0].key,))
     block = approve_all_assets(refresh_asset_source_context(
         additions[destination], (source,)))
     assert len(block.asset_hashes) == 3
