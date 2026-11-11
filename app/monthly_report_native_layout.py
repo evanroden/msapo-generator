@@ -2568,6 +2568,17 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     mark_native_section_headings(document, original, headings, section_by_pos, navigable)
     if source_region_observer is not None:
         source_region_observer(body, page_plan)
+    # Issue page links belong to the issue, not the independent Report pages
+    # pipeline. Emit them inside the native Issues section only, after all
+    # template/section transformations have settled. No source is approved here.
+    if (section_key in (None, "issues")
+            and any(section.key == "issues" and section.included for section in draft.sections)):
+        from app.monthly_report_issue_evidence_render import selected_issue_pages, append_issue_evidence
+        if selected_issue_pages(draft):
+            anchor = section_ends.get("issues")
+            if anchor is None or anchor.getparent() is None:
+                raise NativeLayoutError("The native Issues section has no safe evidence anchor. Review the selected design.")
+            append_issue_evidence(document, draft, before=anchor)
     result = BytesIO()
     document.save(result)
     # Prune image relationships which became unused after old payload removal.
