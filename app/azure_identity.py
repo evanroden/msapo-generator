@@ -19,14 +19,11 @@ _GUID = re.compile(r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\Z")
 _OID = ("oid", "http://schemas.microsoft.com/identity/claims/objectidentifier")
 _TID = ("tid", "http://schemas.microsoft.com/identity/claims/tenantid")
 _ROLE = ("roles", "http://schemas.microsoft.com/ws/2008/06/identity/claims/role")
-# Set True only in the reviewed A05 data-layer authorization integration.
-# An environment setting alone must never activate legacy shared data paths.
+# A05 must change this in a reviewed code change, after wiring all stores.
+# An environment setting alone never activates legacy shared data paths.
 RESOURCE_BOUNDARIES_INTEGRATED = False
 
-# Values are proposed, not yet ENFRA-approved Entra app-role IDs.
-# This cannot be enabled by configuration alone. A05 must make a reviewed
-# code change once every persisted data path authorizes per resource.
-RESOURCE_BOUNDARIES_INTEGRATED = False
+# Proposed, not ENFRA-approved Entra application role values.
 
 ACTION_ROLES = {
     "report.open": frozenset({"MSAPO.ReportReader", "MSAPO.ReportEditor"}),
