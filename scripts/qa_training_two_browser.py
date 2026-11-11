@@ -266,6 +266,18 @@ def journey():
                                        "monthly_events": len(event_rows)})
 
             b.reload(wait_until="domcontentloaded")
+            settled(b)
+            # Both real contexts intentionally share a recovery identity. An
+            # interrupted older browser journal may now be based on snapshot 1.
+            # The UI must offer a deliberate choice; never silently replace
+            # snapshot 2 or accept its old draft as a new completion.
+            review = b.get_by_role("button", name="Review draft changes", exact=True)
+            if review.count():
+                review.click()
+                expect(b.get_by_role("button", name="Open saved report", exact=True)).to_be_visible()
+                b.get_by_role("button", name="Open saved report", exact=True).click()
+                evidence["stages"].append({"stage": "explicit saved-version recovery", "chosen": "saved"})
+                settled(b)
             open_training(b)
             b.get_by_role("button", name="Generate QA Word and PDF", exact=True).click()
             expect(b.get_by_role("button", name="Download isolated QA DOCX", exact=True)).to_be_visible(timeout=180000)
