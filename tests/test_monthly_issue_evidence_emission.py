@@ -25,10 +25,11 @@ from tests.test_monthly_report_issue_cards import draft_for
 
 
 def _reviewed(source, numbers):
-    return replace(source, client_page_reviews=tuple(
-        (n, page_fingerprint(source, n)) for n in numbers),
-        captions=tuple((n, f"Reviewed caption for {source.filename}, sheet {n}")
-                       for n in numbers))
+    captioned = replace(source, captions=tuple(
+        (n, f"Reviewed caption for {source.filename}, sheet {n}")
+        for n in numbers))
+    return replace(captioned, client_page_reviews=tuple(
+        (n, page_fingerprint(captioned, n)) for n in numbers))
 
 
 def _setup(monkeypatch, tmp_path):
