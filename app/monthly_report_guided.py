@@ -938,7 +938,7 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
     # current result without changing the established mutation order.
     writing = st.container(key=prefix + "_activity_writing") if section.key == "activity" else None
     if section.key in {"organization", "subcontractors", "training"} and not draft.prepared_by.strip():
-        st.info("Enter Prepared by above to view or edit saved contact and team information.")
+        st.info("[Enter Prepared by](#report-prepared-by) to view or edit saved contact and team information.")
         return draft, blocks
     # A source-acceptance callback is delivered before widgets redraw. Use
     # this report's identity + the exact block revision the user reviewed;
