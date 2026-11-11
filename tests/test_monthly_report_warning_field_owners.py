@@ -592,3 +592,40 @@ def test_pricing_heading_cannot_hide_numeric_monetary_column(monkeypatch):
         report, "p", lambda key, value: key)
     assert state["p_draft"] == report
     assert warnings and "monetary" in warnings[0]
+
+
+def test_required_omitted_text_opens_one_native_field_without_approval(monkeypatch):
+    from app import monthly_report_guided as guided
+    from types import SimpleNamespace
+    block = ResolvedBlock("activity_summary", "Omit", text="Retained historical wording")
+    report = synthetic_draft(block)
+    state = {"p_draft": report}
+    monkeypatch.setattr(correction, "st", SimpleNamespace(session_state=state))
+    monkeypatch.setattr(guided, "_rich_text_scope", lambda prefix: "scope")
+    correction._open_required_text_editor("p", report.fingerprint,
+                                         block.key, block.fingerprint)
+    updated = state["p_draft"]
+    assert updated.blocks[0].source == "This month"
+    assert updated.blocks[0].text == block.text
+    assert updated.blocks[0].reviewed_fingerprint == block.reviewed_fingerprint
+    assert "p_required_text_focus" in state
+    markup = correction.required_text_focus_markup(
+        updated, updated.blocks[0], "p")
+    assert "enfra-page-correction-request" in markup
+    assert 'data-report-identity="' + correction._identity("p") + '"' in markup
+    assert not correction.required_text_focus_markup(updated, updated.blocks[0], "p")
+
+
+def test_stale_required_text_recovery_preserves_newer_work(monkeypatch):
+    from app import monthly_report_guided as guided
+    from types import SimpleNamespace
+    block = ResolvedBlock("activity_summary", "Omit")
+    earlier = synthetic_draft(block)
+    latest = replace(earlier, prepared_by="A later actor")
+    state = {"p_draft": latest}
+    monkeypatch.setattr(correction, "st", SimpleNamespace(session_state=state))
+    monkeypatch.setattr(guided, "_rich_text_scope", lambda prefix: "scope")
+    correction._open_required_text_editor("p", earlier.fingerprint,
+                                         block.key, block.fingerprint)
+    assert state["p_draft"] == latest
+    assert "p_required_text_focus" not in state
