@@ -683,6 +683,24 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
             source = "Omit" if retained_mbcx and block.source == "Omit" else "This month"
             block = replace(block, source=source, text=notes, reviewed_fingerprint="", client_reviewed_fingerprint="")
     if row_cards:
+        from app.monthly_report_table_column_recovery import (
+            fixed_width_defect, edit_missing_positions, missing_positions)
+        if fixed_width_defect(spec, block) > 0:
+            st.warning("This row table has more values than saved column headings. "
+                       "The original rows are unchanged. Confirm the positional "
+                       "column correction in Review before editing a row.")
+            return block
+        if block.extra_tables:
+            tables = tuple(edit_missing_positions(table, block, number, prefix, field)
+                           for number, table in enumerate(block.extra_tables))
+            if tables != block.extra_tables:
+                block = replace(block, extra_tables=tables, source="This month",
+                                reviewed_fingerprint="", client_reviewed_fingerprint="")
+            if any(missing_positions(table) for table in tables):
+                st.warning("An imported table has more values than headings. "
+                           "Enter and confirm its missing positional headings above; "
+                           "row-card editing remains closed to protect those values.")
+                return block
         from app.monthly_report_row_cards_ui import edit_row_cards
         quiet = not (block.text.strip() or block.asset_hashes or block.org_nodes or block.ai_paragraphs)
         block = edit_row_cards(spec, block, prefix, field, notice=request_notice,
