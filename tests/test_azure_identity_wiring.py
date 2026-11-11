@@ -10,7 +10,7 @@ def test_root_requires_identity_before_workflow_import_and_render():
     assert code.index("from app.web_ui import main") < code.index("main()", code.index("from app.web_ui import main"))
 
 
-def test_legacy_bookmark_requires_identity_before_any page data():
+def test_legacy_bookmark_requires_identity_before_any_page_data():
     code = (ROOT / "pages/2_Smartsheet_PO.py").read_text(encoding="utf-8")
     assert code.index("require_streamlit_entry()") < code.index('st.title("Smartsheet PO handoff")')
     assert "submit_po" not in code
