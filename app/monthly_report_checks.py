@@ -316,7 +316,14 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                 if not block.reviewed:
                     checks.append(ReportCheck("review", f"Review the AI draft: {spec.key}.", True, spec.key))
                 texts.append((spec.key, block.text, block))
-                texts.extend((spec.key, caption) for caption in block.asset_captions)
+                # Include an immutable occurrence receipt when the problem
+                # is in a caption, not the adjacent narrative/table. Same
+                # image bytes and identical captions remain distinct targets.
+                from app.monthly_report_correction_targets import picture_target
+                texts.extend((spec.key, caption, None, False,
+                              (picture_target(draft, block, index),))
+                             for index, caption in enumerate(block.asset_captions)
+                             if index < len(block.asset_hashes))
                 texts.extend((spec.key, cell) for row in block.rows for cell in row)
                 if block.rows:
                     if table_has_pricing(tuple(c.title for c in spec.columns), block.rows, work_orders=spec.type == "work_order_grid"):
@@ -331,7 +338,8 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
     for item in texts:
         key, text = item[:2]
         narrative = item[2] if len(item) >= 3 else None
-        structural_month = len(item) == 4 and item[3]
+        structural_month = len(item) >= 4 and bool(item[3])
+        correction_targets = item[4] if len(item) >= 5 else ()
         # Word renderers split VT/FF and record separators into paragraphs.
         # Only reject characters that reach the XML writer unchanged.
         invalid = sorted(set(re.findall(r"[\x00-\x08\x0e-\x1b\x1f\ud800-\udfff\ufffe\uffff]", text)))
@@ -340,12 +348,12 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
             checks.append(ReportCheck(
                 "text_character",
                 f"Remove unsupported text characters ({codes}) from {key.replace('_', ' ')} before creating the report.",
-                True, key))
+                True, key, correction_targets))
         if contains_price(text):
-            checks.append(ReportCheck("pricing", f"Remove pricing from {key.replace('_', ' ')}. Client reports cannot contain prices.", True, key))
+            checks.append(ReportCheck("pricing", f"Remove pricing from {key.replace('_', ' ')}. Client reports cannot contain prices.", True, key, correction_targets))
         phrases = placeholder_matches(text)
         if phrases:
-            checks.append(ReportCheck("placeholder", f"Remove template instructions from {key}: {', '.join(phrases)}.", True, key))
+            checks.append(ReportCheck("placeholder", f"Remove template instructions from {key}: {', '.join(phrases)}.", True, key, correction_targets))
         if key != "report_identity" and not structural_month:
             if narrative is not None:
                 from app.monthly_report_period_items import apply_exclusions, unresolved_mentions
