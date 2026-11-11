@@ -264,6 +264,36 @@ def test_actual_synthetic_native_design_docx_order_and_no_cross_section_bleed(mo
 
 @pytest.mark.skipif(not (shutil.which("libreoffice") or shutil.which("soffice")),
                     reason="LibreOffice is required for actual PDF conversion")
+def test_actual_synthetic_native_design_pdf_preserves_each_marker_once(monkeypatch, tmp_path):
+    from app.monthly_report_native_layout import build_native_docx
+
+    draft, originals = _setup(monkeypatch, tmp_path)
+    template = Document()
+    template.add_heading("EQUIPMENT PERFORMANCE ISSUES", 1)
+    template.add_paragraph("Issues Identified")
+    template.add_paragraph("Synthetic old note")
+    template.add_heading("TRAINING SUMMARY", 1)
+    template.add_paragraph("Synthetic old training")
+    path = tmp_path / "native-issue-design.docx"
+    template.save(path)
+    word = build_native_docx(draft, path)
+    pdf, error = _convert_report_pdf(draft, word)
+    assert not error and pdf and pdf.startswith(b"%PDF-")
+    expected = [f"Reviewed caption for {file}, sheet {page}" for file, page in (
+        ("alpha.pdf", 1), ("alpha.pdf", 3), ("alpha.pdf", 5),
+        ("beta.pdf", 1), ("beta.pdf", 2), ("beta.pdf", 3))]
+    with fitz.open(stream=pdf, filetype="pdf") as opened:
+        text = "\\n".join(page.get_text() for page in opened)
+        assert all(text.count(label) == 1 for label in expected)
+        assert [text.index(label) for label in expected] == sorted(text.index(label) for label in expected)
+        assert sum(len(page.get_images(full=True)) for page in opened) >= 6
+        assert "Synthetic old note" not in text
+    assert all(sources.source_bytes(draft.profile, source) == originals[source.filename]
+               for source in draft.sources)
+
+
+@pytest.mark.skipif(not (shutil.which("libreoffice") or shutil.which("soffice")),
+                    reason="LibreOffice is required for actual PDF conversion")
 def test_actual_pdf_has_ordered_evidence_pages_without_loss(monkeypatch, tmp_path):
     draft, originals = _setup(monkeypatch, tmp_path)
     word = _build_docx(draft)
