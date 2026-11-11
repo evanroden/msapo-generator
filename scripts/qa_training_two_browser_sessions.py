@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 import re
 import traceback
+import time
 
 from docx import Document
 import pymupdf
@@ -52,8 +53,17 @@ def save_shared(page, token, revision):
     save = page.get_by_role("button", name="Save shared version", exact=True)
     expect(save).to_be_enabled()
     save.click()
-    base.settled(page)
-    assert base.snapshot_store(token)[2].revision == revision
+    # The button can complete its native click before Streamlit starts
+    # processing. Observe the actual immutable store revision; never count
+    # a merely visible success label or a pre-action idle state as a save.
+    deadline = time.monotonic() + 40
+    while time.monotonic() < deadline:
+        head = base.snapshot_store(token)[2]
+        if head is not None and head.revision == revision:
+            base.settled(page)
+            return
+        time.sleep(.2)
+    raise AssertionError("The shared Training report did not commit revision " + str(revision))
 
 
 def event_titles(saved):
