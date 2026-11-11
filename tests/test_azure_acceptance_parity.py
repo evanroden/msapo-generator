@@ -130,3 +130,36 @@ def test_cli_writes_blocked_status_not_false_success(tmp_path):
                "--sha", SHA, "--require", "monthly.pdf", "--output", str(out)])
     assert rc == 4
     assert json.loads(out.read_text())["status"] == "BLOCKED"
+
+
+def test_embedded_attachment_omission_detected_in_pdf_and_docx():
+    from zipfile import ZipFile
+    original_pdf = fitz.open()
+    original_pdf.new_page()
+    original_pdf.embfile_add("invented.txt", b"invented attachment only")
+    with_attachment = original_pdf.tobytes()
+    original_pdf.close()
+    assert compare_pdf(with_attachment, pdf(("",), pages=1))["attachments"] == "FAIL"
+
+    original_docx = docx("Invented attached memo")
+    buf = BytesIO()
+    with ZipFile(BytesIO(original_docx)) as source, ZipFile(buf, "w") as output:
+        for item in source.infolist():
+            output.writestr(item, source.read(item.filename))
+        output.writestr("word/embeddings/synthetic.bin", b"mock bundled source")
+    assert compare_word(buf.getvalue(), original_docx)["attachments"] == "FAIL"
+
+
+def test_corrupt_document_and_bad_identity_fail_closed(tmp_path):
+    a, b = tmp_path / "container", tmp_path / "azure"
+    ma = meta(a, environment="container")
+    mb = meta(b, environment="azure-staging")
+    (a / "monthly.docx").write_bytes(b"not a Word ZIP")
+    (b / "monthly.docx").write_bytes(docx("Synthetic"))
+    res = compare_bundle(a, b, sha=SHA, baseline_identity=ma, azure_identity=mb,
+                         required=["monthly.docx"])
+    assert res["status"] == "FAIL"
+    bad = json.loads(mb.read_text()); bad["image_digest"] = None
+    mb.write_text(json.dumps(bad))
+    with pytest.raises(ValueError, match="digest"):
+        load_identity(mb, SHA, "azure-staging")
