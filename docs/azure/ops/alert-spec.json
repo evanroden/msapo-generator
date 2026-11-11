@@ -59,11 +59,11 @@
     "backup_failed",
     "backup_overdue",
     "restore_check_failed",
-    "telemetry_heartbeat_missing",
     "readiness_ready",
     "save_succeeded",
     "generation_succeeded",
-    "generation_failed"
+    "generation_failed",
+    "telemetry_heartbeat"
   ],
   "forbidden_properties": [
     "payload",
@@ -323,14 +323,14 @@
       "enabled": false,
       "production_route": "TBD",
       "severity": "Sev2",
-      "kind": "count",
+      "kind": "absence",
       "window_minutes": 15,
       "threshold": 1,
       "event_codes": [
-        "telemetry_heartbeat_missing"
+        "telemetry_heartbeat"
       ],
       "route_role": "SRE/observability owner",
-      "first_action": "Check ingestion and instrumentation; cannot infer application healthy from missing events."
+      "first_action": "Independent Azure Monitor absence query: verify that a system heartbeat was emitted in the last 15 minutes; correlate with App Service HealthCheckStatus and known maintenance. Do not depend on an event from the failing process."
     }
   ],
   "allowed_reason_codes": [
@@ -363,5 +363,5 @@
     "TELEMETRY_GAP"
   ],
   "reason_code_policy": "Only use fixed, reviewed reason enums. Never normalize a private value (name, email, filename, contract, site) into reason_code.",
-  "telemetry_heartbeat_note": "A missing heartbeat cannot depend on an event emitted by the failing process. Use an independently evaluated AppEvents absence query and/or App Service platform health metrics, with isolated alert routing review."
+  "telemetry_heartbeat_note": "Heartbeat absence is an independently evaluated query, not an app-generated failure event; alarm when fewer than one system heartbeat has arrived in a 15-minute evaluation window. App can emit telemetry_heartbeat, but the scheduled rule runs independently."
 }
