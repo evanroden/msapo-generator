@@ -105,6 +105,14 @@ def test_persistence_omit_reorder_replace_and_stale_links_dont_move_between_issu
                 ("valve", "beta.pdf", 1), ("valve", "beta.pdf", 2), ("valve", "beta.pdf", 3)]
     assert len(_paragraphs(_build_docx(reordered))[0].inline_shapes) == 6
 
+    deleted = replace(draft, sources=(draft.sources[1],))
+    with pytest.raises(ValueError, match="changed|unavailable"):
+        selected_issue_pages(deleted)
+    isolated = replace(deleted, follow_ups=(
+        replace(draft.follow_ups[0], included=False), draft.follow_ups[1]))
+    assert len(selected_issue_pages(isolated)) == 3
+    assert len(_paragraphs(_build_docx(isolated))[0].inline_shapes) == 3
+
     changed = replace(draft.sources[0], filename="replaced.pdf", sha256="f" * 64)
     stale = replace(draft, sources=(changed, draft.sources[1]))
     with pytest.raises(ValueError, match="changed|unavailable"):
