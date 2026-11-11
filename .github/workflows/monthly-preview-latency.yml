@@ -91,6 +91,43 @@ jobs:
         env:
           MSAPO_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: python scripts/qa_monthly_preview_browser_latency.py
+      - name: Preserve uncapped browser reference distribution
+        run: cp test-artifacts/monthly-preview-latency/browser.json test-artifacts/monthly-preview-latency/browser-uncapped.json
+      - name: Build production image for capped real-UI server
+        timeout-minutes: 10
+        run: docker build --build-arg APP_GIT_COMMIT="${{ github.event.pull_request.head.sha || github.sha }}" -t msapo-491-browser .
+      - name: Measure real browser against production image at 512MiB and 0.5 CPU
+        timeout-minutes: 12
+        env:
+          MSAPO_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          qa_root="$(mktemp -d -t qa491-capped-XXXXXXXX)"
+          printf 'synthetic-monthly-dom-v1' > "$qa_root/monthly-dom-synthetic-only.marker"
+          mkdir -p test-artifacts/monthly-preview-latency
+          cleanup() {
+            docker logs msapo-491-browser > test-artifacts/monthly-preview-latency/capped-streamlit.log 2>&1 || true
+            docker inspect msapo-491-browser > test-artifacts/monthly-preview-latency/capped-container.json || true
+            docker exec msapo-491-browser sh -c 'cat /sys/fs/cgroup/memory.peak; cat /sys/fs/cgroup/memory.events; cat /sys/fs/cgroup/cpu.stat' > test-artifacts/monthly-preview-latency/capped-resource-stats.txt 2>&1 || true
+            docker rm -f msapo-491-browser || true
+            rm -rf "$qa_root"
+          }
+          trap cleanup EXIT
+          docker run -d --name msapo-491-browser --memory=512m --memory-swap=512m --cpus=0.5 \
+            --env EPC_DATA_DIR=/tmp/qa491 --env EPC_MONTHLY_DOM_FIXTURE=1 \
+            --env SMARTSHEET_API_MODE=disabled --env ANTHROPIC_API_KEY='' \
+            -v "$qa_root:/tmp/qa491" -v "$GITHUB_WORKSPACE/tests:/app/tests:ro" \
+            -p 127.0.0.1:8534:8501 --entrypoint python msapo-491-browser \
+            -m streamlit run tests/fixtures/workspaces/monthly_app.py \
+            --server.address 0.0.0.0 --server.port 8501 --server.headless true --browser.gatherUsageStats false
+          healthy=0
+          for attempt in $(seq 1 120); do
+            if curl -fsS http://127.0.0.1:8534/_stcore/health >/dev/null; then healthy=1; break; fi
+            sleep 0.5
+          done
+          test "$healthy" = 1
+          QA491_EXTERNAL_SERVER=1 python scripts/qa_monthly_preview_browser_latency.py
+          cp test-artifacts/monthly-preview-latency/browser.json test-artifacts/monthly-preview-latency/browser-capped.json
+          test "$(docker inspect --format='{{.State.OOMKilled}}' msapo-491-browser)" = false
       - name: Retain timing, Streamlit logs and first-failure screenshots
         if: always()
         uses: actions/upload-artifact@v4
