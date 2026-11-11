@@ -163,3 +163,37 @@ def test_corrupt_document_and_bad_identity_fail_closed(tmp_path):
     mb.write_text(json.dumps(bad))
     with pytest.raises(ValueError, match="digest"):
         load_identity(mb, SHA, "azure-staging")
+
+
+def test_word_style_change_detected_without_text_change():
+    original = docx("Synthetic style check")
+    changed = Document(BytesIO(original))
+    changed.styles["Heading 1"].font.name = "Synthetic Different Serif"
+    buffer = BytesIO()
+    changed.save(buffer)
+    result = compare_word(original, buffer.getvalue())
+    assert result["content"] == "PASS"
+    assert result["styles_fonts"] == "FAIL"
+
+
+def test_word_artwork_order_detected_when_media_bytes_same():
+    from PIL import Image
+    original = Document()
+    for rgb in ((25, 60, 90), (165, 35, 20)):
+        picture = BytesIO()
+        Image.new("RGB", (48, 48), rgb).save(picture, format="PNG")
+        picture.seek(0)
+        original.add_picture(picture)
+    baseline = BytesIO()
+    original.save(baseline)
+    reordered = Document(BytesIO(baseline.getvalue()))
+    body = reordered.element.body
+    pictures = [el for el in body if el.xpath('.//a:blip')]
+    assert len(pictures) == 2
+    body.remove(pictures[1])
+    body.insert(body.index(pictures[0]), pictures[1])
+    updated = BytesIO()
+    reordered.save(updated)
+    result = compare_word(baseline.getvalue(), updated.getvalue())
+    assert result["artwork"] == "PASS"
+    assert result["artwork_order"] == "FAIL"
