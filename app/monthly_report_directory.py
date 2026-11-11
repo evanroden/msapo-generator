@@ -1447,6 +1447,7 @@ def apply_defaults(draft):
                         or current.client_reviewed_fingerprint))
                     or (current.source == "This month" and any(
                         ref.startswith("directory:") for ref in current.references))
+                    or any(ref.startswith("report-directory-undo:") for ref in current.references)
                     or current.text.strip() or current.rows
                     or any(t.rows for t in current.extra_tables)
                     or current.asset_hashes or current.org_nodes):
