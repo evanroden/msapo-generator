@@ -145,7 +145,10 @@ def test_explicit_directory_save_updates_working_preview_and_saved_report_only(m
     assert not app.exception
     changed = current(app)
     contact_block = next(b for b in changed.blocks if b.key == "contact_matrix")
-    assert len(contact_block.rows) == 2 and all(row[3] == "202-555-0177" for row in contact_block.rows)
+    # Owner decision (b), 10 Nov 2026: the directory's rows first, then every
+    # row typed into the report that the directory cannot prove it owns.
+    assert len(contact_block.rows) == 3 and all(row[3] == "202-555-0177" for row in contact_block.rows[:2])
+    assert contact_block.rows[2] == original_contacts.rows[0]
     assert next(b for b in changed.blocks if b.key == "org_chart") == previous_chart
     assert any(key == "organization" and contact_block in shown.blocks for key, shown in observed)
     assert library.load_snapshot(profile.contract, profile.key, draft.period) == snapshot

@@ -1459,11 +1459,11 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     # a competing report editor above Organizational Chart. Keep the same
     # explicit shared-save scope, contact widget identity and return value.
     with st.sidebar:
-        updated_contacts = render_selected_directory(contract, profile.facilities, prepared, prefix)
+        updated_contacts = render_selected_directory(contract, profile.facilities, prepared, prefix, draft=draft)
     if updated_contacts is not None:
         from app.monthly_report_directory import apply_contacts
         from app.monthly_report_directory_ui import _resume_contacts
-        draft = apply_contacts(draft, updated_contacts)
+        draft = apply_contacts(draft, updated_contacts, keep_report_rows=True)
         _resume_contacts(draft, prefix)
     from app.monthly_report_save_status import SaveStatus
     save_status = SaveStatus(prefix, recovery_available=recovery_available)

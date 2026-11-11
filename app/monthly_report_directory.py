@@ -1175,14 +1175,133 @@ def contact_block(state: DirectoryState, facilities: tuple[Facility, ...], bindi
     return ResolvedBlock("contact_matrix", "This month", rows=tuple(rows), references=(reference, *links)), tuple(missing)
 
 
-def apply_contacts(draft, block):
-    """Apply a reviewed replacement or an unambiguous saved-directory default."""
-    sections = tuple(replace(s, included=True, blocks=tuple(CONTACT_SPEC if b.key == "contact_matrix" else b for b in s.blocks))
-                     if any(b.key == "contact_matrix" for b in s.blocks) else s for s in draft.sections)
-    if not any(b.key == "contact_matrix" for s in sections for b in s.blocks):
+def apply_contacts(draft, block, *, keep_report_rows=False):
+    """Apply reviewed shared rows without replacing independent report content.
+
+    Exact historical directory references and row positions prove which rows
+    belong to the shared directory. An unproved edit is a review choice, not
+    permission to discard it. This guard also runs before the sidebar save.
+
+    keep_report_rows is for the explicit "Save contacts to directory and
+    report" only (owner decision, 10 Nov 2026): rows the directory cannot prove
+    it owns are kept, in their order, after the directory rows, instead of
+    pausing the save. Nothing typed into the report is lost; stale rows are
+    removed by hand. Automatic fills and refreshes never pass it, so they still
+    leave report-owned rows untouched. People are never matched by name.
+    """
+    destinations = [(section, spec) for section in draft.sections for spec in section.blocks
+                    if spec.key == "contact_matrix"]
+    if not destinations:
         raise ValueError("The saved design has no contact-matrix destination. Add it in the advanced layout editor first.")
-    blocks = {b.key: b for b in draft.blocks}
-    blocks[block.key] = block
+    if block.key != "contact_matrix":
+        raise ValueError("Only a contact-matrix block can be applied to directory contacts.")
+
+    def review(message):
+        raise ValueError("Directory Apply paused: " + message
+                         + " Keep this report unchanged, or review its contact content in the report editor and retry.")
+
+    contract_id = library._contract_directory(draft.profile.contract)
+    incoming_versions = [m for ref in block.references
+                         if (m := re.fullmatch(r"directory:([^:]+):([1-9][0-9]*)", ref))]
+    if (len(incoming_versions) > 1
+            or any(match[1] != contract_id for match in incoming_versions)):
+        review("the selected directory belongs to a different contract.")
+    if any(len(row) != 5 for row in block.rows):
+        review("the shared contact table has an unexpected column layout.")
+    current = next((b for b in draft.blocks if b.key == "contact_matrix"), None)
+    # A new report starts with an empty, unreviewed "Omit" contact block. Only an
+    # omission that holds content or review provenance is a deliberate choice
+    # (the same test apply_defaults uses before it fills a report).
+    deliberate_omit = current is not None and current.source == "Omit" and bool(
+        current.references or current.reviewed_fingerprint or current.client_reviewed_fingerprint
+        or current.text.strip() or current.rows or any(t.rows for t in current.extra_tables)
+        or current.asset_hashes or current.org_nodes)
+    if deliberate_omit or any(not s.included for s, _ in destinations):
+        review("this report intentionally omits its contact section.")
+    if current and any(ref.startswith(("directory-pending-correction:", "directory-add-intent:"))
+                       for ref in current.references):
+        review("a report-only contact edit is still pending.")
+
+    spec = destinations[0][1]
+    if spec.columns and spec.columns[:5] != CONTACT_SPEC.columns:
+        review("custom contact columns cannot be mapped to the five shared fields.")
+    width = max(5, len(spec.columns))
+    if current and any(len(row) > width for row in current.rows):
+        review("some report-only contact cells have no matching column.")
+    rows = block.rows
+    if current:
+        versions = [m for ref in current.references
+                    if (m := re.fullmatch(r"directory:([^:]+):([1-9][0-9]*)", ref))]
+        if (len(versions) > 1 or any(m[1] != contract_id for m in versions)):
+            review("this report has a conflicting directory source.")
+        if current.source not in ("This month", "Library") and (
+                current.rows or current.text or current.extra_tables or current.asset_hashes):
+            review("the existing contact block has a separate source.")
+        baseline = ()
+        linked = {}
+        if versions:
+            for ref in current.references:
+                match = re.fullmatch(r"directory-site:([^:]+):([^:]+)", ref)
+                if match:
+                    if match[1] in linked:
+                        review("a site has more than one saved directory identity.")
+                    linked[match[1]] = match[2]
+            previous = load_directory(draft.profile.contract, int(versions[0][2]))
+            if previous is None or library._contract_directory(previous.contract) != versions[0][1]:
+                review("the previous directory version cannot be verified.")
+            historical, _ = contact_block(previous, draft.profile.facilities, linked)
+            source_refs = tuple(ref for ref in current.references
+                                if ref.startswith(("directory:", "directory-site:")))
+            if historical.references != source_refs:
+                review("the previous site links cannot be verified.")
+            baseline = historical.rows
+            if (len(current.rows) < len(baseline)
+                    or any(tuple(row[:5]) != expected for row, expected in zip(current.rows, baseline))):
+                review("directory-owned rows were edited or reordered in this report.")
+        elif current.rows and not keep_report_rows:
+            review("existing contact rows have no verified directory identity.")
+
+        report_rows = current.rows[len(baseline):]
+        old_links = {ref.split(":")[1]: ref.split(":")[2] for ref in current.references
+                     if ref.startswith("directory-site:") and len(ref.split(":")) == 3}
+        new_links = {ref.split(":")[1]: ref.split(":")[2] for ref in block.references
+                     if ref.startswith("directory-site:") and len(ref.split(":")) == 3}
+        if report_rows and (set(new_links) - set(old_links)) and not keep_report_rows:
+            review("a newly covered site also has report-only rows; review the scope.")
+        if any(key in new_links and new_links[key] != site for key, site in old_links.items()):
+            review("a saved site identity changed.")
+        # Extra cells are row-position-owned only while the shared role/name
+        # identities stay in the same positions. Never match people by name.
+        if width > 5:
+            attached = any(any(cell for cell in row[5:]) for row in current.rows[:len(baseline)])
+            if attached and (len(rows) != len(baseline) or any(
+                    row[:3] != baseline[index][:3] for index, row in enumerate(rows))):
+                review("shared contact rows changed position while custom cells are attached.")
+            rows = tuple((*row, *(current.rows[index][5:] if index < len(baseline) else ()),
+                          *("" for _ in range(width - len(row) -
+                                              (len(current.rows[index][5:]) if index < len(baseline) else 0))))
+                         for index, row in enumerate(rows))
+        rows = (*rows, *report_rows)
+        retained_refs = tuple(ref for ref in current.references
+                              if not ref.startswith(("directory:", "directory-site:")))
+        block = replace(current, source=block.source, rows=rows,
+                        references=tuple(dict.fromkeys((*block.references, *retained_refs))),
+                        reviewed_fingerprint="", client_reviewed_fingerprint="")
+    elif width > 5:
+        rows = tuple((*row, *("" for _ in range(width - 5))) for row in rows)
+        block = replace(block, rows=rows)
+
+    # Preserve an image-capable contact page and an extended schema instead
+    # of silently changing the approved report design.
+    keep_spec = bool(current and (current.asset_hashes or current.asset_instances
+                                  or spec.columns != CONTACT_SPEC.columns))
+    sections = tuple(replace(section, included=True, blocks=tuple(
+        (specification if keep_spec else CONTACT_SPEC) if specification.key == "contact_matrix"
+        else specification for specification in section.blocks))
+        if any(item.key == "contact_matrix" for item in section.blocks) else section
+        for section in draft.sections)
+    blocks = {item.key: item for item in draft.blocks}
+    blocks["contact_matrix"] = block
     return replace(draft, sections=sections, blocks=tuple(blocks.values()))
 
 
@@ -1340,7 +1459,12 @@ def apply_defaults(draft):
     block, _ = contact_block(state, draft.profile.facilities, bindings)
     if not block.rows:
         return draft
-    return apply_contacts(draft, replace(block, source="Library"))
+    try:
+        return apply_contacts(draft, replace(block, source="Library"))
+    except ValueError:
+        # Apply refuses rather than replace report-owned content; a default
+        # fill then leaves the report as it is.
+        return draft
 
 
 def refresh_directory_contacts(draft):
@@ -1389,4 +1513,8 @@ def refresh_directory_contacts(draft):
             return draft
     except (ValueError, OSError):
         return draft
-    return apply_contacts(draft, replace(replacement, source='Library'))
+    try:
+        return apply_contacts(draft, replace(replacement, source='Library'))
+    except ValueError:
+        # A refused Apply keeps the report unchanged, like every check above.
+        return draft
