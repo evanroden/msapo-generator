@@ -53,11 +53,19 @@ All generated assets are invented. No client data or paid reader is used.
 
    ~~~sh
    docker build --build-arg APP_GIT_COMMIT="$(git rev-parse HEAD)" -t msapo-491-latency .
-   docker run --rm --memory=512m --memory-swap=512m --cpus=0.5 \
-     -e RESOURCE_REQUIRE_512_MB=1 -e RESOURCE_REQUIRE_HALF_CPU=1 \
-     -e ANTHROPIC_API_KEY=test-key-not-used \
-     --entrypoint python msapo-491-latency scripts/qa_monthly_preview_latency_e2e.py
+   for part in sources native; do
+     docker run --rm --memory=512m --memory-swap=512m --cpus=0.5 \
+       -e RESOURCE_REQUIRE_512_MB=1 -e RESOURCE_REQUIRE_HALF_CPU=1 \
+       -e ANTHROPIC_API_KEY=test-key-not-used \
+       --entrypoint python msapo-491-latency scripts/qa_monthly_preview_latency_e2e.py --part "$part"
+   done
    ~~~
+
+   The source and native workloads run in separate fresh processes with
+   identical 512 MiB/0.5 CPU caps: the first initial attempt mixed them in
+   one process and the correct production headroom guard returned RenderBusy
+   after the source trials. Benchmark contamination is not a reason to weaken
+   this guard or increase service resources. Two JSON receipts are emitted.
 
    Six workload families: 2/24/96-page PDFs and 1/4/8-image DOCX files.
    Each uses five independently cold **profile namespaces**, with the
