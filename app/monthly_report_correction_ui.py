@@ -892,3 +892,56 @@ def render_unmounted_library_recovery(check, draft, prefix):
               key=prefix + "_warning_unmounted_library_" + matches[0].fingerprint,
               on_click=_resolve_unmounted_library,
               args=(prefix, report_identity(draft), check.block_key, matches[0].fingerprint))
+
+
+def _open_required_text_editor(prefix, report_fingerprint, block_key, revision):
+    """Create/reinclude only a uniquely owned, currently required text slot."""
+    from dataclasses import replace
+    from app.monthly_report_model import ResolvedBlock
+    draft = st.session_state.get(prefix + "_draft")
+    if draft is None or draft.fingerprint != report_fingerprint:
+        st.session_state[prefix + "_warning_recovery_notice"] = (
+            "The required block changed. Existing content is untouched; reopen its current warning.")
+        return
+    matches = [spec for section in draft.sections if section.included
+               for spec in section.blocks if spec.key == block_key and spec.required]
+    blocks = [block for block in draft.blocks if block.key == block_key]
+    if len(matches) != 1 or len(blocks) > 1 or matches[0].type not in (
+            "rich_text", "stock_text"):
+        return
+    before = blocks[0] if blocks else None
+    if (before.fingerprint if before else "") != revision:
+        return
+    if before is not None and before.source != "Omit":
+        return  # Its ordinary text input should own this warning instead.
+    allowed = ("This month", "Replace once")
+    source = next((name for name in allowed if name in matches[0].allowed_sources), None)
+    if source is None:
+        return
+    changed = replace(before, source=source) if before is not None else ResolvedBlock(block_key, source)
+    updated = tuple(changed if block is before else block for block in draft.blocks)
+    if before is None:
+        updated += (changed,)
+    st.session_state[prefix + "_draft"] = replace(draft, blocks=updated)
+    st.session_state[prefix + "_period_editor_refresh"] = True
+
+
+def render_required_text_recovery(check, draft, prefix):
+    if not check.blocking or check.code != "required":
+        return
+    specs = [spec for section in draft.sections if section.included
+             for spec in section.blocks if spec.key == check.block_key and spec.required]
+    blocks = [block for block in draft.blocks if block.key == check.block_key]
+    if len(specs) != 1 or len(blocks) > 1 or specs[0].type not in (
+            "rich_text", "stock_text"):
+        return
+    current = blocks[0] if blocks else None
+    if current is not None and current.source != "Omit":
+        # The exact native textarea route already exists.
+        return
+    revision = current.fingerprint if current is not None else ""
+    st.button("Open required " + check.block_key.replace("_", " ") + " editor",
+              key=prefix + "_required_text_recovery_" + check.block_key +
+                  "_" + draft.fingerprint,
+              on_click=_open_required_text_editor,
+              args=(prefix, draft.fingerprint, check.block_key, revision))
