@@ -6,6 +6,7 @@ import json
 
 import pytest
 from docx import Document
+from tests.conftest import requires_libreoffice
 
 from app import monthly_report_sources as source_api
 from app.monthly_report_receivable_intake import (
@@ -219,6 +220,7 @@ def test_vendor_invoice_amounts_never_enter_client_word_output(monkeypatch):
     assert not any(c.blocking for c in preflight(report))
 
 
+@requires_libreoffice
 def test_saved_status_only_ar_word_and_real_pdf_exclude_invoice_amounts(monkeypatch, tmp_path):
     """Output acceptance: status and aging dates survive, monetary inputs do not."""
     from app.monthly_report_docx import generate_report
