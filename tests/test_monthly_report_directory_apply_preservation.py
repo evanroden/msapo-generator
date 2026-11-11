@@ -223,3 +223,32 @@ def test_explicit_save_keeps_row_for_newly_covered_site_and_other_refusals(parti
     foreign, _ = directory.contact_block(other, draft.profile.facilities, {"south": "south"})
     with pytest.raises(ValueError, match="contract"):
         directory.apply_contacts(draft, foreign, keep_report_rows=True)
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_fresh_extended_schema_keeps_heading_and_row_width(partial_report, existing):
+    first, draft = partial_report
+    sections = tuple(replace(s, blocks=tuple(
+        replace(spec, columns=(*directory.CONTACT_SPEC.columns, ColumnSpec("local", "Local details")))
+        if spec.key == "contact_matrix" else spec for spec in s.blocks)) for s in draft.sections)
+    draft = replace(draft, sections=sections,
+                    blocks=(ResolvedBlock("contact_matrix", "Omit"),) if existing else ())
+    applied = directory.apply_contacts(draft, _candidate(first, draft))
+    spec = next(b for s in applied.sections for b in s.blocks if b.key == "contact_matrix")
+    assert spec.columns[-1].title == "Local details"
+    assert len(spec.columns) == len(_contact(applied).rows[0]) == 6
+    saved = library.save_snapshot(applied, expected_revision=0, entered_editor=applied.prepared_by)
+    reopened = library.load_snapshot(applied.profile.contract, applied.profile.key, applied.period)
+    assert reopened.draft.sections == saved.draft.sections
+    assert _contact(reopened.draft).rows == _contact(applied).rows
+
+
+@pytest.mark.parametrize("alias", ["synthetic contact contract", "SYNTHETIC CONTACT CONTRACT", "Synthetic  Contact Contract"])
+def test_apply_resolves_saved_contract_alias_and_historical_rows(partial_report, alias):
+    first, draft = partial_report
+    draft = replace(draft, profile=replace(draft.profile, contract=alias))
+    assert directory.load_directory(alias).contract == first.contract
+    latest = _next_directory(first)
+    applied = directory.apply_contacts(draft, _candidate(latest, draft))
+    assert _contact(applied).rows[0][3] == "202-555-0199"
+    assert _contact(applied).references[0].endswith(":2")
