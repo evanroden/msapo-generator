@@ -88,7 +88,7 @@ def selected_issue_pages(draft):
                     f"Review page {number} of {source.filename} in Manage source files before emitting issue evidence. "
                     "Pricing, legal, signature, blank and unreviewed pages cannot be included.")
             label = f"{source.filename} · page {number}" + (" — " + caption if caption else "")
-            if re.search(r"[\\x00-\\x08\\x0e-\\x1b\\x1f\\ud800-\\udfff\\ufffe\\uffff]", label):
+            if re.search(r"[\x00-\x08\x0e-\x1b\x1f\ud800-\udfff\ufffe\uffff]", label):
                 raise ValueError(
                     f"Remove unsupported characters from the caption or filename of {source.filename} page {number}.")
             if caption_metrics is None:
@@ -97,7 +97,7 @@ def selected_issue_pages(draft):
             from app.monthly_report_visuals import wrapped
             draw, face = caption_metrics
             if sum(max(1, len(wrapped(line, face, 1000, draw)))
-                   for line in label.split("\\n")) > 3:
+                   for line in label.split("\n")) > 3:
                 raise ValueError(
                     f"Shorten the caption for {source.filename} page {number} to at most three lines before generating.")
             chosen.append((issue, source, number, reference))
