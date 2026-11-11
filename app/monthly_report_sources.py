@@ -689,8 +689,16 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
                     else:
                         pdf_text_blocks.extend(spans)
     elif suffix in ocr.SUPPORTED_IMAGE_SUFFIXES:
-        normalize_report_image(raw, suffix)  # Validate before caching or paid work.
-        page_texts, needs_vision = [""], [1]
+        if suffix == ".mpo":
+            from app.mpo_images import frame_count
+            count = frame_count(raw)
+            for index in range(count):
+                normalize_report_image(raw, suffix, frame_index=index)
+            page_texts, needs_vision = [""] * count, list(range(1, count + 1))
+            notices.append("MPO pictures are separate source pages in their original order; review each picture before inclusion.")
+        else:
+            normalize_report_image(raw, suffix)  # Validate before caching or paid work.
+            page_texts, needs_vision = [""], [1]
     elif suffix == ".txt":
         page_texts = [raw.decode("utf-8-sig")]
     elif suffix in (".csv", ".xlsx"):
@@ -882,7 +890,8 @@ def page_image(profile: ReportProfile, content: SourceContent, number: int, *, p
             png = page.get_pixmap(dpi=dpi, alpha=False).tobytes("png")
         result = normalize_report_image(png, ".png", line_art=True, dpi=dpi)
     elif source.suffix in ocr.SUPPORTED_IMAGE_SUFFIXES:
-        result = normalize_report_image(raw, source.suffix, dpi=96 if preview else 200)
+        result = normalize_report_image(raw, source.suffix, dpi=96 if preview else 200,
+                                        **({"frame_index": number - 1} if source.suffix == ".mpo" else {}))
     elif source.suffix == ".docx":
         item_id = dict(content.image_items).get(number)
         if not item_id:
