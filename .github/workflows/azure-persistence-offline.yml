@@ -7,6 +7,8 @@ on:
       - 'app/managed_blob_objects.py'
       - 'app/postgres_submission_store.py'
       - 'tests/test_postgres_submission_contracts.py'
+      - 'tests/test_postgres_live_contracts.py'
+      - 'docs/azure/SCHEMA_POSTGRESQL_CANDIDATE.sql'
       - 'tests/test_managed_persistence_contracts.py'
       - '.github/workflows/azure-persistence-offline.yml'
   workflow_dispatch:
@@ -27,3 +29,32 @@ jobs:
         run: python -m pip install 'pytest>=8,<9'
       - name: Exercise isolated transactional and object contracts
         run: python -m pytest -q tests/test_managed_persistence_contracts.py tests/test_postgres_submission_contracts.py
+
+  postgres-service-contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: epc_test
+          POSTGRES_PASSWORD: synthetic_ci_only
+          POSTGRES_DB: epc_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U epc_test -d epc_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      MSAPO_TEST_PG_DSN: postgresql://epc_test:synthetic_ci_only@127.0.0.1:5432/epc_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test-only PostgreSQL driver
+        run: python -m pip install 'pytest>=8,<9' 'psycopg[binary]>=3.2,<4'
+      - name: Prove real database CAS and Smartsheet lease semantics
+        run: python -m pytest -q tests/test_postgres_live_contracts.py
