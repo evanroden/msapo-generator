@@ -119,13 +119,12 @@ def undo_directory_apply(draft: ReportDraft, receipt: DirectoryApplyUndo) -> Rep
     )))
     has_content = bool(rows or current.text.strip() or current.extra_tables
                        or current.asset_hashes or current.asset_instances or current.org_nodes)
-    source = receipt.previous_source if receipt.had_previous_block else (
-        "This month" if has_content else "Omit"
-    )
-    # A deliberate empty Undo must not be refilled automatically on the next
-    # render; the marker also stops silent refresh of an older directory copy.
-    if not has_content and not receipt.previous_directory_refs:
-        source = "Omit"
+    source = receipt.previous_source if receipt.had_previous_block else "This month"
+    # An initial unreviewed Omit is a placeholder, not a deliberate exclusion.
+    # Retain the report-only Undo marker instead of making explicit reapply
+    # impossible; default fill and automatic refresh must respect that marker.
+    if not has_content and source == "Omit" and not receipt.previous_directory_refs:
+        source = "This month"
     restored = replace(
         current, source=source, rows=rows, references=refs,
         reviewed_fingerprint="", client_reviewed_fingerprint="",
