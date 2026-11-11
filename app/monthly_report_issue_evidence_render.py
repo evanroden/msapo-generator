@@ -44,6 +44,7 @@ def selected_issue_pages(draft):
         for ref in asset_context(block, index)
     }
     chosen = []
+    owners = {}
     for issue in draft.follow_ups:
         if issue.category != "issue" or not issue.included:
             continue
@@ -61,6 +62,12 @@ def selected_issue_pages(draft):
                     raise ValueError("An issue evidence page link changed. Reopen the issue and select its current source page.")
                 continue  # Other legacy narrative/Word source references.
             source, number = pair
+            previous = owners.get(reference)
+            if previous is not None and previous != issue.key:
+                raise ValueError(
+                    f"Page {number} of {source.filename} is linked to multiple issues. "
+                    "Keep one issue owner or use independently reviewed evidence.")
+            owners[reference] = issue.key
             if source.suffix != ".pdf" and source.suffix not in sources.ocr.SUPPORTED_IMAGE_SUFFIXES:
                 raise ValueError(f"Page {number} of {source.filename} is not a raster source page. Review its original in Manage source files.")
             caption = dict(source.captions).get(number, "")
@@ -113,7 +120,8 @@ def append_issue_evidence(document, draft, *, before=None):
     total = 0
     authenticated = set()
     for issue, source, number, reference in planned:
-        if source.sha256 not in authenticated:
+        original_key = (source.sha256, source.suffix)
+        if original_key not in authenticated:
             # page_image may return a cached derivative without reopening its
             # source. Always authenticate the saved original before emission.
             try:
@@ -122,7 +130,7 @@ def append_issue_evidence(document, draft, *, before=None):
                 raise ValueError(
                     f"Issue evidence source {source.filename} is unavailable or changed. "
                     "Restore the exact original in Manage source files.") from exc
-            authenticated.add(source.sha256)
+            authenticated.add(original_key)
         # A missing/truncated original is a generation refusal, not an omitted
         # evidence page. page_image authenticates original SHA before decoding.
         try:
