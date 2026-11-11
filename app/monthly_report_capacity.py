@@ -552,7 +552,7 @@ def _row_key(table, row, site):
         # removing it would silently conflate different pieces of equipment.
         if _normal(column) in {"title", "report title", "source title"} and any(
                 i != table.site_column and i < len(row) and str(row[i]).strip()
-                and re.search(r"\b(?:plant|equipment|asset|system|service|category|name|identifier|id|tag|type)\b",
+                and re.search(r"\b(?:plant|equipment|asset|system|identifier|id|tag)\b",
                               heading, re.I)
                 for i, heading in enumerate(table.columns)):
             return False
