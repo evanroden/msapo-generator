@@ -1852,6 +1852,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 render_source_recovery_links(check, draft, prefix)
                 from app.monthly_report_correction_ui import render_imported_table_warning_links
                 render_imported_table_warning_links(check, draft, prefix)
+                from app.monthly_report_correction_ui import render_followup_identity_recovery
+                render_followup_identity_recovery(check, draft, prefix)
         notice = st.session_state.pop(prefix + "_page_navigation_notice", None)
         if notice:
             st.warning(notice)
