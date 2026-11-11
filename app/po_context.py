@@ -455,14 +455,12 @@ def _active_quote_attachment(
     "the vendor's quote". Attaching the wrong file is worse than attaching a
     plain-text stand-in.
 
-    READ THIS BEFORE SIMPLIFYING THE GATE. When any check fails, the function
-    does not error -- it falls through and synthesises "Vendor Quote.txt" from
-    the analyzed text. The package still generates, still validates, and still
-    submits; the operator gets a text file where they expected their PDF, and
-    only one of the failure paths (upload selected, bytes present, extraction
-    empty) raises a warning. Every other path is SILENT by design, because the
-    common cause is benign: the same text legitimately moved from an upload to
-    the paste box, which ``quote_source`` alone distinguishes.
+    READ THIS BEFORE SIMPLIFYING THE GATE. When the operator explicitly chose
+    an upload, failure of any source proof adds a blocking warning. A generated
+    "Vendor Quote.txt" may be retained for inspection but cannot make the
+    package ready to hand off as the original. When the operator explicitly
+    switches to Paste text, however, a text attachment is intentional and
+    valid even if an unrelated uploaded file remains in browser state.
 
     ``quote_source`` gates the whole thing. "paste" excludes a stale upload even
     when its extracted text is byte-identical to the pasted text -- pinned by
