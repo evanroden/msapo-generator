@@ -215,6 +215,30 @@ def test_cross_issue_page_cannot_print_twice_or_reassign_owner(monkeypatch, tmp_
     assert len(selected_issue_pages(draft)) == 6
 
 
+def test_long_caption_and_corrupt_raster_refuse_with_recovery(monkeypatch, tmp_path):
+    from app.monthly_report_docx import ReportImage
+
+    draft, originals = _setup(monkeypatch, tmp_path)
+    first, second = draft.sources
+    changed = replace(first, captions=tuple(
+        (n, "Synthetic " + "wide-caption " * 150 if n == 1 else value)
+        for n, value in first.captions))
+    changed = replace(changed, client_page_reviews=tuple(
+        (n, page_fingerprint(changed, n)) for n in (1, 3, 5)))
+    blocked = replace(draft, sources=(changed, second),
+        follow_ups=(replace(draft.follow_ups[0], references=tuple(
+            sources.source_reference(changed, n) for n in (1, 3, 5))),
+            draft.follow_ups[1]))
+    with pytest.raises(ValueError, match="Shorten the caption"):
+        selected_issue_pages(blocked)
+    with monkeypatch.context() as patch:
+        patch.setattr(sources, "page_image", lambda *_args, **_kwargs:
+                      ReportImage(b"not-an-image", "png", 5, 5))
+        with pytest.raises(ValueError, match="artwork.*invalid or too large"):
+            append_issue_evidence(Document(), draft)
+    assert sources.source_bytes(draft.profile, first) == originals["alpha.pdf"]
+
+
 def test_native_anchor_insert_does_not_reassign_water_or_omit_issues(monkeypatch, tmp_path):
     draft, _ = _setup(monkeypatch, tmp_path)
     document = Document()
