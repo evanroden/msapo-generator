@@ -1891,8 +1891,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 render_footer_warning_links(check, draft, prefix)
                 from app.monthly_report_correction_ui import render_unmounted_library_recovery
                 render_unmounted_library_recovery(check, draft, prefix)
-                from app.monthly_report_table_column_recovery import edit_fixed_column_schema
+                from app.monthly_report_table_column_recovery import (
+                    edit_fixed_column_schema, edit_unsafe_primary_heading)
                 edit_fixed_column_schema(check, draft, prefix, field)
+                edit_unsafe_primary_heading(check, draft, prefix, field)
                 from app.monthly_report_org_warning import render_chart_links, render_chart_text_safety
                 render_chart_links(check, draft, prefix)
                 render_chart_text_safety(check, draft, prefix)
