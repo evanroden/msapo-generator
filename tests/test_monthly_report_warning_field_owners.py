@@ -194,3 +194,48 @@ def test_duplicate_section_keys_refuse_title_link(monkeypatch):
     correction.render_native_warning_links(ReportCheck("title", "", True, "activity"),
                                            report, "scope")
     assert not seen["markup"]
+
+
+def test_duplicate_followup_recovery_requires_click_and_preserves_each_item(monkeypatch):
+    from app.monthly_report_model import ReportFollowUp
+    first = ReportFollowUp("collision", "issue", "Pump 1", "2026-09",
+                           update="Exact update 1")
+    second = ReportFollowUp("collision", "issue", "Pump 2", "2026-09",
+                            update="Exact update 2")
+    report = replace(synthetic_draft(), follow_ups=(first, second))
+    prefix = "repair-duplicate"
+    monkeypatch.setattr(correction.st, "session_state", {prefix + "_draft": report})
+    seen = _capture(monkeypatch, correction, pressed=False)
+    check = ReportCheck("follow_up_identity", "Rows collide", True)
+    correction.render_followup_identity_recovery(check, report, prefix)
+    assert correction.st.session_state[prefix + "_draft"] == report
+    assert seen["buttons"][0][1]["key"].endswith(report.fingerprint)
+
+    def interrupted():
+        raise RuntimeError("Expected current-draft rerun")
+    monkeypatch.setattr(correction.st, "rerun", interrupted)
+    _capture(monkeypatch, correction, pressed=True)
+    import pytest
+    with pytest.raises(RuntimeError, match="Expected current-draft rerun"):
+        correction.render_followup_identity_recovery(check, report, prefix)
+    updated = correction.st.session_state[prefix + "_draft"]
+    assert [item.text for item in updated.follow_ups] == ["Pump 1", "Pump 2"]
+    assert [item.update for item in updated.follow_ups] == ["Exact update 1", "Exact update 2"]
+    assert updated.follow_ups[0].key == "collision"
+    assert updated.follow_ups[1].key != "collision"
+    assert updated.follow_ups[1].reviewed_fingerprint == ""
+
+
+def test_duplicate_followup_recovery_refuses_stale_draft(monkeypatch):
+    from app.monthly_report_model import ReportFollowUp
+    first = ReportFollowUp("collision", "issue", "Pump A", "2026-09")
+    second = ReportFollowUp("collision", "issue", "Pump B", "2026-09")
+    warning_report = replace(synthetic_draft(), follow_ups=(first, second))
+    later = replace(warning_report, prepared_by="Later updated preparer")
+    prefix = "repair-stale"
+    monkeypatch.setattr(correction.st, "session_state", {prefix + "_draft": later})
+    _capture(monkeypatch, correction, pressed=True)
+    monkeypatch.setattr(correction.st, "warning", lambda message: None)
+    correction.render_followup_identity_recovery(
+        ReportCheck("follow_up_identity", "Rows collide", True), warning_report, prefix)
+    assert correction.st.session_state[prefix + "_draft"] == later
