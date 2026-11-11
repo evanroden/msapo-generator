@@ -102,22 +102,42 @@ PHOTO_CAPTION_NOTICE = (
 )
 
 
-def _current_photo_caption(draft, target):
+def _current_photo_caption(draft, target, code=None):
     resolved = resolve_target(draft, target)
     if resolved is None:
         return False
     block, index, source = resolved
     if block is None or index is None:
         return False
-    # A source-page caption must remain a source-page warning: after source loss,
-    # the same image could otherwise acquire an ordinary photo-caption warning.
-    code = "document_caption" if source is not None else "photo_caption"
+    if code in {"pricing", "placeholder", "text_character"}:
+        if index >= len(block.asset_captions):
+            return False
+        caption = block.asset_captions[index]
+        if code == "pricing":
+            from app.monthly_report_content_policy import contains_price
+            valid = contains_price(caption)
+        elif code == "placeholder":
+            from app.monthly_report_checks import placeholder_matches
+            valid = bool(placeholder_matches(caption))
+        else:
+            import re
+            valid = bool(re.search(r"[\\x00-\\x08\\x0e-\\x1b\\x1f\\ud800-\\udfff\\ufffe\\uffff]", caption))
+        if not valid:
+            return False
+        # No sibling may substitute for the exact caption occurrence.
+        from app.monthly_report_checks import preflight
+        return any(check.code == code and target in check.targets
+                   for check in preflight(draft))
+    # A source-page caption must remain a source-page warning after source loss.
+    expected = "document_caption" if source is not None else "photo_caption"
+    if code not in (None, expected):
+        return False
     from app.monthly_report_layout_checks import layout_checks
-    return any(check.code == code and target in check.targets
+    return any(check.code == expected and target in check.targets
                for check in layout_checks(draft))
 
 
-def queue_photo_caption(prefix, target, scope):
+def queue_photo_caption(prefix, target, scope, code=None):
     from uuid import uuid4
     from app.monthly_report_guided import _rich_text_scope
     state = st.session_state
@@ -125,11 +145,11 @@ def queue_photo_caption(prefix, target, scope):
     state.pop(prefix + "_photo_caption_navigation_pending", None)
     draft = state.get(prefix + "_draft")
     if (not scope or scope != _rich_text_scope(prefix) or draft is None
-            or not _current_photo_caption(draft, target)):
+            or not _current_photo_caption(draft, target, code)):
         state[prefix + "_photo_caption_navigation_notice"] = PHOTO_CAPTION_NOTICE
         return
     state[prefix + "_photo_caption_navigation_pending"] = {
-        "scope": scope, "target": target, "nonce": uuid4().hex}
+        "scope": scope, "target": target, "code": code, "nonce": uuid4().hex}
 
 
 def consume_photo_caption(prefix, draft, scope):
@@ -140,7 +160,8 @@ def consume_photo_caption(prefix, draft, scope):
         return
     if (not isinstance(request, dict) or request.get("scope") != scope
             or not isinstance(request.get("nonce"), str) or not request["nonce"]
-            or not _current_photo_caption(draft, request.get("target"))):
+            or not _current_photo_caption(draft, request.get("target"),
+                                         request.get("code"))):
         state[prefix + "_photo_caption_navigation_notice"] = PHOTO_CAPTION_NOTICE
         return
     block, _, _ = resolve_target(draft, request["target"])
@@ -156,7 +177,7 @@ def photo_caption_request(prefix, draft, block, index):
     target = request.get("target")
     resolved = resolve_target(draft, target)
     if (resolved is None or resolved[0] != block or resolved[1] != index
-            or not _current_photo_caption(draft, target)):
+            or not _current_photo_caption(draft, target, request.get("code"))):
         return ""
     from app.monthly_report_correction_targets import picture_target
     if picture_target(draft, block, index, source=resolved[2], page=target.page) != target:
@@ -168,19 +189,20 @@ def photo_caption_request(prefix, draft, block, index):
 
 
 def render_photo_caption_links(check, draft, prefix):
-    if check.code not in {"photo_caption", "document_caption"}:
+    if check.code not in {"photo_caption", "document_caption",
+                          "pricing", "placeholder", "text_character"}:
         return
     from app.monthly_report_guided import _rich_text_scope
     for target in check.targets:
-        if not _current_photo_caption(draft, target):
+        if not _current_photo_caption(draft, target, check.code):
             st.caption(PHOTO_CAPTION_NOTICE)
             continue
         block, index, _ = resolve_target(draft, target)
         st.button("Edit caption · " + block.key.replace("_", " ") +
                   " · photo " + str(index + 1),
-                  key=prefix + "_photo_caption_correction_" + target.token,
+                  key=prefix + "_photo_caption_correction_" + check.code + "_" + target.token,
                   on_click=queue_photo_caption,
-                  args=(prefix, target, _rich_text_scope(prefix)))
+                  args=(prefix, target, _rich_text_scope(prefix), check.code))
 
 
 def finish_photo_caption(prefix):
@@ -227,6 +249,10 @@ def render_text_warning_links(check, draft, prefix):
     """Only a proven problem in this block's text gets a direct field link."""
     if check.code not in ("required", "review", "placeholder", "pricing", "text_character",
                            "period_removed"):
+        return
+    if check.targets:
+        # A caption or source-page warning already owns its exact occurrence.
+        # Never advertise an adjacent narrative field as a substitute.
         return
     matches = [block for block in draft.blocks if block.key == check.block_key]
     if len(matches) != 1:
