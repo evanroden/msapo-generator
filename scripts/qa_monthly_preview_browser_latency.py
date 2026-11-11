@@ -133,6 +133,21 @@ def main():
                 "browser_device": "headless desktop engine; not actual mobile Safari or Render",
                 "commit": os.environ.get("GITHUB_SHA") or os.environ.get("MSAPO_SHA") or "unreported",
                 "engines": {}}
+    if os.environ.get("QA491_EXTERNAL_SERVER") == "1":
+        # The same real synthetic Monthly app is served inside the separately
+        # restricted production container. Browser Playwright stays on host;
+        # actual Streamlit, LibreOffice and PyMuPDF share the 512-MiB/0.5-CPU cap.
+        evidence["backend_resources"] = "Docker production image 512 MiB RAM, 0.5 CPU"
+        with urllib.request.urlopen(URL + "/_stcore/health", timeout=10) as response:
+            if response.status != 200:
+                raise RuntimeError("The capped synthetic Monthly app is not healthy.")
+        with sync_playwright() as playwright:
+            for browser_type, name in ((playwright.chromium, "chromium"),
+                                       (playwright.webkit, "webkit")):
+                evidence["engines"][name] = _exercise(browser_type, name)
+        (OUT / "browser.json").write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n")
+        print(json.dumps(evidence, indent=2, sort_keys=True), flush=True)
+        return
     with tempfile.TemporaryDirectory(prefix="qa491-browser-") as directory:
         (Path(directory) / "monthly-dom-synthetic-only.marker").write_text("synthetic-monthly-dom-v1")
         env = dict(os.environ, EPC_DATA_DIR=directory, EPC_MONTHLY_DOM_FIXTURE="1",
