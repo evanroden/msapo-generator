@@ -4,7 +4,7 @@ import json
 import pytest
 
 from app.azure_identity import (
-    AccessDenied, Principal, ScopeGrant, authorize, decode_easy_auth,
+    AccessDenied, Principal, ScopeGrant, authorize,
     entry_principal, azure_enforced, ACTION_ROLES,
 )
 
@@ -129,7 +129,6 @@ def test_azure_browser_gate_disabled_until_data_scope_boundary_verified(monkeypa
     monkeypatch.setitem(sys.modules, "streamlit", fake_st)
     for key, value in AZURE.items():
         monkeypatch.setenv(key, value)
-    monkeypatch.delenv("MSAPO_AUTHZ_DATA_BOUNDARY_READY", raising=False)
     with pytest.raises(Halt):
         identity.require_streamlit_entry()
     assert errors and "Access denied" in errors[-1]
@@ -151,9 +150,10 @@ def test_two_users_clear_session_without_inheriting_draft_and_ws_age_caps(monkey
         stop=lambda: (_ for _ in ()).throw(Halt()),
     )
     monkeypatch.setitem(sys.modules, "streamlit", fake_st)
-    for key, value in {**AZURE, "MSAPO_AUTHZ_DATA_BOUNDARY_READY": "verified"}.items():
+    for key, value in AZURE.items():
         monkeypatch.setenv(key, value)
     monkeypatch.setattr(identity, "RESOURCE_BOUNDARIES_INTEGRATED", True)
+    monkeypatch.setattr(identity, "_resource_boundaries_implemented", lambda: True)
     monkeypatch.setattr(identity.time, "monotonic", lambda: 100.)
     a = identity.require_streamlit_entry()
     state["report_draft"] = "one-user-only"
