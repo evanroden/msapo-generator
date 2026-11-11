@@ -5,11 +5,13 @@ from app import monthly_report_guided as guided
 from test_monthly_report_ui import monthly
 
 
-def test_historical_underestimates_and_capped_native_sample_are_inside_wide_ranges():
+def test_historical_underestimates_are_inside_wide_ranges():
+    # These are actual historical forecast inputs; the 13.63 MB native
+    # fixture's SOURCE size is not its preflight estimate and is measured
+    # independently by scripts/qa_monthly_report_resources.py.
     samples = (
         (1_000_000, 5_200_000, 4_200_000),
         (1_900_000, 6_000_000, 4_600_000),
-        (13_630_812, 13_613_736, 2_642_403),
     )
     for input_bytes, word_bytes, pdf_bytes in samples:
         forecast = forecast_output_sizes(input_bytes, libreoffice_available=True)
