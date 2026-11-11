@@ -62,7 +62,8 @@
     "telemetry_heartbeat_missing",
     "readiness_ready",
     "save_succeeded",
-    "generation_succeeded"
+    "generation_succeeded",
+    "generation_failed"
   ],
   "forbidden_properties": [
     "payload",
@@ -152,6 +153,20 @@
       ],
       "route_role": "Application + data owner",
       "first_action": "Stop unsafe writes; inspect store availability and revision conflicts; preserve draft."
+    },
+    {
+      "id": "generation_failures",
+      "enabled": false,
+      "production_route": "TBD",
+      "severity": "Sev1",
+      "kind": "count",
+      "window_minutes": 15,
+      "threshold": 1,
+      "event_codes": [
+        "generation_failed"
+      ],
+      "route_role": "Application engineering + business workflow owner",
+      "first_action": "Preserve accepted draft and last-good output; inspect source integrity and renderer/availability; no unsafe fallback."
     },
     {
       "id": "database_unavailable",
