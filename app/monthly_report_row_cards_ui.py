@@ -20,7 +20,9 @@ from app.monthly_report_ui_text import literal
 
 CARD_TABLES = {"proposals": ("proposal", "Add proposal"),
                "service_calls": ("onsite call", "Add onsite call"),
-               "rfi_matrix": ("request", "Add request")}
+               "rfi_matrix": ("request", "Add request"),
+               "capital_renewal": ("capital item", "Add capital item"),
+               "end_of_life": ("replacement item", "Add replacement item")}
 _REQUEST_WORDS = {"request", "requested", "requests", "question", "questions", "answer",
                   "response", "details", "information"}
 _REQUEST_METADATA = {"#", "number", "no", "id", "by", "date", "status", "link", "reference", "ref"}
@@ -57,7 +59,7 @@ def _queue(key, expected, tokens, active, fields, action="edit", target=None, *,
     record = dict(st.session_state.get(key, {}))
     if group and action == "edit" and record.get("group_closed"):
         return  # A late field echo cannot reopen the row a sibling action closed.
-    if group and action in {"open", "add", "remove"}:
+    if group and action in {"open", "add", "remove", "undo_remove"}:
         for other_key in group:
             if other_key == key:
                 continue
@@ -107,12 +109,22 @@ def _queue(key, expected, tokens, active, fields, action="edit", target=None, *,
         active = None
     elif action == "remove" and target in identities:
         index = identities.index(target)
+        removed_row = rows[index]
         del rows[index]
         del identities[index]
+        record["removed"] = {"row": removed_row, "token": target, "index": index,
+                             "remaining_tokens": tuple(identities)}
         if active == target:
             active = None
     elif action == "remove" and target == draft_token:
         active, draft_token = None, None
+    elif action == "undo_remove":
+        removed = record.pop("removed", None)
+        if removed and tuple(identities) == removed["remaining_tokens"]:
+            rows.insert(removed["index"], removed["row"])
+            identities.insert(removed["index"], removed["token"])
+        elif removed:
+            record["undo_notice"] = "The table changed since removal. Current rows were kept; restore the removed content from saved history if needed."
     if changed_fields and not preserve_empty:
         retained = [(row, token) for row, token in zip(rows, identities)
                     if any(value is not None and str(value).strip() for value in row)]
@@ -398,6 +410,13 @@ def _edit_table(columns, rows, types, key, noun, add_label, field, *, onsite=Fal
         visible_index += 1
     st.button(add_label, key=key + "_add", on_click=queue, args=(*args, "add"),
               disabled=bool(active and active == draft_token))
+    if record.get("removed"):
+        st.button("Undo last removal", key=key + "_undo_remove", on_click=queue,
+                  args=(*args, "undo_remove"),
+                  help="Restores only the last removed row. Later edits to other rows are kept.")
+    if record.get("undo_notice"):
+        st.warning(record.pop("undo_notice"))
+        st.session_state[key] = record
     return rows
 
 

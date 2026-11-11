@@ -383,3 +383,36 @@ def test_schema_provenance_durable_rows_and_actual_word_output_remain_editable(m
     assert tuple(cell.text for cell in native.rows[1].cells)[0] == '0007'
     assert tuple(cell.text for cell in native.rows[1].cells)[5] == 'Conditional approval: retain source scope'
     assert tuple(cell.text for cell in native.rows[2].cells) == PROPOSAL_ROWS[1]
+
+
+@pytest.mark.parametrize('key,noun,rows', [
+    ('capital_renewal', 'capital item', (('North', 'Pump', 'Inspect vibration'), ('South', 'Fan', 'Replace bearing'))),
+    ('end_of_life', 'replacement item', (('North', 'Pump', '2028'), ('South', 'Fan', '2030'))),
+])
+def test_capital_and_replacement_cards_keep_rows_through_edit_remove_undo(key, noun, rows):
+    app = workspace(key, rows)
+    assert not app.exception and not app.dataframe
+    button(app, 'Edit ' + noun, 1).click().run()
+    # Edit a sibling after removing the first row; Undo must not restore an old table.
+    button(app, 'Remove ' + noun, 0).click().run()
+    labels = [x.label for x in app.text_input]
+    assert labels
+    target = app.text_area[-1] if key == 'capital_renewal' else app.text_input[-1]
+    target.set_value('Later correction').run()
+    button(app, 'Undo last removal').click().run()
+    assert not app.exception
+    result = app.session_state['result']
+    assert result.rows[0] == rows[0]
+    assert result.rows[1][-1] == 'Later correction'
+
+
+def test_row_removal_undo_refuses_changed_external_identity():
+    app = workspace()
+    button(app, 'Remove proposal', 0).click().run()
+    app.run()  # Acknowledge removal before an independent external edit.
+    app.session_state['block'] = replace(app.session_state['block'], rows=(PROPOSAL_ROWS[1], PROPOSAL_ROWS[0]))
+    app.run()
+    before = app.session_state['block']
+    button(app, 'Undo last removal').click().run()
+    assert app.session_state['result'].rows == before.rows
+    assert any('table changed since removal' in item.value for item in app.warning)
