@@ -397,14 +397,16 @@ def render_source_recovery_links(check, draft, prefix):
         ids = tuple(dict.fromkeys(getattr(target, "source_id", "")
                                   for target in check.targets if getattr(target, "source_id", "")))
     elif check.code == "source_missing":
-        targets = [block for block in draft.blocks if block.key == check.block_key]
-        items = [item for item in draft.follow_ups if item.key == check.block_key]
-        if len(targets) + len(items) != 1:
-            ids = ()
-        else:
-            refs = used_source_ids(replace(draft,
-                blocks=tuple(targets), follow_ups=tuple(items)))
-            ids = tuple(sorted(refs - set(known)))
+        from app.monthly_report_correction_targets import CorrectionTarget, report_identity
+        ids = tuple(dict.fromkeys(
+            target.source_id for target in check.targets
+            if isinstance(target, CorrectionTarget)
+            and target.report == report_identity(draft)
+            and target.source_id not in known))
+        if not ids:
+            st.caption("The original source identity changed. Recheck the current "
+                       "source warning; no other file was substituted.")
+            return
     else:
         # The preflight check already records the exact picture occurrences.
         # A missing original must not be recovered by selecting equal bytes.

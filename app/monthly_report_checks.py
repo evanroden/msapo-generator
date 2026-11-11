@@ -383,9 +383,15 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
         follow_up = next((item for item in draft.follow_ups if source_id in used_source_ids(
             replace(draft, blocks=(), follow_ups=(item,)))), None)
         key = block.key if block else follow_up.key if follow_up else ""
+        from app.monthly_report_correction_targets import CorrectionTarget, report_identity
+        # The original is gone, so it has no valid source hash/revision to
+        # approve. This receipt is navigation-only and names its missing ID;
+        # a same-name re-upload never inherits its source permission.
+        missing_target = CorrectionTarget(report_identity(draft), source_id=source_id)
         checks.append(ReportCheck("source_missing",
             "An included item refers to a source file that is no longer in this draft. "
-            "Restore the original source file or remove its linked report content.", True, key))
+            "Restore the original source file or remove its linked report content.", True, key,
+            (missing_target,)))
     from app.monthly_report_correction_targets import source_target
     for source in draft.sources:
         facility = source.facility.strip().casefold()

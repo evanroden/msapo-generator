@@ -469,3 +469,26 @@ def test_org_chart_field_markup_is_one_use_and_invalidates_changed_chart(monkeyp
     later = replace(block, org_nodes=(OrgChartNode("a", name="Newer name", role="Role"),))
     assert not chart_field_markup("p", later, 0, "name", "p_org_person_a_name")
     assert state["p_chart_warning_request"] == request
+
+
+def test_missing_source_warning_carries_exact_absent_id_even_with_duplicate_names(monkeypatch):
+    from app.monthly_report_checks import preflight
+    from app.monthly_report_correction_targets import CorrectionTarget, report_identity
+    from types import SimpleNamespace
+    missing = "original-source-id-no-longer-in-report"
+    block = ResolvedBlock("activity_summary", "This month",
+        text="Unverified imported action", references=(missing + ":1:unchanged",))
+    report = synthetic_draft(block)
+    checks = [c for c in preflight(report) if c.code == "source_missing"]
+    assert len(checks) == 1
+    check = checks[0]
+    assert check.block_key == block.key
+    assert len(check.targets) == 1
+    assert isinstance(check.targets[0], CorrectionTarget)
+    assert (check.targets[0].report, check.targets[0].source_id) == (
+        report_identity(report), missing)
+    seen = _capture(monkeypatch, correction)
+    correction.render_source_recovery_links(check, report, "p")
+    assert len(seen["buttons"]) == 1
+    assert seen["buttons"][0][1]["args"][-1] == ""
+    assert missing in seen["captions"][0]
