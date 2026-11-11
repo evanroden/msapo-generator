@@ -125,6 +125,9 @@ def load_rosters(contract):
         return RosterState(contract, 0, ())
     value = library._read(path)
     try:
+        if (type(value["schema"]) is not int
+                or not isinstance(value.get("entries"), list) or "rows" in value):
+            raise ValueError("Unsupported roster format")
         if value["contract"] != contract or type(value["revision"]) is not int or value["revision"] < 1:
             raise ValueError("Contract or revision mismatch")
         entries = []
