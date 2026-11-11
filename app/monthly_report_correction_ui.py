@@ -771,7 +771,8 @@ def render_identity_warning_recovery(check, draft, prefix):
             st.caption("Site " + str(index + 1) + " · " + site.title +
                        " has unsafe label text. Correct that exact site in the contract directory "
                        "and reload this report; do not edit an unrelated site.")
-            st.link_button("Open contract directory for site " + str(index + 1), admin_url("directory"))
+            st.markdown("[Open contract directory for site " + str(index + 1) +
+                        "](" + admin_url("directory") + ")")
 
 
 def _footer_repair_revision(draft):
