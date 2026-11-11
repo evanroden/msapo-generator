@@ -741,3 +741,108 @@ def render_receivable_recovery(check, draft, prefix):
         on_click=_open_manager,
         args=(prefix + "_batch_files_open", prefix + "_evidence_selected",
               source[0].id if len(source) == 1 else ""))
+
+
+def render_identity_warning_recovery(check, draft, prefix):
+    """Point unsafe identity text to its actual authority; do not remap sites."""
+    if not check.blocking or check.block_key != "report_identity" or check.code not in (
+            "pricing", "placeholder", "text_character"):
+        return
+    from app.monthly_report_non_narrative_recovery import unsafe
+    from app.monthly_report_correction_targets import report_identity
+    if unsafe(draft.prepared_by, check.code):
+        # This exact marker is beside the one native Prepared by field.
+        destination = "report-correction-" + sha256(
+            (prefix + "\\0prepared_by\\0report\\0" + report_identity(draft)).encode()).hexdigest()
+        st.markdown('<a class="enfra-picture-correction-link" data-report-identity="' +
+                    _identity(prefix) + '" href="#' + destination +
+                    '">Correct Prepared by</a>', unsafe_allow_html=True)
+    if unsafe(draft.profile.title, check.code):
+        st.markdown("[Correct the saved group name in Change report sites → More report details](#report-profile-details)")
+        st.caption("Use Save report details after editing; this does not automatically "
+                   "rename the underlying contract or overwrite report content.")
+    if unsafe(draft.profile.contract, check.code):
+        st.markdown("[Choose the correct contract and its report sites](#report-contract-selector)")
+        st.caption("The contract identifier belongs to the contract directory. "
+                   "Changing reports must not silently relabel the current site's content.")
+    for index, site in enumerate(draft.profile.facilities):
+        if unsafe(site.title, check.code):
+            from app.monthly_report_admin_ui import admin_url
+            st.caption("Site " + str(index + 1) + " · " + site.title +
+                       " has unsafe label text. Correct that exact site in the contract directory "
+                       "and reload this report; do not edit an unrelated site.")
+            st.link_button("Open contract directory for site correction", admin_url("directory"),
+                           key=prefix + "_repair_facility_label_" + check.code + "_" + str(index))
+
+
+def _footer_repair_revision(draft):
+    blocks = [block for block in draft.blocks if block.key == "footer_text"]
+    if len(blocks) > 1:
+        return None
+    block = blocks[0] if blocks else None
+    return (block.fingerprint if block else sha256(draft.address_line.encode()).hexdigest())
+
+
+def render_footer_warning_links(check, draft, prefix):
+    if not check.blocking or check.block_key not in ("footer", "footer_text") or check.code not in (
+            "pricing", "placeholder", "text_character"):
+        return
+    from app.monthly_report_non_narrative_recovery import unsafe
+    blocks = [block for block in draft.blocks if block.key == "footer_text"]
+    if len(blocks) > 1:
+        st.caption("The footer has duplicate block identities. Repair them first.")
+        return
+    text = blocks[0].text if blocks else draft.address_line
+    if not unsafe(text, check.code):
+        return
+    revision = _footer_repair_revision(draft)
+    dest = "report-correction-" + sha256(
+        (prefix + "\\0" + check.code + "\\0footer_text\\0" + revision).encode()).hexdigest()
+    st.markdown('<a class="enfra-picture-correction-link" data-report-identity="' +
+                _identity(prefix) + '" href="#' + dest +
+                '">Correct the exact report footer</a>', unsafe_allow_html=True)
+
+
+def render_footer_repair_editor(draft, checks, prefix, field):
+    """One guarded report footer editor, not one per warning occurrence."""
+    from app.monthly_report_non_narrative_recovery import unsafe
+    from dataclasses import replace
+    from app.monthly_report_model import ResolvedBlock
+    blocks = [block for block in draft.blocks if block.key == "footer_text"]
+    if len(blocks) > 1:
+        return
+    current = blocks[0] if blocks else ResolvedBlock("footer_text", "This month",
+                                                      text=draft.address_line)
+    codes = tuple(code for code in ("pricing", "placeholder", "text_character")
+                  if unsafe(current.text, code) and any(
+                      check.blocking and check.code == code and
+                      check.block_key in ("footer", "footer_text") for check in checks))
+    if not codes:
+        return
+    revision = _footer_repair_revision(draft)
+    key = prefix + "_repair_footer_text_" + revision
+    st.caption("Correct this report's footer. It is not a change to the contract's "
+               "master address or to any source original.")
+    st.markdown("".join(native_warning_marker(prefix, code, "footer_text",
+                          revision, key, kind="textarea") for code in codes),
+                unsafe_allow_html=True)
+    edited = st.text_area("Correct report footer", value=current.text,
+                          key=field(key, current.text), height=110)
+    if st.button("Apply corrected footer in this report", key=prefix +
+                 "_repair_footer_apply_" + revision):
+        original = st.session_state.get(prefix + "_draft")
+        if original is None or original.fingerprint != draft.fingerprint:
+            st.warning("The report changed before this footer edit. Current values are retained.")
+            return
+        if edited == current.text:
+            st.warning("The footer is unchanged. Correct or deliberately clear it first.")
+            return
+        changed = replace(current, source="This month", text=edited,
+                          reviewed_fingerprint="", client_reviewed_fingerprint="")
+        updated = tuple(changed if block.key == "footer_text" else block
+                        for block in original.blocks)
+        if not blocks:
+            updated += (changed,)
+        st.session_state[prefix + "_draft"] = replace(
+            original, blocks=updated, address_line=edited)
+        st.session_state[prefix + "_period_editor_refresh"] = True
