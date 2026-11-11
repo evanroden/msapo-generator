@@ -36,8 +36,12 @@ def check(data: object) -> list[str]:
         errors.append("platform.enabled must be true")
     if validation.get("requireAuthentication") is not True:
         errors.append("requireAuthentication must be true")
-    if validation.get("unauthenticatedClientAction") not in ("RedirectToLoginPage", "Return401"):
+    unauthenticated = validation.get("unauthenticatedClientAction")
+    if unauthenticated not in ("RedirectToLoginPage", "Return401"):
         errors.append("anonymous access must redirect or return 401")
+    if (unauthenticated == "RedirectToLoginPage"
+            and validation.get("redirectToProvider") != "azureActiveDirectory"):
+        errors.append("unauthenticated redirect must use the Entra provider")
     if validation.get("excludedPaths", []) != []:
         errors.append("excludedPaths must be empty")
     if http.get("requireHttps") is not True:
@@ -62,8 +66,8 @@ def check(data: object) -> list[str]:
     if not reg.get("clientSecretSettingName"):
         errors.append("Easy Auth client credential setting name is missing")
     audiences = aad_validation.get("allowedAudiences")
-    if not isinstance(audiences, list) or not client or client not in audiences:
-        errors.append("allowed audiences must include the intended client ID")
+    if not isinstance(audiences, list) or not client or audiences != [client]:
+        errors.append("allowed audiences must contain only the intended client ID")
     return errors
 
 
