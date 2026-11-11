@@ -220,10 +220,11 @@ class SubmissionStore:
 
         * ``complete``  -- already fully submitted; returns the known row ID so
           the caller can report success rather than an error.
-        * ``uncertain`` -- a prior write's outcome is unknown AND no row ID was
-          ever recorded. Blocked until ``reconcile_row`` supplies one. Testing
-          this BEFORE the lease check is essential: an expired lease must not
-          turn an unresolved ambiguous write into a fresh attempt.
+        * ``uncertain``/``creating`` -- a prior write's outcome is unknown AND no
+          row ID was recorded. ``creating`` is written before the network
+          request, so a crash after the remote write cannot reopen the row
+          creation window when the lease expires. Both states require exact
+          reconciliation; they are checked BEFORE the lease.
         * ``in_progress`` -- another worker holds an unexpired lease. This still
           applies after the row exists (FM-F02): a second process must not start
           attaching to a row the first one is still working on.
@@ -279,7 +280,7 @@ class SubmissionStore:
                 # carry a row ID (FM-F05: the row was created, only the local
                 # write of its ID failed) is resumable, because the ID identifies
                 # the exact row to finish rather than a second one to create.
-                if status == "uncertain" and not row_id:
+                if status in {"uncertain", "creating"} and not row_id:
                     conn.commit()
                     return SubmissionClaim(
                         False, "uncertain", status, None, attached, None, last_error
@@ -363,6 +364,22 @@ class SubmissionStore:
             lease_token,
             "updated_at = ?, lease_expires_at = ?",
             (now, now + max(30, int(lease_seconds))),
+        )
+
+    def mark_row_create_started(self, submission_key: str, lease_token: str) -> None:
+        """Durably fence row creation BEFORE sending the non-idempotent HTTP POST.
+
+        A killed worker has no opportunity to catch an exception or mark an
+        ambiguous response as uncertain. Without this write-ahead intent,
+        expiry of its pending lease would let another worker create a second
+        Smartsheet row. A crash between this marker and the actual POST may
+        conservatively require reconciliation even though no row exists.
+        """
+        self._owned_update(
+            submission_key,
+            lease_token,
+            "status = 'creating', updated_at = ?",
+            (time.time(),),
         )
 
     def record_row(
