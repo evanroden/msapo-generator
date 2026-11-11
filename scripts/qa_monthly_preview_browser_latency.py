@@ -69,6 +69,10 @@ def _exercise(browser_type, engine):
                 qa.current_image(page, qa.ACTIVITY)
                 image = page.locator(qa.ACTIVITY).locator(".report-preview img").first
                 first = _decoded(image)
+                preview_panel = page.locator(qa.ACTIVITY).locator(".report-preview").first
+                before_layout = preview_panel.evaluate("(node) => JSON.parse(node._previewState.layout)")
+                assert before_layout[2] is True and before_layout[3] is False
+                before_generation = before_layout[0]
                 first_seconds = time.perf_counter() - start
 
                 # Browser upload-to-useful-thumbnail includes the native
@@ -98,33 +102,43 @@ def _exercise(browser_type, engine):
                 # distinguishes a decoded old raster from a current result.
                 qa.scroll_pair(page, qa.ACTIVITY)
                 earlier = field.input_value()
-                # Change the start of the first content page rather than
-                # appending after the visible range: the raster must differ,
-                # so a stale "Current" status can never satisfy this probe.
+                # The initial visible page can be a title/divider or part of
+                # multi-page content and may remain byte-identical after an
+                # edit elsewhere. Revision identity and ready/current state,
+                # never a JPEG inequality, prove a newer result won.
                 revised = (f"MR-021 CURRENT REVISION {engine}-{sequence}: synthetic only.\n"
                            + earlier)
-                previous_src = image.get_attribute("src")
-                assert previous_src and previous_src.startswith("data:image/jpeg;base64,")
                 field.fill(revised)
                 field.press("Tab")
                 digest = sha256(revised.encode()).hexdigest()
                 expect(page.get_by_text("QA durable Activity SHA256: " + digest, exact=True)).to_be_visible(timeout=90000)
                 update_started = time.perf_counter()
                 qa.scroll_pair(page, qa.ACTIVITY)
-                # A new image byte identity, not the editor text or the
-                # server's possibly momentarily old "Current" label, proves
-                # the newest rendered section replaced the earlier raster.
-                latest_image = page.locator(qa.ACTIVITY).locator(".report-preview img").first
-                expect(latest_image).not_to_have_attribute("src", previous_src, timeout=90000)
+                # Wait for a different *actual component generation* in ready
+                # state. A stale old "Current" label or an unchanged title
+                # page's JPEG cannot produce a false success.
+                page.wait_for_function(
+                    "old => {" + qa.DEEP + """
+                    const pair = document.querySelector('.st-key-epc_pair_monthly_activity');
+                    const panel = pair && deep(pair, '.report-preview')[0];
+                    if (!panel?._previewState?.layout) return false;
+                    const [generation, sizes, ready, stale] = JSON.parse(panel._previewState.layout);
+                    return generation !== old && ready === true && stale === false &&
+                      /^Current · [1-9]/.test(panel.querySelector('.report-preview-status')?.textContent || '') &&
+                      [...panel.querySelectorAll('img')].some(img => img.complete && img.naturalWidth > 0);
+                    }""", arg=before_generation, timeout=120000)
                 qa.current_image(page, qa.ACTIVITY)
+                latest_image = page.locator(qa.ACTIVITY).locator(".report-preview img").first
                 latest = _decoded(latest_image)
-                assert latest["sha256"] != first["sha256"], "New revision reused the old raster"
+                after_layout = preview_panel.evaluate("(node) => JSON.parse(node._previewState.layout)")
+                assert after_layout[0] != before_generation and after_layout[2] is True and after_layout[3] is False
                 assert field.input_value() == revised, "Manual edit was lost."
                 assert not external and not errors, {"external": external, "pageerrors": errors}
                 records.append({"index": sequence + 1, "fresh_report_press_to_decoded_section_seconds": round(first_seconds, 4),
                                 "native_upload_to_requested_decoded_thumbnail_seconds": round(thumbnail_seconds, 4),
                                 "edit_commit_to_current_section_seconds": round(time.perf_counter() - update_started, 4),
                                 "first_section_image": first, "thumbnail": thumb, "latest_section_image": latest,
+                                "preview_generation_changed": before_generation != after_layout[0],
                                 "manual_edit_retained": True, "upload_sha256": sha256(alpha).hexdigest(),
                                 "second_upload_sha256": sha256(beta).hexdigest()})
             except Exception:
