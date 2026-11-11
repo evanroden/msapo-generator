@@ -60,10 +60,12 @@ def test_real_guided_sidebar_undo_preserves_later_section_edits_and_reopen(
     # acceptance, not a synthetic claim from this session mutation.
     draft_key = next(key for key, value in app.session_state.filtered_state.items()
                      if isinstance(value, ReportDraft) and value.profile.key == profile.key)
-    activity = ResolvedBlock("activity_narrative", "This month",
-                             text="Independent later synthetic edit")
+    activity = replace(next(block for block in applied.blocks
+                            if block.key == "activity_summary"),
+                       source="This month", text="Independent later synthetic edit")
     app.session_state[draft_key] = replace(
-        applied, blocks=(*applied.blocks, activity))
+        applied, blocks=tuple(activity if block.key == "activity_summary" else block
+                              for block in applied.blocks))
     app.run()
     assert not app.exception
     next(button for button in app.button
