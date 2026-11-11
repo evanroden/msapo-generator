@@ -4,6 +4,7 @@ Issue references are links, not page approval. They never change the source's
 whole-document inclusion decisions, saved report blocks or original bytes.
 """
 from io import BytesIO
+import re
 
 from docx.shared import Inches, Pt
 from PIL import Image
@@ -45,6 +46,7 @@ def selected_issue_pages(draft):
     }
     chosen = []
     owners = {}
+    caption_metrics = None
     for issue in draft.follow_ups:
         if issue.category != "issue" or not issue.included:
             continue
@@ -85,6 +87,19 @@ def selected_issue_pages(draft):
                 raise ValueError(
                     f"Review page {number} of {source.filename} in Manage source files before emitting issue evidence. "
                     "Pricing, legal, signature, blank and unreviewed pages cannot be included.")
+            label = f"{source.filename} · page {number}" + (" — " + caption if caption else "")
+            if re.search(r"[\\x00-\\x08\\x0e-\\x1b\\x1f\\ud800-\\udfff\\ufffe\\uffff]", label):
+                raise ValueError(
+                    f"Remove unsupported characters from the caption or filename of {source.filename} page {number}.")
+            if caption_metrics is None:
+                from app.monthly_report_visuals import wrapped, font, _measure
+                caption_metrics = (_measure(), font(28))
+            from app.monthly_report_visuals import wrapped
+            draw, face = caption_metrics
+            if sum(max(1, len(wrapped(line, face, 1000, draw)))
+                   for line in label.split("\\n")) > 3:
+                raise ValueError(
+                    f"Shorten the caption for {source.filename} page {number} to at most three lines before generating.")
             chosen.append((issue, source, number, reference))
             if len(chosen) > MAX_ISSUE_EVIDENCE_PAGES:
                 raise ValueError("Issue evidence exceeds 150 selected pages. Remove some selections.")
@@ -149,12 +164,17 @@ def append_issue_evidence(document, draft, *, before=None):
         else:
             separate = True
         photo = paragraph(page_break=separate)
-        with Image.open(BytesIO(picture.data)) as image:
-            if image.width * image.height > _MAX_PIXELS_PER_FRAME:
-                raise ValueError("Issue evidence page image exceeds the pixel limit.")
-            scale = min(6.8 / image.width, 7.2 / image.height)
-            photo.add_run().add_picture(BytesIO(picture.data),
-                width=Inches(image.width * scale), height=Inches(image.height * scale))
+        try:
+            with Image.open(BytesIO(picture.data)) as image:
+                if image.width * image.height > _MAX_PIXELS_PER_FRAME:
+                    raise ValueError("Issue evidence page image exceeds the pixel limit.")
+                scale = min(6.8 / image.width, 7.2 / image.height)
+                photo.add_run().add_picture(BytesIO(picture.data),
+                    width=Inches(image.width * scale), height=Inches(image.height * scale))
+        except (OSError, ValueError, Image.DecompressionBombError) as exc:
+            raise ValueError(
+                f"Issue evidence artwork for {source.filename} page {number} is invalid or too large. "
+                "Restore the original or review the page in Manage source files.") from exc
         caption = dict(source.captions).get(number, "")
         label = f"{source.filename} · page {number}"
         paragraph(label + (" — " + caption if caption else ""), caption=True)
