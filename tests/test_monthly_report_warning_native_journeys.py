@@ -149,5 +149,5 @@ render_source_recovery_links(check,current,PREFIX)
     action(app, "Open Manage source files · source lost-source-a").click().run()
     assert not app.exception
     assert app.session_state["warning-native_batch_files_open"] is True
-    assert app.session_state.get("warning-native_evidence_selected", "") == ""
+    assert "warning-native_evidence_selected" not in app.session_state
     assert app.session_state["warning-native_draft"].sources == ()
