@@ -37,14 +37,51 @@ def check_origin(origin: str, production_origin: str) -> bool:
             and not a.query and not a.fragment and not a.path.strip("/"))
 
 
+def signed_out_denial(status: int | None, final_url: str, app_origin: str, *,
+                      served_marker: bool, websocket_opened: bool) -> bool:
+    """An actual authentication challenge or explicit denial, never an empty UI."""
+    page = urlparse(final_url)
+    app = urlparse(app_origin)
+    challenge = ((status in (401, 403) and page.hostname == app.hostname)
+                 or (page.hostname in ("login.microsoftonline.com", "login.microsoftonline.us"))
+                 or (page.hostname == app.hostname and page.path.startswith("/.auth/login/")))
+    return bool(challenge and not served_marker and not websocket_opened)
+
+
+def direct_socket_opened(page, origin: str) -> bool:
+    """Attempt only the WebSocket handshake; never send application payloads."""
+    return bool(page.evaluate("""async origin => await new Promise(resolve => {
+        const url = origin.replace(/^https:/, 'wss:') + '/_stcore/stream';
+        const conn = new WebSocket(url);
+        const timer = setTimeout(() => {conn.close(); resolve(true);}, 5000);
+        conn.onopen = () => {clearTimeout(timer); conn.close(); resolve(true);};
+        conn.onerror = () => {clearTimeout(timer); resolve(false);};
+        conn.onclose = () => {clearTimeout(timer); resolve(false);};
+    })""", origin))
+
+
 def run_probe(origin: str, storage_state: Path, expected_sha: str) -> dict:
     from playwright.sync_api import sync_playwright
     from scripts.qa_public_build import running_code_marker
-    events = {"authenticated_page": "NOT_RUN", "served_sha": "NOT_RUN",
+    events = {"signed_out_page_denied": "NOT_RUN", "signed_out_socket_denied": "NOT_RUN",
+              "authenticated_page": "NOT_RUN", "served_sha": "NOT_RUN",
               "websocket_initial": "NOT_RUN", "websocket_reconnect": "NOT_RUN"}
     with sync_playwright() as client:
         browser = client.chromium.launch(headless=True)
         try:
+            # Independent context, with no stored cookies or sign-in state.
+            anonymous = browser.new_context(accept_downloads=False)
+            unauth_page = anonymous.new_page()
+            unauth_page.goto(origin + "/?workflow=monthly", wait_until="domcontentloaded", timeout=45000)
+            unauth_page.wait_for_timeout(1500)
+            response = unauth_page.request.get(origin + "/?workflow=monthly", max_redirects=0)
+            opened = direct_socket_opened(unauth_page, origin)
+            challenge = signed_out_denial(response.status, unauth_page.url, origin,
+                                          served_marker=bool(unauth_page.get_by_text(re.compile(r"^Running code:")).count()),
+                                          websocket_opened=opened)
+            events["signed_out_page_denied"] = "PASS" if challenge else "FAIL"
+            events["signed_out_socket_denied"] = "PASS" if not opened else "FAIL"
+            anonymous.close()
             context = browser.new_context(storage_state=str(storage_state), accept_downloads=False)
             page = context.new_page()
             ws_urls = []
