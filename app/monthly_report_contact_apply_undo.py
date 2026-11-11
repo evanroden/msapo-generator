@@ -21,6 +21,12 @@ def _directory_refs(refs: tuple[str, ...]) -> tuple[str, ...]:
                  if ref.startswith(("directory:", "directory-site:")))
 
 
+def _report_scope(profile: ReportProfile) -> tuple:
+    # The title, layout and presentation metadata are independent report
+    # edits. Bind Undo to the contract/report/site identities instead.
+    return (profile.contract, profile.key, profile.scope_type, profile.facilities)
+
+
 def _contact(draft: ReportDraft) -> ResolvedBlock | None:
     return next((block for block in draft.blocks if block.key == "contact_matrix"), None)
 
@@ -95,7 +101,8 @@ def undo_directory_apply(draft: ReportDraft, receipt: DirectoryApplyUndo) -> Rep
     """
     if not isinstance(receipt, DirectoryApplyUndo):
         raise ValueError("A legacy directory Undo receipt cannot be verified.")
-    if draft.profile != receipt.profile or draft.period != receipt.period:
+    if (_report_scope(draft.profile) != _report_scope(receipt.profile)
+            or draft.period != receipt.period):
         raise ValueError("This directory Undo belongs to another report or month.")
     current = _contact(draft)
     length = len(receipt.applied_owned_rows)
