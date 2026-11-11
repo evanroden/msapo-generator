@@ -276,9 +276,11 @@ def render_native_warning_links(check, draft, prefix):
         owner, revision, label = "report", report_identity(draft), "Enter Prepared by"
     elif code in {"carried_period", "photo_layout", "source", "library_save"}:
         matches = [block for block in draft.blocks if block.key == owner]
-        if len(matches) != 1 or matches[0].source == "Omit":
+        if len(matches) != 1:
             return
         block = matches[0]
+        if code in {"carried_period", "photo_layout"} and block.source == "Omit":
+            return
         if code == "carried_period":
             from app.monthly_report_setup import carried_period
             if not carried_period(block, draft.period):
@@ -388,7 +390,7 @@ def render_inline_block_repairs(spec, block, prefix):
                          block.key.replace("_", " "), key=key):
                 block = replace(block, source=selection)
     if block.pending_library_save:
-        selection = choice()
+        selection = 'Omit' if block.source == 'Omit' else choice()
         if selection is None:
             st.error("Shared-library replacement cannot be completed here. "
                      "Keep this draft and import a supported report-only version.")
@@ -397,7 +399,9 @@ def render_inline_block_repairs(spec, block, prefix):
             st.markdown(native_warning_marker(prefix, "library_save", block.key,
                                                block.fingerprint, key),
                         unsafe_allow_html=True)
-            if st.button("Keep this block in this report only; do not replace the shared library",
+            if st.button(("Cancel the pending library replacement; keep this block omitted"
+                          if block.source == "Omit" else
+                          "Keep this block in this report only; do not replace the shared library"),
                          key=key):
                 block = replace(block, source=selection, pending_library_save=False)
     if type(block.photos_per_page) is not int or not 1 <= block.photos_per_page <= 6:
@@ -408,3 +412,28 @@ def render_inline_block_repairs(spec, block, prefix):
                      key=key):
             block = replace(block, photos_per_page=3)
     return block
+
+
+def render_imported_table_warning_links(check, draft, prefix):
+    """Name one physical imported table, never a duplicate heading or filename."""
+    if not check.blocking or check.code not in {"table_columns", "table_missing_columns"}:
+        return
+    from app.monthly_report_table_column_recovery import missing_positions
+    blocks = [block for block in draft.blocks if block.key == check.block_key]
+    if len(blocks) != 1:
+        return
+    block = blocks[0]
+    for index, table in enumerate(block.extra_tables):
+        positions = missing_positions(table)
+        if not positions:
+            continue
+        code = "table_missing_columns" if not table.columns else "table_columns"
+        if code != check.code or not check.message.startswith("Imported table " + str(index + 1) + " "):
+            continue
+        owner = block.key + ":imported:" + str(index)
+        destination = "report-correction-" + sha256(
+            (prefix + "\\0" + code + "\\0" + owner + "\\0" + block.fingerprint).encode()).hexdigest()
+        st.markdown('<a class="enfra-picture-correction-link" data-report-identity="' +
+                    _identity(prefix) + '" href="#' + destination +
+                    '">Correct imported table ' + str(index + 1) + ' · column ' +
+                    str(positions[0] + 1) + '</a>', unsafe_allow_html=True)
