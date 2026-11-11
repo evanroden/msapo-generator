@@ -32,19 +32,23 @@ jobs:
       - name: Collect cold/warm and uncached/reused synthetic timing samples
         timeout-minutes: 22
         run: |
-          docker run --name msapo-491-latency --memory=512m --memory-swap=512m --cpus=0.5 \
-            --env RESOURCE_REQUIRE_512_MB=1 \
-            --env RESOURCE_REQUIRE_HALF_CPU=1 \
-            --env ANTHROPIC_API_KEY=test-key-not-used \
-            --entrypoint python msapo-491-latency scripts/qa_monthly_preview_latency_e2e.py
-          test "$(docker inspect --format='{{.State.OOMKilled}}' msapo-491-latency)" = false
+          for part in sources native; do
+            docker run --name "msapo-491-latency-$part" --memory=512m --memory-swap=512m --cpus=0.5 \
+              --env RESOURCE_REQUIRE_512_MB=1 \
+              --env RESOURCE_REQUIRE_HALF_CPU=1 \
+              --env ANTHROPIC_API_KEY=test-key-not-used \
+              --entrypoint python msapo-491-latency scripts/qa_monthly_preview_latency_e2e.py --part "$part"
+            test "$(docker inspect --format='{{.State.OOMKilled}}' "msapo-491-latency-$part")" = false
+          done
       - name: Copy collected measurements even when a later check fails
         if: always()
         run: |
           mkdir -p test-artifacts/monthly-preview-latency
-          docker cp msapo-491-latency:/tmp/monthly-preview-latency/. test-artifacts/monthly-preview-latency/ || true
-          docker logs msapo-491-latency > test-artifacts/monthly-preview-latency/container.log 2>&1 || true
-          docker inspect msapo-491-latency > test-artifacts/monthly-preview-latency/container-inspect.json || true
+          for part in sources native; do
+            docker cp "msapo-491-latency-$part:/tmp/monthly-preview-latency/." test-artifacts/monthly-preview-latency/ || true
+            docker logs "msapo-491-latency-$part" > "test-artifacts/monthly-preview-latency/$part-container.log" 2>&1 || true
+            docker inspect "msapo-491-latency-$part" > "test-artifacts/monthly-preview-latency/$part-inspect.json" || true
+          done
       - name: Upload timing and OOM diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -55,7 +59,7 @@ jobs:
           retention-days: 14
       - name: Remove disposable benchmark container
         if: always()
-        run: docker rm --force msapo-491-latency || true
+        run: docker rm --force msapo-491-latency-sources msapo-491-latency-native || true
 
   native-browser:
     runs-on: ubuntu-24.04
