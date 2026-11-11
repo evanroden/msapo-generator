@@ -1843,6 +1843,11 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         if checks:
             count = len(checks)
             st.markdown(f"**{count} {'item needs' if count == 1 else 'items need'} attention**")
+        # Several distinct preflight messages may describe the same underlying
+        # table cell or schema. Show each message but mount each native editor
+        # once per exact code/block owner to avoid duplicate Streamlit keys.
+        rendered_cell_owners = set()
+        rendered_heading_owners = set()
         for check in checks:
             source = next((source for source in draft.sources if source.id == check.block_key), None)
             if source is not None and check.code in {"source_facility", "source_period", "source_date_unknown"}:
@@ -1882,7 +1887,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 from app.monthly_report_correction_ui import render_structure_and_followup_recovery
                 render_structure_and_followup_recovery(check, draft, prefix)
                 from app.monthly_report_non_narrative_recovery import render_links as render_cell_links
-                render_cell_links(check, draft, prefix)
+                cell_owner = (check.code, check.block_key)
+                if not check.targets and cell_owner not in rendered_cell_owners:
+                    render_cell_links(check, draft, prefix)
+                    rendered_cell_owners.add(cell_owner)
                 from app.monthly_report_correction_ui import render_receivable_recovery
                 render_receivable_recovery(check, draft, prefix)
                 from app.monthly_report_correction_ui import (
@@ -1894,7 +1902,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 from app.monthly_report_table_column_recovery import (
                     edit_fixed_column_schema, edit_unsafe_primary_heading)
                 edit_fixed_column_schema(check, draft, prefix, field)
-                edit_unsafe_primary_heading(check, draft, prefix, field)
+                if cell_owner not in rendered_heading_owners:
+                    edit_unsafe_primary_heading(check, draft, prefix, field)
+                    rendered_heading_owners.add(cell_owner)
                 from app.monthly_report_org_warning import render_chart_links, render_chart_text_safety
                 render_chart_links(check, draft, prefix)
                 render_chart_text_safety(check, draft, prefix)
