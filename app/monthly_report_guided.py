@@ -566,6 +566,9 @@ def _review_carried_update(block, period, prefix):
     # Equal content in a replacement editor is not the same acknowledgement.
     # Include the scope in the native widget identity, not only its callback.
     key = prefix + "_current_period_" + block.key + "_" + observed["token"]
+    from app.monthly_report_correction_ui import native_warning_marker
+    st.markdown(native_warning_marker(prefix, "carried_period", block.key,
+                                      block.fingerprint, key), unsafe_allow_html=True)
     if st.button(f"This update is correct for {period.label}", key=key):
         confirmed = confirm_current_period(block, period)
         st.session_state[marker] = {
@@ -628,6 +631,8 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
                   manage_saved_pictures=True, inline_photo_intake=False, page_actions_open=True,
                   text_label=None, text_height=140):
     block = _include_left_out(spec, block, prefix)
+    from app.monthly_report_correction_ui import render_inline_block_repairs
+    block = render_inline_block_repairs(spec, block, prefix)
     if draft is not None and spec.type == "image_grid":
         from app.monthly_report_visual_ui import edit_photos
         return edit_photos(draft, block, prefix, assets, field, show_preview=False)
@@ -1442,7 +1447,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     # actual native text input immediately below it (not a fake proxy field).
     st.markdown('<span id="report-prepared-by"></span>', unsafe_allow_html=True)
     from app.monthly_report_preparer_ui import render_preparer
-    prepared = render_preparer(prefix, draft.prepared_by, field)
+    prepared = render_preparer(prefix, draft.prepared_by, field, draft=draft)
     draft = replace(draft, prepared_by=prepared)
     if prepared.strip() and not st.session_state.get(prefix + "_directory_defaults_attempted"):
         from app.monthly_report_directory import apply_defaults
@@ -1787,9 +1792,11 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         dependent = used_missing_sources(draft, st.session_state.get(prefix + "_unavailable_sources", ()))
         if dependent:
             missing_names = ", ".join(safe_source_name(source) for source in dependent)
+            from app.monthly_report_correction_targets import source_target
             checks.append(ReportCheck("unavailable_source",
                 f"Cannot safely generate while {missing_names} is missing. "
-                "Replace the source or remove the content linked to it first.", True))
+                "Replace the source or remove the content linked to it first.", True,
+                targets=tuple(source_target(draft, source) for source in dependent)))
         if checks:
             count = len(checks)
             st.markdown(f"**{count} {'item needs' if count == 1 else 'items need'} attention**")
@@ -1821,6 +1828,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 render_financial_links(check,draft,prefix)
                 from app.monthly_report_ai_correction_ui import render_links as render_ai_links
                 render_ai_links(check,draft,prefix)
+                from app.monthly_report_correction_ui import (
+                    render_native_warning_links, render_source_recovery_links)
+                render_native_warning_links(check, draft, prefix)
+                render_source_recovery_links(check, draft, prefix)
         notice = st.session_state.pop(prefix + "_page_navigation_notice", None)
         if notice:
             st.warning(notice)
