@@ -22,6 +22,7 @@ from urllib.parse import urlparse
 import urllib.request
 
 from playwright.sync_api import expect, sync_playwright
+from qa_device_metadata import browser_evidence
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -643,6 +644,7 @@ def exercise(browser_type, name):
 
     context.route("**/*", route)
     page = context.new_page()
+    REPORT.setdefault('environments', {})[name] = browser_evidence(page, engine=name, input_method='Playwright pointer/keyboard and label hit targets; simulated viewports')
     from workspace_wire_observations import WireObservations
     wire = WireObservations(8520)
     wire.attach(page)
