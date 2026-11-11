@@ -153,6 +153,7 @@ def test_two_users_clear_session_without_inheriting_draft_and_ws_age_caps(monkey
     monkeypatch.setitem(sys.modules, "streamlit", fake_st)
     for key, value in {**AZURE, "MSAPO_AUTHZ_DATA_BOUNDARY_READY": "verified"}.items():
         monkeypatch.setenv(key, value)
+    monkeypatch.setattr(identity, "RESOURCE_BOUNDARIES_INTEGRATED", True)
     monkeypatch.setattr(identity.time, "monotonic", lambda: 100.)
     a = identity.require_streamlit_entry()
     state["report_draft"] = "one-user-only"
