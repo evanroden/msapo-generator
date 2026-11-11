@@ -693,7 +693,12 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
             from app.mpo_images import frame_count
             count = frame_count(raw)
             for index in range(count):
-                normalize_report_image(raw, suffix, frame_index=index)
+                try:
+                    normalize_report_image(raw, suffix, frame_index=index)
+                except (OSError, EOFError, SyntaxError) as exc:
+                    # Pillow can report truncated MPO raster data only when a
+                    # selected frame is decoded, after its header inventory.
+                    raise ValueError("MPO image data is damaged or truncated. Export a fresh copy.") from exc
             page_texts, needs_vision = [""] * count, list(range(1, count + 1))
             notices.append("MPO pictures are separate source pages in their original order; review each picture before inclusion.")
         else:
