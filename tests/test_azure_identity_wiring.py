@@ -17,14 +17,14 @@ def test_legacy_bookmark_requires_identity_before_any_page_data():
 
 
 def test_auth_configuration_requires_auth_and_does_not_exclude_health_or_ws():
-    code = (ROOT / "docs/azure/app_service_auth.bicep").read_text(encoding="utf-8")
+    code = (ROOT / "infra/azure/a04-appservice-auth.bicep").read_text(encoding="utf-8")
     assert "'authsettingsV2'" in code
     assert "requireAuthentication: true" in code
     assert "unauthenticatedClientAction: 'RedirectToLoginPage'" in code
     assert "excludedPaths: []" in code
     assert "requireHttps: true" in code
     assert "azureActiveDirectory:" in code
-    assert "openIdIssuer: 'https://login.microsoftonline.com/${tenantId}/v2.0'" in code
+    assert "openIdIssuer: 'https://login.microsoftonline.com/${entraTenantId}/v2.0'" in code
     assert "google:" not in code and "facebook:" not in code
     assert "AllowAnonymous" not in code
 
