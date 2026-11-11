@@ -1288,7 +1288,7 @@ def apply_contacts(draft, block, *, keep_report_rows=False):
                          for index, row in enumerate(rows))
         rows = (*rows, *report_rows)
         retained_refs = tuple(ref for ref in current.references
-                              if not ref.startswith(("directory:", "directory-site:")))
+                              if not ref.startswith(("directory:", "directory-site:", "report-directory-undo:")))
         block = replace(current, source=block.source, rows=rows,
                         references=tuple(dict.fromkeys((*block.references, *retained_refs))),
                         reviewed_fingerprint="", client_reviewed_fingerprint="")
