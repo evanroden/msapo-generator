@@ -124,6 +124,20 @@ def test_separated_vendor_caption_blocks_preflight_preview_and_word(monkeypatch,
         assemble_docx(draft, acknowledged_fingerprint=draft.fingerprint, asset_loader=load)
 
 
+@pytest.mark.parametrize('text', [
+    'INVOICE\nVendor: Acme Parts\nService: Valve repair\nTotal: $1,200',
+    'Supplier: North Works\nINVOICE\nMaintenance items\nAmount Due: $800',
+    'Subcontractor: Service Team\nINVOICE\nBalance Due: $60',
+])
+def test_standalone_vendor_invoice_heading_blocks_financial_page(monkeypatch, tmp_path, text):
+    p, content, raw = setup(monkeypatch, tmp_path, text)
+    assert sources.source_bytes(p, content.source) == raw
+    assert api().known_vendor_total(content.source, 1)
+    with pytest.raises(ValueError, match='vendor-invoice total'):
+        reviewed(p, content)
+    assert content.source.financial_page_reviews == ()
+
+
 def test_unknown_financial_semantics_rejected(monkeypatch,tmp_path):
     p,c,_=setup(monkeypatch,tmp_path);m=api()
     with pytest.raises(ValueError):m.review_pages(p,c,(1,),source_confirmed=True,visual_fingerprints=((1,m.page_review_fingerprint(c.source,1)),),financial_semantics='unknown')
