@@ -1458,13 +1458,44 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     # Shared contact maintenance belongs to the administration surface, not
     # a competing report editor above Organizational Chart. Keep the same
     # explicit shared-save scope, contact widget identity and return value.
+    from app.monthly_report_contact_apply_undo import (
+        DirectoryApplyUndo, capture_directory_apply, undo_directory_apply,
+    )
+    from app.monthly_report_directory_ui import _resume_contacts
+    undo_key = prefix + "_directory_apply_undo"
     with st.sidebar:
         updated_contacts = render_selected_directory(contract, profile.facilities, prepared, prefix, draft=draft)
+        # This is a report-only Undo. The shared directory revision remains
+        # immutable; changes to the applied directory-owned rows refuse Undo.
+        receipt = st.session_state.get(undo_key)
+        if (isinstance(receipt, DirectoryApplyUndo)
+                and receipt.profile == draft.profile and receipt.period == draft.period):
+            st.caption("Undo affects this report only; saved shared contacts are unchanged.")
+            if st.button("Undo last directory Apply in this report", key=prefix + "_undo_directory_apply"):
+                try:
+                    restored = undo_directory_apply(draft, receipt)
+                except ValueError as exc:
+                    st.session_state.pop(undo_key, None)
+                    st.warning(str(exc) + " No changes were undone.")
+                else:
+                    st.session_state.pop(undo_key, None)
+                    _resume_contacts(restored, prefix)
     if updated_contacts is not None:
         from app.monthly_report_directory import apply_contacts
-        from app.monthly_report_directory_ui import _resume_contacts
+        previous_contacts = draft
         draft = apply_contacts(draft, updated_contacts, keep_report_rows=True)
+        try:
+            st.session_state[undo_key] = capture_directory_apply(
+                previous_contacts, draft, len(updated_contacts.rows))
+        except ValueError as exc:
+            # Shared directory save has already succeeded. Keep the saved
+            # report update, but never advertise an unprovable Undo.
+            st.session_state.pop(undo_key, None)
+            st.session_state[prefix + "_directory_undo_unavailable"] = str(exc)
         _resume_contacts(draft, prefix)
+    if st.session_state.pop(prefix + "_directory_undo_unavailable", ""):
+        st.warning("This directory Apply cannot safely be undone automatically. "
+                   "The report contacts remain available for manual editing.")
     from app.monthly_report_save_status import SaveStatus
     save_status = SaveStatus(prefix, recovery_available=recovery_available)
     from app.monthly_report_asset_review import refresh_asset_source_context
