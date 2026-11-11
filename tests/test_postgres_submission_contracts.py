@@ -109,7 +109,7 @@ def test_corrupt_attachment_proof_fails_closed(invalid):
 
 def test_mark_creating_is_lease_owned_and_committed_before_post():
     store, conn = adapter()
-    store.mark_creating("key", "token")
+    store.mark_row_create_started("key", "token")
     assert conn.committed
     sql, params = conn.cur.executions[0]
     assert "status = 'creating'" in sql
@@ -121,7 +121,7 @@ def test_mark_creating_is_lease_owned_and_committed_before_post():
 def test_missing_or_expired_mark_creating_raises_before_post():
     store, conn = adapter(rowcount=0)
     with pytest.raises(SubmissionStoreError):
-        store.mark_creating("key", "stale")
+        store.mark_row_create_started("key", "stale")
     assert conn.rolled_back and conn.closed
 
 
