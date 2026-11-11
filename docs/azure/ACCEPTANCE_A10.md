@@ -6,7 +6,7 @@
 
 - Existing Render [synthetic isolated Monthly QA run 43032816730](https://github.com/evanroden/msapo-generator/actions/runs/43032816730), attempt 2, was successful at SHA 57c5cd87e3e441dfea3cddbc666248f8e469d986; artifact: monthly-isolated-live-evidence. This is not AUTH01, AUTH02 or AUTH03 acceptance.
 - Existing Tests workflow runs all pytest with LibreOffice/fonts, verifies container APP_GIT_COMMIT, starts a healthy container, exports synthetic DOCX/PDF, and separately performs capped resource testing. It does not certify Azure.
-- A10 added focused tests for document semantics, page order, geometry, font and artwork, grayscale, output metadata tolerance, absent artifacts, SHA/digest/fixture matching, and fail-closed target isolation. The independent local environment ran all 10 tests successfully. GitHub exact-head CI remains necessary.
+- A10 added focused tests for document semantics, page order, geometry, font and artwork, grayscale, output metadata tolerance, absent artifacts, SHA/digest/fixture matching, and fail-closed target isolation. The independent local environment ran all 12 tests successfully. GitHub exact-head CI remains necessary.
 - Native Microsoft Word layout, private originals, Entra negative cases, physical-device checks, live Azure storage, tenant access, and matched-digest Azure comparison are NOT RUN.
 
 ## Classification and method
@@ -56,7 +56,7 @@ Use identically named private local files for the same fixture, e.g. container/m
       --require monthly.docx --require monthly.pdf \
       --output "$PRIVATE_EVIDENCE_DIR/paired-parity.json"
 
-Use --require separately for each expected DOCX/PDF format actually supported by Monthly/PO/Expense. Code 0=PASS, 2=FAIL, 3=NOT RUN (missing paired files), 4=BLOCKED (identity/evidence). Word comparison covers body/header/footer words, tables, font declarations, OOXML geometry, embedded media and grayscale. PDF covers page order/count, text, spans/fonts/captions, page and text coordinates, image counts, chromatic fractions and bounded per-page rendered-pixel differences. Timestamp/OOXML ZIP and PDF metadata differences do not alone fail parity. Results are hashed/summary-only; actual text, screenshots and documents stay in approved private evidence storage.
+Use --require separately for each expected DOCX/PDF format actually supported by Monthly/PO/Expense. Code 0=PASS, 2=FAIL, 3=NOT RUN (missing paired files), 4=BLOCKED (identity/evidence). Word comparison covers body/header/footer words, tables, font declarations, OOXML geometry, embedded media, embedded attachments and grayscale. PDF covers page order/count, text, spans/fonts/captions, page and text coordinates, image counts, embedded attachment bytes, chromatic fractions and bounded per-page rendered-pixel differences. Timestamp/OOXML ZIP and PDF metadata differences do not alone fail parity. Results are hashed/summary-only; actual text, screenshots and documents stay in approved private evidence storage.
 
 For authentic acceptance, use **restricted authorized originals only**, and keep them outside public GitHub/CI: AUTH01 prior month same sites; AUTH02 different site under same contract; AUTH03 incomplete correct target month. Verify first gesture, import scope, prepared-by, edit, save/reopen, original preservation, every DOCX/PDF page, object/page order, tables, captions, artwork and grayscale. LibreOffice-generated PDF is not native Microsoft Word acceptance. Native Word and physical iOS/Safari remain NOT RUN until physically observed.
 
