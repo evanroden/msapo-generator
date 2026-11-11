@@ -1315,6 +1315,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     render_administration_links()
     from app.monthly_report_start_ui import choose_contract, select_sites, starting_choice, identity_summary
     with st.container(key="monthly_report_identity"):
+        st.markdown('<span id="report-contract-selector"></span>', unsafe_allow_html=True)
         contract = choose_contract(last_contract, field)
         if contract:
             period = month_selector(field, "report", suggested_period(operator_today(browser_timezone)))
@@ -1327,6 +1328,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     initial_sites_open = st.session_state.setdefault("report_sites_initially_open_" + _signature(contract), not returning)
     # Always use the same container/label. Remembering this report after its
     # first acknowledged edit must not move existing native editors.
+    st.markdown('<span id="report-profile-details"></span>', unsafe_allow_html=True)
     site_box = st.expander("Change report sites", expanded=initial_sites_open)
     with site_box:
         candidate, existing = select_sites(contract, profiles, remembered, field, completed_setup,
@@ -1883,11 +1885,17 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 render_cell_links(check, draft, prefix)
                 from app.monthly_report_correction_ui import render_receivable_recovery
                 render_receivable_recovery(check, draft, prefix)
+                from app.monthly_report_correction_ui import (
+                    render_identity_warning_recovery, render_footer_warning_links)
+                render_identity_warning_recovery(check, draft, prefix)
+                render_footer_warning_links(check, draft, prefix)
                 from app.monthly_report_table_column_recovery import edit_fixed_column_schema
                 edit_fixed_column_schema(check, draft, prefix, field)
                 from app.monthly_report_org_warning import render_chart_links, render_chart_text_safety
                 render_chart_links(check, draft, prefix)
                 render_chart_text_safety(check, draft, prefix)
+        from app.monthly_report_correction_ui import render_footer_repair_editor
+        render_footer_repair_editor(draft, checks, prefix, field)
         from app.monthly_report_org_warning import finish_chart_notice
         finish_chart_notice(prefix)
         from app.monthly_report_non_narrative_recovery import finish_notice as finish_cell_notice
