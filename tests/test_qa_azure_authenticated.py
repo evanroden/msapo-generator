@@ -40,3 +40,19 @@ def test_preflight_blocks_before_network_access(tmp_path):
                "--isolation-json", str(identity), "--output", str(out)])
     assert rc == 4
     assert json.loads(out.read_text())["status"] == "BLOCKED"
+
+
+def test_signed_out_requires_actual_denial_not_blank_ui():
+    from scripts.qa_azure_authenticated import signed_out_denial
+    base = "https://stage.example.invalid"
+    assert signed_out_denial(401, base + "/?workflow=monthly", base, served_marker=False, websocket_opened=False)
+    assert signed_out_denial(200, "https://login.microsoftonline.com/tenant/oauth", base,
+                             served_marker=False, websocket_opened=False)
+    for status, url, marker, socket in (
+        (200, base + "/?workflow=monthly", False, False),
+        (200, base + "/?workflow=monthly", True, True),
+        (200, "https://unrelated.example.invalid/login", False, False),
+        (403, base + "/?workflow=monthly", True, False),
+        (401, base + "/?workflow=monthly", False, True),
+    ):
+        assert not signed_out_denial(status, url, base, served_marker=marker, websocket_opened=socket)
