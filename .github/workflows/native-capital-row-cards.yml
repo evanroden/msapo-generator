@@ -47,6 +47,16 @@ jobs:
           python scripts/patch_streamlit_frontend.py
           python scripts/patch_streamlit_date_input.py
           python -m playwright install --with-deps chromium webkit
+      - name: Focused capital, row-card, precision, date and literal-label regression
+        timeout-minutes: 9
+        run: |
+          python -m pytest -q \
+            tests/test_monthly_report_row_cards_ui.py \
+            tests/test_monthly_capital_row_cards_native_outputs.py \
+            tests/test_monthly_report_row_card_groups.py \
+            tests/test_row_cards_date_boundaries.py \
+            tests/test_row_cards_numeric_precision.py \
+            tests/test_monthly_row_card_literal_source_labels.py
       - name: Native edit, clear, Undo, save/reload and actual Word/PDF
         timeout-minutes: 16
         run: |
