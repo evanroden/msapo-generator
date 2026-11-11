@@ -100,7 +100,7 @@ def test_existing_gate_must_protect_even_when_preview_dom_has_unmounted(viewers)
 def test_missing_or_unprotected_live_gate_still_fails_first_action(values):
     calls, error = exercise(activation(**values))
     assert error is not None and "protect its actual native full rerun" in str(error)
-    assert calls == ["read receipt", "observe", "click"]
+    assert calls == ["read receipt", "observe", "click", "fresh durable receipt"]
 
 
 def test_untrusted_cold_click_still_fails():

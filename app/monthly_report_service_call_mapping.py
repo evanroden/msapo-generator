@@ -362,6 +362,20 @@ def exclude_unmatched_call(review: ServiceCallReview, row_number: int, *,
     return replace(review, unmatched=tuple(unresolved))
 
 
+def exclude_unmatched_call(review: ServiceCallReview, row_number: int, *,
+                           expected_revision):
+    """Explicit report-only exclusion of an unlinked/partial CMMS source row."""
+    if review.revision != expected_revision:
+        raise ValueError("Maintenance review changed; inspect the current rows.")
+    matches = [n for n, row in enumerate(review.unmatched)
+               if row.number == row_number and not row.excluded]
+    if len(matches) != 1:
+        raise ValueError("The unmatched source row is missing or already excluded.")
+    unresolved = list(review.unmatched)
+    unresolved[matches[0]] = replace(unresolved[matches[0]], excluded=True)
+    return replace(review, unmatched=tuple(unresolved))
+
+
 def confirm_financial_exclusion(review: ServiceCallReview, *, expected_revision):
     """A reviewed omission of price columns, not approval to output prices."""
     if review.revision != expected_revision:

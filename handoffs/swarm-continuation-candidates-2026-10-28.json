@@ -1,0 +1,301 @@
+{
+  "date": "2026-10-28",
+  "status": "active swarm; more candidates forthcoming",
+  "baseline": "a1b2aa61aa92c596d424c95dba29be66135f3441",
+  "candidates": [
+    {
+      "pr": 566,
+      "url": "https://github.com/evanroden/msapo-generator/pull/566",
+      "head": "e0829b8385fa5dca40e6e8e9ed88bcbf3278c43b",
+      "tree": "a3093dc7f5bc682bb616d2445a9e68adfeba92dd",
+      "workflow_runs": [
+        {
+          "id": 40728197434,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40728197434",
+          "status_at_registration": "queued; refresh before release"
+        },
+        {
+          "id": 40728197224,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40728197224",
+          "status_at_registration": "queued; refresh before release"
+        },
+        {
+          "id": 40728197442,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40728197442",
+          "status_at_registration": "queued; refresh before release"
+        },
+        {
+          "id": 40728197215,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40728197215",
+          "status_at_registration": "queued; refresh before release"
+        },
+        {
+          "id": 40728197615,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40728197615",
+          "status_at_registration": "queued; refresh before release"
+        }
+      ],
+      "focused": "118 pass, 2 existing skips; independent8pass",
+      "notes": "Select as integrated guidance; further caption-alt repair forthcoming"
+    },
+    {
+      "pr": 567,
+      "url": "https://github.com/evanroden/msapo-generator/pull/567",
+      "head": "e5800a65146067fa1b0a9b87a9849eba9959d59a",
+      "tree": "d97558487cbba6374cf214f6857673ad643be6aa",
+      "workflow_runs": [],
+      "focused": "41 pass; independent5pass",
+      "notes": "Exclude from release composition in favor of external #571; duplicate repair"
+    },
+    {
+      "pr": 568,
+      "url": "https://github.com/evanroden/msapo-generator/pull/568",
+      "head": "18f21a02f247f2fa20c5a85e8b096ea1bd828c2c",
+      "tree": "80be66e395cb893e2663ffa426507e004147ee8a",
+      "workflow_runs": [
+        {
+          "id": 40728600157,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40728600157",
+          "status_at_registration": "queued; refresh before release"
+        },
+        {
+          "id": 40728600320,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40728600320",
+          "status_at_registration": "queued; refresh before release"
+        }
+      ],
+      "focused": "114 pass",
+      "notes": "Cumulative #573 includes this correction and existing #537"
+    },
+    {
+      "pr": 570,
+      "url": "https://github.com/evanroden/msapo-generator/pull/570",
+      "head": "69f1049f58aab82916e8735e465953be61b0d16e",
+      "tree": "ea6777fcfa4b9d72e3665f32ff43ca3485d830eb",
+      "workflow_runs": [
+        {
+          "id": 40729044223,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40729044223",
+          "status_at_registration": "queued; refresh before release"
+        },
+        {
+          "id": 40729044062,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40729044062",
+          "status_at_registration": "queued; refresh before release"
+        }
+      ],
+      "focused": "38 pass; independent3process tests pass7.60s",
+      "notes": "Synthetic SIGKILL and lock acceptance only"
+    },
+    {
+      "pr": 573,
+      "url": "https://github.com/evanroden/msapo-generator/pull/573",
+      "head": "953b92b24941b1f8176efd451377ba28ca5022ec",
+      "tree": "decfcd53c56f493b98252b2a42d9dedd6096ac6a",
+      "workflow_runs": [
+        {
+          "id": 40729776366,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40729776366",
+          "status_at_registration": "queued; refresh before release"
+        },
+        {
+          "id": 40729776510,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40729776510",
+          "status_at_registration": "queued; refresh before release"
+        },
+        {
+          "id": 40729776488,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40729776488",
+          "status_at_registration": "queued; refresh before release"
+        }
+      ],
+      "focused": "164 pass4existing renderer skips; independent8pass",
+      "notes": "Cumulative #537,#568,#524,#561,#556; do not apply parent patches twice"
+    },
+    {
+      "pr": 574,
+      "url": "https://github.com/evanroden/msapo-generator/pull/574",
+      "head": "3f26ee98d32263a91a1d32afb6db5e136d804a79",
+      "tree": "3e3e61b76645d6365b44604c582c1ad17d2d651c",
+      "workflow_runs": [
+        {
+          "id": 40730004235,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40730004235",
+          "status_at_registration": "queued; refresh before release"
+        },
+        {
+          "id": 40730004291,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40730004291",
+          "status_at_registration": "queued; refresh before release"
+        }
+      ],
+      "focused": "34 pass; independent2real-handler journey cases pass2.23s",
+      "notes": "30-day retention policy already resolved; tests-only synthetic admin UI"
+    },
+    {
+      "pr": 575,
+      "url": "https://github.com/evanroden/msapo-generator/pull/575",
+      "head": "d3edf84a7f860efab3d52957c2adf2b5c13d889c",
+      "tree": "fbf440652a26ef8b636edd060404a439449dd583",
+      "workflow_runs": [
+        {
+          "id": 40730024833,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40730024833",
+          "status_at_registration": "queued; refresh before release"
+        },
+        {
+          "id": 40730024718,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40730024718",
+          "status_at_registration": "queued; refresh before release"
+        },
+        {
+          "id": 40730025118,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40730025118",
+          "status_at_registration": "queued; refresh before release"
+        }
+      ],
+      "focused": "174 pass3existing skips; independent7pass",
+      "notes": "Includes preserved old #506 plus complete standalone floating-frame inventory"
+    },
+    {
+      "pr": 577,
+      "url": "https://github.com/evanroden/msapo-generator/pull/577",
+      "head": "14456162d5ac661982bcff0f906ae25f97c64fff",
+      "tree": "6bad596b6846167622a6a2a572895392762c1193",
+      "workflow_runs": [
+        {
+          "id": 40731099246,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40731099246",
+          "status_at_registration": "queued; refresh before release"
+        },
+        {
+          "id": 40731099293,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40731099293",
+          "status_at_registration": "queued; refresh before release"
+        },
+        {
+          "id": 40731099139,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40731099139",
+          "status_at_registration": "queued; refresh before release"
+        },
+        {
+          "id": 40731099278,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40731099278",
+          "status_at_registration": "queued; refresh before release"
+        }
+      ],
+      "focused": "101 focused+21viewer pass; independent10real-render cases pass",
+      "notes": "Stacked on updated #557; local LibreOfficeDev26.8 is not production24.2 parity"
+    },
+    {
+      "pr": 580,
+      "url": "https://github.com/evanroden/msapo-generator/pull/580",
+      "head": "0fb8d16e03ec8cd182ddc25f6297f96ea718f315",
+      "tree": "a0357da98ff8bbc30dbe1ddd1993b64b4eb90cf6",
+      "workflow_runs": [
+        {
+          "id": 40731209312,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40731209312",
+          "status_at_registration": "queued; refresh before release"
+        },
+        {
+          "id": 40731209250,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40731209250",
+          "status_at_registration": "queued; refresh before release"
+        },
+        {
+          "id": 40731209339,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40731209339",
+          "status_at_registration": "queued; refresh before release"
+        },
+        {
+          "id": 40731209376,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40731209376",
+          "status_at_registration": "queued; refresh before release"
+        }
+      ],
+      "focused": "162focused; root18pass1localrenderer skip; agent19new pass with bundledLO",
+      "notes": "Cumulative normalized workorder/CMMS adapters+actual visible correction/publication. Shared source_row_reviews schema coordinated with Training"
+    },
+    {
+      "pr": 581,
+      "url": "https://github.com/evanroden/msapo-generator/pull/581",
+      "head": "ded60632843f95d1544966a787f711d9518fdc61",
+      "tree": "34b49f64782fbe01d37581f50e7a5ea7f66354fd",
+      "workflow_runs": [],
+      "focused": "1failure before83pass after",
+      "notes": "Stacked docs-index repair on #547; does not approve matrix policy"
+    },
+    {
+      "pr": 582,
+      "url": "https://github.com/evanroden/msapo-generator/pull/582",
+      "head": "0fa54eea2611146b400752fc12e7044d4cac3916",
+      "tree": "61e9a3e113bb1238d86146f2ef18292b3480dac6",
+      "workflow_runs": [
+        {
+          "id": 40731447376,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40731447376",
+          "status_at_registration": "queued; refresh before release"
+        },
+        {
+          "id": 40731447422,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40731447422",
+          "status_at_registration": "queued; refresh before release"
+        },
+        {
+          "id": 40731447383,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40731447383",
+          "status_at_registration": "queued; refresh before release"
+        },
+        {
+          "id": 40731447264,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40731447264",
+          "status_at_registration": "queued; refresh before release"
+        },
+        {
+          "id": 40731447375,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40731447375",
+          "status_at_registration": "queued; refresh before release"
+        }
+      ],
+      "focused": "222pass; root9newpass3.91s;27MiB intake peak280133632bytes",
+      "notes": "Hosted512MiB cap added, queued. Separate from external primary error-message repair"
+    },
+    {
+      "pr": 557,
+      "url": "https://github.com/evanroden/msapo-generator/pull/557",
+      "head": "2d2d846377356285b6298a24ba9892cd01395be4",
+      "tree": "78d2822896890f4f0a56b4de197df44d35e3c91a",
+      "workflow_runs": [
+        {
+          "id": 40730619035,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40730619035",
+          "status_at_registration": "queued; refresh before release"
+        },
+        {
+          "id": 40730619086,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40730619086",
+          "status_at_registration": "queued; refresh before release"
+        },
+        {
+          "id": 40730619280,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40730619280",
+          "status_at_registration": "queued; refresh before release"
+        },
+        {
+          "id": 40730619096,
+          "url": "https://github.com/evanroden/msapo-generator/actions/runs/40730619096",
+          "status_at_registration": "queued; refresh before release"
+        }
+      ],
+      "focused": "53focusedpass",
+      "notes": "Updated head supersedes initial557 snapshot; #577 stacks this fix"
+    }
+  ],
+  "release_rules": [
+    "No merge/deploy by this swarm.",
+    "Reconcile cumulative and duplicate branches before integration; run exact integrated-head CI.",
+    "Never count queued, skipped, failed or superseded runs as pass.",
+    "Preserve first-failure evidence."
+  ]
+}
