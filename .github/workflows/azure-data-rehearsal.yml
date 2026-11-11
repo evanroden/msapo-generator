@@ -1,0 +1,41 @@
+name: Azure data migration rehearsal
+
+on:
+  pull_request:
+    paths:
+      - "scripts/azure_data_rehearsal.py"
+      - "scripts/migrate_data.py"
+      - "tests/test_azure_data_rehearsal.py"
+      - ".github/workflows/azure-data-rehearsal.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: azure-data-rehearsal-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  synthetic-rehearsal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install locked test dependency
+        run: python -m pip install -r requirements-dev.lock
+      - name: Verify offline snapshot, interruption, corruption and idempotency
+        env:
+          ANTHROPIC_API_KEY: test-key-not-used
+        run: python -m pytest -q tests/test_azure_data_rehearsal.py --junitxml=azure-data-rehearsal-results.xml
+      - name: Upload test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: azure-data-migration-rehearsal-results
+          path: azure-data-rehearsal-results.xml
+          if-no-files-found: warn
+          retention-days: 14
