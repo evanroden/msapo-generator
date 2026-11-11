@@ -237,7 +237,7 @@ def repair_duplicate_positions(block, prefix):
                    if other.key and other.key == item.reports_to]
         if not item.reports_to:
             chosen = -1
-        elif len(matches) == 1:
+        elif len(matches) == 1 and matches[0] != n:
             chosen = matches[0]
         else:
             chosen = "review"
