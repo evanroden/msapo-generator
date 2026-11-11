@@ -6,6 +6,7 @@ Run with the production image under 512 MiB / 0.5 CPU; no hosting changes.
 """
 from __future__ import annotations
 
+import argparse
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from hashlib import sha256
@@ -251,6 +252,9 @@ def _section_preview():
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Independent capped synthetic source/native phases")
+    parser.add_argument("--part", required=True, choices=("sources", "native"))
+    part = parser.parse_args().part
     memory_limit, _ = _memory()
     cpu = None
     try:
@@ -269,7 +273,9 @@ def main():
         # All source/draft paths are synthetic; no durable or shared client data.
         started = perf_counter()
         cpu_started = process_time()
-        result = {"boundary": "server_receipt_of_upload_bytes_to_thumbnail_data_uri_and_section_raster",
+        child_started = resource.getrusage(resource.RUSAGE_CHILDREN)
+        result = {"boundary": "server_received_bytes_to_first_raster_delivery",
+                  "part": part,
                   "environment": {"python": sys.version.split()[0],
                                   "platform": platform.platform(), "memory_limit_bytes": memory_limit,
                                   "cpu_quota": cpu,
@@ -277,13 +283,22 @@ def main():
                                       name: importlib.metadata.version(name)
                                       for name in ("PyMuPDF", "Pillow", "python-docx")
                                   }, "commit": os.environ.get("APP_GIT_COMMIT")
-                                  or os.environ.get("MSAPO_SHA") or "unreported"},
-                  "sources": _source_cases(),
-                  "concurrent_visitor_sources": _concurrent(),
-                  "replacement": _replacement(),
-                  "native_section": _section_preview()}
+                                  or os.environ.get("MSAPO_SHA") or "unreported"}}
+        # Run each phase in a *fresh* 512-MiB process. The production render
+        # guard correctly refuses native work if an unrelated large extraction
+        # has already consumed its headroom. Never suppress RenderBusy here.
+        if part == "sources":
+            result["sources"] = _source_cases()
+            result["concurrent_visitor_sources"] = _concurrent()
+            result["replacement"] = _replacement()
+        else:
+            result["native_section"] = _section_preview()
         result["elapsed_seconds"] = round(perf_counter() - started, 3)
-        result["cpu_seconds"] = round(process_time() - cpu_started, 3)
+        result["python_process_cpu_seconds"] = round(process_time() - cpu_started, 3)
+        child_ended = resource.getrusage(resource.RUSAGE_CHILDREN)
+        result["child_office_cpu_seconds"] = round(
+            child_ended.ru_utime + child_ended.ru_stime
+            - child_started.ru_utime - child_started.ru_stime, 3)
         result["rss_bytes_at_end"] = _current_rss()
         try:
             result["cgroup_peak_bytes"] = int(Path("/sys/fs/cgroup/memory.peak").read_text())
@@ -296,7 +311,7 @@ def main():
         assert result["memory_events_delta"].get("oom_kill", 0) == 0
         output = Path("/tmp/monthly-preview-latency")
         output.mkdir(parents=True, exist_ok=True)
-        (output / "backend.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
+        (output / ("backend-" + part + ".json")).write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
         print(json.dumps(result, indent=2, sort_keys=True), flush=True)
 
 
