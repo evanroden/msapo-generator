@@ -428,7 +428,8 @@ def render_imported_table_warning_links(check, draft, prefix):
         if not positions:
             continue
         code = "table_missing_columns" if not table.columns else "table_columns"
-        if code != check.code or not check.message.startswith("Imported table " + str(index + 1) + " "):
+        stem = "Imported table " + str(index + 1)
+        if code != check.code or not check.message.startswith((stem + " ", stem + ",")):
             continue
         owner = block.key + ":imported:" + str(index)
         destination = "report-correction-" + sha256(
