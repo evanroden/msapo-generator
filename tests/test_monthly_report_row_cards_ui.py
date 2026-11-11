@@ -437,3 +437,19 @@ def test_replacement_timing_retains_free_text_for_legacy_date_schema():
     button(app, 'Edit replacement item').click().run()
     field(app, 'Expected replacement timing').set_value('2029').run()
     assert app.session_state['result'].rows[0][-1] == '2029'
+
+
+def test_cleared_primary_row_stays_editable_alongside_imported_table():
+    spec, block = example('end_of_life', (('North', 'Pump', '2028'),))
+    block = replace(block, extra_tables=(ReportTable(('Notes',), (('Keep imported detail',),)),))
+    app = AppTest.from_string(SCRIPT.replace('INITIAL', repr(block)).replace('SPEC', repr(spec))).run()
+    button(app, 'Edit replacement item', 1).click().run()
+    for widget in app.text_input:
+        widget.set_value('')
+    app.run()
+    app.run()
+    app.run()
+    assert app.session_state['result'].rows == ()
+    field(app, 'Expected replacement timing').set_value('2029').run()
+    assert app.session_state['result'].rows == (('', '', '2029'),)
+    assert app.session_state['result'].extra_tables == block.extra_tables

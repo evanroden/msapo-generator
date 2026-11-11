@@ -450,7 +450,9 @@ def _table_key(spec, block, prefix):
 
 def primary_row_recovery_pending(spec, block, prefix):
     record = st.session_state.get(_table_key(spec, block, prefix) + "_rows", {})
-    return bool(record.get("pending") or record.get("removed"))
+    draft_token = record.get("draft_token")
+    return bool(record.get("pending") or record.get("removed")
+                or (draft_token and record.get("active") == draft_token))
 
 
 def edit_row_cards(spec, block, prefix, field, *, empty=None, notice=None):
