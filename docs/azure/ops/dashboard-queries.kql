@@ -53,3 +53,17 @@ AppEvents
 // Microsoft.Web/sites: HealthCheckStatus, Http5xx, MemoryWorkingSet, HttpResponseTime
 // and the App Service plan CPU/memory; confirm exact metrics in target region/SKU.
 // Use diagnostic setting ingestion limits and Azure Monitor billing dashboard.
+
+// 8. INDEPENDENT heartbeat gap alert query. Do not depend on a self-reported
+// telemetry_heartbeat_missing event from the process whose absence is detected.
+// Configure scheduled query operator: result COUNT >= 1 and an approved
+// maintenance suppression window. No action group is configured by this file.
+// Needs a dedicated safe telemetry_heartbeat emitted on a regular cadence.
+let heartbeat_count = toscalar(
+    AppEvents
+    | where TimeGenerated > ago(15m) and Name == "msapo.op"
+    | where tostring(Properties.code) == "telemetry_heartbeat"
+    | summarize count()
+);
+print heartbeat_missing=(heartbeat_count == 0)
+| where heartbeat_missing
