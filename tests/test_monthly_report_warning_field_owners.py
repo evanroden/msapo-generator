@@ -629,3 +629,19 @@ def test_stale_required_text_recovery_preserves_newer_work(monkeypatch):
                                          block.key, block.fingerprint)
     assert state["p_draft"] == latest
     assert "p_required_text_focus" not in state
+
+
+def test_distinct_duplicate_structure_offers_recovery_without_dropping_data(monkeypatch):
+    from app.monthly_report_model import SectionSpec
+    first = SectionSpec("activity", "2", "Activity, first original", ())
+    second = SectionSpec("activity", "3", "Activity, second original", ())
+    report = replace(synthetic_draft(), sections=(first, second))
+    seen = _capture(monkeypatch, correction)
+    correction.render_structure_and_followup_recovery(
+        ReportCheck("duplicate_sections", "Conflicting section IDs", True),
+        report, "p")
+    labels = [label for label, _ in seen["buttons"]]
+    assert any("re-import" in label for label in labels)
+    assert any("history" in label for label in labels)
+    assert not any("byte-identical" in label for label in labels)
+    assert report.sections == (first, second)
