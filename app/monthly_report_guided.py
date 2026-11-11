@@ -678,6 +678,8 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
         tables = []
         rows_edited = False
         for n, table in enumerate(block.extra_tables):
+            from app.monthly_report_table_column_recovery import edit_missing_positions
+            table = edit_missing_positions(table, block, n, prefix, field)
             from app.monthly_report_table_review_ui import review_table_headings
             table = review_table_headings(table, key + f"_imported_{n}", field)
             if spec.key == "work_orders" or len(block.extra_tables) > 1:
@@ -1832,6 +1834,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     render_native_warning_links, render_source_recovery_links)
                 render_native_warning_links(check, draft, prefix)
                 render_source_recovery_links(check, draft, prefix)
+                from app.monthly_report_correction_ui import render_imported_table_warning_links
+                render_imported_table_warning_links(check, draft, prefix)
         notice = st.session_state.pop(prefix + "_page_navigation_notice", None)
         if notice:
             st.warning(notice)
