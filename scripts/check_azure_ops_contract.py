@@ -40,7 +40,7 @@ def check_spec(spec: dict) -> None:
     assert len(spec["allowed_reason_codes"]) == len(set(spec["allowed_reason_codes"]))
     for rule in spec["rules"]:
         assert set(rule["event_codes"]) <= allowed
-        assert rule["kind"] in ("count", "p95_duration_ms")
+        assert rule["kind"] in ("count", "p95_duration_ms", "absence")
         assert rule["window_minutes"] > 0 and rule["threshold"] > 0
         assert rule["route_role"] and rule["first_action"]
 
@@ -87,6 +87,8 @@ def alert_fires(rule: dict, events: list[dict], now: int) -> bool:
     ]
     if rule["kind"] == "count":
         return len(matching) >= rule["threshold"]
+    if rule["kind"] == "absence":
+        return len(matching) < rule["threshold"]
     durations = sorted(e["props"].get("duration_ms", 0) for e in matching)
     if not durations:
         return False
@@ -112,13 +114,17 @@ def simulate(spec: dict) -> int:
             assert validate_event(spec, payload)
             positive = [{"time": now, "props": payload}]
             negative = [{"time": now, "props": dict(payload, duration_ms=rule["threshold"] - 1)}]
+        elif rule["kind"] == "absence":
+            positive = []
+            negative = [{"time": now, "props": payload} for _ in range(rule["threshold"])]
         else:
             n = rule["threshold"]
             positive = [{"time": now, "props": payload} for _ in range(n)]
             negative = [{"time": now, "props": payload} for _ in range(n - 1)]
         assert alert_fires(rule, positive, now), "missing positive: " + rule["id"]
         assert not alert_fires(rule, negative, now), "false positive: " + rule["id"]
-        assert not alert_fires(rule, [{"time": now - 10_000, "props": payload}], now)
+        assert (alert_fires(rule, [{"time": now - 10_000, "props": payload}], now)
+                == (rule["kind"] == "absence")), rule["id"] + " stale semantics"
         tests += 3
     for bad_key in spec["forbidden_properties"]:
         assert not validate_event(spec, dict(base, **{bad_key: "private-content"})), "field leaked"
