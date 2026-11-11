@@ -239,3 +239,129 @@ def test_duplicate_followup_recovery_refuses_stale_draft(monkeypatch):
     correction.render_followup_identity_recovery(
         ReportCheck("follow_up_identity", "Rows collide", True), warning_report, prefix)
     assert correction.st.session_state[prefix + "_draft"] == later
+
+
+def test_section_and_item_recovery_is_explicit_and_positional(monkeypatch):
+    from app.monthly_report_model import SectionSpec, ReportFollowUp
+    from types import SimpleNamespace
+    empty = SectionSpec("activity", "2", "Activity", (), included=False)
+    issue = ReportFollowUp("issue-a", "issue", "First issue", "2026-09")
+    other = ReportFollowUp("issue-b", "issue", "Second issue", "2026-09")
+    report = replace(synthetic_draft(), sections=(empty,), follow_ups=(issue, other))
+    state = {"p_draft": report}
+    monkeypatch.setattr(correction, "st", SimpleNamespace(session_state=state))
+    correction._apply_review_recovery("p", report, "include_section", target="activity")
+    included = state["p_draft"]
+    assert included.sections[0].included and included.follow_ups == (issue, other)
+    correction._apply_review_recovery("p", included, "omit_followup",
+                                      target="issue-b", position=1)
+    revised = state["p_draft"]
+    assert revised.follow_ups[0] == issue
+    assert not revised.follow_ups[1].included
+    assert revised.follow_ups[1].text == "Second issue"
+    assert revised.follow_ups[1].reviewed_fingerprint == ""
+
+
+def test_structural_recovery_never_discards_distinct_duplicate_records(monkeypatch):
+    from app.monthly_report_model import SectionSpec
+    from types import SimpleNamespace
+    a = SectionSpec("activity", "2", "Activity A", ())
+    b = SectionSpec("activity", "3", "Activity B", ())
+    report = replace(synthetic_draft(), sections=(a, b))
+    state = {"p_draft": report}
+    monkeypatch.setattr(correction, "st", SimpleNamespace(session_state=state))
+    correction._apply_review_recovery("p", report, "dedupe_sections")
+    assert state["p_draft"] == report
+    duplicate = replace(report, sections=(a, a))
+    state["p_draft"] = duplicate
+    correction._apply_review_recovery("p", duplicate, "dedupe_sections")
+    assert state["p_draft"].sections == (a,)
+
+
+def test_later_draft_refuses_stale_followup_omit(monkeypatch):
+    from app.monthly_report_model import ReportFollowUp
+    from types import SimpleNamespace
+    a = ReportFollowUp("a", "proposal", "Original", "2026-09")
+    old = replace(synthetic_draft(), follow_ups=(a,))
+    newer = replace(old, follow_ups=(replace(a, text="Newer retained edit"),))
+    state = {"p_draft": newer}
+    monkeypatch.setattr(correction, "st", SimpleNamespace(session_state=state))
+    correction._apply_review_recovery("p", old, "omit_followup", target="a", position=0)
+    assert state["p_draft"] == newer
+
+
+def test_fixed_table_width_correction_retains_physical_columns_and_all_source_cells(monkeypatch):
+    from types import SimpleNamespace
+    from app.monthly_report_model import BlockSpec, ColumnSpec, SectionSpec
+    table = ResolvedBlock("work_orders", "This month", rows=(("A", "", "C"),))
+    spec = BlockSpec("work_orders", "table", columns=(ColumnSpec("original", ""),))
+    section = SectionSpec("activity", "2", "Activity", (spec,))
+    report = replace(synthetic_draft(table), sections=(section,))
+    state = {"p_draft": report}
+    fields = []
+    def text_input(label, **kwargs):
+        fields.append((label, kwargs))
+        return ["", "Replacement"][len(fields) - 1]
+    monkeypatch.setattr(columns, "st", SimpleNamespace(
+        session_state=state, markdown=lambda *a, **kw: None, warning=lambda *a: None,
+        text_input=text_input, button=lambda *a, **kw: True))
+    assert columns.fixed_width_defect(spec, table) == 2
+    columns.edit_fixed_column_schema(
+        ReportCheck("table_columns", "Row 1 in work orders has 3 cells but only 1 columns.",
+                    True, "work_orders"), report, "p", lambda k,v: k)
+    revised = state["p_draft"]
+    assert revised.blocks == (table,)
+    assert revised.sections[0].blocks[0].columns[0] == spec.columns[0]
+    assert [c.title for c in revised.sections[0].blocks[0].columns] == ["", "", "Replacement"]
+    assert len({c.key for c in revised.sections[0].blocks[0].columns}) == 3
+
+
+def test_non_narrative_unsafe_captions_route_by_exact_picture_occurrence(monkeypatch):
+    from types import SimpleNamespace
+    from app.monthly_report_model import AssetInstance
+    from app.monthly_report_checks import preflight
+    from app.monthly_report_correction_targets import resolve_target
+    image = "d" * 64 + ".png"
+    block = ResolvedBlock("improvements", "This month",
+        asset_hashes=(image, image),
+        asset_instances=(AssetInstance("picture-one", image), AssetInstance("picture-two", image)),
+        asset_captions=("Quoted cost $100", "Quoted cost $100"))
+    report = synthetic_draft(block)
+    checks = [check for check in preflight(report) if check.code == "pricing" and check.targets]
+    assert len(checks) == 2
+    targets = [check.targets[0] for check in checks]
+    assert targets[0] != targets[1]
+    assert [resolve_target(report, target)[1] for target in targets] == [0, 1]
+    state = {"p_draft": report}
+    callbacks = []
+    monkeypatch.setattr(correction, "st", SimpleNamespace(
+        session_state=state, button=lambda label, **kw: callbacks.append(kw),
+        caption=lambda *a: None))
+    from app import monthly_report_guided as guided
+    monkeypatch.setattr(guided, "_rich_text_scope", lambda prefix: "editor-epoch")
+    for check in checks:
+        correction.render_photo_caption_links(check, report, "p")
+    assert len(callbacks) == 2
+    assert callbacks[0]["key"] != callbacks[1]["key"]
+    callbacks[1]["on_click"](*callbacks[1]["args"])
+    correction.consume_photo_caption("p", report, "editor-epoch")
+    assert correction.photo_caption_request("p", report, block, 0) == ""
+    assert 'enfra-page-correction-request' in correction.photo_caption_request(
+        "p", report, block, 1)
+
+
+def test_chart_warning_owner_is_position_specific():
+    from app.monthly_report_model import OrgChartNode
+    from app.monthly_report_org_warning import node_owner
+    block = ResolvedBlock("org_chart", "This month",
+        org_nodes=(OrgChartNode("a", "Ready", "Lead"),
+                   OrgChartNode("b", "", "", "a")))
+    assert node_owner(block, "Enter a name or role for each chart position.") == (1, "name")
+    assert node_owner(replace(block, org_nodes=(
+        OrgChartNode("a", "Ready", "Lead", "b"),
+        OrgChartNode("b", "Helper", "Support", "a"))),
+        "The reporting lines form a loop. A person cannot report back to themselves.") is not None
+    assert node_owner(replace(block, org_nodes=(
+        OrgChartNode("a", "Ready", "Lead"),
+        OrgChartNode("a", "Other", "Support"))),
+        "Each chart position needs its own identity.") is None
