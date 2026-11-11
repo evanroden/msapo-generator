@@ -260,7 +260,6 @@ def test_actual_synthetic_native_design_docx_order_and_no_cross_section_bleed(mo
     assert "Old synthetic template issue" not in text
     assert all(sources.source_bytes(draft.profile, source) == originals[source.filename]
                for source in draft.sources)
-    return word
 
 
 @pytest.mark.skipif(not (shutil.which("libreoffice") or shutil.which("soffice")),
