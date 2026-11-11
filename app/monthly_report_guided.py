@@ -1880,6 +1880,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 render_structure_and_followup_recovery(check, draft, prefix)
                 from app.monthly_report_non_narrative_recovery import render_links as render_cell_links
                 render_cell_links(check, draft, prefix)
+                from app.monthly_report_correction_ui import render_receivable_recovery
+                render_receivable_recovery(check, draft, prefix)
                 from app.monthly_report_table_column_recovery import edit_fixed_column_schema
                 edit_fixed_column_schema(check, draft, prefix, field)
                 from app.monthly_report_org_warning import render_chart_links, render_chart_text_safety
