@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'scripts/qa_training_two_browser.py'
+      - 'scripts/qa_training_two_browser_sessions.py'
       - '.github/workflows/training-two-browser.yml'
       - 'app/monthly_report_training*'
       - 'app/monthly_report_guided.py'
@@ -43,6 +44,9 @@ jobs:
       - name: Two genuinely distinct browser contexts against one versioned synthetic Training store
         timeout-minutes: 13
         run: python -m scripts.qa_training_two_browser
+      - name: Native conflicting edits of the same completed Training event row
+        timeout-minutes: 9
+        run: python -m scripts.qa_training_two_browser_sessions
       - name: Preserve first-failure DOM and actual synthetic output evidence
         if: always()
         uses: actions/upload-artifact@v4
