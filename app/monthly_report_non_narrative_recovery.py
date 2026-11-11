@@ -127,6 +127,20 @@ def render_links(check, draft, prefix):
     if check.targets:
         return
     matches = candidates(draft, check.block_key, check.code)
+    if not matches:
+        return
+    # One rendered control for a potentially large imported file. The native
+    # selectbox lists exact physical positions; changing selection never edits.
+    if len(matches) > 12:
+        choice = st.selectbox("Affected " + check.code + " table cell",
+            list(range(len(matches))),
+            format_func=lambda n: ("Imported " + str(matches[n].table + 1)
+                if matches[n].table >= 0 else "Primary") +
+                " · row " + str(matches[n].row + 1) +
+                " · column " + str(matches[n].column + 1),
+            key=prefix + "_unsafe_cell_select_" + check.block_key + "_" +
+                check.code + "_" + draft.fingerprint)
+        matches = (matches[choice],)
     for target in matches:
         source_label = ("table rows" if target.table == -1 else
                         "imported table " + str(target.table + 1))
