@@ -1,0 +1,10 @@
+# Inert template only: must NOT be installed unchanged as .github/CODEOWNERS.
+# Replace placeholders with actual approved existing ENFRA destination teams.
+/* @<APPROVED-ORG>/<APPROVED-MAINTAINERS>
+/.github/workflows/ @<APPROVED-ORG>/<APPROVED-DEVSECOPS>
+/docs/azure/ @<APPROVED-ORG>/<APPROVED-PLATFORM>
+/scripts/azure/ @<APPROVED-ORG>/<APPROVED-DEVSECOPS>
+/Dockerfile @<APPROVED-ORG>/<APPROVED-PLATFORM>
+/app/ @<APPROVED-ORG>/<APPROVED-APPLICATION>
+/runtime/ @<APPROVED-ORG>/<APPROVED-APPLICATION>
+/render.yaml @<APPROVED-ORG>/<APPROVED-PLATFORM>
