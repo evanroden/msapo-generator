@@ -1863,6 +1863,13 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 render_followup_identity_recovery(check, draft, prefix)
                 from app.monthly_report_correction_ui import render_structure_and_followup_recovery
                 render_structure_and_followup_recovery(check, draft, prefix)
+                from app.monthly_report_org_warning import render_chart_links
+                render_chart_links(check, draft, prefix)
+        from app.monthly_report_org_warning import finish_chart_notice
+        finish_chart_notice(prefix)
+        recovery_notice = st.session_state.pop(prefix + "_warning_recovery_notice", None)
+        if recovery_notice:
+            st.warning(recovery_notice)
         notice = st.session_state.pop(prefix + "_page_navigation_notice", None)
         if notice:
             st.warning(notice)
