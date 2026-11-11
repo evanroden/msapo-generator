@@ -715,8 +715,19 @@ def render_structure_and_followup_recovery(check, draft, prefix):
                             else "dedupe_blocks"))
         else:
             st.caption("These records differ. Keep the current draft and "
-                       "restore an original with unique structural identities; "
+                       "restore a version with unique structural identities; "
                        "no matching-name record can be silently selected.")
+            from app.monthly_report_source_manager_ui import _open_manager
+            st.button("Open Manage source files to re-import the corrected original",
+                      key=prefix + "_warning_reimport_structure_" + code +
+                          "_" + draft.fingerprint,
+                      on_click=_open_manager,
+                      args=(prefix + "_batch_files_open", prefix + "_evidence_selected", ""))
+            st.button("Open Shared report history to recover a previous version",
+                      key=prefix + "_warning_history_structure_" + code +
+                          "_" + draft.fingerprint,
+                      on_click=_open_structure_history,
+                      args=(prefix,))
 
 
 def render_receivable_recovery(check, draft, prefix):
@@ -978,3 +989,8 @@ def render_required_text_recovery(check, draft, prefix):
                   "_" + draft.fingerprint,
               on_click=_open_required_text_editor,
               args=(prefix, draft.fingerprint, check.block_key, revision))
+
+
+def _open_structure_history(prefix):
+    """Open the existing version-history recovery UI; do not change the draft."""
+    st.session_state[prefix + "_history_open"] = True
