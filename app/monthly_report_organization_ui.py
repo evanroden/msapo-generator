@@ -6,6 +6,7 @@ import streamlit as st
 
 from app import monthly_report_library as library
 from app.monthly_report_model import ResolvedBlock
+from app.monthly_report_ui_text import literal
 from app.monthly_report_workflow_standards import WORKFLOW_KEYS
 
 
@@ -67,6 +68,9 @@ def _preview_part(draft, spec, block, prefix, assets, title, *, show_preview=Tru
     else:
         st.caption("Not added yet")
     if not show_preview:
+        for node in block.org_nodes:
+            details = " · ".join(value for value in (node.name, node.role, node.team) if value)
+            st.caption(literal(details) if details else "Position details not entered")
         return
     if block.text.strip():
         st.text(block.text)
