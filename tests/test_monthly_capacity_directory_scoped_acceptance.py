@@ -163,3 +163,26 @@ def test_omit_then_restore_is_consistent_in_actual_pdf():
             printed = " ".join(page.get_text() for page in document)
         assert ("UniqueCapacityMarker" in printed) is included
         assert "Left Director" in printed and "Right Director" not in printed
+
+
+def test_non_rrh_collision_rejected_without_mutating_saved_directory(monkeypatch):
+    """A real saved synthetic directory cannot authorize two colliding slugs."""
+    from app import monthly_report_site_catalog as catalog
+
+    contract = "Synthetic Non RRH Site Identity"
+    original = _directory(contract, (_site("north", "North Plant/A", "North Director"),))
+    monkeypatch.setattr(catalog.contracts, "sites_for_contract",
+                        lambda value: ("North Plant/A", "North Plant-A"))
+    with pytest.raises(ValueError, match="same report site key"):
+        catalog.site_options(contract)
+    assert directory.load_directory(contract) == original
+    assert directory.load_directory(contract, 1) == original
+
+    # Once the synthetic catalog identities are unambiguous, the saved
+    # directory's explicit site key is preserved; nothing has been rewritten.
+    monkeypatch.setattr(catalog.contracts, "sites_for_contract",
+                        lambda value: ("North Plant/A", "South Plant B"))
+    choices = catalog.site_options(contract)
+    assert choices[0].key == "north"
+    assert choices[-1].key == "south-plant-b"
+    assert directory.load_directory(contract) == original
