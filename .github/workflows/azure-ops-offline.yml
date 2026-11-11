@@ -1,0 +1,31 @@
+name: Azure operations synthetic contract
+
+on:
+  pull_request:
+    paths:
+      - 'docs/azure/ops/**'
+      - 'scripts/check_azure_ops_contract.py'
+      - '.github/workflows/azure-ops-offline.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-alert-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact PR candidate
+        uses: actions/checkout@v4
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify disabled routing, safety filters and synthetic failure thresholds
+        run: python scripts/check_azure_ops_contract.py --dry-run
+      - name: Verify repository baseline is untouched
+        run: |
+          test -f Dockerfile
+          test -f requirements.lock
+          test -f docs/azure/ops/OPERATIONS_HANDOFF.md
