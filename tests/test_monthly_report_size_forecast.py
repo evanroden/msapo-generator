@@ -61,7 +61,12 @@ def test_before_create_and_current_revision_only_actual_after_create(monkeypatch
     assert len(calls) == 1
     completed = [c.value for c in app.caption]
     assert any('Actual Word (DOCX):' in c and 'Actual PDF:' in c for c in completed)
-    assert not any('Before creation · Word estimate:' in c for c in completed)
+    # The button click can render both the pre-create caption and completed
+    # receipts in one Streamlit pass. On the next neutral pass only actual
+    # sizes remain; do not change generation/save flow just to hide a caption.
+    app.run()
+    settled = [c.value for c in app.caption]
+    assert not any('Before creation · Word estimate:' in c for c in settled)
     next(w for w in app.text_area if w.label == 'Activity summary').set_value(
         'Synthetic updated content for this new revision.').run()
     assert not app.exception
