@@ -453,3 +453,71 @@ def test_cleared_primary_row_stays_editable_alongside_imported_table():
     field(app, 'Expected replacement timing').set_value('2029').run()
     assert app.session_state['result'].rows == (('', '', '2029'),)
     assert app.session_state['result'].extra_tables == block.extra_tables
+
+
+@pytest.mark.parametrize('key,noun', [
+    ('capital_renewal', 'capital item'),
+    ('end_of_life', 'replacement item'),
+])
+def test_imported_only_capital_and_replacement_tables_use_native_cards(key, noun):
+    spec, block = example(key, ())
+    table = ReportTable(('Notes', 'Notes', ''),
+                        (('Original first', 'Distinct second', 'Unlabeled third'),),
+                        'synthetic-imported-source')
+    block = replace(block, extra_tables=(table,))
+    app = AppTest.from_string(SCRIPT.replace('INITIAL', repr(block)).replace('SPEC', repr(spec))).run()
+    assert not app.exception and not app.dataframe
+    button(app, 'Edit ' + noun).click().run()
+    assert len([widget for widget in app.text_area if widget.label == 'Notes']) == 2
+    assert field(app, 'Column 3').value == 'Unlabeled third'
+    field(app, 'Column 3').set_value('Exact changed third')
+    button(app, 'Close editing').click().run()
+    result = app.session_state['block']
+    assert result.rows == ()
+    assert result.extra_tables[0].rows == (('Original first', 'Distinct second', 'Exact changed third'),)
+    assert result.extra_tables[0].columns == table.columns
+    assert result.extra_tables[0].reference == table.reference
+    assert result.references == block.references
+    app.run()
+    assert not app.exception and not app.dataframe
+    button(app, 'Edit ' + noun).click().run()
+    assert field(app, 'Column 3').value == 'Exact changed third'
+
+
+@pytest.mark.parametrize('key,noun', [
+    ('capital_renewal', 'capital item'),
+    ('end_of_life', 'replacement item'),
+])
+def test_mixed_primary_clear_then_imported_card_edit_survives_rerender(key, noun):
+    spec, block = example(key, (('North', 'Pump', '2028'),))
+    table = ReportTable(('Notes', 'Notes', ''),
+                        (('First original', 'Second original', 'Unlabeled original'),),
+                        'synthetic-imported-source')
+    block = replace(block, extra_tables=(table,))
+    app = AppTest.from_string(SCRIPT.replace('INITIAL', repr(block)).replace('SPEC', repr(spec))).run()
+    # Clear the final primary row without closing the editor. That blank
+    # native draft is not content and must not make another table fall back.
+    button(app, 'Edit ' + noun, 1).click().run()
+    for widget in (*app.text_input, *app.text_area):
+        widget.set_value('')
+    app.run()
+    app.run()
+    app.run()
+    assert app.session_state['block'].rows == ()
+    button(app, 'Edit ' + noun).click().run()
+    app.run()  # A second rerun must not turn imported native fields into a grid.
+    assert not app.exception and not app.dataframe
+    duplicate_fields = [widget for widget in app.text_area if widget.label == 'Notes']
+    assert len(duplicate_fields) == 2
+    duplicate_fields[1].set_value('Second changed without blur')
+    button(app, 'Close editing').click().run()
+    result = app.session_state['block']
+    assert result.rows == ()
+    assert result.extra_tables[0].rows == (('First original', 'Second changed without blur', 'Unlabeled original'),)
+    assert result.extra_tables[0].columns == table.columns
+    assert result.extra_tables[0].reference == table.reference
+    assert result.references == block.references
+    app.run()
+    assert not app.exception and not app.dataframe
+    button(app, 'Edit ' + noun).click().run()
+    assert [widget.value for widget in app.text_area if widget.label == 'Notes'][1] == 'Second changed without blur'
