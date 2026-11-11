@@ -123,7 +123,7 @@ all attachments are checked. Reconcile with #830/#847 and P20 before wiring.
    `RecordKey`.
 3. Finish managed adapters for `memory.py`'s 14 tables and activate the
    isolated, proposed `app/postgres_submission_store.py` only after integrating
-   the pre-POST `mark_creating` protocol into `app.smartsheet` and #847;
+   the pre-POST `mark_row_create_started` protocol into `app.smartsheet` and #847;
    prove claim collisions, lease fencing, row/attachment
    recovery and actual POST crash windows. Do not activate direct Smartsheet API
    submission; checked-in Render remains disabled.
@@ -176,13 +176,19 @@ connection and in-memory Blob client. Run:
 python -m pytest -q tests/test_managed_persistence_contracts.py \
   tests/test_postgres_submission_contracts.py \
   tests/test_smartsheet_store.py tests/test_sqlite_storage.py
+# Optional service-level test: MSAPO_TEST_PG_DSN must reference an isolated test database.
+python -m pytest -q tests/test_postgres_live_contracts.py
 ```
 
 They exercise expected revision conflicts, same-transaction history writes,
 exact-byte read validation, scoped references, corrupt object refusal and
-ambiguous uploads. They **do not** prove PostgreSQL SQL correctness against
-a live server, Azure Blob behavior, Azure App Service compatibility or
-production acceptance. Separate real-service and journey tests are required.
+ambiguous uploads. The CI-specific PostgreSQL service job provisions a disposable PostgreSQL 16
+container and exercises actual SQL/schema, concurrent claims, CAS, and
+post-crash recovery without customer data. CI results must be inspected at the
+exact PR head; queued work is not evidence of a pass. Even if the job passes,
+these tests do **not** establish ENFRA-managed PostgreSQL, Azure Blob,
+App Service, authorization or actual native user-journey compatibility.
+Separate service and journey acceptance tests are required.
 
 Remaining hard blockers: ENFRA service and IAM approval; complete memory
 schema mapping; inactive PostgreSQL Smartsheet adapter still needs real-service validation and #847 integration;
