@@ -191,3 +191,80 @@ def test_legacy_undo_receipt_and_unrelated_section_changes(scenario):
     result = undo.undo_directory_apply(later, receipt)
     assert modified in result.sections
     assert contacts(result).rows == contacts(before).rows
+
+
+@pytest.mark.parametrize("native", [False, True])
+def test_actual_docx_after_apply_and_undo_keeps_correct_contacts(scenario, tmp_path, native):
+    from io import BytesIO
+    from docx import Document
+    from app.monthly_report_docx import _build_docx
+    from app.monthly_report_native_layout import build_native_docx
+    from tests.test_monthly_report_contact_headers import native_contact_source
+    from tests.test_monthly_report_generic_contact_page import _draft
+
+    _, _, before, incoming = scenario
+    applied = directory.apply_contacts(before, incoming)
+    receipt = undo.capture_directory_apply(before, applied, len(incoming.rows))
+    restored = undo.undo_directory_apply(applied, receipt)
+    for expected, state in (
+        ("202-555-0199", applied), ("202-555-0101", restored),
+    ):
+        baseline = _draft(chart=False)
+        layout = replace(baseline.sections[0], blocks=tuple(
+            spec for spec in baseline.sections[0].blocks
+            if spec.key == "contact_matrix"))
+        output = replace(baseline, sections=(layout,), blocks=(contacts(state),))
+        raw = (build_native_docx(output, native_contact_source(
+            tmp_path / ("native-" + expected + ".docx")), master=True)
+               if native else _build_docx(output))
+        document = Document(BytesIO(raw))
+        cells = tuple(cell.text for table in document.tables
+                      for row in table.rows for cell in row.cells)
+        assert expected in cells
+        assert ("202-555-0101" if expected == "202-555-0199"
+                else "202-555-0199") not in cells
+        assert "Synthetic North Person" in cells
+
+
+@pytest.mark.parametrize("native", [False, True])
+def test_actual_pdf_after_apply_and_undo_keeps_correct_contacts(
+    scenario, tmp_path, monkeypatch, native,
+):
+    from app import pdf_converter
+    from app.monthly_report_docx import _build_docx
+    from app.monthly_report_native_layout import build_native_docx
+    from tests.test_monthly_report_contact_headers import native_contact_source
+    from tests.test_monthly_report_generic_contact_page import _draft
+    from tests.conftest import requires_libreoffice
+    import pymupdf as fitz
+
+    # Same conditional as other actual PDF tests; no mocked conversion.
+    if not pdf_converter.available():
+        pytest.skip("LibreOffice not installed")
+    monkeypatch.setattr(pdf_converter, "OUTPUT_DIR", tmp_path)
+    _, _, before, incoming = scenario
+    applied = directory.apply_contacts(before, incoming)
+    restored = undo.undo_directory_apply(
+        applied, undo.capture_directory_apply(before, applied, len(incoming.rows)))
+    for expected, state in (
+        ("202-555-0199", applied), ("202-555-0101", restored),
+    ):
+        baseline = _draft(chart=False)
+        layout = replace(baseline.sections[0], blocks=tuple(
+            spec for spec in baseline.sections[0].blocks
+            if spec.key == "contact_matrix"))
+        output = replace(baseline, sections=(layout,), blocks=(contacts(state),))
+        raw = (build_native_docx(output, native_contact_source(
+            tmp_path / ("native-pdf-" + expected + ".docx")), master=True)
+               if native else _build_docx(output))
+        source = tmp_path / (expected + ".docx")
+        source.write_bytes(raw)
+        converted = pdf_converter.convert_to_pdf(source)
+        try:
+            with fitz.open(converted) as pdf:
+                text = "\n".join(page.get_text() for page in pdf)
+            assert expected in text
+            assert ("202-555-0101" if expected == "202-555-0199"
+                    else "202-555-0199") not in text
+        finally:
+            converted.unlink(missing_ok=True)
