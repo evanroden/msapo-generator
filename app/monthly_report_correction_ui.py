@@ -362,3 +362,49 @@ def render_source_recovery_links(check, draft, prefix):
             on_click=_open_manager,
             args=(prefix + "_batch_files_open", prefix + "_evidence_selected",
                   source_id if identity else ""))
+
+
+def render_inline_block_repairs(spec, block, prefix):
+    """Expose existing-block corrections; never act without an explicit click.
+
+    Key each action to the original block incarnation. A stale browser action
+    cannot silently alter a newer replacement or an unrelated block.
+    """
+    from dataclasses import replace
+    def choice():
+        return next((name for name in ("Replace once", "This month")
+                     if name in spec.allowed_sources), None)
+
+    if block.source not in spec.allowed_sources:
+        selection = choice()
+        if selection is None:
+            st.error("This block has no supported report-only source option. "
+                     "Re-import it using an allowed source; its existing content is retained.")
+        else:
+            key = prefix + "_fix_source_" + block.key + "_" + block.fingerprint
+            st.markdown(native_warning_marker(prefix, "source", block.key, block.fingerprint,
+                                               key), unsafe_allow_html=True)
+            if st.button("Use " + selection + " as the source for " +
+                         block.key.replace("_", " "), key=key):
+                block = replace(block, source=selection)
+    if block.pending_library_save:
+        selection = choice()
+        if selection is None:
+            st.error("Shared-library replacement cannot be completed here. "
+                     "Keep this draft and import a supported report-only version.")
+        else:
+            key = prefix + "_fix_library_save_" + block.key + "_" + block.fingerprint
+            st.markdown(native_warning_marker(prefix, "library_save", block.key,
+                                               block.fingerprint, key),
+                        unsafe_allow_html=True)
+            if st.button("Keep this block in this report only; do not replace the shared library",
+                         key=key):
+                block = replace(block, source=selection, pending_library_save=False)
+    if type(block.photos_per_page) is not int or not 1 <= block.photos_per_page <= 6:
+        key = prefix + "_fix_photo_layout_" + block.key + "_" + block.fingerprint
+        st.markdown(native_warning_marker(prefix, "photo_layout", block.key,
+                                           block.fingerprint, key), unsafe_allow_html=True)
+        if st.button("Use 3 photos per page for " + block.key.replace("_", " "),
+                     key=key):
+            block = replace(block, photos_per_page=3)
+    return block
