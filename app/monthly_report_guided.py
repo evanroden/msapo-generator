@@ -789,9 +789,12 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
         editor_anchor = "report-editor-" + spec.key
         if draft is not None:
             from html import escape
-            from app.monthly_report_correction_ui import text_warning_marker
+            from app.monthly_report_correction_ui import (
+                text_warning_marker, required_text_focus_markup)
             st.markdown('<span id="' + escape(editor_anchor, quote=True) + '"></span>' +
-                        text_warning_marker(draft, block, prefix, editor_key), unsafe_allow_html=True)
+                        text_warning_marker(draft, block, prefix, editor_key) +
+                        required_text_focus_markup(draft, block, prefix),
+                        unsafe_allow_html=True)
         from app.monthly_report_native_loading import reserve_text_area
         reserve_text_area(editor_key, text_height)
         st.text_area(

@@ -922,8 +922,33 @@ def _open_required_text_editor(prefix, report_fingerprint, block_key, revision):
     updated = tuple(changed if block is before else block for block in draft.blocks)
     if before is None:
         updated += (changed,)
-    st.session_state[prefix + "_draft"] = replace(draft, blocks=updated)
+    working = replace(draft, blocks=updated)
+    st.session_state[prefix + "_draft"] = working
     st.session_state[prefix + "_period_editor_refresh"] = True
+    from uuid import uuid4
+    from app.monthly_report_guided import _rich_text_scope
+    st.session_state[prefix + "_required_text_focus"] = {
+        "block": block_key, "revision": changed.fingerprint,
+        "scope": _rich_text_scope(prefix), "nonce": uuid4().hex}
+
+
+def required_text_focus_markup(draft, block, prefix):
+    """No second editor: focus the actual newly opened native textarea."""
+    request = st.session_state.get(prefix + "_required_text_focus")
+    if not isinstance(request, dict) or request.get("block") != block.key:
+        return ""
+    from app.monthly_report_guided import _rich_text_scope
+    token = _text_warning_target(draft, block)
+    if (token is None or request.get("revision") != block.fingerprint
+            or request.get("scope") != _rich_text_scope(prefix)):
+        st.session_state.pop(prefix + "_required_text_focus", None)
+        return ""
+    st.session_state.pop(prefix + "_required_text_focus", None)
+    from html import escape
+    dest = "report-correction-" + sha256((prefix + "\\0" + token).encode()).hexdigest()
+    return ('<a class="enfra-page-correction-request" data-report-identity="' +
+            _identity(prefix) + '" data-token="' + escape(request["nonce"], quote=True) +
+            '" href="#' + dest + '" hidden></a>')
 
 
 def render_required_text_recovery(check, draft, prefix):
