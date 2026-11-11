@@ -280,7 +280,10 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
         if block.key in layout_keys and block.source != "Omit":
             texts.append((block.key, block.text, block))
             if not block.reviewed:
-                checks.append(ReportCheck("review", f"Review the AI draft: {block.key}.", True, block.key))
+                from app.monthly_report_ai_correction_targets import paragraph_target
+                checks.append(ReportCheck("review", f"Review the AI draft: {block.key}.", True, block.key,
+                    tuple(paragraph_target(draft, block, n, "review")
+                          for n in range(len(block.ai_paragraphs)))))
             if block.pending_library_save:
                 checks.append(ReportCheck("library_save", f"Confirm the library replacement for {block.key}, or choose Replace once.", True, block.key))
     for section in sections:
@@ -314,7 +317,10 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
             # Scan all included text, rather than only fully resolved payloads.
             if block and block.source != "Omit":
                 if not block.reviewed:
-                    checks.append(ReportCheck("review", f"Review the AI draft: {spec.key}.", True, spec.key))
+                    from app.monthly_report_ai_correction_targets import paragraph_target
+                checks.append(ReportCheck("review", f"Review the AI draft: {spec.key}.", True, spec.key,
+                    tuple(paragraph_target(draft, block, n, "review")
+                          for n in range(len(block.ai_paragraphs)))))
                 texts.append((spec.key, block.text, block))
                 # Include an immutable occurrence receipt when the problem
                 # is in a caption, not the adjacent narrative/table. Same
