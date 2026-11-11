@@ -6,6 +6,7 @@ shared-report data, persistence, PDF regeneration or fixture substitution.
 """
 from __future__ import annotations
 
+from base64 import b64decode
 from hashlib import sha256
 import json
 import os
@@ -17,6 +18,7 @@ import time
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
+import pymupdf
 from playwright.sync_api import expect, sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,13 +41,41 @@ def image_ready(page):
         }""", timeout=45000)
     value = image.get_attribute("src")
     assert value and value.startswith("data:image/jpeg;base64,"), value
-    return sha256(value.encode()).hexdigest()
+    return b64decode(value.partition(",")[2], validate=True)
 
 
-def check_engine(engine, name):
-    details = {"browser": name, "events": [], "external_attempts": [], "errors": []}
+def download_current(page):
+    """Download actual native Streamlit bytes, not the fixture's Python variable."""
+    with page.expect_download(timeout=45000) as operation:
+        page.get_by_role("button", name="Download current synthetic PDF", exact=True).click()
+    return Path(operation.value.path()).read_bytes()
+
+
+def assert_download_matches_view(raw: bytes, viewed_jpeg: bytes, expected: str):
+    """Independently rasterize the downloaded PDF, matching the viewer's DPI.
+
+    Comparing only captions or a different A/B JPEG digest misses a viewer
+    that displays an older PDF while the download already serves new bytes.
+    """
+    assert raw.startswith(b"%PDF-") and viewed_jpeg.startswith(b"\\xff\\xd8")
+    with pymupdf.open(stream=raw, filetype="pdf") as doc:
+        assert len(doc) == 1, "Synthetic viewer must display one PDF page."
+        page = doc[0]
+        assert expected in page.get_text(), "Downloaded bytes are not the selected report."
+        for dpi in (96, 120, 150):
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(dpi / 72, dpi / 72),
+                                  colorspace=pymupdf.csRGB, alpha=False)
+            if pix.tobytes("jpeg", jpg_quality=88) == viewed_jpeg:
+                return dpi
+    raise AssertionError("Displayed page JPEG does not match rasterization of the downloaded PDF.")
+
+
+def check_engine(engine, name, width):
+    label = name + "-" + str(width)
+    details = {"browser": name, "width": width, "events": [],
+               "artifacts": {}, "external_attempts": [], "errors": []}
     browser = engine.launch(headless=True)
-    context = browser.new_context(viewport={"width": 1300, "height": 900})
+    context = browser.new_context(viewport={"width": width, "height": 780 if width < 600 else 900})
     def route(request):
         target = urlparse(request.request.url)
         if target.scheme in ("data", "blob") or (target.hostname == "127.0.0.1" and target.port == PORT):
@@ -65,11 +95,16 @@ def check_engine(engine, name):
 
         page.get_by_role("button", name="Create PDF A").click()
         expect(page.get_by_text("QA current PDF: alpha", exact=True)).to_be_visible()
+        pdf_a = download_current(page)
         expander = page.get_by_text("View PDF here (this session)", exact=True)
         expander.click()
         image_a = image_ready(page)
-        page.screenshot(path=str(OUT / f"{name}-pdf-a.png"))
-        details["events"].append("actual expander rasterized exact current synthetic PDF A")
+        dpi_a = assert_download_matches_view(pdf_a, image_a, "SYNTHETIC FINISHED PDF ALPHA")
+        details["artifacts"]["A"] = {"pdf_sha256": sha256(pdf_a).hexdigest(),
+                                      "visible_jpeg_sha256": sha256(image_a).hexdigest(),
+                                      "matching_dpi": dpi_a}
+        page.screenshot(path=str(OUT / f"{label}-pdf-a.png"))
+        details["events"].append("A exact downloaded PDF and displayed page JPEG match")
 
         # A different browser must NOT inherit the PDF while the first viewer
         # is still live and its disposable raster ticket remains active.
@@ -89,22 +124,30 @@ def check_engine(engine, name):
         expect(page.get_by_text("QA owner entries: 0", exact=True)).to_be_visible()
         expect(page.get_by_text("QA live preview tickets: 0", exact=True)).to_be_visible()
         expect(page.get_by_text("View PDF here (this session)", exact=True)).to_have_count(0)
+        expect(page.get_by_role("button", name="Download current synthetic PDF")).to_have_count(0)
         expect(page.locator(".report-preview img")).to_have_count(0)
-        details["events"].append("same-draft replacement with no PDF retired owner and fragment")
+        details["events"].append("same-draft no-PDF replacement retired viewer and download")
 
         page.get_by_role("button", name="Replace with PDF B").click()
         expect(page.get_by_text("QA current PDF: bravo", exact=True)).to_be_visible()
+        pdf_b = download_current(page)
+        assert sha256(pdf_b).digest() != sha256(pdf_a).digest(), "Replacement kept PDF A bytes."
         page.get_by_text("View PDF here (this session)", exact=True).click()
         image_b = image_ready(page)
         assert image_a != image_b, "New package did not replace the visible page raster."
-        page.screenshot(path=str(OUT / f"{name}-pdf-b.png"))
-        details["events"].append("later synthetic PDF B renders distinct image bytes")
+        dpi_b = assert_download_matches_view(pdf_b, image_b, "SYNTHETIC FINISHED PDF BRAVO")
+        details["artifacts"]["B"] = {"pdf_sha256": sha256(pdf_b).hexdigest(),
+                                      "visible_jpeg_sha256": sha256(image_b).hexdigest(),
+                                      "matching_dpi": dpi_b}
+        page.screenshot(path=str(OUT / f"{label}-pdf-b.png"))
+        details["events"].append("B exact downloaded PDF and displayed page JPEG match; A retired")
 
         page.get_by_role("button", name="Start over").click()
         expect(page.get_by_text("QA current PDF: absent", exact=True)).to_be_visible()
         expect(page.get_by_text("QA owner entries: 0", exact=True)).to_be_visible()
         expect(page.locator(".report-preview img")).to_have_count(0)
-        details["events"].append("reset discarded the only disposable owner")
+        expect(page.get_by_role("button", name="Download current synthetic PDF")).to_have_count(0)
+        details["events"].append("reset discarded viewer, download and disposable owner")
 
         assert not details["errors"] and not details["external_attempts"], details
         details["result"] = "passed"
@@ -112,12 +155,12 @@ def check_engine(engine, name):
         details["result"] = "failed"
         details["failure"] = {"type": type(exc).__name__, "message": str(exc)[:2000]}
         try:
-            page.screenshot(path=str(OUT / f"{name}-first-failure.png"))
+            page.screenshot(path=str(OUT / f"{label}-first-failure.png"))
         except Exception:
             pass
         raise
     finally:
-        (OUT / f"{name}-results.json").write_text(json.dumps(details, indent=2) + "\n")
+        (OUT / f"{label}-results.json").write_text(json.dumps(details, indent=2) + "\n")
         context.close()
         browser.close()
 
@@ -155,7 +198,8 @@ def main():
                 with sync_playwright() as playwright:
                     for name, engine in (("chromium", playwright.chromium),
                                          ("webkit", playwright.webkit)):
-                        check_engine(engine, name)
+                        for width in (1300, 390):
+                            check_engine(engine, name, width)
             finally:
                 process.terminate()
                 try:
