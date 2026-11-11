@@ -1200,7 +1200,12 @@ def apply_contacts(draft, block, *, keep_report_rows=False):
         raise ValueError("Directory Apply paused: " + message
                          + " Keep this report unchanged, or review its contact content in the report editor and retry.")
 
-    contract_id = library._contract_directory(draft.profile.contract)
+    # Directory lookup accepts case/space aliases and retains the original
+    # stored spelling in provenance. Validate against that resolved identity,
+    # not the report's display spelling (never normalize a foreign reference).
+    selected_directory = load_directory(draft.profile.contract)
+    contract_id = library._contract_directory(
+        selected_directory.contract if selected_directory else draft.profile.contract)
     incoming_versions = [m for ref in block.references
                          if (m := re.fullmatch(r"directory:([^:]+):([1-9][0-9]*)", ref))]
     if (len(incoming_versions) > 1
@@ -1293,8 +1298,8 @@ def apply_contacts(draft, block, *, keep_report_rows=False):
 
     # Preserve an image-capable contact page and an extended schema instead
     # of silently changing the approved report design.
-    keep_spec = bool(current and (current.asset_hashes or current.asset_instances
-                                  or spec.columns != CONTACT_SPEC.columns))
+    keep_spec = bool(spec.columns != CONTACT_SPEC.columns
+                     or (current and (current.asset_hashes or current.asset_instances)))
     sections = tuple(replace(section, included=True, blocks=tuple(
         (specification if keep_spec else CONTACT_SPEC) if specification.key == "contact_matrix"
         else specification for specification in section.blocks))
