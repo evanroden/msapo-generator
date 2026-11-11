@@ -238,3 +238,82 @@ def test_scorecards_mbcx_and_water_keep_nine_occurrences_once_after_reopen(
     # Rendering is derivative-only; the three accepted source PDFs stay exact.
     for source, (destination, _, _) in zip(accepted_sources, routes):
         assert sources.source_bytes(profile, source) == original_files[destination]
+
+
+@requires_libreoffice
+def test_ar_section_ten_contents_follow_preceding_scorecard_attachment(
+    tmp_path, monkeypatch,
+):
+    """Actual twelve-section derivative, not the default eleven-section design.
+
+    Three attached pages before AR must move its real PDF destination without
+    changing its approved 10 identity, or rewriting the original source.
+    """
+    from app.monthly_report_contents_pagination import anchor_for
+    from app.monthly_report_model import included_sections
+    from docx.oxml.ns import qn
+    from test_monthly_report_ar_section_ten import _twelve_section_draft
+
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "ar-isolated-library"))
+    base = _twelve_section_draft()
+    profile = base.profile
+    source, block, original = _included_source(
+        profile, "utility_analysis", "ar-preface", CENTERS[:3], {})
+    revised = replace(
+        base,
+        blocks=tuple(b for b in base.blocks if b.key != "utility_analysis") + (block,),
+        sources=(source,),
+    )
+    library.save_snapshot(revised, expected_revision=0)
+    reopened = library.load_snapshot(profile.contract, profile.key, revised.period).draft
+    assert reopened == revised
+    result = generate_report(
+        reopened, acknowledged_fingerprint=reopened.fingerprint,
+        asset_loader=lambda ref: library.read_asset(profile.contract, profile.key, ref),
+    )
+    assert result.docx and result.pdf, result.pdf_error
+    assert sources.source_bytes(profile, source) == original
+
+    document = Document(BytesIO(result.docx))
+    headings = [p.text for p in document.paragraphs if p.style.name == "Heading 1"]
+    assert headings.count("10. Accounts Receivable") == 1
+    assert len(document.inline_shapes) == 3
+    fields = {
+        fld.get(qn("w:instr"), "").strip(): "".join(
+            run.text or "" for run in fld.iter(qn("w:t")))
+        for fld in document.element.iter(qn("w:fldSimple"))
+        if fld.get(qn("w:instr"), "").strip().startswith("PAGEREF mr_contents_")
+    }
+
+    with fitz.open(stream=result.pdf, filetype="pdf") as pdf:
+        outline = pdf.get_toc()
+        expected = included_sections(reopened.sections)
+        assert len(outline) == len(expected) == 12
+        assert [entry[1] for entry in outline] == [
+            f"{section.number}. {section.title}" for section in expected
+        ]
+        assert outline[9][1] == "10. Accounts Receivable"
+        assert outline[10][1] == "11. Pending & Declined Proposals"
+        assert outline[11][1] == "12. Training Summary"
+        assert fields[f"PAGEREF {anchor_for('accounts_receivable')} \h"] == str(
+            outline[9][2])
+        assert "Accounts Receivable" in pdf[outline[9][2] - 1].get_text()
+
+        pages = [page.get_text() for page in pdf]
+        attachments = []
+        for n in (1, 2, 3):
+            label = f"synthetic-ar-preface.pdf · page/item {n}"
+            matching = [i for i, text in enumerate(pages) if label in text]
+            assert len(matching) == 1
+            attachments.append(matching[0])
+        assert attachments == list(range(attachments[0], attachments[0] + 3))
+        assert attachments[-1] < outline[9][2] - 1
+        assert sum("Synthetic nonfinancial status: invoice review is ongoing."
+                   in text for text in pages) == 1
+
+    if os.environ.get("MSAPO_JOINED_OUTPUT"):
+        target = Path(os.environ["MSAPO_JOINED_OUTPUT"])
+        target.mkdir(parents=True, exist_ok=True)
+        (target / "ar-twelve-with-preface.docx").write_bytes(result.docx)
+        (target / "ar-twelve-with-preface.pdf").write_bytes(result.pdf)
+        (target / "ar-preface-original.pdf").write_bytes(original)
