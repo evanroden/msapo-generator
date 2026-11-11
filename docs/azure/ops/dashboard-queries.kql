@@ -1,0 +1,55 @@
+// Dashboard template for a WORKSPACE-BASED Application Insights resource.
+// AppEvents telemetry below DOES NOT EXIST in current main. Implement allowlisted
+// MSAPO operations via reviewed instrumentation before expecting data.
+// Each query is separate. Never project Properties wholesale in shared dashboards.
+
+// 1. Operations: volume/errors/readiness by time, workflow and safe reason code
+AppEvents
+| where TimeGenerated > ago(24h) and Name == "msapo.op"
+| extend code=tostring(Properties.code), workflow=tostring(Properties.workflow), outcome=tostring(Properties.outcome)
+| summarize operations=count() by bin(TimeGenerated, 15m), workflow, outcome, code
+| order by TimeGenerated asc
+
+// 2. Save and generation failures: use result only, not content or identities
+AppEvents
+| where TimeGenerated > ago(24h) and Name == "msapo.op"
+| extend code=tostring(Properties.code), workflow=tostring(Properties.workflow)
+| where code in ("save_failed","commit_failed","generation_failed","readiness_blocked")
+| summarize failures=count() by bin(TimeGenerated, 15m), workflow, code
+| order by TimeGenerated asc
+
+// 3. Conversion p50/p95 and failure classes (duration_ms numeric; no filename)
+AppEvents
+| where TimeGenerated > ago(24h) and Name == "msapo.op"
+| extend code=tostring(Properties.code), duration_ms=todouble(Properties.duration_ms)
+| where code == "conversion_completed"
+| summarize count(), p50_ms=percentile(duration_ms, 50), p95_ms=percentile(duration_ms, 95) by bin(TimeGenerated, 30m)
+| order by TimeGenerated asc
+
+// 4. Provider throttling and duplicate-risk uncertainty
+AppEvents
+| where TimeGenerated > ago(24h) and Name == "msapo.op"
+| extend code=tostring(Properties.code), workflow=tostring(Properties.workflow)
+| where code in ("ai_429","ai_unavailable","submission_uncertain","submission_state_untrusted")
+| summarize events=count() by bin(TimeGenerated, 15m), workflow, code
+| order by TimeGenerated asc
+
+// 5. Build and correlation IDs for a selected safe failure, not raw exception text
+AppEvents
+| where TimeGenerated > ago(6h) and Name == "msapo.op"
+| extend code=tostring(Properties.code), correlation_id=tostring(Properties.correlation_id), build_sha=tostring(Properties.build_sha), image_digest=tostring(Properties.image_digest), reason_code=tostring(Properties.reason_code)
+| where code in ("save_failed","conversion_failed","submission_uncertain","readiness_blocked")
+| project TimeGenerated, code, correlation_id, build_sha, image_digest, reason_code
+| take 100
+
+// 6. Telemetry health and build/version distribution (check missing heartbeat separately)
+AppEvents
+| where TimeGenerated > ago(24h) and Name == "msapo.op"
+| extend build_sha=tostring(Properties.build_sha), image_digest=tostring(Properties.image_digest)
+| summarize last_seen=max(TimeGenerated), events=count() by build_sha, image_digest
+| order by last_seen desc
+
+// 7. Operational/consumption metrics: add native Azure Monitor metric tiles for
+// Microsoft.Web/sites: HealthCheckStatus, Http5xx, MemoryWorkingSet, HttpResponseTime
+// and the App Service plan CPU/memory; confirm exact metrics in target region/SKU.
+// Use diagnostic setting ingestion limits and Azure Monitor billing dashboard.
