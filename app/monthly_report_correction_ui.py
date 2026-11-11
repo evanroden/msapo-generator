@@ -471,3 +471,31 @@ def render_imported_table_warning_links(check, draft, prefix):
                     _identity(prefix) + '" href="#' + destination +
                     '">Correct imported table ' + str(index + 1) + ' · column ' +
                     str(positions[0] + 1) + '</a>', unsafe_allow_html=True)
+
+
+def render_followup_identity_recovery(check, draft, prefix):
+    """Explicitly make colliding saved row identities unique without losing rows."""
+    if not check.blocking or check.code != "follow_up_identity":
+        return
+    from collections import Counter
+    from app.monthly_report_followups import unique_followup_keys
+    counts = Counter(item.key for item in draft.follow_ups)
+    if not any(value > 1 for value in counts.values()):
+        return
+    st.caption("Saved follow-up row identifiers collide. Each occurrence can "
+               "receive a separate stable identity; its wording, status, dates "
+               "and sources remain. Changed proposal decisions must be reviewed again.")
+    key = prefix + "_repair_followup_identities_" + draft.fingerprint
+    if st.button("Give colliding issue/proposal rows separate identities",
+                 key=key):
+        current = st.session_state.get(prefix + "_draft")
+        if current is None or current.fingerprint != draft.fingerprint:
+            st.warning("The report changed before this identity repair. "
+                       "Review the current rows and retry; no rows were altered.")
+            return
+        repaired = unique_followup_keys(current)
+        if repaired == current:
+            st.warning("The current rows no longer have colliding identities.")
+            return
+        st.session_state[prefix + "_draft"] = repaired
+        st.rerun()
