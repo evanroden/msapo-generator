@@ -633,6 +633,13 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
     block = _include_left_out(spec, block, prefix)
     from app.monthly_report_correction_ui import render_inline_block_repairs
     block = render_inline_block_repairs(spec, block, prefix)
+    if draft is not None:
+        from app.monthly_report_non_narrative_recovery import edit_active_cell
+        block, cell_editor_active = edit_active_cell(draft, block, prefix, field)
+        if cell_editor_active:
+            # One authoritative correction editor: the ordinary grid stays
+            # unmounted until this exact cell is applied or cancelled.
+            return block
     if draft is not None and spec.type == "image_grid":
         # The existing photo slider rejects saved values outside its 1–6
         # options before Review can display a correction. Keep the exact
@@ -1871,12 +1878,16 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 render_followup_identity_recovery(check, draft, prefix)
                 from app.monthly_report_correction_ui import render_structure_and_followup_recovery
                 render_structure_and_followup_recovery(check, draft, prefix)
+                from app.monthly_report_non_narrative_recovery import render_links as render_cell_links
+                render_cell_links(check, draft, prefix)
                 from app.monthly_report_table_column_recovery import edit_fixed_column_schema
                 edit_fixed_column_schema(check, draft, prefix, field)
                 from app.monthly_report_org_warning import render_chart_links
                 render_chart_links(check, draft, prefix)
         from app.monthly_report_org_warning import finish_chart_notice
         finish_chart_notice(prefix)
+        from app.monthly_report_non_narrative_recovery import finish_notice as finish_cell_notice
+        finish_cell_notice(prefix)
         recovery_notice = st.session_state.pop(prefix + "_warning_recovery_notice", None)
         if recovery_notice:
             st.warning(recovery_notice)
