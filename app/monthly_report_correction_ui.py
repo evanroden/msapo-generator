@@ -225,7 +225,8 @@ def text_warning_marker(draft, block, prefix, field_key):
 
 def render_text_warning_links(check, draft, prefix):
     """Only a proven problem in this block's text gets a direct field link."""
-    if check.code not in ("required", "review", "placeholder", "pricing", "text_character"):
+    if check.code not in ("required", "review", "placeholder", "pricing", "text_character",
+                           "period_removed"):
         return
     matches = [block for block in draft.blocks if block.key == check.block_key]
     if len(matches) != 1:
@@ -234,6 +235,10 @@ def render_text_warning_links(check, draft, prefix):
     token = _text_warning_target(draft, block)
     if token is None:
         return
+    if check.code == "period_removed":
+        from app.monthly_report_period_items import apply_exclusions
+        if apply_exclusions(block, draft.period).text == block.text:
+            return
     if check.code == "placeholder":
         from app.monthly_report_checks import placeholder_matches
         if not placeholder_matches(block.text):
