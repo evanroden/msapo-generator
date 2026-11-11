@@ -98,15 +98,27 @@ def _exercise(browser_type, engine):
                 # distinguishes a decoded old raster from a current result.
                 qa.scroll_pair(page, qa.ACTIVITY)
                 earlier = field.input_value()
-                revised = earlier + f"\nInvented MR-021 revision {engine}-{sequence}."
+                # Change the start of the first content page rather than
+                # appending after the visible range: the raster must differ,
+                # so a stale "Current" status can never satisfy this probe.
+                revised = (f"MR-021 CURRENT REVISION {engine}-{sequence}: synthetic only.\n"
+                           + earlier)
+                previous_src = image.get_attribute("src")
+                assert previous_src and previous_src.startswith("data:image/jpeg;base64,")
                 field.fill(revised)
                 field.press("Tab")
                 digest = sha256(revised.encode()).hexdigest()
                 expect(page.get_by_text("QA durable Activity SHA256: " + digest, exact=True)).to_be_visible(timeout=90000)
                 update_started = time.perf_counter()
                 qa.scroll_pair(page, qa.ACTIVITY)
+                # A new image byte identity, not the editor text or the
+                # server's possibly momentarily old "Current" label, proves
+                # the newest rendered section replaced the earlier raster.
+                latest_image = page.locator(qa.ACTIVITY).locator(".report-preview img").first
+                expect(latest_image).not_to_have_attribute("src", previous_src, timeout=90000)
                 qa.current_image(page, qa.ACTIVITY)
-                latest = _decoded(page.locator(qa.ACTIVITY).locator(".report-preview img").first)
+                latest = _decoded(latest_image)
+                assert latest["sha256"] != first["sha256"], "New revision reused the old raster"
                 assert field.input_value() == revised, "Manual edit was lost."
                 assert not external and not errors, {"external": external, "pageerrors": errors}
                 records.append({"index": sequence + 1, "fresh_report_press_to_decoded_section_seconds": round(first_seconds, 4),
