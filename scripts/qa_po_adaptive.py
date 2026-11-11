@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 from dotenv import dotenv_values
 from playwright.sync_api import expect, sync_playwright
+from qa_device_metadata import browser_evidence
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "test-artifacts" / "po-adaptive"
@@ -108,6 +109,7 @@ def wait_preview_ack(reference, *, image, page_number):
 def exercise(engine, name):
     browser = engine.launch(headless=True)
     page = browser.new_page(viewport={"width":1440,"height":900})
+    REPORT.setdefault('environments', {})[name] = browser_evidence(page, engine=name, input_method='Playwright pointer/keyboard and semantic labels; simulated fold segments')
     errors = []
     page.on("pageerror", lambda exc: errors.append(str(exc)))
     from qa_po_diagnostics import PODiagnostics
