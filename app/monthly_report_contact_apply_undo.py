@@ -117,13 +117,12 @@ def undo_directory_apply(draft: ReportDraft, receipt: DirectoryApplyUndo) -> Rep
     refs = tuple(dict.fromkeys((
         *receipt.previous_directory_refs, *other_refs, UNDO_MARKER,
     )))
-    has_content = bool(rows or current.text.strip() or current.extra_tables
-                       or current.asset_hashes or current.asset_instances or current.org_nodes)
     source = receipt.previous_source if receipt.had_previous_block else "This month"
-    # An initial unreviewed Omit is a placeholder, not a deliberate exclusion.
-    # Retain the report-only Undo marker instead of making explicit reapply
-    # impossible; default fill and automatic refresh must respect that marker.
-    if not has_content and source == "Omit" and not receipt.previous_directory_refs:
+    # Apply only admits an empty, unreviewed Omit placeholder. Do not restore
+    # that placeholder over report-only notes or rows added after Apply: such
+    # work must remain visible and a later explicit reapply must stay possible.
+    # The marker prevents silent auto-fill without changing directory history.
+    if source == "Omit" and not receipt.previous_directory_refs:
         source = "This month"
     restored = replace(
         current, source=source, rows=rows, references=refs,
