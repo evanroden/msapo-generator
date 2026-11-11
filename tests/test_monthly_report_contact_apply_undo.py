@@ -268,3 +268,37 @@ def test_actual_pdf_after_apply_and_undo_keeps_correct_contacts(
                     else "202-555-0199") not in text
         finally:
             converted.unlink(missing_ok=True)
+
+
+def test_real_generic_docx_retains_blank_duplicate_contact_headings_and_cells(scenario):
+    from io import BytesIO
+    from docx import Document
+    from app.monthly_report_docx import _build_docx
+    from tests.test_monthly_report_generic_contact_page import _draft
+
+    _, _, before, incoming = scenario
+    headings = (*contact_spec(before).columns, ColumnSpec("local", ""),
+                ColumnSpec("local", ""))
+    sections = tuple(replace(section, blocks=tuple(
+        replace(spec, columns=headings) if spec.key == "contact_matrix" else spec
+        for spec in section.blocks)) for section in before.sections)
+    old = contacts(before)
+    before = replace(before, sections=sections, blocks=(replace(
+        old, rows=tuple((*row, "Synthetic private A", "Synthetic private B")
+                        for row in old.rows)),))
+    applied = directory.apply_contacts(before, incoming)
+    receipt = undo.capture_directory_apply(before, applied, len(incoming.rows))
+    restored = undo.undo_directory_apply(applied, receipt)
+    for state, phone in ((applied, "202-555-0199"), (restored, "202-555-0101")):
+        baseline = _draft(chart=False)
+        organization = replace(baseline.sections[0], blocks=(
+            contact_spec(state),))
+        value = replace(baseline, sections=(organization,), blocks=(contacts(state),))
+        document = Document(BytesIO(_build_docx(value)))
+        table = next(table for table in document.tables
+                     if any(phone in cell.text for row in table.rows for cell in row.cells))
+        assert len(table.columns) == 7
+        assert tuple(cell.text for cell in table.rows[0].cells) == (
+            "Facility", "Role", "Name", "Phone", "Email", "", "")
+        assert tuple(cell.text for cell in table.rows[1].cells[-2:]) == (
+            "Synthetic private A", "Synthetic private B")
