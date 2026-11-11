@@ -20,8 +20,8 @@ from app.monthly_report_docx import _build_docx, _convert_report_pdf
 from app.monthly_report_issue_evidence_render import (
     append_issue_evidence, selected_issue_pages)
 from app.monthly_report_model import ReportFollowUp, synthetic_profiles
-from tests.test_monthly_issue_page_gallery import synthetic_pdf
-from tests.test_monthly_report_issue_cards import draft_for
+from test_monthly_issue_page_gallery import synthetic_pdf
+from test_monthly_report_issue_cards import draft_for
 
 
 def _reviewed(source, numbers):
