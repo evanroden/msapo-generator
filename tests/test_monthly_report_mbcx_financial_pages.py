@@ -99,6 +99,31 @@ def test_copied_vendor_invoice_caption_revokes_existing_page_permission(monkeypa
     assert not page_allowed(altered, 1, profile=p, destination='mbcx_report')
 
 
+@pytest.mark.parametrize('caption', [
+    'Vendor: Acme Services · Invoice total: $1,200',
+    'Supplier: Parts Ltd · Invoice amount due: $800',
+])
+def test_separated_vendor_caption_blocks_preflight_preview_and_word(monkeypatch, tmp_path, caption):
+    from app.monthly_report_asset_review import approve_all_assets
+    from app.monthly_report_checks import preflight
+    from app.monthly_report_preview import section_preview_docx
+    from app.monthly_report_docx import assemble_docx
+    p, content, _ = setup(monkeypatch, tmp_path)
+    accepted = reviewed(p, content)
+    block, = sources.prepare_pages(p, (accepted,), ((accepted.source.id, 'mbcx_report'),))
+    block = approve_all_assets(replace(block, asset_captions=(caption,)))
+    section = SectionSpec('mbcx', '4', 'MBCx Reports',
+                          (BlockSpec('mbcx_report', 'pdf_pages'),))
+    draft = ReportDraft(p, ReportPeriod(2026, 9), 'Synthetic Editor',
+                        (section,), (block,), sources=(accepted.source,))
+    load = lambda ref: library.read_asset(p.contract, p.key, ref)
+    assert any(check.code == 'financial_page' and check.blocking for check in preflight(draft))
+    with pytest.raises(ValueError):
+        section_preview_docx(draft, 'mbcx', asset_loader=load)
+    with pytest.raises(ValueError):
+        assemble_docx(draft, acknowledged_fingerprint=draft.fingerprint, asset_loader=load)
+
+
 def test_unknown_financial_semantics_rejected(monkeypatch,tmp_path):
     p,c,_=setup(monkeypatch,tmp_path);m=api()
     with pytest.raises(ValueError):m.review_pages(p,c,(1,),source_confirmed=True,visual_fingerprints=((1,m.page_review_fingerprint(c.source,1)),),financial_semantics='unknown')
