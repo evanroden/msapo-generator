@@ -25,7 +25,7 @@ def test_unavailable_source_converter_and_out_of_calibration_are_explicit():
     assert forecast_output_sizes(100_000, libreoffice_available=False).word is not None
     assert forecast_output_sizes(100_000, libreoffice_available=False).pdf is None
     assert forecast_output_sizes(100_000, pdf_backend='gotenberg').pdf is None
-    for invalid in (None, 0, -1, True, 129 * 1024 * 1024):
+    for invalid in (None, 0, -1, True, 17 * 1024 * 1024, 129 * 1024 * 1024):
         forecast = forecast_output_sizes(invalid, libreoffice_available=True)
         assert forecast.word is None and forecast.pdf is None
     assert format_size_range(None) == 'unavailable'
