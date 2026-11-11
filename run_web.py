@@ -23,4 +23,5 @@ if __name__ == "__main__":
     from app.azure_identity import require_streamlit_entry
     require_streamlit_entry()
     from app.web_ui import main
+from app.azure_identity import require_streamlit_entry
     main()
