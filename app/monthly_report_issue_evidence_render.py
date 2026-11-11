@@ -31,6 +31,18 @@ def selected_issue_pages(draft):
         ids.add(source.id)
         for number in range(1, len(source.page_texts) + 1):
             valid[sources.source_reference(source, number)] = (source, number)
+    # An explicit page exclusion is not undone by merely citing that page
+    # on an issue card. Nor may this emitter duplicate an already emitted
+    # source-owned page from an included report picture block.
+    from app.monthly_report_asset_review import asset_context
+    from app.monthly_report_model import used_block_keys
+    active_blocks = used_block_keys(draft)
+    already_rendered = {
+        ref for block in draft.blocks
+        if block.key in active_blocks and block.source != "Omit"
+        for index in range(len(block.asset_hashes))
+        for ref in asset_context(block, index)
+    }
     chosen = []
     for issue in draft.follow_ups:
         if issue.category != "issue" or not issue.included:
@@ -52,6 +64,15 @@ def selected_issue_pages(draft):
             if source.suffix != ".pdf" and source.suffix not in sources.ocr.SUPPORTED_IMAGE_SUFFIXES:
                 raise ValueError(f"Page {number} of {source.filename} is not a raster source page. Review its original in Manage source files.")
             caption = dict(source.captions).get(number, "")
+            from app.monthly_report_content_policy import page_fingerprint
+            if dict(source.client_page_exclusions).get(number) == page_fingerprint(source, number):
+                raise ValueError(
+                    f"Page {number} of {source.filename} was explicitly excluded. "
+                    "Review the page decision in Manage source files before adding it to an issue.")
+            if reference in already_rendered:
+                raise ValueError(
+                    f"Page {number} of {source.filename} is already emitted as a separate report page. "
+                    "Remove that occurrence from Report pages before attaching it to an issue.")
             if not page_allowed(source, number, profile=draft.profile,
                                 destination="equipment_issues", output_captions=(caption,)):
                 raise ValueError(
@@ -90,7 +111,18 @@ def append_issue_evidence(document, draft, *, before=None):
     current_issue = None
     output = []
     total = 0
+    authenticated = set()
     for issue, source, number, reference in planned:
+        if source.sha256 not in authenticated:
+            # page_image may return a cached derivative without reopening its
+            # source. Always authenticate the saved original before emission.
+            try:
+                sources.source_bytes(draft.profile, source)
+            except (OSError, ValueError) as exc:
+                raise ValueError(
+                    f"Issue evidence source {source.filename} is unavailable or changed. "
+                    "Restore the exact original in Manage source files.") from exc
+            authenticated.add(source.sha256)
         # A missing/truncated original is a generation refusal, not an omitted
         # evidence page. page_image authenticates original SHA before decoding.
         try:
