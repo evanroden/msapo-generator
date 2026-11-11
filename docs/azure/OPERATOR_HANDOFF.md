@@ -1,6 +1,6 @@
 # ENFRA MSAPO operator handoff (draft, acceptance pending)
 
-**Status:** DOCUMENTATION PREP ONLY; A11 #856's alert templates are disabled and no App Service backup/restore has been executed; no ENFRA operational acceptance or ownership assignment claimed. **Version:** 2026-11-11. Business system: Monthly/PO/Expense MSAPO. Source: https://github.com/evanroden/msapo-generator. Source-of-truth remains Render until a future separately authorized cutover; not automatically changed by repository transfer or DNS. See `CUTOVER_RUNBOOK.md`, `CUTOVER_ACCEPTANCE_CHECKLIST.md`, `ROLLBACK_REHEARSAL_RESULTS.md`, A01 PR #849, A10 draft #855, A11 draft #856 and #270.
+**Status:** DOCUMENTATION PREP ONLY; A11 #856's alert templates are disabled and no App Service backup/restore has been executed; no ENFRA operational acceptance or ownership assignment claimed. **Version:** 2026-11-11. Business system: Monthly/PO/Expense MSAPO. Source: https://github.com/evanroden/msapo-generator. Source-of-truth remains Render until a future separately authorized cutover; not automatically changed by repository transfer or DNS. See `CUTOVER_RUNBOOK.md`, `CUTOVER_ACCEPTANCE_CHECKLIST.md`, `ROLLBACK_REHEARSAL_RESULTS.md`, A01 PR #849, A07 draft #859, external integrations draft #858, A10 draft #855, A11 draft #856 and #270.
 
 ## Handoff register (to complete in restricted ENFRA record)
 
