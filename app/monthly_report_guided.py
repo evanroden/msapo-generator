@@ -1615,7 +1615,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 st.divider()
                 # A unique blank included section title is an editable field,
                 # never an invitation to normalize any existing literal heading.
-                if (section.included and not section.title.strip()
+                from app.monthly_report_correction_ui import section_title_problems
+                if (section.included and (not section.title.strip() or section_title_problems(section))
                         and sum(s.key == section.key for s in draft.sections) == 1):
                     from app.monthly_report_correction_ui import edit_missing_section_title
                     before = section
