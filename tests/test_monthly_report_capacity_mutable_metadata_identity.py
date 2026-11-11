@@ -127,3 +127,16 @@ def test_blank_service_does_not_erase_the_only_equipment_title(profile):
     assert len(_site_rows(saved, "north")) == 2
     assert {row[-1] for row in _site_rows(saved, "north")} == {
         "Boiler 1", "Boiler 2"}
+
+
+def test_shared_service_does_not_replace_distinct_titled_equipment(profile):
+    """Steam service describes a category, not the individual boilers."""
+    raw = (b"Facility,Service,Required capacity,Available capacity,Units,Title\n"
+           b"North Facility,Steam,100,200,lb/hr,Boiler 1\n"
+           b"North Facility,Steam,100,200,lb/hr,Boiler 2\n")
+    candidate = inspect(profile, raw, "distinct-boilers.csv")
+    assert capacity.duplicate_capacity_rows(candidate.tables) == ()
+    saved = save(profile, candidate, 0)
+    assert len(_site_rows(saved, "north")) == 2
+    assert {row[-1] for row in _site_rows(saved, "north")} == {
+        "Boiler 1", "Boiler 2"}
