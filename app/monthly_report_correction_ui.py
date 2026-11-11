@@ -692,3 +692,37 @@ def render_structure_and_followup_recovery(check, draft, prefix):
             st.caption("These records differ. Keep the current draft and "
                        "restore an original with unique structural identities; "
                        "no matching-name record can be silently selected.")
+
+
+def render_receivable_recovery(check, draft, prefix):
+    """Re-enter the real invoice source, never approve a stale AR receipt."""
+    if not check.blocking or check.code != "receivable_source":
+        return
+    from app.monthly_report_model import used_block_keys
+    from app.monthly_report_source_manager_ui import _open_manager
+    from app.monthly_report_receivable_intake import decoded
+    if "accounts_receivable" not in used_block_keys(draft):
+        return
+    source_ids = set()
+    for raw in draft.source_row_reviews:
+        try:
+            record = decoded(raw)
+        except (ValueError, TypeError):
+            continue
+        source_id = record.get("source_id")
+        if isinstance(source_id, str) and source_id:
+            source_ids.add(source_id)
+    source = [item for item in draft.sources if item.id in source_ids]
+    if len(source) == 1:
+        st.caption("Invoice source: " + source[0].filename +
+                   ". Reopen the original, then review the invoice-status rows "
+                   "in Accounts Receivable. This action does not approve an amount.")
+    else:
+        st.caption("The saved invoice-status receipt is missing or ambiguous. "
+                   "Re-upload the correct CSV/XLSX source and explicitly "
+                   "re-review its current status rows; no amounts will be inferred.")
+    st.button("Open Manage source files for invoice recovery",
+        key=prefix + "_receivable_source_recover_" + draft.fingerprint,
+        on_click=_open_manager,
+        args=(prefix + "_batch_files_open", prefix + "_evidence_selected",
+              source[0].id if len(source) == 1 else ""))
