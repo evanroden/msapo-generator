@@ -1,0 +1,28 @@
+name: Enterprise Migration Preflight (read only)
+
+# No deploy, OIDC or production environment. Only synthetic checks.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - 'docs/azure/**'
+      - 'scripts/azure/github_migration_preflight.py'
+      - 'tests/test_github_migration_preflight.py'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: enterprise-migration-preflight-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  preparation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check A01 contract and prevent premature Azure deployment
+        run: python scripts/azure/github_migration_preflight.py --root .
+      - name: Test synthetic preparation guard
+        run: python -m unittest discover -s tests -p test_github_migration_preflight.py -v
