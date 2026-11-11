@@ -542,3 +542,30 @@ def test_last_onsite_primary_remove_undo_stays_available_with_imported_table():
     assert result.references == block.references
     button(app, 'Edit onsite call').click().run()
     assert field(app, 'Finish Date', 'date_input').value == date(2026, 9, 12)
+
+
+@pytest.mark.parametrize('key,rows,expected', [
+    ('capital_renewal', (('North', 'P1', 'Replace pump'),), 'Priority: P1'),
+    ('end_of_life', (('North', 'Pump', '2028'),), 'Expected replacement timing: 2028'),
+    ('end_of_life', (('South', 'Fan', ''),), 'Expected replacement timing: Not recorded'),
+])
+def test_collapsed_capital_cards_expose_priority_and_replacement_schedule(key, rows, expected):
+    app = workspace(key, rows)
+    assert not app.exception and not app.dataframe
+    assert not app.text_input and not app.text_area  # No row editor must be opened.
+    captions = '\n'.join(item.value for item in app.caption)
+    assert expected in captions
+    assert app.session_state['block'].rows == rows
+
+
+def test_duplicate_imported_priority_columns_have_distinct_literal_summary_values():
+    spec, block = example('capital_renewal', ())
+    imported = ReportTable(('Priority', 'Priority', ''),
+                           (('P1', 'P2', 'Keep third physical cell'),),
+                           'synthetic-priority-reference')
+    block = replace(block, extra_tables=(imported,))
+    app = AppTest.from_string(SCRIPT.replace('INITIAL', repr(block)).replace('SPEC', repr(spec))).run()
+    assert not app.exception and not app.dataframe
+    captions = '\n'.join(item.value for item in app.caption)
+    assert 'Priority: P1' in captions and 'Priority: P2' in captions
+    assert app.session_state['block'].extra_tables == (imported,)
