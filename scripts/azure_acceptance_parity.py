@@ -11,6 +11,7 @@ from hashlib import sha256
 from io import BytesIO
 import json
 from pathlib import Path
+import posixpath
 import re
 from zipfile import ZipFile, BadZipFile
 
@@ -21,7 +22,13 @@ from PIL import Image, ImageChops, ImageStat
 FORMATS = {".docx", ".pdf"}
 SHA = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
-_NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+_NS = {
+    "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+    "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
+    "v": "urn:schemas-microsoft-com:vml",
+    "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+}
+_PKG_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 
 
 def hashed(value: str | bytes) -> str:
@@ -43,7 +50,7 @@ def word_fingerprint(blob: bytes) -> dict:
                        and (p == "word/document.xml" or re.search(r"/(?:header|footer)\d*\.xml$", p)))
         if "word/document.xml" not in names:
             raise ValueError("Missing Word document body")
-        text, tables, fonts, geometry = [], [], [], []
+        text, tables, fonts, geometry, ordered_artwork = [], [], [], [], []
         for name in names:
             root = etree.fromstring(z.read(name))
             text.extend([node.text or "" for node in root.xpath(".//w:t", namespaces=_NS)])
@@ -53,10 +60,39 @@ def word_fingerprint(blob: bytes) -> dict:
                     rows.append(tuple("".join(node.text or "" for node in cell.xpath(".//w:t", namespaces=_NS))
                                       for cell in row.xpath("./w:tc", namespaces=_NS)))
                 tables.append(rows)
+            # Resolve artwork relationships to bytes, not unstable rId numbers.
+            rel_name = posixpath.join(posixpath.dirname(name), "_rels",
+                                      posixpath.basename(name) + ".rels")
+            relationships = {}
+            if rel_name in z.namelist():
+                rel_root = etree.fromstring(z.read(rel_name))
+                for rel in rel_root.findall("{" + _PKG_REL_NS + "}Relationship"):
+                    if rel.get("TargetMode") == "External":
+                        continue
+                    target = posixpath.normpath(posixpath.join(posixpath.dirname(name), rel.get("Target", "")))
+                    if target in z.namelist():
+                        relationships[rel.get("Id")] = hashed(z.read(target))
+            for node in root.xpath(".//a:blip|.//v:imagedata", namespaces=_NS):
+                rel_id = node.get("{" + _NS["r"] + "}embed") or node.get("{" + _NS["r"] + "}id")
+                ordered_artwork.append(relationships.get(rel_id, "unresolved-image-reference"))
             for elem in root.xpath(".//w:rFonts|.//w:sz|.//w:szCs", namespaces=_NS):
                 fonts.append((etree.QName(elem).localname, tuple(sorted(elem.attrib.items()))))
-            for elem in root.xpath(".//w:pgSz|.//w:pgMar|.//w:tblW|.//w:tcW|.//w:gridCol|.//w:ind|.//w:spacing", namespaces=_NS):
+            for elem in root.xpath(".//w:pgSz|.//w:pgMar|.//w:tblW|.//w:tcW|.//w:gridCol|.//w:ind|.//w:spacing|.//a:xfrm|.//a:off|.//a:ext|.//wp:extent", namespaces={**_NS, "wp": "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"}):
                 geometry.append((etree.QName(elem).localname, tuple(sorted(elem.attrib.items()))))
+        # Include effective style/font/theme definitions, excluding only revision IDs.
+        style_parts = [path for path in sorted(z.namelist())
+                       if path in ("word/styles.xml", "word/fontTable.xml", "word/numbering.xml")
+                       or (path.startswith("word/theme/") and path.endswith(".xml"))]
+        styles = []
+        for style_path in style_parts:
+            style_root = etree.fromstring(z.read(style_path))
+            for element in list(style_root.iter()):
+                for attr in list(element.attrib):
+                    if etree.QName(attr).localname.lower().startswith("rsid"):
+                        del element.attrib[attr]
+                if etree.QName(element).localname.lower() == "rsids" and element.getparent() is not None:
+                    element.getparent().remove(element)
+            styles.append((style_path, etree.tostring(style_root, method="c14n")))
         media_paths = [p for p in z.namelist() if p.startswith("word/media/") and not p.endswith("/")]
         embedding_paths = [p for p in z.namelist() if p.startswith("word/embeddings/") and not p.endswith("/")]
         embedded_hashes = sorted(hashed(z.read(p)) for p in embedding_paths)
@@ -75,7 +111,8 @@ def word_fingerprint(blob: bytes) -> dict:
                 colors["unreadable"] += 1
         return {"text": hashed("\x1f".join(text)), "tables": hashed(repr(tables)),
                 "table_count": len(tables), "fonts": hashed(repr(fonts)),
-                "geometry": hashed(repr(geometry)), "media": sorted(media_hashes),
+                "geometry": hashed(repr(geometry)), "styles": hashed(repr(styles)),
+                "artwork_order": hashed(repr(ordered_artwork)), "media": sorted(media_hashes),
                 "media_count": len(media_paths), "attachments": embedded_hashes,
                 "attachment_count": len(embedding_paths),
                 "chromatic_fraction": round(colors["chromatic"] / max(1, colors["total"]), 4),
@@ -114,6 +151,8 @@ def compare_word(a: bytes, b: bytes) -> dict:
     return {"content": outcome(x["text"], y["text"]),
             "tables": outcome((x["tables"], x["table_count"]), (y["tables"], y["table_count"])),
             "fonts": outcome(x["fonts"], y["fonts"]),
+            "styles_fonts": outcome(x["styles"], y["styles"]),
+            "artwork_order": outcome(x["artwork_order"], y["artwork_order"]),
             "geometry": outcome(x["geometry"], y["geometry"]),
             "artwork": outcome((x["media"], x["unreadable_media"]), (y["media"], y["unreadable_media"])),
             "attachments": outcome(x["attachments"], y["attachments"]),
