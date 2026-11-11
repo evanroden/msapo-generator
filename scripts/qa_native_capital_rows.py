@@ -25,6 +25,10 @@ def settled(page, *, key=None, primary=None, imported=None, contains=None,
             saved=False, revision=None):
     # A previous receipt can still be visible immediately after a native
     # click. Require the expected authoritative transition, not merely idle.
+    # NOTE: use loose `!= null` below, not `!== null`. Playwright drops
+    # None-valued keys from the arg passed to wait_for_function, so an
+    # unset optional arrives as `undefined`, not `null`; `!== null` would
+    # treat "no check requested" as a check that can never pass.
     page.wait_for_function("""args => {
       const node=document.querySelector('[' + args.name + ']');
       if (!node || document.querySelector('[data-testid=stApp]')
@@ -33,13 +37,13 @@ def settled(page, *, key=None, primary=None, imported=None, contains=None,
       if (args.key) {
         const block=data.working?.[args.key];
         if (!block) return false;
-        if (args.primary !== null && block.rows.length !== args.primary) return false;
-        if (args.imported !== null &&
+        if (args.primary != null && block.rows.length !== args.primary) return false;
+        if (args.imported != null &&
             block.extra?.[0]?.rows.length !== args.imported) return false;
         if (args.contains && !JSON.stringify(block).includes(args.contains)) return false;
       }
       if (args.saved && JSON.stringify(data.working)!==JSON.stringify(data.saved)) return false;
-      if (args.revision !== null && data.revision!==args.revision) return false;
+      if (args.revision != null && data.revision!==args.revision) return false;
       return true;
     }""", arg={"name": NAME, "key":key,"primary":primary,
                "imported":imported,"contains":contains,"saved":saved,
@@ -98,6 +102,11 @@ def exercise(browser, name):
         capital.get_by_role("textbox",name="Facility",exact=True).fill("")
         capital.get_by_role("textbox",name="Priority",exact=True).fill("")
         capital.get_by_role("textbox",name="Recommendation",exact=True).fill("")
+        # The last cleared field only submits on blur. Tab out and wait for
+        # the row to drop first; switching editors immediately can capture
+        # the row before the final clear arrives and the row survives.
+        page.keyboard.press("Tab")
+        settled(page, key="capital_renewal", primary=0, imported=2)
         capital.get_by_role("button",name="Edit capital item",exact=True).first.click()
         decisions=capital.get_by_role("textbox",name="Decision",exact=True)
         expect(decisions).to_have_count(2)
