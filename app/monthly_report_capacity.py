@@ -544,6 +544,10 @@ def _row_key(table, row, site):
     # Preserve separate plants/services/units, and replace values only when their
     # observable labels and column meanings are unchanged.
     def dimension(column, cell):
+        # Notes, dates and status describe a reading; changing them must not
+        # create a second physical plant/service measurement in standing data.
+        if re.search(r"\b(?:notes?|remarks?|comments?|status|condition|dates?|updated|reviewed|title)\b", column, re.I):
+            return False
         # "Capacity type" names the service; "Capacity (kW)" measures it.
         # Explicit identity labels take precedence over measurement vocabulary,
         # including numeric plant/equipment IDs that must not collapse together.
