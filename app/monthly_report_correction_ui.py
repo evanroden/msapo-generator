@@ -23,7 +23,8 @@ def picture_marker(draft, block, index, prefix, caption_key):
 def render_picture_links(check, draft, prefix):
     # Overlong ordinary captions require the native closed-editor route below,
     # not an additional link to a field that may not be mounted yet.
-    if check.code in {"photo_caption", "document_caption"}:
+    if check.code in {"photo_caption", "document_caption"} or (
+            check.targets and check.code in {"pricing", "placeholder", "text_character"}):
         return
     specs = {b.key: b for section in draft.sections if section.included for b in section.blocks}
     links = []
