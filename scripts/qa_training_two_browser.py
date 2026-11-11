@@ -228,7 +228,17 @@ def journey():
                                        "pending_input_retained": True})
             b.get_by_role("button", name="Reload saved training matrix", exact=True).click()
             settled(b)
-            expect(b.get_by_role("textbox", name="Requirement name", exact=True)).to_have_value(REQUIREMENTS[1])
+            # Reload legitimately re-renders the Add requirement expander
+            # collapsed. Reopen it with a real pointer action BEFORE checking
+            # retained native input. Do not refill the textbox or turn a lost
+            # value into a false passing recovery.
+            requirement_panel = b.locator('[data-testid="stExpander"] summary').filter(
+                has=b.get_by_text("Add requirement", exact=True))
+            expect(requirement_panel).to_have_count(1)
+            if requirement_panel.get_attribute("aria-expanded") != "true":
+                requirement_panel.click()
+            expect(b.get_by_role("textbox", name="Requirement name", exact=True)).to_have_value(
+                REQUIREMENTS[1])
             perform_add(b)
             final_revision, final_names, _ = until_store(token, first_revision + 1, REQUIREMENTS)
             assert final_names.issuperset(baseline_names)
