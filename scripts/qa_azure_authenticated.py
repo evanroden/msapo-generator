@@ -6,11 +6,14 @@ ENFRA-restricted runner and independently checked staging resource identities.
 from __future__ import annotations
 
 import argparse
+import base64
+import http.client
+import secrets
 from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 
 SHA = re.compile(r"[0-9a-f]{40}$")
 
@@ -48,16 +51,36 @@ def signed_out_denial(status: int | None, final_url: str, app_origin: str, *,
     return bool(challenge and not served_marker and not websocket_opened)
 
 
-def direct_socket_opened(page, origin: str) -> bool:
-    """Attempt only the WebSocket handshake; never send application payloads."""
-    return bool(page.evaluate("""async origin => await new Promise(resolve => {
-        const url = origin.replace(/^https:/, 'wss:') + '/_stcore/stream';
-        const conn = new WebSocket(url);
-        const timer = setTimeout(() => {conn.close(); resolve(true);}, 5000);
-        conn.onopen = () => {clearTimeout(timer); conn.close(); resolve(true);};
-        conn.onerror = () => {clearTimeout(timer); resolve(false);};
-        conn.onclose = () => {clearTimeout(timer); resolve(false);};
-    })""", origin))
+def unauthenticated_websocket_handshake(origin: str) -> tuple[int, str]:
+    """Probe real HTTP Upgrade without cookies; a browser CSP denial is not proof.
+
+    No application message is sent. An authorized service must deny or challenge
+    before accepting a Streamlit WebSocket (HTTP 101).
+    """
+    parsed = urlparse(origin)
+    key = base64.b64encode(secrets.token_bytes(16)).decode("ascii")
+    connection = http.client.HTTPSConnection(parsed.hostname, parsed.port or 443, timeout=15)
+    try:
+        connection.request("GET", "/_stcore/stream", headers={
+            "Host": parsed.netloc, "Upgrade": "websocket", "Connection": "Upgrade",
+            "Sec-WebSocket-Key": key, "Sec-WebSocket-Version": "13",
+            "Origin": origin,
+        })
+        response = connection.getresponse()
+        return response.status, urljoin(origin, response.getheader("Location") or "")
+    finally:
+        connection.close()
+
+
+def websocket_handshake_denied(status: int, location: str, origin: str) -> bool:
+    """Fail if anonymous gets HTTP 101 or any ambiguous non-auth error."""
+    if status in (401, 403):
+        return True
+    if status not in (302, 303, 307, 308):
+        return False
+    p = urlparse(location)
+    return bool((p.hostname == urlparse(origin).hostname and p.path.startswith("/.auth/login/"))
+                or p.hostname in ("login.microsoftonline.com", "login.microsoftonline.us"))
 
 
 def run_probe(origin: str, storage_state: Path, expected_sha: str) -> dict:
@@ -75,12 +98,13 @@ def run_probe(origin: str, storage_state: Path, expected_sha: str) -> dict:
             unauth_page.goto(origin + "/?workflow=monthly", wait_until="domcontentloaded", timeout=45000)
             unauth_page.wait_for_timeout(1500)
             response = unauth_page.request.get(origin + "/?workflow=monthly", max_redirects=0)
-            opened = direct_socket_opened(unauth_page, origin)
+            ws_status, ws_location = unauthenticated_websocket_handshake(origin)
+            socket_denied = websocket_handshake_denied(ws_status, ws_location, origin)
             challenge = signed_out_denial(response.status, unauth_page.url, origin,
                                           served_marker=bool(unauth_page.get_by_text(re.compile(r"^Running code:")).count()),
-                                          websocket_opened=opened)
+                                          websocket_opened=not socket_denied)
             events["signed_out_page_denied"] = "PASS" if challenge else "FAIL"
-            events["signed_out_socket_denied"] = "PASS" if not opened else "FAIL"
+            events["signed_out_socket_denied"] = "PASS" if socket_denied else "FAIL"
             anonymous.close()
             context = browser.new_context(storage_state=str(storage_state), accept_downloads=False)
             page = context.new_page()
