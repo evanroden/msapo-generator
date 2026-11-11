@@ -383,3 +383,162 @@ def test_schema_provenance_durable_rows_and_actual_word_output_remain_editable(m
     assert tuple(cell.text for cell in native.rows[1].cells)[0] == '0007'
     assert tuple(cell.text for cell in native.rows[1].cells)[5] == 'Conditional approval: retain source scope'
     assert tuple(cell.text for cell in native.rows[2].cells) == PROPOSAL_ROWS[1]
+
+
+@pytest.mark.parametrize('key,noun,rows', [
+    ('capital_renewal', 'capital item', (('North', 'Pump', 'Inspect vibration'), ('South', 'Fan', 'Replace bearing'))),
+    ('end_of_life', 'replacement item', (('North', 'Pump', '2028'), ('South', 'Fan', '2030'))),
+])
+def test_capital_and_replacement_cards_keep_rows_through_edit_remove_undo(key, noun, rows):
+    app = workspace(key, rows)
+    assert not app.exception and not app.dataframe
+    button(app, 'Edit ' + noun, 1).click().run()
+    # Edit a sibling after removing the first row; Undo must not restore an old table.
+    button(app, 'Remove ' + noun, 0).click().run()
+    labels = [x.label for x in app.text_input]
+    assert labels
+    target = app.text_area[-1] if key == 'capital_renewal' else app.text_input[-1]
+    target.set_value('Later correction').run()
+    button(app, 'Undo last removal').click().run()
+    assert not app.exception
+    result = app.session_state['result']
+    assert result.rows[0] == rows[0]
+    assert result.rows[1][-1] == 'Later correction'
+
+
+def test_row_removal_undo_refuses_changed_external_identity():
+    app = workspace()
+    button(app, 'Remove proposal', 0).click().run()
+    app.run()  # Acknowledge removal before an independent external edit.
+    app.session_state['block'] = replace(app.session_state['block'], rows=(PROPOSAL_ROWS[1], PROPOSAL_ROWS[0]))
+    app.run()
+    before = app.session_state['block']
+    button(app, 'Undo last removal').click().run()
+    assert app.session_state['result'].rows == before.rows
+    assert any('table changed since removal' in item.value for item in app.warning)
+
+
+def test_last_primary_row_can_be_restored_alongside_imported_table():
+    spec, block = example('capital_renewal', (('North', 'High', 'Inspect pump'),))
+    block = replace(block, extra_tables=(ReportTable(('Notes',), (('Keep imported detail',),)),))
+    app = AppTest.from_string(SCRIPT.replace('INITIAL', repr(block)).replace('SPEC', repr(spec))).run()
+    button(app, 'Remove capital item', 1).click().run()
+    app.run()
+    assert app.session_state['result'].rows == ()
+    button(app, 'Undo last removal').click().run()
+    assert app.session_state['result'].rows == block.rows
+    assert app.session_state['result'].extra_tables == block.extra_tables
+
+
+def test_replacement_timing_retains_free_text_for_legacy_date_schema():
+    spec, block = example('end_of_life', (('North', 'Pump', '2028-01-01'),))
+    spec = replace(spec, columns=(*spec.columns[:-1], replace(spec.columns[-1], type='date')))
+    app = AppTest.from_string(SCRIPT.replace('INITIAL', repr(block)).replace('SPEC', repr(spec))).run()
+    button(app, 'Edit replacement item').click().run()
+    field(app, 'Expected replacement timing').set_value('2029').run()
+    assert app.session_state['result'].rows[0][-1] == '2029'
+
+
+def test_cleared_primary_row_stays_editable_alongside_imported_table():
+    spec, block = example('end_of_life', (('North', 'Pump', '2028'),))
+    block = replace(block, extra_tables=(ReportTable(('Notes',), (('Keep imported detail',),)),))
+    app = AppTest.from_string(SCRIPT.replace('INITIAL', repr(block)).replace('SPEC', repr(spec))).run()
+    button(app, 'Edit replacement item', 1).click().run()
+    for widget in app.text_input:
+        widget.set_value('')
+    app.run()
+    app.run()
+    app.run()
+    assert app.session_state['result'].rows == ()
+    field(app, 'Expected replacement timing').set_value('2029').run()
+    assert app.session_state['result'].rows == (('', '', '2029'),)
+    assert app.session_state['result'].extra_tables == block.extra_tables
+
+
+@pytest.mark.parametrize('key,noun', [
+    ('capital_renewal', 'capital item'),
+    ('end_of_life', 'replacement item'),
+])
+def test_imported_only_capital_and_replacement_tables_use_native_cards(key, noun):
+    spec, block = example(key, ())
+    table = ReportTable(('Notes', 'Notes', ''),
+                        (('Original first', 'Distinct second', 'Unlabeled third'),),
+                        'synthetic-imported-source')
+    block = replace(block, extra_tables=(table,))
+    app = AppTest.from_string(SCRIPT.replace('INITIAL', repr(block)).replace('SPEC', repr(spec))).run()
+    assert not app.exception and not app.dataframe
+    button(app, 'Edit ' + noun).click().run()
+    assert len([widget for widget in app.text_area if widget.label == 'Notes']) == 2
+    assert field(app, 'Column 3').value == 'Unlabeled third'
+    field(app, 'Column 3').set_value('Exact changed third')
+    button(app, 'Close editing').click().run()
+    result = app.session_state['block']
+    assert result.rows == ()
+    assert result.extra_tables[0].rows == (('Original first', 'Distinct second', 'Exact changed third'),)
+    assert result.extra_tables[0].columns == table.columns
+    assert result.extra_tables[0].reference == table.reference
+    assert result.references == block.references
+    app.run()
+    assert not app.exception and not app.dataframe
+    button(app, 'Edit ' + noun).click().run()
+    assert field(app, 'Column 3').value == 'Exact changed third'
+
+
+@pytest.mark.parametrize('key,noun', [
+    ('capital_renewal', 'capital item'),
+    ('end_of_life', 'replacement item'),
+])
+def test_mixed_primary_clear_then_imported_card_edit_survives_rerender(key, noun):
+    spec, block = example(key, (('North', 'Pump', '2028'),))
+    table = ReportTable(('Notes', 'Notes', ''),
+                        (('First original', 'Second original', 'Unlabeled original'),),
+                        'synthetic-imported-source')
+    block = replace(block, extra_tables=(table,))
+    app = AppTest.from_string(SCRIPT.replace('INITIAL', repr(block)).replace('SPEC', repr(spec))).run()
+    # Clear the final primary row without closing the editor. That blank
+    # native draft is not content and must not make another table fall back.
+    button(app, 'Edit ' + noun, 1).click().run()
+    for widget in (*app.text_input, *app.text_area):
+        widget.set_value('')
+    app.run()
+    app.run()
+    app.run()
+    assert app.session_state['block'].rows == ()
+    button(app, 'Edit ' + noun).click().run()
+    app.run()  # A second rerun must not turn imported native fields into a grid.
+    assert not app.exception and not app.dataframe
+    duplicate_fields = [widget for widget in app.text_area if widget.label == 'Notes']
+    assert len(duplicate_fields) == 2
+    duplicate_fields[1].set_value('Second changed without blur')
+    button(app, 'Close editing').click().run()
+    result = app.session_state['block']
+    assert result.rows == ()
+    assert result.extra_tables[0].rows == (('First original', 'Second changed without blur', 'Unlabeled original'),)
+    assert result.extra_tables[0].columns == table.columns
+    assert result.extra_tables[0].reference == table.reference
+    assert result.references == block.references
+    app.run()
+    assert not app.exception and not app.dataframe
+    button(app, 'Edit ' + noun).click().run()
+    assert [widget.value for widget in app.text_area if widget.label == 'Notes'][1] == 'Second changed without blur'
+
+
+def test_last_onsite_primary_remove_undo_stays_available_with_imported_table():
+    spec, block = example('service_calls')
+    note = ReportTable(('Notes',), (('Keep imported onsite context',),),
+                       'synthetic-onsite-import-reference')
+    block = replace(block, extra_tables=(note,))
+    app = AppTest.from_string(SCRIPT.replace('INITIAL', repr(block)).replace('SPEC', repr(spec))).run()
+    assert not app.exception and not app.dataframe
+    button(app, 'Remove onsite call').click().run()
+    app.run()  # Acknowledge the empty primary table before the Undo action.
+    assert app.session_state['block'].rows == ()
+    assert app.session_state['block'].extra_tables == (note,)
+    button(app, 'Undo last removal').click().run()
+    result = app.session_state['block']
+    assert not app.exception and not app.dataframe
+    assert result.rows == block.rows
+    assert result.extra_tables == block.extra_tables
+    assert result.references == block.references
+    button(app, 'Edit onsite call').click().run()
+    assert field(app, 'Finish Date', 'date_input').value == date(2026, 9, 12)
