@@ -84,6 +84,21 @@ def test_vendor_metadata_alone_does_not_veto_client_savings(monkeypatch, tmp_pat
     assert page_allowed(accepted.source, 1, profile=p, destination='mbcx_report')
 
 
+@pytest.mark.parametrize('caption', [
+    'Vendor: Acme Services · Invoice total: $1,200',
+    'Supplier: Parts Ltd · Invoice amount due: $800',
+])
+def test_copied_vendor_invoice_caption_revokes_existing_page_permission(monkeypatch, tmp_path, caption):
+    p, content, _ = setup(monkeypatch, tmp_path)
+    accepted = reviewed(p, content)
+    assert page_allowed(accepted.source, 1, profile=p, destination='mbcx_report')
+    assert not page_allowed(accepted.source, 1, profile=p,
+                            destination='mbcx_report', output_captions=(caption,))
+    # A caption tied to the source likewise invalidates the old page fingerprint.
+    altered = replace(accepted.source, captions=((1, caption),))
+    assert not page_allowed(altered, 1, profile=p, destination='mbcx_report')
+
+
 def test_unknown_financial_semantics_rejected(monkeypatch,tmp_path):
     p,c,_=setup(monkeypatch,tmp_path);m=api()
     with pytest.raises(ValueError):m.review_pages(p,c,(1,),source_confirmed=True,visual_fingerprints=((1,m.page_review_fingerprint(c.source,1)),),financial_semantics='unknown')
