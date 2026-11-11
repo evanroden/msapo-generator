@@ -13,7 +13,8 @@ from shutil import which
 
 _MIB = 1024 * 1024
 _MIN = 16 * 1024
-_MAX_CALIBRATED_INPUT = 128 * _MIB
+# Largest dated synthetic native example was roughly 13 MiB; cap extrapolation.
+_MAX_CALIBRATED_INPUT = 16 * _MIB
 
 
 @dataclass(frozen=True)
