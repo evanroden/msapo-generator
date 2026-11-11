@@ -302,3 +302,27 @@ def test_real_generic_docx_retains_blank_duplicate_contact_headings_and_cells(sc
             "Facility", "Role", "Name", "Phone", "Email", "", "")
         assert tuple(cell.text for cell in table.rows[1].cells[-2:]) == (
             "Synthetic private A", "Synthetic private B")
+
+
+def test_empty_omit_placeholder_undo_preserves_new_report_rows_and_notes(scenario):
+    _, _, prior, incoming = scenario
+    placeholder = replace(contacts(prior), source="Omit",
+                          rows=(), references=(), text="", extra_tables=(),
+                          asset_hashes=(), reviewed_fingerprint="",
+                          client_reviewed_fingerprint="")
+    before = replace(prior, blocks=(placeholder,))
+    applied = directory.apply_contacts(before, incoming, keep_report_rows=True)
+    receipt = undo.capture_directory_apply(before, applied, len(incoming.rows))
+    authored = ("Synthetic South", "Lead", "Later Report Person",
+                "202-555-0163", "later@example.invalid")
+    edited = replace(applied, blocks=(replace(
+        contacts(applied), rows=(*contacts(applied).rows, authored),
+        text="Later notes must remain visible after Undo"),))
+    restored = undo.undo_directory_apply(edited, receipt)
+    assert contacts(restored).source == "This month"
+    assert contacts(restored).rows == (authored,)
+    assert contacts(restored).text == "Later notes must remain visible after Undo"
+    assert directory.apply_defaults(restored) == restored
+    assert contacts(directory.apply_contacts(
+        restored, incoming, keep_report_rows=True)).rows == (
+            *incoming.rows, authored)
