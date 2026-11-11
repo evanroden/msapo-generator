@@ -159,6 +159,11 @@ def authorize(principal: Principal | None, action: str, contract_id: str,
         raise AccessDenied("Access denied")
 
 
+def _resource_boundaries_implemented() -> bool:
+    """A05 integration must replace this hard lock in a reviewed code change."""
+    return False
+
+
 def require_streamlit_entry() -> Principal | None:
     """Entry guard, before any user data/Streamlit UI initialization.
 
