@@ -21,6 +21,7 @@ that the submitting/email routes live nowhere but the root page.
 
 import streamlit as st
 from app.azure_identity import require_streamlit_entry
+from app.azure_identity import require_streamlit_entry
 
 
 st.set_page_config(
@@ -29,6 +30,8 @@ st.set_page_config(
     layout="centered",
     initial_sidebar_state="collapsed",
 )
+
+require_streamlit_entry()
 
 require_streamlit_entry()
 
