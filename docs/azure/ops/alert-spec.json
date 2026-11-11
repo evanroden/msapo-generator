@@ -332,5 +332,36 @@
       "route_role": "SRE/observability owner",
       "first_action": "Check ingestion and instrumentation; cannot infer application healthy from missing events."
     }
-  ]
+  ],
+  "allowed_reason_codes": [
+    "SYNTHETIC_FAILURE",
+    "STARTUP_FAILURE",
+    "PROCESS_UNHEALTHY",
+    "APP_EXCEPTION",
+    "SAVE_FAILED",
+    "COMMIT_FAILED",
+    "GENERATION_FAILED",
+    "DATABASE_UNAVAILABLE",
+    "DATABASE_WRITE_FAILED",
+    "FILE_STORE_UNAVAILABLE",
+    "OBJECT_STORAGE_UNAVAILABLE",
+    "SOURCE_INTEGRITY_FAILED",
+    "READINESS_BLOCKED",
+    "CONVERSION_FAILED",
+    "CONVERSION_TIMEOUT",
+    "CONVERSION_INVALID_PDF",
+    "MEMORY_PRESSURE",
+    "TEMP_PRESSURE",
+    "DISK_PRESSURE",
+    "AI_THROTTLED",
+    "AI_UNAVAILABLE",
+    "SUBMISSION_UNCERTAIN",
+    "SUBMISSION_STATE_UNTRUSTED",
+    "BACKUP_FAILED",
+    "BACKUP_OVERDUE",
+    "RESTORE_CHECK_FAILED",
+    "TELEMETRY_GAP"
+  ],
+  "reason_code_policy": "Only use fixed, reviewed reason enums. Never normalize a private value (name, email, filename, contract, site) into reason_code.",
+  "telemetry_heartbeat_note": "A missing heartbeat cannot depend on an event emitted by the failing process. Use an independently evaluated AppEvents absence query and/or App Service platform health metrics, with isolated alert routing review."
 }
