@@ -235,6 +235,34 @@ def _save_for_test(document):
     return stream.getvalue()
 
 
+def test_actual_synthetic_native_design_docx_order_and_no_cross_section_bleed(monkeypatch, tmp_path):
+    from app.monthly_report_native_layout import build_native_docx
+
+    draft, originals = _setup(monkeypatch, tmp_path)
+    source = Document()
+    source.add_heading("EQUIPMENT PERFORMANCE ISSUES", 1)
+    source.add_paragraph("Issues Identified")
+    source.add_paragraph("Old synthetic template issue")
+    source.add_heading("TRAINING SUMMARY", 1)
+    source.add_paragraph("Old synthetic training line")
+    path = tmp_path / "synthetic-native-issue-design.docx"
+    source.save(path)
+    word = build_native_docx(draft, path)
+    created, text = _paragraphs(word)
+    expected = [f"Reviewed caption for {file}, sheet {number}" for file, number in (
+        ("alpha.pdf", 1), ("alpha.pdf", 3), ("alpha.pdf", 5),
+        ("beta.pdf", 1), ("beta.pdf", 2), ("beta.pdf", 3))]
+    assert len(created.inline_shapes) == 6
+    assert all(text.count(label) == 1 for label in expected)
+    assert [text.index(label) for label in expected] == sorted(text.index(label) for label in expected)
+    assert text.index("Evidence for issue: Synthetic pump incident") < text.index(expected[0])
+    assert text.index("Evidence for issue: Synthetic valve incident") < text.index(expected[3])
+    assert "Old synthetic template issue" not in text
+    assert all(sources.source_bytes(draft.profile, source) == originals[source.filename]
+               for source in draft.sources)
+    return word
+
+
 @pytest.mark.skipif(not (shutil.which("libreoffice") or shutil.which("soffice")),
                     reason="LibreOffice is required for actual PDF conversion")
 def test_actual_pdf_has_ordered_evidence_pages_without_loss(monkeypatch, tmp_path):
