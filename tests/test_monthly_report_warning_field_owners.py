@@ -365,3 +365,107 @@ def test_chart_warning_owner_is_position_specific():
         OrgChartNode("a", "Ready", "Lead"),
         OrgChartNode("a", "Other", "Support"))),
         "Each chart position needs its own identity.") is None
+
+
+def test_exact_table_cell_recovery_preserves_duplicate_bytes_and_neighbouring_rows(monkeypatch):
+    from app import monthly_report_non_narrative_recovery as cells
+    from types import SimpleNamespace
+    from app.monthly_report_model import ReportTable
+    raw = ReportTable(("Description", "Amount"),
+        (("Part", "$120"), ("Part", "$120")), "source:same.pdf")
+    block = ResolvedBlock("work_orders", "This month", extra_tables=(raw,))
+    report = synthetic_draft(block)
+    targets = cells.candidates(report, "work_orders", "pricing")
+    assert len(targets) == 2 and targets[0].token != targets[1].token
+    assert [cells.resolve(report, target) for target in targets] == [block, block]
+    state = {"p_draft": report}
+    monkeypatch.setattr(cells, "st", SimpleNamespace(session_state=state))
+    from app import monthly_report_guided as guided
+    monkeypatch.setattr(guided, "_rich_text_scope", lambda prefix: "scope")
+    cells.queue("p", targets[1], "scope")
+    assert state["p_table_cell_repair"]["target"] == targets[1]
+    cells.queue("p", targets[0], "scope")
+    assert state["p_table_cell_repair"]["target"] == targets[1]
+    assert "Finish or cancel" in state["p_table_cell_repair_notice"]
+    assert cells.resolve(replace(report, blocks=(replace(block, extra_tables=(
+        replace(raw, rows=(("Part", "$200"), raw.rows[1])),)),)),
+        targets[0]) is None
+    assert state["p_draft"] == report
+
+
+def test_exact_table_cell_apply_changes_only_selected_cell_and_clears_review(monkeypatch):
+    from app import monthly_report_non_narrative_recovery as cells
+    from types import SimpleNamespace
+    raw = ReportTable(("Item", "Cost"), (("First", "$100"), ("Second", "$100")),
+                      "same-imported-table")
+    block = ResolvedBlock("work_orders", "This month", extra_tables=(raw,))
+    report = synthetic_draft(block)
+    target = cells.candidates(report, "work_orders", "pricing")[1]
+    state = {"p_draft": report}
+    from app import monthly_report_guided as guided
+    monkeypatch.setattr(guided, "_rich_text_scope", lambda prefix: "scope")
+    monkeypatch.setattr(cells, "st", SimpleNamespace(session_state=state))
+    cells.queue("p", target, "scope")
+    controls = []
+    import streamlit as real_st
+    def button(label, **kwargs):
+        controls.append(label)
+        return label.startswith("Apply")
+    monkeypatch.setattr(cells, "st", SimpleNamespace(
+        session_state=state, caption=lambda *a: None,
+        markdown=lambda *a, **kw: None,
+        text_area=lambda *a, **kw: "Price removed",
+        button=button))
+    updated, editing = cells.edit_active_cell(
+        report, block, "p", lambda key, default: key)
+    assert editing
+    assert updated.extra_tables[0].rows == (("First", "$100"), ("Second", "Price removed"))
+    assert updated.extra_tables[0].columns == raw.columns
+    assert updated.extra_tables[0].reference == raw.reference
+    assert updated.client_reviewed_fingerprint == ""
+    assert updated.reviewed_fingerprint == ""
+    assert "p_table_cell_repair" not in state
+    assert state["p_period_editor_refresh"]
+
+
+def test_cell_recovery_after_source_change_never_substitutes_sibling(monkeypatch):
+    from app import monthly_report_non_narrative_recovery as cells
+    from types import SimpleNamespace
+    raw = ReportTable(("Item",), (("$200",), ("$200",)), "same-original")
+    block = ResolvedBlock("work_orders", "This month", extra_tables=(raw,))
+    report = synthetic_draft(block)
+    target = cells.candidates(report, "work_orders", "pricing")[0]
+    changed = replace(block, extra_tables=(replace(raw, reference="different-source"),))
+    state = {"p_draft": report, "p_table_cell_repair": {
+        "target": target, "scope": "scope", "nonce": "one", "reveal": True}}
+    monkeypatch.setattr(cells, "st", SimpleNamespace(session_state=state))
+    from app import monthly_report_guided as guided
+    monkeypatch.setattr(guided, "_rich_text_scope", lambda prefix: "scope")
+    updated, editing = cells.edit_active_cell(replace(report, blocks=(changed,)),
+                                              changed, "p", lambda k,v:k)
+    assert not editing and updated == changed
+    assert "p_table_cell_repair" not in state
+    assert "No other row" in state["p_table_cell_repair_notice"]
+
+
+def test_org_chart_field_markup_is_one_use_and_invalidates_changed_chart(monkeypatch):
+    from types import SimpleNamespace
+    from app.monthly_report_org_warning import chart_field_markup
+    from app.monthly_report_model import OrgChartNode
+    from app import monthly_report_guided as guided
+    block = ResolvedBlock("org_chart", "This month",
+        org_nodes=(OrgChartNode("a", name="A", role="Role"),))
+    request = {"block": "org_chart", "revision": block.fingerprint,
+               "index": 0, "field": "name", "scope": "scope", "nonce": "one"}
+    state = {"p_chart_warning_request": request.copy()}
+    import app.monthly_report_org_warning as org
+    monkeypatch.setattr(org, "st", SimpleNamespace(session_state=state))
+    monkeypatch.setattr(guided, "_rich_text_scope", lambda prefix: "scope")
+    marker = chart_field_markup("p", block, 0, "name", "p_org_person_a_name")
+    assert 'data-field-key="p_org_person_a_name"' in marker
+    assert 'enfra-page-correction-request' in marker
+    assert not chart_field_markup("p", block, 0, "name", "p_org_person_a_name")
+    state["p_chart_warning_request"] = request
+    later = replace(block, org_nodes=(OrgChartNode("a", name="Newer name", role="Role"),))
+    assert not chart_field_markup("p", later, 0, "name", "p_org_person_a_name")
+    assert state["p_chart_warning_request"] == request
