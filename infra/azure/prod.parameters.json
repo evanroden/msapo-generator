@@ -1,0 +1,44 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environment": {
+      "value": "prod"
+    },
+    "prefix": {
+      "value": "REPLACE-ENFRA-UNIQUE"
+    },
+    "imageDigest": {
+      "value": "REPLACE_WITH_64_CHAR_SHA256"
+    },
+    "keyVaultName": {
+      "value": "REPLACE_APPROVED_VAULT"
+    },
+    "tenantId": {
+      "value": "REPLACE_IN_RESTRICTED_PARAMETER_FILE"
+    },
+    "entraClientId": {
+      "value": "REPLACE_IN_RESTRICTED_PARAMETER_FILE"
+    },
+    "allowedGroupObjectIds": {
+      "value": [
+        "REPLACE_APPROVED_PROD_GROUP"
+      ]
+    },
+    "vnetIntegrationSubnetId": {
+      "value": "REPLACE_APPROVED_SUBNET_RESOURCE_ID"
+    },
+    "appPrivateEndpointSubnetId": {
+      "value": "REPLACE_APPROVED_SUBNET_RESOURCE_ID"
+    },
+    "appPrivateDnsZoneId": {
+      "value": "REPLACE_APPROVED_DNS_ZONE_RESOURCE_ID"
+    },
+    "smartsheetFormFieldMapJson": {
+      "value": "REPLACE_WITH_REVIEWED_RENDER_YAML_JSON"
+    },
+    "enableQualifiedFilesMount": {
+      "value": false
+    }
+  }
+}

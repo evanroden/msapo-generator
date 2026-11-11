@@ -364,8 +364,26 @@ def run(app_path: str, auth_path: str | None = None) -> int:
 def main(argv=()) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("app", help="output of az containerapp show -o json ('-' reads standard input)")
-    parser.add_argument("--auth", help="output of az containerapp auth show -o json")
+    parser.add_argument("--auth", help="platform-specific authentication export")
+    parser.add_argument("--platform", choices=("containerapps", "appservice"), default="containerapps",
+                        help="App Service requires --config, --settings, --storage and --plan exports")
+    parser.add_argument("--config", help="App Service webapp config export")
+    parser.add_argument("--settings", help="App Service app settings export")
+    parser.add_argument("--storage", help="App Service storage mount mapping export")
+    parser.add_argument("--plan", help="App Service plan export")
     args = parser.parse_args(list(argv))
+    if args.platform == "appservice":
+        if not all((args.config, args.settings, args.auth, args.storage, args.plan)):
+            print("error: App Service needs --config, --settings, --auth, --storage and --plan",
+                  file=sys.stderr)
+            return 2
+        from scripts.appservice_config_check import main as appservice_main
+        return appservice_main([args.app, "--config", args.config,
+                                "--settings", args.settings, "--auth", args.auth,
+                                "--storage", args.storage, "--plan", args.plan])
+    if any((args.config, args.settings, args.storage, args.plan)):
+        print("error: Container Apps does not accept App Service export options", file=sys.stderr)
+        return 2
     try:
         return run(args.app, args.auth)
     except InputError as error:
