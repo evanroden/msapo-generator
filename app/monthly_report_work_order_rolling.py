@@ -196,6 +196,8 @@ def bind_template_grids(counts: RollingCounts, period, frames, bindings, facilit
     """
     from app.monthly_report_model import ReportTable
 
+    if counts.review_notices:
+        raise ValueError("Resolve unclassified, conflicting or unsupported work-order rows before Word/PDF binding.")
     sites = {facility.key: facility for facility in facilities}
     if tuple(sites) != counts.sites:
         raise ValueError("Grid site order has changed; review the binding.")
