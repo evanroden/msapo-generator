@@ -185,11 +185,19 @@ def bind_template_grids(counts: RollingCounts, period, frames, bindings, facilit
     expected = {(site, metric) for site in sites for metric in METRICS}
     if len(set(pairs)) != len(pairs) or set(pairs) != expected:
         raise ValueError("Native frames do not cover each site/metric exactly once.")
+    headings = {
+        "pm_received": "pm received",
+        "pm_closed": "pm closed",
+        "non_pm_received": "non-pm received",
+        "non_pm_closed": "non-pm closed",
+    }
     tables = []
     for frame in frames:
         if frame.slot != "work_orders" or len(frame.columns) != 13:
             raise ValueError("Expected a recognized 13-column native work-order grid.")
         site, metric = bindings[frame.reference]
+        if _key(frame.columns[0]).replace("non pm ", "non-pm ") != headings[metric]:
+            raise ValueError("The native heading disagrees with the reviewed PM/status mapping.")
         values = tuple(counts.cell(site, metric, month).value or "" for month in counts.months)
         tables.append(ReportTable((frame.columns[0], *rolling_labels(period)),
                     ((sites[site].title, *values),), frame.reference))
