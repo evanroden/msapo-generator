@@ -196,6 +196,25 @@ def bind_template_grids(counts: RollingCounts, period, frames, bindings, facilit
     return tuple(tables)
 
 
+def explicit_grid_period(columns):
+    """Recover a historical period ONLY from twelve explicit year/month labels."""
+    if len(columns) != 13:
+        return None
+    import calendar
+    from app.monthly_report_model import ReportPeriod
+
+    last = columns[-1]
+    try:
+        tokens = last.strip().split()
+        if len(tokens) != 2 or not tokens[1].isdigit() or len(tokens[1]) != 4:
+            return None
+        month = tuple(calendar.month_abbr).index(tokens[0].title())
+        period = ReportPeriod(int(tokens[1]), month)
+    except (ValueError, IndexError):
+        return None
+    return period if columns[1:] == rolling_labels(period) else None
+
+
 def merge_carried_grid(previous, current, prior_period, period, *, site_title: str):
     """Merge two explicitly identified native frames by real year-month.
 
