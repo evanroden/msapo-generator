@@ -22,6 +22,7 @@ import statistics
 import sys
 import tempfile
 from threading import Barrier
+from zipfile import ZipFile
 from time import perf_counter, process_time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -189,10 +190,20 @@ def _section_preview():
 
     native_original = native.build_native_docx
     calls = []
+    def package_members_sha256(raw):
+        # Compare every actual DOCX XML, relationship and embedded media part.
+        # ZIP container timestamps/order can differ without changing content.
+        with ZipFile(BytesIO(raw)) as archive:
+            names = archive.namelist()
+            assert len(names) == len(set(names)), "Duplicate DOCX package names."
+            members = sorted((name, sha256(archive.read(name)).hexdigest()) for name in names)
+        return sha256(json.dumps(members, separators=(",", ":")).encode()).hexdigest()
+
     def counted(*args, **kwargs):
         started = perf_counter()
         raw = native_original(*args, **kwargs)
-        calls.append({"seconds": perf_counter() - started, "sha256": sha256(raw).hexdigest()})
+        calls.append({"seconds": perf_counter() - started, "sha256": sha256(raw).hexdigest(),
+                      "package_sha256": package_members_sha256(raw)})
         return raw
     result = {"runs": {}}
     with tempfile.TemporaryDirectory(prefix="qa491-native-") as directory:
@@ -236,12 +247,17 @@ def _section_preview():
                         gc.collect()
                 result["runs"][name] = {"samples": measures, "native_assemblies": len(calls),
                                         "native_assembly_seconds": [round(c["seconds"], 4) for c in calls],
-                                        "native_docx_sha256": [c["sha256"] for c in calls]}
+                                        "native_docx_sha256": [c["sha256"] for c in calls],
+                                         "native_docx_package_sha256": [c["package_sha256"] for c in calls]}
             assert result["runs"]["uncached_control"]["native_assemblies"] == 3
             assert result["runs"]["owner_scoped_reuse"]["native_assemblies"] == 1
             assert all(item == controls[0] for item in controls)
-            assert len(set(result["runs"]["uncached_control"]["native_docx_sha256"]
-                           + result["runs"]["owner_scoped_reuse"]["native_docx_sha256"])) == 1
+            # Raw ZIP hashes are still reported; require exact equality of
+            # all package member bytes for meaningful native DOCX equivalence.
+            assert len(set(result["runs"]["uncached_control"]["native_docx_package_sha256"]
+                           + result["runs"]["owner_scoped_reuse"]["native_docx_package_sha256"])) == 1, (
+                "Uncached and reused native DOCX package contents differ."
+            )
             result["output_equivalence"] = controls[0]
             result["store_budgets"] = store.stats()
         finally:

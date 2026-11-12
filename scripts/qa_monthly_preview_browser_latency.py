@@ -58,10 +58,12 @@ def _exercise(browser_type, engine):
             page.on("pageerror", lambda error: errors.append(str(error)))
             try:
                 page.goto(URL, wait_until="domcontentloaded")
-                # The clock starts at the native first report-load press. It
-                # includes reruns/queue/conversion/raster/browser decode.
+                # The metric starts at the actual press, not Streamlit bootstrap
+                # after the health endpoint comes up on a capped server.
+                load_button = page.get_by_role("button", name="Load known-value report", exact=True)
+                expect(load_button).to_be_visible(timeout=90000)
                 start = time.perf_counter()
-                page.get_by_role("button", name="Load known-value report", exact=True).click()
+                load_button.click()
                 expect(page.get_by_text(re.compile(r"^QA fixture state: known-value prefill"))).to_be_visible(timeout=90000)
                 field = page.get_by_role("textbox", name="Activity summary", exact=True)
                 expect(field).to_be_visible(timeout=90000)
