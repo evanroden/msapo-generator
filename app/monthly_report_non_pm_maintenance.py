@@ -51,6 +51,9 @@ CLASSIFICATIONS = {
     "leasedstaff": "Vendor/leased",
     "agency": "Vendor/leased",
 }
+CLOSED_DATE_HEADERS = {"closeddate", "dateclosed", "closedon", "completedon",
+                       "completiondate", "completiondatetime", "datecompleted",
+                       "finishdate", "finisheddate", "actualfinish", "workcompleteddate"}
 ACTIVITY_COLUMNS = (
     "Work order", "Site", "Recorded completion date", "Performer category",
     "Work performed", "Area", "Equipment tag",
@@ -175,8 +178,15 @@ def project_completed_non_pm(
             aliases = {_norm(k): v for k, v in rules[row.site].items()}
             performer = aliases.get(_norm(performer_raw), performer)
         explicit_closed = review.mapping.completed_date is not None
-        completion = row.completed_date if explicit_closed else row.work_date
-        basis = "closed date" if explicit_closed else "work-date fallback (no closed-date column)"
+        # A physically present but unmapped completion column is NOT absence.
+        # A fallback in that case would silently attribute the wrong month.
+        unmapped_closed = not explicit_closed and any(
+            _norm(label) in CLOSED_DATE_HEADERS for label in review.original_columns)
+        completion = (row.completed_date if explicit_closed else
+                      "" if unmapped_closed else row.work_date)
+        basis = ("closed date" if explicit_closed else
+                 "closed-date mapping required" if unmapped_closed else
+                 "work-date fallback (no closed-date column)")
         reasons = []
         disposition = ""
         if row.excluded or row.work_type == "PM" or row.status == "Open":
@@ -190,8 +200,9 @@ def project_completed_non_pm(
         if row.site not in allowed:
             reasons.append("Facility identity needs review.")
         if not completion:
-            reasons.append("Explicit closed date is missing or invalid." if explicit_closed
-                           else "Work date fallback is missing or invalid.")
+            reasons.append("Explicit closed date is missing, invalid or unmapped."
+                           if explicit_closed or unmapped_closed else
+                           "Work date fallback is missing or invalid.")
         elif completion[:7] != period.key:
             disposition = "not_eligible" if not reasons else "needs_review"
         if not task:
