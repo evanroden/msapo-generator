@@ -1,9 +1,15 @@
 """Finished files retain precise shared-save state and target only failed work."""
 from dataclasses import replace
+from io import BytesIO
 from pathlib import Path
+from random import Random
+
+from PIL import Image
 
 from app import monthly_report_guided as guided, monthly_report_library as library
 from app.monthly_report_docx import ReportPackage
+from app.monthly_report_storage import readable_bytes
+from tests.conftest import requires_libreoffice
 from app.monthly_report_model import ReportPeriod
 from app.contracts import RRH_CONTRACT
 from test_monthly_report_ui import monthly
@@ -263,3 +269,63 @@ def test_retry_before_concurrency_decision_cannot_save_after_base_is_accepted(mo
     assert not app.exception
     assert library.load_snapshot(draft.profile.contract, draft.profile.key, draft.period) == newer
     assert len(calls) == 1
+
+
+def _shown_bytes(value):
+    amount, unit = value.replace(",", "").split()
+    return float(amount) * {"B": 1, "KB": 1024, "MB": 1024 ** 2, "GB": 1024 ** 3}[unit]
+
+
+def _shown_estimate(app, label):
+    shown = next(c.value for c in app.caption if c.value.startswith(label + " estimate: about "))
+    return tuple(_shown_bytes(piece) for piece in shown.split("about ", 1)[1].split("–"))
+
+
+def test_word_and_pdf_ranges_appear_before_generate(monkeypatch, tmp_path):
+    app = monthly(monkeypatch, tmp_path)
+    word = _shown_estimate(app, "Word")
+    pdf = _shown_estimate(app, "PDF")
+    assert 0 < word[0] < word[1] and 0 < pdf[0] < pdf[1]
+    assert any("Method: tracked text/image bytes" in c.value for c in app.caption)
+    assert widget(app, "button", "Create Word and PDF")
+    assert not app.get("download_button")
+
+
+def test_word_and_pdf_estimates_increase_with_large_synthetic_image(monkeypatch, tmp_path):
+    app = monthly(monkeypatch, tmp_path)
+    before_word, before_pdf = _shown_estimate(app, "Word"), _shown_estimate(app, "PDF")
+    key, draft = _current_output_draft(app)
+    prefix = key.removesuffix("_draft")
+    raw = BytesIO()
+    Image.frombytes("RGB", (1000, 1000), Random(101).randbytes(3_000_000)).save(raw, "PNG")
+    assert len(raw.getvalue()) > 2_000_000
+    # A divider is actual included document artwork, not an unused upload.
+    sections = tuple(replace(section, divider_asset="synthetic-large.png")
+                     if section.key == "activity" else section for section in draft.sections)
+    app.session_state[prefix + "_assets"]["synthetic-large.png"] = raw.getvalue()
+    app.session_state[key] = replace(draft, sections=sections)
+    app.run()
+    assert not app.exception
+    after_word, after_pdf = _shown_estimate(app, "Word"), _shown_estimate(app, "PDF")
+    assert after_word[1] > before_word[1]
+    assert after_pdf[1] > before_pdf[1]
+
+
+@requires_libreoffice
+def test_actual_synthetic_word_pdf_sizes_fall_within_displayed_pre_generate_ranges(monkeypatch, tmp_path):
+    # Exercise the real Word assembly and PDF conversion, not guessed fake bytes.
+    app = monthly(monkeypatch, tmp_path)
+    widget(app, "text_input", "Prepared by").set_value("Synthetic output editor").run()
+    widget(app, "text_area", "Activity summary").set_value("Completed synthetic monthly repair.").run()
+    before_word, before_pdf = _shown_estimate(app, "Word"), _shown_estimate(app, "PDF")
+    widget(app, "button", "Create Word and PDF").click().run(timeout=90)
+    assert not app.exception
+    package = next(value for key, value in app.session_state.filtered_state.items()
+                   if key.endswith("_package") and isinstance(value, ReportPackage))
+    assert package.pdf, package.pdf_error
+    assert before_word[0] <= len(package.docx) <= before_word[1]
+    assert before_pdf[0] <= len(package.pdf) <= before_pdf[1]
+    assert any(
+        c.value == f"Actual Word (DOCX): {readable_bytes(len(package.docx))} · Actual PDF: {readable_bytes(len(package.pdf))}"
+        for c in app.caption
+    )
