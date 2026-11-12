@@ -124,7 +124,7 @@ def test_two_site_eight_frame_binding_is_order_explicit_and_overflow_fails_close
     result = count((), coverage=(
         CoveredMonth("n", "pm_received", "2026-12", "complete:n"),))
     frames = tuple(SimpleNamespace(reference=f"native-{site}-{metric}",
-        columns=("PM Received", *rolling_labels(JANUARY)), slot="work_orders")
+        columns=(("PM" if metric.startswith("pm_") else "Non-PM") + (" Received" if metric.endswith("received") else " Closed"), *rolling_labels(JANUARY)), slot="work_orders")
         for site in ("n", "s") for metric in METRICS)
     pairs = {f.reference: tuple(f.reference.split("-", 2)[1:]) for f in frames}
     tables = bind_template_grids(result, JANUARY, frames, pairs, (NORTH, SOUTH))
@@ -135,7 +135,7 @@ def test_two_site_eight_frame_binding_is_order_explicit_and_overflow_fails_close
     assert tables[4].rows[0][0] == "South"
     with pytest.raises(ValueError, match="exactly once"):
         bind_template_grids(result, JANUARY, frames, {**pairs,
-            frames[4].reference: pairs[0] if isinstance(pairs, tuple) else ("n", "pm_received")},
+            frames[4].reference: ("n", "pm_received")},
             (NORTH, SOUTH))
     three = (NORTH, SOUTH, Facility("e", "East"))
     third_counts = count((), facilities=three)
