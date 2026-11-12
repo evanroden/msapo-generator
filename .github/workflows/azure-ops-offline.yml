@@ -11,6 +11,11 @@ on:
 permissions:
   contents: read
 
+# Coalesce superseded queued runs, as required by test_ci_workflow_concurrency.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   offline-alert-contract:
     runs-on: ubuntu-24.04
