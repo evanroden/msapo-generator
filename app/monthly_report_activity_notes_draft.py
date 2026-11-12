@@ -26,10 +26,14 @@ MAX_DOCX_UNCOMPRESSED = 12 * 1024 * 1024
 MAX_DRAFT_CHARS = 8_000
 
 _PERSON = re.compile(
-    r"\b(?:by|with|technician|engineer|operator|employee|manager|contact|"
+    r"\b(?i:by|with|technician|engineer|operator|employee|manager|contact|"
     r"reported by|attended by|performed by)\s+"
     r"(?:Mr\.?\s+|Ms\.?\s+|Dr\.?\s+)?"
     r"[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2}\b"
+)
+_LEADING_PERSON = re.compile(
+    r"(?m)^([A-Z][a-z]+\s+[A-Z][a-z]+)(?=\s+"
+    r"(?:inspected|checked|repaired|visited|reported|completed|performed)\b)"
 )
 _TITLED_PERSON = re.compile(r"\b(?:Mr|Mrs|Ms|Dr)\.?\s+[A-Z][a-z]+\b")
 _UNTRUSTED_INSTRUCTION = re.compile(
@@ -116,6 +120,7 @@ def safe_notes(raw: str) -> tuple[str, tuple[str, ...]]:
             continue
         cleaned = _PERSON.sub("[person omitted]", ai.clean_text(line))
         cleaned = _TITLED_PERSON.sub("[person omitted]", cleaned)
+        cleaned = _LEADING_PERSON.sub("[person omitted]", cleaned)
         if cleaned != line:
             notices.append("Detected personal details were omitted from the draft input.")
         lines.append(cleaned)
@@ -153,7 +158,7 @@ def review_flags(text: str, source: str) -> tuple[tuple[str, ...], tuple[str, ..
         blocking.append("No draft text. Edit the suggestion or discard it.")
     if contains_price(text):
         blocking.append("Pricing or financial wording detected; remove it.")
-    if _PERSON.search(text) or _TITLED_PERSON.search(text):
+    if _PERSON.search(text) or _TITLED_PERSON.search(text) or _LEADING_PERSON.search(text):
         blocking.append("A possible person's name appears; remove it.")
     if ai.numbers(text) - ai.numbers(source):
         blocking.append("Unsupported number: verify and remove or correct quantities and dates.")
