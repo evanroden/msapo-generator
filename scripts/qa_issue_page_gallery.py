@@ -155,10 +155,19 @@ def browser_task(browser_type, name):
         history = page.get_by_test_id("stExpander").filter(
             has=page.locator("summary").get_by_text("Shared report history", exact=True))
         history.locator("summary").click()
+        versions = history.get_by_role("table", name="Saved report versions").get_by_role("row")
+        # Each native browser has a separate cookie and can start from a
+        # different valid shared-history baseline. The durable guarantee is
+        # exactly one new immutable version, not an absolute row count.
+        before_save_rows = versions.count()
+        assert before_save_rows >= 2, "History must include a saved baseline version."
         expect(history.get_by_role("button", name="Save shared version", exact=True)).to_be_enabled()
         history.get_by_role("button", name="Save shared version", exact=True).click()
-        expect(history.get_by_role("table", name="Saved report versions").get_by_role("row")).to_have_count(3)
-        record["steps"].append({"stage": "shared-version-two-saved", "selected": tags(issue)})
+        expect(versions).to_have_count(before_save_rows + 1, timeout=30000)
+        record["steps"].append({"stage": "shared-version-saved-once",
+                                "previous_rows": before_save_rows,
+                                "saved_rows": before_save_rows + 1,
+                                "selected": tags(issue)})
 
         # Reload the real product session; its existing snapshot/recovery path
         # must restore the exact selected associations, without test injection.
