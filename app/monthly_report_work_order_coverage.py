@@ -1,6 +1,6 @@
 """Explicit source coverage for existing reviewed work-order records.
 
-Earliest/latest source rows are never evidence that intermediate months were exported.
+Earliest/latest source rows are never evidence that intermediate months were exported.\nUnverified export metadata cannot self-authorize coverage; only a deliberate\nAM confirmation is currently supported.
 This module prepares source-bound review evidence, not annual report grids.
 """
 from __future__ import annotations
@@ -29,7 +29,7 @@ def month_window(end_month: str, length: int = 12) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class CoverageDecision:
-    """AM attestation or verified metadata for one source, contract and site."""
+    """Explicit AM attestation for one source, contract and site."""
     contract: str
     profile_key: str
     site: str
@@ -48,7 +48,7 @@ class CoverageDecision:
                              self.source_sha256, self.source_fingerprint, self.evidence))
                 or len(self.evidence) > 500
                 or type(self.table_number) is not int or self.table_number < 1
-                or self.basis not in ("am_confirmed", "verified_export_metadata")):
+                or self.basis != "am_confirmed"):
             raise ValueError("Coverage requires a specific source, site, period and evidence.")
 
     def to_record(self) -> dict:
