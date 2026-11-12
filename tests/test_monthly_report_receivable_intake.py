@@ -450,7 +450,7 @@ def test_saved_status_only_ar_word_and_real_pdf_exclude_invoice_amounts(monkeypa
         text = ' '.join(text.split())  # Word/PDF may wrap the same cell differently.
         assert 'Invoice INV-101' in text
         assert 'Partially paid' in text
-        assert 'aging as of 2026-10-31' in text
+        assert 'aging by invoice date as of 2026-10-31' in text
         assert 'Credit' in text
         assert 'due date needs review' in text
         assert not re.search(r'(?<!\d)(?:500|350|250|100|25)(?!\d)', text)
