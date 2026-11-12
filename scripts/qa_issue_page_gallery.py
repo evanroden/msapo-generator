@@ -156,17 +156,20 @@ def browser_task(browser_type, name):
             has=page.locator("summary").get_by_text("Shared report history", exact=True))
         history.locator("summary").click()
         versions = history.get_by_role("table", name="Saved report versions").get_by_role("row")
-        # Each native browser has a separate cookie and can start from a
-        # different valid shared-history baseline. The durable guarantee is
-        # exactly one new immutable version, not an absolute row count.
+        # Empty shared history deliberately has NO table, whereas nonempty
+        # history includes a header row. Count saved versions, not table rows:
+        # both an empty and a populated browser baseline must gain exactly one.
         before_save_rows = versions.count()
-        assert before_save_rows >= 2, "History must include a saved baseline version."
+        assert before_save_rows == 0 or before_save_rows >= 2, (
+            "History table has an incomplete header or no saved version")
+        before_save_versions = max(0, before_save_rows - 1)
         expect(history.get_by_role("button", name="Save shared version", exact=True)).to_be_enabled()
         history.get_by_role("button", name="Save shared version", exact=True).click()
-        expect(versions).to_have_count(before_save_rows + 1, timeout=30000)
+        expected_rows = before_save_versions + 2  # header plus one new version
+        expect(versions).to_have_count(expected_rows, timeout=30000)
         record["steps"].append({"stage": "shared-version-saved-once",
-                                "previous_rows": before_save_rows,
-                                "saved_rows": before_save_rows + 1,
+                                "previous_versions": before_save_versions,
+                                "saved_versions": before_save_versions + 1,
                                 "selected": tags(issue)})
 
         # Reload the real product session; its existing snapshot/recovery path
