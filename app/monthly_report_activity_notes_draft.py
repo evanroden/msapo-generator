@@ -178,7 +178,7 @@ def apply_reviewed(existing, text: str, mode: str, expected: str):
     """An exact-version, explicit Add/Replace; preserve all non-text report data."""
     if mode not in {"add", "replace"} or existing.fingerprint != expected:
         raise ValueError("Activity changed. Compare your current wording and draft again.")
-    if existing.ai_paragraphs:
+    if existing.ai_written or existing.ai_paragraphs:
         raise ValueError("Source-linked paragraphs must be edited in their evidence review first.")
     if not text.strip():
         raise ValueError("The reviewed draft is empty.")
@@ -276,10 +276,10 @@ def render_activity_notes(draft, blocks, prefix, field, *, enabled: bool):
             scope = (draft.profile.contract, draft.profile.key, draft.period.key,
                      _rich_text_scope(prefix))
             valid = (proposal["scope"] == scope and proposal["hash"] == note_hash
-                     and proposal["baseline"] == current.fingerprint)
+                     and proposal["baseline"] == current.fingerprint and not job)
             st.markdown("**Review the proposed Activity wording**")
             st.caption("This is a suggestion, not source evidence. Check against your notes; no report wording changes until you choose a use action.")
-            text_key = prefix + "_activity_notes_edit_" + _digest(str(proposal["scope"]) + proposal["text"])
+            text_key = prefix + "_activity_notes_edit_" + _digest(str(proposal["scope"]) + proposal["hash"] + proposal["text"])
             checked_text = st.text_area("Review and edit draft", value=proposal["text"],
                                         key=field(text_key, proposal["text"]), height=130)
             blocking, warnings = review_flags(checked_text, proposal["notes"])
@@ -290,8 +290,8 @@ def render_activity_notes(draft, blocks, prefix, field, *, enabled: bool):
             if not valid:
                 st.warning("The report or notes changed after drafting. Your Activity wording is intact; draft again from current notes.")
             approval = st.checkbox("I verified every statement against my notes, including status and units",
-                                   key=prefix + "_activity_notes_review_" + _digest(checked_text + str(proposal["baseline"])))
-            can_use = valid and approval and not blocking and not current.ai_paragraphs
+                                   key=prefix + "_activity_notes_review_" + _digest(checked_text + str(proposal["baseline"]) + proposal["hash"]))
+            can_use = valid and approval and not blocking and not current.ai_written and not current.ai_paragraphs
             if current.ai_paragraphs:
                 st.caption("This Activity contains source-linked paragraphs. Use their existing evidence review to edit them.")
             selected = None
@@ -306,7 +306,7 @@ def render_activity_notes(draft, blocks, prefix, field, *, enabled: bool):
             if discard:
                 st.session_state.pop(state_key, None)
                 st.caption("Draft discarded. Manual Activity and source files are unchanged.")
-            elif selected:
+            elif selected and can_use:
                 try:
                     revised = apply_reviewed(current, checked_text, selected, proposal["baseline"])
                     blocks["activity_summary"] = revised
