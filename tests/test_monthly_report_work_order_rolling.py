@@ -122,6 +122,16 @@ def test_conflicting_sources_exclude_ambiguous_identity_and_keep_other_site():
     assert result.cell("n", "non_pm_received", "2026-12").value is None
     assert result.cell("s", "non_pm_received", "2026-12").value == "1"
     assert any("conflicting updates" in n for n in result.review_notices)
+    # A partial known subtotal is not permission to publish misleading grids.
+    frames = tuple(SimpleNamespace(reference=f"native-{site}-{metric}",
+        columns=(("PM" if metric.startswith("pm_") else "Non-PM") +
+                 (" Received" if metric.endswith("received") else " Closed"),
+                 *rolling_labels(JANUARY)), slot="work_orders")
+        for site in ("n", "s") for metric in METRICS)
+    bindings = {frame.reference: tuple(frame.reference.split("-", 2)[1:])
+                for frame in frames}
+    with pytest.raises(ValueError, match="Resolve unclassified"):
+        bind_template_grids(result, JANUARY, frames, bindings, (NORTH, SOUTH))
 
 
 def test_unapproved_review_or_coverage_without_source_is_rejected():
