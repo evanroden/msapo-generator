@@ -140,6 +140,27 @@ def source_for(profile):
     raise ValueError("The original ENFRA page design is unavailable. Restore its saved reference report in Report design settings.")
 
 
+def render_source_for(profile):
+    """Resolve an immutable render-safe master working copy, preserving the original pin."""
+    original = source_for(profile)
+    if original is None or not is_master(profile):
+        return original
+    digest = _digest(profile)
+    metadata = _metadata(profile, digest)
+    working_hash = metadata.get("working_sha256")
+    if not working_hash:
+        return original  # Legacy installed masters keep their exact old semantics.
+    if not isinstance(working_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", working_hash):
+        raise ValueError("The installed master compatibility reference is invalid.")
+    working = library._root() / "designs" / "master" / "working" / (working_hash + ".docx")
+    if not working.is_file():
+        raise ValueError("The installed master working copy is missing; restore this version in Report design settings.")
+    with working.open("rb") as stream:
+        if hashlib.file_digest(stream, "sha256").hexdigest() != working_hash:
+            raise ValueError("The installed master working copy failed its integrity check.")
+    return working
+
+
 def installed_master_download():
     """Return the exact manifest-selected Word original without changing stored state.
 
@@ -234,37 +255,57 @@ def pin(profile, *, latest_master=False, preserve_legacy=False):
 
 
 def install_master(source: Path, *, actor, expected_revision, companion_pdf=None):
-    """Replace the ENFRA master for future reports; retain every older version."""
-    actor = library._confirmation(actor, True)
+    """Install a new default for fresh reports only, preserving every original and pin."""
+    from tempfile import TemporaryDirectory
     from app.monthly_report_import import inspect_docx
     from app.monthly_report_native_package import passive_docx
+    from app.monthly_report_master_install_compat import prepare_master_working_copy
+    from app.monthly_report_model import default_sections
+    from app.monthly_report_objects import store_file
+
+    actor = library._confirmation(actor, True)
+    source = Path(source)
     inspection = inspect_docx(source)
     found = {item.section for item in inspection.items if item.section}
-    from app.monthly_report_model import default_sections
     missing = {section.key for section in default_sections() if not section.appendix} - found
     if missing:
         raise ValueError("The master needs every standard report section. Missing: " + ", ".join(sorted(missing)) + ".")
-    passive_docx(source)
-    digest, paired = _paired_metadata(source, inspection.sha256, companion_pdf)
-    directory = library._root() / "designs" / "master"
-    with library._locked(directory):
-        current = master_state()
-        if current["revision"] != expected_revision:
-            raise library.RevisionConflict("The master design changed. Reopen design settings before updating it.")
-        if current.get("default") == digest:
-            return digest
-        from app.monthly_report_objects import store_file
-        store_file(directory / (inspection.sha256 + ".docx"), source)
-        if companion_pdf is not None:
-            store_file(directory / (paired["companion_sha256"] + ".pdf"), Path(companion_pdf))
-        library._atomic_write(directory / "metadata" / (digest + ".json"), library._json(
-            {"schema": 1, "hash": digest, "section_order": _inspection_order(inspection), **paired}))
-        value = {"schema": 1, "revision": current["revision"] + 1, "default": digest,
-                 "history": [*current.get("history", []), {"hash": digest, "actor": actor, "at": library._now()}]}
-        library._atomic_write(directory / "history" / f'{value["revision"]:08d}.json', library._json(value))
-        library._atomic_write(directory / "manifest.json", library._json(value))
-    return digest
 
+    detached, transformations = prepare_master_working_copy(source)
+    with TemporaryDirectory(prefix="enfra-master-working-") as temporary:
+        working = source
+        working_hash = ""
+        if detached is not None:
+            working = Path(temporary) / "working.docx"
+            working.write_bytes(detached)
+            working_hash = hashlib.sha256(detached).hexdigest()
+            if {item.section for item in inspect_docx(working).items if item.section} != found:
+                raise ValueError("Master compatibility changed recognizable report sections; the original was preserved.")
+        # Validate the exact bytes the renderer will use, before selecting them.
+        passive_docx(working)
+        digest, paired = _paired_metadata(working, inspection.sha256, companion_pdf)
+        directory = library._root() / "designs" / "master"
+        with library._locked(directory):
+            current = master_state()
+            if current["revision"] != expected_revision:
+                raise library.RevisionConflict("The master design changed. Reopen design settings before updating it.")
+            if current.get("default") == digest:
+                return digest
+            store_file(directory / (inspection.sha256 + ".docx"), source)
+            if working_hash:
+                store_file(directory / "working" / (working_hash + ".docx"), working)
+            if companion_pdf is not None:
+                store_file(directory / (paired["companion_sha256"] + ".pdf"), Path(companion_pdf))
+            library._atomic_write(directory / "metadata" / (digest + ".json"), library._json(
+                {"schema": 1, "hash": digest, "source_sha256": inspection.sha256,
+                 "section_order": _inspection_order(inspection),
+                 "working_sha256": working_hash or None,
+                 "compatibility_transformations": list(transformations), **paired}))
+            value = {"schema": 1, "revision": current["revision"] + 1, "default": digest,
+                     "history": [*current.get("history", []), {"hash": digest, "actor": actor, "at": library._now()}]}
+            library._atomic_write(directory / "history" / f'{value["revision"]:08d}.json', library._json(value))
+            library._atomic_write(directory / "manifest.json", library._json(value))
+        return digest
 
 def install(source: Path, profile, *, actor, expected_revision, companion_pdf=None):
     """Save the reference's layout only; no source values enter the draft."""
