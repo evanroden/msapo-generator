@@ -82,6 +82,7 @@ def tally_reviewed_months(
     pm_categories: Iterable[str] = (),
     closed_statuses: Iterable[str] = (),
     covered_months: Iterable[CoveredMonth] = (),
+    coverage_approvals: dict[tuple[str, str, str], str] | None = None,
 ) -> RollingCounts:
     """Derive received/closed PM/non-PM counts with explicit source semantics.
 
@@ -96,11 +97,18 @@ def tally_reviewed_months(
     pm = {_key(value) for value in pm_categories if _key(value)}
     closed = {_key(value) for value in closed_statuses if _key(value)}
     coverage: dict[tuple[str, str, str], set[str]] = defaultdict(set)
+    coverage_approvals = coverage_approvals or {}
     for item in covered_months:
         key = item.site, item.metric, item.month
         if (item.site not in sites or item.metric not in METRICS
                 or item.month not in months or not item.source_reference.strip()):
             raise ValueError("Coverage must name a known site, metric, month and source.")
+        # A source with approved rows is not by itself proof of a complete
+        # monthly export. Require a separate month/site/metric coverage approval
+        # tied to the exact same reviewed source identity.
+        if (coverage_approvals.get(key) != item.source_reference
+                or item.source_reference not in approved_revisions):
+            raise ValueError("Coverage needs an independently approved, current source receipt.")
         coverage[key].add(item.source_reference)
     identities = defaultdict(list)
     notices = []
