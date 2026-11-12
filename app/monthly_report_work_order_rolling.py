@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, replace
 from datetime import date
+import re
 from typing import Iterable
 
 
@@ -37,6 +38,20 @@ def _month(value: str) -> str | None:
 
 def _key(value) -> str:
     return " ".join(str(value).casefold().split())
+
+
+def _review_category(value: str) -> str:
+    compact = re.sub(r"[^a-z0-9]", "", str(value).casefold())
+    if compact in {"pm", "preventive", "preventivemaintenance", "plannedmaintenance"}:
+        return "pm"
+    return _key(value)
+
+
+def _review_closed_status(value: str) -> str:
+    compact = re.sub(r"[^a-z0-9]", "", str(value).casefold())
+    if compact in {"completed", "complete", "closed", "finished", "done"}:
+        return "completed"
+    return _key(value)
 
 
 @dataclass(frozen=True)
@@ -94,8 +109,8 @@ def tally_reviewed_months(
     if not sites or len(set(sites)) != len(sites):
         raise ValueError("Explicit unique facility keys are required.")
     months = rolling_months(period)
-    pm = {_key(value) for value in pm_categories if _key(value)}
-    closed = {_key(value) for value in closed_statuses if _key(value)}
+    pm = {_review_category(value) for value in pm_categories if _key(value)}
+    closed = {_review_closed_status(value) for value in closed_statuses if _key(value)}
     coverage: dict[tuple[str, str, str], set[str]] = defaultdict(set)
     coverage_approvals = coverage_approvals or {}
     for item in covered_months:
@@ -137,7 +152,7 @@ def tally_reviewed_months(
             continue
         review, row = records[0]
         kind = _key(row.work_type)
-        if pm and kind in pm:
+        if pm and _review_category(kind) in pm:
             category = "pm"
         elif kind in ("non-pm", "non pm", "nonpm"):
             category = "non_pm"
@@ -152,7 +167,7 @@ def tally_reviewed_months(
             members[key].update(origins)
         has_closed_date = review.mapping.completed_date is not None
         completed = (_month(row.completed_date) if has_closed_date
-                     else received if _key(row.status) in closed else None)
+                     else received if _review_closed_status(row.status) in closed else None)
         if has_closed_date and row.completed_date and completed is None:
             notices.append(f"{site}/{identity}: invalid completion date requires review")
         if completed in months:
@@ -252,6 +267,12 @@ def merge_carried_grid(previous, current, prior_period, period, *, site_title: s
     if current.rows and (len(current.rows[0]) != 13
                          or _key(current.rows[0][0]) != _key(site_title)):
         raise ValueError("Current month edits have ambiguous site identity.")
+    distance = ((period.year - prior_period.year) * 12
+                + period.month - prior_period.month)
+    if not 1 <= distance <= 12:
+        raise ValueError("Work-order rollover needs a later month within one reporting year.")
+    if current.rows and current.columns[1:] != rolling_labels(period):
+        raise ValueError("Edited current values require current year-month headings.")
     old_values = dict(zip(rolling_months(prior_period), previous.rows[0][1:]))
     new_values = dict(zip(rolling_months(period), current.rows[0][1:])) if current.rows else {}
     merged = []
