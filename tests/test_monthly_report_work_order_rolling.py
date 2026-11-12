@@ -36,10 +36,11 @@ JANUARY = ReportPeriod(2027, 1)
 
 
 def count(reviews, *, pm=("PM",), closed=("Closed", "Completed"), coverage=(),
-          facilities=(NORTH, SOUTH)):
+          coverage_approvals=None, facilities=(NORTH, SOUTH)):
     return tally_reviewed_months(reviews, JANUARY, facilities,
         approved_revisions={r.source_reference: r.revision for r in reviews},
-        pm_categories=pm, closed_statuses=closed, covered_months=coverage)
+        pm_categories=pm, closed_statuses=closed, covered_months=coverage,
+        coverage_approvals=coverage_approvals)
 
 
 def test_twelve_months_cross_year_and_received_closed_event_dates_are_independent():
@@ -75,7 +76,8 @@ def test_missing_pm_selection_leaves_pm_unknown_including_explicit_coverage():
     source = review("source", (
         Row("r", "n", "W-1", "2026-12-01", "2026-12-02", "Closed", "PM"),))
     attest = CoveredMonth("n", "pm_received", "2026-12", "source")
-    result = count((source,), pm=(), coverage=(attest,))
+    result = count((source,), pm=(), coverage=(attest,),
+                   coverage_approvals={("n", "pm_received", "2026-12"): "source"})
     assert result.cell("n", "pm_received", "2026-12").value is None
     assert not result.cell("n", "pm_received", "2026-12").covered
     assert any("unselected or unknown" in n for n in result.review_notices)
@@ -83,7 +85,8 @@ def test_missing_pm_selection_leaves_pm_unknown_including_explicit_coverage():
 
 def test_unknown_month_is_blank_and_covered_zero_is_literal_zero():
     coverage = (CoveredMonth("s", "non_pm_received", "2026-12", "verified:full-export"),)
-    result = count((), coverage=coverage)
+    result = count((review("verified:full-export", ()),), coverage=coverage,
+                   coverage_approvals={("s", "non_pm_received", "2026-12"): "verified:full-export"})
     assert result.cell("s", "non_pm_received", "2026-12").value == "0"
     assert result.cell("s", "non_pm_received", "2026-12").covered
     assert result.cell("s", "non_pm_received", "2026-11").value is None
@@ -118,11 +121,17 @@ def test_unapproved_review_or_coverage_without_source_is_rejected():
             approved_revisions={"source": "stale"}, pm_categories=("PM",))
     with pytest.raises(ValueError, match="Coverage"):
         count((), coverage=(CoveredMonth("n", "pm_received", "2026-12", ""),))
+    with pytest.raises(ValueError, match="independently approved"):
+        count((source,), coverage=(CoveredMonth("n", "pm_received", "2026-12", "source"),))
+    with pytest.raises(ValueError, match="independently approved"):
+        count((), coverage=(CoveredMonth("n", "pm_received", "2026-12", "other"),),
+              coverage_approvals={("n", "pm_received", "2026-12"): "other"})
 
 
 def test_two_site_eight_frame_binding_is_order_explicit_and_overflow_fails_closed():
-    result = count((), coverage=(
-        CoveredMonth("n", "pm_received", "2026-12", "complete:n"),))
+    result = count((review("complete:n", ()),), coverage=(
+        CoveredMonth("n", "pm_received", "2026-12", "complete:n"),),
+        coverage_approvals={("n", "pm_received", "2026-12"): "complete:n"})
     frames = tuple(SimpleNamespace(reference=f"native-{site}-{metric}",
         columns=(("PM" if metric.startswith("pm_") else "Non-PM") + (" Received" if metric.endswith("received") else " Closed"), *rolling_labels(JANUARY)), slot="work_orders")
         for site in ("n", "s") for metric in METRICS)
