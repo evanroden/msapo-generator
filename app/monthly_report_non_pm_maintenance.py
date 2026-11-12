@@ -82,6 +82,7 @@ class MaintenanceCandidate:
     task: str
     tag: str
     performer: str
+    performer_basis: str
     trade: str
     disposition: str
     reasons: tuple[str, ...] = ()
@@ -170,13 +171,18 @@ def project_completed_non_pm(
                      {"ENFRA onsite": "ENFRA onsite",
                       "Vendor/leased": "Vendor/leased",
                       "Unknown": ""}.get(performer_raw, ""))
+        performer_basis = ("reviewer-classified" if "performer" in changed and performer else
+                           "source-stated" if performer else "unknown")
         if "performer" in changed and performer_raw not in (
                 "ENFRA onsite", "Vendor/leased", "Unknown"):
             raise ValueError("Choose ENFRA onsite, Vendor/leased or Unknown explicitly.")
         # Site policies may clarify source-specific *organization codes*.
         if "performer" not in changed and row.site in rules:
             aliases = {_norm(k): v for k, v in rules[row.site].items()}
-            performer = aliases.get(_norm(performer_raw), performer)
+            rule_performer = aliases.get(_norm(performer_raw))
+            if rule_performer:
+                performer = rule_performer
+                performer_basis = "site-rule"
         explicit_closed = review.mapping.completed_date is not None
         # A physically present but unmapped completion column is NOT absence.
         # A fallback in that case would silently attribute the wrong month.
@@ -228,7 +234,7 @@ def project_completed_non_pm(
             disposition = "onsite" if performer == "ENFRA onsite" else "vendor_activity"
         candidates.append(MaintenanceCandidate(
             row.key, row.origin, row.work_order, row.site, completion, basis,
-            area, task, tag, performer, row.trade, disposition,
+            area, task, tag, performer, performer_basis, row.trade, disposition,
             tuple(dict.fromkeys(reasons))))
     # One WO identity is unique only *within* a site. Duplicates are never
     # silently dropped; a duplicate across different sites remains distinct.
@@ -254,7 +260,7 @@ def project_completed_non_pm(
             onsite.append((row.work_order, row.completed_date, location, row.task, row.tag))
         elif row.disposition == "vendor_activity":
             vendor.append((row.work_order, allowed[row.site], row.completed_date,
-                           "Vendor/leased (source-stated)", row.task, row.area, row.tag))
+                           f"Vendor/leased ({row.performer_basis})", row.task, row.area, row.tag))
     if onsite and table_has_pricing(OUTPUT_COLUMNS, tuple(onsite), work_orders=True):
         raise ValueError("Pricing requires correction before including Maintenance calls.")
     if vendor and table_has_pricing(ACTIVITY_COLUMNS, tuple(vendor), work_orders=True):
