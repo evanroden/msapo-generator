@@ -93,6 +93,17 @@ def normalize_with_section_choices(draft: ReportDraft, normalizer) -> ReportDraf
                        for section in draft.sections if not section.key.startswith("custom_")),
     )
     resolved = normalizer(staged)
+    if (resolved.profile.contract != staged.profile.contract
+            or resolved.profile.key != staged.profile.key
+            or resolved.profile.facilities != staged.profile.facilities
+            or resolved.period != staged.period):
+        raise ValueError("A section normalizer changed the contract, sites or report period.")
+    retained_keys = {block.key for section in draft.sections if not section.included
+                     or section.key.startswith("custom_") for block in section.blocks}
+    original_blocks = {block.key: block for block in draft.blocks if block.key in retained_keys}
+    normalized_blocks = {block.key: block for block in resolved.blocks if block.key in retained_keys}
+    if original_blocks != normalized_blocks:
+        raise ValueError("A section normalizer changed hidden or contract-scoped saved content.")
     standard_keys = {section.key for section in resolved.sections}
     unexpected = set(original) - standard_keys - {section.key for section in custom}
     if unexpected:
