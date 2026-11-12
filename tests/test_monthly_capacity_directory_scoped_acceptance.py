@@ -13,8 +13,10 @@ from app import monthly_report_directory as directory
 from app import monthly_report_library as library
 from app.monthly_report_capacity_inclusion import capacity_inclusion
 from app.monthly_report_docx import assemble_docx, _convert_report_pdf
+from app.monthly_report_checks import preflight
 from app.monthly_report_model import (
-    Facility, ReportDraft, ReportPeriod, ReportProfile, default_sections,
+    Facility, OrgChartNode, ReportDraft, ReportPeriod, ReportProfile,
+    ResolvedBlock, default_sections,
 )
 from conftest import requires_libreoffice
 
@@ -105,11 +107,21 @@ def _saved_report():
     assert source is not None and source.extra_tables
     assert source.extra_tables[0].rows[0][2:5] == ("0", "NR", "lb/hr")
     omitted = capacity_inclusion(source, False)
+    # Construct valid synthetic required blocks: never bypass the export gate.
+    required = (
+        ResolvedBlock("org_chart", "This month", org_nodes=(
+            OrgChartNode("synthetic-lead", "Synthetic Lead", "Asset Manager"),
+        )),
+        ResolvedBlock("activity_summary", "This month", text="Synthetic monthly activity reviewed."),
+        ResolvedBlock("equipment_issues", "This month", text="Synthetic equipment issue review completed."),
+        ResolvedBlock("training_summary", "This month", text="Synthetic training summary reviewed."),
+    )
     draft = ReportDraft(profile, ReportPeriod(2026, 11), "Synthetic Reviewer",
-                        default_sections(), (omitted,))
+                        default_sections(), (omitted, *required))
     contacts, missing = directory.contact_block(left, profile.facilities, {"left": "left"})
     assert not missing
     draft = directory.apply_contacts(draft, contacts)
+    assert not [check.message for check in preflight(draft) if check.blocking]
     snapshot = library.save_snapshot(draft, expected_revision=0,
                                      entered_editor="Synthetic Reviewer")
     reopened = library.load_snapshot(profile.contract, profile.key, draft.period)
