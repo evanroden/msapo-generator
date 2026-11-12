@@ -38,9 +38,27 @@ def source_pdf(label, pages):
         return document.tobytes()
 
 
-def choose(page, control, value):
+def choose(page, control, value, record):
+    def snapshot():
+        return control.evaluate("""node => {
+            const rect=node.getBoundingClientRect();
+            const hit=document.elementFromPoint(rect.left+rect.width/2,rect.top+rect.height/2);
+            return {node:window.__issueSelectId(node), connected:node.isConnected,
+                rect:rect.toJSON(), expanded:node.getAttribute('aria-expanded'),
+                readonly:node.readOnly, disabled:node.disabled, focused:document.activeElement===node,
+                hit:{tag:hit?.tagName,node:window.__issueSelectId(hit),text:hit?.textContent?.slice(0,100)},
+                running:document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state'),
+                events:window.__issueSelectEvents.slice(-40)};
+        }""")
+    receipt = {"target": value}
+    record["choices"].append(receipt)
     control.click()
-    page.get_by_role("option", name=value, exact=True).click()
+    receipt["after_click"] = snapshot()
+    try:
+        page.get_by_role("option", name=value, exact=True).click()
+    finally:
+        receipt["after_option_attempt"] = snapshot()
+
 
 
 def open_gallery(issue):
@@ -88,7 +106,31 @@ def browser_task(browser_type, name):
             request.abort()
 
     context.route("**/*", route)
+    context.add_init_script("""(() => {
+        const ids=new WeakMap();let next=0;
+        window.__issueSelectId=node=>{if(!node)return null;if(!ids.has(node))ids.set(node,++next);return ids.get(node)};
+        window.__issueSelectEvents=[];
+        for(const type of ['pointerdown','pointerup','click','focus','blur','keydown','input','change']){
+            document.addEventListener(type,event=>{
+                const box=event.target?.closest?.('[data-testid="stSelectbox"]');
+                if(!box||!['Source file to inspect','Pages to review'].some(label=>box.textContent.includes(label)))return;
+                const input=box.querySelector('[role="combobox"]');
+                const items=window.__issueSelectEvents;
+                items.push({type,trusted:event.isTrusted,node:window.__issueSelectId(input),
+                    target:window.__issueSelectId(event.target),expanded:input?.getAttribute('aria-expanded'),
+                    running:document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state'),
+                    at:performance.now(),x:event.clientX??null,y:event.clientY??null,
+                    rect:input?.getBoundingClientRect().toJSON(), connected:input?.isConnected,
+                    focused:document.activeElement===input,
+                    hitTag:document.elementFromPoint(event.clientX||0,event.clientY||0)?.tagName});
+                if(items.length>200)items.shift();
+            },{capture:true,passive:true});
+        }
+    })();""")
     page = context.new_page()
+    from scripts.workspace_wire_observations import WireObservations
+    wire = WireObservations(urlparse(qa.URL).port)
+    wire.attach(page)
     page.set_default_timeout(30000)
     page.on("pageerror", lambda error: errors.append(str(error)))
     output = qa.OUT / name
@@ -96,7 +138,7 @@ def browser_task(browser_type, name):
     alpha, beta = source_pdf("alpha", 5), source_pdf("beta", 2)
     record = {"synthetic_only": True, "actual_route": "Monthly QA prefill, native file upload and issue editor",
               "inputs": {ALPHA: sha256(alpha).hexdigest(), BETA: sha256(beta).hexdigest()},
-              "steps": [], "external": external, "errors": errors,
+              "steps": [], "choices": [], "external": external, "errors": errors,
               "limits": ["No physical-device or production acceptance", "This journey does not approve or embed evidence pages"]}
     try:
         page.goto(qa.URL, wait_until="domcontentloaded")
@@ -130,14 +172,14 @@ def browser_task(browser_type, name):
         assert_tags(issue, [f"{ALPHA} · page 1", f"{ALPHA} · page 2"])
         record["steps"].append({"stage": "pointer-and-keyboard", "selected": tags(issue)})
 
-        choose(page, issue.get_by_role("combobox", name="Source file to inspect", exact=True), BETA)
+        choose(page, issue.get_by_role("combobox", name="Source file to inspect", exact=True), BETA, record)
         expect(checkbox(issue, BETA, 1)).not_to_be_checked()
         qa.set_checkbox(issue, f"Include {BETA} · page 1 as issue evidence", True, name)
         assert_tags(issue, [f"{ALPHA} · page 1", f"{ALPHA} · page 2", f"{BETA} · page 1"])
-        choose(page, issue.get_by_role("combobox", name="Source file to inspect", exact=True), ALPHA)
+        choose(page, issue.get_by_role("combobox", name="Source file to inspect", exact=True), ALPHA, record)
         qa.set_checkbox(issue, f"Include {ALPHA} · page 1 as issue evidence", False, name)
         assert_tags(issue, [f"{ALPHA} · page 2", f"{BETA} · page 1"])
-        choose(page, issue.get_by_role("combobox", name="Pages to review", exact=True), "Pages 5–5 of 5")
+        choose(page, issue.get_by_role("combobox", name="Pages to review", exact=True), "Pages 5–5 of 5", record)
         qa.set_checkbox(issue, f"Include {ALPHA} · page 5 as issue evidence", True, name)
         expected = [f"{ALPHA} · page 2", f"{ALPHA} · page 5", f"{BETA} · page 1"]
         assert_tags(issue, expected)
@@ -165,7 +207,7 @@ def browser_task(browser_type, name):
         expect(checkbox(issue, ALPHA, 1)).not_to_be_checked()
         expect(checkbox(issue, ALPHA, 2)).to_be_checked()
         page.set_viewport_size({"width": 545, "height": 757})
-        choose(page, issue.get_by_role("combobox", name="Source file to inspect", exact=True), BETA)
+        choose(page, issue.get_by_role("combobox", name="Source file to inspect", exact=True), BETA, record)
         expect(checkbox(issue, BETA, 1)).to_be_checked()
         expect(checkbox(issue, BETA, 2)).not_to_be_checked()
         assert_tags(issue, expected)
@@ -185,6 +227,7 @@ def browser_task(browser_type, name):
             record["screenshot_error"] = str(screenshot_error)[:300]
         raise
     finally:
+        record["wire"] = wire.snapshot()
         (output / "journey.json").write_text(json.dumps(record, indent=2) + "\n")
         context.close()
         browser.close()

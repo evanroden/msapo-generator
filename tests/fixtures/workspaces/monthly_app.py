@@ -26,6 +26,13 @@ if (os.environ.get("EPC_MONTHLY_DOM_FIXTURE") != "1" or not marker.is_file()
     st.error("This synthetic fixture requires the disposable harness storage root.")
     st.stop()
 
+# Callback diagnostics are installed only after the synthetic storage guard.
+# Production modules and ordinary fixture runs never install this wrapper.
+if os.environ.get("EPC_MONTHLY_ROW_TASK") == "1":
+    from app import monthly_report_row_cards_ui
+    from scripts.qa_row_callback_delivery import install
+    install(monthly_report_row_cards_ui, lambda: st.session_state)
+
 # This fixture has its own server process. Install one process-wide outgoing
 # network guard, including worker threads, without blocking localhost Streamlit
 # traffic or the real LibreOffice subprocess used by production conversion.
