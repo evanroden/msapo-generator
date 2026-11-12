@@ -252,33 +252,76 @@ def initialize_master_tables(draft):
 
 
 def rebind_carried_master_tables(draft, previous_blocks, previous_template: str):
-    """Retain same-master physical table IDs on new-month rollover only.
+    """Reuse only identical pinned physical regions and explicit month history.
 
-    The ordinary design-seed operation deliberately drops source data and
-    provenance. Native *design frame identities*, unlike source facts, can be
-    carried when both reports have the identical immutable master pin. Fail
-    closed for changed master, mismatched columns or unrecognized old refs.
+    Ordinary table shapes still carry *no* previous-client facts. Recognized
+    13-column work-order history is different: each dated reported value
+    belongs to a specific month/site/metric, so those original values can be
+    retained in a new rolling view after unique identity checks. Conflicts
+    stop the rebind before any draft is changed. Previous reports stay immutable.
     """
     if draft.profile.template != previous_template:
         return draft
     accepted = {table.reference: table for table in for_profile(draft.profile)}
     if not accepted:
         return draft
+    from app.monthly_report_work_order_rolling import (
+        explicit_grid_period, merge_carried_grid, rolling_labels,
+    )
+
     updated = []
     for block in draft.blocks:
         prior = previous_blocks.get(block.key)
-        if (prior is None or not block.extra_tables
-                or len(prior.extra_tables) != len(block.extra_tables)):
+        if prior is None or not block.extra_tables:
+            updated.append(block)
+            continue
+        if len(prior.extra_tables) != len(block.extra_tables):
+            if (block.key == "work_orders" and any(
+                    len(t.columns) == 13 and t.rows for t in prior.extra_tables)):
+                raise ValueError("Work-order master grid count changed; review all historical locations.")
             updated.append(block)
             continue
         tables = []
+        used = set()
         for current, former in zip(block.extra_tables, prior.extra_tables):
             master = accepted.get(former.reference)
-            if (master is not None and master.slot == block.key
-                    and len(current.columns) == len(master.columns)
-                    and not current.rows):
-                tables.append(replace(current, reference=former.reference))
-            else:
+            bound = (master is not None and master.slot == block.key
+                     and len(current.columns) == len(master.columns)
+                     and not current.rows)
+            if not bound:
+                if (block.key == "work_orders" and len(former.columns) == 13
+                        and former.rows and block.source != "Omit"):
+                    raise ValueError("A carried work-order grid has no matching pinned master region.")
                 tables.append(current)
+                continue
+            target = replace(current, reference=former.reference)
+            if (block.key == "work_orders" and block.source != "Omit"
+                    and len(former.columns) == 13 and former.rows):
+                if len(draft.profile.facilities) > 2:
+                    raise ValueError("More than two work-order locations need an approved overflow layout.")
+                previous_period = explicit_grid_period(former.columns)
+                if previous_period is None:
+                    raise ValueError("Historical work-order month labels lack explicit years; review before rollover.")
+                if (len(former.rows) != 1 or len(former.rows[0]) != 13
+                        or " ".join(former.columns[0].casefold().split())
+                        not in _WORK_ORDER_METRICS
+                        or " ".join(target.columns[0].casefold().split())
+                        != " ".join(former.columns[0].casefold().split())):
+                    raise ValueError("Historical work-order site or metric needs explicit review.")
+                label = " ".join(former.rows[0][0].casefold().split())
+                matches = [site for site in draft.profile.facilities
+                           if label in {" ".join(v.casefold().split()) for v
+                                        in (site.key, site.title, *site.aliases)}]
+                if len(matches) != 1:
+                    raise ValueError("Historical work-order site identity is missing or ambiguous.")
+                site = matches[0]
+                pair = (site.key, " ".join(former.columns[0].casefold().split()))
+                if pair in used:
+                    raise ValueError("Two physical grids claim the same historical site and metric.")
+                used.add(pair)
+                target = replace(target, columns=(target.columns[0], *rolling_labels(draft.period)))
+                target = merge_carried_grid(former, target, previous_period,
+                                            draft.period, site_title=site.title)
+            tables.append(target)
         updated.append(replace(block, extra_tables=tuple(tables)))
     return replace(draft, blocks=tuple(updated))
