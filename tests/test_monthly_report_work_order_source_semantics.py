@@ -60,3 +60,25 @@ def test_summary_identifier_and_semantically_different_headers_need_review(tmp_p
     record = normalize_table(content, 1, PROFILE, PERIOD)
     assert "summary/title row needs review" in record.rows[0].issues
     assert record.rows[0].origin.cells[1:4] == ("2026-09-02", "Origin-01", "Staff")
+
+
+def test_excel_formatted_serial_date_is_read_but_unformatted_number_needs_review(tmp_path, monkeypatch):
+    """A date cell's explicit XLSX number format matters; don't guess raw serials."""
+    from datetime import datetime
+    from io import BytesIO
+    from openpyxl import Workbook
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    book = Workbook()
+    sheet = book.active
+    sheet.append(("Work Order #", "Received Date", "Site", "Status"))
+    sheet.append(("W-10", datetime(2026, 9, 6), "Alpha", "Closed"))
+    sheet["B2"].number_format = "yyyy-mm-dd"
+    sheet.append(("W-11", 46271, "Alpha", "Open"))
+    buf = BytesIO()
+    book.save(buf)
+    content, _ = sources.ingest(PROFILE, "serials.xlsx", buf.getvalue())
+    checked = normalize_table(content, 1, PROFILE, PERIOD)
+    assert checked.rows[0].work_date == "2026-09-06"
+    assert checked.rows[1].work_date == ""
+    assert checked.rows[1].origin.cells[1] == "46271"
+    assert "work_date needs review" in checked.rows[1].issues
