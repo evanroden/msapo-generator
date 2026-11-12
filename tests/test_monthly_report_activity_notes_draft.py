@@ -176,3 +176,22 @@ def test_failed_provider_or_discard_keeps_manual_entry(monkeypatch, tmp_path):
     app.run()
     _button(app, "Discard draft").click().run()
     assert app.session_state["current_block"].text == "Manual current wording."
+
+
+def test_reviewed_addition_survives_immutable_snapshot_reopen(monkeypatch, tmp_path):
+    from app import monthly_report_library as library
+    from app.monthly_report_model import ReportPeriod, synthetic_draft, synthetic_profiles
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    profile = synthetic_profiles()[0]
+    period = ReportPeriod(2026, 9)
+    initial = synthetic_draft(profile, period)
+    original = next(block for block in initial.blocks if block.key == "demo_activity")
+    edited = notes.apply_reviewed(original, "Inspected a synthetic pump.", "add", original.fingerprint)
+    draft = replace(initial, blocks=tuple(edited if block.key == original.key else block
+                                          for block in initial.blocks))
+    library.save_snapshot(draft, expected_revision=0, entered_editor="Synthetic Reviewer")
+    restored = library.load_snapshot(profile.contract, profile.key, period)
+    assert restored is not None and restored.revision == 1
+    assert restored.draft.block("demo_activity").text == edited.text
+    assert library.load_snapshot_version(profile.contract, profile.key, period, 1).draft.block(
+        "demo_activity").text == edited.text
