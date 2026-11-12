@@ -160,7 +160,7 @@ def test_master_install_keeps_original_and_pinned_history(tmp_path, monkeypatch)
 
 def test_title_month_is_distinct_from_cover_print_date_and_conflicts_are_reviewed():
     period, notes = report_period_from_title_candidates((
-        "LSUNO Monthly Report — January 2026",
+        "QA-UNO Monthly Report — January 2026",
         "Cover printed Date: February 2, 2026",
     ))
     assert period == ReportPeriod(2026, 1)
