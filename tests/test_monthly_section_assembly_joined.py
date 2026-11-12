@@ -77,6 +77,12 @@ def _included_source(profile, destination, label, colors, previous):
     original = _source_pdf(label, colors)
     content, messages = sources.ingest(profile, filename, original)
     assert content is not None, messages
+    # Finalize factual metadata and site approval before preparing pages.
+    # Source references are bound to the complete source fingerprint.
+    source = replace(content.source, service_date="2026-09-12",
+                     facility=profile.facilities[0].key)
+    source = correct_scope(source, profile, (profile.facilities[0].key,))
+    content = replace(content, source=source)
 
     if destination in {"mbcx_report", "utility_analysis"}:
         revised, additions = prepare_whole_pdf(
@@ -93,11 +99,8 @@ def _included_source(profile, destination, label, colors, previous):
         revised = replace(content, source=source)
         additions = prepare_section_pages(
             profile, (revised,), destination, previous)
-    # Bind the scope receipt after the final factual metadata. Changing the
-    # site/date afterwards would make a formerly valid receipt stale.
-    source = replace(revised.source, service_date="2026-09-12",
-                     facility=profile.facilities[0].key)
-    source = correct_scope(source, profile, (profile.facilities[0].key,))
+    # Use the same finalized source when reviewing the prepared references.
+    source = revised.source
     block = approve_all_assets(refresh_asset_source_context(
         additions[destination], (source,)))
     assert len(block.asset_hashes) == 3
