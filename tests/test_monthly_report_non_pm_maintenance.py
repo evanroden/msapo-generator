@@ -198,6 +198,8 @@ def test_synthetic_120_calls_render_docx_pdf_with_row_order_and_no_empty_pages(
     csv.writer(stream).writerows((COLUMNS, *rows))
     raw = stream.getvalue().encode()
     content, _ = sources.ingest(profile, "invented-wo.csv", raw)
+    from app.monthly_report_source_scope import correct_scope
+    content = replace(content, source=correct_scope(content.source, profile, ("north", "south")))
     review = normalize_table(content, 1, profile, PERIOD)
     projection = project(review)
     section = next(s for s in default_sections() if s.key == "maintenance")
