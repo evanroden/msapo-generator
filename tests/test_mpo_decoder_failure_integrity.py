@@ -112,8 +112,8 @@ def test_guided_mpo_failure_preserves_pending_activity_and_reopens(monkeypatch, 
     app, profile = setup_app(monkeypatch, tmp_path)
     first, last = b"First synthetic inspection.", b"Last synthetic inspection."
     good_bad_good = (
-        ("first-service-report.txt", first), ("damaged.mpo", mpo()[:-100]),
-        ("last-service-report.txt", last),
+        ("first service report.txt", first), ("damaged.mpo", mpo()[:-100]),
+        ("last service report.txt", last),
     )
     original_uploader = st.file_uploader
 
