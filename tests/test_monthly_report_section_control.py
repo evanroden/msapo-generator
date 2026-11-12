@@ -344,3 +344,16 @@ def test_all_off_fails_preflight_without_discarding_saved_sections():
     assert disabled.blocks == draft.blocks and disabled.profile == draft.profile
     with pytest.raises(ValueError, match="Include at least one section"):
         assemble_docx(disabled, acknowledged_fingerprint=disabled.fingerprint)
+
+
+def test_normalization_refuses_hidden_data_loss_and_scope_changes():
+    draft = report_only_sections(make_draft(), {"training": False})
+    def loses_hidden_block(staged):
+        return replace(staged, blocks=tuple(
+            block for block in staged.blocks if block.key != "demo_training"))
+    with pytest.raises(ValueError, match="hidden or contract-scoped"):
+        normalize_with_section_choices(draft, loses_hidden_block)
+    def crosses_contract(staged):
+        return replace(staged, profile=replace(staged.profile, contract="Different Contract"))
+    with pytest.raises(ValueError, match="contract, sites or report period"):
+        normalize_with_section_choices(draft, crosses_contract)
