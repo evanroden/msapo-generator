@@ -76,13 +76,16 @@ def event_titles(saved):
 def accept_saved_version(page, evidence):
     base.settled(page)
     review = page.get_by_role("button", name="Review draft changes", exact=True)
-    if review.count():
-        review.click()
-        choose = page.get_by_role("button", name="Open saved report", exact=True)
-        expect(choose).to_be_visible()
-        choose.click()
-        evidence["recovery_choice"] = "Open saved report"
-        base.settled(page)
+    expect(review).to_be_visible(timeout=30000)
+    review.click()
+    pending = page.get_by_text(B_EDIT, exact=False)
+    expect(pending).to_be_visible(timeout=30000)
+    choose = page.get_by_role("button", name="Open saved report", exact=True)
+    expect(choose).to_be_visible(timeout=30000)
+    choose.click()
+    evidence["recovery_choice"] = "Open saved report"
+    evidence["pending_edit_verified_in_review"] = True
+    base.settled(page)
 
 
 def verify_word_pdf(word, pdf):
