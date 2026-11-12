@@ -182,7 +182,7 @@ def test_money_in_description_does_not_leak_into_client_table():
     assert result.candidates[0].original.cells[-1] == "999.99"
 
 
-from tests.conftest import requires_libreoffice
+from conftest import requires_libreoffice
 
 
 @requires_libreoffice
