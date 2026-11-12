@@ -129,8 +129,9 @@ def test_unrelated_master_shape_and_manual_values_are_not_copied(monkeypatch):
     monkeypatch.setattr(master, "for_profile", lambda _: shapes)
     mismatch = replace(draft, profile=replace(draft.profile,
         template="enfra_master:" + "b" * 64))
-    assert master.rebind_carried_master_tables(mismatch,
-        {"work_orders": older}, draft.profile.template) == mismatch
+    with pytest.raises(ValueError, match="pinned master changed"):
+        master.rebind_carried_master_tables(mismatch,
+            {"work_orders": older}, draft.profile.template)
     omitted = replace(draft, blocks=(replace(draft.blocks[0], source="Omit"),))
     carried = master.rebind_carried_master_tables(omitted,
         {"work_orders": older}, draft.profile.template)
