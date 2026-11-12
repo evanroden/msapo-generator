@@ -117,8 +117,8 @@ def _png():
 
 
 def _scan_pdf():
-    fitz = pytest.importorskip("pymupdf")
-    document = fitz.open()
+    pymupdf = pytest.importorskip("pymupdf")
+    document = pymupdf.open()
     page = document.new_page(width=180, height=240)
     page.insert_image(page.rect, stream=_png())
     raw = document.tobytes()
