@@ -119,5 +119,5 @@ def inspect_receivable_schema(table: ReportTable, *, source_sha256: str) -> Rece
                                     sort_keys=True).encode()).hexdigest()
     return ReceivableSchemaReview(source_sha256, table.reference, fingerprint, columns, rows,
         duplicates, tuple(index for index, role in enumerate(roles) if not role),
-        tuple(role for role in ("invoice_id", "invoice_date", "balance")
+        tuple(role for role in ("invoice_id", "site", "status", "due_date", "as_of_date")
               if role not in roles))
