@@ -88,6 +88,14 @@ def set_history(page, opened, identity, activations):
               if(host.shadowRoot)count+=previewCount(host.shadowRoot);
             return count;
           };
+          const activePreviewCount=root=>{
+            if(!root)return 0;
+            let count=[...root.querySelectorAll('.report-preview')]
+              .filter(panel=>typeof panel._previewCleanup==='function').length;
+            for(const host of root.querySelectorAll('*'))
+              if(host.shadowRoot)count+=activePreviewCount(host.shadowRoot);
+            return count;
+          };
           const snapshot=()=>{
             const app=node.closest('[data-testid="stApp"]');
             const gate=window.__enfraPreviewNativeEditGates?.get(app);
@@ -96,7 +104,7 @@ def set_history(page, opened, identity, activations):
               const keys=[...item.classList].filter(name=>name.startsWith('st-key-'));
               if(keys.length)ancestors.push(keys);
             }
-            return {viewers:previewCount(app),
+            return {viewers:previewCount(app),activeViewers:activePreviewCount(app),
               installed:Boolean(gate),pending:gate?.pending??null,
               blockAll:gate?.blockAll??null,before:gate?.before??null,
               fullRender:gate?.workspace?.dataset.epcFullRender??null,ancestors};
@@ -123,10 +131,13 @@ def set_history(page, opened, identity, activations):
         # Native History can be used before the optional preview components
         # mount on a cold reload. No viewer can send a competing fragment yet.
         # An existing gate still owes protection, even if its DOM just unmounted.
+        # Preserve the exact protection assertion, but let the original
+        # post-click receipt complete first so an initialization-gap failure
+        # records whether the native action actually reached its full render.
+        await_state(page, identity, after=before)
         if clicked["viewers"] or clicked["installed"]:
             assert clicked["installed"] and clicked["pending"] and clicked["blockAll"], (
                 "The history disclosure must protect its actual native full rerun before preview fragments.", activation)
-        await_state(page, identity, after=before)
     control = panel.get_by_role("combobox", name="Inspect a saved version", exact=True)
     expect(control).to_have_count(1 if opened else 0)
     if opened:
