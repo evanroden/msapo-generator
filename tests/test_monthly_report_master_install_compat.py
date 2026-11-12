@@ -266,3 +266,46 @@ def test_import_save_reopen_keeps_unknown_section_in_review(tmp_path, monkeypatc
     assert unknown.id not in mapped.mapped_ids
     assert source.read_bytes() == original
     assert any(item.id == unknown.id for item in inspect_docx(source).items)
+
+
+def test_working_copy_keeps_numbering_images_headers_footers_and_relationships(tmp_path):
+    from PIL import Image
+    from docx.shared import Inches
+    from docx.opc.constants import RELATIONSHIP_TYPE as REL
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    source = master_reference(tmp_path)
+    doc = Document(source)
+    doc.add_paragraph("Invented numbered operation", style="List Number")
+    image = BytesIO()
+    Image.new("RGB", (24, 24), (37, 90, 57)).save(image, format="PNG")
+    image.seek(0)
+    doc.sections[0].header.paragraphs[0].add_run().add_picture(image, width=Inches(0.2))
+    doc.sections[0].footer.paragraphs[0].text = "Synthetic internal footer"
+    link = doc.part.relate_to("https://example.invalid/info", REL.HYPERLINK, is_external=True)
+    paragraph = doc.add_paragraph()
+    node = OxmlElement("w:hyperlink")
+    node.set(qn("r:id"), link)
+    run = OxmlElement("w:r")
+    text = OxmlElement("w:t")
+    text.text = "Synthetic safe link"
+    run.append(text)
+    node.append(run)
+    paragraph._p.append(node)
+    doc.save(source)
+    edit_package(source, lambda root, parts: alternate(root))
+    with ZipFile(source) as original:
+        parts_before = {n: original.read(n) for n in original.namelist()}
+    copy_bytes, reasons = prepare_master_working_copy(source)
+    assert reasons == ("equivalent_modern_choice",)
+    with ZipFile(BytesIO(copy_bytes)) as prepared:
+        assert set(prepared.namelist()) == set(parts_before)
+        assert all(prepared.read(name) == data for name, data in parts_before.items()
+                   if name != "word/document.xml")
+        assert b"AlternateContent" not in prepared.read("word/document.xml")
+        assert b"Synthetic safe link" in prepared.read("word/document.xml")
+        assert b"numbering.xml" in prepared.read("word/_rels/document.xml.rels")
+        assert any(name.startswith("word/media/") for name in prepared.namelist())
+        assert any(name.startswith("word/header") for name in prepared.namelist())
+        assert any(name.startswith("word/footer") for name in prepared.namelist())
