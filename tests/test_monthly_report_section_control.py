@@ -233,3 +233,31 @@ def test_revisioned_library_save_reload_and_report_override_are_independent(tmp_
     # Historical report is pinned, while the next month adopts the standing choice.
     old = library.load_snapshot_version(pref.contract, pref.key, report.period, saved.revision)
     assert old.draft == reloaded.draft
+
+
+def test_saved_custom_page_cannot_cross_contract_at_library_boundary(tmp_path, monkeypatch):
+    from app import monthly_report_library as library
+    monkeypatch.setattr(library, "_data_dir", lambda: tmp_path)
+    uno = add_page(make_draft("Synthetic UNO"))
+    different = replace(uno, profile=make_draft("Other Contract").profile)
+    with pytest.raises(ValueError, match="another contract"):
+        library.save_snapshot(different, expected_revision=0, entered_editor="Synthetic")
+    # A failed write leaves the intended target empty.
+    assert library.load_snapshot(different.profile.contract, different.profile.key,
+                                 different.period) is None
+    invalid = asdict(uno)
+    invalid["profile"]["contract"] = "Other Contract"
+    from app.monthly_report_library import LibraryError
+    with pytest.raises(LibraryError, match="Invalid report snapshot"):
+        draft_from_dict(invalid)
+
+
+def test_docx_public_gate_rejects_unverified_custom_page_after_content_mutation():
+    draft = add_page(make_draft("Synthetic UNO"))
+    page = page_for(draft)
+    wrong = replace(draft, blocks=tuple(
+        replace(block, text="Synthetic allowance amount: 8,750")
+        if block.key == page.block_key else block for block in draft.blocks
+    ))
+    with pytest.raises(ValueError, match="field/page review"):
+        assemble_docx(wrong, acknowledged_fingerprint=wrong.fingerprint)
