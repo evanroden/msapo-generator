@@ -156,6 +156,9 @@ def test_pinned_native_master_fails_closed_without_rewriting_old_report():
         install_text_page(pinned, page, ResolvedBlock(page.block_key, "This month", text="Synthetic"))
     assert asdict(pinned) == original
     assert draft_from_dict(original) == pinned
+    unknown_design = replace(a, profile=replace(a.profile, template="unrecognized_native_design_v7"))
+    with pytest.raises(ValueError, match="native designs"):
+        add_page(unknown_design)
 
 
 def test_generated_generic_docx_has_no_orphan_heading_divider_or_custom_content():
@@ -187,3 +190,20 @@ def test_generated_generic_pdf_matches_visible_custom_page_order():
         assert "Plumbing & Electrical Allowance" in text
         assert "Synthetic scope update without monetary amounts." in text
         assert "Training Summary" not in text
+
+
+def test_reload_scope_gate_rejects_bypassed_money_and_visual_data():
+    draft = add_page(make_draft("Synthetic UNO"))
+    page = page_for(draft)
+    updated = tuple(
+        replace(block, text="Synthetic vendor invoice total $5,000")
+        if block.key == page.block_key else block for block in draft.blocks
+    )
+    with pytest.raises(ValueError, match="field/page review"):
+        verify_custom_page_scope(replace(draft, blocks=updated))
+    visual = tuple(
+        replace(block, asset_hashes=("fake-picture-ref",))
+        if block.key == page.block_key else block for block in draft.blocks
+    )
+    with pytest.raises(ValueError, match="field/page review"):
+        verify_custom_page_scope(replace(draft, blocks=visual))
