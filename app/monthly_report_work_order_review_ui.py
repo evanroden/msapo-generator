@@ -39,11 +39,11 @@ def apply_request(draft, content, request):
     elif action == "decisions":
         value = flow.group_decisions(old, request["group"], **values)
     elif action == "coverage":
-        value = flow.confirm_coverage(draft, old, site=values["site"],
+        value = flow.confirm_coverage(draft, old, table_number=request["table_number"], site=values["site"],
             start_month=values["start_month"], end_month=values["end_month"],
             evidence=values["evidence"], confirmed=values["confirmed"])
     elif action == "coverage_revoke":
-        value = flow.revoke_coverage(draft, old, site=values["site"])
+        value = flow.revoke_coverage(draft, old, site=values["site"], table_number=request["table_number"])
     elif action == "mapping":
         if not values.pop("confirmed", False):
             raise ValueError("Confirm rebuilding this table's mapping before replacing row corrections.")
@@ -196,10 +196,10 @@ def render_reviewed_rows(draft, blocks, prefix, content):
                                 key=widget)
                     form_fields.append(("confirmed", widget))
                     st.form_submit_button("Save confirmed coverage", on_click=_queue,
-                        args=(request_key, {**base, "action": "coverage"}, form_fields))
+                        args=(request_key, {**base, "action": "coverage", "table_number": record.table_number}, form_fields))
                 st.button("Revoke this site's coverage confirmations", key=local + "_coverage_revoke",
                     on_click=_queue, args=(request_key,
-                        {**base, "action": "coverage_revoke"}, (("site", selected_key),)))
+                        {**base, "action": "coverage_revoke", "table_number": record.table_number}, (("site", selected_key),)))
         if kind == "maintenance":
             for unmatched in record.unmatched:
                 st.caption(f"Unmatched source row {unmatched.number}: {unmatched.reason} — " + " | ".join(unmatched.cells))
