@@ -26,7 +26,7 @@ from urllib.request import urlopen
 
 from docx import Document
 import pymupdf
-from playwright.sync_api import expect, sync_playwright
+from playwright.sync_api import expect, sync_playwright, TimeoutError
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -72,32 +72,81 @@ def until_store(token, revision, names=()):
 
 
 def add_requirement_form(page, name):
-    expander = page.locator('[data-testid="stExpander"] summary').filter(
-        has=page.get_by_text("Add requirement", exact=True))
-    expect(expander).to_have_count(1)
-    # Streamlit's expander is a native <details>, and the <summary> does
-    # not reliably expose aria-expanded. Inspect the actual open attribute
-    # so a pre-opened panel is never toggled shut by this test.
-    if expander.locator("xpath=ancestor::details[1]").get_attribute("open") is None:
-        expander.click()
+    # Open the panel via the button-visibility loop, not a single read of
+    # the <details> open attribute: under the repeated reruns in the
+    # conflict phase that read can catch a fresh render and toggle a
+    # pre-opened panel shut. (Helper is defined below; resolved at call time.)
+    ensure_requirement_panel_open(page)
     field = page.get_by_role("textbox", name="Requirement name", exact=True)
     expect(field).to_be_visible()
     field.fill(name)
     field.press("Tab")  # Deliver the native input before its button becomes enabled.
     expect(field).to_have_value(name)
     expect(page.get_by_role("button", name="Add requirement", exact=True)).to_be_enabled(timeout=20000)
+    # The button renders enabled while the rerun the Tab commit started is
+    # still going (the rest of the page -- matrix grid, monthly sessions --
+    # renders after it). Returning now lets a later click start mid-rerun;
+    # on a slow runner the rerun then replaces the button node under
+    # Playwright's actionability wait and the click times out detached.
+    # Wait the rerun out before the caller does anything with the page.
+    settled(page)
     return field
 
 
+def ensure_requirement_panel_open(page):
+    """Make the Add requirement button visible, however the panel got there.
+
+    Do NOT decide from the <details> open attribute: this page reruns every
+    few seconds in the conflict phase, and a single instantaneous read can
+    catch a fresh closed render of an open panel (or vice versa) and toggle
+    a pre-opened panel shut -- which removes the button from the DOM until
+    someone reopens it. Instead loop on the button itself: on a settled
+    page, a missing button means the panel is closed, so click the summary
+    once and re-check. A wrong-way toggle self-corrects on the next pass
+    because the check is the button, not the attribute.
+    """
+    button = page.get_by_role("button", name="Add requirement", exact=True)
+    for _ in range(4):
+        settled(page)
+        if button.count() and button.is_visible():
+            return
+        panel = page.locator('[data-testid="stExpander"] summary').filter(
+            has=page.get_by_text("Add requirement", exact=True))
+        expect(panel).to_have_count(1, timeout=30000)
+        panel.click()
+    settled(page)
+    if not (button.count() and button.is_visible()):
+        raise AssertionError("Add requirement button never became visible")
+
+
 def perform_add(page):
-    page.get_by_role("button", name="Add requirement", exact=True).click()
+    # Never start the click while a rerun is in flight: a rerun that
+    # finishes mid-click replaces the button node and Playwright times out
+    # detached. One retry covers a rerun that lands after the first click
+    # attempt started.
+    ensure_requirement_panel_open(page)
+    settled(page)
+    button = page.get_by_role("button", name="Add requirement", exact=True)
+    expect(button).to_be_visible(timeout=30000)
+    expect(button).to_be_enabled(timeout=30000)
+    try:
+        button.click(timeout=30000)
+    except TimeoutError:
+        ensure_requirement_panel_open(page)
+        settled(page)
+        button = page.get_by_role("button", name="Add requirement", exact=True)
+        expect(button).to_be_visible(timeout=30000)
+        expect(button).to_be_enabled(timeout=30000)
+        button.click(timeout=30000)
     settled(page)
 
 
 def open_training(page):
     settled(page)
     preparer = page.get_by_role("textbox", name="Prepared by", exact=True)
-    expect(preparer).to_be_visible()
+    # After a reload + recovery the full page can take well over the 5s
+    # default to render on a slow runner; same 40s margin as elsewhere.
+    expect(preparer).to_be_visible(timeout=40000)
     if not preparer.input_value():
         preparer.fill("Synthetic two-browser reviewer")
         preparer.press("Tab")
@@ -234,12 +283,11 @@ def journey():
             # Reload legitimately re-renders the Add requirement expander
             # collapsed. Reopen it with a real pointer action BEFORE checking
             # retained native input. Do not refill the textbox or turn a lost
-            # value into a false passing recovery.
-            requirement_panel = b.locator('[data-testid="stExpander"] summary').filter(
-                has=b.get_by_text("Add requirement", exact=True))
-            expect(requirement_panel).to_have_count(1)
-            if requirement_panel.locator("xpath=ancestor::details[1]").get_attribute("open") is None:
-                requirement_panel.click()
+            # value into a false passing recovery. The helper loops on the
+            # button itself instead of one read of the <details> open
+            # attribute, which can misread under the repeated reruns here
+            # and toggle a pre-opened panel shut.
+            ensure_requirement_panel_open(b)
             # The retained pending value is checked, not refilled.
             expect(b.get_by_role("textbox", name="Requirement name", exact=True)).to_have_value(
                 REQUIREMENTS[1])
@@ -285,7 +333,23 @@ def journey():
             # interrupted older browser journal may now be based on snapshot 1.
             # The UI must offer a deliberate choice; never silently replace
             # snapshot 2 or accept its old draft as a new completion.
+            # The recovery prompt renders on a later run than the landing
+            # view, so a single count() right after settled() can miss it:
+            # wait for whichever state the page reaches -- the prompt or the
+            # editor -- instead of assuming the first settled render is final.
+            # While the prompt is up the editor below it does not render, so
+            # the two are mutually exclusive.
+            deadline = time.monotonic() + 60
             review = b.get_by_role("button", name="Review draft changes", exact=True)
+            preparer = b.get_by_role("textbox", name="Prepared by", exact=True)
+            while time.monotonic() < deadline:
+                if review.count() or preparer.count():
+                    break
+                time.sleep(.5)
+            else:
+                raise AssertionError(
+                    "After reload neither the draft-recovery prompt nor the "
+                    "report editor appeared within 60s")
             if review.count():
                 review.click()
                 expect(b.get_by_role("button", name="Open saved report", exact=True)).to_be_visible()
