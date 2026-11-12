@@ -133,7 +133,7 @@ def safe_notes(raw: str) -> tuple[str, tuple[str, ...]]:
 def draft_request(notes: str):
     safe, notices = safe_notes(notes)
     payload = [{"type": "text", "text": PROMPT + json.dumps({"notes": safe}, ensure_ascii=False)}]
-    return payload, notices
+    return payload, notices, safe
 
 
 def parse_draft(value) -> str:
@@ -250,7 +250,7 @@ def render_activity_notes(draft, blocks, prefix, field, *, enabled: bool):
                      key=prefix + "_activity_notes_start",
                      disabled=bool(job) or not combined.strip()):
             try:
-                content, notices = draft_request(combined)
+                content, notices, reviewed_input = draft_request(combined)
                 for notice in notices:
                     st.caption(notice)
                 if not ai.ANTHROPIC_API_KEY:
@@ -265,7 +265,7 @@ def render_activity_notes(draft, blocks, prefix, field, *, enabled: bool):
                     st.warning("The reader is busy. Retry or continue with manual Activity.")
                 else:
                     st.session_state[job_key] = {
-                        "future": future, "notes": combined, "hash": note_hash,
+                        "future": future, "notes": reviewed_input, "hash": note_hash,
                         "scope": scope, "baseline": current.fingerprint,
                     }
                     st.rerun()
