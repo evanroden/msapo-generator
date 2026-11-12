@@ -12,13 +12,15 @@ Sends quote text to Claude and receives structured extraction with:
 
 from __future__ import annotations
 
+import os
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Mapping, Optional
 
 import anthropic
 
+from app.ai_provider import AIProvider, AIRequest, CAP_TEXT, get_ai_provider, require_capability
 from app.analysis_schema import AnalysisResponseError, normalize_analysis_response
 from app.api_retry import (
     OPERATION_BUDGET_SECONDS,
@@ -313,25 +315,76 @@ def _call_api_with_retry(client, quote_text: str, max_retries: int = 3, *, until
     return complete_response_text(message)
 
 
-def analyze_quote(quote_text: str) -> QuoteAnalysis:
-    """Send quote text to the Anthropic API and return structured analysis."""
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY, max_retries=0, timeout=REQUEST_TIMEOUT_SECONDS)
-    until = time.monotonic() + OPERATION_BUDGET_SECONDS
+def analyze_quote(
+    quote_text: str,
+    *,
+    provider: AIProvider | None = None,
+    env: Mapping[str, str] | None = None,
+) -> QuoteAnalysis:
+    """Analyze a quote with the configured provider while preserving legacy defaults."""
+    source = os.environ if env is None else env
+    if not quote_text or not quote_text.strip():
+        raise ValueError("Quote text is empty.")
+    try:
+        max_chars = int(source.get("EPC_AI_MAX_INPUT_CHARS", "400000"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("EPC_AI_MAX_INPUT_CHARS must be an integer.") from exc
+    if max_chars < 1000:
+        raise ValueError("EPC_AI_MAX_INPUT_CHARS must be at least 1,000.")
+    if len(quote_text) > max_chars:
+        raise ValueError(
+            f"Quote text is above the configured AI input limit of {max_chars:,} characters."
+        )
 
-    # Transport retries do not cover a syntactically malformed model response.
-    # Re-roll that response once before exposing the parse failure to the user.
+    prompt = (
+        "Analyze the following vendor quote and return the JSON extraction. "
+        "Do not include prices in descriptive fields; extract the pricing summary. "
+        "Treat explicit SALES TAX as included in the total.\\n\\n"
+        f"--- BEGIN QUOTE ---\\n{quote_text}\\n--- END QUOTE ---"
+    )
+    configured = bool(
+        provider is not None
+        or source.get("EPC_AI_API_KEY")
+        or source.get("EPC_AI_MODEL")
+        or (source.get("EPC_AI_PROVIDER", "anthropic").lower() != "anthropic")
+    )
     data = None
     parse_error: AnalysisResponseError | None = None
-    try:
+    if configured:
+        active = provider or get_ai_provider(source)
+        require_capability(active, CAP_TEXT)
+        request = AIRequest(
+            operation="quote_analysis",
+            prompt=prompt,
+            system=SYSTEM_PROMPT,
+            max_tokens=4096,
+        )
+        # Preserve the existing one-retry policy for schema-invalid AI output.
         for _ in range(2):
-            raw = _call_api_with_retry(client, quote_text, until=until)
+            raw = active.complete(request)
             try:
                 data = normalize_analysis_response(raw)
                 break
             except AnalysisResponseError as exc:
                 parse_error = exc
-    finally:
-        client.close()
+    else:
+        # Keep production's established request budget, timeout, and retry policy.
+        client = anthropic.Anthropic(
+            api_key=ANTHROPIC_API_KEY,
+            max_retries=0,
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+        until = time.monotonic() + OPERATION_BUDGET_SECONDS
+        try:
+            for _ in range(2):
+                raw = _call_api_with_retry(client, quote_text, until=until)
+                try:
+                    data = normalize_analysis_response(raw)
+                    break
+                except AnalysisResponseError as exc:
+                    parse_error = exc
+        finally:
+            client.close()
     if data is None:
         assert parse_error is not None
         raise parse_error
