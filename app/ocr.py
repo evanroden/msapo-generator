@@ -300,6 +300,7 @@ def _portable_pdf_text(
         len(embedded) >= min_chars
         and len(re.findall(r"[A-Za-z0-9]{2,}", embedded)) >= 3
         and sum(ch.isprintable() for ch in embedded) >= len(embedded) * 0.85
+        and not getattr(result, "has_scanned_pages", False)
     ):
         _check_extracted_size(len(embedded))
         return embedded

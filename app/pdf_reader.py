@@ -18,6 +18,8 @@ class PDFReadResult:
     text: str
     analysis_bytes: bytes
     page_count: int
+    # When true, a PDF with native text also has pages needing OCR.
+    has_scanned_pages: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.text, str):
@@ -93,12 +95,17 @@ class PyMuPDFReader:
                     )
                 if pdf.is_encrypted:
                     analysis_bytes = pdf.tobytes(encryption=fitz.PDF_ENCRYPT_NONE)
+                has_scanned_pages = False
                 for page in pdf:
-                    text_parts.append(page.get_text())
+                    native = page.get_text()
+                    text_parts.append(native)
+                    if len(native.strip()) < 20:
+                        has_scanned_pages = True
                 return PDFReadResult(
                     text="\n".join(text_parts).strip(),
                     analysis_bytes=analysis_bytes,
                     page_count=pdf.page_count,
+                    has_scanned_pages=has_scanned_pages,
                 )
         except PDFReaderError:
             raise

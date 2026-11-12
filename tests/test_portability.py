@@ -434,3 +434,25 @@ def test_live_sqlite_submission_store_requires_explicit_durable_path():
                 "EPC_SUBMISSION_STORE_BACKEND": "sqlite",
             }
         )
+
+
+def test_mixed_native_text_and_scanned_pages_are_not_silently_truncated():
+    class MixedReader:
+        name = "mixed"
+
+        def extract_text(self, data):
+            return PDFReadResult(
+                "This native text has enough real words to pass the quality check",
+                b"pdf", 2, has_scanned_pages=True,
+            )
+
+        def render_pages(self, data, **kwargs):
+            return [RenderedPage(1, b"page1"), RenderedPage(2, b"page2")]
+
+        def diagnostic(self):
+            return {"configured": True}
+
+    provider = FakeProvider(["first page and second page"])
+    text = extract_text_from_pdf(b"pdf", provider=provider, reader=MixedReader(), env={})
+    assert text == "first page and second page"
+    assert [len(request.parts) for request in provider.requests] == [2]

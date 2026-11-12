@@ -1744,7 +1744,8 @@ class SQLiteMemoryBackend:
     def _connect(self) -> sqlite3.Connection:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self.path, timeout=5)
-        conn.execute("PRAGMA journal_mode=WAL")
+        from app.sqlite_storage import journal_mode
+        conn.execute(f"PRAGMA journal_mode={journal_mode(self.path)}")
         conn.execute("PRAGMA busy_timeout=5000")
         conn.executescript(_PORTABILITY_CONTACT_SCHEMA)
         return conn
