@@ -599,6 +599,9 @@ def test_required_omitted_text_opens_one_native_field_without_approval(monkeypat
     from types import SimpleNamespace
     block = ResolvedBlock("activity_summary", "Omit", text="Retained historical wording")
     report = synthetic_draft(block)
+    required_spec = replace(report.sections[0].blocks[0], required=True)
+    required_section = replace(report.sections[0], blocks=(required_spec, *report.sections[0].blocks[1:]))
+    report = replace(report, sections=(required_section, *report.sections[1:]))
     state = {"p_draft": report}
     monkeypatch.setattr(correction, "st", SimpleNamespace(session_state=state))
     monkeypatch.setattr(guided, "_rich_text_scope", lambda prefix: "scope")

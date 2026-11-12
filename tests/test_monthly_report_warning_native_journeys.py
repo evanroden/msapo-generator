@@ -4,6 +4,7 @@ All data are synthetic; tests do not approve source/client content or bypass
 preflight. DOM focus and Return-to-Review remain hosted Playwright acceptance.
 """
 from streamlit.testing.v1 import AppTest
+from app.monthly_report_checks import preflight
 
 
 BASE = """

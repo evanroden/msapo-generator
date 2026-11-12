@@ -1495,10 +1495,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     draft, removed_prices = client_table_draft(complete_guided_sections(normalize_mbcx(refresh_profile_identity(st.session_state[draft_key], profile))))
     if removed_prices:
         st.info("Price columns were left out of this working report: " + ", ".join(removed_prices) + ". The saved original remains available. Check the remaining wording and images for prices before download.")
-    # A missing preparer must never strand someone in a distant section with
-    # only a generic instruction. This stable in-page anchor identifies the
-    # actual native text input immediately below it (not a fake proxy field).
-    st.markdown('<span id="report-prepared-by"></span>', unsafe_allow_html=True)
+    # The native preparer renderer owns the unique in-page anchor and
+    # correction marker immediately before the actual native input.
     from app.monthly_report_preparer_ui import render_preparer
     prepared = render_preparer(prefix, draft.prepared_by, field, draft=draft)
     draft = replace(draft, prepared_by=prepared)

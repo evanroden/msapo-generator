@@ -90,7 +90,7 @@ def candidates(draft, key, code):
                                    if c < len(row) and str(row[c]).strip())
                     if not flagged:
                         numeric = [c for c, value in enumerate(row)
-                                   if re.search(r"\\d", str(value))]
+                                   if re.search(r"\d", str(value))]
                         if numeric:
                             flagged.add(numeric[-1])
             for column in sorted(flagged):
