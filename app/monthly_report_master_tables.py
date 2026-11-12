@@ -60,6 +60,30 @@ _WORK_ORDER_MONTHS = frozenset(
 )
 
 
+_WORK_ORDER_METRICS = frozenset({
+    "wo received", "wo closed", "work orders received", "work orders closed",
+    "pm received", "pm closed", "non-pm received", "non-pm closed",
+    "non pm received", "non pm closed",
+})
+
+
+def _work_order_month_heading(value: str) -> tuple[int | None, int] | None:
+    """Recognize an actual month label, with or without an explicit year."""
+    label = " ".join(str(value).strip().casefold().split())
+    iso = re.fullmatch(r"(\d{4})-(0[1-9]|1[012])", label)
+    if iso:
+        return int(iso.group(1)), int(iso.group(2))
+    match = re.fullmatch(r"([a-z]{3,9})\.?(?:\s+(\d{4}))?", label)
+    if not match:
+        return None
+    names = {name.casefold(): number for number, name in
+             enumerate(month_name) if number and name}
+    names.update({name.casefold(): number for number, name in
+                  enumerate(month_abbr) if number and name})
+    month = names.get(match.group(1))
+    return (int(match.group(2)) if match.group(2) else None, month) if month else None
+
+
 def _heading(value: str, n: int, old_titles: set[str], *, slot: str = "") -> str:
     """Strict allowlist; do not infer a current client's name from the master."""
     normalized = " ".join(str(value).strip().split())
@@ -70,7 +94,9 @@ def _heading(value: str, n: int, old_titles: set[str], *, slot: str = "") -> str
     if n == 0 and len(normalized) == 1 and (normalized.isdigit() or normalized == "#"):
         return "#"
     safe_generic = key in _GENERIC_LABELS or (
-        slot == "work_orders" and key in _WORK_ORDER_MONTHS
+        slot == "work_orders" and (
+            key in _WORK_ORDER_METRICS or _work_order_month_heading(normalized) is not None
+        )
     )
     if key == "" or key in old_titles or not safe_generic:
         return f"Detail {n + 1}"
@@ -78,19 +104,30 @@ def _heading(value: str, n: int, old_titles: set[str], *, slot: str = "") -> str
 
 
 def _verified_work_order_month_frame(headers: tuple[str, ...]) -> bool:
-    """Recognize six consecutive month labels, never a lone client name.
-
-    The native seven-column WO frame has one label column followed by either
-    Jan–Jun or Jul–Dec. A short previous-client heading such as "May" alone
-    does not authorize itself as a safe new report field.
-    """
+    """Allow only verified six- or twelve-month native work-order headings."""
     labels = tuple(" ".join(str(value).strip().split()).casefold()
                    for value in headers)
-    if len(labels) != 7 or labels[0] not in ("wo received", "work order", "work order #"):
+    if len(labels) == 7:
+        if labels[0] not in ("wo received", "work order", "work order #"):
+            return False
+        return any(all(labels[index + 1] in (
+            month_abbr[start + index].casefold(), month_name[start + index].casefold()
+        ) for index in range(6)) for start in (1, 7))
+    if len(labels) != 13 or labels[0] not in _WORK_ORDER_METRICS:
         return False
-    return any(all(labels[index + 1] in (
-        month_abbr[start + index].casefold(), month_name[start + index].casefold())
-        for index in range(6)) for start in (1, 7))
+    months = tuple(_work_order_month_heading(label) for label in labels[1:])
+    if any(value is None for value in months):
+        return False
+    has_year = tuple(value[0] is not None for value in months)
+    if any(has_year) and not all(has_year):
+        return False  # A mixed year/no-year header cannot prove its ordering.
+    positions = tuple(year * 12 + month - 1 for year, month in months) if all(has_year) else (
+        tuple(month for _, month in months))
+    if all(has_year):
+        return all(next_value == value + 1 for value, next_value in
+                   zip(positions, positions[1:]))
+    return all(next_value == value % 12 + 1 for value, next_value in
+               zip(positions, positions[1:]))
 
 
 def from_inspection(inspection) -> tuple[MasterTable, ...]:
