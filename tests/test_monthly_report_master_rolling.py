@@ -85,8 +85,8 @@ def test_rebind_preserves_two_explicit_locations_and_original_month_history(monk
 
 
 def test_ambiguous_or_wrong_site_is_blocked_without_cross_site_copy(monkeypatch):
-    sites = (Facility("n", "North", ("Shared",)),
-             Facility("s", "South", ("Shared",)))
+    sites = (Facility("n", "West Plant", ("Shared",)),
+             Facility("shared", "South"))
     draft, older, shapes = make_draft(sites, prior_rows=(row("Shared"),))
     monkeypatch.setattr(master, "for_profile", lambda _: shapes)
     with pytest.raises(ValueError, match="ambiguous"):
