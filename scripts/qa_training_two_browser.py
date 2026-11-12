@@ -75,7 +75,10 @@ def add_requirement_form(page, name):
     expander = page.locator('[data-testid="stExpander"] summary').filter(
         has=page.get_by_text("Add requirement", exact=True))
     expect(expander).to_have_count(1)
-    if expander.get_attribute("aria-expanded") != "true":
+    # Streamlit's expander is a native <details>, and the <summary> does
+    # not reliably expose aria-expanded. Inspect the actual open attribute
+    # so a pre-opened panel is never toggled shut by this test.
+    if expander.locator("xpath=ancestor::details[1]").get_attribute("open") is None:
         expander.click()
     field = page.get_by_role("textbox", name="Requirement name", exact=True)
     expect(field).to_be_visible()
@@ -235,8 +238,9 @@ def journey():
             requirement_panel = b.locator('[data-testid="stExpander"] summary').filter(
                 has=b.get_by_text("Add requirement", exact=True))
             expect(requirement_panel).to_have_count(1)
-            if requirement_panel.get_attribute("aria-expanded") != "true":
+            if requirement_panel.locator("xpath=ancestor::details[1]").get_attribute("open") is None:
                 requirement_panel.click()
+            # The retained pending value is checked, not refilled.
             expect(b.get_by_role("textbox", name="Requirement name", exact=True)).to_have_value(
                 REQUIREMENTS[1])
             perform_add(b)
