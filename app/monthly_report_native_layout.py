@@ -1220,6 +1220,12 @@ def _build_verified_native_docx(draft, source_path, *, asset_loader=None, sectio
                                  master=False, operation):
     source_view, native_art = operation.view, operation.native_art
     if source_view is None:
+        if master:
+            # The operational source gate first validated the exact pinned
+            # original. Only the master renderer uses its immutable, separately
+            # hashed installation working copy; other imports remain unchanged.
+            from app.monthly_report_designs import render_source_for
+            source_path = render_source_for(draft.profile)
         return _build_native_docx(draft, source_path, asset_loader=asset_loader, section_key=section_key, master=master)
     if master:
         raise NativeLayoutError("Experimental native source views do not support master or foreign-branding reuse.")
