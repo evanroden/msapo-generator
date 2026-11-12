@@ -112,7 +112,8 @@ def test_guided_mpo_failure_preserves_pending_activity_and_reopens(monkeypatch, 
     app, profile = setup_app(monkeypatch, tmp_path)
     first, last = b"First synthetic inspection.", b"Last synthetic inspection."
     good_bad_good = (
-        ("first.txt", first), ("damaged.mpo", mpo()[:-100]), ("last.txt", last),
+        ("first-service-report.txt", first), ("damaged.mpo", mpo()[:-100]),
+        ("last-service-report.txt", last),
     )
     original_uploader = st.file_uploader
 
@@ -131,6 +132,7 @@ def test_guided_mpo_failure_preserves_pending_activity_and_reopens(monkeypatch, 
     assert not app.exception
     expected_ids = {sha256(first).hexdigest(), sha256(last).hexdigest()}
     assert {src.id for src in draft(app).sources} == expected_ids
+    assert {src.classification for src in draft(app).sources} == {'Vendor service'}
     expected = "\n\n".join(("The unsaved Activity edit must survive.", first.decode(), last.decode()))
     assert activity(app).text == editor(app).value == expected
     notice = "\n".join(item.value for item in (*app.warning, *app.info, *app.error))

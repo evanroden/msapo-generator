@@ -16,7 +16,7 @@ from test_monthly_report_rfi_ui import SCRIPT, field, labels, press
 
 
 # Requests open named row fields; Capital and end-of-life keep their grids.
-GRID_TABLES = tuple(key for key in EMPTY_TABLES if key not in CARD_TABLES)
+CAPITAL_TABLES = ('capital_renewal', 'end_of_life')
 
 
 def edit_grid(app, key, *, edited=None, added=None, removed=None):
@@ -39,7 +39,7 @@ def grid(app, key):
 
 
 def open_entry(app, key):
-    next(button for button in app.button if button.label == EMPTY_TABLES[key][1]).click().run()
+    next(button for button in app.button if button.label == CARD_TABLES.get(key, (None, EMPTY_TABLES[key][1]))[1]).click().run()
 
 
 def test_open_request_removes_the_empty_sentence_and_none_cell_placeholders():
@@ -78,37 +78,44 @@ def test_blank_and_removed_requests_do_not_enter_durable_data_or_actual_word_out
     assert EMPTY_TABLES['rfi_matrix'][0] not in table_text
 
 
-@pytest.mark.parametrize('key', GRID_TABLES)
+
+@pytest.mark.parametrize('key', CAPITAL_TABLES)
 def test_fresh_entry_opens_blank_native_cells_without_stale_empty_copy_or_data(key):
     app = workspace(key)
     original = app.session_state['draft']
     assert not app.exception and not app.dataframe
     assert any(item.value == EMPTY_TABLES[key][0] for item in app.caption)
     open_entry(app, key)
-    assert not app.exception and len(app.dataframe) == 1
-    identity = grid(app, key)
+    assert not app.exception and not app.dataframe
     assert app.session_state['draft'] == original
-    assert set(app.session_state[identity + '_data'][0].values()) == {''}
+    fields = (*app.text_input, *app.text_area)
+    assert len(fields) == 3 and {widget.value for widget in fields} == {''}
+    identity = fields[0].proto.id
     assert not any(item.value == EMPTY_TABLES[key][0] for item in app.caption)
-    assert not any(button.label == EMPTY_TABLES[key][1] for button in app.button)
+    label = CARD_TABLES[key][1]
+    assert next(button for button in app.button if button.label == label).disabled
     app.run()
-    assert grid(app, key) == identity
-    assert app.session_state['draft'] == original
+    assert not app.exception and app.session_state['draft'] == original
+    assert (*app.text_input, *app.text_area)[0].proto.id == identity
 
 
-@pytest.mark.parametrize('key', GRID_TABLES)
+
+@pytest.mark.parametrize('key', CAPITAL_TABLES)
 def test_blank_and_removed_rows_do_not_enter_durable_data_or_actual_word_output(monkeypatch, tmp_path, key):
     monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path))
     app = workspace(key)
     open_entry(app, key)
-    identity = grid(app, key)
-    columns = tuple(app.session_state[identity + '_data'][0])
-    edit_grid(app, identity, edited={0: {columns[1]: '   '}})
+    field_name = 'Recommendation' if key == 'capital_renewal' else 'Asset'
+    def chosen():
+        return next(widget for widget in (*app.text_input, *app.text_area)
+                    if widget.label == field_name)
+    chosen().set_value('   ').run()
     assert not app.exception and not current(app, key).rows
-    edit_grid(app, identity, edited={0: {columns[1]: 'Synthetic item to remove.'}})
-    assert current(app, key).rows[0][1] == 'Synthetic item to remove.'
-    assert grid(app, key) == identity
-    edit_grid(app, identity, removed=[0])
+    chosen().set_value('Synthetic item to remove.').run()
+    index = 2 if key == 'capital_renewal' else 1
+    assert current(app, key).rows[0][index] == 'Synthetic item to remove.'
+    assert not app.dataframe
+    next(button for button in app.button if button.label == 'Remove ' + CARD_TABLES[key][0]).click().run()
     assert not app.exception and not current(app, key).rows
     draft = app.session_state['draft']
     kept = active.save('e' * 32, draft, expected_revision=0, base_snapshot_revision=0)
@@ -116,8 +123,8 @@ def test_blank_and_removed_rows_do_not_enter_durable_data_or_actual_word_output(
     assert loaded.draft == draft and loaded.revision == kept.revision
     output_draft = replace(draft, sections=tuple(replace(section, included=any(spec.key == key for spec in section.blocks))
                                                 for section in draft.sections))
-    # This intentionally empty, included optional section has only its honest
-    # empty-section qualification. No site/date/source blocker is waived.
+    # The intentionally empty section is qualified without weakening site
+    # identity, source review, or the client-facing price gate.
     assert all(check.code == 'empty' and not check.blocking for check in preflight(output_draft))
     document = Document(BytesIO(assemble_docx(output_draft, acknowledged_fingerprint=output_draft.fingerprint)))
     table_text = '\n'.join(cell.text for table in document.tables for row in table.rows for cell in row.cells)
@@ -136,14 +143,19 @@ def test_omitted_imported_empty_capital_frame_keeps_schema_until_deliberate_entr
     app.run()
     assert not app.dataframe and current(app, key) == incoming
     open_entry(app, key)
-    identity = grid(app, key)
-    assert current(app, key) == incoming
-    edit_grid(app, identity, edited={0: {'Timing': '   '}})
-    assert current(app, key) == incoming  # Whitespace never reincludes the omitted frame.
-    edit_grid(app, identity, edited={0: {'Source identifier': '0007', 'Asset / recommendation': 'Replace motor', 'Timing': 'Unknown'}})
+    assert not app.dataframe and current(app, key) == incoming
+    timing = next(widget for widget in app.text_input if widget.label == 'Timing')
+    identity = timing.proto.id
+    timing.set_value('   ').run()
+    assert current(app, key) == incoming  # Whitespace never reincludes an omitted frame.
+    assert next(widget for widget in app.text_input if widget.label == 'Timing').proto.id == identity
+    next(widget for widget in app.text_input if widget.label == 'Source identifier').set_value('0007')
+    next(widget for widget in app.text_area if widget.label == 'Asset / recommendation').set_value('Replace motor')
+    next(widget for widget in app.text_input if widget.label == 'Timing').set_value('Unknown')
+    next(button for button in app.button if button.label == 'Close editing').click().run()
     result = current(app, key)
-    assert not app.exception and result.source == 'This month'
+    assert not app.exception and not app.dataframe and result.source == 'This month'
     assert result.extra_tables[0].columns == frame.columns
     assert result.extra_tables[0].reference == frame.reference
     assert result.extra_tables[0].rows == (('0007', 'Replace motor', 'Unknown', ''),)
-    assert result.references == incoming.references and grid(app, key) == identity
+    assert result.references == incoming.references

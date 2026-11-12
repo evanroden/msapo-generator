@@ -103,6 +103,7 @@ def test_passive_grid_preserves_every_physical_cell_and_omission(columns, source
     assert app.session_state['draft'] == draft
 
 
+
 @pytest.mark.parametrize('key', ['water_monthly_update', 'capital_renewal'])
 @pytest.mark.parametrize('source', ['This month', 'Omit'])
 def test_native_corrections_blanks_and_row_changes_stay_column_specific(key, source):
@@ -110,9 +111,30 @@ def test_native_corrections_blanks_and_row_changes_stay_column_specific(key, sou
                         (('A', 'B', 'C'), ('D', 'E', 'F')), 'synthetic:retained')
     draft = report(table, key=key, source=source)
     app = start(draft)
-    labels = tuple(app.dataframe[-1].value.columns)
-    wire(app, edited={'0': {labels[0]: 'corrected-A', labels[1]: ''}},
-         added=[dict(zip(labels, ('0', '', 'kW')))], deleted=[1])
+    if key == 'water_monthly_update':
+        labels = tuple(app.dataframe[-1].value.columns)
+        wire(app, edited={'0': {labels[0]: 'corrected-A', labels[1]: ''}},
+             added=[dict(zip(labels, ('0', '', 'kW')))], deleted=[1])
+    else:
+        # Capital uses native cards, not the old data-editor wire format.
+        # Preserve the same duplicate-column, blank, deletion and add checks.
+        assert not app.dataframe and current(app) == table
+        next(button for button in app.button if button.label == 'Edit capital item').click().run()
+        assert not app.exception and not app.dataframe
+        physical = [widget for widget in app.text_input if widget.label == 'Reading']
+        assert len(physical) == 2
+        physical[0].set_value('corrected-A')
+        physical[1].set_value('')
+        next(button for button in app.button if button.label == 'Close editing').click().run()
+        assert current(app).rows == (('corrected-A', '', 'C'), ('D', 'E', 'F'))
+        [button for button in app.button if button.label == 'Remove capital item'][1].click().run()
+        assert current(app).rows == (('corrected-A', '', 'C'),)
+        next(button for button in app.button if button.label == 'Add capital item').click().run()
+        assert len(app.text_input) == 3
+        app.text_input[0].set_value('0')
+        app.text_input[2].set_value('kW')
+        next(button for button in app.button if button.label == 'Close editing').click().run()
+        assert not app.exception and not app.dataframe
     expected = replace(table, rows=(('corrected-A', '', 'C'), ('0', '', 'kW')))
     assert current(app) == expected
     result = app.session_state['draft']
@@ -121,7 +143,16 @@ def test_native_corrections_blanks_and_row_changes_stay_column_specific(key, sou
     assert result.blocks[1:] == draft.blocks[1:] and result.profile == draft.profile
     reopened = start(result)
     assert current(reopened) == expected
-    assert tuple(map(tuple, reopened.dataframe[-1].value.values)) == expected.rows
+    if key == 'water_monthly_update':
+        assert tuple(map(tuple, reopened.dataframe[-1].value.values)) == expected.rows
+    else:
+        assert not reopened.dataframe
+        next(button for button in reopened.button if button.label == 'Edit capital item').click().run()
+        assert tuple(widget.value for widget in reopened.text_input) == expected.rows[0]
+        next(button for button in reopened.button if button.label == 'Close editing').click().run()
+        next(button for button in reopened.button if button.label == 'Edit capital item').click().run()
+        assert tuple(widget.value for widget in reopened.text_input) == expected.rows[1]
+        assert current(reopened) == expected
 
 
 def test_legacy_collapsed_seed_cannot_rewrite_intact_canonical_columns():
@@ -142,16 +173,28 @@ def test_ordinary_unique_columns_keep_existing_native_key_and_labels():
     assert current(app).rows == (('pump', '17', 'pending'),)
 
 
+
 @pytest.mark.parametrize('rows', [(), (('', '', ''),)])
 def test_empty_optional_frame_keeps_original_schema_without_phantom_content(rows):
     table = ReportTable(('Reading', 'Reading', 'Status'), rows, 'synthetic:empty')
     draft = report(table, key='capital_renewal')
     app = start(draft)
-    next(b for b in app.button if b.label == 'Add capital item').click().run()
-    assert not app.exception
+    next(button for button in app.button if button.label == 'Add capital item').click().run()
+    assert not app.exception and not app.dataframe
+    assert len(app.text_input) == 3
+    assert {widget.value for widget in app.text_input} == {''}
     assert current(app) == table
-    wire(app)
+    app.run()  # A blank native draft is not a saved row.
     assert current(app) == table
+    next(button for button in app.button if button.label == 'Close editing').click().run()
+    assert current(app) == table
+    # An intentional insertion uses the original imported physical columns,
+    # and must never turn the pre-existing empty slot into a phantom row.
+    next(button for button in app.button if button.label == 'Add capital item').click().run()
+    app.text_input[0].set_value('0007')
+    app.text_input[1].set_value('Synthetic pump')
+    next(button for button in app.button if button.label == 'Close editing').click().run()
+    assert current(app) == replace(table, rows=(('0007', 'Synthetic pump', ''),))
 
 
 def test_price_evidence_in_earlier_duplicate_cell_is_retained_for_existing_gate():
