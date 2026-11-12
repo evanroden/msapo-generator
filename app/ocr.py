@@ -13,11 +13,20 @@ sent as ordered JPEG image blocks.
 from __future__ import annotations
 
 import base64
+import os
+import re
 import time
 from io import BytesIO
 from pathlib import Path
+from typing import Mapping
 
 import anthropic
+
+from app.ai_provider import (
+    AIProvider, AIProviderError, AIRequest, BinaryPart, CAP_DOCUMENT, CAP_IMAGE,
+    UnsupportedCapabilityError, get_ai_provider, require_capability,
+)
+from app.pdf_reader import PDFReader, get_pdf_reader
 
 from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
 from app.api_retry import (
@@ -263,8 +272,134 @@ def _check_extracted_size(size: int) -> None:
         )
 
 
-def extract_text_from_pdf(file_bytes: bytes) -> str:
-    """Read native pages locally; OCR scanned pages in ordered contiguous runs."""
+def _portable_positive_int(
+    env: Mapping[str, str], name: str, default: int, maximum: int
+) -> int:
+    try:
+        value = int(env.get(name, str(default)))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be an integer.") from exc
+    if not 1 <= value <= maximum:
+        raise ValueError(f"{name} must be between 1 and {maximum}.")
+    return value
+
+
+def _portable_pdf_text(
+    file_bytes: bytes,
+    *,
+    provider: AIProvider | None,
+    reader: PDFReader | None,
+    env: Mapping[str, str] | None,
+) -> str:
+    source = os.environ if env is None else env
+    active_reader = reader or get_pdf_reader(source)
+    result = active_reader.extract_text(file_bytes)
+    min_chars = _portable_positive_int(source, "EPC_PDF_TEXT_MIN_CHARS", 20, 10000)
+    embedded = result.text.strip()
+    if (
+        len(embedded) >= min_chars
+        and len(re.findall(r"[A-Za-z0-9]{2,}", embedded)) >= 3
+        and sum(ch.isprintable() for ch in embedded) >= len(embedded) * 0.85
+    ):
+        _check_extracted_size(len(embedded))
+        return embedded
+
+    active = provider or get_ai_provider(source)
+    if CAP_DOCUMENT in active.capabilities:
+        try:
+            text = active.complete(AIRequest(
+                operation="pdf_ocr",
+                prompt=_OCR_PROMPT,
+                parts=(BinaryPart(CAP_DOCUMENT, result.analysis_bytes, "application/pdf", "quote.pdf"),),
+                max_tokens=8192,
+            )).strip()
+            if text:
+                _check_extracted_size(len(text))
+                return text
+        except UnsupportedCapabilityError:
+            pass
+        except AIProviderError:
+            # Credential and network failures are never disguised as a media fallback.
+            raise
+
+    max_pages = _portable_positive_int(source, "EPC_OCR_MAX_PAGES", 30, 200)
+    dpi = _portable_positive_int(source, "EPC_OCR_DPI", 150, 400)
+    batch_size = _portable_positive_int(source, "EPC_OCR_PAGES_PER_BATCH", 5, 20)
+    max_pixels = _portable_positive_int(
+        source, "EPC_OCR_MAX_PIXELS_PER_PAGE", 40_000_000, 100_000_000
+    )
+    if result.page_count > max_pages:
+        raise ValueError("This PDF exceeds the configured OCR page limit.")
+    pages = active_reader.render_pages(
+        result.analysis_bytes,
+        dpi=dpi,
+        max_pages=max_pages,
+        max_pixels_per_page=max_pixels,
+    )
+    if not pages:
+        raise ValueError("The PDF reader returned no rendered pages for OCR.")
+    max_bytes = _portable_positive_int(
+        source, "EPC_OCR_MAX_TOTAL_IMAGE_BYTES", 50 * 1024 * 1024, 250 * 1024 * 1024
+    )
+    if sum(len(page.data) for page in pages) > max_bytes:
+        raise ValueError("Rendered PDF pages exceed the configured OCR byte limit.")
+    require_capability(active, CAP_IMAGE)
+    outputs = []
+    for index in range(0, len(pages), batch_size):
+        batch = pages[index:index + batch_size]
+        outputs.append(active.complete(AIRequest(
+            operation="pdf_ocr",
+            prompt=_OCR_PROMPT + " Preserve the supplied page order.",
+            parts=tuple(BinaryPart(CAP_IMAGE, p.data, p.media_type) for p in batch),
+            max_tokens=8192,
+        )).strip())
+    text = "\\n".join(output for output in outputs if output).strip()
+    _check_extracted_size(len(text))
+    if not text:
+        raise ValueError("The configured PDF reader and AI provider returned no text.")
+    return text
+
+
+def _portable_image_text(
+    file_bytes: bytes,
+    suffix: str,
+    *,
+    provider: AIProvider | None,
+    env: Mapping[str, str] | None,
+) -> str:
+    source = os.environ if env is None else env
+    active = provider or get_ai_provider(source)
+    require_capability(active, CAP_IMAGE)
+    blocks = image_blocks_for_vision(file_bytes, suffix)
+    parts = tuple(
+        BinaryPart(
+            CAP_IMAGE,
+            base64.b64decode(block["source"]["data"], validate=True),
+            block["source"]["media_type"],
+        )
+        for block in blocks
+    )
+    return active.complete(AIRequest(
+        operation="image_ocr", prompt=_OCR_PROMPT, parts=parts, max_tokens=8192
+    )).strip()
+
+
+def extract_text_from_pdf(
+    file_bytes: bytes,
+    *,
+    provider: AIProvider | None = None,
+    reader: PDFReader | None = None,
+    env: Mapping[str, str] | None = None,
+) -> str:
+    """Read native pages; use portable adapters when explicitly selected."""
+    source = os.environ if env is None else env
+    if (
+        provider is not None
+        or reader is not None
+        or source.get("EPC_AI_PROVIDER", "anthropic").lower() != "anthropic"
+        or source.get("EPC_PDF_READER", "pymupdf").lower() != "pymupdf"
+    ):
+        return _portable_pdf_text(file_bytes, provider=provider, reader=reader, env=env)
     import pymupdf as fitz
 
     until = time.monotonic() + OPERATION_BUDGET_SECONDS
@@ -408,14 +543,25 @@ def _ocr_pdf_via_page_images(file_bytes: bytes, *, until: float | None = None) -
     return _ocr_request(content, until=until)
 
 
-def extract_text_from_image(file_bytes: bytes, suffix: str) -> str:
+def extract_text_from_image(
+    file_bytes: bytes, suffix: str, *,
+    provider: AIProvider | None = None, env: Mapping[str, str] | None = None,
+) -> str:
     """Normalize all frames, then make one bounded OCR request."""
+    source = os.environ if env is None else env
+    if provider is not None or source.get("EPC_AI_PROVIDER", "anthropic").lower() != "anthropic":
+        return _portable_image_text(file_bytes, suffix, provider=provider, env=env)
     content = image_blocks_for_vision(file_bytes, suffix)
     content.append({"type": "text", "text": _OCR_PROMPT})
     return _ocr_request(content)
 
 
-def extract_text(file_bytes: bytes, filename: str) -> str:
+def extract_text(
+    file_bytes: bytes, filename: str, *,
+    provider: AIProvider | None = None,
+    reader: PDFReader | None = None,
+    env: Mapping[str, str] | None = None,
+) -> str:
     """Detect the uploaded file type and extract its text."""
     suffix = Path(filename).suffix.lower()
 
@@ -423,10 +569,10 @@ def extract_text(file_bytes: bytes, filename: str) -> str:
         return file_bytes.decode("utf-8", errors="replace")
 
     if suffix == ".pdf":
-        return extract_text_from_pdf(file_bytes)
+        return extract_text_from_pdf(file_bytes, provider=provider, reader=reader, env=env)
 
     if suffix in SUPPORTED_IMAGE_SUFFIXES:
-        return extract_text_from_image(file_bytes, suffix)
+        return extract_text_from_image(file_bytes, suffix, provider=provider, env=env)
 
     # Fallback for other text-like files.
     return file_bytes.decode("utf-8", errors="replace")
