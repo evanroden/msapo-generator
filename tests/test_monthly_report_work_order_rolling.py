@@ -65,6 +65,16 @@ def test_twelve_months_cross_year_and_received_closed_event_dates_are_independen
         "pdf:no-date#r3",)
 
 
+def test_selected_closure_and_pm_aliases_use_reviewed_normalized_values():
+    # Normalized rows express these as Completed and PM; dropdown values may
+    # still carry the source's human status/category variant labels.
+    source = review("aliases", (Row("r", "n", "WO-9", "2026-12-15", "",
+                                  "Completed", "PM"),), completion_column=False)
+    counts = count((source,), pm=("Preventive Maintenance",), closed=("Finished",))
+    assert counts.cell("n", "pm_received", "2026-12").value == "1"
+    assert counts.cell("n", "pm_closed", "2026-12").value == "1"
+
+
 def test_present_but_blank_completion_date_never_falls_back_to_closed_status():
     result = count((review("has-date", (
         Row("r", "n", "W-1", "2026-12-01", "", "Closed", "PM"),)),))
@@ -189,3 +199,9 @@ def test_undated_or_other_site_carry_is_rejected_not_backfilled():
         merge_carried_grid(correct, blank, december, JANUARY, site_title="South")
     assert merge_carried_grid(correct, blank, december, JANUARY,
                               site_title="North").rows[0][1] == "0"
+    with pytest.raises(ValueError, match="later month"):
+        merge_carried_grid(correct, blank, december, december, site_title="North")
+    undated_edits = ReportTable(correct.columns, (correct.rows[0],), correct.reference)
+    with pytest.raises(ValueError, match="current year-month"):
+        merge_carried_grid(correct, undated_edits, december, JANUARY,
+                           site_title="North")
