@@ -60,8 +60,10 @@ def test_before_create_and_current_revision_only_actual_after_create(monkeypatch
     assert calls == []
     # Standing library text is not a new monthly entry. Enter a real update
     # and acknowledge existing nonblocking warnings before creation.
+    # August (not the September report period) raises the existing
+    # stale-period warning, so the acknowledgement checkbox exists.
     next(w for w in app.text_area if w.label == 'Activity summary').set_value(
-        'Synthetic September 2026 activity update.').run()
+        'Synthetic August 2026 activity update.').run()
     assert calls == []
     review = next(w for w in app.checkbox if w.label == 'I checked these specific warnings')
     review.check().run()
