@@ -58,7 +58,16 @@ def test_before_create_and_current_revision_only_actual_after_create(monkeypatch
     assert not any('Actual Word (DOCX):' in c for c in initial)
     next(w for w in app.text_input if w.label == 'Prepared by').set_value('Synthetic Editor').run()
     assert calls == []
-    next(w for w in app.button if w.label == 'Create Word and PDF').click().run()
+    # Standing library text is not a new monthly entry. Enter a real update
+    # and acknowledge existing nonblocking warnings before creation.
+    next(w for w in app.text_area if w.label == 'Activity summary').set_value(
+        'Synthetic September 2026 activity update.').run()
+    assert calls == []
+    review = next(w for w in app.checkbox if w.label == 'I checked these specific warnings')
+    review.check().run()
+    create = next(w for w in app.button if w.label == 'Create Word and PDF')
+    assert not create.disabled
+    create.click().run()
     assert not app.exception
     assert len(calls) == 1
     completed = [c.value for c in app.caption]
