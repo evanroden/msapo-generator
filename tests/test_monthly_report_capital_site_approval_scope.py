@@ -3,17 +3,28 @@
 No production imports, source files, amounts, or user identities are used here.
 """
 from dataclasses import replace
+from io import BytesIO
+
+from docx import Document
+import pymupdf
 
 import pytest
 
 from app import monthly_report_library as library
 from app.monthly_report_capital_master import (
     CapitalItem,
+    capital_report_block,
     load_capital_master,
     save_capital_master,
     select_capital,
 )
-from app.monthly_report_model import Facility, ReportPeriod, ReportProfile
+from app.monthly_report_docx import assemble_docx
+from app.monthly_report_model import (
+    Facility, ReportDraft, ReportPeriod, ReportProfile, default_sections,
+)
+from app.monthly_report_setup import new_month_draft
+from app.pdf_converter import convert_to_pdf
+from tests.conftest import requires_libreoffice
 
 
 @pytest.fixture
@@ -137,3 +148,56 @@ def test_unknown_timing_stays_blank_and_vendor_totals_cannot_be_promoted(scopes)
     with pytest.raises(ValueError, match="Financial|financial"):
         approve(both, (forbidden, first.items[1]), revision=1)
     assert load_capital_master(both.contract) == first
+
+
+def _restored_rolled_south(scopes):
+    both, _, south, _ = scopes
+    master = existing(scopes)
+    period = ReportPeriod(2026, 9)
+    section = next(s for s in default_sections() if s.key == "capital")
+    block = capital_report_block(south, select_capital(south, master, period))
+    draft = ReportDraft(south, period, "Synthetic reviewer", (section,),
+                        (block,), synthetic=True)
+    library.save_snapshot(draft, expected_revision=0)
+    restored = library.load_snapshot(south.contract, south.key, period).draft
+    assert restored == draft
+
+    # A later approved contract version must not rewrite a saved report.
+    changed = replace(master.items[0], priority="Urgent")
+    later = approve(both, (changed, master.items[1]), revision=1)
+    assert later.revision == 2
+    assert library.load_snapshot(south.contract, south.key, period).draft == draft
+    next_month = new_month_draft(restored, ReportPeriod(2026, 10))
+    assert next_month.blocks[0].references == (master.reference,)
+    assert next_month.blocks[0].rows == block.rows
+    assert len(next_month.blocks[0].rows) == 1
+    return next_month
+
+
+def test_saved_monthly_south_report_keeps_reviewed_rows_in_word(scopes):
+    rolled = _restored_rolled_south(scopes)
+    raw = assemble_docx(rolled, acknowledged_fingerprint=rolled.fingerprint)
+    word = Document(BytesIO(raw))
+    cells = [cell.text for table in word.tables
+             for row in table.rows for cell in row.cells]
+    assert cells.count("Inspect chiller") == 1
+    assert cells.count("CHILLER-02") == 1
+    assert "Review boiler replacement" not in cells
+    assert "Synthetic North" not in cells
+    assert "Medium" in cells
+
+
+@requires_libreoffice
+def test_saved_monthly_south_report_pdf_retains_scope_and_text(scopes, tmp_path):
+    rolled = _restored_rolled_south(scopes)
+    word = tmp_path / "synthetic-capital.docx"
+    word.write_bytes(
+        assemble_docx(rolled, acknowledged_fingerprint=rolled.fingerprint))
+    pdf_path = convert_to_pdf(word)
+    with pymupdf.open(str(pdf_path)) as pdf:
+        assert len(pdf) >= 1
+        readable = " ".join(" ".join(p.get_text().split()) for p in pdf)
+        assert "Inspect chiller" in readable
+        assert "CHILLER-02" in readable
+        assert "Review boiler replacement" not in readable
+        assert "Synthetic North" not in readable
