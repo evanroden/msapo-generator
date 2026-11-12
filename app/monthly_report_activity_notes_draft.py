@@ -92,9 +92,9 @@ def parse_notes_file(filename: str, content: bytes) -> str:
                 for row in table.rows:
                     lines.append(" | ".join(cell.text for cell in row.cells))
             text = "\n".join(lines)
-        except (BadZipFile, KeyError, OSError, TypeError, ValueError) as exc:
-            if isinstance(exc, ValueError):
-                raise
+        except ValueError:
+            raise
+        except Exception as exc:
             raise ValueError("This Word notes file cannot be read. Use a valid DOCX.") from exc
     else:
         raise ValueError("Use a .txt or .docx notes file.")
@@ -130,9 +130,9 @@ def safe_notes(raw: str) -> tuple[str, tuple[str, ...]]:
     return result, tuple(dict.fromkeys(notices))
 
 
-def draft_request(notes: str):
+def draft_request(notes: str, report_period: str = ""):
     safe, notices = safe_notes(notes)
-    payload = [{"type": "text", "text": PROMPT + json.dumps({"notes": safe}, ensure_ascii=False)}]
+    payload = [{"type": "text", "text": PROMPT + json.dumps({"report_period": report_period, "notes": safe}, ensure_ascii=False)}]
     return payload, notices, safe
 
 
@@ -250,7 +250,7 @@ def render_activity_notes(draft, blocks, prefix, field, *, enabled: bool):
                      key=prefix + "_activity_notes_start",
                      disabled=bool(job) or not combined.strip()):
             try:
-                content, notices, reviewed_input = draft_request(combined)
+                content, notices, reviewed_input = draft_request(combined, draft.period.key)
                 for notice in notices:
                     st.caption(notice)
                 if not ai.ANTHROPIC_API_KEY:
@@ -294,16 +294,15 @@ def render_activity_notes(draft, blocks, prefix, field, *, enabled: bool):
             can_use = valid and approval and not blocking and not current.ai_paragraphs
             if current.ai_paragraphs:
                 st.caption("This Activity contains source-linked paragraphs. Use their existing evidence review to edit them.")
-            c1, c2, c3 = st.columns(3)
             selected = None
+            c1, c2 = st.columns(2)
             with c1:
                 if st.button("Use / replace", key=prefix + "_activity_notes_replace", disabled=not can_use):
                     selected = "replace"
             with c2:
                 if st.button("Add to Activity", key=prefix + "_activity_notes_add", disabled=not can_use):
                     selected = "add"
-            with c3:
-                discard = st.button("Discard draft", key=prefix + "_activity_notes_discard")
+            discard = st.button("Discard draft", key=prefix + "_activity_notes_discard")
             if discard:
                 st.session_state.pop(state_key, None)
                 st.caption("Draft discarded. Manual Activity and source files are unchanged.")
