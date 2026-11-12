@@ -188,3 +188,46 @@ def test_unrecognized_section_and_its_table_stay_reviewable(tmp_path):
     result = inspect_docx(src)
     assert any(item.section == "unmatched" and item.kind == "table"
                and "Unmapped value" in str(item.rows) for item in result.items)
+
+
+def test_supported_native_word_output_preserves_editable_tables(tmp_path):
+    from test_monthly_report_master_tables import master_source, current
+    from app.monthly_report_master_tables import from_inspection
+    from app.monthly_report_native_layout import build_native_docx
+
+    source = master_source(tmp_path)
+    selected = from_inspection(inspect_docx(source))
+    raw = build_native_docx(current(selected), source, master=True)
+    assert raw[:2] == b"PK"
+    rendered = Document(BytesIO(raw))
+    assert len(rendered.tables) == 2
+    assert rendered.tables[0].cell(1, 2).text == "45 gpm"
+    assert "OLD PRIVATE CLIENT" not in "\n".join(
+        cell.text for table in rendered.tables for row in table.rows for cell in row.cells)
+
+
+def test_supported_native_pdf_export_uses_local_libreoffice(tmp_path):
+    import shutil
+    import fitz
+    from test_monthly_report_master_tables import master_source, current
+    from app.monthly_report_master_tables import from_inspection
+    from app.monthly_report_native_layout import build_native_docx
+    from app import pdf_converter
+
+    if not (shutil.which("libreoffice") or shutil.which("soffice")):
+        pytest.skip("The configured real PDF renderer is not installed in this environment.")
+    source = master_source(tmp_path)
+    selected = from_inspection(inspect_docx(source))
+    rendered = tmp_path / "synthetic-master.docx"
+    rendered.write_bytes(build_native_docx(current(selected), source, master=True))
+    pdf_path = pdf_converter._convert_libreoffice(rendered, lossless_images=True)
+    try:
+        with pdf_path.open("rb") as stream:
+            assert stream.read(5) == b"%PDF-"
+        with fitz.open(pdf_path) as result:
+            assert len(result) > 0
+            body = "\n".join(page.get_text() for page in result)
+            assert "Q-TEST-731" in body
+            assert "OLD PRIVATE CLIENT" not in body
+    finally:
+        pdf_path.unlink()
