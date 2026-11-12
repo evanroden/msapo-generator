@@ -140,6 +140,9 @@ def test_site_specific_business_rule_requires_explicit_original_value():
     classified = project(review, site_performer_rules={
         "north": {"Contract X staff": "Vendor/leased"}})
     assert classified.vendor_activity_table.rows[0][0] == "0041"
+    assert classified.vendor_activity_table.rows[0][3] == "Vendor/leased (site-rule)"
+    reviewer = project(review, corrections={review.rows[0].key: {"performer": "Vendor/leased"}})
+    assert reviewer.vendor_activity_table.rows[0][3] == "Vendor/leased (reviewer-classified)"
     assert classified.onsite_table is None
     with pytest.raises(ValueError, match="site"):
         project(review, site_performer_rules={"uno": {"ENFRA": "ENFRA onsite"}})
