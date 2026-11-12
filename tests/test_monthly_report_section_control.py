@@ -207,3 +207,29 @@ def test_reload_scope_gate_rejects_bypassed_money_and_visual_data():
     )
     with pytest.raises(ValueError, match="field/page review"):
         verify_custom_page_scope(replace(draft, blocks=visual))
+
+
+def test_revisioned_library_save_reload_and_report_override_are_independent(tmp_path, monkeypatch):
+    from app import monthly_report_library as library
+    monkeypatch.setattr(library, "_data_dir", lambda: tmp_path)
+    before = make_draft("Synthetic Contract A")
+    pref = standing_sections(before.profile, {"water": False})
+    state = library.save_profile(pref, expected_revision=0, actor="Synthetic Test Editor", confirmed=True)
+    assert state.revision == 1
+    assert library.load_profile(pref.contract, pref.key).profile.excluded_sections == ("water",)
+
+    month = replace(before, profile=pref)
+    report = report_only_sections(month, {"training": False, "water": True})
+    saved = library.save_snapshot(report, expected_revision=0, entered_editor="Synthetic Test Editor")
+    reloaded = library.load_snapshot(pref.contract, pref.key, report.period)
+    assert reloaded is not None and reloaded.revision == saved.revision
+    assert next(s for s in reloaded.draft.sections if s.key == "water").included
+    assert not next(s for s in reloaded.draft.sections if s.key == "training").included
+    assert reloaded.draft.blocks == report.blocks
+    assert library.load_profile(pref.contract, pref.key).profile.excluded_sections == ("water",)
+
+    new_month_sections = profile_sections(library.load_profile(pref.contract, pref.key).profile)
+    assert not next(s for s in new_month_sections if s.key == "water").included
+    # Historical report is pinned, while the next month adopts the standing choice.
+    old = library.load_snapshot_version(pref.contract, pref.key, report.period, saved.revision)
+    assert old.draft == reloaded.draft
