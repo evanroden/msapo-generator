@@ -19,7 +19,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -109,7 +109,7 @@ jobs:
             docker inspect msapo-491-browser > test-artifacts/monthly-preview-latency/capped-container.json || true
             docker exec msapo-491-browser sh -c 'cat /sys/fs/cgroup/memory.peak; cat /sys/fs/cgroup/memory.events; cat /sys/fs/cgroup/cpu.stat' > test-artifacts/monthly-preview-latency/capped-resource-stats.txt 2>&1 || true
             docker rm -f msapo-491-browser || true
-            rm -rf "$qa_root"
+            rm -rf "$qa_root" 2>/dev/null || true
           }
           trap cleanup EXIT
           docker run -d --name msapo-491-browser --memory=512m --memory-swap=512m --cpus=0.5 \
