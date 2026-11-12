@@ -88,6 +88,13 @@ def test_fallback_only_when_export_lacks_closed_date_field():
     assert "Explicit closed date" in " ".join(pending.needs_review[0].reasons)
     ambiguous = fixture(COLUMNS, (row("00010", closed="09/03/2026"),))
     assert project(ambiguous).onsite_table is None
+    # Explicit but unrecognized completion heading must not be treated as absent.
+    unexpected = tuple("Closed On" if c == "Closed Date" else c for c in COLUMNS)
+    mapped = fixture(unexpected, (row("00011", work="2026-09-03", closed="2026-10-01"),))
+    assert mapped.mapping.completed_date is None
+    denied = project(mapped)
+    assert denied.onsite_table is None
+    assert denied.candidates[0].date_basis == "closed-date mapping required"
 
 
 def test_same_id_across_sites_allowed_but_same_site_duplicate_requires_review():
