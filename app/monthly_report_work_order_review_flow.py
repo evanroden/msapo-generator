@@ -149,30 +149,37 @@ def store_bundle(draft, value, *, expected_revision=""):
     return replace(draft, source_row_reviews=tuple(records))
 
 
-def confirm_coverage(draft, bundle, *, site, start_month, end_month, evidence, confirmed):
-    """Explicit AM act; raw row dates never authorize an export coverage range."""
+def confirm_coverage(draft, bundle, *, table_number, site, start_month, end_month,
+                     evidence, confirmed):
+    """Explicit AM act, scoped to one reviewed row table and its original bytes."""
     _validate(draft, bundle)
-    if bundle["kind"] != "workorders" or confirmed is not True:
-        raise ValueError("Confirm this site's export coverage before saving it.")
     source = next(s for s in draft.sources if s.id == bundle["source_id"])
+    if (bundle["kind"] != "workorders" or confirmed is not True
+            or source.suffix not in (".csv", ".xlsx")
+            or type(table_number) is not int
+            or not 1 <= table_number <= len(bundle["groups"])):
+        raise ValueError("Confirm one source table's coverage before saving it.")
+    group = bundle["groups"][table_number - 1]
+    if not group["record"] or restore_review(group["record"]).kind != "records":
+        raise ValueError("Coverage requires a reviewed row-based source table.")
     value = json.loads(encoded(bundle))
-    for group_index, group in enumerate(value["groups"], 1):
-        if group["record"] is None:
-            continue
-        entry = CoverageDecision(draft.profile.contract, draft.profile.key, site,
-            source.sha256, source.fingerprint, group_index, start_month, end_month,
-            "am_confirmed", evidence)
-        if entry.to_record() not in value.setdefault("coverage", []):
-            value["coverage"].append(entry.to_record())
+    entry = CoverageDecision(draft.profile.contract, draft.profile.key, site,
+        source.sha256, source.fingerprint, table_number, start_month, end_month,
+        "am_confirmed", evidence)
+    if entry.to_record() not in value.setdefault("coverage", []):
+        value["coverage"].append(entry.to_record())
     return _validate(draft, value)
 
 
-def revoke_coverage(draft, bundle, *, site):
-    """Revoke a site's explicit decision without touching its source or row edits."""
+def revoke_coverage(draft, bundle, *, site, table_number):
+    """Revoke exactly one site's table coverage without touching row edits."""
     _validate(draft, bundle)
+    if type(table_number) is not int:
+        raise ValueError("Select a source table before revoking coverage.")
     value = json.loads(encoded(bundle))
     value["coverage"] = [item for item in value.get("coverage", [])
-                         if restore_decision(item).site != site]
+                         if not (restore_decision(item).site == site
+                                 and restore_decision(item).table_number == table_number)]
     return _validate(draft, value)
 
 
