@@ -1,10 +1,14 @@
 """Visible source-row mapping, corrections, omissions and explicit report inclusion."""
 from dataclasses import replace
+from datetime import date
 
 import streamlit as st
 
 from app.monthly_report_model import ResolvedBlock
 from app import monthly_report_work_order_review_flow as flow
+from app.monthly_report_work_order_coverage import (
+    month_window, restore_decision, summarize_coverage,
+)
 
 LABELS = {"work_order": "Work-order ID", "work_date": "Work date", "completed_date": "Completion date",
           "status": "Recorded status", "site": "Site", "work_type": "PM / Non-PM", "trade": "Trade",
@@ -34,6 +38,12 @@ def apply_request(draft, content, request):
             {name: values[name] for name in fields}, excluded=bool(values["excluded"]))
     elif action == "decisions":
         value = flow.group_decisions(old, request["group"], **values)
+    elif action == "coverage":
+        value = flow.confirm_coverage(draft, old, site=values["site"],
+            start_month=values["start_month"], end_month=values["end_month"],
+            evidence=values["evidence"], confirmed=values["confirmed"])
+    elif action == "coverage_revoke":
+        value = flow.revoke_coverage(draft, old, site=values["site"])
     elif action == "mapping":
         if not values.pop("confirmed", False):
             raise ValueError("Confirm rebuilding this table's mapping before replacing row corrections.")
@@ -150,6 +160,46 @@ def render_reviewed_rows(draft, blocks, prefix, content):
                 pairs.append(("excluded", widget))
                 st.form_submit_button("Save row correction", on_click=_queue,
                     args=(request_key, {**base, "action": "row", "group": index, "row": row.key}, pairs))
+        if kind == "workorders" and content.source.suffix in (".csv", ".xlsx"):
+            with st.expander("Verify export month coverage (unknown is not zero)"):
+                site_options = tuple(site.key for site in draft.profile.facilities)
+                selected_key = local + "_coverage_site"
+                chosen = st.selectbox("Site covered by this export", site_options, key=selected_key,
+                    format_func=lambda key: next((site.title for site in draft.profile.facilities
+                                                  if site.key == key), key))
+                confirmations = tuple(restore_decision(item) for item in bundle.get("coverage", ())
+                    if item.get("site") == chosen and item.get("table_number") == record.table_number)
+                months = summarize_coverage(record, confirmations,
+                    contract=draft.profile.contract, profile_key=draft.profile.key,
+                    site=chosen, months=month_window(draft.period.key), as_of=date.today())
+                st.caption("A row's earliest/latest date does not prove complete export coverage. "
+                           "Blank means missing or unresolved coverage; zero requires a confirmed covered month.")
+                st.dataframe([{"Month": item.month,
+                    "Coverage": "Confirmed" if item.covered else "Unknown",
+                    "Reviewed source rows": item.total,
+                    "PM": item.pm, "Non-PM": item.non_pm,
+                    "Review needed": "; ".join(item.issues)}
+                    for item in months], hide_index=True)
+                for evidence in confirmations:
+                    st.caption(f"Confirmed {evidence.start_month}–{evidence.end_month}: {evidence.evidence}")
+                with st.form(local + "_coverage_form"):
+                    form_fields = [("site", selected_key)]
+                    for name, label in (("start_month", "Export covers months from (YYYY-MM)"),
+                                        ("end_month", "Export covers months through (YYYY-MM)"),
+                                        ("evidence", "How was full export coverage verified?")):
+                        widget = local + "_coverage_" + name
+                        st.text_input(label, value=draft.period.key if name != "evidence" else "",
+                                      key=widget)
+                        form_fields.append((name, widget))
+                    widget = local + "_coverage_confirmed"
+                    st.checkbox("I confirmed this export covers the entire range for the selected site",
+                                key=widget)
+                    form_fields.append(("confirmed", widget))
+                    st.form_submit_button("Save confirmed coverage", on_click=_queue,
+                        args=(request_key, {**base, "action": "coverage"}, form_fields))
+                st.button("Revoke this site's coverage confirmations", key=local + "_coverage_revoke",
+                    on_click=_queue, args=(request_key,
+                        {**base, "action": "coverage_revoke"}, (("site", selected_key),)))
         if kind == "maintenance":
             for unmatched in record.unmatched:
                 st.caption(f"Unmatched source row {unmatched.number}: {unmatched.reason} — " + " | ".join(unmatched.cells))
