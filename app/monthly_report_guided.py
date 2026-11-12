@@ -1460,11 +1460,32 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     # explicit shared-save scope, contact widget identity and return value.
     with st.sidebar:
         updated_contacts = render_selected_directory(contract, profile.facilities, prepared, prefix, draft=draft)
+    from app.monthly_report_contact_undo import (
+        capture_contact_undo, contact_undo_ready, undo_contact_update,
+    )
+    contact_undo_key = prefix + "_contact_undo"
     if updated_contacts is not None:
         from app.monthly_report_directory import apply_contacts
         from app.monthly_report_directory_ui import _resume_contacts
+        before_contacts = draft
         draft = apply_contacts(draft, updated_contacts, keep_report_rows=True)
+        st.session_state[contact_undo_key] = capture_contact_undo(before_contacts, draft)
         _resume_contacts(draft, prefix)
+    undo_receipt = st.session_state.get(contact_undo_key)
+    if undo_receipt is not None:
+        if contact_undo_ready(draft, undo_receipt):
+            with st.sidebar:
+                if st.button("Undo contact table update", key=prefix + "_undo_contact_table"):
+                    draft = undo_contact_update(draft, undo_receipt)
+                    st.session_state.pop(contact_undo_key, None)
+                    from app.monthly_report_directory_ui import _resume_contacts
+                    _resume_contacts(draft, prefix)
+                    st.session_state[draft_key] = draft
+                    st.rerun()
+        else:
+            st.session_state.pop(contact_undo_key, None)
+            with st.sidebar:
+                st.warning("Undo is no longer available because the report contact table changed.")
     from app.monthly_report_save_status import SaveStatus
     save_status = SaveStatus(prefix, recovery_available=recovery_available)
     from app.monthly_report_asset_review import refresh_asset_source_context
