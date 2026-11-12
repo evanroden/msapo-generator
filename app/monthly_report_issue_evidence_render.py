@@ -39,9 +39,17 @@ def selected_issue_pages(draft):
     from app.monthly_report_model import used_block_keys
     active_blocks = used_block_keys(draft)
     # Imported issue-register tables provide provenance links, not explicit
-    # approval to print their original PDF page as raster evidence.
+    # approval to print their original PDF page as raster evidence. The
+    # tables themselves are stripped from the review draft, so canonical_issues
+    # carries their page references as "issue-table:<reference>" markers on
+    # the equipment_issues block; read those alongside any tables still present.
+    from app.monthly_report_issues import ISSUE_TABLE_PROVENANCE_PREFIX
     table_provenance = {table.reference for block in draft.blocks
                         for table in block.extra_tables if table.reference}
+    table_provenance |= {ref[len(ISSUE_TABLE_PROVENANCE_PREFIX):]
+                         for block in draft.blocks if block.key == "equipment_issues"
+                         for ref in block.references
+                         if ref.startswith(ISSUE_TABLE_PROVENANCE_PREFIX)}
     already_rendered = {
         ref for block in draft.blocks
         if block.key in active_blocks and block.source != "Omit"
