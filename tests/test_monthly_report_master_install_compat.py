@@ -231,3 +231,38 @@ def test_supported_native_pdf_export_uses_local_libreoffice(tmp_path):
             assert "OLD PRIVATE CLIENT" not in body
     finally:
         pdf_path.unlink()
+
+
+def test_import_save_reopen_keeps_unknown_section_in_review(tmp_path, monkeypatch):
+    from app.monthly_report_import import ImportMapping, map_items
+    from app.monthly_report_model import synthetic_profiles
+
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "synthetic-library"))
+    document = Document()
+    document.add_heading("Synthetic Operations Monthly Report — September 2026", 0)
+    document.add_heading("2 Monthly Activity Summary", 1)
+    document.add_paragraph("Invented completed rounds, no monetary amounts.")
+    document.add_paragraph("13 EXTRA REGIONAL OPERATIONS")
+    table = document.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "Identifier"
+    table.cell(1, 0).text = "Unknown review-only example"
+    source = tmp_path / "synthetic-unknown.docx"
+    document.save(source)
+    original = source.read_bytes()
+    inspection = inspect_docx(source)
+    unknown = next(item for item in inspection.items if item.kind == "table"
+                   and item.section == "unmatched")
+    text_item = next(item for item in inspection.items if item.kind == "text"
+                     and item.section == "activity"
+                     and "Invented completed rounds" in item.text)
+    mapped = map_items(source, inspection, (ImportMapping(text_item.id, "activity_summary"),))
+    profile = synthetic_profiles()[0]
+    library.save_profile(profile, expected_revision=0, actor="Synthetic Editor", confirmed=True)
+    library.save_import(profile.contract, profile.key, mapped.blocks,
+                        overrides=mapped.overrides, expected_revision=1,
+                        actor="Synthetic Editor", confirmed=True)
+    reloaded = library.load_profile(profile.contract, profile.key)
+    assert "Invented completed rounds" in reloaded.block("activity_summary").text
+    assert unknown.id not in mapped.mapped_ids
+    assert source.read_bytes() == original
+    assert any(item.id == unknown.id for item in inspect_docx(source).items)
