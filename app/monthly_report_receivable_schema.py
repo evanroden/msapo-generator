@@ -17,7 +17,7 @@ _HEADINGS = {
     "invoice_id": ("invoice", "invoice number", "invoice no", "invoice id", "invoice #"),
     "customer_id": ("customer id", "customer number", "customer account", "account number"),
     "site": ("site", "facility", "location"),
-    "invoice_date": ("invoice date", "date invoiced", "invoice issued date"),
+    "invoice_date": ("invoice date", "date invoiced"),
     "due_date": ("due date", "payment due date"),
     "status": ("status", "invoice status", "payment status"),
     "description": ("description", "invoice description"),
