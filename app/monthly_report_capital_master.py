@@ -220,6 +220,15 @@ def save_capital_master(profile: ReportProfile, items: tuple[CapitalItem, ...], 
             if item.key not in old or item != old[item.key]:
                 if any(key not in known_sites for key in item.site_keys):
                     raise ValueError("A new capital site requires explicit confirmed contract membership.")
+                # Membership is not review authority: a site known from another
+                # approved row may still be absent from the editor's profile.
+                # Never add or expand site applicability outside selected scope.
+                previously_selected = set(old[item.key].site_keys) if item.key in old else set()
+                newly_affected = set(item.site_keys) - previously_selected
+                if newly_affected - chosen:
+                    raise ValueError(
+                        "New capital site applicability requires selected facilities "
+                        "for every newly affected site.")
                 if (item.key in old and old[item.key].site_keys and
                         any(key not in chosen for key in old[item.key].site_keys)):
                     raise ValueError("Do not replace another site's capital entry from this report.")
