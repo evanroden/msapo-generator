@@ -15,6 +15,9 @@ from app.monthly_report_asset_review import approve_all_assets, asset_context, p
 from app.monthly_report_model import ResolvedBlock
 from app.monthly_report_page_reference import page_identity
 
+# Bounded PNG decode; the encoded 30 MiB byte cap alone is not a pixel cap.
+MAX_STANDING_PICTURE_PIXELS = 40_000_000
+
 @dataclass(frozen=True)
 class ChartDefault:
     site_key: str
@@ -79,7 +82,8 @@ def load_defaults(contract):
                 raise ValueError('Invalid chart scope')
             if item.site_key:
                 library._valid_key(item.site_key)
-            if not eligible(item.block) or not item.origin_profile or not item.origin_fingerprint or not item.saved_at:
+            if (not eligible(item.block) or any(not isinstance(value, str) or not value
+                    for value in (item.origin_profile, item.origin_fingerprint, item.saved_at))):
                 raise ValueError('Invalid chart')
         return ChartDefaults(data['revision'],items)
     except (ValueError,TypeError,KeyError,AttributeError) as exc:
@@ -104,7 +108,14 @@ def _verify(reference, raw):
         with Image.open(BytesIO(raw)) as picture:
             if picture.format != expected:
                 raise ValueError('The chart image does not match its saved file type.')
+            if picture.width * picture.height > MAX_STANDING_PICTURE_PIXELS:
+                raise ValueError('Chart picture exceeds the safe decoded-pixel budget.')
             picture.verify()
+        if expected == 'PNG':
+            # PNG verify() checks chunk CRCs, not complete pixel raster data.
+            # Decode only after checking the pixel budget; do not expand bombs.
+            with Image.open(BytesIO(raw)) as picture:
+                picture.load()
         if expected == 'JPEG':
             # JPEG verify() accepts some truncated scans; a draft-resolution
             # decode checks the complete stream without full-size expansion.

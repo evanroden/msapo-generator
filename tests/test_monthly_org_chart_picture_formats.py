@@ -155,3 +155,74 @@ def test_malformed_preexisting_chart_asset_fails_without_erasing_history(scopes)
     assert retained == {"existing": b"untouched"}
     assert _stored(profile.contract) == before
     assert charts.load_defaults(profile.contract).revision == 1
+
+
+def _png_with_untrue_dimensions(raw, width, height):
+    import struct
+    import zlib
+    modified = bytearray(raw)
+    modified[16:24] = struct.pack(">II", width, height)
+    modified[29:33] = struct.pack(">I", zlib.crc32(modified[12:29]))
+    return bytes(modified)
+
+
+@pytest.mark.parametrize("width,height", [(42, 42), (7000, 7000)])
+def test_png_valid_hash_and_crc_but_bad_raster_refuses_chart_publication(scopes, width, height):
+    profile = scopes[0]
+    raw = _png_with_untrue_dimensions(_image("PNG"), width, height)
+    with Image.open(BytesIO(raw)) as opened:
+        assert opened.format == "PNG"
+        opened.verify()
+    block, assets = _candidate(raw)
+    before = _stored(profile.contract)
+    with pytest.raises(library.LibraryError, match="(?i)picture|image"):
+        _publish(profile, block, assets)
+    assert _stored(profile.contract) == before
+    assert charts.load_defaults(profile.contract).revision == 0
+
+
+def test_incomplete_png_raster_is_not_reused_from_existing_chart_default(scopes):
+    profile = scopes[0]
+    raw = _png_with_untrue_dimensions(_image("PNG"), 42, 42)
+    block, assets = _candidate(raw)
+    reference = "contract-org-chart:v1:" + "a" * 64
+    pinned = approve_all_assets(ResolvedBlock(
+        "org_chart", "Library", asset_hashes=block.asset_hashes,
+        references=(reference,),
+        asset_provenance=((block.asset_hashes[0], (reference,)),)))
+    state = charts.ChartDefaults(1, (charts.ChartDefault(
+        "", pinned, profile.key, block.fingerprint, "2026-11-11"),))
+    path = charts._path(profile.contract)
+    library._atomic_write(path / "assets" / block.asset_hashes[0], raw)
+    library._atomic_write(path / "manifest.json", library._json({
+        "schema": 1, "contract": charts._contract(profile.contract),
+        "actor": "Synthetic Editor", **asdict(state),
+    }))
+    before = _stored(profile.contract)
+    draft = fresh(profile)
+    current = chart(draft)
+    retained = {"unrelated": b"retained"}
+    with pytest.raises(library.LibraryError, match="(?i)picture|image"):
+        charts.use_default(draft, current, retained, expected_revision=1,
+                           expected_fingerprint=current.fingerprint)
+    assert retained == {"unrelated": b"retained"}
+    assert _stored(profile.contract) == before
+
+
+@pytest.mark.parametrize("field,bad", [
+    ("origin_profile", 123),
+    ("origin_fingerprint", True),
+    ("saved_at", ["2026-11-11"]),
+])
+def test_chart_required_metadata_types_refuse_without_rewriting(scopes, field, bad):
+    profile = scopes[0]
+    block, assets = _candidate(_image())
+    _publish(profile, block, assets)
+    path = charts._path(profile.contract) / "manifest.json"
+    data = library._read(path)
+    data["charts"][0][field] = bad
+    path.write_bytes(library._json(data))
+    before = _stored(profile.contract)
+    with pytest.raises(library.LibraryError, match="could not be read"):
+        charts.load_defaults(profile.contract)
+    assert _stored(profile.contract) == before
