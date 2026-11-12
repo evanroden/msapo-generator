@@ -1,5 +1,10 @@
 # Email Process Control — Next-LLM Handoff for the Smartsheet and Infrastructure Transition
 
+> **Historical handoff (July 2026).** PR #25/#26 branch topology, merge
+> order, and CI claims below are a historical snapshot, not current release
+> instructions. The November 2026 consolidation branch must be validated
+> against current main and must not trigger an Azure cutover.
+
 **Repository:** `evanroden/msapo-generator`  
 **Document purpose:** give the next implementation LLM a single, authoritative explanation of why the current transition work exists, what has already been changed, what business behavior must remain unchanged, what is still unknown, and how to continue safely without recreating rejected designs or weakening the reliability controls.  
 **Primary transition branches:**

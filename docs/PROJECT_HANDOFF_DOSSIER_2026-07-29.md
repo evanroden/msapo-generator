@@ -1,5 +1,10 @@
 # Email Process Control — Comprehensive Project Handoff Dossier
 
+> **Historical handoff (July 2026).** PR #25/#26 branch topology, merge
+> order, and CI claims below are a historical snapshot, not current release
+> instructions. The November 2026 consolidation branch must be validated
+> against current main and must not trigger an Azure cutover.
+
 **Repository:** `evanroden/msapo-generator` (private)  
 **Default branch:** `main`  
 **Current production-code head:** `5a03b86` — `Validate Claude quote-analysis responses`  

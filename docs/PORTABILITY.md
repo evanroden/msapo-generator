@@ -1,5 +1,13 @@
 # Portability and Provider-Abstraction Guide
 
+> **Preparation-only integration (2026-11-12).** This branch does not migrate
+> or modify live Azure settings, secrets, identity, persistence, or deployed
+> services. Production continues using the locked Dockerfile and existing
+> Anthropic/PyMuPDF/LibreOffice behavior. Provider overrides are opt-in.
+> Core-only images require complete dependency/import validation before
+> production use. Do not use this document as cutover authorization.
+
+
 **Scope:** moving Email Process Control to a different host, AI API, PDF-reading library, PDF converter, or persistent database without changing the quote-to-PO business rules.
 
 ## 1. Design rule
@@ -231,16 +239,16 @@ Managed-store implementations should provide transactional compare-and-set or ro
 
 - `requirements-core.txt`: provider-neutral web/document dependencies.
 - `requirements-default-adapters.txt`: Anthropic, PyMuPDF, and HEIC support used by the current deployment.
-- `requirements.txt`: installs both for backward-compatible default behavior.
+- `requirements.txt` and the locked Dockerfile: remain the authoritative production dependency path. The optional split files are migration inputs, not yet a production image recipe.
 
-A host using ENFRA-provided adapters can install core only, plus its internal adapter package:
+A future alternate host could install core plus its internal adapters **after** all non-provider imports and full regressions are validated:
 
 ```bash
 pip install -r requirements-core.txt
 pip install company-epc-adapters
 ```
 
-Docker supports:
+A future alternate Dockerfile may support build arguments; the current production Dockerfile intentionally does **not** implement the following illustrative command:
 
 ```bash
 docker build \

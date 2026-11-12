@@ -2,14 +2,12 @@ services:
   web:
     build:
       context: .
-      args:
-        EPC_REQUIREMENTS_FILE: requirements.txt
-        INSTALL_LIBREOFFICE: "true"
+    # Use the locked, renderer-verified production Dockerfile unchanged.
     ports:
-      - "${PORT:-8501}:${PORT:-8501}"
+      - "${PORT:-8501}:8501"
     env_file: .env
     environment:
-      PORT: ${PORT:-8501}
+      PORT: "8501"
       EPC_DATA_DIR: /var/lib/epc
       EPC_WORK_DIR: /var/tmp/epc
     volumes:

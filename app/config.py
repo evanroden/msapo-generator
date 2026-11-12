@@ -15,8 +15,8 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 # ── Paths ──────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent.parent
 TEMPLATE_PATH = BASE_DIR / "templates" / "Master_MSAPO_Template.docx"
-OUTPUT_DIR = BASE_DIR / "output"
-OUTPUT_DIR.mkdir(exist_ok=True)
+OUTPUT_DIR = Path(os.getenv("EPC_OUTPUT_DIR") or BASE_DIR / "output").expanduser()
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Anthropic ──────────────────────────────────────────────────────────
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")

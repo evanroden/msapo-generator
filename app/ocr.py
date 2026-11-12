@@ -353,7 +353,7 @@ def _portable_pdf_text(
             parts=tuple(BinaryPart(CAP_IMAGE, p.data, p.media_type) for p in batch),
             max_tokens=8192,
         )).strip())
-    text = "\\n".join(output for output in outputs if output).strip()
+    text = "\n".join(output for output in outputs if output).strip()
     _check_extracted_size(len(text))
     if not text:
         raise ValueError("The configured PDF reader and AI provider returned no text.")

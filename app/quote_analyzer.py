@@ -339,8 +339,8 @@ def analyze_quote(
     prompt = (
         "Analyze the following vendor quote and return the JSON extraction. "
         "Do not include prices in descriptive fields; extract the pricing summary. "
-        "Treat explicit SALES TAX as included in the total.\\n\\n"
-        f"--- BEGIN QUOTE ---\\n{quote_text}\\n--- END QUOTE ---"
+        "Treat explicit SALES TAX as included in the total.\n\n"
+        f"--- BEGIN QUOTE ---\n{quote_text}\n--- END QUOTE ---"
     )
     configured = bool(
         provider is not None
