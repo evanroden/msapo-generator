@@ -16,6 +16,13 @@ on:
 permissions:
   contents: read
 
+# Avoid duplicating work for superseded PR heads.
+# Every new PR revision still starts all applicable required checks.
+# Main pushes retain the active run and replace pending runs; dispatch uses unique run IDs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   offline-contracts:
     runs-on: ubuntu-24.04
