@@ -163,8 +163,12 @@ def test_month_end_is_required_and_future_dates_are_not_aged(monkeypatch):
 def test_excel_serial_dates_are_never_guessed_from_csv():
     from app.monthly_report_receivable_intake import _date
     from datetime import date
+    assert _date("1", excel_serial=True) == date(1900, 1, 1)
+    assert _date("59", excel_serial=True) == date(1900, 2, 28)
+    assert _date("61", excel_serial=True) == date(1900, 3, 1)
     assert _date("46326", excel_serial=True) == date(2026, 10, 31)
     assert _date("46326") is None
+    assert _date(" 2026-10-31 ") is None
     assert _date("60", excel_serial=True) is None
     assert _date("99999999", excel_serial=True) is None
 
@@ -178,6 +182,58 @@ def test_title_total_rows_rejected_with_original_intact(monkeypatch):
                        edited=edits, source_kind="vendor_invoice", confirmed=True)
     assert draft.sources == (content.source,)
     assert b"TOTAL" in raw
+
+
+def test_legacy_saved_receipt_keeps_due_date_aging(monkeypatch):
+    # No rewrite or reauthorization of installed legacy reports.
+    from datetime import date
+    from app.monthly_report_receivable_intake import _review_row
+    draft, content, review, edits, _ = fixture(monkeypatch)
+    report, block = prepare_review(
+        draft, content, 1, as_of="2026-10-31",
+        edited=edits, source_kind="vendor_invoice", confirmed=True)
+    original_receipt = decoded(report.source_row_reviews[0])
+    legacy = dict(original_receipt)
+    legacy.pop("aging_basis")
+    legacy.pop("excel_serial_dates")
+    legacy["as_of"] = "2026-10-28"
+    rebuilt = [_review_row(draft, review, row, {}, date(2026, 10, 28))
+               for row in review.rows]
+    legacy["rows"] = [record for record, _ in rebuilt]
+    legacy["output_rows"] = [list(public) for _, public in rebuilt]
+    linked = "receivable:v1:" + _digest(legacy)
+    legacy_block = replace(
+        block, rows=tuple(tuple(row) for row in legacy["output_rows"]),
+        references=tuple(linked if ref.startswith("receivable:v1:") else ref
+                         for ref in block.references))
+    old_report = replace(
+        report, blocks=(legacy_block,),
+        source_row_reviews=(json.dumps(legacy, sort_keys=True, separators=(",", ":")),))
+    assert check_review_binding(old_report) is None
+    assert "1–30 days" in old_report.blocks[0].rows[0][2]
+    assert "aging as of 2026-10-28" in old_report.blocks[0].rows[0][2]
+
+
+def test_minimal_invoice_fields_single_site_do_not_invent_open_status(monkeypatch):
+    from datetime import date
+    from app.monthly_report_receivable_intake import _review_row
+    from app.monthly_report_receivable_schema import inspect_receivable_schema
+    from app.monthly_report_model import ReportTable
+    draft, _, _, _, _ = fixture(monkeypatch)
+    single = replace(draft, profile=replace(
+        draft.profile, facilities=(draft.profile.facilities[0],)))
+    review = inspect_receivable_schema(
+        ReportTable(("Invoice #", "Invoice Date", "Amount Due"),
+                    (("MIN-1", "2026-10-01", ""),), "fixture:core"),
+        source_sha256="a" * 64)
+    record, output = _review_row(single, review, review.rows[0], {},
+                                 date(2026, 10, 31), invoice_aging=True)
+    assert record["status"] == "Unknown status"
+    assert record["open_balance"] is None
+    assert "Unknown aging — open status not verified" in output[2]
+    with pytest.raises(ValueError, match="missing, foreign, or ambiguous"):
+        _review_row(draft, review, review.rows[0], {},
+                    date(2026, 10, 31), invoice_aging=True)
 
 
 def test_core_aliases_and_optional_source_headers():

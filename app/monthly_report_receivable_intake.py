@@ -63,7 +63,9 @@ def _digest(value):
 def _date(value, *, excel_serial=False):
     if not isinstance(value, str):
         return None
-    raw = value.strip()
+    # Legacy saved receipts deliberately interpreted only exact ISO strings.
+    # Do not reclassify a formerly ambiguous saved cell on replay.
+    raw = value
     if excel_serial and raw.isdecimal():
         # Excel's 1900 date system includes a fictitious leap day (serial 60).
         # Never reinterpret numeric CSV invoice identifiers as dates.
@@ -71,7 +73,8 @@ def _date(value, *, excel_serial=False):
         if serial == 60 or serial < 1 or serial > 2_958_465:
             return None
         try:
-            return date(1899, 12, 30) + timedelta(days=serial)
+            base = date(1899, 12, 31) if serial < 60 else date(1899, 12, 30)
+            return base + timedelta(days=serial)
         except (ValueError, OverflowError):
             return None
     if not _ISO.fullmatch(raw):

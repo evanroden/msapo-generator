@@ -100,7 +100,7 @@ grant client-output permission. The Section 10 derivative in this first
 integration is explicitly a **nonfinancial open-invoice status and aging-bucket
 view**, not a complete monetary AR Aging statement. It displays the original
 invoice identity, confirmed report site, invoice/due dates (or a visible
-unknown/ambiguous date), normalized status and due-date aging as of a human
+unknown/ambiguous date), normalized status and historical due-date aging as of a human
 confirmed date. It does **not** display balances, sums, aged dollar buckets,
 payments, credit figures or vendor invoice totals in Word/PDF.
 
@@ -124,9 +124,10 @@ same-named file or identical invoice value is never substituted for another
 source/occurrence. Existing generic table/narrative/image financial exclusions
 remain authoritative outside this source-bound derivative.
 
-**Status and aging rules:** only explicit ISO YYYY-MM-DD is interpreted, with
-no locale inference for dates such as 03/04/2026. A human-specified aging
-as-of date and available due date determine Current, 1–30, 31–60, 61–90 or
+**Historical status and aging rules (old saved reviews):** only explicit ISO YYYY-MM-DD
+was interpreted, with no locale inference for dates such as 03/04/2026. A
+human-specified aging as-of date and available due date determined Current,
+1–30, 31–60, 61–90 or
 91+ days past due. Paid/closed invoices are not aged as open receivables;
 credits are distinguished, not silently treated as payment. Unknown due dates
 remain unknown, not zero. Partial payments retain their status and source
