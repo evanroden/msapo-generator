@@ -189,3 +189,9 @@ role choices block the entire import; applied mappings are part of the
 source-bound review receipt and are checked again against original bytes at
 preflight. Standard aliases require no per-report mapping action. This does
 not interpret title rows as headers or authorize client monetary output.
+
+**Site attribution:** a missing source Location may default to a single-facility
+profile only when that exact saved source's facility identity independently
+matches the report facility key/title/alias. An unverified or missing source
+facility, a multi-site profile, or a conflicting location rejects. This is not
+site verification from filenames.

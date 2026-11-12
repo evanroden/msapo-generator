@@ -227,13 +227,18 @@ def test_minimal_invoice_fields_single_site_do_not_invent_open_status(monkeypatc
                     (("MIN-1", "2026-10-01", ""),), "fixture:core"),
         source_sha256="a" * 64)
     record, output = _review_row(single, review, review.rows[0], {},
-                                 date(2026, 10, 31), invoice_aging=True)
+                                 date(2026, 10, 31), invoice_aging=True,
+                                 verified_source_site="Demo North")
     assert record["status"] == "Unknown status"
     assert record["open_balance"] is None
     assert "Unknown aging — open status not verified" in output[2]
     with pytest.raises(ValueError, match="missing, foreign, or ambiguous"):
-        _review_row(draft, review, review.rows[0], {},
+        _review_row(single, review, review.rows[0], {},
                     date(2026, 10, 31), invoice_aging=True)
+    with pytest.raises(ValueError, match="missing, foreign, or ambiguous"):
+        _review_row(draft, review, review.rows[0], {},
+                    date(2026, 10, 31), invoice_aging=True,
+                    verified_source_site="Demo North")
 
 
 def test_nonstandard_column_mapping_is_source_bound_and_reviewed(monkeypatch):

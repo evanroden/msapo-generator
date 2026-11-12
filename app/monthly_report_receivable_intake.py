@@ -133,13 +133,18 @@ def inspect_content(draft, content, number, *, role_overrides=None):
     return review
 
 
-def _profile_site(draft, raw):
+def _profile_site(draft, raw, *, verified_source_site=""):
     site = " ".join(raw.casefold().split())
     matches = [facility for facility in draft.profile.facilities
                if site and site in {" ".join(name.casefold().split()) for name in
                                     (facility.key, facility.title, *facility.aliases)}]
-    if not site and len(draft.profile.facilities) == 1:
-        return draft.profile.facilities[0].title
+    if not site and len(draft.profile.facilities) == 1 and isinstance(verified_source_site, str):
+        facility = draft.profile.facilities[0]
+        verified = " ".join(verified_source_site.casefold().split())
+        approved_labels = {" ".join(name.casefold().split()) for name in
+                           (facility.key, facility.title, *facility.aliases)}
+        if verified and verified in approved_labels:
+            return facility.title
     if len(matches) != 1:
         raise ValueError("Invoice site is missing, foreign, or ambiguous. Correct the exact row before including it.")
     return matches[0].title
@@ -160,7 +165,8 @@ def editable_rows(review):
         for role in EDITABLE}} for row in review.rows]
 
 
-def _review_row(draft, review, row, changed, as_of, *, invoice_aging=False, excel_serial=False):
+def _review_row(draft, review, row, changed, as_of, *, invoice_aging=False,
+                excel_serial=False, verified_source_site=""):
     base = _source_fields(review, row)
     if not isinstance(changed, dict) or set(changed) - set(EDITABLE):
         raise ValueError("Unknown invoice correction field.")
@@ -172,7 +178,8 @@ def _review_row(draft, review, row, changed, as_of, *, invoice_aging=False, exce
         raise ValueError("A title or total row is not an invoice; review a corrected export without silently counting it.")
     if not _INVOICE.fullmatch(identifier):
         raise ValueError("Invoice number is missing or includes unreviewable characters.")
-    facility = _profile_site(draft, values.get("site", ""))
+    facility = _profile_site(
+        draft, values.get("site", ""), verified_source_site=verified_source_site)
     raw_status = " ".join(values.get("status", "").casefold().split())
     state = _STATES.get(raw_status)
     if state is None:
@@ -301,7 +308,8 @@ def prepare_review(draft, content, table_number, *, as_of, edited, source_kind,
         correction = edited[row.reference]
         record, public = _review_row(
             draft, review, row, correction, stamp, invoice_aging=True,
-            excel_serial=content.source.suffix == ".xlsx")
+            excel_serial=content.source.suffix == ".xlsx",
+            verified_source_site=content.source.facility)
         key = (public[0].casefold(), record["account"].casefold(), record["invoice_id"].casefold())
         if key in identities:
             raise ValueError("Two source rows have the same site, account and invoice number. Resolve the duplicate.")
@@ -476,7 +484,8 @@ def check_review_binding(draft):
             regenerated, public = _review_row(
                 draft, review, row, stored.get("corrections"), _date(receipt["as_of"]),
                 invoice_aging=basis == "invoice_date_month_end",
-                excel_serial=basis == "invoice_date_month_end" and sources[0].suffix == ".xlsx")
+                excel_serial=basis == "invoice_date_month_end" and sources[0].suffix == ".xlsx",
+                verified_source_site=sources[0].facility if basis == "invoice_date_month_end" else "")
             if regenerated != stored:
                 return _NOTICE
             expected.append(public)
