@@ -74,6 +74,52 @@ def visible_outline(draft: ReportDraft) -> tuple[tuple[str, str, str], ...]:
                  for section in included_sections(draft.sections))
 
 
+def normalize_with_section_choices(draft: ReportDraft, normalizer) -> ReportDraft:
+    """Adapt an existing all-on guided-section normalizer without losing choices.
+
+    The old guided normalizer restores all section flags to True and can turn
+    hidden blocks into source='Omit'. Passing a temporarily all-on view avoids
+    those destructive conversions. The actual saved flags and profile are
+    restored afterward. Unknown non-custom sections fail closed instead of
+    being silently dropped by the normalizer.
+    """
+    verify_custom_page_scope(draft)
+    original = {section.key: section for section in draft.sections}
+    custom = tuple(section for section in draft.sections if section.key.startswith("custom_"))
+    staged = replace(
+        draft,
+        profile=replace(draft.profile, excluded_sections=()),
+        sections=tuple(replace(section, included=True)
+                       for section in draft.sections if not section.key.startswith("custom_")),
+    )
+    resolved = normalizer(staged)
+    standard_keys = {section.key for section in resolved.sections}
+    unexpected = set(original) - standard_keys - {section.key for section in custom}
+    if unexpected:
+        raise ValueError("Unknown imported sections need review before normalizing the report.")
+    if len(standard_keys) != len(resolved.sections):
+        raise ValueError("The normalized report contains repeated section identities.")
+
+    # Insert custom pages after their nearest preceding original standard
+    # section, never after Appendix G merely because the normalizer filled it.
+    buckets = {}
+    preceding = None
+    for section in draft.sections:
+        if section.key in standard_keys:
+            preceding = section.key
+        elif section.key.startswith("custom_"):
+            buckets.setdefault(preceding, []).append(section)
+    ordered = list(buckets.get(None, ()))
+    for section in resolved.sections:
+        enabled = original[section.key].included if section.key in original else (
+            section.key not in draft.profile.excluded_sections)
+        ordered.append(replace(section, included=enabled))
+        ordered.extend(buckets.get(section.key, ()))
+    adapted = replace(resolved, profile=draft.profile, sections=tuple(ordered))
+    verify_custom_page_scope(adapted)
+    return adapted
+
+
 @dataclass(frozen=True)
 class ContractPage:
     """An identity-bound editable text page, with no monetary-output exception."""
