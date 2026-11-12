@@ -128,6 +128,45 @@ def test_lost_attachment_response_is_reconciled_by_remote_name(monkeypatch, tmp_
     assert calls["attach"] == 1
 
 
+def test_crash_during_row_creation_blocks_duplicate_after_lease_expiry(monkeypatch, tmp_path):
+    """A process kill after the POST can leave a remote row but no local ID.
+
+    KeyboardInterrupt simulates a hard interruption that bypasses the
+    ordinary Exception handler. An expired lease must not retry the POST.
+    """
+    import sqlite3
+
+    config = _config()
+    path = tmp_path / "submissions.db"
+    monkeypatch.setattr(smartsheet, "get_columns", lambda config: _columns())
+    calls = {"create": 0}
+
+    def interrupted_create(config, cells):
+        calls["create"] += 1
+        raise KeyboardInterrupt("synthetic worker termination after sending POST")
+
+    monkeypatch.setattr(smartsheet, "_create_row", interrupted_create)
+    fields = {"site_location": "UMMC", "total": "$100.00"}
+
+    with pytest.raises(KeyboardInterrupt):
+        submit_po(fields, [], config=config, store=SubmissionStore(path))
+    key = smartsheet.submission_fingerprint(fields, [])
+    before = SubmissionStore(path).get(key)
+    assert before["status"] == "creating"
+    assert before["row_id"] is None
+
+    # Another process returns after the dead worker's lease has expired.
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "UPDATE submissions SET lease_expires_at = 0 WHERE submission_key = ?",
+            (key,),
+        )
+    after = submit_po(fields, [], config=config, store=SubmissionStore(path))
+    assert after["ok"] is False and after["uncertain"] is True
+    assert calls["create"] == 1
+    assert SubmissionStore(path).get(key)["status"] == "creating"
+
+
 def test_live_schema_drift_blocks_before_row_write(monkeypatch, tmp_path):
     config = _config()
     store = SubmissionStore(tmp_path / "submissions.db")

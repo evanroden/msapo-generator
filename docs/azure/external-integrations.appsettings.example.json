@@ -1,0 +1,38 @@
+[
+  {
+    "name": "SMARTSHEET_API_MODE",
+    "value": "disabled"
+  },
+  {
+    "name": "SMARTSHEET_ALLOW_CUSTOM_API_BASE",
+    "value": "false"
+  },
+  {
+    "name": "SMARTSHEET_API_BASE_URL",
+    "value": "https://api.smartsheet.com/2.0"
+  },
+  {
+    "name": "SMARTSHEET_URL_PREFILL_ENABLED",
+    "value": "false"
+  },
+  {
+    "name": "SMARTSHEET_FORM_URL",
+    "value": ""
+  },
+  {
+    "name": "SMARTSHEET_FORM_FIELD_MAP_JSON",
+    "value": "{}"
+  },
+  {
+    "name": "EXPENSE_ACCOUNT_DIRECTORS_JSON",
+    "value": "{}"
+  },
+  {
+    "name": "PDF_BACKEND",
+    "value": "libreoffice"
+  },
+  {
+    "name": "EPC_DATA_DIR",
+    "value": "/test1"
+  }
+]

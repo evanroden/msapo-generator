@@ -1809,6 +1809,10 @@ def submit_po(
         # intentionally not rewritten. Resuming only finishes the attachments.
         row_id = claim.row_id
         if not row_id:
+            # Write intent BEFORE the network request. If the process is killed
+            # after Smartsheet stores the row but before record_row(), an
+            # expired lease must never authorize another row-create POST.
+            history.mark_row_create_started(key, lease_token)
             try:
                 row = _create_row(cfg, cells)
                 row_id = str(row["id"])

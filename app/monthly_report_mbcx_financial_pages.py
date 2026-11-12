@@ -15,6 +15,12 @@ SEMANTICS = 'client_enfra_no_vendor_totals'
 FINANCIAL_RECEIPT = 'financial:v1:'
 _VENDOR_INVOICE = re.compile(r'\b(?:vendor|supplier|subcontractor)\s+invoice\b', re.I)
 _TOTAL_LABEL = re.compile(r'\b(?:total|amount\s+due|balance\s+due)\b', re.I)
+# Vendor invoice PDFs often separate the supplier field from the invoice total.
+# Do not classify unrelated vendor metadata and ENFRA savings as invoice totals.
+_VENDOR_FIELD = re.compile(r'\b(?:vendor|supplier|subcontractor)\s*[:=]\s*\S+', re.I)
+_INVOICE_TOTAL = re.compile(r'\binvoice\s+(?:total|amount(?:\s+due)?|balance(?:\s+due)?)\b', re.I)
+# A standalone invoice title and later Total line also identify invoice pages.
+_INVOICE_TITLE = re.compile(r'(?im)^\s*invoice\s*$', re.I)
 
 
 def scope_for(profile):
@@ -30,9 +36,12 @@ def page_review_fingerprint(source,number):
 
 
 def known_vendor_total(source,number):
-    text = ' '.join((source.page_texts[number-1] + ' ' + dict(source.captions).get(number,'')).split())
-    return bool(_VENDOR_INVOICE.search(text) and _TOTAL_LABEL.search(text))
-
+    raw = source.page_texts[number - 1] + '\n' + dict(source.captions).get(number, '')
+    text = ' '.join(raw.split())
+    return bool(_TOTAL_LABEL.search(text) and (
+        _VENDOR_INVOICE.search(text) or
+        (_VENDOR_FIELD.search(text) and (
+            _INVOICE_TOTAL.search(text) or _INVOICE_TITLE.search(raw)))))
 
 
 def has_financial_page_review(source, number):
