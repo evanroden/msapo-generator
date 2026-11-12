@@ -239,8 +239,8 @@ def test_minimal_invoice_fields_single_site_do_not_invent_open_status(monkeypatc
 def test_nonstandard_column_mapping_is_source_bound_and_reviewed(monkeypatch):
     from app.monthly_report_sources import SourceContent
     draft, content, _, _, _ = fixture(monkeypatch)
-    raw = (b"Ref,Issued,Open balance,Campus,Stage\\n"
-           b"C-1,2026-10-01,75,Demo North,Open\\n")
+    raw = (b"Ref,Issued,Open balance,Campus,Stage\n"
+           b"C-1,2026-10-01,75,Demo North,Open\n")
     digest = sha256(raw).hexdigest()
     source = replace(content.source, id=digest, sha256=digest,
                      filename="synthetic-other-site.csv",
