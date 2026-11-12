@@ -36,6 +36,18 @@ def _geometry_equivalent(choice, fallback) -> bool:
     """Require matching available width/height, never assume equal art from text."""
     modern_shapes = list(choice.iter(WPS + "wsp")) + list(choice.iter(WPG + "wgp"))
     legacy_shapes = [n for n in fallback.iter() if n.tag in {VML + "shape", VML + "rect"}]
+    # The independent comparison also checks duplicate picture occurrences.
+    # A set of equal image hashes alone cannot prove that two drawings are one.
+    if sum(n.tag == A + "blip" or n.tag == VML + "imagedata"
+           for n in choice.iter()) != sum(n.tag == A + "blip" or n.tag == VML + "imagedata"
+                                          for n in fallback.iter()):
+        return False
+    # Shape positions in modern Word anchors and VML are not interchangeable
+    # merely because the dimensions match. Leave unknown anchored pairs intact
+    # as rejected input instead of silently moving cover artwork.
+    if any(isinstance(n.tag, str) and n.tag.endswith("}anchor")
+           for n in choice.iter()):
+        return False
     if not modern_shapes and not legacy_shapes:
         return True  # Text-only equivalent compatibility alternatives.
     if len(modern_shapes) != len(legacy_shapes) or not modern_shapes:
@@ -118,13 +130,23 @@ def prepare_master_working_copy(source: Path) -> tuple[bytes | None, tuple[str, 
                 if (not equivalent_native_alternatives(guard, identity)
                         or not _geometry_equivalent(choice, fallback)):
                     raise ImportError(f"Modern/legacy Word drawing differs or has unverified geometry in {part}; export a corrected master with equivalent representations.")
+                # OOXML branch payloads normally consist only of child
+                # elements. Direct non-whitespace text would otherwise vanish.
+                if (choice.text or "").strip() or (fallback.text or "").strip():
+                    raise ImportError(f"Unstructured Word compatibility text in {part}; no source text was removed.")
                 parent = alternate.getparent()
                 if parent is None:
                     raise ImportError(f"Root AlternateContent is unsupported in {part}.")
                 index = parent.index(alternate)
+                children = [deepcopy(child) for child in choice]
+                if not children:
+                    raise ImportError(f"Empty modern Word compatibility choice in {part}.")
+                # Preserve the wrapper's trailing text/tail rather than dropping
+                # it when substituting equivalent child markup.
+                children[-1].tail = (children[-1].tail or "") + (alternate.tail or "")
                 parent.remove(alternate)
-                for child in list(choice):
-                    parent.insert(index, deepcopy(child))
+                for child in children:
+                    parent.insert(index, child)
                     index += 1
                 part_changed = True
                 changes.add("equivalent_modern_choice")
