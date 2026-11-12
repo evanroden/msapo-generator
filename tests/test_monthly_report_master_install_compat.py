@@ -309,3 +309,32 @@ def test_working_copy_keeps_numbering_images_headers_footers_and_relationships(t
         assert any(name.startswith("word/media/") for name in prepared.namelist())
         assert any(name.startswith("word/header") for name in prepared.namelist())
         assert any(name.startswith("word/footer") for name in prepared.namelist())
+
+
+def test_normalized_master_tables_bind_to_original_source_identity(tmp_path):
+    from test_monthly_report_master_tables import master_source
+    from app.monthly_report_master_tables import from_inspection
+    from app.monthly_report_native_layout import (
+        NativeLayoutError, _master_shapes_for_rendition,
+    )
+
+    source = master_source(tmp_path)
+    edit_package(source, lambda root, parts: alternate(root))
+    originals = from_inspection(inspect_docx(source))
+    assert len(originals) == 2
+    detached, _ = prepare_master_working_copy(source)
+    working = tmp_path / "normalized-with-tables.docx"
+    working.write_bytes(detached)
+    working_inspection = inspect_docx(working)
+    assert working_inspection.sha256 != inspect_docx(source).sha256
+    verified = _master_shapes_for_rendition(working_inspection, original_path=source)
+    assert tuple(s.reference for s in verified) == tuple(s.reference for s in originals)
+    assert tuple(s.position for s in verified) == tuple(s.position for s in originals)
+
+    def tamper_table(root, parts):
+        first = root.find(".//" + W + "tbl")
+        text = first.find(".//" + W + "t")
+        text.text = "Unverified custom heading"
+    edit_package(working, tamper_table)
+    with pytest.raises(NativeLayoutError, match="native table geometry|safe column schema"):
+        _master_shapes_for_rendition(inspect_docx(working), original_path=source)
