@@ -153,6 +153,44 @@ class MappedImport:
     mapped_ids: tuple[str, ...]
 
 
+def report_period_from_title_candidates(titles: tuple[str, ...]) -> tuple[ReportPeriod | None, tuple[str, ...]]:
+    """Detect a report month only from explicit cover/title report-period wording.
+
+    A print/signature date is never a report month. Distinct explicit report
+    periods are a review conflict, not a last-match-wins decision.
+    """
+    import calendar
+    month_names = {name.casefold(): i for i, name in enumerate(calendar.month_name) if name}
+    month_names.update({name[:3].casefold(): i for i, name in enumerate(calendar.month_name)
+                        if name and i != 9})
+    month_names["sep"] = 9
+    month_names["sept"] = 9
+    names = "|".join(sorted(map(re.escape, month_names), key=len, reverse=True))
+    word_month = re.compile(rf"(?<![A-Za-z])({names})\\.?[ ,/-]+(20\\d{{2}})(?!\\d)", re.I)
+    numeric_month = re.compile(r"(?<!\\d)(20\\d{2})[-/](0?[1-9]|1[0-2])(?!\\d)")
+    results = set()
+    for title in titles:
+        # These are title candidates, not a trusted date extraction from any
+        # body paragraph. Restrict authority further to report/month headings.
+        headline = re.split(r"\\b(?:printed|prepared|issued|signed)?\\s*Date\\s*:", title,
+                            maxsplit=1, flags=re.I)[0].strip()
+        normalized = re.sub(r"\\s+", " ", headline)
+        if not (re.search(r"\\b(?:monthly\\s+(?:report|review)|report(?:ing)?\\s+(?:month|period))\\b",
+                          normalized, re.I)
+                or re.search(r"\\b(?:month|period)\\s+of\\b", normalized, re.I)):
+            continue
+        for match in word_month.finditer(normalized):
+            results.add(ReportPeriod(int(match.group(2)),
+                                     month_names[match.group(1).casefold()]))
+        for match in numeric_month.finditer(normalized):
+            results.add(ReportPeriod(int(match.group(1)), int(match.group(2))))
+    if len(results) > 1:
+        months = ", ".join(p.label for p in sorted(results, key=lambda p: (p.year, p.month)))
+        return None, ("Conflicting explicit report-month titles (" + months +
+                      "). Review the original cover and select the correct reporting period.",)
+    return (next(iter(results)), ()) if results else (None, ())
+
+
 def _package(path: Path) -> ZipFile:
     if path.stat().st_size > MAX_DOCX_BYTES:
         raise ImportError("DOCX exceeds the 128 MB import limit. Split the source document and retry.")
@@ -1002,6 +1040,11 @@ def inspect_docx(path: Path) -> DocxInspection:
         notices.append("Tracked changes use their final accepted view. Deleted and moved-from text is excluded; the uploaded original is unchanged.")
     if comment_changes:
         notices.append("Word comments are excluded from report previews and downloads; the uploaded original is unchanged.")
+    identified_period, period_notices = report_period_from_title_candidates(tuple(titles[:12]))
+    if identified_period is not None:
+        notices.append("Source report title indicates " + identified_period.label +
+                       ". Confirm the reporting month when saving; unrelated cover or print dates do not decide it.")
+    notices.extend(period_notices)
     return DocxInspection(digest.hexdigest(), tuple(items), tuple(titles[:12]), tuple(notices), word_section, version)
 
 
