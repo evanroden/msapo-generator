@@ -8,7 +8,7 @@ a stripped-amount status view is never called a complete AR Aging statement.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from hashlib import sha256
 import json
@@ -26,7 +26,7 @@ MAX_RECEIPT = 4_000_000
 OUTPUT_COLUMNS = ("Facility", "Item", "Status")
 AMOUNT_ROLES = ("invoice_amount", "payment_amount", "credit_amount", "balance")
 EDITABLE = ("invoice_id", "customer_id", "site", "invoice_date", "due_date",
-            "status", "currency", *AMOUNT_ROLES)
+            "status", "currency", "description", "notes", *AMOUNT_ROLES)
 _NOTICE = ("The reviewed invoice source, report scope, or Section 10 rows changed. "
            "Reopen and review that exact source; saved originals and edits are unchanged.")
 _STATES = {
@@ -60,11 +60,24 @@ def _digest(value):
                              separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
-def _date(value):
-    if not isinstance(value, str) or not _ISO.fullmatch(value):
+def _date(value, *, excel_serial=False):
+    if not isinstance(value, str):
+        return None
+    raw = value.strip()
+    if excel_serial and raw.isdecimal():
+        # Excel's 1900 date system includes a fictitious leap day (serial 60).
+        # Never reinterpret numeric CSV invoice identifiers as dates.
+        serial = int(raw)
+        if serial == 60 or serial < 1 or serial > 2_958_465:
+            return None
+        try:
+            return date(1899, 12, 30) + timedelta(days=serial)
+        except (ValueError, OverflowError):
+            return None
+    if not _ISO.fullmatch(raw):
         return None
     try:
-        return date.fromisoformat(value)
+        return date.fromisoformat(raw)
     except ValueError:
         return None
 
@@ -122,6 +135,8 @@ def _profile_site(draft, raw):
     matches = [facility for facility in draft.profile.facilities
                if site and site in {" ".join(name.casefold().split()) for name in
                                     (facility.key, facility.title, *facility.aliases)}]
+    if not site and len(draft.profile.facilities) == 1:
+        return draft.profile.facilities[0].title
     if len(matches) != 1:
         raise ValueError("Invoice site is missing, foreign, or ambiguous. Correct the exact row before including it.")
     return matches[0].title
@@ -142,7 +157,7 @@ def editable_rows(review):
         for role in EDITABLE}} for row in review.rows]
 
 
-def _review_row(draft, review, row, changed, as_of):
+def _review_row(draft, review, row, changed, as_of, *, invoice_aging=False, excel_serial=False):
     base = _source_fields(review, row)
     if not isinstance(changed, dict) or set(changed) - set(EDITABLE):
         raise ValueError("Unknown invoice correction field.")
@@ -150,16 +165,22 @@ def _review_row(draft, review, row, changed, as_of):
         raise ValueError("Invoice corrections must remain text.")
     values = {**base, **changed}
     identifier = values.get("invoice_id", "").strip()
+    if identifier.casefold() in {"total", "subtotal", "grand total", "beginning balance"}:
+        raise ValueError("A title or total row is not an invoice; review a corrected export without silently counting it.")
     if not _INVOICE.fullmatch(identifier):
         raise ValueError("Invoice number is missing or includes unreviewable characters.")
     facility = _profile_site(draft, values.get("site", ""))
-    state = _STATES.get(" ".join(values.get("status", "").casefold().split()))
+    raw_status = " ".join(values.get("status", "").casefold().split())
+    state = _STATES.get(raw_status)
     if state is None:
-        raise ValueError("Invoice status is unknown. Correct the status explicitly.")
-    invoice_date = _date(values.get("invoice_date", ""))
-    due_date = _date(values.get("due_date", ""))
+        if invoice_aging and not raw_status:
+            state = "Unknown status"
+        else:
+            raise ValueError("Invoice status is unknown. Correct the status explicitly.")
+    invoice_date = _date(values.get("invoice_date", ""), excel_serial=excel_serial)
+    due_date = _date(values.get("due_date", ""), excel_serial=excel_serial)
     source_as_of = values.get("as_of_date", "").strip()
-    if source_as_of and _date(source_as_of) != as_of:
+    if source_as_of and _date(source_as_of, excel_serial=excel_serial) != as_of:
         raise ValueError("Source aging as-of date differs or is ambiguous; correct the exact source.")
     source_days = values.get("days_past_due", "").strip()
     if source_days and state not in ("Paid", "Closed", "Credit"):
@@ -177,9 +198,23 @@ def _review_row(draft, review, row, changed, as_of):
         bucket = "Closed — not aged as open"
     elif state == "Credit":
         bucket = "Credit — not aged as a receivable"
+    elif invoice_aging:
+        if state == "Unknown status":
+            bucket = "Unknown aging — open status not verified"
+        elif invoice_date is None:
+            bucket = "Unknown aging — invoice date missing or invalid"
+        else:
+            elapsed = (as_of - invoice_date).days
+            bucket = ("Future invoice — not aged" if elapsed < 0 else
+                      "Current (0–30 days)" if elapsed <= 30 else
+                      "31–60 days" if elapsed <= 60 else
+                      "61–90 days" if elapsed <= 90 else
+                      "91–120 days" if elapsed <= 120 else "121+ days")
     elif due_date is None:
         bucket = "Unknown aging — due date not established"
     else:
+        # Preserve saved legacy receipt interpretation. Never silently migrate
+        # a previously approved due-date/as-of status review.
         elapsed = (as_of - due_date).days
         bucket = ("Current" if elapsed <= 0 else "1–30 days" if elapsed <= 30
                   else "31–60 days" if elapsed <= 60 else "61–90 days" if elapsed <= 90
@@ -188,22 +223,23 @@ def _review_row(draft, review, row, changed, as_of):
     parsed = {key: _money(value) for key, value in financial.items()}
     original, payment, credit, balance = (parsed.get(key) for key in AMOUNT_ROLES)
     if (all(v is not None for v in (original, payment, credit, balance))
-            and original - payment - credit != balance):
+            and original - payment - (abs(credit) if invoice_aging else credit) != balance):
         raise ValueError("Invoice, payment, credit and remaining balance disagree; correct the exact row.")
     if state in ("Paid", "Closed") and balance not in (None, Decimal(0)):
         raise ValueError("A paid or closed invoice still has an outstanding source balance.")
-    if payment is not None and payment < 0 or credit is not None and credit < 0:
+    if payment is not None and payment < 0 or (not invoice_aging and credit is not None and credit < 0):
         raise ValueError("Payment or credit has an ambiguous negative sign.")
     account = values.get("customer_id", "").strip()
     # No amount, raw source detail, unreviewed price, or financial total reaches
     # the client block, even for a source the operator describes as a contract.
+    aging_label = ("aging by invoice date as of " if invoice_aging else "aging as of ")
     output = (facility, "Invoice " + identifier + " · issued " + invoice_label,
-              state + " · due " + due_label + " · aging as of " +
+              state + " · due " + due_label + " · " + aging_label +
               as_of.isoformat() + ": " + bucket +
               (" · outstanding balance unknown" if state == "Partially paid" and balance is None else ""))
     if any(contains_price(text) for text in output) or table_has_pricing(OUTPUT_COLUMNS, (output,)):
         raise ValueError("Client invoice status text resembles monetary content; correct the source identifiers.")
-    return {
+    record = {
         "reference": row.reference,
         "cells": list(row.cells),
         "corrections": changed,
@@ -215,7 +251,16 @@ def _review_row(draft, review, row, changed, as_of):
         "due_date_raw": values.get("due_date", ""),
         "aging": bucket,
         "source_amounts": financial,
-    }, output
+    }
+    if invoice_aging:
+        # A source balance is accepted as reconciled only when the complete
+        # invoice/payment/credit/balance tuple is supplied and agrees.
+        reconciled = all(v is not None for v in (original, payment, credit, balance))
+        record["open_balance"] = str(balance) if reconciled else None
+        record["balance_reconciliation"] = "reconciled" if reconciled else "unresolved"
+        record["description"] = values.get("description", "")
+        record["notes"] = values.get("notes", "")
+    return record, output
 
 
 def prepare_review(draft, content, table_number, *, as_of, edited, source_kind,
@@ -233,14 +278,16 @@ def prepare_review(draft, content, table_number, *, as_of, edited, source_kind,
     stamp = _date(as_of)
     if stamp is None:
         raise ValueError("Enter an explicit ISO aging as-of date; no date is inferred.")
+    if stamp != draft.period.end:
+        raise ValueError("Invoice-date aging as-of must equal the selected report-month end.")
     section = [s for s in draft.sections if s.key == "accounts_receivable" and s.included]
     if len(section) != 1 or not any(b.key == "accounts_receivable" for b in section[0].blocks):
         raise ValueError("Include the existing Accounts Receivable section before importing.")
     review = inspect_content(draft, content, table_number)
     roles = [col.candidate_role for col in review.columns]
     if (review.duplicate_roles or
-            not all(roles.count(role) == 1 for role in ("invoice_id", "site", "status"))):
-        raise ValueError("Invoice, site and status columns need one unambiguous heading each.")
+            not all(roles.count(role) == 1 for role in ("invoice_id", "invoice_date", "balance"))):
+        raise ValueError("Invoice number, invoice date and amount due need one unambiguous heading each.")
     if not review.rows:
         raise ValueError("The invoice table has no rows to review.")
     if not isinstance(edited, dict) or set(edited) != {row.reference for row in review.rows}:
@@ -248,7 +295,9 @@ def prepare_review(draft, content, table_number, *, as_of, edited, source_kind,
     records, output, identities = [], [], set()
     for row in review.rows:
         correction = edited[row.reference]
-        record, public = _review_row(draft, review, row, correction, stamp)
+        record, public = _review_row(
+            draft, review, row, correction, stamp, invoice_aging=True,
+            excel_serial=content.source.suffix == ".xlsx")
         key = (public[0].casefold(), record["account"].casefold(), record["invoice_id"].casefold())
         if key in identities:
             raise ValueError("Two source rows have the same site, account and invoice number. Resolve the duplicate.")
@@ -264,6 +313,8 @@ def prepare_review(draft, content, table_number, *, as_of, edited, source_kind,
                "table_number": table_number, "table_reference": review.table_reference,
                "table_fingerprint": review.fingerprint,
                "as_of": as_of, "source_kind": source_kind,
+               "aging_basis": "invoice_date_month_end",
+               "excel_serial_dates": content.source.suffix == ".xlsx",
                "source_heading_roles": [col.candidate_role for col in review.columns],
                "rows": records, "output_rows": [list(item) for item in output]}
     payload = json.dumps(receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -396,11 +447,20 @@ def check_review_binding(draft):
     if receipt["source_kind"] not in (
             "customer_invoice", "vendor_invoice", "contract", "enfra_client_report", "unverified"):
         return _NOTICE
+    basis = receipt.get("aging_basis")
+    if basis not in (None, "invoice_date_month_end"):
+        return _NOTICE
+    if basis == "invoice_date_month_end" and (
+            _date(receipt["as_of"]) != draft.period.end
+            or receipt.get("excel_serial_dates") is not (sources[0].suffix == ".xlsx")):
+        return _NOTICE
     try:
         expected = []
         for row, stored in zip(review.rows, receipt["rows"]):
             regenerated, public = _review_row(
-                draft, review, row, stored.get("corrections"), _date(receipt["as_of"]))
+                draft, review, row, stored.get("corrections"), _date(receipt["as_of"]),
+                invoice_aging=basis == "invoice_date_month_end",
+                excel_serial=basis == "invoice_date_month_end" and sources[0].suffix == ".xlsx")
             if regenerated != stored:
                 return _NOTICE
             expected.append(public)

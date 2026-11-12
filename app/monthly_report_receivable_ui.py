@@ -102,9 +102,10 @@ def render_receivable_intake(draft, blocks, prefix):
             st.caption("This source sheet contains no invoice rows.")
             return draft, blocks
         labels = {column.candidate_role for column in review.columns}
-        if review.duplicate_roles or not {"invoice_id", "site", "status"} <= labels:
-            st.warning("This table needs one Invoice, Site and Status column without competing headings. "
-                       "Use a corrected source export; its original is unchanged.")
+        if review.duplicate_roles or not {"invoice_id", "invoice_date", "balance"} <= labels:
+            st.warning("This table needs Invoice #, Invoice Date and Amount Due columns "
+                       "without competing headings. Map missing fields in an authorized "
+                       "corrected export; originals are unchanged.")
             st.table([{"Source header": column.heading,
                        "Candidate role": column.candidate_role or "Unmapped"}
                       for column in review.columns])
@@ -114,7 +115,7 @@ def render_receivable_intake(draft, blocks, prefix):
                        "they do not become client-report fields.")
         st.caption("Source rows " + str(len(review.rows)) +
                    " · exact table fingerprint " + review.fingerprint[:12] +
-                   ". Dates must use YYYY-MM-DD; unknown/ambiguous source dates stay explicit.")
+                   ". Dates use YYYY-MM-DD (or validated XLSX serials); unknown/ambiguous dates stay explicit.")
         st.table([{"Source heading": col.heading, "Candidate field": col.candidate_role or "Unmapped",
                    "Internal monetary": "Yes" if col.policy_controlled else "No"}
                   for col in review.columns])
@@ -124,7 +125,10 @@ def render_receivable_intake(draft, blocks, prefix):
         st.dataframe([dict(zip(unique_headers, row.cells)) for row in review.rows],
                      hide_index=True, width="stretch")
         st.caption("Edit the review fields below when the original is ambiguous. "
-                   "Raw source values remain unchanged. No outstanding balance is inferred.")
+                   "Invoice dates determine aging; due dates are informational. "
+                   "Signed credits reduce a balance only when the entire source "
+                   "invoice/payment/credit/balance tuple reconciles. Raw cells remain "
+                   "unchanged; missing money is never zero.")
         saved = saved_review_for_editor(draft, current, content, number, review)
         # Source metadata, report owner, original table and prior receipt are
         # all part of the editor identity. A previous month cannot replay a
@@ -140,9 +144,10 @@ def render_receivable_intake(draft, blocks, prefix):
             st.warning("The previous invoice review does not match this report, source or table. "
                        "Recheck the original rows and enter a new as-of date; no approval was reused.")
         with st.form(key + "_review_" + stamp):
-            as_of = st.text_input("Aging as of date (YYYY-MM-DD)",
-                                  value=saved["as_of"] if saved else "",
-                                  help="Required explicit review date; not inferred from the report month.")
+            as_of = st.text_input("Aging as of report-month end (YYYY-MM-DD)",
+                                  value=saved["as_of"] if saved else draft.period.end.isoformat(),
+                                  help="New reviews age by invoice date at report-month end. "
+                                       "Existing saved reviews preserve their prior rules.")
             roles = {
                 "customer_invoice": "Customer-billable / CCJ invoice (internal amounts)",
                 "vendor_invoice": "Vendor invoice (internal only; no client totals)",

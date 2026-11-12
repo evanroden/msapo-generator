@@ -74,7 +74,7 @@ def fixture(monkeypatch, rows=DATA, *, filename="synthetic-invoices.csv"):
 def prepared(monkeypatch, rows=DATA, **kwargs):
     draft, content, review, edits, raw = fixture(monkeypatch, rows, **kwargs)
     updated, block = prepare_review(draft, content, 1,
-                                    as_of="2026-10-28", edited=edits,
+                                    as_of="2026-10-31", edited=edits,
                                     source_kind="vendor_invoice", confirmed=True)
     return updated, block, draft, content, raw
 
@@ -84,8 +84,8 @@ def test_review_preserves_source_amounts_partials_credits_and_unknown_dates(monk
     assert len(block.rows) == 3
     assert tuple(len(row) for row in block.rows) == (3, 3, 3)
     assert "Partially paid" in block.rows[0][2]
-    assert "1–30 days" in block.rows[0][2]
-    assert "aging as of 2026-10-28" in block.rows[0][2]
+    assert "Current (0–30 days)" in block.rows[0][2]
+    assert "aging by invoice date as of 2026-10-31" in block.rows[0][2]
     assert "Credit — not aged" in block.rows[1][2]
     assert "unknown date" in block.rows[1][1]
     assert "date needs review" in block.rows[2][1]
@@ -110,19 +110,87 @@ def test_review_preserves_source_amounts_partials_credits_and_unknown_dates(monk
 
 
 def test_date_bucket_boundaries_and_unknown_balance(monkeypatch):
-    rows = (
-        ("INV-A", "Demo North", "Open", "2026-10-01", "2026-10-28", "", "", "", "", "A"),
-        ("INV-B", "Demo North", "Open", "2026-10-01", "2026-10-27", "", "", "", "", "B"),
-        ("INV-C", "Demo North", "Open", "2026-09-13", "2026-09-13", "", "", "", "", "C"),
-        ("INV-D", "Demo North", "Open", "2026-08-14", "2026-08-14", "", "", "", "", "D"),
-        ("INV-E", "Demo North", "Partially paid", "2026-01-01", "2026-01-01", "", "5", "", "", "E"),
+    # Every boundary is inclusive by invoice date at the October 31 month-end.
+    dates = ("2026-10-31", "2026-10-01", "2026-09-30", "2026-09-01",
+             "2026-08-31", "2026-08-02", "2026-08-01", "2026-07-03",
+             "2026-07-02", "2026-11-01", "")
+    rows = tuple(
+        (f"INV-{index}", "Demo North",
+         "Partially paid" if index == 11 else "Open",
+         issued, "", "", "5" if index == 11 else "", "", "", str(index))
+        for index, issued in enumerate(dates, 1)
     )
     report, _, _, _, _ = prepared(monkeypatch, rows)
-    assert ["Current", "1–30 days", "31–60 days", "61–90 days", "91+ days"] == [
-        next(v for v in ("Current", "1–30 days", "31–60 days", "61–90 days", "91+ days")
-             if v in row[2])
-        for row in report.blocks[0].rows]
+    assert [entry["aging"] for entry in decoded(report.source_row_reviews[0])["rows"]] == [
+        "Current (0–30 days)", "Current (0–30 days)",
+        "31–60 days", "31–60 days", "61–90 days", "61–90 days",
+        "91–120 days", "91–120 days", "121+ days",
+        "Future invoice — not aged", "Unknown aging — invoice date missing or invalid",
+    ]
     assert "outstanding balance unknown" in report.blocks[0].rows[-1][2]
+    assert all(entry["open_balance"] is None for entry in decoded(report.source_row_reviews[0])["rows"])
+
+
+def test_negative_credit_is_reconciled_without_changing_original_sign(monkeypatch):
+    rows = (("INV-CREDIT", "Demo North", "Partially paid",
+             "2026-10-01", "2026-11-10", "500", "100", "(50)", "350", "A"),)
+    report, block, _, _, _ = prepared(monkeypatch, rows)
+    record = decoded(report.source_row_reviews[0])["rows"][0]
+    assert record["source_amounts"]["credit_amount"] == "(50)"
+    assert record["open_balance"] == "350"
+    assert record["balance_reconciliation"] == "reconciled"
+    assert "350" not in repr(block.rows)
+    assert check_review_binding(report) is None
+
+
+def test_unreconciled_amount_is_not_a_computed_open_balance(monkeypatch):
+    report, _, _, _, _ = prepared(monkeypatch)
+    record = decoded(report.source_row_reviews[0])["rows"][2]
+    assert record["open_balance"] is None
+    assert record["balance_reconciliation"] == "unresolved"
+
+
+def test_month_end_is_required_and_future_dates_are_not_aged(monkeypatch):
+    draft, content, review, edits, _ = fixture(monkeypatch)
+    with pytest.raises(ValueError, match="report-month end"):
+        prepare_review(draft, content, 1, as_of="2026-10-30",
+                       edited=edits, source_kind="vendor_invoice", confirmed=True)
+    report, _, _, _, _ = prepared(monkeypatch, rows=(
+        ("INV-FUT", "Demo North", "Open", "2026-11-01", "", "", "", "", "", "A"),))
+    assert "Future invoice — not aged" in report.blocks[0].rows[0][2]
+
+
+def test_excel_serial_dates_are_never_guessed_from_csv():
+    from app.monthly_report_receivable_intake import _date
+    from datetime import date
+    assert _date("46326", excel_serial=True) == date(2026, 10, 31)
+    assert _date("46326") is None
+    assert _date("60", excel_serial=True) is None
+    assert _date("99999999", excel_serial=True) is None
+
+
+def test_title_total_rows_rejected_with_original_intact(monkeypatch):
+    rows = (("TOTAL", "Demo North", "Open", "2026-10-01", "",
+             "500", "0", "0", "500", "A"),)
+    draft, content, review, edits, raw = fixture(monkeypatch, rows)
+    with pytest.raises(ValueError, match="title or total"):
+        prepare_review(draft, content, 1, as_of="2026-10-31",
+                       edited=edits, source_kind="vendor_invoice", confirmed=True)
+    assert draft.sources == (content.source,)
+    assert b"TOTAL" in raw
+
+
+def test_core_aliases_and_optional_source_headers():
+    from app.monthly_report_receivable_schema import inspect_receivable_schema
+    from app.monthly_report_model import ReportTable
+    review = inspect_receivable_schema(
+        ReportTable(("Invoice #", "Invoice Date", "Amount Due",
+                     "Description", "Notes", "Location", "Status"),
+                    (("TEST-1", "2026-10-01", "20", "", "", "Demo North", "Open"),),
+                    "source:synthetic:sheet:1"),
+        source_sha256="a" * 64)
+    assert [column.candidate_role for column in review.columns] == [
+        "invoice_id", "invoice_date", "balance", "description", "notes", "site", "status"]
 
 
 @pytest.mark.parametrize("change", (
@@ -159,25 +227,27 @@ def test_source_receipt_cannot_be_reused_for_a_different_invoice(monkeypatch, ch
 
 def test_manual_row_corrections_preserve_original_and_reject_duplicate_or_ambiguous_site(monkeypatch):
     draft, content, review, edits, _ = fixture(monkeypatch)
-    edits[review.rows[2].reference] = {"due_date": "2026-10-07"}
+    edits[review.rows[2].reference] = {
+        "invoice_date": "2026-10-07", "due_date": "2026-10-07"}
     revised, _ = prepare_review(draft, content, 1,
-                                 as_of="2026-10-28", edited=edits,
+                                 as_of="2026-10-31", edited=edits,
                                  source_kind="customer_invoice", confirmed=True)
     original = decoded(revised.source_row_reviews[0])["rows"][2]
     assert original["cells"][4] == "03/05/2026"
-    assert original["corrections"] == {"due_date": "2026-10-07"}
-    assert "1–30 days" in revised.blocks[0].rows[2][2]
+    assert original["corrections"] == {
+        "invoice_date": "2026-10-07", "due_date": "2026-10-07"}
+    assert "Current (0–30 days)" in revised.blocks[0].rows[2][2]
     assert check_review_binding(revised) is None
     duplicates = dict(edits)
     duplicates[review.rows[1].reference] = {
         "invoice_id": "INV-101", "site": "Demo North", "customer_id": "A"}
     with pytest.raises(ValueError, match="same site"):
-        prepare_review(draft, content, 1, as_of="2026-10-28",
+        prepare_review(draft, content, 1, as_of="2026-10-31",
                        edited=duplicates, source_kind="customer_invoice", confirmed=True)
     bad = dict(edits)
     bad[review.rows[1].reference] = {"site": "Other client"}
     with pytest.raises(ValueError, match="foreign"):
-        prepare_review(draft, content, 1, as_of="2026-10-28",
+        prepare_review(draft, content, 1, as_of="2026-10-31",
                        edited=bad, source_kind="customer_invoice", confirmed=True)
 
 
@@ -189,10 +259,10 @@ def test_missing_asof_missing_columns_and_inconsistent_partial_balance_fail_clos
     mismatch = dict(edits)
     mismatch[review.rows[0].reference] = {"balance": "400"}
     with pytest.raises(ValueError, match="disagree"):
-        prepare_review(draft, content, 1, as_of="2026-10-28", edited=mismatch,
+        prepare_review(draft, content, 1, as_of="2026-10-31", edited=mismatch,
                        source_kind="vendor_invoice", confirmed=True)
     with pytest.raises(ValueError, match="Confirm"):
-        prepare_review(draft, content, 1, as_of="2026-10-28", edited=edits,
+        prepare_review(draft, content, 1, as_of="2026-10-31", edited=edits,
                        source_kind="vendor_invoice", confirmed=False)
 
 
@@ -283,7 +353,7 @@ def test_saved_status_only_ar_word_and_real_pdf_exclude_invoice_amounts(monkeypa
         text = ' '.join(text.split())  # Word/PDF may wrap the same cell differently.
         assert 'Invoice INV-101' in text
         assert 'Partially paid' in text
-        assert 'aging as of 2026-10-28' in text
+        assert 'aging as of 2026-10-31' in text
         assert 'Credit' in text
         assert 'due date needs review' in text
         assert not re.search(r'(?<!\d)(?:500|350|250|100|25)(?!\d)', text)

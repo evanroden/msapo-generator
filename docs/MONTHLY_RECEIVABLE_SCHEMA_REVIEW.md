@@ -140,3 +140,44 @@ The independently authorized contract and ENFRA client-report monetary path
 must retain its established source/page approvals and cannot be inferred from
 a selected category or reused from an invoice receipt. Synthetic unit checks
 do not establish true original document or served Word/PDF acceptance.
+
+
+## Prompt 06 follow-on: invoice-date aging and conservative output (12 November 2026)
+
+New reviews of the shared CSV/XLSX source use **Invoice Date** and the selected
+report month's **last calendar day**, not the due date or an arbitrary current
+date. Current covers 0–30 days inclusive; then 31–60, 61–90, 91–120, and
+121+ days. Future invoices are explicitly not aged; missing or ambiguous invoice
+dates have unknown aging. Paid/closed rows and credit memos are not aged as open
+receivables. Due dates remain visible for review but do not determine the
+aging group. Excel 1900 date-system serials are accepted from XLSX only, with
+phantom serial 60 rejected; CSV numeric dates are never locale-guessed. Source
+days-past-due, when supplied, are checked separately against due dates.
+
+Existing saved source receipts with no `aging_basis` marker retain the prior
+due-date/as-of interpretation. Nothing silently recalculates installed reports.
+New receipts bind invoice-date/month-end rules to the report and source and are
+recomputed during output preflight. Fully supplied invoice, payment, credit and
+balance cells must reconcile; signed credits in the reviewed credit field
+reduce the open balance by their magnitude. Missing figures are unresolved, not
+zero or an inferred balance. This reconciliation is internal only. Original row
+strings and user corrections remain separate; a title/total masquerading as an
+invoice is rejected instead of added to the register.
+
+**Output restriction remains in force.** The app's current Section 10 client
+Word/PDF/preview contribution is only an explicitly nonfinancial status and
+aging-category derivative. Internally reviewed source amounts are **not**
+proof of client output eligibility. No 7-column monetary aging or 11-column
+financial detail is enabled until field/page-level source, audience, review
+invalidation and every output path are independently enforced. Vendor-invoice
+totals remain excluded even if copied elsewhere. Existing monetary gates
+remain unchanged.
+
+**Open gaps:** explicit per-site field mapping where aliases do not match;
+source exports with leading title/total rows that need non-destructive row
+selection; invoice-keyed notes carryover with contract/site conflict checks;
+partial payment history with only summary balance; currency scope and verified
+client amounts. The Tulane three-sheet workbook and Hampton PDF are separate
+intake contracts, not established by synthetic UNO-like CSV/XLSX testing.
+Physical browser/edit/reload, actual rendered DOCX/PDF and pixel-level
+price-leak validation are still required for served acceptance.

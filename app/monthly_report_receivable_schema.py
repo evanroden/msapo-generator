@@ -17,9 +17,11 @@ _HEADINGS = {
     "invoice_id": ("invoice", "invoice number", "invoice no", "invoice id", "invoice #"),
     "customer_id": ("customer id", "customer number", "customer account", "account number"),
     "site": ("site", "facility", "location"),
-    "invoice_date": ("invoice date", "date invoiced"),
+    "invoice_date": ("invoice date", "date invoiced", "invoice issued date"),
     "due_date": ("due date", "payment due date"),
     "status": ("status", "invoice status", "payment status"),
+    "description": ("description", "invoice description"),
+    "notes": ("notes", "invoice notes", "comments"),
     "as_of_date": ("as of date", "aging as of", "aging as of date"),
     "days_past_due": ("days past due", "days overdue"),
     "currency": ("currency", "currency code"),
@@ -117,5 +119,5 @@ def inspect_receivable_schema(table: ReportTable, *, source_sha256: str) -> Rece
                                     sort_keys=True).encode()).hexdigest()
     return ReceivableSchemaReview(source_sha256, table.reference, fingerprint, columns, rows,
         duplicates, tuple(index for index, role in enumerate(roles) if not role),
-        tuple(role for role in ("invoice_id", "site", "status", "due_date", "as_of_date")
+        tuple(role for role in ("invoice_id", "invoice_date", "balance")
               if role not in roles))
