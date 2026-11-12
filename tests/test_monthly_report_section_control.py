@@ -14,7 +14,7 @@ from app.monthly_report_model import (
 )
 from app.monthly_report_section_control import (
     ContractPage, install_text_page, report_only_sections, standing_sections,
-    verify_custom_page_scope, visible_outline,
+    verify_custom_page_scope, visible_outline, normalize_with_section_choices,
 )
 from tests.conftest import requires_libreoffice
 
@@ -261,3 +261,51 @@ def test_docx_public_gate_rejects_unverified_custom_page_after_content_mutation(
     ))
     with pytest.raises(ValueError, match="field/page review"):
         assemble_docx(wrong, acknowledged_fingerprint=wrong.fingerprint)
+
+
+def test_guided_normalization_keeps_report_only_omissions_and_content():
+    from app.monthly_report_guided import complete_guided_sections
+    draft = report_only_sections(make_draft(), {"training": False, "water": False})
+    before = {block.key: block for block in draft.blocks}
+    # Existing normalize path restores every section to included=True.
+    legacy = complete_guided_sections(draft)
+    assert next(s for s in legacy.sections if s.key == "training").included
+    fixed = normalize_with_section_choices(draft, complete_guided_sections)
+    assert not next(s for s in fixed.sections if s.key == "training").included
+    assert not next(s for s in fixed.sections if s.key == "water").included
+    assert {block.key: block for block in fixed.blocks} == before
+    assert fixed.profile == draft.profile
+    reloaded = draft_from_dict(asdict(fixed))
+    assert reloaded == fixed
+
+
+def test_guided_normalization_does_not_drop_custom_page_or_restore_default():
+    from app.monthly_report_guided import complete_guided_sections
+    draft = add_page(make_draft("Synthetic UNO"))
+    draft = report_only_sections(draft, {"training": False, page_for(draft).key: False})
+    fixed = normalize_with_section_choices(draft, complete_guided_sections)
+    custom_sections = [section for section in fixed.sections if section.key == page_for(draft).key]
+    assert len(custom_sections) == 1
+    assert not custom_sections[0].included
+    assert not next(s for s in fixed.sections if s.key == "training").included
+    assert next(block for block in fixed.blocks if block.key == page_for(draft).block_key) == (
+        next(block for block in draft.blocks if block.key == page_for(draft).block_key))
+    assert any(s.appendix for s in fixed.sections[fixed.sections.index(custom_sections[0])+1:])
+    visible = normalize_with_section_choices(
+        report_only_sections(fixed, {page_for(draft).key: True}), complete_guided_sections)
+    assert len([s for s in visible.sections if s.key == page_for(draft).key]) == 1
+    assert next(s for s in visible.sections if s.key == page_for(draft).key).included
+    verify_custom_page_scope(visible)
+
+
+def test_guided_normalization_does_not_silently_delete_unknown_section():
+    from app.monthly_report_model import BlockSpec, SectionSpec
+    from app.monthly_report_guided import complete_guided_sections
+    draft = make_draft()
+    rogue = SectionSpec("undocumented_legacy_section", "", "Unmapped imported content",
+                        (BlockSpec("undocumented_content", "rich_text"),))
+    draft = replace(draft, sections=(*draft.sections, rogue),
+                    blocks=(*draft.blocks, ResolvedBlock("undocumented_content", "This month",
+                                                      text="Unmapped retained source text")))
+    with pytest.raises(ValueError, match="Unknown imported sections"):
+        normalize_with_section_choices(draft, complete_guided_sections)
