@@ -43,7 +43,10 @@ jobs:
           NATIVE_TEST
       - name: Retain synthetic first-failure and interaction evidence
         if: always()
-        timeout-minutes: 3
+        # Evidence includes a Playwright trace.zip (tens of MB); a 3-minute
+        # cap failed the whole check on a slow artifact upload even though
+        # the acceptance tests had passed (PR #859, run 43078132517).
+        timeout-minutes: 10
         uses: actions/upload-artifact@v4
         with:
           name: monthly-simplicity-${{ github.run_attempt }}
