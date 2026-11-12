@@ -38,6 +38,10 @@ def selected_issue_pages(draft):
     from app.monthly_report_asset_review import asset_context
     from app.monthly_report_model import used_block_keys
     active_blocks = used_block_keys(draft)
+    # Imported issue-register tables provide provenance links, not explicit
+    # approval to print their original PDF page as raster evidence.
+    table_provenance = {table.reference for block in draft.blocks
+                        for table in block.extra_tables if table.reference}
     already_rendered = {
         ref for block in draft.blocks
         if block.key in active_blocks and block.source != "Omit"
@@ -64,14 +68,22 @@ def selected_issue_pages(draft):
                     raise ValueError("An issue evidence page link changed. Reopen the issue and select its current source page.")
                 continue  # Other legacy narrative/Word source references.
             source, number = pair
+            # Non-raster links are citations (including existing TXT/CSV links),
+            # not source-page artwork. Never decode or print them as pictures.
+            if source.suffix != ".pdf" and source.suffix not in sources.ocr.SUPPORTED_IMAGE_SUFFIXES:
+                continue
+            # Legacy register imports cite the originating table page before
+            # any image review. Do not turn a table citation into image consent.
+            # Explicit page links outside table provenance still fail closed.
+            if (reference in table_provenance
+                    and number not in dict(source.client_page_reviews)):
+                continue
             previous = owners.get(reference)
             if previous is not None and previous != issue.key:
                 raise ValueError(
                     f"Page {number} of {source.filename} is linked to multiple issues. "
                     "Keep one issue owner or use independently reviewed evidence.")
             owners[reference] = issue.key
-            if source.suffix != ".pdf" and source.suffix not in sources.ocr.SUPPORTED_IMAGE_SUFFIXES:
-                raise ValueError(f"Page {number} of {source.filename} is not a raster source page. Review its original in Manage source files.")
             caption = dict(source.captions).get(number, "")
             from app.monthly_report_content_policy import page_fingerprint
             if dict(source.client_page_exclusions).get(number) == page_fingerprint(source, number):
