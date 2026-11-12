@@ -115,11 +115,17 @@ def render_receivable_intake(draft, blocks, prefix):
                          not required <= {col.candidate_role for col in review.columns})
         overrides = {}
         if needs_mapping:
-            with st.expander("Map nonstandard invoice columns",
-                             expanded=bool(review.duplicate_roles or
-                                           not required <= {c.candidate_role for c in review.columns})):
-                st.caption("Use each source column once. Unknown headings stay internal "
-                           "unless explicitly assigned. Mapping is not financial-output approval.")
+            # Streamlit does not allow an expander inside another expander.
+            # Optional mapping stays behind a single native checkbox.
+            show_mapping = st.checkbox(
+                "Map nonstandard invoice columns",
+                value=bool(previous_mapping or review.duplicate_roles or
+                           not required <= {c.candidate_role for c in review.columns}),
+                key=key + "_map_show_" + _digest((
+                    report_identity(draft), content.source.fingerprint, number))[:20])
+            if show_mapping:
+                st.caption("Assign one source column per role. Unknown headings stay internal "
+                           "unless explicitly assigned. This is not monetary-output approval.")
                 options = ("", *MAPPABLE_ROLES)
                 for column in initial.columns:
                     default = previous_mapping.get(column.index, column.candidate_role)
