@@ -166,18 +166,18 @@ def report_period_from_title_candidates(titles: tuple[str, ...]) -> tuple[Report
     month_names["sep"] = 9
     month_names["sept"] = 9
     names = "|".join(sorted(map(re.escape, month_names), key=len, reverse=True))
-    word_month = re.compile(rf"(?<![A-Za-z])({names})\\.?[ ,/-]+(20\\d{{2}})(?!\\d)", re.I)
-    numeric_month = re.compile(r"(?<!\\d)(20\\d{2})[-/](0?[1-9]|1[0-2])(?!\\d)")
+    word_month = re.compile(rf"(?<![A-Za-z])({names})\.?[ ,/-]+(20\d{{2}})(?!\d)", re.I)
+    numeric_month = re.compile(r"(?<!\d)(20\d{2})[-/](0?[1-9]|1[0-2])(?!\d)")
     results = set()
     for title in titles:
         # These are title candidates, not a trusted date extraction from any
         # body paragraph. Restrict authority further to report/month headings.
-        headline = re.split(r"\\b(?:printed|prepared|issued|signed)?\\s*Date\\s*:", title,
+        headline = re.split(r"\b(?:printed|prepared|issued|signed)?\s*Date\s*:", title,
                             maxsplit=1, flags=re.I)[0].strip()
-        normalized = re.sub(r"\\s+", " ", headline)
-        if not (re.search(r"\\b(?:monthly\\s+(?:report|review)|report(?:ing)?\\s+(?:month|period))\\b",
+        normalized = re.sub(r"\s+", " ", headline)
+        if not (re.search(r"\b(?:monthly\s+(?:report|review)|report(?:ing)?\s+(?:month|period))\b",
                           normalized, re.I)
-                or re.search(r"\\b(?:month|period)\\s+of\\b", normalized, re.I)):
+                or re.search(r"\b(?:month|period)\s+of\b", normalized, re.I)):
             continue
         for match in word_month.finditer(normalized):
             results.add(ReportPeriod(int(match.group(2)),
