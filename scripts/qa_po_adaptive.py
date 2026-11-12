@@ -109,13 +109,13 @@ def wait_preview_ack(reference, *, image, page_number):
 def exercise(engine, name):
     browser = engine.launch(headless=True)
     page = browser.new_page(viewport={"width":1440,"height":900})
-    REPORT.setdefault('environments', {})[name] = browser_evidence(page, engine=name, input_method='Playwright pointer/keyboard and semantic labels; simulated fold segments')
     errors = []
     page.on("pageerror", lambda exc: errors.append(str(exc)))
     from qa_po_diagnostics import PODiagnostics
     diagnostics = PODiagnostics(OUT / "diagnostics", name)
     try:
         diagnostics.start(page)
+        REPORT.setdefault('environments', {})[name] = browser_evidence(page, engine=name, input_method='Playwright pointer/keyboard and semantic labels; simulated fold segments')
         exercise_page(page, name, errors)
     except Exception:
         diagnostics.failure_snapshot(page)
