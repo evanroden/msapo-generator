@@ -35,10 +35,13 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
+from typing import Mapping, Protocol
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import requests
 
+from app.adapter_loader import AdapterConfigurationError, load_adapter
 from app.config import PDF_BACKEND, GOTENBERG_URL, OUTPUT_DIR
 
 
@@ -48,6 +51,157 @@ class PDFConversionError(Exception):
 
 class PDFConversionTimeout(PDFConversionError):
     pass
+
+
+class PDFConverter(Protocol):
+    name: str
+
+    def convert(self, docx_path: Path, output_dir: Path) -> Path: ...
+
+    def diagnostic(self) -> Mapping[str, object]: ...
+
+
+def _validate_converted_pdf(path: Path) -> Path:
+    if not path.is_file() or path.is_symlink():
+        raise PDFConversionError("The converter did not return a valid PDF file.")
+    with path.open("rb") as stream:
+        if stream.read(5) != b"%PDF-":
+            raise PDFConversionError("The converter did not return a valid PDF file.")
+    return path
+
+
+class LibreOfficeConverter:
+    """Portable CLI implementation for adapter contracts.
+
+    The legacy default conversion below remains authoritative for production
+    because it also holds the shared office-process budget and image-preservation
+    rules used by monthly reports.
+    """
+    name = "libreoffice"
+
+    def diagnostic(self) -> Mapping[str, object]:
+        return {"name": self.name, "configured": bool(shutil.which("libreoffice") or shutil.which("soffice"))}
+
+    def convert(self, docx_path: Path, output_dir: Path) -> Path:
+        exe = shutil.which("libreoffice") or shutil.which("soffice")
+        if not exe:
+            raise PDFConversionError("LibreOffice is not installed.")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".epc-convert-", dir=output_dir) as tmp:
+            staging = Path(tmp)
+            profile = staging / "profile"
+            target = staging / "out"
+            target.mkdir()
+            try:
+                result = subprocess.run(
+                    [
+                        exe, "--headless", f"-env:UserInstallation={profile.as_uri()}",
+                        "--convert-to", "pdf", "--outdir", str(target),
+                        str(docx_path.resolve()),
+                    ],
+                    capture_output=True, text=True, timeout=120,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise PDFConversionTimeout("Portable LibreOffice conversion timed out.") from exc
+            expected = target / f"{docx_path.stem}.pdf"
+            if result.returncode or not expected.is_file():
+                raise PDFConversionError("LibreOffice finished without the expected PDF.")
+            _validate_converted_pdf(expected)
+            published = output_dir / f"{docx_path.stem}-{uuid4().hex}.pdf"
+            try:
+                os.link(expected, published)
+            except OSError as exc:
+                raise PDFConversionError("Could not publish converted PDF safely.") from exc
+            return _validate_converted_pdf(published)
+
+
+class GotenbergConverter:
+    name = "gotenberg"
+
+    def __init__(self, *, base_url: str, timeout: int = 120) -> None:
+        split = urlsplit(base_url)
+        if split.scheme not in ("http", "https") or not split.hostname:
+            raise PDFConversionError("Gotenberg requires an absolute HTTP(S) URL.")
+        if split.scheme != "https" and split.hostname not in ("localhost", "127.0.0.1", "::1"):
+            raise PDFConversionError("Remote Gotenberg URLs must use HTTPS.")
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+
+    def diagnostic(self) -> Mapping[str, object]:
+        return {"name": self.name, "configured": True, "endpoint": self.base_url}
+
+    def convert(self, docx_path: Path, output_dir: Path) -> Path:
+        with docx_path.open("rb") as source:
+            response = requests.post(
+                f"{self.base_url}/forms/libreoffice/convert",
+                files={"files": (
+                    docx_path.name, source,
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )},
+                timeout=self.timeout,
+            )
+        if response.status_code != 200:
+            raise PDFConversionError(f"Gotenberg returned HTTP {response.status_code}.")
+        data = response.content
+        if not isinstance(data, bytes) or not data.startswith(b"%PDF-"):
+            raise PDFConversionError("Gotenberg did not return a valid PDF.")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        path = output_dir / f"{docx_path.stem}-{uuid4().hex}.pdf"
+        path.write_bytes(data)
+        return _validate_converted_pdf(path)
+
+
+class Docx2PdfConverter:
+    name = "docx2pdf"
+
+    def diagnostic(self) -> Mapping[str, object]:
+        try:
+            import docx2pdf  # noqa: F401
+        except ImportError:
+            return {"name": self.name, "configured": False}
+        return {"name": self.name, "configured": True}
+
+    def convert(self, docx_path: Path, output_dir: Path) -> Path:
+        try:
+            import docx2pdf
+        except ImportError as exc:
+            raise PDFConversionError("docx2pdf is not installed.") from exc
+        output_dir.mkdir(parents=True, exist_ok=True)
+        target = output_dir / f"{docx_path.stem}-{uuid4().hex}.pdf"
+        docx2pdf.convert(str(docx_path), str(target))
+        return _validate_converted_pdf(target)
+
+
+class DisabledConverter:
+    name = "none"
+
+    def diagnostic(self) -> Mapping[str, object]:
+        return {"name": self.name, "configured": True}
+
+    def convert(self, docx_path: Path, output_dir: Path) -> Path:
+        raise PDFConversionError("PDF conversion is disabled; DOCX output remains available.")
+
+
+def get_pdf_converter(env: Mapping[str, str] | None = None) -> PDFConverter:
+    source = os.environ if env is None else env
+    name = (source.get("EPC_PDF_CONVERTER") or source.get("PDF_BACKEND") or "libreoffice").strip().lower()
+    if name == "libreoffice":
+        return LibreOfficeConverter()
+    if name == "gotenberg":
+        return GotenbergConverter(base_url=source.get("EPC_GOTENBERG_URL") or source.get("GOTENBERG_URL") or "http://localhost:3000")
+    if name == "docx2pdf":
+        return Docx2PdfConverter()
+    if name in ("none", "disabled"):
+        return DisabledConverter()
+    if name == "custom":
+        return load_adapter(
+            source.get("EPC_PDF_CONVERTER_ADAPTER", ""),
+            kind="PDF converter",
+            required_methods=("convert", "diagnostic"),
+            env=source,
+        )
+    raise AdapterConfigurationError(f"Unknown EPC_PDF_CONVERTER {name!r}.")
 
 
 # ── LibreOffice headless ──────────────────────────────────────────────
@@ -195,7 +349,13 @@ _BACKENDS = {
 }
 
 
-def convert_to_pdf(docx_path: Path, *, lossless_images: bool = False) -> Path:
+def convert_to_pdf(
+    docx_path: Path,
+    *,
+    lossless_images: bool = False,
+    converter: PDFConverter | None = None,
+    env: Mapping[str, str] | None = None,
+) -> Path:
     """
     Convert a .docx file to .pdf using the configured backend.
     Returns the Path to the generated PDF.
@@ -214,6 +374,18 @@ def convert_to_pdf(docx_path: Path, *, lossless_images: bool = False) -> Path:
     """
     if type(lossless_images) is not bool:
         raise PDFConversionError("The lossless image option must be a boolean.")
+    source = os.environ if env is None else env
+    if converter is not None or source.get("EPC_PDF_CONVERTER"):
+        active = converter or get_pdf_converter(source)
+        if lossless_images:
+            # Never downgrade monthly lossless images by selecting another renderer.
+            if getattr(active, "name", "") != "libreoffice":
+                raise PDFConversionError("Requested lossless image export requires LibreOffice.")
+            return _convert_libreoffice(docx_path, lossless_images=True)
+        if converter is None and getattr(active, "name", "") == "libreoffice":
+            # Preserve existing production process limits and PDF publication.
+            return _convert_libreoffice(docx_path)
+        return _validate_converted_pdf(active.convert(docx_path, docx_path.parent))
     backend = PDF_BACKEND.lower()
     converter = _BACKENDS.get(backend)
     if converter is None:
