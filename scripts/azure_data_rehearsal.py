@@ -89,7 +89,7 @@ def _safe_archive(archive: Path) -> dict:
             if manifest.get("totals", {}).get("files") != len(files):
                 raise RehearsalError("File count disagrees with manifest")
         return legacy.verify(archive)
-    except (OSError, KeyError, TypeError, ValueError, tarfile.TarError, legacy.MigrationError) as exc:
+    except (EOFError, OSError, KeyError, TypeError, ValueError, tarfile.TarError, legacy.MigrationError) as exc:
         raise RehearsalError("Invalid or corrupt migration archive") from exc
 
 
