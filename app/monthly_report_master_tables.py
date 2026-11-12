@@ -261,6 +261,13 @@ def rebind_carried_master_tables(draft, previous_blocks, previous_template: str)
     stop the rebind before any draft is changed. Previous reports stay immutable.
     """
     if draft.profile.template != previous_template:
+        # Old report history is still saved, but a new physical master cannot
+        # silently claim or discard its work-order month cells.
+        for block in draft.blocks:
+            prior = previous_blocks.get(block.key)
+            if (block.key == "work_orders" and block.source != "Omit" and prior
+                    and any(len(t.columns) == 13 and t.rows for t in prior.extra_tables)):
+                raise ValueError("The pinned master changed; review historical work-order grid migration.")
         return draft
     accepted = {table.reference: table for table in for_profile(draft.profile)}
     if not accepted:
