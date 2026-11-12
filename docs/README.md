@@ -44,6 +44,8 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 [Monthly preview cache measurements](MONTHLY_PREVIEW_CACHE_MEASUREMENTS.md) — reproducible synthetic before/after PDF-page cache measurements for PR #548, including warm-load improvements, preserved raster hashes, and explicitly unverified browser/cold-render limits.
 
+[Monthly preview latency end-to-end evidence](MONTHLY_PREVIEW_LATENCY_E2E.md) — MR-021 synthetic source/thumbnail and native browser measurement methods, proposed unapproved targets, resource caps and remaining served/device acceptance.
+
 Current next-LLM handoff and owner-requested testing release:
 [HANDOFF_MONTHLY_REPORT_2026-10-09.md](HANDOFF_MONTHLY_REPORT_2026-10-09.md).
 Read this before resuming report work; it distinguishes completed fixes from
