@@ -103,6 +103,32 @@ def test_passive_grid_preserves_every_physical_cell_and_omission(columns, source
     assert app.session_state['draft'] == draft
 
 
+def card_buttons(app, label):
+    return [button for button in app.button if button.label == label]
+
+
+def card_edit_row(app, index, values, *, add_label='Add capital item'):
+    # Capital tables render as row cards, not a native grid: open one card,
+    # set its fields in column order, and close it.
+    card_buttons(app, 'Edit capital item')[index].click().run()
+    assert not app.exception
+    for widget, value in zip(app.text_input, values):
+        widget.set_value(value).run()
+    assert not app.exception
+    next(button for button in app.button if button.label == 'Close editing').click().run()
+    assert not app.exception
+
+
+def card_add_row(app, values):
+    next(button for button in app.button if button.label == 'Add capital item').click().run()
+    assert not app.exception
+    for widget, value in zip(app.text_input, values):
+        widget.set_value(value).run()
+    assert not app.exception
+    next(button for button in app.button if button.label == 'Close editing').click().run()
+    assert not app.exception
+
+
 @pytest.mark.parametrize('key', ['water_monthly_update', 'capital_renewal'])
 @pytest.mark.parametrize('source', ['This month', 'Omit'])
 def test_native_corrections_blanks_and_row_changes_stay_column_specific(key, source):
@@ -110,10 +136,16 @@ def test_native_corrections_blanks_and_row_changes_stay_column_specific(key, sou
                         (('A', 'B', 'C'), ('D', 'E', 'F')), 'synthetic:retained')
     draft = report(table, key=key, source=source)
     app = start(draft)
-    labels = tuple(app.dataframe[-1].value.columns)
-    wire(app, edited={'0': {labels[0]: 'corrected-A', labels[1]: ''}},
-         added=[dict(zip(labels, ('0', '', 'kW')))], deleted=[1])
     expected = replace(table, rows=(('corrected-A', '', 'C'), ('0', '', 'kW')))
+    if key == 'capital_renewal':
+        card_edit_row(app, 0, ('corrected-A', '', 'C'))
+        card_add_row(app, ('0', '', 'kW'))
+        card_buttons(app, 'Remove capital item')[1].click().run()
+        assert not app.exception
+    else:
+        labels = tuple(app.dataframe[-1].value.columns)
+        wire(app, edited={'0': {labels[0]: 'corrected-A', labels[1]: ''}},
+             added=[dict(zip(labels, ('0', '', 'kW')))], deleted=[1])
     assert current(app) == expected
     result = app.session_state['draft']
     assert result.blocks[0].source == 'This month'
@@ -121,7 +153,10 @@ def test_native_corrections_blanks_and_row_changes_stay_column_specific(key, sou
     assert result.blocks[1:] == draft.blocks[1:] and result.profile == draft.profile
     reopened = start(result)
     assert current(reopened) == expected
-    assert tuple(map(tuple, reopened.dataframe[-1].value.values)) == expected.rows
+    if key == 'capital_renewal':
+        assert [item.value for item in reopened.markdown] == ['Capital item 1', 'Capital item 2']
+    else:
+        assert tuple(map(tuple, reopened.dataframe[-1].value.values)) == expected.rows
 
 
 def test_legacy_collapsed_seed_cannot_rewrite_intact_canonical_columns():
@@ -147,10 +182,15 @@ def test_empty_optional_frame_keeps_original_schema_without_phantom_content(rows
     table = ReportTable(('Reading', 'Reading', 'Status'), rows, 'synthetic:empty')
     draft = report(table, key='capital_renewal')
     app = start(draft)
-    next(b for b in app.button if b.label == 'Add capital item').click().run()
+    # The capital frame renders as row cards, not a native grid: opening a
+    # blank card and closing it without entering anything must leave the
+    # frame untouched, with no phantom content.
+    next(button for button in app.button if button.label == 'Add capital item').click().run()
     assert not app.exception
     assert current(app) == table
-    wire(app)
+    assert {item.value for item in (*app.text_input, *app.text_area)} == {''}
+    next(button for button in app.button if button.label == 'Close editing').click().run()
+    assert not app.exception
     assert current(app) == table
 
 

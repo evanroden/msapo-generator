@@ -1,0 +1,73 @@
+name: Native capital row cards
+
+on:
+  pull_request:
+    paths:
+      - 'app/monthly_report*.py'
+      - 'scripts/qa_native_capital_rows.py'
+      - 'scripts/fixtures/native_capital_rows_app.py'
+      - '.github/workflows/native-capital-row-cards.yml'
+      - 'requirements*.lock'
+  push:
+    branches: [main]
+    paths:
+      - 'app/monthly_report*.py'
+      - 'scripts/qa_native_capital_rows.py'
+      - 'scripts/fixtures/native_capital_rows_app.py'
+      - '.github/workflows/native-capital-row-cards.yml'
+      - 'requirements*.lock'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  native-capital:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    env:
+      FONTCONFIG_FILE: ${{ github.workspace }}/runtime/fonts.conf
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - name: Install native editors, converters and browser engines
+        timeout-minutes: 25
+        run: |
+          sudo python3 scripts/ci_ubuntu_mirror_priority.py
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-calc fonts-dejavu-core fonts-crosextra-carlito fonts-crosextra-caladea
+          python -m pip install -r requirements-dev.lock playwright==1.58.0
+          python scripts/patch_streamlit_frontend.py
+          python scripts/patch_streamlit_date_input.py
+          python -m playwright install --with-deps chromium webkit
+      - name: Focused capital, row-card, precision, date and literal-label regression
+        timeout-minutes: 9
+        run: |
+          python -m pytest -q \
+            tests/test_monthly_report_row_cards_ui.py \
+            tests/test_monthly_capital_row_cards_native_outputs.py \
+            tests/test_monthly_report_row_card_groups.py \
+            tests/test_row_cards_date_boundaries.py \
+            tests/test_row_cards_numeric_precision.py \
+            tests/test_monthly_row_card_literal_source_labels.py
+      - name: Native edit, clear, Undo, save/reload and actual Word/PDF
+        timeout-minutes: 16
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 15 <<'NATIVE_TEST'
+          python scripts/qa_native_capital_rows.py
+          NATIVE_TEST
+      - name: Retain synthetic first failures and browser output evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-capital-${{ github.run_attempt }}
+          path: test-artifacts/native-capital-rows/
+          retention-days: 7
+          if-no-files-found: error
