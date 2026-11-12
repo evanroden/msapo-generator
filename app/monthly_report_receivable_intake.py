@@ -111,7 +111,7 @@ def _table_reference(source, number):
     return f"ar-source:{source.id}:table:{number}"
 
 
-def inspect_content(draft, content, number):
+def inspect_content(draft, content, number, *, role_overrides=None):
     """Verify original bytes AND re-extract this one exact CSV/XLSX table."""
     from app import monthly_report_sources as sources
     source = content.source
@@ -127,7 +127,7 @@ def inspect_content(draft, content, number):
     table = actual[number - 1]
     review = inspect_receivable_schema(
         ReportTable(table.columns, table.rows, _table_reference(source, number)),
-        source_sha256=source.sha256)
+        source_sha256=source.sha256, role_overrides=role_overrides)
     if len(review.rows) > MAX_ROWS:
         raise ValueError("Review at most 150 invoice rows per intake; split larger source exports.")
     return review
@@ -267,7 +267,7 @@ def _review_row(draft, review, row, changed, as_of, *, invoice_aging=False, exce
 
 
 def prepare_review(draft, content, table_number, *, as_of, edited, source_kind,
-                   confirmed=False):
+                   confirmed=False, role_overrides=None):
     """Return (new draft, new AR block) only after the *entire* review passes.
 
     An operator confirms source category for internal record context, not
@@ -286,7 +286,8 @@ def prepare_review(draft, content, table_number, *, as_of, edited, source_kind,
     section = [s for s in draft.sections if s.key == "accounts_receivable" and s.included]
     if len(section) != 1 or not any(b.key == "accounts_receivable" for b in section[0].blocks):
         raise ValueError("Include the existing Accounts Receivable section before importing.")
-    review = inspect_content(draft, content, table_number)
+    review = inspect_content(draft, content, table_number,
+                             role_overrides=role_overrides)
     roles = [col.candidate_role for col in review.columns]
     if (review.duplicate_roles or
             not all(roles.count(role) == 1 for role in ("invoice_id", "invoice_date", "balance"))):
@@ -319,6 +320,8 @@ def prepare_review(draft, content, table_number, *, as_of, edited, source_kind,
                "aging_basis": "invoice_date_month_end",
                "excel_serial_dates": content.source.suffix == ".xlsx",
                "source_heading_roles": [col.candidate_role for col in review.columns],
+               "role_overrides": {str(i): value for i, value in
+                                  sorted((role_overrides or {}).items())},
                "rows": records, "output_rows": [list(item) for item in output]}
     payload = json.dumps(receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     if len(payload) > MAX_RECEIPT:
@@ -433,10 +436,20 @@ def check_review_binding(draft):
         if not 1 <= number <= len(tables):
             return _NOTICE
         table = tables[number - 1]
+        encoded_mapping = receipt.get("role_overrides", {})
+        if (not isinstance(encoded_mapping, dict) or any(
+                not isinstance(index, str) or
+                not re.fullmatch(r"(?:0|[1-9][0-9]*)", index)
+                for index in encoded_mapping)):
+            return _NOTICE
+        mapping = {int(index): value for index, value in encoded_mapping.items()}
         review = inspect_receivable_schema(
             ReportTable(table.columns, table.rows, receipt["table_reference"]),
-            source_sha256=sources[0].sha256)
-    except (ValueError, OSError, KeyError, TypeError):
+            source_sha256=sources[0].sha256, role_overrides=mapping)
+        if receipt.get("aging_basis") == "invoice_date_month_end" and (
+                [col.candidate_role for col in review.columns] != receipt["source_heading_roles"]):
+            return _NOTICE
+    except (ValueError, OSError, KeyError, TypeError, OverflowError):
         return _NOTICE
     if (receipt["table_reference"] != _table_reference(sources[0], number) or
             review.fingerprint != receipt["table_fingerprint"] or

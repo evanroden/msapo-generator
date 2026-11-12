@@ -236,6 +236,47 @@ def test_minimal_invoice_fields_single_site_do_not_invent_open_status(monkeypatc
                     date(2026, 10, 31), invoice_aging=True)
 
 
+def test_nonstandard_column_mapping_is_source_bound_and_reviewed(monkeypatch):
+    from app.monthly_report_sources import SourceContent
+    draft, content, _, _, _ = fixture(monkeypatch)
+    raw = (b"Ref,Issued,Open balance,Campus,Stage\\n"
+           b"C-1,2026-10-01,75,Demo North,Open\\n")
+    digest = sha256(raw).hexdigest()
+    source = replace(content.source, id=digest, sha256=digest,
+                     filename="synthetic-other-site.csv",
+                     page_texts=(raw.decode(),))
+    source_content = SourceContent(source, source_api._spreadsheet(raw, ".csv"))
+    draft = replace(draft, sources=(source,))
+    monkeypatch.setattr(source_api, "source_bytes",
+                        lambda profile, original: raw)
+    initial = inspect_content(draft, source_content, 1)
+    assert {"invoice_id", "invoice_date", "balance"} - {
+        col.candidate_role for col in initial.columns}
+    changes = {row.reference: {} for row in initial.rows}
+    with pytest.raises(ValueError, match="need one unambiguous"):
+        prepare_review(draft, source_content, 1, as_of="2026-10-31",
+                       edited=changes, source_kind="customer_invoice", confirmed=True)
+    mapping = {0: "invoice_id", 1: "invoice_date", 2: "balance",
+               3: "site", 4: "status"}
+    reviewed, block = prepare_review(
+        draft, source_content, 1, as_of="2026-10-31",
+        edited=changes, source_kind="customer_invoice",
+        confirmed=True, role_overrides=mapping)
+    receipt = decoded(reviewed.source_row_reviews[0])
+    assert receipt["role_overrides"] == {str(i): role for i, role in mapping.items()}
+    assert receipt["rows"][0]["cells"] == list(source_content.tables[0].rows[0])
+    assert "Current (0–30 days)" in block.rows[0][2]
+    assert check_review_binding(reviewed) is None
+    forged = dict(receipt)
+    forged["role_overrides"] = {"2": "invoice_amount"}
+    forged_ref = "receivable:v1:" + _digest(forged)
+    altered = replace(block, references=tuple(
+        forged_ref if x.startswith("receivable:v1:") else x for x in block.references))
+    changed = replace(reviewed, blocks=(altered,), source_row_reviews=(
+        json.dumps(forged, sort_keys=True, separators=(",", ":")),))
+    assert check_review_binding(changed) is not None
+
+
 def test_core_aliases_and_optional_source_headers():
     from app.monthly_report_receivable_schema import inspect_receivable_schema
     from app.monthly_report_model import ReportTable

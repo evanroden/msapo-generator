@@ -34,6 +34,8 @@ _FINANCIAL_ROLES = frozenset((
     "invoice_amount", "balance", "payment_amount", "credit_amount", "aging_bucket",
 ))
 _ROLE_BY_HEADING = {heading: role for role, headings in _HEADINGS.items() for heading in headings}
+# Explicit per-source column corrections are never financial approval.
+MAPPABLE_ROLES = tuple(_HEADINGS) + ("aging_bucket",)
 
 
 def _heading(value):
@@ -76,7 +78,8 @@ class ReceivableSchemaReview:
     )
 
 
-def inspect_receivable_schema(table: ReportTable, *, source_sha256: str) -> ReceivableSchemaReview:
+def inspect_receivable_schema(table: ReportTable, *, source_sha256: str,
+                              role_overrides: dict[int, str] | None = None) -> ReceivableSchemaReview:
     """Inventory raw source fields without authorizing any report contribution.
 
     A repeated role is deliberately not selected. All source cells, including
@@ -93,6 +96,14 @@ def inspect_receivable_schema(table: ReportTable, *, source_sha256: str) -> Rece
         raise ValueError("Review requires a rectangular table of source text cells.")
 
     roles = [_ROLE_BY_HEADING.get(_heading(title), "") for title in table.columns]
+    if role_overrides is not None:
+        if (not isinstance(role_overrides, dict) or
+                any(type(index) is not int or index < 0 or index >= len(roles)
+                    or type(role) is not str or role not in ("", *MAPPABLE_ROLES)
+                    for index, role in role_overrides.items())):
+            raise ValueError("Invoice column mapping contains an unsupported index or role.")
+        for index, role in role_overrides.items():
+            roles[index] = role
     # "Current" and ranges are financial buckets only in an explicit invoice
     # and balance/amount context. No generic technical table is reclassified.
     invoice_context = "invoice_id" in roles and any(role in _FINANCIAL_ROLES for role in roles)

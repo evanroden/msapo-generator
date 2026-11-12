@@ -182,3 +182,10 @@ client amounts. The Tulane three-sheet workbook and Hampton PDF are separate
 intake contracts, not established by synthetic UNO-like CSV/XLSX testing.
 Physical browser/edit/reload, actual rendered DOCX/PDF and pixel-level
 price-leak validation are still required for served acceptance.
+
+**Explicit alias fallback:** a source with nonstandard column labels can map
+exact source column indexes to invoice roles during review. Duplicate/unknown
+role choices block the entire import; applied mappings are part of the
+source-bound review receipt and are checked again against original bytes at
+preflight. Standard aliases require no per-report mapping action. This does
+not interpret title rows as headers or authorize client monetary output.

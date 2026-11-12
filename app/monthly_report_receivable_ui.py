@@ -13,6 +13,7 @@ from app.monthly_report_receivable_intake import (
     EDITABLE, _RECEIPT_LINK, _digest, check_review_binding, decoded,
     editable_rows, inspect_content, prepare_review,
 )
+from app.monthly_report_receivable_schema import MAPPABLE_ROLES
 
 
 def saved_review_for_editor(draft, current, content, number, review):
@@ -101,11 +102,51 @@ def render_receivable_intake(draft, blocks, prefix):
         if not review.rows:
             st.caption("This source sheet contains no invoice rows.")
             return draft, blocks
+        # A standard export needs no mapping interaction. Unknown or
+        # competing headings expose an explicit, report-scoped fallback.
+        initial = review
+        saved_original = saved_review_for_editor(draft, current, content, number, initial)
+        previous_mapping = {
+            int(index): role for index, role in
+            (saved_original.get("role_overrides", {}) if saved_original else {}).items()
+        }
+        required = {"invoice_id", "invoice_date", "balance"}
+        needs_mapping = (bool(review.duplicate_roles or review.unknown_columns) or
+                         not required <= {col.candidate_role for col in review.columns})
+        overrides = {}
+        if needs_mapping:
+            with st.expander("Map nonstandard invoice columns",
+                             expanded=bool(review.duplicate_roles or
+                                           not required <= {c.candidate_role for c in review.columns})):
+                st.caption("Use each source column once. Unknown headings stay internal "
+                           "unless explicitly assigned. Mapping is not financial-output approval.")
+                options = ("", *MAPPABLE_ROLES)
+                for column in initial.columns:
+                    default = previous_mapping.get(column.index, column.candidate_role)
+                    selected = st.selectbox(
+                        str(column.index + 1) + ". " + column.heading,
+                        options,
+                        index=options.index(default) if default in options else 0,
+                        format_func=lambda role: role or "Unmapped",
+                        key=key + "_role_" + _digest((
+                            report_identity(draft), content.source.fingerprint,
+                            number, column.index))[:20])
+                    if selected != column.candidate_role:
+                        overrides[column.index] = selected
+        elif previous_mapping:
+            # A prior mapped receipt is restored even if the source headings
+            # happen to become recognized in a future version.
+            overrides = previous_mapping
+        try:
+            review = inspect_content(draft, content, number,
+                                     role_overrides=overrides)
+        except (ValueError, OSError) as exc:
+            st.warning(str(exc))
+            return draft, blocks
         labels = {column.candidate_role for column in review.columns}
-        if review.duplicate_roles or not {"invoice_id", "invoice_date", "balance"} <= labels:
-            st.warning("This table needs Invoice #, Invoice Date and Amount Due columns "
-                       "without competing headings. Map missing fields in an authorized "
-                       "corrected export; originals are unchanged.")
+        if review.duplicate_roles or not required <= labels:
+            st.warning("Resolve competing columns and map one Invoice #, "
+                       "Invoice Date and Amount Due. No imported data was changed.")
             st.table([{"Source header": column.heading,
                        "Candidate role": column.candidate_role or "Unmapped"}
                       for column in review.columns])
@@ -135,6 +176,7 @@ def render_receivable_intake(draft, blocks, prefix):
         # native data-editor delta even when invoice IDs and bytes match.
         stamp = hashlib.sha256(json.dumps((
             report_identity(draft), content.source.fingerprint, review.fingerprint,
+            sorted(overrides.items()),
             _RECEIPT_LINK + _digest(saved) if saved else "new-review"),
             ensure_ascii=False).encode()).hexdigest()[:24]
         if saved:
@@ -194,7 +236,8 @@ def render_receivable_intake(draft, blocks, prefix):
         try:
             revised, new_block = prepare_review(
                 draft, content, number, as_of=as_of,
-                edited=corrections, source_kind=source_kind, confirmed=True)
+                edited=corrections, source_kind=source_kind, confirmed=True,
+                role_overrides=overrides)
         except (ValueError, OSError) as exc:
             st.error(str(exc))
             st.caption("No source, financial amount, or prior Section 10 row was changed.")
