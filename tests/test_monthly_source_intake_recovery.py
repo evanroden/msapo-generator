@@ -47,12 +47,25 @@ def setup(monkeypatch, tmp_path, files):
     return AppTest.from_string(APP).run(), values, charges
 
 
-@pytest.mark.parametrize('heading', ['Reference memo', 'Water treatment', 'Utility results', 'MBCx', 'Capital renewal', 'Proposal', 'Training'])
+@pytest.mark.parametrize('heading', ['Water treatment', 'Utility results', 'MBCx', 'Capital renewal', 'Proposal', 'Training'])
 def test_managed_non_activity_source_never_enters_native_or_paid_activity(monkeypatch, tmp_path, heading):
     raw=(heading+'\nFacility: Demo North\nInspected valve ZZ-21.').encode()
     app, starts, charges=setup(monkeypatch,tmp_path,[('synthetic-evidence.txt',raw)])
     assert not app.exception
     assert app.session_state['blocks']['activity_summary'].text == 'Independent human note.'
+    assert not any(b.label == 'Read selected files' for b in app.button)
+    assert starts == charges == []
+    assert len(app.session_state['sources']) == 1, 'Keep the original available for its actual section.'
+
+
+def test_managed_reference_only_enters_native_activity_but_not_paid_read(monkeypatch, tmp_path):
+    # Reference-only plain text auto-merges into Activity on native (free)
+    # intake, but it never starts a paid reading.
+    raw=b'Reference memo\nFacility: Demo North\nInspected valve ZZ-21.'
+    app, starts, charges=setup(monkeypatch,tmp_path,[('synthetic-evidence.txt',raw)])
+    assert not app.exception
+    assert 'ZZ-21' in app.session_state['blocks']['activity_summary'].text
+    assert 'Independent human note.' in app.session_state['blocks']['activity_summary'].text
     assert not any(b.label == 'Read selected files' for b in app.button)
     assert starts == charges == []
     assert len(app.session_state['sources']) == 1, 'Keep the original available for its actual section.'
@@ -77,13 +90,11 @@ def test_mixed_managed_read_is_explicit_and_sends_only_activity_sources(monkeypa
     assert len(starts)==len(charges)==1, 'Focus/rerender cannot repeat the read.'
 
 
-def test_explicit_classification_enables_only_first_native_activity_use(monkeypatch,tmp_path):
+def test_reference_only_merges_natively_on_first_upload_without_repeat(monkeypatch,tmp_path):
+    # Reference-only plain text auto-merges into Activity on upload; a
+    # rerun must not apply it a second time, and it starts no paid job.
     raw=b'Reference memo\nFacility: Demo North\nInspected valve ZZ-21.'
     app, starts, charges=setup(monkeypatch,tmp_path,[('synthetic-note.txt',raw)])
-    assert app.session_state['blocks']['activity_summary'].text=='Independent human note.'
-    content,=app.session_state['intake_evidence']
-    app.session_state['intake_evidence']=(replace(content,source=replace(content.source,classification='Vendor service')),)
-    app.run()
     assert not app.exception
     assert 'ZZ-21' in app.session_state['blocks']['activity_summary'].text
     first=app.session_state['blocks']['activity_summary']
@@ -114,7 +125,7 @@ def test_removed_source_can_be_readded_after_clearing_same_file(monkeypatch,tmp_
     assert ui.sources.source_bytes(current_draft(app).profile,source)==raw
 
 
-def test_native_classification_click_routes_without_an_unrelated_second_action(monkeypatch,tmp_path):
+def test_reference_only_merged_classification_click_does_not_duplicate(monkeypatch,tmp_path):
     from test_monthly_report_ui import monthly
     from test_monthly_report_upload_ui import button,current_draft
     files=[]
@@ -124,10 +135,15 @@ def test_native_classification_click_routes_without_an_unrelated_second_action(m
     # Fresh intake is already visible; deliver the selected uploader values.
     app.run()
     assert not app.exception
-    assert 'ZZ-21' not in next(b.text for b in current_draft(app).blocks if b.key=='activity_summary')
+    # The Reference-only file already merged natively on upload: the Activity
+    # block carries its source reference.
+    draft=current_draft(app)
+    source,=draft.sources
+    assert any(ref.startswith(source.id+':') for b in draft.blocks if b.key=='activity_summary' for ref in b.references)
     next(w for w in app.selectbox if w.label=='Classification').set_value('Vendor service').run()
     assert not app.exception
-    assert 'ZZ-21' in next(b.text for b in current_draft(app).blocks if b.key=='activity_summary')
+    after=next(b.text for b in current_draft(app).blocks if b.key=='activity_summary')
+    assert 'ZZ-21' in after and after.count('ZZ-21')==1, 'The classification click must not merge the same source a second time.'
 
 
 def test_adding_another_file_does_not_resurrect_a_removed_uploader_selection(monkeypatch,tmp_path):
@@ -136,8 +152,10 @@ def test_adding_another_file_does_not_resurrect_a_removed_uploader_selection(mon
     files=[]
     app=monthly(monkeypatch,tmp_path)
     setup(monkeypatch,tmp_path,files)
-    a=('synthetic-reference-A.txt',b'Reference memo A for later review.')
-    b=('synthetic-reference-B.txt',b'Reference memo B for later review.')
+    # Water-treatment sources do not merge into Activity, so Remove stays
+    # available: this test covers the uploader tombstone, not the merge.
+    a=('synthetic-water-A.txt',b'Water treatment A for later review.')
+    b=('synthetic-water-B.txt',b'Water treatment B for later review.')
     files.append(a)
     # Fresh intake is already visible; deliver the selected uploader values.
     app.run()
