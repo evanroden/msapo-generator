@@ -192,6 +192,6 @@ def test_reviewed_addition_survives_immutable_snapshot_reopen(monkeypatch, tmp_p
     library.save_snapshot(draft, expected_revision=0, entered_editor="Synthetic Reviewer")
     restored = library.load_snapshot(profile.contract, profile.key, period)
     assert restored is not None and restored.revision == 1
-    assert restored.draft.block("demo_activity").text == edited.text
-    assert library.load_snapshot_version(profile.contract, profile.key, period, 1).draft.block(
-        "demo_activity").text == edited.text
+    assert next(block.text for block in restored.draft.blocks if block.key == "demo_activity") == edited.text
+    historical = library.load_snapshot_version(profile.contract, profile.key, period, 1)
+    assert next(block.text for block in historical.draft.blocks if block.key == "demo_activity") == edited.text
