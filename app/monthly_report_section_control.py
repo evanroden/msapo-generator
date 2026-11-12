@@ -122,8 +122,7 @@ class ContractPage:
 def _check_native(draft: ReportDraft) -> None:
     # A pinned Word design cannot acquire a real new page by inventing a
     # SectionSpec; the native layout must be extended and checked separately.
-    if draft.profile.imported_from or draft.profile.template.startswith(
-            ("enfra_native:", "enfra_master:")):
+    if draft.profile.imported_from or draft.profile.template != "monthly_review_v1":
         raise ValueError("Pinned native designs require reviewed custom-page placement.")
 
 
@@ -161,9 +160,13 @@ def verify_custom_page_scope(draft: ReportDraft) -> None:
     Call at both render/preflight and reload boundaries when integrating this
     module. No existing native renderer has been modified by this module.
     """
+    seen = set()
     for section in draft.sections:
         if not section.key.startswith("custom_"):
             continue
+        if section.key in seen:
+            raise ValueError("Duplicate custom page identity.")
+        seen.add(section.key)
         match = _CUSTOM_KEY.fullmatch(section.key)
         if match is None:
             raise ValueError("Custom page has an unknown scope marker.")
@@ -172,7 +175,14 @@ def verify_custom_page_scope(draft: ReportDraft) -> None:
             raise ValueError("Custom page belongs to another contract or site selection.")
         if len(section.blocks) != 1 or section.blocks[0].key != page.block_key:
             raise ValueError("Custom page has unexpected content slots.")
-        if not any(block.key == page.block_key for block in draft.blocks):
+        content = [block for block in draft.blocks if block.key == page.block_key]
+        if len(content) != 1:
             raise ValueError("Custom page content was not preserved.")
+        block = content[0]
+        if (block.rows or block.extra_tables or block.asset_hashes or block.org_nodes
+                or block.asset_captions or contains_price(block.text)):
+            raise ValueError("Custom page needs field/page review for monetary, table or image content.")
+        if block.ai_written and not block.reviewed:
+            raise ValueError("Custom page AI content needs review.")
         if section.included:
             _check_native(draft)
