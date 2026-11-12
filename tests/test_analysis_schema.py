@@ -165,6 +165,9 @@ def test_genuinely_broken_json_still_raises():
 def test_analyzer_rerolls_one_malformed_response(monkeypatch):
     responses = iter(("{not json", json.dumps(_payload())))
     calls = []
+    # The A06 provider gate requires a configured key before the injected
+    # factory runs; the factory itself stays mocked, so no real request occurs.
+    monkeypatch.setattr(quote_analyzer, "ANTHROPIC_API_KEY", "synthetic-key")
     monkeypatch.setattr(
         quote_analyzer.anthropic,
         "Anthropic",
