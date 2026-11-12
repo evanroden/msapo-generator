@@ -190,6 +190,9 @@ def test_generated_generic_pdf_matches_visible_custom_page_order():
         assert "Plumbing & Electrical Allowance" in text
         assert "Synthetic scope update without monetary amounts." in text
         assert "Training Summary" not in text
+        from app.monthly_report_docx import outline
+        assert len(pdf) == 2 + sum(pages for _, _, pages in outline(draft))
+        assert "Plumbing & Electrical Allowance" in pdf[1].get_text()
 
 
 def test_reload_scope_gate_rejects_bypassed_money_and_visual_data():
@@ -309,3 +312,35 @@ def test_guided_normalization_does_not_silently_delete_unknown_section():
                                                       text="Unmapped retained source text")))
     with pytest.raises(ValueError, match="Unknown imported sections"):
         normalize_with_section_choices(draft, complete_guided_sections)
+
+
+def test_two_different_contract_profiles_and_multisite_profile_are_isolated_on_disk(tmp_path, monkeypatch):
+    from app import monthly_report_library as library
+    monkeypatch.setattr(library, "_data_dir", lambda: tmp_path)
+    uno = make_draft("Synthetic UNO")
+    other = make_draft("Synthetic Healthcare", key="east",
+                       facilities=(Facility("east", "Synthetic East"),))
+    region = make_draft("Synthetic UNO", key="region",
+                        facilities=(Facility("north", "Synthetic North"),
+                                    Facility("south", "Synthetic South")))
+    decisions = ((uno, {"water": False}), (other, {"training": False}),
+                 (region, {"proposals": False, "maintenance": False}))
+    for draft, choices in decisions:
+        preference = standing_sections(draft.profile, choices)
+        library.save_profile(preference, expected_revision=0, actor="Synthetic Tester", confirmed=True)
+    for draft, choices in decisions:
+        saved = library.load_profile(draft.profile.contract, draft.profile.key).profile
+        assert set(saved.excluded_sections) == {key for key, enabled in choices.items() if not enabled}
+    assert library.load_profile(uno.profile.contract, uno.profile.key).profile.excluded_sections == ("water",)
+    assert library.load_profile(region.profile.contract, region.profile.key).profile.excluded_sections == (
+        "proposals", "maintenance")
+
+
+def test_all_off_fails_preflight_without_discarding_saved_sections():
+    from app.monthly_report_checks import preflight
+    draft = make_draft()
+    disabled = report_only_sections(draft, {s.key: False for s in draft.sections})
+    assert any(check.code == "sections" and check.blocking for check in preflight(disabled))
+    assert disabled.blocks == draft.blocks and disabled.profile == draft.profile
+    with pytest.raises(ValueError, match="Include at least one section"):
+        assemble_docx(disabled, acknowledged_fingerprint=disabled.fingerprint)
