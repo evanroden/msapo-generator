@@ -6,6 +6,7 @@ import json
 
 import pytest
 from docx import Document
+from tests.conftest import requires_libreoffice
 
 from app import monthly_report_sources as source_api
 from app.monthly_report_receivable_intake import (
@@ -217,6 +218,78 @@ def test_vendor_invoice_amounts_never_enter_client_word_output(monkeypatch):
     assert "350" not in words and "500" not in words
     assert "$" not in words
     assert not any(c.blocking for c in preflight(report))
+
+
+@requires_libreoffice
+def test_saved_status_only_ar_word_and_real_pdf_exclude_invoice_amounts(monkeypatch, tmp_path):
+    """Output acceptance: status and aging dates survive, monetary inputs do not."""
+    from app.monthly_report_docx import generate_report
+    from app.monthly_report_library import load_snapshot, save_snapshot
+    from zipfile import ZipFile
+    from lxml import etree
+    import pymupdf as fitz
+    import re
+
+    monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path))
+    report, block, _, _, original_bytes = prepared(monkeypatch)
+    saved = save_snapshot(report, expected_revision=0, entered_editor='Synthetic reviewer')
+    reopened = load_snapshot(report.profile.contract, report.profile.key, report.period)
+    assert reopened.revision == saved.revision
+    assert reopened.draft == report
+    assert check_review_binding(reopened.draft) is None
+    assert len(original_bytes) > 0
+
+    package = generate_report(reopened.draft,
+                              acknowledged_fingerprint=reopened.draft.fingerprint)
+    assert package.docx and package.pdf, package.pdf_error
+    with ZipFile(BytesIO(package.docx)) as archive:
+        visible = []
+        for name in archive.namelist():
+            if name.startswith('word/') and name.endswith('.xml'):
+                root = etree.fromstring(archive.read(name))
+                visible.extend(node.text or '' for node in root.iter()
+                               if node.tag.endswith('}t'))
+        word_text = ' '.join(visible)
+    rendered = []
+    with fitz.open(stream=package.pdf, filetype='pdf') as pages:
+        assert len(pages) >= 1
+        pdf_text = ' '.join(page.get_text() for page in pages)
+        for page in pages:
+            image = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5))
+            assert image.width > 0 and image.height > 0
+            rendered.append(image.tobytes('png'))
+    from pathlib import Path
+    import os
+    artifact_root = os.environ.get('FINANCIAL_OUTPUT') or os.environ.get('INDEPENDENT_OUTPUT')
+    if artifact_root:
+        target = Path(artifact_root) / 'receivables'
+        target.mkdir(parents=True, exist_ok=True)
+        (target / 'status-only.docx').write_bytes(package.docx)
+        (target / 'status-only.pdf').write_bytes(package.pdf)
+        for number, raw_png in enumerate(rendered, 1):
+            (target / f'page-{number:02}.png').write_bytes(raw_png)
+        manifest = {
+            'kind': 'synthetic source-bound nonfinancial AR status acceptance',
+            'source_sha256': sha256(original_bytes).hexdigest(),
+            'report_fingerprint': reopened.draft.fingerprint,
+            'snapshot_revision': reopened.revision,
+            'docx_sha256': sha256(package.docx).hexdigest(),
+            'pdf_sha256': sha256(package.pdf).hexdigest(),
+            'page_count': len(rendered),
+            'expected_client_content': 'invoice identity, status and dated aging only; no monetary figures',
+        }
+        (target / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+    for text in (word_text, pdf_text):
+        text = ' '.join(text.split())  # Word/PDF may wrap the same cell differently.
+        assert 'Invoice INV-101' in text
+        assert 'Partially paid' in text
+        assert 'aging as of 2026-10-28' in text
+        assert 'Credit' in text
+        assert 'due date needs review' in text
+        assert not re.search(r'(?<!\d)(?:500|350|250|100|25)(?!\d)', text)
+        assert '$' not in text
+        assert not re.search(r'(?i)invoice amount|aged dollar total|complete ar aging statement', text)
+    assert reopened.draft.blocks[0].rows == block.rows
 
 
 def test_same_filename_different_source_bytes_do_not_replay(monkeypatch):

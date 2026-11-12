@@ -14,7 +14,7 @@ from app.memory import (record_report_preferences, record_report_preparer,
                         remembered_report_preferences, remembered_report_preparer)
 from app.monthly_report_busy_ui import recover_render_busy
 from app.monthly_report_checks import preflight
-from app.monthly_report_docx import estimate_bytes, generate_report, normalize_report_image
+from app.monthly_report_docx import estimate_bytes, estimated_output_ranges, generate_report, normalize_report_image
 from app.monthly_report_editor import _grid, _signature, _typed_table
 from app.monthly_report_model import (ReportDraft, ResolvedBlock,
                                      layout_blocks, profile_sections, picture_replacement_references)
@@ -1835,6 +1835,14 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         empty_confirmation_key = prefix + "_empty_generation_confirmation"
         if st.session_state.get(empty_confirmation_key) not in (None, draft.fingerprint):
             st.session_state.pop(empty_confirmation_key, None)
+        # File type matters: original source bytes do not predict renderer output
+        # precisely, so expose conservative ranges without another conversion.
+        from app.monthly_report_storage import readable_bytes
+        (word_min, word_max), (pdf_min, pdf_max) = estimated_output_ranges(estimated)
+        st.caption(f"Word estimate: about {readable_bytes(word_min)}–{readable_bytes(word_max)}")
+        st.caption(f"PDF estimate: about {readable_bytes(pdf_min)}–{readable_bytes(pdf_max)}")
+        st.caption("Method: tracked text/image bytes with Word (0.1–7×) and PDF (0.05–6×) "
+                   "margins for packaging and conversion; check actual sizes against 15 MB.")
         st.caption("Creating files also attempts to save a shared version.")
         pressed = st.button("Create Word and PDF", key=prefix + "_generate",
                             type="secondary" if blocked_reason else "primary", disabled=bool(blocked_reason))

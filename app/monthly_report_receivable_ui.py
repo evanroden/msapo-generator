@@ -4,11 +4,58 @@ The original CSV/XLSX is ingested and retained by that existing owner.
 Selecting rows here never imports another file, approves a financial output,
 or writes client monetary columns. All choices remain report-scoped.
 """
+import hashlib
+import json
 import streamlit as st
 
+from app.monthly_report_correction_targets import report_identity
 from app.monthly_report_receivable_intake import (
-    EDITABLE, editable_rows, inspect_content, prepare_review, decoded,
+    EDITABLE, _RECEIPT_LINK, _digest, check_review_binding, decoded,
+    editable_rows, inspect_content, prepare_review,
 )
+
+
+def saved_review_for_editor(draft, current, content, number, review):
+    """Hydrate only the exact current, still-valid source/period receipt.
+
+    Internal corrections are defaults, never new source evidence or client
+    financial permission. If the block/source is stale, do not replay edits.
+    """
+    originals = [block for block in draft.blocks if block.key == "accounts_receivable"]
+    if (len(originals) != 1 or originals[0] != current or current.source == "Omit"):
+        return None
+    refs = [ref for ref in current.references if ref.startswith(_RECEIPT_LINK)]
+    if len(refs) != 1:
+        return None
+    candidates = []
+    for raw in draft.source_row_reviews:
+        try:
+            receipt = decoded(raw)
+        except ValueError:
+            continue
+        if (_RECEIPT_LINK + _digest(receipt) == refs[0]
+                and receipt["report"] == report_identity(draft)
+                and receipt["period"] == draft.period.key
+                and receipt["source_id"] == content.source.id
+                and receipt["source_sha256"] == content.source.sha256
+                and receipt["table_number"] == number
+                and receipt["table_reference"] == review.table_reference
+                and receipt["table_fingerprint"] == review.fingerprint):
+            candidates.append(receipt)
+    if len(candidates) != 1 or check_review_binding(draft) is not None:
+        return None
+    if [row["reference"] for row in candidates[0]["rows"]] != [
+            row.reference for row in review.rows]:
+        return None
+    return candidates[0]
+
+
+def reviewed_editor_defaults(review, receipt):
+    rows = editable_rows(review)
+    if receipt is not None:
+        for row, saved in zip(rows, receipt["rows"]):
+            row.update(saved["corrections"])
+    return rows
 
 
 def render_receivable_intake(draft, blocks, prefix):
@@ -78,8 +125,23 @@ def render_receivable_intake(draft, blocks, prefix):
                      hide_index=True, width="stretch")
         st.caption("Edit the review fields below when the original is ambiguous. "
                    "Raw source values remain unchanged. No outstanding balance is inferred.")
-        with st.form(key + "_review_" + review.fingerprint):
-            as_of = st.text_input("Aging as of date (YYYY-MM-DD)", value="",
+        saved = saved_review_for_editor(draft, current, content, number, review)
+        # Source metadata, report owner, original table and prior receipt are
+        # all part of the editor identity. A previous month cannot replay a
+        # native data-editor delta even when invoice IDs and bytes match.
+        stamp = hashlib.sha256(json.dumps((
+            report_identity(draft), content.source.fingerprint, review.fingerprint,
+            _RECEIPT_LINK + _digest(saved) if saved else "new-review"),
+            ensure_ascii=False).encode()).hexdigest()[:24]
+        if saved:
+            st.caption("Saved review: as of " + saved["as_of"] +
+                       " · corrections remain editable. Original cells above are unchanged.")
+        elif current is not None and any(ref.startswith(_RECEIPT_LINK) for ref in current.references):
+            st.warning("The previous invoice review does not match this report, source or table. "
+                       "Recheck the original rows and enter a new as-of date; no approval was reused.")
+        with st.form(key + "_review_" + stamp):
+            as_of = st.text_input("Aging as of date (YYYY-MM-DD)",
+                                  value=saved["as_of"] if saved else "",
                                   help="Required explicit review date; not inferred from the report month.")
             roles = {
                 "customer_invoice": "Customer-billable / CCJ invoice (internal amounts)",
@@ -88,10 +150,12 @@ def render_receivable_intake(draft, blocks, prefix):
                 "enfra_client_report": "ENFRA report intended for client (no automatic output grant)",
                 "unverified": "Source audience not established (no financial output)",
             }
-            source_kind = st.selectbox("Exact source category", list(roles),
-                                       format_func=roles.get)
-            editor = st.data_editor(editable_rows(review), num_rows="fixed",
-                                    key=key + "_rows_" + review.fingerprint,
+            source_kind = st.selectbox(
+                "Exact source category", list(roles),
+                index=list(roles).index(saved["source_kind"]) if saved else 0,
+                format_func=roles.get)
+            editor = st.data_editor(reviewed_editor_defaults(review, saved),
+                                    num_rows="fixed", key=key + "_rows_" + stamp,
                                     hide_index=True, width="stretch")
             if current is not None and current.rows:
                 overwrite = st.checkbox("Replace the existing Section 10 status rows with this reviewed source")

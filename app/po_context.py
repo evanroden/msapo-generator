@@ -455,14 +455,12 @@ def _active_quote_attachment(
     "the vendor's quote". Attaching the wrong file is worse than attaching a
     plain-text stand-in.
 
-    READ THIS BEFORE SIMPLIFYING THE GATE. When any check fails, the function
-    does not error -- it falls through and synthesises "Vendor Quote.txt" from
-    the analyzed text. The package still generates, still validates, and still
-    submits; the operator gets a text file where they expected their PDF, and
-    only one of the failure paths (upload selected, bytes present, extraction
-    empty) raises a warning. Every other path is SILENT by design, because the
-    common cause is benign: the same text legitimately moved from an upload to
-    the paste box, which ``quote_source`` alone distinguishes.
+    READ THIS BEFORE SIMPLIFYING THE GATE. When the operator explicitly chose
+    an upload, failure of any source proof adds a blocking warning. A generated
+    "Vendor Quote.txt" may be retained for inspection but cannot make the
+    package ready to hand off as the original. When the operator explicitly
+    switches to Paste text, however, a text attachment is intentional and
+    valid even if an unrelated uploaded file remains in browser state.
 
     ``quote_source`` gates the whole thing. "paste" excludes a stale upload even
     when its extracted text is byte-identical to the pasted text -- pinned by
@@ -498,15 +496,22 @@ def _active_quote_attachment(
     if upload_valid:
         return (uploaded_name, uploaded_bytes), warnings
 
-    if (
-        quote_source == "upload"
-        and isinstance(uploaded_bytes, bytes)
-        and uploaded_bytes
-        and not extracted_text
-    ):
-        warnings.append(
-            "The current uploaded file was not successfully extracted; the prior analysis may not describe it."
-        )
+    # An explicit upload promises that the original vendor file is the first
+    # attachment. If its bytes, hash, name or extracted text cannot be proven,
+    # a text substitute may still be shown for inspection, but it must NOT
+    # become a submit-ready package. Paste text is a distinct, explicit source
+    # choice and keeps its normal text attachment behavior.
+    if quote_source == "upload":
+        if not extracted_text:
+            warnings.append(
+                "The current uploaded file was not successfully extracted; "
+                "re-upload the quote or switch to Paste text and regenerate."
+            )
+        else:
+            warnings.append(
+                "The original uploaded quote no longer matches the reviewed "
+                "source; re-upload it or switch to Paste text and regenerate."
+            )
     if quote_text:
         return ("Vendor Quote.txt", quote_text.encode("utf-8")), warnings
     return None, warnings
