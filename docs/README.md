@@ -6,6 +6,12 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 # Documentation index
 
+[Provider abstraction guide](PORTABILITY.md) — preparation-only adapter contracts and verification; no provider switch, Azure migration or deployment is implied.
+
+[Historical Smartsheet and portability handoff](NEXT_LLM_SMARTSHEET_AND_PORTABILITY_HANDOFF.md) — July 2026 background; its old branch topology and release instructions are superseded.
+
+[Historical project handoff dossier](PROJECT_HANDOFF_DOSSIER_2026-07-29.md) — July 2026 project context; current repository state and later decisions take precedence.
+
 [Monthly Report ownership and carryover decisions](monthly_report_ownership_matrix.md) — audited contract, site and report behavior; explicit requirements, proposals and unresolved choices; synthetic scope examples and a migration proposal that preserves originals and history. This decision record does not approve policy changes or a production migration.
 
 [Accounts Receivable schema discovery](MONTHLY_RECEIVABLE_SCHEMA_REVIEW.md) — source-bound read-only invoice-field inventory; owner financial-source policy recorded in #458, with field-level eligibility and AR Aging implementation still outstanding.
