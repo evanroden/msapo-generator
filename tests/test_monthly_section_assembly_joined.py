@@ -319,6 +319,16 @@ def test_ar_section_ten_contents_follow_preceding_scorecard_attachment(
             assert len(matching) == 1
             attachments.append(matching[0])
         assert attachments == list(range(attachments[0], attachments[0] + 3))
+        # P13: caption order alone does not prove image/caption
+        # co-location — the source image's centre and four corner sentinels
+        # must render on the same physical page as its caption.
+        for number, page_index in enumerate(attachments):
+            frame = _frame(pdf[page_index])
+            xs, ys = _matching_pixels(frame, CENTERS[number])
+            assert len(xs) >= 30, (number + 1, "center lost")
+            for corner in CORNERS:
+                cx, cy = _matching_pixels(frame, corner)
+                assert len(cx) >= 30, (number + 1, "corner lost", corner)
         assert attachments[-1] < outline[9][2] - 1
         assert sum("Synthetic nonfinancial status: invoice review is ongoing."
                    in text for text in pages) == 1
