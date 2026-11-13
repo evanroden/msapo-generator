@@ -327,7 +327,11 @@ def test_expected_port_and_health_path_are_the_images():
     dockerfile = (ROOT / "Dockerfile").read_text()
     assert f"EXPOSE {azure_config_check.PORT}" in dockerfile
     assert f"--server.port={azure_config_check.PORT}" in dockerfile
-    assert f"localhost:{azure_config_check.PORT}{azure_config_check.HEALTH_PATH}" in dockerfile
+    # The image healthcheck is the portability readiness probe, which itself
+# hits the Streamlit health endpoint (see container_portability.ready).
+assert "scripts/container_portability.py ready" in dockerfile
+probe = (ROOT / "scripts/container_portability.py").read_text()
+assert azure_config_check.HEALTH_PATH in probe
 
 
 @pytest.mark.parametrize("relative", ["scripts/azure_config_check.py", "scripts/host_check.py",
