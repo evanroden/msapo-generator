@@ -242,6 +242,11 @@ def _build_section_import(path, inspection, plans, *, source_view=None, _operati
             # until source-bound pages or clear replacements are retained.
             raise ValueError("A Word diagram contains unread drawings that were not preserved. Prepare its source page or add a replacement in this section.")
         selected = () if plan.get("page_layout") else plan.get("selected", ())
+        # A saved ENFRA design keeps each title where the source page put it,
+        # so only the built-in design moves a title onto its picture.
+        picture_titles = (_picture_titles(items, selected, plan.get("texts", {}))
+                          if _builtin_design(profile) else {})
+        title_owner = {text_id: image_id for image_id, (text_id, _) in picture_titles.items()}
         for identity in selected:
             item = items[identity]
             slot = plan.get("destinations", {}).get(identity)
@@ -249,8 +254,12 @@ def _build_section_import(path, inspection, plans, *, source_view=None, _operati
                 slot = item.suggested_slot if plan["target"] == item.section and item.suggested_slot in known else default_slot(plan["target"])
             if slot not in known or item.kind == "unsupported":
                 raise ValueError("A section contains content that needs a replacement before it can be included.")
-            block = grouped.get(slot, ResolvedBlock(slot, "Last month"))
             reference = f"docx:{inspection.sha256}:{item.id}"
+            if identity in title_owner:
+                # This line is the title of the picture in its own Word
+                # paragraph. It travels with that picture as its caption.
+                continue
+            block = grouped.get(slot, ResolvedBlock(slot, "Last month"))
             if item.kind == "image":
                 if slot == "cover_photo" and is_header_artwork(item):
                     raise ValueError("Header artwork has no confirmed photograph role. Keep it out of the cover photo and confirm its identity first.")
@@ -268,7 +277,7 @@ def _build_section_import(path, inspection, plans, *, source_view=None, _operati
                         raise ValueError("Selected images exceed the 60 MB preparation budget. Leave out unneeded pages and try again.")
                     assets[digest] = image.data
                 if digest not in block.asset_hashes:
-                    caption = item.text.strip()
+                    caption = item.text.strip() or picture_titles.get(identity, ("", ""))[1]
                     if contains_price(caption):
                         raise ValueError("Remove pricing from the picture caption before continuing.")
                     captions = block.asset_captions + ("",) * (len(block.asset_hashes) - len(block.asset_captions))
@@ -277,6 +286,11 @@ def _build_section_import(path, inspection, plans, *, source_view=None, _operati
                 contexts = dict(block.asset_provenance)
                 contexts[digest] = tuple(dict.fromkeys((*contexts.get(digest, ()), reference)))
                 block = replace(block, asset_provenance=tuple(contexts.items()))
+                if identity in picture_titles:
+                    title_id = picture_titles[identity][0]
+                    block = replace(block, references=tuple(dict.fromkeys(
+                        (*block.references, f"docx:{inspection.sha256}:{title_id}"))))
+                    mappings.append(ImportMapping(title_id, slot))
             elif item.kind == "table":
                 table, _ = table_without_prices(item)
                 if item.id in plan.get("tables", {}):
@@ -338,3 +352,41 @@ def apply_section_omissions(draft, plans):
     return replace(draft, sections=tuple(replace(s, included=False) if s.key in omitted else s for s in draft.sections),
                    blocks=tuple(replace(b, source="Omit") if b.key in keys else b for b in draft.blocks),
                    address_line="" if "cover" in omitted else draft.address_line)
+
+
+def _builtin_design(profile):
+    if profile is None:
+        return False
+    from app.monthly_report_designs import _digest
+    try:
+        return not _digest(profile)
+    except ValueError:
+        return False
+
+
+def _picture_titles(items, selected, edited_texts):
+    """Pair a short title line with the one picture in its own Word paragraph.
+
+    Vendor-page and photo titles are typed beside the picture in the same
+    paragraph. They are that picture's caption, not section narrative. A
+    paragraph holding several pictures, a long or multi-line text, or an
+    edited text keeps the ordinary narrative mapping.
+    """
+    chosen = tuple(items[identity] for identity in selected if identity in items)
+    places = defaultdict(list)
+    for item in chosen:
+        places[(item.part, item.word_section, item.position)].append(item)
+    titles = {}
+    for group in places.values():
+        pictures = [item for item in group if item.kind == "image"]
+        texts = [item for item in group if item.kind == "text"]
+        if len(pictures) != 1 or len(texts) != 1 or len(group) != 2:
+            continue
+        picture, text = pictures[0], texts[0]
+        line = text.text.strip()
+        edited = edited_texts.get(text.id, text.text).strip() != line
+        if (picture.text.strip() or edited or not line
+                or "\n" in line or len(line) > 160 or contains_price(line)):
+            continue
+        titles[picture.id] = (text.id, line)
+    return titles

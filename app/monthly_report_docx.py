@@ -367,25 +367,78 @@ def _divider_background(document, raw):
     inline.getparent().replace(inline, anchor)
 
 
-def _format_table(table, has_header):
-    """Keep site labels with their row and repeat column titles on overflow."""
+def _table_font_size(table, has_header, header_rows=1):
+    """ENFRA's reports set wide schedules (asset lists, capacity tables) in 7 pt.
+
+    A wide grid of short labels, such as the monthly work-order grid, keeps
+    the ordinary size; long headings or a long list need the compact size.
+    """
+    rows, columns = table.rows, len(table.columns)
+    headings = ([" ".join(cell.text.split()) for row in rows[:header_rows] for cell in row.cells]
+                if rows and has_header else [])
+    schedule = len(rows) > 20 or any(len(title) > 12 for title in headings)
+    if columns >= 7 and schedule:
+        return 7
+    if columns == 6 and schedule:
+        return 8
+    return 9 if columns > 6 else 10
+
+
+def _title_band(columns):
+    """Only the importer's own placeholders ("Column 2" ...) mark a title band."""
+    return (len(columns) >= 2 and bool(str(columns[0]).strip())
+            and all(title == f"Column {n}" for n, title in enumerate(columns[1:], 2)))
+
+
+def _band_label(text):
+    """A campus or group label in capitals, or a one-line message."""
+    text = " ".join(text.split())
+    return bool(text) and (text.isupper() or len(text.split()) >= 4)
+
+
+def _format_table(table, has_header, header_rows=1, partial_rows=()):
+    """Keep site labels with their row and repeat column titles on overflow.
+
+    A data row whose text is only in its first cell is a group band (a campus
+    name, "NEW EQUIPMENT") or a one-line message; it spans the whole table as
+    in the source reports instead of squeezing into the first column.
+    """
+    width = len(table.columns)
+    size = Pt(_table_font_size(table, has_header, header_rows))
     for index, row in enumerate(table.rows):
         properties = row._tr.get_or_add_trPr()
         properties.append(OxmlElement("w:cantSplit"))
-        if index == 0 and has_header:
+        heading = index < header_rows and has_header
+        if heading:
             properties.append(OxmlElement("w:tblHeader"))
-        for cell in row.cells:
-            if index == 0 and has_header:
+        cells = row.cells
+        band = (not heading and width >= 3 and index not in partial_rows
+                and _band_label(cells[0].text)
+                and not any(cell.text.strip() for cell in cells[1:]))
+        if band:
+            merged = cells[0].merge(cells[-1])
+            # Word keeps each merged cell's empty paragraph; drop them so the
+            # band is one line high.
+            for paragraph in merged.paragraphs[1:]:
+                if not paragraph.text.strip():
+                    paragraph._p.getparent().remove(paragraph._p)
+            cells = [merged]
+        seen = set()
+        cells = [cell for cell in cells if not (id(cell._tc) in seen or seen.add(id(cell._tc)))]
+        for cell in cells:
+            if heading:
                 shading = OxmlElement("w:shd")
                 shading.set(qn("w:fill"), OCEAN)
                 cell._tc.get_or_add_tcPr().append(shading)
             for paragraph in cell.paragraphs:
-                paragraph.paragraph_format.space_after = Pt(4)
-                paragraph.paragraph_format.keep_with_next = index == 0 and has_header
+                paragraph.paragraph_format.space_after = Pt(4 if size.pt >= 10 else 1)
+                paragraph.paragraph_format.keep_with_next = heading or bool(band)
                 for run in paragraph.runs:
-                    run.font.size = Pt(9 if len(row.cells) > 6 else 10)
-                    if index == 0 and has_header:
+                    run.font.size = size
+                    if heading:
                         run.font.color.rgb = RGBColor(255, 255, 255)
+                        run.bold = True
+                    elif band:
                         run.bold = True
 
 
@@ -549,16 +602,34 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
                 title = matrix_title(imported.reference)
                 if title:
                     document.add_paragraph(title).paragraph_format.keep_with_next = True
-                table = document.add_table(rows=1, cols=len(imported.columns))
+                columns, rows = imported.columns, imported.rows
+                # A source title band ("October 2026 Service Calls") above the
+                # real column titles is stored as the first column name with
+                # placeholder names beside it. Show it as the source did: a
+                # full-width title over the actual headings.
+                titled = _title_band(columns) and bool(rows)
+                table = document.add_table(rows=1, cols=len(columns))
                 table.style = "Light Shading Accent 1"
-                for cell, title in zip(table.rows[0].cells, imported.columns):
-                    cell.text = title
-                for values in imported.rows:
-                    if len(values) > len(imported.columns):
+                if titled:
+                    table.rows[0].cells[0].merge(table.rows[0].cells[-1]).text = columns[0]
+                    columns, rows = tuple("" if v is None else str(v) for v in rows[0]), rows[1:]
+                    if len(columns) > len(table.columns):
                         raise ValueError("An imported table has more cells than columns.")
+                    for cell, title in zip(table.add_row().cells, columns):
+                        cell.text = title
+                else:
+                    for cell, title in zip(table.rows[0].cells, columns):
+                        cell.text = title
+                partial = set()
+                for values in rows:
+                    if len(values) > len(table.columns):
+                        raise ValueError("An imported table has more cells than columns.")
+                    if len(values) < len(table.columns):
+                        # A short source row is a data row with blanks, never a band.
+                        partial.add(len(table.rows))
                     for cell, value in zip(table.add_row().cells, values):
                         cell.text = "" if value is None else str(value)
-                _format_table(table, True)
+                _format_table(table, True, header_rows=2 if titled else 1, partial_rows=partial)
             if spec.key == "org_chart" and (block.org_nodes or block.asset_hashes):
                 chart_emitted = True
         carried = [item for item in draft.follow_ups if item.included and ("issues" if item.category == "issue" else "proposals") == section.key]
