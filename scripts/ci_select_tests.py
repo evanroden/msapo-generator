@@ -11,7 +11,12 @@ that uses this selector.
 
 How a changed file maps to tests:
 
-* A changed ``tests/test_*.py`` file selects itself.
+* A changed ``tests/test_*.py`` file selects itself, plus every test file
+  that imports helpers from it. Tests import each other by bare module
+  name (pytest puts the tests directory on sys.path), e.g.
+  ``from test_monthly_report_ui import monthly`` -- a helper change can
+  invalidate its consumers, so this is a direct dependency, not the
+  transitive-import tradeoff below.
 * A changed Python module selects every test file that imports it
   *directly* (including imports inside test functions), plus every test
   file that mentions the module's dotted name or file name in its text.
@@ -25,7 +30,9 @@ How a changed file maps to tests:
   top of this file); the full suite on the main push is the backstop.
 * A changed documentation or data file under ``docs/`` selects the test
   files that mention its path (tests do read docs files, e.g. the ownership
-  matrix), plus the CI-guard tests.
+  matrix), plus the CI-guard tests. A changed top-level ``docs/*.md`` file
+  also selects ``tests/test_docs_index.py``, which discovers docs with
+  ``DOCS.glob("*.md")`` and never mentions any one file by name.
 * Anything else falls back to the full suite: shared code and entrypoints
   (``run_web.py``, ``app/__init__.py``, ``pages/`` -- Streamlit pages are
   exercised by AppTest journey tests that never import them, so the import
@@ -82,6 +89,7 @@ FULL_NAMES = {
     "pyproject.toml",
     "setup.cfg",
     "run_web.py",
+    "app/__init__.py",
 }
 FULL_DIRS = (".github", "tests/fixtures")
 
@@ -151,15 +159,37 @@ class ImportGraph:
             # conftest.py and test helpers are nodes too: a test that
             # imports a helper inherits the helper's imports.
             modules[module_name(path, self.repo)] = path
+        # Tests import each other by bare module name (pytest puts the
+        # tests directory on sys.path), e.g. `from test_monthly_report_ui
+        # import monthly`. Resolve those to the dotted test module so a
+        # changed test helper selects its consumers.
+        bare_tests = {
+            module.rsplit(".", 1)[-1]: module
+            for module in modules
+            if module.startswith("tests.")
+        }
         for module, path in modules.items():
             self.edges[module] = {
-                imported
+                resolved
                 for imported in parse_imports(path, self.repo)
-                if imported in modules or imported.startswith(("app.", "pages.", "scripts.", "runtime.", "tests."))
+                if (resolved := self._resolve_import(imported, modules, bare_tests)) is not None
             }
         for module, path in modules.items():
             if module.startswith("tests.test_"):
                 self.test_modules[module] = path
+
+    @staticmethod
+    def _resolve_import(imported: str, modules: dict[str, Path], bare_tests: dict[str, str]) -> str | None:
+        """Canonical dotted name for an import, or None if unmapped."""
+        if imported in modules:
+            return imported
+        root, _, rest = imported.partition(".")
+        if root in bare_tests:
+            canonical = bare_tests[root]
+            return f"{canonical}.{rest}" if rest else canonical
+        if imported.startswith(("app.", "pages.", "scripts.", "runtime.", "tests.")):
+            return imported
+        return None
 
     def tests_importing(self, changed: set[str]) -> set[Path]:
         """Test files that import a changed module directly.
@@ -240,6 +270,9 @@ def select(repo: Path, changed: list[str]) -> tuple[str, list[str], list[str]]:
         path = repo / rel
         if _is_test_file(rel):
             selected.add(rel)
+            # A changed test file may also supply shared helpers: its
+            # consumers must run too, not just the file itself.
+            changed_modules.add(module_name(path, repo))
             log.append(f"selected {rel} (changed test file)")
         elif rel.endswith(".py") and path.is_file():
             changed_modules.add(module_name(path, repo))
@@ -253,6 +286,13 @@ def select(repo: Path, changed: list[str]) -> tuple[str, list[str], list[str]]:
             }
             selected.update(hits)
             log.append(f"selected {len(hits)} test(s) mentioning {needle}")
+            # tests/test_docs_index.py discovers top-level docs/*.md with
+            # DOCS.glob, so it never mentions any one file by name.
+            if rel.startswith("docs/") and "/" not in rel[len("docs/"):] and rel.endswith(".md"):
+                index_test = "tests/test_docs_index.py"
+                if (repo / index_test).is_file():
+                    selected.add(index_test)
+                    log.append(f"selected {index_test} (top-level docs/*.md change)")
         else:
             return "full", [], log + [f"FULL SUITE: {rel} cannot be mapped"]
 
