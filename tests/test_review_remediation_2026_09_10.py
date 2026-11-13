@@ -297,6 +297,10 @@ def test_invalid_timeout_settings_use_bounded_default(monkeypatch, value):
 def test_analyzers_disable_sdk_retries_and_close_clients(monkeypatch, kind):
     from types import SimpleNamespace
 
+    # The A06 provider gate requires a configured key before the injected
+    # factory runs; the factory itself stays mocked, so no real request occurs.
+    monkeypatch.setattr(receipt_analyzer, "ANTHROPIC_API_KEY", "synthetic-key")
+    monkeypatch.setattr(quote_analyzer, "ANTHROPIC_API_KEY", "synthetic-key")
     created, closed = [], []
 
     def client(**kwargs):
@@ -452,6 +456,11 @@ def test_stopping_automatic_reading_cannot_publish_late_result(configured, monke
 def test_incomplete_model_output_is_never_published(monkeypatch, kind, stop_reason):
     calls = []
     real_client = anthropic.Anthropic
+    # The A06 provider gate requires a configured key before the injected
+    # factory runs; the factory/transport stays mocked, so no real request occurs.
+    monkeypatch.setattr(quote_analyzer, "ANTHROPIC_API_KEY", "synthetic-key")
+    monkeypatch.setattr(receipt_analyzer, "ANTHROPIC_API_KEY", "synthetic-key")
+    monkeypatch.setattr(ocr, "ANTHROPIC_API_KEY", "synthetic-key")
 
     def respond(request):
         calls.append(request)
@@ -597,6 +606,9 @@ def test_retired_ocr_model_404_names_configuration_without_retry(monkeypatch):
     """OCR uses the same model diagnostic, including before quote parsing begins."""
     configured_model = "claude-synthetic-retired"
     monkeypatch.setattr(ocr, "ANTHROPIC_MODEL", configured_model)
+    # The A06 provider gate requires a configured key before the injected
+    # factory runs; the factory/transport stays mocked, so no real request occurs.
+    monkeypatch.setattr(ocr, "ANTHROPIC_API_KEY", "synthetic-key")
     real_client = anthropic.Anthropic
     calls = []
 

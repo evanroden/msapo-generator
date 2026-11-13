@@ -175,7 +175,13 @@ def check_databases(report: Report, data: Path) -> None:
 
 
 def check_settings(report: Report) -> None:
+    provider = os.getenv("EPC_AI_PROVIDER", "anthropic").strip().casefold()
+    if provider not in {"anthropic", "disabled"}:
+        report.line("FAIL", "AI provider has no approved adapter; no external reading is allowed")
     for name in SECRETS:
+        if name == "ANTHROPIC_API_KEY" and provider == "disabled":
+            report.line("INFO", "secret ANTHROPIC_API_KEY is optional while AI is disabled")
+            continue
         report.line("PASS" if os.getenv(name, "").strip() else "FAIL", f"secret {name} is "
                     + ("set" if os.getenv(name, "").strip() else "missing"))
     for name in OPTIONAL_SECRETS:
@@ -197,6 +203,16 @@ def check_settings(report: Report) -> None:
 
 
 def check_anthropic(report: Report, http_client=None) -> None:
+    # A disabled or unsupported provider must not leak even a model-lookup
+    # request. This check is optional diagnostics, never provider approval.
+    from app.ai_provider import AIProviderConfigurationError, require_configured_provider
+    try:
+        require_configured_provider()
+    except AIProviderConfigurationError:
+        disabled = os.getenv("EPC_AI_PROVIDER", "anthropic").strip().casefold() == "disabled"
+        report.line("INFO" if disabled else "FAIL",
+                    "Anthropic probe skipped: AI disabled or provider endpoint not approved")
+        return
     key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     if not key:
         return  # check_settings has already failed it

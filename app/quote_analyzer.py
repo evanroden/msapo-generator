@@ -19,6 +19,8 @@ from typing import Optional
 
 import anthropic
 
+from app.ai_provider import anthropic_client
+
 from app.analysis_schema import AnalysisResponseError, normalize_analysis_response
 from app.api_retry import (
     OPERATION_BUDGET_SECONDS,
@@ -315,7 +317,10 @@ def _call_api_with_retry(client, quote_text: str, max_retries: int = 3, *, until
 
 def analyze_quote(quote_text: str) -> QuoteAnalysis:
     """Send quote text to the Anthropic API and return structured analysis."""
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY, max_retries=0, timeout=REQUEST_TIMEOUT_SECONDS)
+    client = anthropic_client(
+        factory=anthropic.Anthropic, api_key=ANTHROPIC_API_KEY,
+        timeout=REQUEST_TIMEOUT_SECONDS,
+    )
     until = time.monotonic() + OPERATION_BUDGET_SECONDS
 
     # Transport retries do not cover a syntactically malformed model response.
