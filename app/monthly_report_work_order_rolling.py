@@ -271,6 +271,9 @@ def merge_carried_grid(previous, current, prior_period, period, *, site_title: s
                 + period.month - prior_period.month)
     if not 1 <= distance <= 12:
         raise ValueError("Work-order rollover needs a later month within one reporting year.")
+    if (not _key(previous.columns[0])
+            or _key(previous.columns[0]) != _key(current.columns[0])):
+        raise ValueError("The work-order metric changed; review before carrying values.")
     if (previous.columns[1:] != rolling_labels(prior_period)
             or current.columns[1:] not in (rolling_labels(period), previous.columns[1:])):
         raise ValueError("Unverified month headings cannot be carried as known history.")

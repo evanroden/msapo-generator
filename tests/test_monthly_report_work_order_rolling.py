@@ -257,6 +257,18 @@ def test_history_merges_by_real_month_and_preserves_edited_previous_report():
                               site_title="North") == merged
 
 
+def test_rollover_rejects_a_different_work_order_metric():
+    december = ReportPeriod(2026, 12)
+    previous = ReportTable(("PM Closed", *rolling_labels(december)),
+        (("North", *("7" for _ in range(12))),), "master-table:stable")
+    other = ReportTable(("Non-PM Closed", *rolling_labels(JANUARY)), (), previous.reference)
+    with pytest.raises(ValueError, match="metric"):
+        merge_carried_grid(previous, other, december, JANUARY, site_title="North")
+    equivalent = ReportTable(("pm   closed", *rolling_labels(JANUARY)), (), previous.reference)
+    assert merge_carried_grid(previous, equivalent, december, JANUARY,
+                              site_title="North").rows[0][1] == "7"
+
+
 def test_undated_or_other_site_carry_is_rejected_not_backfilled():
     december = ReportPeriod(2026, 12)
     correct = ReportTable(("PM Closed", *rolling_labels(december)),
