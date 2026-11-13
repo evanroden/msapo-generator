@@ -702,7 +702,13 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
             page_texts, needs_vision = [""] * count, list(range(1, count + 1))
             notices.append("MPO pictures are separate source pages in their original order; review each picture before inclusion.")
         else:
-            normalize_report_image(raw, suffix)  # Validate before caching or paid work.
+            try:
+                normalize_report_image(raw, suffix)  # Validate before caching or paid work.
+            except (OSError, EOFError, SyntaxError) as exc:
+                # These exceptions originate inside the bounded image decoder,
+                # not the surrounding original/cache storage operations. Do not
+                # mislabel invalid image bytes as a transient storage outage.
+                raise ValueError("Image data is damaged or unreadable. Export a fresh copy.") from exc
             page_texts, needs_vision = [""], [1]
     elif suffix == ".txt":
         page_texts = [raw.decode("utf-8-sig")]
