@@ -181,10 +181,13 @@ def tally_reviewed_months(
                 key = (site, metric, month)
                 # PM classification has not been approved: no PM count or zero.
                 active = not metric.startswith("pm_") or bool(pm)
-                value = (str(totals[key]) if totals[key] else
-                         "0" if active and coverage[key] else None)
+                # A partial export can contain rows without proving the month
+                # complete. Keep those row receipts for review, but never
+                # present their subtotal as the month's actual count.
+                covered = bool(active and coverage[key])
+                value = (str(totals[key]) if totals[key] else "0") if covered else None
                 cells.append(RollingCell(site, metric, month, value,
-                    bool(active and coverage[key]), tuple(sorted(members[key]))))
+                    covered, tuple(sorted(members[key]))))
     return RollingCounts(months, sites, tuple(cells), tuple(dict.fromkeys(notices)))
 
 
@@ -259,6 +262,10 @@ def merge_carried_grid(previous, current, prior_period, period, *, site_title: s
             or len(previous.columns) != 13 or len(current.columns) != 13
             or len(previous.rows) != 1 or len(current.rows) > 1):
         raise ValueError("Review changed master regions or ambiguous work-order rows.")
+    distance = ((period.year - prior_period.year) * 12
+                + period.month - prior_period.month)
+    if not 1 <= distance <= 12:
+        raise ValueError("Work-order rollover needs a later month within one reporting year.")
     if (previous.columns[1:] != rolling_labels(prior_period)
             or current.columns[1:] not in (rolling_labels(period), previous.columns[1:])):
         raise ValueError("Unverified month headings cannot be carried as known history.")
@@ -269,10 +276,6 @@ def merge_carried_grid(previous, current, prior_period, period, *, site_title: s
     if current.rows and (len(current.rows[0]) != 13
                          or _key(current.rows[0][0]) != _key(site_title)):
         raise ValueError("Current month edits have ambiguous site identity.")
-    distance = ((period.year - prior_period.year) * 12
-                + period.month - prior_period.month)
-    if not 1 <= distance <= 12:
-        raise ValueError("Work-order rollover needs a later month within one reporting year.")
     if current.rows and current.columns[1:] != rolling_labels(period):
         raise ValueError("Edited current values require current year-month headings.")
     old_values = dict(zip(rolling_months(prior_period), previous.rows[0][1:]))
