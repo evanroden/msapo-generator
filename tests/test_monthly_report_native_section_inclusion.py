@@ -60,9 +60,10 @@ def test_omitting_middle_native_section_keeps_reflow_splits_and_inherited_header
     from app.monthly_report_native_section_inclusion import apply_native_section_choices
 
     document, paragraphs, names, plan = _split_region_fixture()
+    from app.monthly_report_model import ReportPeriod, synthetic_draft, synthetic_profiles
     choice = set_section_included(
-        __import__("tests.test_monthly_report_section_inclusion",
-                   fromlist=["draft"]).draft(), "organization", False)
+        synthetic_draft(synthetic_profiles()[0], ReportPeriod(2026, 9)),
+        "organization", False)
     apply_native_section_choices(
         document, choice, [p._p for p in paragraphs], set(),
         {i + 1: name for i, name in enumerate(names)}, plan)
@@ -94,9 +95,10 @@ def test_proved_contacts_page_separator_gets_region_ownership_before_omission():
     separator.append(props)
     paragraphs[2]._p.addprevious(separator)  # Native org/contact split.
     assert separator not in plan.owner
+    from app.monthly_report_model import ReportPeriod, synthetic_draft, synthetic_profiles
     choice = set_section_included(
-        __import__("tests.test_monthly_report_section_inclusion",
-                   fromlist=["draft"]).draft(), "training", False)
+        synthetic_draft(synthetic_profiles()[0], ReportPeriod(2026, 9)),
+        "training", False)
     apply_native_section_choices(
         document, choice, [p._p for p in paragraphs], set(),
         {i + 1: name for i, name in enumerate(names)}, plan)
