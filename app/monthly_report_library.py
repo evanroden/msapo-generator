@@ -311,7 +311,7 @@ def draft_from_dict(value: dict) -> ReportDraft:
             ) for b in s["blocks"]), divider_asset=s.get("divider_asset", ""),
             included=s.get("included", True), appendix=s.get("appendix", False),
         ) for s in value["sections"])
-        return ReportDraft(
+        draft = ReportDraft(
             profile=profile_from_dict(value["profile"]), period=ReportPeriod(**value["period"]),
             cover_recovery_request=request_from_dict(value.get("cover_recovery_request")),
             prepared_by=value["prepared_by"], sections=sections,
@@ -321,6 +321,9 @@ def draft_from_dict(value: dict) -> ReportDraft:
             follow_ups=tuple(ReportFollowUp(**{**item, "references":tuple(item.get("references",()))}) for item in value.get("follow_ups",())),
             source_row_reviews=tuple(reviews),
         )
+        from app.monthly_report_section_control import verify_custom_page_scope
+        verify_custom_page_scope(draft)
+        return draft
     except (KeyError, TypeError, ValueError) as exc:
         raise LibraryError("Invalid report snapshot.") from exc
 
@@ -1212,6 +1215,8 @@ def save_snapshot(draft: ReportDraft, *, expected_revision: int, open_issues: tu
                   pending_proposals: tuple[str, ...] = (), assets: tuple[tuple[str, bytes], ...] = (),
                   entered_editor: str = "") -> SavedReport:
     from app.monthly_report_cover_recovery import validate_cover_occurrence
+    from app.monthly_report_section_control import verify_custom_page_scope
+    verify_custom_page_scope(draft)
     for block in draft.blocks:
         validate_cover_occurrence(draft.profile, block)
     path = _profile_path(draft.profile.contract, draft.profile.key, snapshots=True)
