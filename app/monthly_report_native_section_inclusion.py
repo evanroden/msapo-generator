@@ -69,6 +69,7 @@ def apply_native_section_choices(document, draft, original, headings, section_by
     # paginated regions. Preserve each region's boundary rather than merging
     # merely because its source_word_sections number happens to match.
     properties = {}
+    proven_boundaries = set()
     if hasattr(page_plan, 'source_word_sections') and hasattr(page_plan, 'regions'):
         properties = {region: deepcopy(item.properties)
                       for region, item in enumerate(page_plan.regions)}
@@ -77,6 +78,7 @@ def apply_native_section_choices(document, draft, original, headings, section_by
             if boundary is not None:
                 region = region_owner(node)
                 if region is not None:
+                    proven_boundaries.add(region)
                     properties[region] = effective_properties(region, boundary)
     # Each emitted node inherits its origin's logical section. Physical Word
     # sections can span more than one logical section and are not an authority.
@@ -123,6 +125,7 @@ def apply_native_section_choices(document, draft, original, headings, section_by
     # boundaries whose logical content was removed may disappear.
     if properties and hasattr(page_plan, 'source_word_sections'):
         groups = []
+        previous_region = None
         for node in list(body):
             if node.tag == qn('w:sectPr'):
                 body.remove(node)
@@ -130,9 +133,20 @@ def apply_native_section_choices(document, draft, original, headings, section_by
             owner = region_owner(node)
             for boundary in list(node.iter(qn('w:sectPr'))):
                 boundary.getparent().remove(boundary)
-            if not groups or groups[-1][0] != owner:
-                groups.append((owner, []))
+            # Distinct source Word sections always have distinct geometry.
+            # For multiple logical regions within the SAME source section,
+            # split only at a boundary actually emitted by the current
+            # derivative. Constructor-only reflow candidates do not justify
+            # inventing a new blank page in otherwise protected source text.
+            if (not groups or (owner != previous_region and
+                    (page_plan.source_word_sections[previous_region]
+                     != page_plan.source_word_sections[owner]
+                     or previous_region in proven_boundaries))):
+                groups.append([owner, []])
+            else:
+                groups[-1][0] = owner
             groups[-1][1].append(node)
+            previous_region = owner
         for index,(owner,nodes) in enumerate(groups):
             if owner not in properties:
                 raise ValueError('A remaining native section has no proved page geometry.')
