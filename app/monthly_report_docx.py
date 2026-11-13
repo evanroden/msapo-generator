@@ -678,7 +678,7 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
                     _picture(document, partner, height=3.95)
                     index += 2
                 else:
-                    _picture(document, raw, page_break_before=page > 0, keep_with_next=bool(captions[index])
+                    _picture(document, raw, page_break_before=page > 0, keep_with_next=bool(captions[index]))
                     if captions[index]:
                         document.add_paragraph(captions[index], style="Caption")
                     index += 1
