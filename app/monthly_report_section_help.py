@@ -36,22 +36,20 @@ SECTION_HELP = {
 # just the context needed to make an informed choice without repeating field
 # labels. Blank hints mean the nearby native editor is self-explanatory.
 _EDITOR_GUIDANCE = {
-    "cover": "Include the report month, selected sites and approved cover details. Provide changes only if needed. Fictional example: a current-month facility photograph.",
-    "organization": "Include the current org chart, contacts and outage procedures. Provide changed roles or diagrams. Fictional example: an updated after-hours escalation route.",
-    "activity": "Include completed work, findings and unresolved work, not assumptions. Provide work orders, vendor reports or your own notes. Fictional example: inspected a test pump; repair pending.",
-    "scorecards": "Include verified utility results and capacity. Provide readings or a confirmed pending-results note; leave unknown values blank. Fictional example: a test meter reading.",
-    "mbcx": "MBCx means monitoring-based commissioning. Provide verified monitoring results or a status update. Fictional example: a test trend showed an open control issue.",
-    "maintenance": "Include ENFRA onsite technician service calls only, not vendor work. Provide call date, asset and outcome. Fictional example: checked a test valve.",
-    "subcontractors": "Include vendor agreement and contact status. Provide only confirmed changes. Fictional example: a sample service agreement is awaiting renewal.",
-    "water": "Include treatment readings and follow-ups. Provide the treatment report and verified exceptions. Fictional example: a sample reading requires retesting.",
-    "issues": "Include unresolved equipment issues, actions and current status. Provide evidence and corrections. Fictional example: a test pump seal remains under review.",
-    "capital": "Include replacement priorities and expected timing. Provide confirmed asset needs; leave unknown dates blank. Fictional example: review a test chiller next year.",
-    "proposals": "Include proposal scope and decision status. Provide verified status and approved source evidence; do not copy vendor-invoice amounts. Fictional example: test valve replacement proposed.",
-    "training": "Include completed hospital/client staff training. Provide topic, roles and confirmed hours. Fictional example: a sample safety session completed.",
-    "rfi": "RFI means request for information. Provide each request and confirmed response status. Fictional example: a sample drawing request remains open.",
-    "accounts_receivable": "Include source-verified receivable status only where approved for this report. Provide the reviewed ledger and audience decision. Fictional example: a sample invoice is awaiting review.",
-    "other": "Include additional relevant information only where it belongs. Provide a clear description and source. Fictional example: a test facility update awaiting verification.",
+    "organization": "",
+    "activity": "",
+    "scorecards": "Add utility results. Leave unknown capacity blank or NR; note pending results only when confirmed.",
+    "mbcx": "Add monitoring results or a brief status update.",
+    "maintenance": "ENFRA onsite technician calls only. Put vendor work in [Monthly Activity Summary](#report-section-activity).",
+    "subcontractors": "",
+    "water": "Check out-of-range water readings and follow-up work.",
+    "issues": "Update issues and status. Removing an item leaves it out of this report only.",
+    "capital": "Update replacement priorities; leave unknown dates blank.",
+    "proposals": "Exclude prices and commercial or legal-only pages.",
+    "training": "Record completed hospital/client staff training; hours only when known.",
+    "rfi": "RFI means request for information. Mark complete only when confirmed.",
 }
+
 
 _EDITOR_HEADING_HELP = {
     "mbcx": "MBCx means monitoring-based commissioning. Include only verified findings.",
