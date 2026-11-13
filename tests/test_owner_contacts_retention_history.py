@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from app import memory, owner_access
+from app import memory
 from app.memory import (
     CONTACT_RETENTION_SECONDS,
     contracts_with_saved_contacts,
@@ -27,9 +27,7 @@ OTHER = "UMMC"
 def _isolated(monkeypatch, tmp_path):
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(memory, "_last_prune_at", time.time())
-    owner_access._reset_for_tests()
     yield tmp_path
-    owner_access._reset_for_tests()
 
 
 def _db(tmp_path):
@@ -138,27 +136,6 @@ def test_deleted_contact_is_not_revived_by_a_later_correction_of_its_package():
     assert vendor_reps(ACCOUNT, "Trane") == [("New Rep", "new@example.com")]
 
 
-# --- Owner gate --------------------------------------------------------------
-
-def test_gate_is_off_without_a_long_enough_passcode(monkeypatch):
-    monkeypatch.delenv(owner_access.ENV_VAR, raising=False)
-    assert not owner_access.owner_access_configured()
-    assert not owner_access.check_owner_passcode("")
-    monkeypatch.setenv(owner_access.ENV_VAR, "short")
-    assert not owner_access.owner_access_configured()
-    assert not owner_access.check_owner_passcode("short")
-
-
-def test_gate_accepts_right_passcode_and_locks_after_five_wrong_tries(monkeypatch):
-    monkeypatch.setenv(owner_access.ENV_VAR, "correct-horse-battery")
-    assert owner_access.check_owner_passcode("correct-horse-battery", now=1000.0)
-    for _ in range(5):
-        assert not owner_access.check_owner_passcode("nope", now=1000.0)
-    assert not owner_access.check_owner_passcode("correct-horse-battery", now=1001.0)
-    later = 1000.0 + owner_access.FAILURE_WINDOW_SECONDS + 1
-    assert owner_access.check_owner_passcode("correct-horse-battery", now=later)
-
-
 # --- Owner screen in the app ---------------------------------------------------
 
 def _visible(at):
@@ -174,30 +151,26 @@ render_owner_contacts()
 """
 
 
-def test_owner_screen_is_hidden_when_no_passcode_is_configured(monkeypatch):
+def test_owner_screen_lists_nothing_until_opened_then_shows_contacts_and_history():
     from streamlit.testing.v1 import AppTest
-    monkeypatch.delenv(owner_access.ENV_VAR, raising=False)
-    _contact()
-    at = AppTest.from_string(_SCRIPT).run()
-    assert not at.exception
-    assert len(at.text_input) == 0
-    assert "rep1@example.com" not in _visible(at)
-
-
-def test_owner_screen_shows_contacts_and_history_only_after_unlock(monkeypatch):
-    from streamlit.testing.v1 import AppTest
-    monkeypatch.setenv(owner_access.ENV_VAR, "correct-horse-battery")
     _contact()
     record_po_history(contract=ACCOUNT, context_id="ctx", vendor="Trane", total="1,250.00",
                       quote_filename="Trane Quote.pdf")
     at = AppTest.from_string(_SCRIPT).run()
+    assert not at.exception
     assert "rep1@example.com" not in _visible(at)
-    at.text_input(key="owner_passcode_input").input("wrong-passcode-here")
-    at.button(key="owner_unlock").click().run()
-    assert "rep1@example.com" not in _visible(at)
-    at.text_input(key="owner_passcode_input").input("correct-horse-battery")
-    at.button(key="owner_unlock").click().run()
+    at.checkbox(key="owner_contacts_open").check().run()
     assert not at.exception
     rendered = _visible(at)
     assert "rep1@example.com" in rendered
     assert "Trane Quote.pdf" in rendered
+
+
+def test_owner_screen_delete_removes_the_contact():
+    from streamlit.testing.v1 import AppTest
+    _contact()
+    at = AppTest.from_string(_SCRIPT).run()
+    at.checkbox(key="owner_contacts_open").check().run()
+    at.button(key="owner_delete_0").click().run()
+    assert not at.exception
+    assert saved_vendor_contacts(ACCOUNT) == []

@@ -1689,9 +1689,9 @@ def forget_device_requester(device_token: str | None) -> bool:
 # ---------------------------------------------------------------------------
 # Owner decisions for #21 (13 November 2026)
 #
-# * Only the owner may view or edit saved contacts. The screen that does so is
-#   gated by app.owner_access; these functions do no access checks themselves
-#   and must never be called from an ungated route.
+# * Only the owner may view or edit saved contacts. He is the app's only user
+#   and chose no passcode, so the screen in app.owner_contacts_ui is open to
+#   whoever opens the purchase page's About section.
 # * Saved contacts are kept for two years after their last use, then removed.
 #   A row whose last use is unknown (0) is never removed.
 # * One PO history row is kept per accepted PO package: date, vendor, total and

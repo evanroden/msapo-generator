@@ -1,9 +1,9 @@
 """Owner screen for saved contacts and PO history (#21).
 
-Rendered inside the purchase page's About section, and only when
-``app.owner_access.owner_access_configured()`` is true. Everything below the
-unlock box is shown only after the server-side passcode was entered in this
-browser session.
+Rendered inside the purchase page's About section. The owner decided on
+13 November 2026 to use this screen without a passcode: the app has no sign-in
+and the owner is its only user, so anyone who opens the About section can see
+and edit these contacts.
 """
 from __future__ import annotations
 
@@ -18,9 +18,6 @@ from app.memory import (
     po_history,
     saved_vendor_contacts,
 )
-from app.owner_access import check_owner_passcode, locked_out, owner_access_configured
-
-UNLOCKED_KEY = "owner_contacts_unlocked"
 
 
 def _when(ts: float) -> str:
@@ -30,26 +27,9 @@ def _when(ts: float) -> str:
 
 
 def render_owner_contacts() -> None:
-    if not owner_access_configured():
+    st.markdown("**Saved contacts and PO history**")
+    if not st.checkbox("Show saved contacts and PO history", key="owner_contacts_open"):
         return
-    st.markdown("**Owner: saved contacts and PO history**")
-    if not st.session_state.get(UNLOCKED_KEY):
-        if locked_out():
-            st.caption("Too many wrong tries. Try again later.")
-            return
-        passcode = st.text_input("Owner passcode", type="password", key="owner_passcode_input")
-        if st.button("Unlock", key="owner_unlock"):
-            if check_owner_passcode(passcode):
-                st.session_state[UNLOCKED_KEY] = True
-                st.session_state.pop("owner_passcode_input", None)
-                st.rerun()
-            else:
-                st.error("That passcode is not right.")
-        return
-
-    if st.button("Lock", key="owner_lock"):
-        st.session_state.pop(UNLOCKED_KEY, None)
-        st.rerun()
 
     contracts = contracts_with_saved_contacts()
     if not contracts:

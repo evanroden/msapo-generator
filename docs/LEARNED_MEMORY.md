@@ -20,16 +20,15 @@ is a separate database with different failure behavior.
 
 The owner decided:
 
-* **Only the owner views or edits saved contacts.** The app still has no
-  sign-in, so an entered name, selected contract or browser token is not
-  authentication, and the anonymous Monthly administration is not reused. The
-  owner screen (`app/owner_contacts_ui.py`) sits in the purchase page's About
-  section and is shown only when the server has a passcode of at least 12
-  characters in `MSAPO_OWNER_PASSCODE` (`app/owner_access.py`). Without it the
-  app behaves as before and no list is rendered. After unlocking, the owner
-  can pick one account, correct or delete a saved vendor representative, and
-  read that account's PO history. Five wrong passcodes in 15 minutes lock the
-  gate for the rest of the window. There is no database export.
+* **Only the owner views or edits saved contacts.** He is the app's only
+  user, and on 13 November 2026 he chose not to put a passcode on it. The app
+  still has no sign-in, so the screen (`app/owner_contacts_ui.py`) is open to
+  anyone who opens the purchase page's About section and ticks "Show saved
+  contacts and PO history". It lets the user pick one account, correct or
+  delete a saved vendor representative, and read that account's PO history.
+  There is no database export. Access is expected to come from the planned
+  move to Azure behind single sign-on; until then the link itself is the only
+  protection.
 * **Saved contacts are kept for two years after their last use.**
   `prune_stale_contacts` removes vendor representatives, requester and
   approver suggestions and their events last used more than 730 days ago. It
