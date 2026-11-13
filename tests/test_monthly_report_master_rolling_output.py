@@ -1,6 +1,7 @@
 """Native rolling WO grids are checked in real Word and rendered PDF output."""
 from dataclasses import replace
 from io import BytesIO
+import re
 
 from docx import Document
 import pymupdf
@@ -116,8 +117,14 @@ def test_actual_pdf_reflects_word_tables_without_missing_site_or_fabricated_coun
     with pymupdf.open(pdf_path) as document:
         assert len(document) >= 1
         text = "\n".join(page.get_text() for page in document)
+    # Word may wrap at a word boundary inside a narrow cell. A newline at a
+    # space is readable, but a break inside a word ("Nort h" or "Rece ived")
+    # must still fail these whole-label checks.
+    readable = " ".join(text.split())
     for expected in ("North QA", "South QA", "PM Received", "Non-PM Received",
                      "PM Closed", "Non-PM Closed", "Dec 2026", "Jan 2027"):
-        assert expected in text
-    assert "PREVIOUS SOURCE VALUE" not in text
+        assert expected in readable
+    assert re.search(r"(?<!Non-)PM Received", readable)
+    assert re.search(r"(?<!Non-)PM Closed", readable)
+    assert "PREVIOUS SOURCE VALUE" not in readable
     assert pdf_path.read_bytes().startswith(b"%PDF-")
