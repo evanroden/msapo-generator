@@ -123,6 +123,7 @@ class NativeHeaderScope:
     source_plan: NativeSectionPlan
     reserved_routes: tuple[NativeHeaderRoute, ...]
     reserved_top_margins: tuple[str | None, ...]
+    omitted_sections: tuple[str, ...] = ()
 
     @property
     def sha256(self):
@@ -255,7 +256,7 @@ def _routing(archive):
     return units, tuple(routes), tuple(ends), even_and_odd
 
 
-def expected_header_scope(source_view, section_key=None):
+def expected_header_scope(source_view, section_key=None, *, omitted_sections=()):
     """Compute pre-render closure from an independently verified view supplied by caller."""
     if not isinstance(source_view, CompatibilityView):
         _error('typed verified source view required')
@@ -282,20 +283,29 @@ def expected_header_scope(source_view, section_key=None):
                 if reference.tag in (W + 'headerReference', W + 'footerReference'):
                     properties.remove(reference)
             reserved_routes.append(replace(route, properties_sha256=_subtree_digest(properties)))
-    selected = plan.selected_positions(section_key)
+    omitted_sections = tuple(omitted_sections)
+    mapping = dict(plan.section_by_position)
+    from app.monthly_report_model import known_sections
+    known = {s.key for s in known_sections()} | (set(mapping.values()) - {"cover"})
+    if (len(set(omitted_sections)) != len(omitted_sections)
+            or any(not isinstance(key, str) for key in omitted_sections)
+            or not set(omitted_sections) <= known):
+        _error('unknown report section omission')
+    selected = tuple(p for p in plan.selected_positions(section_key)
+                     if mapping[p] not in omitted_sections)
     if not selected:
         _error('empty selected source range')
-    source_sections = (tuple(range(1, len(ends) + 1)) if section_key is None else
+    source_sections = (tuple(range(1, len(ends) + 1)) if section_key is None and not omitted_sections else
                        tuple(index for index, end in enumerate(ends, 1)
                              if any((ends[index - 2] if index > 1 else 0) < p <= end for p in selected)))
     routes = tuple(all_routes[index - 1] for index in source_sections)
-    if section_key is None:
+    if section_key is None and not omitted_sections:
         output_ends = ends
     else:
         ordinal = {position: index for index, position in enumerate(selected, 1)}
-        if any(ends[index - 1] not in ordinal for index in source_sections[:-1]):
+        if not omitted_sections and any(ends[index - 1] not in ordinal for index in source_sections[:-1]):
             _error('a selected interior section boundary has no retained source anchor')
-        output_ends = (*tuple(ordinal[ends[index - 1]] for index in source_sections[:-1]), len(selected) + 1)
+        output_ends = (*tuple(sum(p <= ends[index - 1] for p in selected) for index in source_sections[:-1]), len(selected) + 1)
     from dataclasses import asdict
     return NativeHeaderScope(POLICY, source_view.original_inspection.sha256,
         source_view.rendition_inspection.sha256, source_view.receipt_sha256, section_key,
@@ -303,7 +313,7 @@ def expected_header_scope(source_view, section_key=None):
         even_and_odd, tuple(sorted({part for route in routes for part in route.parts if part})),
         sha256(_canonical(asdict(plan))).hexdigest(), plan,
         tuple(reserved_routes[index - 1] for index in source_sections),
-        tuple(reserved_tops[index - 1] for index in source_sections))
+        tuple(reserved_tops[index - 1] for index in source_sections), omitted_sections)
 
 
 @dataclass(frozen=True)
