@@ -120,9 +120,9 @@ def work_order_evidence(content: SourceContent, period: ReportPeriod,
             # value so conflicting source spellings cannot pick a winner.
             scoped_identity = (site_key, identity.casefold())
             value = (identity, when.isoformat(), "Completed" if state in _COMPLETE else "Open")
-            if scoped_identity in observations:
-                # Even equal-value repeat records are ambiguous source duplicates.
-                # A complete-export count cannot silently collapse either row.
+            if scoped_identity in observations and observations[scoped_identity] != value:
+                # Differing case, date, or status is ambiguous; do not pick a winner.
+                # Identical observations remain one order in this legacy summary.
                 conflicts.add(scoped_identity)
             else:
                 observations[scoped_identity] = value
