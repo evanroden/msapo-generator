@@ -34,20 +34,52 @@ def isolated(record: dict) -> bool:
 
 
 def check_origin(origin: str, production_origin: str) -> bool:
-    a, b = urlparse(origin), urlparse(production_origin)
-    return (a.scheme == b.scheme == "https" and a.hostname and b.hostname
-            and a.hostname != b.hostname and not a.username and not a.password
-            and not a.query and not a.fragment and not a.path.strip("/"))
+    def parse(value):
+        if not isinstance(value, str) or any(c.isspace() for c in value):
+            return None
+        try:
+            parsed = urlparse(value)
+            port = parsed.port  # Validate even when a port is not used below.
+        except ValueError:
+            return None
+        if (parsed.scheme != "https" or not parsed.hostname
+                or parsed.hostname.endswith(".") or parsed.username is not None
+                or parsed.password is not None or parsed.path not in ("", "/")
+                or parsed.query or parsed.fragment or port == 0):
+            return None
+        return parsed
+
+    a, b = parse(origin), parse(production_origin)
+    return bool(a and b and a.hostname != b.hostname)
+
+
+def _same_https_authority(url: str, origin: str) -> bool:
+    try:
+        a, b = urlparse(url), urlparse(origin)
+        return bool(a.scheme == b.scheme == "https" and a.hostname == b.hostname
+                    and (a.port or 443) == (b.port or 443)
+                    and a.username is None and a.password is None)
+    except ValueError:
+        return False
+
+
+def _login_challenge(url: str, origin: str) -> bool:
+    try:
+        page = urlparse(url)
+        trusted_provider = (page.scheme == "https" and (page.port or 443) == 443
+                            and page.username is None and page.password is None
+                            and page.hostname in ("login.microsoftonline.com", "login.microsoftonline.us"))
+        return bool(trusted_provider or (_same_https_authority(url, origin)
+                    and page.path.startswith("/.auth/login/")))
+    except ValueError:
+        return False
 
 
 def signed_out_denial(status: int | None, final_url: str, app_origin: str, *,
                       served_marker: bool, websocket_opened: bool) -> bool:
     """An actual authentication challenge or explicit denial, never an empty UI."""
-    page = urlparse(final_url)
-    app = urlparse(app_origin)
-    challenge = ((status in (401, 403) and page.hostname == app.hostname)
-                 or (page.hostname in ("login.microsoftonline.com", "login.microsoftonline.us"))
-                 or (page.hostname == app.hostname and page.path.startswith("/.auth/login/")))
+    challenge = ((status in (401, 403) and _same_https_authority(final_url, app_origin))
+                 or _login_challenge(final_url, app_origin))
     return bool(challenge and not served_marker and not websocket_opened)
 
 
@@ -78,9 +110,34 @@ def websocket_handshake_denied(status: int, location: str, origin: str) -> bool:
         return True
     if status not in (302, 303, 307, 308):
         return False
-    p = urlparse(location)
-    return bool((p.hostname == urlparse(origin).hostname and p.path.startswith("/.auth/login/"))
-                or p.hostname in ("login.microsoftonline.com", "login.microsoftonline.us"))
+    return _login_challenge(location, origin)
+
+
+def track_stream_frames(page, origin: str) -> list[bool]:
+    """Record only receipt of frames, never their contents or a mere socket attempt."""
+    observations: list[bool] = []
+
+    def observe(socket):
+        try:
+            candidate, expected = urlparse(socket.url), urlparse(origin)
+            matches = (candidate.scheme == "wss" and candidate.hostname == expected.hostname
+                       and (candidate.port or 443) == (expected.port or 443)
+                       and candidate.path == "/_stcore/stream"
+                       and candidate.username is None and candidate.password is None)
+        except ValueError:
+            matches = False
+        if not matches:
+            return
+        index = len(observations)
+        observations.append(False)
+
+        def received(_payload):
+            observations[index] = True
+
+        socket.on("framereceived", received)
+
+    page.on("websocket", observe)
+    return observations
 
 
 def run_probe(origin: str, storage_state: Path, expected_sha: str) -> dict:
@@ -108,20 +165,17 @@ def run_probe(origin: str, storage_state: Path, expected_sha: str) -> dict:
             anonymous.close()
             context = browser.new_context(storage_state=str(storage_state), accept_downloads=False)
             page = context.new_page()
-            ws_urls = []
-            page.on("websocket", lambda ws: ws_urls.append(ws.url))
+            stream_frames = track_stream_frames(page, origin)
             page.goto(origin + "/?workflow=monthly", wait_until="domcontentloaded", timeout=45000)
             label = (running_code_marker(page, timeout=25000).text_content() or "").strip()
             events["authenticated_page"] = "PASS"
             events["served_sha"] = "PASS" if label == "Running code: " + expected_sha else "FAIL"
             page.wait_for_timeout(2500)
-            events["websocket_initial"] = ("PASS" if any("/_stcore/stream" in url for url in ws_urls)
-                                           else "FAIL")
-            prior = len(ws_urls)
+            events["websocket_initial"] = "PASS" if any(stream_frames) else "FAIL"
+            prior = len(stream_frames)
             page.reload(wait_until="domcontentloaded", timeout=45000)
             page.wait_for_timeout(2500)
-            events["websocket_reconnect"] = ("PASS" if any("/_stcore/stream" in url for url in ws_urls[prior:])
-                                             else "FAIL")
+            events["websocket_reconnect"] = "PASS" if any(stream_frames[prior:]) else "FAIL"
             context.close()
         finally:
             browser.close()

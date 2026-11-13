@@ -28,6 +28,53 @@ def test_https_exact_origin_and_separate_host_are_required():
         assert not check_origin(candidate, "https://production.example.invalid")
 
 
+def test_origin_comparison_rejects_dns_alias_spelling_and_invalid_origins():
+    prod = "https://production.example.invalid"
+    for candidate in ("https://production.example.invalid.",
+                      "https://production.example.invalid.:443",
+                      "https://stage.example.invalid:99999",
+                      "https://stage.example.invalid/not-an-origin"):
+        assert not check_origin(candidate, prod)
+    assert not check_origin("https://stage.example.invalid", prod + "/path")
+
+
+def test_socket_must_receive_a_frame_from_a_new_same_origin_stream():
+    from scripts.qa_azure_authenticated import track_stream_frames
+
+    class Socket:
+        def __init__(self, url):
+            self.url, self.handlers = url, {}
+
+        def on(self, name, handler):
+            self.handlers[name] = handler
+
+        def receive(self):
+            self.handlers["framereceived"]("private data must not be recorded")
+
+    class Page:
+        def on(self, name, handler):
+            assert name == "websocket"
+            self.handler = handler
+
+    page = Page()
+    observations = track_stream_frames(page, "https://stage.example.invalid")
+    initial = Socket("wss://stage.example.invalid/_stcore/stream")
+    page.handler(initial)
+    assert len(observations) == 1 and not observations[0]
+    initial.receive()
+    assert observations == [True]
+    before_reload = len(observations)
+    unrelated = Socket("wss://other.example.invalid/_stcore/stream")
+    page.handler(unrelated)
+    initial.receive()  # An old connection is not proof of reconnection.
+    assert not any(observations[before_reload:])
+    replacement = Socket("wss://stage.example.invalid/_stcore/stream")
+    page.handler(replacement)
+    assert not any(observations[before_reload:])
+    replacement.receive()
+    assert any(observations[before_reload:])
+
+
 def test_preflight_blocks_before_network_access(tmp_path):
     state = tmp_path / "auth.json"
     state.write_text("{}")
@@ -52,6 +99,9 @@ def test_signed_out_requires_actual_denial_not_blank_ui():
         (200, base + "/?workflow=monthly", False, False),
         (200, base + "/?workflow=monthly", True, True),
         (200, "https://unrelated.example.invalid/login", False, False),
+        (200, "http://login.microsoftonline.com/tenant/oauth", False, False),
+        (200, "https://login.microsoftonline.com:444/tenant/oauth", False, False),
+        (403, "https://stage.example.invalid:444/", False, False),
         (403, base + "/?workflow=monthly", True, False),
         (401, base + "/?workflow=monthly", False, True),
     ):
@@ -67,5 +117,8 @@ def test_upgrade_probe_needs_an_auth_challenge_not_network_or_csp_failure():
     assert websocket_handshake_denied(302, "https://login.microsoftonline.com/tenant/oauth2", origin)
     for status, redirect in ((101, ""), (400, ""), (200, ""),
                              (302, "https://unrelated.example.invalid/login"),
+                             (302, "http://login.microsoftonline.com/tenant/oauth2"),
+                             (302, "https://login.microsoftonline.com:444/tenant/oauth2"),
+                             (302, "https://stage.example.invalid:444/.auth/login/aad"),
                              (302, origin + "/other")):
         assert not websocket_handshake_denied(status, redirect, origin)
