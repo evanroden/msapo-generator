@@ -80,6 +80,17 @@ def test_ambiguous_status_flags_and_paraphrases_require_review():
     assert any("Matching numbers alone" in warning for warning in warnings)
 
 
+def test_may_uncertainty_is_flagged_without_treating_month_name_as_uncertain():
+    for text in ("Pump may need a seal.", "Pump may require inspection."):
+        blocking, warnings = notes.review_flags(text, text)
+        assert not blocking
+        assert any("unclear" in warning.lower() for warning in warnings)
+    text = "The inspection was completed in May 2026."
+    blocking, warnings = notes.review_flags(text, text)
+    assert not blocking
+    assert not any("unclear" in warning.lower() for warning in warnings)
+
+
 def test_add_replace_stale_discard_and_preserve_other_content():
     original = ResolvedBlock("activity_summary", "This month", text="Existing manual entry.",
                              references=("synthetic:original",), asset_hashes=("test-art",))
