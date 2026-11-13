@@ -393,6 +393,21 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
             "Restore the original source file or remove its linked report content.", True, key,
             (missing_target,)))
     from app.monthly_report_correction_targets import source_target
+    from app.monthly_report_sources import source_reference
+    from app.ocr import SUPPORTED_IMAGE_SUFFIXES
+    issue_page_refs = {ref for issue in draft.follow_ups
+                       if issue.category == "issue" and issue.included
+                       for ref in issue.references}
+    # Date acknowledgement also applies to a genuinely reviewed issue PDF/
+    # image page, even if general source-page inclusion was left off. Unreviewed
+    # legacy citations and non-image imports must not gain a new date ritual.
+    issue_page_sources = {
+        source.id for source in draft.sources
+        if source.suffix == ".pdf" or source.suffix in SUPPORTED_IMAGE_SUFFIXES
+        if any(1 <= n <= len(source.page_texts)
+               and source_reference(source, n) in issue_page_refs
+               for n, _ in source.client_page_reviews)
+    }
     for source in draft.sources:
         facility = source.facility.strip().casefold()
         foreign_included = bool(facility and facility not in names and source.id in included_sources)
@@ -409,7 +424,7 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                 "Choose the exact sites in its source details, or remove the linked content.", True, source.id,(source_target(draft,source),)))
         # Classification and intake selections do not remove already-included
         # text/tables. They must not bypass the required foreign-site check.
-        if source.classification == "Reference only" or not source.selected_pages:
+        if (source.classification == "Reference only" or not source.selected_pages) and source.id not in issue_page_sources:
             continue
         from app.monthly_report_source_scope import contribution_dates_bound
         # Verified row/totals dates already bind every included use to this

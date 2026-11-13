@@ -293,7 +293,14 @@ globalThis.ENFRAWorkspaceNavigation = {
                 event.preventDefault();
                 const target = adapter.resolve(app, link, state.identity);
                 const entry = target && entries.find(item => item.target.contains(target.marker));
-                if (!entry) {adapter.unavailable(link);return;}
+                if (!entry) {
+                    // A resolved marker can live outside the wizard's section
+                    // containers (the page-top Prepared by field). Reveal it
+                    // directly instead of reporting the route as unavailable.
+                    if (target) adapter.reveal(app, link, state.identity, () => true);
+                    else adapter.unavailable(link);
+                    return;
+                }
                 navigate(entry.id);
                 correction = {link, serial:correctionSerial};
                 return;
