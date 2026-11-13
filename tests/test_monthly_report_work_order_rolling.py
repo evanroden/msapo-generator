@@ -43,6 +43,14 @@ def count(reviews, *, pm=("PM",), closed=("Closed", "Completed"), coverage=(),
         coverage_approvals=coverage_approvals)
 
 
+def approved_coverage(*items):
+    """Make each test's explicit source/month/site/metric attestation visible."""
+    coverage = tuple(CoveredMonth(site, metric, month, source)
+                     for site, metric, month, source in items)
+    approvals = {(site, metric, month): source for site, metric, month, source in items}
+    return coverage, approvals
+
+
 def test_twelve_months_cross_year_and_received_closed_event_dates_are_independent():
     assert rolling_months(JANUARY) == tuple(
         [f"2026-{m:02d}" for m in range(2, 13)] + ["2027-01"])
@@ -53,10 +61,17 @@ def test_twelve_months_cross_year_and_received_closed_event_dates_are_independen
     )
     with_date = review("csv:dates", rows[:2])
     no_date = review("pdf:no-date", rows[2:], completion_column=False)
-    result = count((with_date, no_date))
+    coverage, approvals = approved_coverage(
+        ("n", "pm_received", "2026-12", "csv:dates"),
+        ("n", "pm_closed", "2026-12", "csv:dates"),
+        ("n", "pm_closed", "2027-01", "csv:dates"),
+        ("s", "non_pm_received", "2026-12", "pdf:no-date"),
+        ("s", "non_pm_closed", "2026-12", "pdf:no-date"))
+    result = count((with_date, no_date), coverage=coverage, coverage_approvals=approvals)
     assert result.cell("n", "pm_received", "2026-12").value == "1"
     assert result.cell("n", "pm_closed", "2027-01").value == "1"
-    assert result.cell("n", "pm_closed", "2026-12").value is None
+    assert result.cell("n", "pm_closed", "2026-12").value == "0"
+    assert result.cell("n", "pm_closed", "2026-11").value is None
     assert result.cell("s", "non_pm_received", "2026-12").value == "1"
     assert result.cell("s", "non_pm_closed", "2026-12").value == "1"
     assert result.cell("n", "non_pm_received", "2027-01").source_rows == (
@@ -70,16 +85,27 @@ def test_selected_closure_and_pm_aliases_use_reviewed_normalized_values():
     # still carry the source's human status/category variant labels.
     source = review("aliases", (Row("r", "n", "WO-9", "2026-12-15", "",
                                   "Completed", "PM"),), completion_column=False)
-    counts = count((source,), pm=("Preventive Maintenance",), closed=("Finished",))
+    coverage, approvals = approved_coverage(
+        ("n", "pm_received", "2026-12", "aliases"),
+        ("n", "pm_closed", "2026-12", "aliases"))
+    counts = count((source,), pm=("Preventive Maintenance",), closed=("Finished",),
+                   coverage=coverage, coverage_approvals=approvals)
     assert counts.cell("n", "pm_received", "2026-12").value == "1"
     assert counts.cell("n", "pm_closed", "2026-12").value == "1"
 
 
 def test_present_but_blank_completion_date_never_falls_back_to_closed_status():
-    result = count((review("has-date", (
-        Row("r", "n", "W-1", "2026-12-01", "", "Closed", "PM"),)),))
+    source = review("has-date", (
+        Row("r", "n", "W-1", "2026-12-01", "", "Closed", "PM"),))
+    coverage, approvals = approved_coverage(("n", "pm_received", "2026-12", "has-date"))
+    result = count((source,), coverage=coverage, coverage_approvals=approvals)
     assert result.cell("n", "pm_received", "2026-12").value == "1"
     assert result.cell("n", "pm_closed", "2026-12").value is None
+    complete, approvals = approved_coverage(
+        ("n", "pm_received", "2026-12", "has-date"),
+        ("n", "pm_closed", "2026-12", "has-date"))
+    assert count((source,), coverage=complete, coverage_approvals=approvals).cell(
+        "n", "pm_closed", "2026-12").value == "0"
 
 
 def test_missing_pm_selection_leaves_pm_unknown_including_explicit_coverage():
@@ -102,23 +128,39 @@ def test_unknown_month_is_blank_and_covered_zero_is_literal_zero():
     assert result.cell("s", "non_pm_received", "2026-11").value is None
 
 
+def test_nonempty_partial_export_does_not_become_a_complete_month_count():
+    row = Row("r1", "n", "WO-1", "2026-12-09", "", "Open", "Non-PM")
+    source = review("partial", (row,))
+    unknown = count((source,)).cell("n", "non_pm_received", "2026-12")
+    assert unknown.value is None and not unknown.covered
+    assert unknown.source_rows == ("partial#r1",)
+    coverage, approvals = approved_coverage(("n", "non_pm_received", "2026-12", "partial"))
+    confirmed = count((source,), coverage=coverage, coverage_approvals=approvals).cell(
+        "n", "non_pm_received", "2026-12")
+    assert confirmed.value == "1" and confirmed.covered
+    assert confirmed.source_rows == unknown.source_rows
+
+
 def test_overlapping_identical_rows_count_once_but_retain_both_sources():
     first = Row("r1", "n", "WO-1", "2026-12-09", "", "Open", "Non-PM")
     second = Row("r2", "n", "wo-1", "2026-12-09", "", "Open", "Non-PM")
-    result = count((review("one", (first,)), review("two", (second,))))
+    coverage, approvals = approved_coverage(("n", "non_pm_received", "2026-12", "one"))
+    result = count((review("one", (first,)), review("two", (second,))),
+                   coverage=coverage, coverage_approvals=approvals)
     cell = result.cell("n", "non_pm_received", "2026-12")
     assert cell.value == "1"
     assert cell.source_rows == ("one#r1", "two#r2")
 
 
 def test_conflicting_sources_exclude_ambiguous_identity_and_keep_other_site():
+    coverage, approvals = approved_coverage(("s", "non_pm_received", "2026-12", "second"))
     result = count((
         review("first", (Row("a", "n", "WO-1", "2026-12-09", "", "Open", "Non-PM"),)),
         review("second", (
             Row("b", "n", "wo-1", "2026-12-10", "", "Closed", "Non-PM"),
             Row("c", "s", "WO-1", "2026-12-09", "", "Open", "Non-PM"),
         )),
-    ))
+    ), coverage=coverage, coverage_approvals=approvals)
     assert result.cell("n", "non_pm_received", "2026-12").value is None
     assert result.cell("s", "non_pm_received", "2026-12").value == "1"
     assert any("conflicting updates" in n for n in result.review_notices)
