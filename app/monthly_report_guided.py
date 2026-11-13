@@ -549,7 +549,13 @@ def complete_guided_sections(draft):
                 additions = tuple(block for block in additions if block is not update)
         sections.append(replace(section, included=key not in draft.omitted_sections,
                                 blocks=tuple(replace(block, required=False) for block in (*existing_blocks, *additions))))
-    return replace(draft, sections=tuple(sections))
+    # A newly chosen master can remove an optional section entirely. Keep
+    # the remembered content in the draft, but retire report-only omission
+    # keys for sections that no longer exist; otherwise the library correctly
+    # rejects the next save/reopen as an invalid section choice.
+    retained = {section.key for section in sections}
+    omitted = tuple(key for key in draft.omitted_sections if key in retained)
+    return replace(draft, sections=tuple(sections), omitted_sections=omitted)
 
 
 def _review_carried_update(block, period, prefix):
