@@ -83,6 +83,30 @@ def test_omitting_middle_native_section_keeps_reflow_splits_and_inherited_header
     assert final_refs == ["rIdOrganization"]
 
 
+
+def test_unrewritten_shared_source_section_does_not_gain_an_invented_page_break():
+    from docx.oxml.ns import qn
+    from app.monthly_report_native_section_inclusion import apply_native_section_choices
+    from app.monthly_report_model import ReportPeriod, synthetic_draft, synthetic_profiles
+
+    document, paragraphs, names, plan = _split_region_fixture()
+    # The region planner may propose splitting Activity and Training, but
+    # absent an emitted boundary these remain one source Word section.
+    candidate = paragraphs[2]._p.find(".//" + qn("w:sectPr"))
+    assert candidate is not None
+    candidate.getparent().remove(candidate)
+    choice = set_section_included(
+        synthetic_draft(synthetic_profiles()[0], ReportPeriod(2026, 9)),
+        "organization", False)
+    apply_native_section_choices(
+        document, choice, [p._p for p in paragraphs], set(),
+        {i + 1: name for i, name in enumerate(names)}, plan)
+    assert [p.text for p in document.paragraphs] == ["Cover", "Activity", "Training"]
+    # Cover and the one retained Activity/Training source section: no false
+    # page after Activity merely because two planned region IDs differed.
+    assert len(list(document.element.body.iter(qn("w:sectPr")))) == 2
+
+
 def test_proved_contacts_page_separator_gets_region_ownership_before_omission():
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
