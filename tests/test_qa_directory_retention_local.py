@@ -1,0 +1,437 @@
+"""Offline tests for the loopback-only companion. No browser/server is started."""
+import ast
+import inspect
+import json
+from pathlib import Path
+import tempfile
+import textwrap
+from unittest.mock import Mock
+
+import pytest
+
+from scripts import qa_directory_retention_live as live
+from scripts import qa_directory_retention_local as local
+
+TOKEN = "e" * 32
+NONCE = "f" * 32
+SHA = "d" * 40
+
+
+@pytest.fixture
+def base():
+    with tempfile.TemporaryDirectory(prefix=local.PREFIX) as value:
+        root = Path(value)
+        (root / local.MARKER).write_text(NONCE)
+        (root / local.GUARD_LOG).write_text("")
+        (root / "ordinary-canary").write_bytes(local.CANARY)
+        yield root
+
+
+def test_local_orchestration_tracks_production_without_editing_its_globals():
+    normalize = lambda method: ast.dump(ast.parse(textwrap.dedent(inspect.getsource(method))), include_attributes=False)
+    assert normalize(local.LocalJourney.run) == normalize(live.Journey.run)
+    assert local.LocalJourney.action is live.Journey.action
+    assert local.LocalJourney.button is live.Journey.button
+    assert local.LocalJourney.radio is live.Journey.radio
+    assert local.LocalJourney.fill is live.Journey.fill
+    assert live.ORIGIN == "https://msapo-generator.onrender.com"
+    with pytest.raises(live.SafetyStop):
+        live.validate_route(local.LocalConfig(SHA, NONCE).address("directory"), "directory")
+    with pytest.raises(live.SafetyStop):
+        live.Config.from_environment({}, SHA)
+
+
+@pytest.mark.parametrize("origin", [
+    "https://msapo-generator.onrender.com", "http://localhost:8529",
+    "http://127.0.0.1:8530", "http://127.1:8529", "https://127.0.0.1:8529",
+    "http://user@127.0.0.1:8529", "http://127.0.0.1:8529.evil.example"])
+def test_loopback_target_is_exact(origin):
+    with pytest.raises(local.SafetyStop):
+        local.LocalConfig(SHA, NONCE, origin)
+    assert not local.allowed_url(origin + "/?workflow=monthly&monthly_qa=isolated&monthly_admin=directory",
+                                 "directory", top_level=True)
+
+
+@pytest.mark.parametrize("suffix", ["", "&monthly_qa=isolated", "&other=1", "#fragment"])
+def test_route_fails_closed(suffix):
+    address = local.ORIGIN + "/?workflow=monthly" if not suffix else local.LocalConfig(SHA, NONCE).address("directory") + suffix
+    assert not local.allowed_url(address, "directory", top_level=True)
+
+
+def test_local_http_websocket_and_blob_rules():
+    config = local.LocalConfig(SHA, NONCE)
+    assert local.allowed_url(config.address("directory"), "directory", top_level=True)
+    assert local.allowed_url(local.ORIGIN + "/_stcore/upload_file/id", "directory")
+    assert local.allowed_url("ws://127.0.0.1:8529/_stcore/stream", "directory", websocket=True)
+    for url in ("wss://127.0.0.1:8529/_stcore/stream", "ws://127.0.0.1:8529/else",
+                "ws://127.0.0.1:8529/_stcore/stream?other=1"):
+        assert not local.allowed_url(url, "directory", websocket=True)
+    assert local.allowed_url("blob:" + local.ORIGIN + "/12345678-1234-1234-1234-123456789abc", "directory")
+    assert not local.allowed_url("blob:" + live.ORIGIN + "/12345678-1234-1234-1234-123456789abc", "directory")
+    assert not local.allowed_url(config.address("storage"), "directory", top_level=True)
+
+
+def test_child_environment_is_scrubbed_and_root_bound(base, monkeypatch, tmp_path):
+    monkeypatch.setattr(local, "ROOT", tmp_path)
+    for key in ("HOME", "EPC_DATA_DIR", "GITHUB_TOKEN", "ANTHROPIC_API_KEY", "AWS_ACCESS_KEY_ID",
+                "HTTPS_PROXY", "PYTHONPATH", "MONTHLY_QA_PUBLIC_URL", "MONTHLY_QA_DIRECTORY_ACCEPTANCE"):
+        monkeypatch.setenv(key, "synthetic-should-not-be-inherited")
+    env = local.child_environment(base, SHA)
+    assert env["EPC_DATA_DIR"] == str(base) and env["APP_GIT_COMMIT"] == SHA
+    assert env["HOME"] == env["XDG_CONFIG_HOME"] == str(base / "home")
+    assert env["ANTHROPIC_API_KEY"] == "" and env["OPENAI_API_KEY"] == ""
+    assert not ({"GITHUB_TOKEN", "AWS_ACCESS_KEY_ID", "HTTPS_PROXY", "PYTHONPATH",
+                 "MONTHLY_QA_PUBLIC_URL", "MONTHLY_QA_DIRECTORY_ACCEPTANCE"} & env.keys())
+    (tmp_path / ".env").write_text("SYNTHETIC_ONLY=1")
+    with pytest.raises(local.SafetyStop):
+        local.child_environment(base, SHA)
+
+
+def test_root_requires_exact_marker_and_not_arbitrary_directory(base, tmp_path):
+    assert local.guarded_root(base) == base
+    with pytest.raises(local.SafetyStop):
+        local.guarded_root(tmp_path)
+    (base / local.MARKER).write_text("invalid")
+    with pytest.raises(local.SafetyStop):
+        local.guarded_root(base)
+
+
+def test_socket_audit_blocks_external_attempt_and_records_it(base, monkeypatch):
+    hook = Mock()
+    monkeypatch.setattr(local.sys, "addaudithook", hook)
+    local.install_outbound_guard(base)
+    audit = hook.call_args.args[0]
+    audit("socket.connect", (None, ("127.0.0.1", 8529)))
+    audit("socket.getaddrinfo", ("localhost", 8529))
+    with pytest.raises(local.SafetyStop):
+        audit("socket.connect", (None, ("203.0.113.10", 443)))
+    assert json.loads((base / local.GUARD_LOG).read_text()) == {"blocked": "socket.connect:non-loopback"}
+
+
+def journey(base, tmp_path):
+    page, context, server = Mock(), Mock(), Mock()
+    config = local.LocalConfig(SHA, NONCE)
+    page.url = config.address("directory")
+    context.cookies.return_value = [{"name": "epc_device_id", "value": TOKEN, "domain": "127.0.0.1", "path": "/"}]
+    item = local.LocalJourney(page, context, TOKEN, config, tmp_path, base, server, b"synthetic")
+    item.namespace.mkdir(parents=True)
+    (item.namespace / ".enfra-qa-namespace").write_text(item.namespace.name + "|" + "a" * 32)
+    return item
+
+
+@pytest.mark.parametrize("drift", ["root_nonce", "generation", "ordinary", "network", "symlink", "cookie", "process"])
+def test_physical_boundary_drift_blocks_next_mutation(base, tmp_path, drift):
+    item = journey(base, tmp_path)
+    item.boundary()
+    if drift == "root_nonce":
+        (base / local.MARKER).write_text("b" * 32)
+    elif drift == "generation":
+        (item.namespace / ".enfra-qa-namespace").write_text(item.namespace.name + "|" + "b" * 32)
+    elif drift == "ordinary":
+        (base / "monthly_reports").mkdir()
+    elif drift == "network":
+        item.blocked.append("unexpected")
+    elif drift == "symlink":
+        (item.namespace / "link").symlink_to(tmp_path, target_is_directory=True)
+    elif drift == "cookie":
+        item.context.cookies.return_value[0]["value"] = "b" * 32
+    else:
+        item.server.alive.side_effect = local.SafetyStop("server exited")
+    item.guard = item.boundary
+    action = Mock()
+    with pytest.raises(local.SafetyStop):
+        item.action("Save", action)
+    action.assert_not_called()
+    assert item.events == []
+
+
+def test_workflow_runs_only_local_native_preflight():
+    source = (local.ROOT / ".github/workflows/directory-retention-local.yml").read_text()
+    assert "pull_request:" in source and "workflow_run:" not in source and "workflow_dispatch:" not in source
+    assert "push:" not in source and "schedule:" not in source
+    assert "permissions:\n  contents: read" in source
+    assert "persist-credentials: false" in source
+    assert "python scripts/qa_directory_retention_local.py" in source
+    assert "python -m scripts.qa_directory_retention_live" not in source
+    assert "MONTHLY_QA_DIRECTORY_ACCEPTANCE:" not in source
+    assert "MONTHLY_QA_PUBLIC_URL:" not in source
+
+
+@pytest.mark.parametrize("field,value", [("blocked_requests", ["late HTTP"]),
+    ("page_errors", ["late error"]), ("server_guard", ["late outbound"]),
+    ("ordinary_canary_unchanged", False)])
+def test_final_isolation_failure_cannot_leave_passed_receipt(field, value):
+    record = {"result": "passed native local", "blocked_requests": [], "page_errors": [],
+              "server_guard": [], "ordinary_canary_unchanged": True}
+    assert not local.final_isolation_failure(record)
+    record[field] = value
+    assert local.final_isolation_failure(record)
+    assert record["result"] == "failed final isolation checks"
+
+
+def delayed_app(base, tmp_path, monkeypatch, on_banner, on_nonce=lambda item: None):
+    """Model the wrapper nonce arriving before the real app binds storage."""
+    import sys
+    from types import ModuleType
+    item = journey(base, tmp_path)
+    (item.namespace / ".enfra-qa-namespace").unlink()
+    item.namespace.rmdir()
+    item.page.get_by_text.side_effect = lambda value, **kwargs: ("text", value)
+    item.page.get_by_test_id.side_effect = lambda value: ("testid", value)
+    observed = []
+    class Assertion:
+        def __init__(self, locator):
+            self.locator = locator
+        def to_be_visible(self):
+            observed.append(self.locator)
+            if self.locator == ("text", "Local synthetic server: " + NONCE):
+                on_nonce(item)
+            if self.locator == ("text", live.BANNER):
+                on_banner(item)
+        def to_have_count(self, value):
+            pass
+    fake = ModuleType("playwright.sync_api")
+    fake.expect = Assertion
+    monkeypatch.setitem(sys.modules, "playwright", ModuleType("playwright"))
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", fake)
+    monkeypatch.setenv("EPC_DATA_DIR", str(base))
+    return item, observed
+
+
+def bind_real_synthetic_namespace(item):
+    from app.memory import _data_dir
+    from app.monthly_report_testing import isolated
+    with isolated(TOKEN):
+        assert _data_dir() == item.namespace
+
+
+def test_nonce_before_app_storage_waits_for_isolated_banner(base, tmp_path, monkeypatch):
+    item, observed = delayed_app(base, tmp_path, monkeypatch, bind_real_synthetic_namespace)
+    mutation = Mock()
+    item.action("Synthetic mutation", mutation)
+    mutation.assert_called_once()
+    assert ("text", live.BANNER) in observed
+    assert item.generation is not None
+    assert item.events == [{"action": "Synthetic mutation", "status": "completed"}]
+
+
+def test_visible_banner_never_substitutes_for_physical_namespace(base, tmp_path, monkeypatch):
+    item, _ = delayed_app(base, tmp_path, monkeypatch, lambda item: None)
+    mutation = Mock()
+    with pytest.raises(local.SafetyStop, match="physical namespace"):
+        item.action("Synthetic mutation", mutation)
+    mutation.assert_not_called()
+    assert item.events == []
+
+
+@pytest.mark.parametrize("stage", ["nonce", "banner"])
+@pytest.mark.parametrize("drift", ["cookie", "route", "network"])
+def test_readiness_wait_drift_stops_before_mutation(base, tmp_path, monkeypatch, stage, drift):
+    def change(item):
+        if drift == "cookie":
+            item.context.cookies.return_value[0]["value"] = "b" * 32
+        elif drift == "route":
+            item.page.url = local.ORIGIN + "/?workflow=monthly"
+        else:
+            item.blocked.append("unexpected")
+    def nonce(item):
+        if stage == "nonce":
+            change(item)
+    def banner(item):
+        bind_real_synthetic_namespace(item)
+        if stage == "banner":
+            change(item)
+    item, observed = delayed_app(base, tmp_path, monkeypatch, banner, nonce)
+    mutation = Mock()
+    with pytest.raises(local.SafetyStop):
+        item.action("Synthetic mutation", mutation)
+    mutation.assert_not_called()
+    assert item.events == []
+    if stage == "nonce":
+        assert ("text", live.BANNER) not in observed
+
+
+def test_missing_banner_timeout_never_enters_mutation(base, tmp_path, monkeypatch):
+    def missing(item):
+        raise TimeoutError("Synthetic missing banner")
+    item, _ = delayed_app(base, tmp_path, monkeypatch, missing)
+    mutation = Mock()
+    with pytest.raises(TimeoutError, match="missing banner"):
+        item.action("Synthetic mutation", mutation)
+    mutation.assert_not_called()
+    assert item.events == []
+
+
+def test_local_csv_native_operations_are_unchanged_after_removing_observations():
+    class RemoveObservations(ast.NodeTransformer):
+        def visit_With(self, node):
+            self.generic_visit(node)
+            if (len(node.items) == 1 and isinstance(node.items[0].context_expr, ast.Call)
+                    and ast.unparse(node.items[0].context_expr.func) == "self.observe_csv"):
+                call = node.items[0].context_expr
+                assert [ast.unparse(value) for value in call.args[:2]] == ["grid", "name"]
+                assert ast.literal_eval(call.args[2]) in {"hover", "click"}
+                assert not call.keywords
+                return node.body
+            return node
+    native = ast.parse(textwrap.dedent(inspect.getsource(live.Journey.download_grid)))
+    measured = ast.parse(textwrap.dedent(inspect.getsource(local.LocalJourney.download_grid)))
+    measured = RemoveObservations().visit(measured)
+    assert ast.dump(native, include_attributes=False) == ast.dump(measured, include_attributes=False)
+
+
+def test_csv_capture_is_bounded_guarded_and_uses_immediate_query(base, tmp_path):
+    item = journey(base, tmp_path)
+    item.guard = Mock(side_effect=item.boundary)
+    grid = Mock()
+    grid.evaluate_all.return_value = {"gridCount": 0, "unavailable": "missing-or-ambiguous-grid"}
+    item.capture_csv_geometry(grid, "reviewed-contacts", "before-hover")
+    assert item.guard.call_count == 2
+    grid.evaluate.assert_not_called()
+    grid.evaluate_all.assert_called_once_with(local.CSV_GEOMETRY)
+    assert item.csv_diagnostics == [{"download": "reviewed-contacts", "stage": "before-hover",
+        "measurement": grid.evaluate_all.return_value}]
+
+
+@pytest.mark.parametrize("stage", ["before", "after"])
+def test_csv_capture_discards_data_when_either_guard_fails(base, tmp_path, stage):
+    item = journey(base, tmp_path)
+    item.guard = Mock(side_effect=item.boundary)
+    grid = Mock()
+    def drift(*args):
+        item.page.url = local.ORIGIN + "/?workflow=monthly"
+        return {"synthetic": "must not be retained"}
+    if stage == "before":
+        drift()
+    else:
+        grid.evaluate_all.side_effect = drift
+    with pytest.raises(local.SafetyStop):
+        item.capture_csv_geometry(grid, "reviewed-contacts", "before-click")
+    assert not item.csv_diagnostics
+    assert grid.evaluate_all.call_count == (0 if stage == "before" else 1)
+
+
+@pytest.mark.parametrize("failure", ["records", "bytes", "nonfinite"])
+def test_csv_diagnostics_enforce_record_and_payload_limits(base, tmp_path, failure):
+    item = journey(base, tmp_path)
+    item.guard = Mock(side_effect=item.boundary)
+    grid = Mock()
+    if failure == "records":
+        item.csv_diagnostics = [{} for _ in range(64)]
+    grid.evaluate_all.return_value = {"value": float("nan") if failure == "nonfinite" else "x" * 65537}
+    with pytest.raises((local.SafetyStop, ValueError)):
+        item.capture_csv_geometry(grid, "reviewed-contacts", "before-hover")
+    assert len(item.csv_diagnostics) == (64 if failure == "records" else 0)
+    assert grid.evaluate_all.call_count == (0 if failure == "records" else 1)
+
+
+def test_csv_observation_preserves_one_native_operation_and_stage_order(base, tmp_path):
+    item = journey(base, tmp_path)
+    events = []
+    item.capture_csv_geometry = Mock(side_effect=lambda grid, name, stage: events.append(stage))
+    operation = Mock(side_effect=lambda: events.append("native"))
+    with item.observe_csv(Mock(), "reviewed-contacts", "click"):
+        operation()
+    assert events == ["before-click", "native", "after-click"]
+    operation.assert_called_once_with()
+
+
+def test_failed_before_observation_blocks_native_operation(base, tmp_path):
+    item = journey(base, tmp_path)
+    item.capture_csv_geometry = Mock(side_effect=local.SafetyStop("guard failed"))
+    operation = Mock()
+    with pytest.raises(local.SafetyStop):
+        with item.observe_csv(Mock(), "reviewed-contacts", "click"):
+            operation()
+    operation.assert_not_called()
+
+
+def test_native_exception_survives_failed_diagnostic_without_retry(base, tmp_path):
+    item = journey(base, tmp_path)
+    item.capture_csv_geometry = Mock(side_effect=[None, local.SafetyStop("drifted")])
+    failure = TimeoutError("original pointer obstruction")
+    operation = Mock(side_effect=failure)
+    with pytest.raises(TimeoutError) as caught:
+        with item.observe_csv(Mock(), "reviewed-contacts", "click"):
+            operation()
+    assert caught.value is failure
+    operation.assert_called_once_with()
+    assert [call.args[-1] for call in item.capture_csv_geometry.call_args_list] == ["before-click", "failed-click"]
+    assert item.csv_diagnostics == [{"download": "reviewed-contacts", "stage": "failed-click",
+                                     "capture_error_type": "SafetyStop"}]
+
+
+def test_after_observation_failure_does_not_mark_action_completed(base, tmp_path):
+    item = journey(base, tmp_path)
+    item.guard = Mock()
+    item.capture_csv_geometry = Mock(side_effect=[None, local.SafetyStop("after drift")])
+    native = Mock()
+    def operation():
+        with item.observe_csv(Mock(), "reviewed-contacts", "click"):
+            native()
+    with pytest.raises(local.SafetyStop):
+        item.action("Download reviewed-contacts", operation)
+    native.assert_called_once()
+    assert item.events == [{"action": "Download reviewed-contacts", "status": "attempted"}]
+
+
+def test_read_only_geometry_script_against_explicit_dom_model():
+    """Run the actual collector, not a browser/layout simulation or native pass."""
+    import subprocess
+    script = r'''
+const collect = COLLECTOR;
+const style = {opacity:'1',display:'block',visibility:'visible',position:'static',top:'auto',
+  zIndex:'auto',pointerEvents:'auto',overflowX:'visible',overflowY:'visible',transform:'none'};
+const forbidden = () => {throw Error('Content or mutation is forbidden')};
+function node(tag, id, y, parent=null, overrides={}) {
+  const n = {tagName:tag,isConnected:true,parentElement:parent,scrollTop:0,scrollLeft:0,
+    clientWidth:100,clientHeight:30,clientLeft:0,clientTop:0,
+    classList:{contains:name => name==='dvn-scroller' && id==='scroller'},
+    getAttribute:name => name==='data-testid' ? id : null,
+    matches:selector => selector===':hover' && !!overrides.hover,
+    getBoundingClientRect:() => ({x:10,y,width:100,height:30,top:y,left:10,right:110,bottom:y+30}),
+    contains:target => {for(let p=target;p;p=p.parentElement) if(p===n) return true;return false;},
+    computed:{...style,...overrides}, click:forbidden,scrollIntoView:forbidden,setAttribute:forbidden};
+  for(const key of ['innerText','textContent','innerHTML','value','style','className'])
+    Object.defineProperty(n,key,{get:forbidden,set:forbidden});
+  return n;
+}
+globalThis.getComputedStyle = n => n.computed;
+globalThis.innerWidth=1440;globalThis.innerHeight=1000;
+globalThis.scrollX=0;globalThis.scrollY=0;
+const results=[];
+for(const scenario of ['retracted','visible-blocked','visible-clickable','outside-clip','ancestor-clipped','ambiguous-button','missing-grid','duplicate-grid']) {
+  const main=node('MAIN','stMain',0,null,{overflowY:'auto'});
+  main.clientHeight=scenario==='ancestor-clipped'?970:1000;
+  const grid=node('DIV','stDataFrame',982,main,{hover:scenario!=='retracted'});
+  const toolbar=node('DIV','stElementToolbar',scenario==='retracted'?966:940,grid,
+    {opacity:scenario==='retracted'?'0':'1',top:scenario==='retracted'?'-16px':'-42.4px'});
+  const button=node('BUTTON','stBaseButton-elementToolbar',scenario==='outside-clip'?990:960,toolbar);
+  const scroller=node('DIV','scroller',982,grid);
+  grid.querySelectorAll=selector => selector.includes('stElementToolbar') ? [toolbar] :
+    scenario==='ambiguous-button' ? [button,button] : [button];
+  const top=scenario==='visible-clickable'?button:scroller;
+  globalThis.document={elementFromPoint:() => top,elementsFromPoint:() => [top,grid,main],
+    querySelectorAll:() => Array(100).fill(grid)};
+  const observed=collect(scenario==='missing-grid'?[]:scenario==='duplicate-grid'?[grid,grid]:[grid]);
+  results.push({scenario,...observed});
+}
+console.log(JSON.stringify(results));
+'''.replace("COLLECTOR", local.CSV_GEOMETRY)
+    result = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True)
+    values = {item["scenario"]: item for item in json.loads(result.stdout)}
+    assert values["retracted"]["toolbar"]["opacity"] == "0"
+    assert not values["retracted"]["geometricCenter"]["buttonOwnsTop"]
+    assert values["visible-blocked"]["toolbar"]["opacity"] == "1"
+    assert not values["visible-blocked"]["geometricCenter"]["buttonOwnsTop"]
+    assert values["visible-clickable"]["geometricCenter"]["buttonOwnsTop"]
+    assert not values["outside-clip"]["geometricCenter"]["insideOverflowClip"]
+    assert values["ancestor-clipped"]["geometricCenter"]["inViewport"]
+    assert not values["ancestor-clipped"]["geometricCenter"]["insideOverflowClip"]
+    assert values["ambiguous-button"]["button"] is None
+    assert values["ambiguous-button"]["buttonCount"] == 2
+    assert values["missing-grid"]["gridCount"] == 0
+    assert values["duplicate-grid"]["gridCount"] == 2
+    assert len(values["visible-blocked"]["hovered"]) == 24
+    assert values["visible-blocked"]["geometricCenter"]["top"]["classes"] == ["dvn-scroller"]
+    assert values["visible-blocked"]["geometricCenter"]["top"]["testid"] is None
