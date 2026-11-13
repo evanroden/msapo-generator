@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 from dotenv import dotenv_values
 from playwright.sync_api import expect, sync_playwright
+from qa_device_metadata import browser_evidence
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "test-artifacts" / "po-adaptive"
@@ -114,6 +115,7 @@ def exercise(engine, name):
     diagnostics = PODiagnostics(OUT / "diagnostics", name)
     try:
         diagnostics.start(page)
+        REPORT.setdefault('environments', {})[name] = browser_evidence(page, engine=name, input_method='Playwright pointer/keyboard and semantic labels; simulated fold segments')
         exercise_page(page, name, errors)
     except Exception:
         diagnostics.failure_snapshot(page)

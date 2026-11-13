@@ -6,6 +6,10 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 # Documentation index
 
+[Learned memory boundaries](LEARNED_MEMORY.md) - fail-closed contact management until real authentication, existing retention unchanged, optional purchase-order history deferred, and outage fallback behavior.
+
+[Issue #440 blocking-warning correction routes](ISSUE_440_WARNING_ROUTES.md) — exact Review warning-to-native-editor and explicit recovery matrix, scoped identity/stale-target guards, and pending acceptance evidence; this branch is not a production or browser acceptance claim.
+
 [Monthly Report ownership and carryover decisions](monthly_report_ownership_matrix.md) — audited contract, site and report behavior; explicit requirements, proposals and unresolved choices; synthetic scope examples and a migration proposal that preserves originals and history. This decision record does not approve policy changes or a production migration.
 
 [Accounts Receivable schema discovery](MONTHLY_RECEIVABLE_SCHEMA_REVIEW.md) — source-bound read-only invoice-field inventory; owner financial-source policy recorded in #458, with field-level eligibility and AR Aging implementation still outstanding.
@@ -36,6 +40,8 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 [Adaptive workspace architecture and checks](ADAPTIVE_WORKSPACES_2026-10-13.md) — shared geometry resolver, stable keyed sections, bounded preview sizing, synthetic browser harness, and rollback scope.
 
+[Issue #305 device/accessibility acceptance ledger](ISSUE_305_DEVICE_ACCEPTANCE_2026-11-11.md) — exact-main synthetic browser evidence, truthful test-method attribution, remaining physical hardware checks, and P20 integration gate; not a physical-device pass.
+
 [Dated report item resolution](MONTHLY_PERIOD_ITEM_RESOLUTION_2026-10-13.md) — exact manual-item historical labeling, report-only exclusion and explicit restore, preserving source and required safety gates.
 
 [Stage-one Monthly Report closure ledger](MONTHLY_REPORT_STAGE1_CLOSURE_2026-10-10.md) — statuses for F01–F16, #101 P1–P12, U01–U06 and explicit mapping of all 113 proposed acceptance checks. This tracks exact CI separately from deployed build, authentic exports and owner acceptance.
@@ -43,6 +49,8 @@ maintained: manually, pinned by tests/test_docs_index.py
 [Monthly report resource budget](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_RESOURCE_BUDGET.md) — viewport-driven previews, shared cache/converter limits and a capped-container acceptance probe.
 
 [Monthly preview cache measurements](MONTHLY_PREVIEW_CACHE_MEASUREMENTS.md) — reproducible synthetic before/after PDF-page cache measurements for PR #548, including warm-load improvements, preserved raster hashes, and explicitly unverified browser/cold-render limits.
+
+[Monthly preview latency end-to-end evidence](MONTHLY_PREVIEW_LATENCY_E2E.md) — MR-021 synthetic source/thumbnail and native browser measurement methods, proposed unapproved targets, resource caps and remaining served/device acceptance.
 
 Current next-LLM handoff and owner-requested testing release:
 [HANDOFF_MONTHLY_REPORT_2026-10-09.md](HANDOFF_MONTHLY_REPORT_2026-10-09.md).

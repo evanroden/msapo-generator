@@ -114,7 +114,18 @@ def test_pytest_renderer_setup_is_bounded_and_preserves_packages_and_trust():
     assert '    timeout-minutes: 180\n' in job
     assert 'continue-on-error' not in job
     assert '          python runtime/check_renderer.py\n' in job
-    assert '        run: python -m pytest -q --junitxml=test-results.xml\n' in job
+    # PRs run only the affected tests (scripts/ci_select_tests.py writes
+    # the selected files; an empty file means the full suite). The command
+    # is still pinned exactly -- only the selection file was added.
+    assert '        run: python -m pytest -q --junitxml=test-results.xml $(cat selected-tests.txt)\n' in job
+    assert '      - name: Select tests for this event\n' in job
+    select = job.split('      - name: Select tests for this event\n', 1)[1]
+    select = select.split('      - ', 1)[0]
+    assert 'scripts/ci_select_tests.py' in select
+    assert '--event "${{ github.event_name }}"' in select
+    assert '--base "${{ github.event.pull_request.base.sha }}"' in select
+    assert '--out selected-tests.txt' in select
+    assert not re.search(r'^        if:', select, flags=re.MULTILINE)
     for name in ('Validate environment and Python sources', 'Run tests'):
         step = job.split(f'      - name: {name}\n', 1)[1]
         step = step.split('      - ', 1)[0]

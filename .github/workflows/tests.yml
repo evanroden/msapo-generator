@@ -19,14 +19,25 @@ concurrency:
 jobs:
   pytest:
     runs-on: ubuntu-24.04
-    # Keep the complete test suite mandatory. Two actual main runs reached 96%
-    # before the former 120-minute job limit; allow the suite and real exports
-    # to finish on slower runners. Timeouts still fail CI and block release.
+    # Pull requests run only the tests affected by the PR; pushes to main
+    # always run the complete suite here. scripts/ci_select_tests.py picks
+    # the affected files (direct importers of changed modules, tests that
+    # mention them, changed test files) and falls back to the full suite
+    # whenever the change touches shared code, fixtures, workflows,
+    # entrypoints, or anything it cannot map -- and a selection that would
+    # still cover most of the suite runs everything instead. The full suite
+    # on main is the backstop for a knock-on regression a PR selection
+    # misses; that residual risk is the price of the faster PR runs.
+    # Timeouts still fail CI and block release.
     timeout-minutes: 180
     env:
       FONTCONFIG_FILE: ${{ github.workspace }}/runtime/fonts.conf
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The selector diffs the PR head against its base, so it needs
+          # the full history rather than the default shallow checkout.
+          fetch-depth: 0
       # The runner image ships no LibreOffice, so every test that renders a
       # document silently SKIPPED here and the paths went unverified: the
       # expense combined-PDF has been skipping since it was written, and the
@@ -65,12 +76,14 @@ jobs:
           python -m pip check
           python runtime/check_renderer.py
           python -m compileall -q app pages scripts run_web.py
+      - name: Select tests for this event
+        run: python scripts/ci_select_tests.py --event "${{ github.event_name }}" --base "${{ github.event.pull_request.base.sha }}" --head "${{ github.event.pull_request.head.sha || github.sha }}" --out selected-tests.txt
       - name: Run tests
         env:
           ANTHROPIC_API_KEY: test-key-not-used
           INDEPENDENT_OUTPUT: ${{ github.workspace }}/test-artifacts/independent-synthetic
           MSAPO_SHA: ${{ github.sha }}
-        run: python -m pytest -q --junitxml=test-results.xml
+        run: python -m pytest -q --junitxml=test-results.xml $(cat selected-tests.txt)
       - name: Retain independent synthetic output, including first failures
         if: always()
         uses: actions/upload-artifact@v4
@@ -141,6 +154,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build production image for capped resource test
         run: docker build --tag msapo-resource-check .
+      - name: Calibrate small, text-heavy and image-heavy output sizes at Starter limits
+        run: |
+          docker run --rm --memory=512m --memory-swap=512m --cpus=0.5 \
+            --env ANTHROPIC_API_KEY=test-key-not-used \
+            --entrypoint python msapo-resource-check scripts/qa_monthly_size_calibration.py
       - name: Exercise two preview visitors and final export at Starter limits
         run: |
           docker run --name msapo-resource-check --memory=512m --memory-swap=512m --cpus=0.5 \

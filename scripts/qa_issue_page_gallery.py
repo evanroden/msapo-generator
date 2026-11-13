@@ -97,7 +97,7 @@ def browser_task(browser_type, name):
     record = {"synthetic_only": True, "actual_route": "Monthly QA prefill, native file upload and issue editor",
               "inputs": {ALPHA: sha256(alpha).hexdigest(), BETA: sha256(beta).hexdigest()},
               "steps": [], "external": external, "errors": errors,
-              "limits": ["No physical-device or production acceptance", "This journey does not approve or embed evidence pages"]}
+              "limits": ["No physical-device or production acceptance", "This journey checks selection and previews, not the separate report output gate"]}
     try:
         page.goto(qa.URL, wait_until="domcontentloaded")
         page.get_by_role("button", name="Load known-value report", exact=True).click()
@@ -143,17 +143,34 @@ def browser_task(browser_type, name):
         assert_tags(issue, expected)
         issue.get_by_role("button", name=f"Preview {ALPHA} · page 5", exact=True).click()
         expect(issue.get_by_text(f"{ALPHA} · page 5 · Preview only; original and issue links are unchanged.", exact=True)).to_be_visible()
-        expect(issue.get_by_test_id("stImage").locator("img")).to_be_visible()
+        # More than one bounded thumbnail is intentionally visible. Target the
+        # enlarged page-five image by its exact caption, not a generic image
+        # locator which becomes ambiguous once preview candidates are shown.
+        expect(issue.get_by_test_id("stImage").filter(
+            has_text=f"{ALPHA} · page 5 · Preview only; use fullscreen to examine small details."
+        ).locator("img")).to_be_visible()
         record["steps"].append({"stage": "file-identity-page-five-preview", "selected": tags(issue)})
 
         # Use the actual shared-history action, not a fixture save wrapper.
         history = page.get_by_test_id("stExpander").filter(
             has=page.locator("summary").get_by_text("Shared report history", exact=True))
         history.locator("summary").click()
+        versions = history.get_by_role("table", name="Saved report versions").get_by_role("row")
+        # Empty shared history deliberately has NO table, whereas nonempty
+        # history includes a header row. Count saved versions, not table rows:
+        # both an empty and a populated browser baseline must gain exactly one.
+        before_save_rows = versions.count()
+        assert before_save_rows == 0 or before_save_rows >= 2, (
+            "History table has an incomplete header or no saved version")
+        before_save_versions = max(0, before_save_rows - 1)
         expect(history.get_by_role("button", name="Save shared version", exact=True)).to_be_enabled()
         history.get_by_role("button", name="Save shared version", exact=True).click()
-        expect(history.get_by_role("table", name="Saved report versions").get_by_role("row")).to_have_count(3)
-        record["steps"].append({"stage": "shared-version-two-saved", "selected": tags(issue)})
+        expected_rows = before_save_versions + 2  # header plus one new version
+        expect(versions).to_have_count(expected_rows, timeout=30000)
+        record["steps"].append({"stage": "shared-version-saved-once",
+                                "previous_versions": before_save_versions,
+                                "saved_versions": before_save_versions + 1,
+                                "selected": tags(issue)})
 
         # Reload the real product session; its existing snapshot/recovery path
         # must restore the exact selected associations, without test injection.
