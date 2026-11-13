@@ -18,7 +18,7 @@ def set_section_included(draft, key, included):
 def render_section_inclusion(draft, section, prefix, field):
     import streamlit as st
     included = st.checkbox(
-        "Include " + section.title + " in this report",
+        "Include " + section.title + " in this report", value=section.included,
         key=field(prefix + "_section_included_" + section.key, section.included),
         help="Uncheck a section that does not apply. Content is kept. Section and contents numbering update automatically.")
     # Render the old included section once more before applying a removal.
