@@ -131,6 +131,8 @@ def apply_native_section_choices(document, draft, original, headings, section_by
                 body.remove(node)
                 continue
             owner = region_owner(node)
+            if owner not in properties:
+                raise ValueError('A remaining native section has no proved page geometry.')
             for boundary in list(node.iter(qn('w:sectPr'))):
                 boundary.getparent().remove(boundary)
             # Distinct source Word sections always have distinct geometry.
