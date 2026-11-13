@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "phase": "preparation",
+  "source_repository": "evanroden/msapo-generator",
+  "azure_deployment_enabled": false,
+  "render_automation_retired": false,
+  "notes": "Not an authorization. Source Render remains authoritative until separately approved A12 cutover."
+}
