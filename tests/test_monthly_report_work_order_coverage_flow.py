@@ -109,3 +109,24 @@ def test_corrected_review_and_scope_survive_coverage_actions(tmp_path, monkeypat
     altered_source = replace(content.source, vendor="Updated synthetic source")
     with pytest.raises(ValueError, match="source changed"):
         flow.store_bundle(replace(draft, sources=(altered_source,)), verified)
+
+
+def test_coverage_uses_operator_day_and_falls_back_when_browser_zone_missing(monkeypatch):
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from app import config, monthly_report_work_order_review_ui as ui
+
+    class BoundaryClock:
+        @classmethod
+        def now(cls, timezone):
+            if timezone.key == "America/Los_Angeles":
+                return datetime(2026, 8, 24, 21, 30, tzinfo=timezone)
+            return datetime(2026, 8, 25, 0, 30, tzinfo=timezone)
+
+    monkeypatch.setattr(config, "datetime", BoundaryClock)
+    monkeypatch.setattr(config, "EPC_TIMEZONE", "America/New_York")
+    monkeypatch.setattr(ui, "st", SimpleNamespace(context=SimpleNamespace(timezone="America/Los_Angeles")))
+    assert ui._coverage_as_of() == date(2026, 8, 24)
+    monkeypatch.setattr(ui, "st", SimpleNamespace())
+    assert ui._coverage_as_of() == date(2026, 8, 25)
