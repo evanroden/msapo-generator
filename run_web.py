@@ -18,7 +18,11 @@ each time -- but the guard also keeps `import run_web` (which the metadata patch
 script and some tooling do) from rendering a UI as an import side effect.
 """
 
-from app.web_ui import main
-
 if __name__ == "__main__":
+    # Authenticate before importing user-data-bearing workflow modules.
+    from app.azure_identity import require_streamlit_entry
+
+    require_streamlit_entry()
+    from app.web_ui import main
+
     main()
