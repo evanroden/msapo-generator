@@ -220,6 +220,30 @@ def test_master_design_change_prunes_only_removed_optional_omission_keys():
     assert draft_from_dict(asdict(normalized)) == normalized
 
 
+
+def test_omitted_activity_keeps_the_one_shared_source_manager(monkeypatch, tmp_path):
+    from test_monthly_report_ui import monthly
+    from test_cover_import_task_ui import current
+
+    app = monthly(monkeypatch, tmp_path)
+    def manager_buttons():
+        return [button for button in app.button if button.label
+                in {"Manage source files", "Done with source files"}]
+
+    assert len(manager_buttons()) == 1
+    next(w for w in app.checkbox
+         if w.label == "Include Monthly Activity Summary in this report").uncheck().run()
+    assert not app.exception
+    assert current(app).omitted_sections == ("activity",)
+    # Retained sections still depend on these source corrections; the global
+    # file manager must remain reachable without re-including Activity.
+    assert len(manager_buttons()) == 1
+    manager_buttons()[0].click().run()
+    assert not app.exception
+    assert len(manager_buttons()) == 1
+    assert current(app).omitted_sections == ("activity",)
+
+
 def test_checkbox_native_default_matches_current_section_on_a_fresh_mount(monkeypatch):
     from app.monthly_report_section_inclusion import render_section_inclusion
     import streamlit as st
