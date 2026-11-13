@@ -325,6 +325,14 @@ def browser_task(engine, name, base):
         assert history_rows(page) == evidence["rows"]
         inspect(page, identity, expected_images)
         capture("saved-version-still-accessible-after-reload", baseline)
+        # Repeat actual first-click close/reopen following reload. Each gesture
+        # must protect the complete native rerun before disposable fragments,
+        # without a rescue click or a timeout-only gate release.
+        for iteration in range(2):
+            set_history(page, False, identity, activations)
+            capture(f"reload-close-{iteration}", baseline)
+            set_history(page, True, identity, activations)
+            capture(f"reload-reopen-{iteration}", baseline)
         other = browser.new_context()
         other_token = secrets.token_hex(16)
         other_identity = sha256(("monthly-qa-v1:" + other_token).encode()).hexdigest()[:32]
@@ -338,6 +346,48 @@ def browser_task(engine, name, base):
             assert isolated["working"] is None and isolated["versions"] == []
             expect(other_page.get_by_text("Shared report history", exact=True)).to_have_count(0)
             assert storage_state(base, token) == baseline["storage"]
+            # The other cookie owns an independent invented report. Publish
+            # and inspect its own second version through native controls, then
+            # reload without creating a checkpoint or changing the first one.
+            live.load_fixture(other_page, "prefill")
+            await_state(other_page, other_identity, revision=1)
+            other_author = "Synthetic independent history editor"
+            other_activity = "Synthetic independent report: annual strainer check."
+            edit(other_page, "Prepared by", other_author, other_identity, author=other_author)
+            edit(other_page, "Activity summary", other_activity, other_identity,
+                 activity=other_activity)
+            other_activations = []
+            save_version(other_page, other_identity, 2, other_author, other_activity,
+                         other_activations)
+            other_table = history(other_page).get_by_role("table", name="Saved report versions", exact=True)
+            expect(other_table).to_be_visible()
+            rows = other_table.get_by_role("row").evaluate_all("""items => items.map(row =>
+              [...row.querySelectorAll('td')].map(cell => cell.textContent.trim())
+            ).filter(cells => cells.length)""")
+            assert [row[0] for row in rows] == ["2", "1"], rows
+            assert [row[2] for row in rows] == [other_author, "Synthetic QA Operator"], rows
+            other_baseline = storage_state(base, other_token)
+            before_inspect = receipt(other_page)["sequence"]
+            history(other_page).get_by_role("combobox", name="Inspect a saved version",
+                                            exact=True).click()
+            other_page.get_by_role("option", name=re.compile(r"^Version 1 ·")).click()
+            await_state(other_page, other_identity, revision=2, author=other_author,
+                        activity=other_activity, after=before_inspect)
+            expect(history(other_page).get_by_text(
+                "Saved version 1 · entered editor: Synthetic QA Operator",
+                exact=True)).to_be_visible()
+            assert storage_state(base, other_token) == other_baseline
+            other_page.reload(wait_until="domcontentloaded")
+            saved_other = await_state(other_page, other_identity, revision=2,
+                                      author=other_author, activity=other_activity)
+            assert sorted(item["revision"] for item in saved_other["versions"]) == [1, 2]
+            assert storage_state(base, other_token) == other_baseline
+            assert storage_state(base, token) == baseline["storage"]
+            evidence["independent_report"] = {
+                "versions": [row[0] for row in rows],
+                "read_only_inspection": True, "reloaded": True,
+                "native_history_activations": len(other_activations),
+            }
         finally:
             other.close()
         expect(page.get_by_text("Monthly DOM blocked external attempts: 0", exact=True)).to_be_visible()

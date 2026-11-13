@@ -130,3 +130,51 @@ def test_existing_hash_matched_but_corrupt_contract_picture_is_not_reused():
     assert incoming == {"keep": b"previous work"}
     assert file_bytes() == before
     assert standards.load_standards("Contract A").revision == 1
+
+
+def _png_with_untrue_dimensions(raw, width, height):
+    # Recalculate the PNG IHDR CRC so Pillow.verify() alone accepts this.
+    import struct
+    import zlib
+    modified = bytearray(raw)
+    modified[16:24] = struct.pack(">II", width, height)
+    modified[29:33] = struct.pack(">I", zlib.crc32(modified[12:29]))
+    return bytes(modified)
+
+
+@pytest.mark.parametrize("width,height", [(42, 42), (7000, 7000)])
+def test_png_valid_hash_and_crc_but_undecodable_or_oversized_raster_refuses_publication(
+    width, height,
+):
+    raw = _png_with_untrue_dimensions(picture("PNG"), width, height)
+    # A correctly hashed image with a valid IHDR CRC was previously accepted:
+    # Image.verify() checks PNG chunks without decoding the declared raster.
+    with Image.open(BytesIO(raw)) as opened:
+        assert opened.format == "PNG"
+        opened.verify()
+    block, assets = candidate(raw, "png")
+    before = file_bytes()
+    with pytest.raises(library.LibraryError, match="(?i)picture|image"):
+        publish(block, assets)
+    assert file_bytes() == before
+    assert standards.load_standards("Contract A").revision == 0
+
+
+def test_incomplete_png_raster_cannot_be_reused_from_existing_valid_hash_default():
+    raw = _png_with_untrue_dimensions(picture("PNG"), 42, 42)
+    block, assets = candidate(raw, "png")
+    pinned = standards._pinned(block, "Contract A")
+    record = standards.WorkflowStandard(
+        block.key, pinned, "contract a", "synthetic-site", block.fingerprint, "2026-11-11")
+    path = standards._path("Contract A")
+    library._atomic_write(path / "assets" / block.asset_hashes[0], raw)
+    library._atomic_write(path / "manifest.json", library._json({
+        "schema": 1, "workflow_scope": "contract", "contract": "contract a",
+        "actor": "Synthetic Editor", "revision": 1, "workflows": [asdict(record)],
+    }))
+    before = file_bytes()
+    caller_assets = {"unrelated": b"retained"}
+    with pytest.raises(library.LibraryError, match="(?i)picture|image"):
+        standards.apply_defaults(report(), caller_assets)
+    assert caller_assets == {"unrelated": b"retained"}
+    assert file_bytes() == before

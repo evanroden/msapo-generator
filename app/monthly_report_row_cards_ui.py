@@ -20,7 +20,9 @@ from app.monthly_report_ui_text import literal
 
 CARD_TABLES = {"proposals": ("proposal", "Add proposal"),
                "service_calls": ("onsite call", "Add onsite call"),
-               "rfi_matrix": ("request", "Add request")}
+               "rfi_matrix": ("request", "Add request"),
+               "capital_renewal": ("capital item", "Add capital item"),
+               "end_of_life": ("replacement item", "Add replacement item")}
 _REQUEST_WORDS = {"request", "requested", "requests", "question", "questions", "answer",
                   "response", "details", "information"}
 _REQUEST_METADATA = {"#", "number", "no", "id", "by", "date", "status", "link", "reference", "ref"}
@@ -57,7 +59,7 @@ def _queue(key, expected, tokens, active, fields, action="edit", target=None, *,
     record = dict(st.session_state.get(key, {}))
     if group and action == "edit" and record.get("group_closed"):
         return  # A late field echo cannot reopen the row a sibling action closed.
-    if group and action in {"open", "add", "remove"}:
+    if group and action in {"open", "add", "remove", "undo_remove"}:
         for other_key in group:
             if other_key == key:
                 continue
@@ -107,12 +109,22 @@ def _queue(key, expected, tokens, active, fields, action="edit", target=None, *,
         active = None
     elif action == "remove" and target in identities:
         index = identities.index(target)
+        removed_row = rows[index]
         del rows[index]
         del identities[index]
+        record["removed"] = {"row": removed_row, "token": target, "index": index,
+                             "remaining_tokens": tuple(identities)}
         if active == target:
             active = None
     elif action == "remove" and target == draft_token:
         active, draft_token = None, None
+    elif action == "undo_remove":
+        removed = record.pop("removed", None)
+        if removed and tuple(identities) == removed["remaining_tokens"]:
+            rows.insert(removed["index"], removed["row"])
+            identities.insert(removed["index"], removed["token"])
+        elif removed:
+            record["undo_notice"] = "The table changed since removal. Current rows were kept; restore the removed content from saved history if needed."
     if changed_fields and not preserve_empty:
         retained = [(row, token) for row, token in zip(rows, identities)
                     if any(value is not None and str(value).strip() for value in row)]
@@ -186,8 +198,12 @@ def _summary(columns, row, noun, index, prose=None):
     if identifiers:
         st.caption(" · ".join(f"{_source_display(column)}: {_source_display(value)}"
                               for column, value in identifiers))
+    # Prior grid editing displayed capital priority and replacement timing for
+    # every row. Preserve that visibility in collapsed native cards instead of
+    # forcing operators to open each renewal/replacement occurrence.
     decisions = [(column, value) for column, value in values if any(
-        word in column.casefold() for word in ("status", "decision"))]
+        word in column.casefold() for word in
+        ("status", "decision", "priority", "replacement timing"))]
     if decisions:
         st.caption(" · ".join(f"{_source_display(column)}: {_source_display(value or 'Not recorded')}"
                               for column, value in decisions))
@@ -398,6 +414,13 @@ def _edit_table(columns, rows, types, key, noun, add_label, field, *, onsite=Fal
         visible_index += 1
     st.button(add_label, key=key + "_add", on_click=queue, args=(*args, "add"),
               disabled=bool(active and active == draft_token))
+    if record.get("removed"):
+        st.button("Undo last removal", key=key + "_undo_remove", on_click=queue,
+                  args=(*args, "undo_remove"),
+                  help="Restores only the last removed row. Later edits to other rows are kept.")
+    if record.get("undo_notice"):
+        st.warning(record.pop("undo_notice"))
+        st.session_state[key] = record
     return rows
 
 
@@ -421,6 +444,26 @@ def _render_fields(columns, fields, args, field, queue=_queue, *, prose=None):
     return keys
 
 
+def _table_key(spec, block, prefix):
+    from app.monthly_report_guided import _rich_text_scope
+
+    context = (spec.key, _rich_text_scope(prefix), block.references,
+               tuple(table.reference for table in block.extra_tables), spec.columns)
+    return prefix + "_row_cards_" + _signature(context)
+
+
+def primary_row_recovery_pending(spec, block, prefix):
+    key = _table_key(spec, block, prefix)
+    if spec.key == "service_calls":
+        # Onsite editors retire their pre-projection widget identities.
+        # Recovery must inspect the same versioned key used by edit_row_cards.
+        key += "_onsite_context_v1"
+    record = st.session_state.get(key + "_rows", {})
+    draft_token = record.get("draft_token")
+    return bool(record.get("pending") or record.get("removed")
+                or (draft_token and record.get("active") == draft_token))
+
+
 def edit_row_cards(spec, block, prefix, field, *, empty=None, notice=None):
     """Return the edited block.
 
@@ -428,19 +471,17 @@ def edit_row_cards(spec, block, prefix, field, *, empty=None, notice=None):
     no rows and no request is open; an open blank editor is not content.
     """
     from app.monthly_report_content_policy import ambiguous_price_columns
-    from app.monthly_report_guided import _rich_text_scope
     from app.monthly_report_table_review_ui import review_table_headings
     noun, add_label = CARD_TABLES[spec.key]
     prose = _request_prose if spec.key == "rfi_matrix" else None
-    context = (spec.key, _rich_text_scope(prefix), block.references,
-               tuple(table.reference for table in block.extra_tables), spec.columns)
-    key = prefix + "_row_cards_" + _signature(context)
+    key = _table_key(spec, block, prefix)
+    primary = bool(block.rows or not block.extra_tables or primary_row_recovery_pending(spec, block, prefix))
     if spec.key == "service_calls":
         # Retire pre-projection callbacks that could have opened a header as a call.
         key += "_onsite_context_v1"
     group = tuple(key + "_extra_" + str(index) + "_" + _signature(table.columns)
                   for index, table in enumerate(block.extra_tables))
-    if block.rows or not block.extra_tables:
+    if primary:
         group += (key + "_rows",)
     tables, table_keys = [], []
     for index, table in enumerate(block.extra_tables):
@@ -460,9 +501,10 @@ def edit_row_cards(spec, block, prefix, field, *, empty=None, notice=None):
         table_keys.append(table_key)
         tables.append(replace(table, rows=edited) if edited != table.rows else table)
     rows = block.rows
-    if rows or not block.extra_tables:
+    if primary:
         columns = tuple(column.title for column in spec.columns) or ("Facility", "Item", "Status")
-        rows = _edit_table(columns, rows, tuple(column.type for column in spec.columns), key + "_rows", noun, add_label, field,
+        rows = _edit_table(columns, rows, tuple("text" if spec.key == "end_of_life" and column.type == "date" else column.type
+                             for column in spec.columns), key + "_rows", noun, add_label, field,
                            onsite=spec.key == "service_calls", prose=prose, group=group)
         table_keys.append(key + "_rows")
     if empty and notice is not None:

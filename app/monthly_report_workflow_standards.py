@@ -16,6 +16,9 @@ from app.monthly_report_model import ResolvedBlock, profile_sections
 from app.monthly_report_page_reference import page_identity
 
 WORKFLOW_KEYS = ("business_hours_workflow", "after_hours_workflow")
+# Bounded PNG raster decode: a 30 MiB compressed PNG can expand to gigabytes.
+# Existing disposable image-conversion paths also cap raster work at 40 MP.
+MAX_STANDING_PICTURE_PIXELS = 40_000_000
 
 
 @dataclass(frozen=True)
@@ -96,7 +99,14 @@ def _verify_asset(reference, raw):
         with Image.open(BytesIO(raw)) as picture:
             if picture.format != expected:
                 raise ValueError("Picture bytes do not match the saved file type.")
+            if picture.width * picture.height > MAX_STANDING_PICTURE_PIXELS:
+                raise ValueError("Workflow picture exceeds the safe decoded-pixel budget.")
             picture.verify()
+        if expected == "PNG":
+            # PNG verify() checks chunk CRCs, not that IDAT decodes enough
+            # scanlines for the declared dimensions. Limit pixels first.
+            with Image.open(BytesIO(raw)) as picture:
+                picture.load()
         if expected == "JPEG":
             # Pillow's verify() checks JPEG headers but accepts some incomplete
             # entropy streams. Decode a draft-resolution copy to detect them

@@ -50,7 +50,8 @@ class ReportImage:
 
 def normalize_report_image(raw: bytes, suffix: str, *, line_art: bool = False,
                            frame: tuple[float, float] = (7, 9), dpi: int = 200,
-                           preserve_transparency: bool = False, cover_photo: bool = False) -> ReportImage:
+                           preserve_transparency: bool = False, cover_photo: bool = False,
+                           frame_index: int | None = None) -> ReportImage:
     """Print normalization; vision still uses the stricter OCR request budgets.
 
     Line art must stay lossless, so the JPEG-only vision encoder is unsuitable
@@ -64,6 +65,13 @@ def normalize_report_image(raw: bytes, suffix: str, *, line_art: bool = False,
         raise ValueError("Choose a supported image format, such as PNG or JPEG.")
     if dpi not in (96, 150, 200) or min(frame) <= 0 or max(frame) > 11:
         raise ValueError("Invalid report image frame.")
+    if frame_index is not None:
+        if suffix.lower() != ".mpo" or cover_photo:
+            raise ValueError("Frame selection is available only for MPO source pages.")
+        from app.mpo_images import frame_count as mpo_frame_count
+        count = mpo_frame_count(raw)
+        if type(frame_index) is not int or not 0 <= frame_index < count:
+            raise ValueError("Selected MPO frame does not exist.")
     if cover_photo:
         check_cover_headroom(len(raw))
         header = cover_codec_header(raw)
@@ -80,13 +88,15 @@ def normalize_report_image(raw: bytes, suffix: str, *, line_art: bool = False,
     except Image.DecompressionBombError as exc:
         raise ValueError("Image is too large to decode safely. Resize it before uploading.") from exc
     with opened as image:
+        if frame_index is not None:
+            image.seek(frame_index)
         if image.width * image.height > _MAX_PIXELS_PER_FRAME:
             raise ValueError("Image is too large to decode safely. Resize it before uploading.")
         try:
             frame_count = getattr(image, "n_frames", 1)
         except TypeError as exc:
             raise ValueError("Image frame information could not be read. Export a fresh single-image copy.") from exc
-        if frame_count != 1:
+        if frame_count != 1 and frame_index is None:
             raise ValueError("Choose a single image; use a PDF for multiple pages.")
         if cover_photo:
             if image.format not in ("PNG", "JPEG", "WEBP", "HEIF"):
@@ -290,6 +300,18 @@ def estimate_bytes(draft: ReportDraft, asset_loader: Callable[[str], bytes] | No
                         for b in used_blocks) + (
         sum(len(asset_loader(ref)) for ref in references) if asset_loader else 0
     )
+
+
+def estimated_output_ranges(estimated_bytes: int) -> tuple[tuple[int, int], tuple[int, int]]:
+    """Broad Word/PDF allowances around tracked bytes, not a trial render.
+
+    The existing estimate counts source artwork and approximated page images,
+    but packaged Word graphics and PDF compression can differ substantially.
+    These ranges are deliberately provisional; finished sizes remain exact.
+    """
+    tracked = max(1, estimated_bytes)
+    return ((max(1, tracked // 10), tracked * 7),
+            (max(1, tracked // 20), tracked * 6))
 
 
 def _picture(document, raw: bytes, *, width: float = 7, height: float = 8,
