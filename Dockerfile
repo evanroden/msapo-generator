@@ -75,10 +75,12 @@ RUN mkdir -p output
 # Last, so a new commit rebuilds only this layer.
 ARG APP_GIT_COMMIT=""
 ENV APP_GIT_COMMIT=$APP_GIT_COMMIT
+LABEL org.opencontainers.image.revision="${APP_GIT_COMMIT}" \
+      org.opencontainers.image.source="https://github.com/evanroden/msapo-generator"
 
 EXPOSE 8501
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s \
-    CMD curl -f http://localhost:8501/_stcore/health || exit 1
+    CMD python scripts/container_portability.py ready || exit 1
 
 CMD ["streamlit", "run", "run_web.py", "--server.address=0.0.0.0", "--server.port=8501", "--server.headless=true", "--browser.gatherUsageStats=false"]
