@@ -5,6 +5,18 @@ independent Streamlit widget sessions. A rejected stale session edit cannot
 erase the newer committed row. The deliberate saved-copy choice is observed
 before a new edit, and real Word/PDF reflect that choice. This test does not
 claim that different monthly-session rows automatically three-way merge.
+
+Why the recovery prompt needs help to appear: the rejected Training edit is
+form widget state, not report-draft work -- a form value is session state
+until Save session commits it to the Training store, so it never enters the
+report draft and no browser journal exists for it. The older-draft recovery
+prompt only renders when a live browser journal is based on an older saved
+version, and A's shared save discards the shared journal. So after the stale
+conflict B makes one genuinely divergent report-draft edit (a distinct
+preparer) and keeps this page for recovery, which re-creates the journal
+based on snapshot 1. The comparison then shows that divergence -- the
+Training edit itself was verified preserved in-session before the reload and
+is verified absent from the outputs after, never silently applied.
 """
 from __future__ import annotations
 
@@ -18,7 +30,7 @@ import time
 
 from docx import Document
 import pymupdf
-from playwright.sync_api import expect, sync_playwright
+from playwright.sync_api import expect, sync_playwright, TimeoutError
 
 from scripts import qa_training_two_browser as base
 
@@ -26,6 +38,7 @@ OUT = base.ROOT / "test-artifacts" / "training-two-browser" / "event-row"
 ORIGINAL = "Synthetic safety refresher"
 A_EDIT = "Synthetic completed session from A"
 B_EDIT = "Synthetic competing session from B"
+DIVERGENT_PREPARER = "Synthetic two-browser reviewer B"
 
 
 def edit_session(page, old, new):
@@ -73,18 +86,83 @@ def event_titles(saved):
     return [row[0] for row in tables[0].rows]
 
 
+def _journal_live(token):
+    """True when a live (not discarded) browser journal exists for this token."""
+    from app import monthly_report_active_work as active_work
+    from app.monthly_report_qa_fixture import CONTRACT, PERIOD, profile
+    from app.monthly_report_testing import isolated
+    with isolated(token):
+        return active_work.load(token, CONTRACT, profile().key, PERIOD) is not None
+
+
+def keep_divergent_draft_for_recovery(page, token):
+    """Give B unfinished report work, then keep it for recovery.
+
+    B's rejected Training edit is form state, not report work, so after A's
+    shared save discarded the shared journal B has nothing the older-draft
+    recovery prompt can offer. A distinct preparer makes B's report draft
+    genuinely diverge from the saved version; "Keep this page for recovery"
+    then re-creates the journal based on snapshot 1, so a reload surfaces
+    the "Review draft changes" prompt. The first keep press can be lost
+    when its rerun rotates the button's identity key (it includes the draft
+    fingerprint), so retry on the fresh render, as perform_add does.
+    """
+    base.settled(page)
+    preparer = page.get_by_role("textbox", name="Prepared by", exact=True)
+    expect(preparer).to_be_visible(timeout=30000)
+    preparer.fill(DIVERGENT_PREPARER)
+    preparer.press("Tab")
+    base.settled(page)
+    expect(preparer).to_have_value(DIVERGENT_PREPARER)
+    compare = page.get_by_role("button", name="Compare browser copies", exact=True)
+    expect(compare).to_be_visible(timeout=30000)
+    compare.click()
+    base.settled(page)
+    keep = page.get_by_role("button", name="Keep this page for recovery", exact=True)
+    expect(keep).to_be_visible(timeout=30000)
+    for _ in range(8):
+        if not keep.count():
+            break
+        try:
+            keep.click(timeout=30000)
+        except TimeoutError:
+            pass
+        base.settled(page)
+        if _journal_live(token):
+            return
+    if not _journal_live(token):
+        raise AssertionError("This browser's unfinished draft was not kept for recovery")
+
+
 def accept_saved_version(page, evidence):
     base.settled(page)
+    # The recovery prompt renders on a later run than the landing view, so
+    # wait for whichever state the page reaches -- the prompt or the editor --
+    # instead of assuming the first settled render is final.
+    deadline = time.monotonic() + 60
     review = page.get_by_role("button", name="Review draft changes", exact=True)
+    preparer = page.get_by_role("textbox", name="Prepared by", exact=True)
+    while time.monotonic() < deadline:
+        if review.count() or preparer.count():
+            break
+        time.sleep(0.5)
+    else:
+        raise AssertionError(
+            "After reload neither the draft-recovery prompt nor the "
+            "report editor appeared within 60s")
     expect(review).to_be_visible(timeout=30000)
     review.click()
-    pending = page.get_by_text(B_EDIT, exact=False)
+    # The comparison shows the report draft's divergence: B's distinct
+    # preparer. B's Training form edit never entered the report draft, so it
+    # cannot appear here; it was verified preserved in-session before the
+    # reload and is verified absent from the outputs after.
+    pending = page.get_by_text(DIVERGENT_PREPARER, exact=False)
     expect(pending).to_be_visible(timeout=30000)
     choose = page.get_by_role("button", name="Open saved report", exact=True)
     expect(choose).to_be_visible(timeout=30000)
     choose.click()
     evidence["recovery_choice"] = "Open saved report"
-    evidence["pending_edit_verified_in_review"] = True
+    evidence["divergent_draft_verified_in_review"] = True
     base.settled(page)
 
 
@@ -147,6 +225,7 @@ def journey():
             expect(b.get_by_text(B_EDIT, exact=True)).to_be_visible(timeout=30000)
             evidence["edits"].append({"stage": "B stale conflict", "saved_revision": 2,
                                       "pending_row_still_visible": True})
+            keep_divergent_draft_for_recovery(b, token)
             b.reload(wait_until="domcontentloaded")
             accept_saved_version(b, evidence)
             base.open_training(b)
