@@ -106,8 +106,17 @@ def test_fallback_only_is_not_discarded(tmp_path):
         wrapper = root.find(".//" + MC + "AlternateContent")
         wrapper.remove(wrapper.find(MC + "Choice"))
     edit_package(src, mutate)
+    original = src.read_bytes()
     assert prepare_master_working_copy(src) == (None, ())
-    assert b"Fallback" in src.read_bytes()
+    assert src.read_bytes() == original
+    with ZipFile(src) as doc:
+        root = etree.fromstring(doc.read("word/document.xml"))
+        wrapper = root.find(".//" + MC + "AlternateContent")
+        assert wrapper is not None
+        assert wrapper.find(MC + "Choice") is None
+        fallback = wrapper.find(MC + "Fallback")
+        assert fallback is not None
+        assert fallback.find(".//" + W + "t").text == "Synthetic shape"
 
 
 def test_only_orphan_comments_are_cleaned_in_working_copy(tmp_path):
@@ -208,7 +217,7 @@ def test_supported_native_word_output_preserves_editable_tables(tmp_path):
 
 def test_supported_native_pdf_export_uses_local_libreoffice(tmp_path):
     import shutil
-    import fitz
+    import pymupdf as fitz
     from test_monthly_report_master_tables import master_source, current
     from app.monthly_report_master_tables import from_inspection
     from app.monthly_report_native_layout import build_native_docx
