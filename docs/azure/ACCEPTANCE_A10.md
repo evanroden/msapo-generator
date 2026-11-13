@@ -1,6 +1,15 @@
 # A10 — Azure acceptance suite and release blockers (11 November 2026)
 
-**Status: PREPARATION ONLY / NO AZURE ACCEPTANCE OR TRAFFIC SWITCH.** The source is msapo-generator main at SHA 57c5cd87e3e441dfea3cddbc666248f8e469d986, as audited in A01 draft PR #849. This is the baseline/reference, not the final P20-approved release SHA. The target App Service, production-safe stage, identities, managed stores and final promoted image digest have not been established.
+**Status: PREPARATION ONLY / NO AZURE ACCEPTANCE OR TRAFFIC SWITCH.** The source is msapo-generator main at SHA 57c5cd87e3e441dfea3cddbc666248f8e469d986, as audited in A01 PR #849. This is a historical reference, not the final P20-approved release SHA. The merged [A01 migration manifest](https://github.com/evanroden/msapo-generator/blob/main/docs/azure/MIGRATION_MANIFEST.md) records a proposed Linux Azure App Service destination; the user-supplied inventory below describes existing Azure Container Apps. The target staging deployment, isolation and final promoted image digest remain unestablished. No change of proposed destination is implied.
+
+## Azure inventory supplied by Evan
+
+The following is from the supplied read-only assessment, not a new Azure inspection or proof of current state. Recheck configuration and permissions before relying on it:
+
+- The assessment identified separate production and development Container Apps in one region, each using a mutable image tag. These tags are not immutable digest evidence. Keep resource identifiers, endpoints and secret references in the approved restricted inventory rather than this public repository.
+- Both apps were reported to share a Container Apps environment, registry, managed identity and mounted storage family. Verify the actual file shares, mounts, paths and effective grants: a different app name or revision does **not** prove isolated data. The production app was reported to reference a secret vault; logging and delegated network resources were also identified.
+- No separate staging app or database was found in the assessed accessible scope. This does not establish their global absence or make the existing development app a safe staging environment. The staging probe currently requires distinct documented database, file and Smartsheet identities and independent verification; if a database is genuinely absent, resolve that requirement through a reviewed change and evidence, not a fabricated identity.
+- Container Apps uses revisions, not App Service deployment slots. Ingress configuration and other application-scope changes can affect multiple revisions; a new revision is not by itself a data, identity or traffic boundary. See Microsoft Learn on [Container Apps revisions](https://learn.microsoft.com/en-us/azure/container-apps/revisions) and [authentication](https://learn.microsoft.com/en-us/azure/container-apps/authentication). The existence or configuration of built-in authentication for these apps has not been verified here.
 
 ## Already established
 
@@ -29,9 +38,9 @@ Reuse the existing container job and scripts/qa_monthly_report_outputs.py for ar
 
 ### Read-only authenticated staging smoke
 
-Run on a private ENFRA runner with an **authorized Entra** Playwright storage-state file, which must never be committed, logged or retained in public artifacts. A04/A05/A07 must independently prove the stage service principal cannot write to production data/Smartsheet. The probe checks for matching served About SHA and real Streamlit WebSocket before/after reload without an anonymous bypass.
+Run on a private ENFRA runner with an **authorized Entra** Playwright storage-state file, which must never be committed, logged or retained in public artifacts. A04/A05/A07 must independently prove the stage identity cannot write to production data/Smartsheet. The probe checks the served About SHA and a received frame on the expected same-origin Streamlit WebSocket, both initially and on a newly created socket after reload. It records no frame contents. A socket creation event alone is insufficient evidence of a working connection.
 
-A separate restricted isolation.json (not a substitute for verified Azure grants) must provide the following keys: environment="staging"; smartsheet_api_mode="disabled"; production_write_access=false; database_target and database_production different and present; files_target and files_production different and present; smartsheet_target and smartsheet_production different and present. The code refuses missing or matching resources, production mode, non-HTTPS and a host identical to the production origin.
+A separate restricted isolation.json (not a substitute for verified Azure grants) must provide the following keys: environment="staging"; smartsheet_api_mode="disabled"; production_write_access=false; database_target and database_production different and present; files_target and files_production different and present; smartsheet_target and smartsheet_production different and present. The code refuses missing or matching resources, production mode, non-HTTPS and a host identical to the production origin. The supplied production origin and the true DNS/resource identity must also be independently verified; hostname comparison cannot detect every alias or shared backend.
 
     python -m scripts.qa_azure_authenticated \
       --origin "$APPROVED_STAGING_HTTPS_ORIGIN" \
@@ -45,7 +54,7 @@ This smoke also runs a signed-out browser context and a separate cookie-free HTT
 
 ### Paired DOCX/PDF semantic, geometry and visual parity
 
-Use identically named private local files for the same fixture, e.g. container/monthly.docx + monthly.pdf and azure/monthly.docx + monthly.pdf. Every environment has a metadata.json with exact measured source_sha, image_digest (sha256:64 hex), fixture_id, dataset_classification="synthetic", and environment="container" or "azure-staging". Independently verify those values against actual Git SHA, the pushed image digest and the App Service image reference; a matching self-reported JSON value is not remote attestation.
+Use identically named private local files for the same fixture, e.g. container/monthly.docx + monthly.pdf and azure/monthly.docx + monthly.pdf. Every environment has a metadata.json with exact measured source_sha, image_digest (sha256:64 hex), fixture_id, dataset_classification="synthetic", and environment="container" or "azure-staging". Independently verify those values against actual Git SHA, the pushed image digest and the candidate's deployed image configuration, using the correct App Service or Container Apps revision evidence for the platform actually tested; a matching self-reported JSON value is not remote attestation.
 
     python -m scripts.azure_acceptance_parity \
       --baseline "$PRIVATE_EVIDENCE_DIR/container" \
@@ -87,7 +96,7 @@ For authentic acceptance, use **restricted authorized originals only**, and keep
 3. **Expense**: initial entry; receipt upload/preview/correction; save/reopen; correct account/director routing; PDF/Excel and native .eml attachment handoff; no server-side send.
 4. **Security/concurrency**: independent assigned/unassigned/wrong-tenant/read-only contexts; forbidden originals/previews/downloads; two users and two tabs performing conflicting writes and explicit merge/review; report/site/contract boundaries.
 5. **Operations**: upper upload limit measured through proxy and app; multi-page image-heavy output; cold/warm CPU/RSS; long conversion, cancellation, DB outage/file-store failures, restart during save and renderer failure; recovery with no accepted state loss.
-6. **Identity and release**: actual App Service-served SHA, image digest confirmed from ACR and deployed config, correct origin, authenticated WSS and reconnection, trusted deployment evidence.
+6. **Identity and release**: actual candidate-served SHA, image digest confirmed from ACR and the applicable deployed App Service configuration or Container Apps revision, correct origin, authenticated WSS and reconnection, trusted deployment evidence.
 
 Each private before/after row must include date/time UTC, exact SHA, immutable digest, environment, allowed data classification, fixture hash, first action/result, persisted correction, downloaded artifact hashes, compare report, reproduction, observed failure classification and rollback/recovery evidence. Publish only sanitized boolean/hash/count summaries. Synthetic evidence is not authentic acceptance. A screenshot of the app shell or a successful process exit is insufficient.
 
@@ -98,7 +107,7 @@ Each private before/after row must include date/time UTC, exact SHA, immutable d
 
 On an independent Python 3.13 environment, 16 synthetic focused unit tests passed (tests/test_azure_acceptance_parity.py + tests/test_qa_azure_authenticated.py). This is a harness self-test, not a project-wide exact-PR CI result.
 
-A locally constructed 30-page/4.8 MB synthetic DOCX (six noisy-image examples, repeated tables and captions) converted twice with installed LibreOffice. Each output had 30 PDF pages and approximately 5.5 MB. Conversion times were 2.17s and 1.94s; peak descendant process RSS recorded approximately 201 MiB. The two PDF binaries differed, while all semantic, geometry, font, caption, attachment, grayscale and visual checks passed (maximum per-page mean pixel error 0.0). The fixture was **not generated by MSAPO**, and neither pass ran on Azure. Results do not establish App Service capacity, performance SLO or authentic-source Word fidelity.
+A locally constructed 30-page/4.8 MB synthetic DOCX (six noisy-image examples, repeated tables and captions) converted twice with installed LibreOffice. Each output had 30 PDF pages and approximately 5.5 MB. Conversion times were 2.17s and 1.94s; peak descendant process RSS recorded approximately 201 MiB. The two PDF binaries differed, while all semantic, geometry, font, caption, attachment, grayscale and visual checks passed (maximum per-page mean pixel error 0.0). The fixture was **not generated by MSAPO**, and neither pass ran on Azure. Results do not establish App Service or Container Apps capacity, performance SLO or authentic-source Word fidelity.
 
 The self-test evidence bundle also contains intentional page-geometry FAIL and missing-artifact NOT RUN cases, plus a difference render and JUnit outcome. All SHA/digest identifiers in local parity examples are simulated and must never be interpreted as a served image or customer acceptance.
 
