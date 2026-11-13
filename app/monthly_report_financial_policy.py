@@ -18,6 +18,21 @@ def _digest(value: str) -> bool:
     return isinstance(value, str) and re.fullmatch(r'[0-9a-f]{64}', value) is not None
 
 
+# Owner decision for #458 (13 November 2026): the Accounts Receivable section of
+# the monthly client report is a status-only view. Invoice amounts, payments,
+# credits, balances and aged totals never go into client output from this
+# section, whatever the source or its review. This is narrower than the general
+# 28 October allowance for verified contract/ENFRA client amounts elsewhere.
+RECEIVABLE_STATUS_ONLY = ('Accounts Receivable is a status-only section in monthly client '
+                          'reports; amounts are never exported from it.')
+_RECEIVABLE_BLOCKS = frozenset({'accounts_receivable', 'accounts_receivable_notes'})
+
+
+def _is_receivable_locator(locator: str) -> bool:
+    head = locator.strip().split(':', 1)[0].strip().lower()
+    return head in _RECEIVABLE_BLOCKS
+
+
 @dataclass(frozen=True)
 class FinancialScope:
     contract_id: str
@@ -106,6 +121,8 @@ def financial_permission(*, purpose: str, scope: FinancialScope, locator: str,
                 return deny('ENFRA source is not confirmed client-facing.')
         else:
             return deny('Source is not an approved contract or client-facing ENFRA report.')
+    if _is_receivable_locator(locator):
+        return deny(RECEIVABLE_STATUS_ONLY)
     return FinancialDecision(True, 'All monetary dependencies have current permitted provenance.')
 
 
