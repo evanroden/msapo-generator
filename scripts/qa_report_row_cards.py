@@ -86,6 +86,7 @@ def close_proposal(page, proposal, expect):
 def assert_outputs(word, pdf):
     from lxml import etree
     import pymupdf
+    import re
     with ZipFile(BytesIO(word)) as package:
         root = etree.fromstring(package.read('word/document.xml'))
         ns={'w':'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
@@ -104,7 +105,13 @@ def assert_outputs(word, pdf):
         assert full.count(NOTE)==1 and full.count(TASK)==1 and full.count(REQUEST)==1
     with pymupdf.open(stream=pdf, filetype='pdf') as doc:
         text=' '.join(' '.join(page.get_text().split()) for page in doc)
-        assert all(' '.join(value.split()) in text for value in (STATUS, NOTE, TASK, ASSET, REQUEST))
+        # PDF text extraction keeps a line break after a hyphen as "- "
+        # ("AHU- TEST-04"): the value is present, only wrapped across lines.
+        # Accept each value against the raw text or against text with those
+        # hyphen line-breaks repaired; every value must still be present.
+        repaired=re.sub(r'-\s+', '-', text)
+        assert all(' '.join(value.split()) in text or ' '.join(value.split()) in repaired
+                   for value in (STATUS, NOTE, TASK, ASSET, REQUEST))
         pages=len(doc)
     return {'docx': {'bytes':len(word),'sha256':sha256(word).hexdigest()},
             'pdf': {'bytes':len(pdf),'sha256':sha256(pdf).hexdigest(),'pages':pages},
