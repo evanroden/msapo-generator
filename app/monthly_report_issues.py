@@ -16,6 +16,13 @@ from app.monthly_report_sources import source_reference
 
 _REMOVED_STATEMENT = "issue-statement-removed:"
 
+# A register-table citation recorded on the review block so the evidence
+# emitter can tell it apart from an explicit evidence link. canonical_issues
+# strips the imported tables from the review draft, so it carries their page
+# references as markers on the block instead; the emitter skips unreviewed
+# pages cited only through such a marker instead of failing closed on them.
+ISSUE_TABLE_PROVENANCE_PREFIX = "issue-table:"
+
 
 def issue_key(text):
     # Match the existing carry-forward identity. Editing or omitting an issue
@@ -108,12 +115,30 @@ def canonical_issues(draft):
         items.append(ReportFollowUp(key, "issue", text, draft.period.key,
                                     status=status, update=update,
                                     references=references))
+    # Imported register tables cite their originating PDF page, but that
+    # citation is provenance, not approval to print the page as evidence.
+    # The review draft below strips the tables, so record which of their
+    # page references the surviving issue items still cite. Markers are
+    # kept only while some issue item still cites the page, so unlinking a
+    # citation drops its marker on the next canonical pass; re-including a
+    # table-derived item keeps its marker because the item itself persists.
+    issue_refs = {ref for item in items if item.category == "issue" for ref in item.references}
+    carried = [ref[len(ISSUE_TABLE_PROVENANCE_PREFIX):] for ref in block.references
+               if ref.startswith(ISSUE_TABLE_PROVENANCE_PREFIX)
+               and ref[len(ISSUE_TABLE_PROVENANCE_PREFIX):] in issue_refs]
+    fresh = [reference for _, _, reference in tables
+             if reference and reference in issue_refs and reference not in carried]
+    table_markers = tuple(ISSUE_TABLE_PROVENANCE_PREFIX + ref
+                          for ref in dict.fromkeys((*carried, *fresh)))
+    base_references = (block.references if block.asset_hashes else
+                       tuple(ref for ref in block.references
+                             if not ref.startswith(("report-period:", "report-origin:"))))
+    kept_references = tuple(ref for ref in base_references
+                            if not ref.startswith(ISSUE_TABLE_PROVENANCE_PREFIX))
     revised = replace(block, text="\n\n".join(dict.fromkeys(statements)), rows=(),
                       extra_tables=(), ai_paragraphs=(), ai_written=False,
                       ai_evidence_fingerprint="", reviewed_fingerprint="",
-                      references=block.references if block.asset_hashes else
-                      tuple(ref for ref in block.references
-                            if not ref.startswith(("report-period:", "report-origin:"))))
+                      references=(*kept_references, *table_markers))
     from app.monthly_report_asset_review import preserve_asset_reviews
     revised = replace(preserve_asset_reviews(block, revised), asset_provenance=block.asset_provenance)
     sections = tuple(replace(section, blocks=tuple(
