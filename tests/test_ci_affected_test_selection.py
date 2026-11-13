@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import ci_select_tests as selector
 
+
 def write_tree(root: Path, files: dict[str, str]) -> None:
     for rel, content in files.items():
         path = root / rel
@@ -36,7 +37,6 @@ def repo(tmp_path):
         "tests/test_ci_ubuntu_mirror_priority.py": "def test_guard():\n    assert True\n",
         "tests/test_ci_affected_test_selection.py": "def test_guard():\n    assert True\n",
     })
-
     return tmp_path
 
 
