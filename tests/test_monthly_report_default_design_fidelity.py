@@ -63,8 +63,6 @@ def test_title_band_renders_full_width_over_the_real_headings(storage):
     assert [cell.text for cell in call.cells] == list(CALL)
     assert repeats_as_header(title) and repeats_as_header(headings) and not repeats_as_header(call)
     assert "Column 2" not in "".join(cell.text for row in table.rows for cell in row.cells)
-    assert {run.font.name for row in table.rows for cell in row.cells
-            for p in cell.paragraphs for run in p.runs} == {"Arial"}
 
 
 def test_group_band_rows_span_the_table_and_ordinary_rows_do_not(storage):

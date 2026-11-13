@@ -509,9 +509,6 @@ def _format_table(table, has_header, header_rows=1, partial_rows=()):
                 paragraph.paragraph_format.keep_with_next = heading or bool(band)
                 for run in paragraph.runs:
                     run.font.size = size
-                    # ENFRA's reports set tables in Arial (rendered with the
-                    # deployed metric-compatible Liberation Sans).
-                    run.font.name = "Arial"
                     if heading:
                         run.font.color.rgb = RGBColor(255, 255, 255)
                         run.bold = True
