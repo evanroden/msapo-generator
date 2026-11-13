@@ -566,6 +566,9 @@ def _review_carried_update(block, period, prefix):
     # Equal content in a replacement editor is not the same acknowledgement.
     # Include the scope in the native widget identity, not only its callback.
     key = prefix + "_current_period_" + block.key + "_" + observed["token"]
+    from app.monthly_report_correction_ui import native_warning_marker
+    st.markdown(native_warning_marker(prefix, "carried_period", block.key,
+                                      block.fingerprint, key), unsafe_allow_html=True)
     if st.button(f"This update is correct for {period.label}", key=key):
         confirmed = confirm_current_period(block, period)
         st.session_state[marker] = {
@@ -628,7 +631,23 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
                   manage_saved_pictures=True, inline_photo_intake=False, page_actions_open=True,
                   text_label=None, text_height=140):
     block = _include_left_out(spec, block, prefix)
+    from app.monthly_report_correction_ui import render_inline_block_repairs
+    block = render_inline_block_repairs(spec, block, prefix)
+    if draft is not None:
+        from app.monthly_report_non_narrative_recovery import edit_active_cell
+        block, cell_editor_active = edit_active_cell(draft, block, prefix, field)
+        if cell_editor_active:
+            # One authoritative correction editor: the ordinary grid stays
+            # unmounted until this exact cell is applied or cancelled.
+            return block
     if draft is not None and spec.type == "image_grid":
+        # The existing photo slider rejects saved values outside its 1–6
+        # options before Review can display a correction. Keep the exact
+        # block and its photos intact until the explicit fix above is chosen.
+        if type(block.photos_per_page) is not int or not 1 <= block.photos_per_page <= 6:
+            st.caption("This photo grid has an invalid saved page density. "
+                       "Choose the correction above before editing its captions.")
+            return block
         from app.monthly_report_visual_ui import edit_photos
         return edit_photos(draft, block, prefix, assets, field, show_preview=False)
     key = prefix + "_edit_" + spec.key
@@ -664,6 +683,24 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
             source = "Omit" if retained_mbcx and block.source == "Omit" else "This month"
             block = replace(block, source=source, text=notes, reviewed_fingerprint="", client_reviewed_fingerprint="")
     if row_cards:
+        from app.monthly_report_table_column_recovery import (
+            fixed_width_defect, edit_missing_positions, missing_positions)
+        if fixed_width_defect(spec, block) > 0:
+            st.warning("This row table has more values than saved column headings. "
+                       "The original rows are unchanged. Confirm the positional "
+                       "column correction in Review before editing a row.")
+            return block
+        if block.extra_tables:
+            tables = tuple(edit_missing_positions(table, block, number, prefix, field)
+                           for number, table in enumerate(block.extra_tables))
+            if tables != block.extra_tables:
+                block = replace(block, extra_tables=tables, source="This month",
+                                reviewed_fingerprint="", client_reviewed_fingerprint="")
+            if any(missing_positions(table) for table in tables):
+                st.warning("An imported table has more values than headings. "
+                           "Enter and confirm its missing positional headings above; "
+                           "row-card editing remains closed to protect those values.")
+                return block
         from app.monthly_report_row_cards_ui import edit_row_cards
         quiet = not (block.text.strip() or block.asset_hashes or block.org_nodes or block.ai_paragraphs)
         block = edit_row_cards(spec, block, prefix, field, notice=request_notice,
@@ -673,6 +710,14 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
         tables = []
         rows_edited = False
         for n, table in enumerate(block.extra_tables):
+            from app.monthly_report_table_column_recovery import edit_missing_positions
+            table = edit_missing_positions(table, block, n, prefix, field)
+            if not table.columns:
+                # A headerless imported table has no native grid schema yet.
+                # Keep every positional source cell until headings are explicitly
+                # confirmed; never round-trip an empty dataframe into its rows.
+                tables.append(table)
+                continue
             from app.monthly_report_table_review_ui import review_table_headings
             table = review_table_headings(table, key + f"_imported_{n}", field)
             if spec.key == "work_orders" or len(block.extra_tables) > 1:
@@ -762,9 +807,12 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
         editor_anchor = "report-editor-" + spec.key
         if draft is not None:
             from html import escape
-            from app.monthly_report_correction_ui import text_warning_marker
+            from app.monthly_report_correction_ui import (
+                text_warning_marker, required_text_focus_markup)
             st.markdown('<span id="' + escape(editor_anchor, quote=True) + '"></span>' +
-                        text_warning_marker(draft, block, prefix, editor_key), unsafe_allow_html=True)
+                        text_warning_marker(draft, block, prefix, editor_key) +
+                        required_text_focus_markup(draft, block, prefix),
+                        unsafe_allow_html=True)
         from app.monthly_report_native_loading import reserve_text_area
         reserve_text_area(editor_key, text_height)
         st.text_area(
@@ -809,6 +857,14 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
                 section_title=section_title, editor_anchor=editor_anchor)
             block = _record_period_editor_transition(prefix, canonical_before, block, resolved, draft.period, editor_key)
     elif edit_tables and not row_cards and spec.type in ("table", "work_order_grid") and (block.rows or not block.extra_tables):
+        from app.monthly_report_table_column_recovery import fixed_width_defect
+        if fixed_width_defect(spec, block) > 0:
+            # The native grid can only display named columns; editing it now
+            # would irreversibly omit the trailing source cells. Review owns
+            # a positional schema repair and this canonical block is retained.
+            st.warning("Some saved rows have more cells than column headings. "
+                       "Use the exact column repair in Review; original cells stay unchanged.")
+            return block
         seed, config = _typed_table(spec, block.rows)
         if optional_table:
             seed = empty_text_seed(seed, spec)
@@ -1280,6 +1336,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     render_administration_links()
     from app.monthly_report_start_ui import choose_contract, select_sites, starting_choice, identity_summary
     with st.container(key="monthly_report_identity"):
+        st.markdown('<span id="report-contract-selector"></span>', unsafe_allow_html=True)
         contract = choose_contract(last_contract, field)
         if contract:
             period = month_selector(field, "report", suggested_period(operator_today(browser_timezone)))
@@ -1292,6 +1349,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     initial_sites_open = st.session_state.setdefault("report_sites_initially_open_" + _signature(contract), not returning)
     # Always use the same container/label. Remembering this report after its
     # first acknowledged edit must not move existing native editors.
+    st.markdown('<span id="report-profile-details"></span>', unsafe_allow_html=True)
     site_box = st.expander("Change report sites", expanded=initial_sites_open)
     with site_box:
         candidate, existing = select_sites(contract, profiles, remembered, field, completed_setup,
@@ -1437,12 +1495,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     draft, removed_prices = client_table_draft(complete_guided_sections(normalize_mbcx(refresh_profile_identity(st.session_state[draft_key], profile))))
     if removed_prices:
         st.info("Price columns were left out of this working report: " + ", ".join(removed_prices) + ". The saved original remains available. Check the remaining wording and images for prices before download.")
-    # A missing preparer must never strand someone in a distant section with
-    # only a generic instruction. This stable in-page anchor identifies the
-    # actual native text input immediately below it (not a fake proxy field).
-    st.markdown('<span id="report-prepared-by"></span>', unsafe_allow_html=True)
+    # The native preparer renderer owns the unique in-page anchor and
+    # correction marker immediately before the actual native input.
     from app.monthly_report_preparer_ui import render_preparer
-    prepared = render_preparer(prefix, draft.prepared_by, field)
+    prepared = render_preparer(prefix, draft.prepared_by, field, draft=draft)
     draft = replace(draft, prepared_by=prepared)
     if prepared.strip() and not st.session_state.get(prefix + "_directory_defaults_attempted"):
         from app.monthly_report_directory import apply_defaults
@@ -1620,9 +1676,20 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     render_section_preview(proposed_draft, "cover", proposed_assets, prefix, deferred=True)
         from app.monthly_report_section_help import editor_section_title
         for section in draft.sections:
-            title = editor_section_title(section)
+            title = editor_section_title(section) or section.key.replace("_", " ").capitalize()
             with workspace_section("monthly_" + section.key, title):
                 st.divider()
+                # A unique blank included section title is an editable field,
+                # never an invitation to normalize any existing literal heading.
+                from app.monthly_report_correction_ui import section_title_problems
+                if (section.included and (not section.title.strip() or section_title_problems(section))
+                        and sum(s.key == section.key for s in draft.sections) == 1):
+                    from app.monthly_report_correction_ui import edit_missing_section_title
+                    before = section
+                    section = edit_missing_section_title(section, prefix, field)
+                    if section != before:
+                        draft = replace(draft, sections=tuple(
+                            section if item is before else item for item in draft.sections))
                 st.subheader(title, anchor="report-section-" + section.key,
                              help=editor_section_heading_help(section.key))
                 guidance = editor_section_guidance(section.key)
@@ -1832,12 +1899,19 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         dependent = used_missing_sources(draft, st.session_state.get(prefix + "_unavailable_sources", ()))
         if dependent:
             missing_names = ", ".join(safe_source_name(source) for source in dependent)
+            from app.monthly_report_correction_targets import source_target
             checks.append(ReportCheck("unavailable_source",
                 f"Cannot safely generate while {missing_names} is missing. "
-                "Replace the source or remove the content linked to it first.", True))
+                "Replace the source or remove the content linked to it first.", True,
+                targets=tuple(source_target(draft, source) for source in dependent)))
         if checks:
             count = len(checks)
             st.markdown(f"**{count} {'item needs' if count == 1 else 'items need'} attention**")
+        # Several distinct preflight messages may describe the same underlying
+        # table cell or schema. Show each message but mount each native editor
+        # once per exact code/block owner to avoid duplicate Streamlit keys.
+        rendered_cell_owners = set()
+        rendered_heading_owners = set()
         for check in checks:
             source = next((source for source in draft.sources if source.id == check.block_key), None)
             if source is not None and check.code in {"source_facility", "source_period", "source_date_unknown"}:
@@ -1866,6 +1940,51 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 render_financial_links(check,draft,prefix)
                 from app.monthly_report_ai_correction_ui import render_links as render_ai_links
                 render_ai_links(check,draft,prefix)
+                from app.monthly_report_correction_ui import (
+                    render_native_warning_links, render_source_recovery_links)
+                render_native_warning_links(check, draft, prefix)
+                render_source_recovery_links(check, draft, prefix)
+                from app.monthly_report_correction_ui import render_imported_table_warning_links
+                render_imported_table_warning_links(check, draft, prefix)
+                from app.monthly_report_correction_ui import render_followup_identity_recovery
+                render_followup_identity_recovery(check, draft, prefix)
+                from app.monthly_report_correction_ui import render_structure_and_followup_recovery
+                render_structure_and_followup_recovery(check, draft, prefix)
+                from app.monthly_report_non_narrative_recovery import render_links as render_cell_links
+                cell_owner = (check.code, check.block_key)
+                if not check.targets and cell_owner not in rendered_cell_owners:
+                    render_cell_links(check, draft, prefix)
+                    rendered_cell_owners.add(cell_owner)
+                from app.monthly_report_correction_ui import render_receivable_recovery
+                render_receivable_recovery(check, draft, prefix)
+                from app.monthly_report_correction_ui import (
+                    render_identity_warning_recovery, render_footer_warning_links)
+                render_identity_warning_recovery(check, draft, prefix)
+                render_footer_warning_links(check, draft, prefix)
+                from app.monthly_report_correction_ui import render_unmounted_library_recovery
+                render_unmounted_library_recovery(check, draft, prefix)
+                from app.monthly_report_table_column_recovery import (
+                    edit_fixed_column_schema, edit_unsafe_primary_heading)
+                edit_fixed_column_schema(check, draft, prefix, field)
+                if cell_owner not in rendered_heading_owners:
+                    edit_unsafe_primary_heading(check, draft, prefix, field)
+                    rendered_heading_owners.add(cell_owner)
+                from app.monthly_report_org_warning import render_chart_links, render_chart_text_safety
+                render_chart_links(check, draft, prefix)
+                render_chart_text_safety(check, draft, prefix)
+                from app.monthly_report_org_warning import render_required_chart_link
+                render_required_chart_link(check, draft, prefix)
+                from app.monthly_report_correction_ui import render_required_text_recovery
+                render_required_text_recovery(check, draft, prefix)
+        from app.monthly_report_correction_ui import render_footer_repair_editor
+        render_footer_repair_editor(draft, checks, prefix, field)
+        from app.monthly_report_org_warning import finish_chart_notice
+        finish_chart_notice(prefix)
+        from app.monthly_report_non_narrative_recovery import finish_notice as finish_cell_notice
+        finish_cell_notice(prefix)
+        recovery_notice = st.session_state.pop(prefix + "_warning_recovery_notice", None)
+        if recovery_notice:
+            st.warning(recovery_notice)
         notice = st.session_state.pop(prefix + "_page_navigation_notice", None)
         if notice:
             st.warning(notice)
