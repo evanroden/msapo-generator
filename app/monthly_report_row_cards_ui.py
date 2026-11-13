@@ -139,8 +139,21 @@ def _queue(key, expected, tokens, active, fields, action="edit", target=None, *,
         previous["expected"] == expected and previous["result"] == tuple(rows)
         and previous["tokens"] == tuple(identities)))
     baseline = previous["baseline"] if continues_pending else expected
+    # A browser can deliver several blurs from one native render while the
+    # parent has acknowledged only an earlier blur. Admit only exact results
+    # produced by that same table/row/token snapshot, never arbitrary changes
+    # to the current report. Bound the transient lineage; overflow conflicts
+    # rather than treating unknown content as our own acknowledged write.
+    intermediates = ()
+    if (previous and action == "edit" and previous.get("input_action") == "edit"
+            and previous["expected"] == expected
+            and previous.get("input_tokens") == tokens
+            and previous.get("input_active") == active):
+        intermediates = tuple(dict.fromkeys((*previous.get("intermediates", ()), previous["result"])))[:32]
     record["pending"] = {"baseline": baseline, "expected": expected, "result": tuple(rows), "tokens": tuple(identities),
-                         "active": active, "draft_token": draft_token, "draft_index": draft_index}
+                         "active": active, "draft_token": draft_token, "draft_index": draft_index,
+                         "input_action": action, "input_tokens": tokens, "input_active": active,
+                         "intermediates": intermediates}
     if group:
         record["group_closed"] = not bool(active)
     st.session_state[key] = record
@@ -305,7 +318,8 @@ def _edit_table(columns, rows, types, key, noun, add_label, field, *, onsite=Fal
     pending = record.get("pending")
     incoming = tuple(tuple(row) for row in rows)
     rows = incoming
-    if pending and incoming in (pending["baseline"], pending["expected"], pending["result"]):
+    if pending and incoming in (pending["baseline"], pending["expected"], pending["result"],
+                                *pending.get("intermediates", ())):
         rows = pending["result"]
         record.update(rows=rows, tokens=pending["tokens"], active=pending["active"],
                       draft_token=pending["draft_token"], draft_index=pending["draft_index"])
