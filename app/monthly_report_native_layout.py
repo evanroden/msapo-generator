@@ -306,12 +306,14 @@ def _remove_unapproved_header_images(part, approved_digests, approved_occurrence
     """Drop only image-backed old-client header/footer art on a fresh master.
 
     Pure native rules/rectangles and Word geometry are left intact; approved
-    current ENFRA logo bytes and explicitly preserved native occurrences remain.
+    current ENFRA logo bytes, ENFRA's own verified header furniture and
+    explicitly preserved native occurrences remain.
     An approved native occurrence does not authorize another use of equal bytes.
     All other image relationships are facts about the imported source, even when
     PNG metadata is not visible on page.
     The package sanitizer prunes dangling image parts after saving.
     """
+    from app.monthly_report_static_branding import is_company_artwork_blob
     vml = "{urn:schemas-microsoft-com:vml}imagedata"
     for picture in list(part.element.iter()):
         if picture.tag not in (qn("w:drawing"), qn("w:pict")):
@@ -329,7 +331,8 @@ def _remove_unapproved_header_images(part, approved_digests, approved_occurrence
                 trusted = False
                 break
             if (node not in approved_occurrences
-                    and hashlib.sha256(rel.target_part.blob).hexdigest() not in approved_digests):
+                    and hashlib.sha256(rel.target_part.blob).hexdigest() not in approved_digests
+                    and not is_company_artwork_blob(rel.target_part.blob)):
                 trusted = False
                 break
         if not trusted and picture.getparent() is not None:

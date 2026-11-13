@@ -70,6 +70,11 @@ if reset:
 
 package = st.session_state.get(prefix + "_package")
 if package and package.pdf:
+    # Same exact finished bytes and native Streamlit download contract used by
+    # the actual Monthly report. This fixture never persists report artifacts.
+    st.download_button("Download current synthetic PDF", package.pdf,
+                       file_name=package.pdf_name, mime="application/pdf",
+                       key=prefix + "_download", on_click="ignore")
     output_ui.render_current_session_pdf_preview(
         package, SimpleNamespace(fingerprint=fingerprint), prefix,
         session_scope=scope)
