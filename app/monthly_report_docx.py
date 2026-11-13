@@ -729,3 +729,4 @@ def _convert_report_pdf(draft, docx):
                 # A cleanup failure must not discard either finished download.
                 logging.getLogger(__name__).warning("Monthly-report temporary PDF cleanup failed")
     return pdf, error
+
