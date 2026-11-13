@@ -1223,7 +1223,15 @@ def _build_verified_native_docx(draft, source_path, *, asset_loader=None, sectio
                                  master=False, operation):
     source_view, native_art = operation.view, operation.native_art
     if source_view is None:
-        return _build_native_docx(draft, source_path, asset_loader=asset_loader, section_key=section_key, master=master)
+        original_path = Path(source_path)
+        if master:
+            from app.monthly_report_designs import is_master, render_source_for
+            # Direct synthetic/native callers may supply an uninstalled source.
+            # Only explicitly pinned installed masters select a normalized copy.
+            if is_master(draft.profile):
+                source_path = render_source_for(draft.profile)
+        return _build_native_docx(draft, source_path, asset_loader=asset_loader,
+                                  section_key=section_key, master=master, original_path=original_path)
     if master:
         raise NativeLayoutError("Experimental native source views do not support master or foreign-branding reuse.")
     from app.monthly_report_operational_source import rendition_file
@@ -1248,6 +1256,34 @@ def _build_verified_native_docx(draft, source_path, *, asset_loader=None, sectio
         verify_native_art_output(result, native_art, source_scope=header_scope,
                                  emission_proof=emission_proofs[0])
     return result
+
+
+def _master_shapes_for_rendition(inspection, *, original_path=None):
+    """Match detached master tables to the *original* immutable pinned identity.
+
+    A master is seeded from the original report. A normalized working copy has
+    a different package hash even when every native table is untouched. Match
+    complete geometry and safe schema before mapping physical cells to original
+    references; never infer a table by ordinal alone.
+    """
+    from app.monthly_report_master_tables import from_inspection
+
+    shapes = from_inspection(inspection)
+    if original_path is None:
+        return shapes
+    originals = from_inspection(inspect_docx(Path(original_path)))
+
+    def identity(shape):
+        return (shape.position, shape.slot, shape.columns, shape.indices,
+                shape.physical_width, shape.continuation)
+
+    if tuple(map(identity, originals)) != tuple(map(identity, shapes)):
+        raise NativeLayoutError(
+            "The compatible master working copy changed native table geometry "
+            "or safe column schema. The original was preserved; inspect the master.")
+    from dataclasses import replace
+    return tuple(replace(working, reference=original.reference)
+                 for working, original in zip(shapes, originals))
 
 
 def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=None, master=False,
@@ -1286,8 +1322,9 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             "A screenshot or replacement asset cannot approve a hidden alternate representation. "
             "Correct the affected source drawing before building this native report.")
     if master:
-        from app.monthly_report_master_tables import from_inspection
-        master_shapes = from_inspection(inspection)
+        original_master = Path(original_path) if Path(original_path) != source_path else None
+        master_shapes = _master_shapes_for_rendition(
+            inspection, original_path=original_master)
         master_by_position = {shape.position: shape for shape in master_shapes}
     else:
         master_by_position = {}
