@@ -1,0 +1,367 @@
+{
+  "schema_version": "1.0",
+  "scope": "PREPARATION ONLY: deploy=false; no action groups, no live telemetry destination",
+  "source": "A01 draft PR #849 (App Service); A03 storage choice not yet confirmed",
+  "deploy": false,
+  "table": "AppEvents",
+  "custom_event_name": "msapo.op",
+  "required_properties": [
+    "code",
+    "workflow",
+    "correlation_id",
+    "build_sha",
+    "image_digest",
+    "outcome"
+  ],
+  "optional_properties": [
+    "duration_ms",
+    "reason_code",
+    "backend_kind",
+    "resource_kind",
+    "operation",
+    "phase"
+  ],
+  "enum_workflow": [
+    "monthly",
+    "po",
+    "expense",
+    "system"
+  ],
+  "enum_outcome": [
+    "ok",
+    "blocked",
+    "failed",
+    "uncertain"
+  ],
+  "allowed_codes": [
+    "startup_failed",
+    "process_unhealthy",
+    "unhandled_exception",
+    "save_failed",
+    "commit_failed",
+    "database_unavailable",
+    "database_write_failed",
+    "object_storage_unavailable",
+    "file_store_unavailable",
+    "source_integrity_failed",
+    "readiness_blocked",
+    "conversion_failed",
+    "conversion_timeout",
+    "conversion_invalid_pdf",
+    "conversion_completed",
+    "memory_pressure",
+    "temp_pressure",
+    "disk_pressure",
+    "ai_429",
+    "ai_unavailable",
+    "submission_uncertain",
+    "submission_state_untrusted",
+    "backup_failed",
+    "backup_overdue",
+    "restore_check_failed",
+    "readiness_ready",
+    "save_succeeded",
+    "generation_succeeded",
+    "generation_failed",
+    "telemetry_heartbeat"
+  ],
+  "forbidden_properties": [
+    "payload",
+    "prompt",
+    "text",
+    "quote",
+    "receipt",
+    "document",
+    "attachment",
+    "filename",
+    "filepath",
+    "path",
+    "url",
+    "uri",
+    "token",
+    "authorization",
+    "email",
+    "phone",
+    "name",
+    "address",
+    "user_id",
+    "tenant_id",
+    "session_id",
+    "cookie",
+    "query_string",
+    "response_body",
+    "request_body",
+    "stderr",
+    "stdout",
+    "stack",
+    "exception_message",
+    "source_id",
+    "contract",
+    "site",
+    "report_id",
+    "submission_key",
+    "row_id",
+    "contact",
+    "signed_url"
+  ],
+  "correlation_id": "Random per operation UUIDv4; never based on user/document/site/contract; same ID across spans.",
+  "build_identity": "Full source SHA and immutable image digest from verified deployment only.",
+  "log_policy": "Allowlist properties and fixed enums only. Never serialize exception objects or subprocess stdout/stderr. No user content in log/traces.",
+  "routing_policy": "All recipients require ENFRA approval and protected action groups; roles below are proposals, not live routing.",
+  "thresholds": "Initial proposed values requiring QA/capacity baselines and ENFRA approval; no active alerts.",
+  "rules": [
+    {
+      "id": "startup_failure",
+      "enabled": false,
+      "production_route": "TBD",
+      "severity": "Sev1",
+      "kind": "count",
+      "window_minutes": 15,
+      "threshold": 1,
+      "event_codes": [
+        "startup_failed",
+        "process_unhealthy"
+      ],
+      "route_role": "Azure App Service operations",
+      "first_action": "Confirm deployment digest and Health Check; roll back only to known-good digest."
+    },
+    {
+      "id": "application_errors",
+      "enabled": false,
+      "production_route": "TBD",
+      "severity": "Sev2",
+      "kind": "count",
+      "window_minutes": 15,
+      "threshold": 3,
+      "event_codes": [
+        "unhandled_exception"
+      ],
+      "route_role": "Application engineering on-call",
+      "first_action": "Inspect redacted correlation ID, build SHA, workflow and reason code; reproduce synthetically."
+    },
+    {
+      "id": "failed_saves",
+      "enabled": false,
+      "production_route": "TBD",
+      "severity": "Sev1",
+      "kind": "count",
+      "window_minutes": 15,
+      "threshold": 1,
+      "event_codes": [
+        "save_failed",
+        "commit_failed"
+      ],
+      "route_role": "Application + data owner",
+      "first_action": "Stop unsafe writes; inspect store availability and revision conflicts; preserve draft."
+    },
+    {
+      "id": "generation_failures",
+      "enabled": false,
+      "production_route": "TBD",
+      "severity": "Sev1",
+      "kind": "count",
+      "window_minutes": 15,
+      "threshold": 1,
+      "event_codes": [
+        "generation_failed"
+      ],
+      "route_role": "Application engineering + business workflow owner",
+      "first_action": "Preserve accepted draft and last-good output; inspect source integrity and renderer/availability; no unsafe fallback."
+    },
+    {
+      "id": "database_unavailable",
+      "enabled": false,
+      "production_route": "TBD",
+      "severity": "Sev1",
+      "kind": "count",
+      "window_minutes": 15,
+      "threshold": 1,
+      "event_codes": [
+        "database_unavailable",
+        "database_write_failed"
+      ],
+      "route_role": "DBA/storage + application owner",
+      "first_action": "Block save/submission; inspect connectivity, migrations, leases and last verified backup."
+    },
+    {
+      "id": "storage_unavailable",
+      "enabled": false,
+      "production_route": "TBD",
+      "severity": "Sev1",
+      "kind": "count",
+      "window_minutes": 15,
+      "threshold": 1,
+      "event_codes": [
+        "object_storage_unavailable",
+        "file_store_unavailable",
+        "source_integrity_failed"
+      ],
+      "route_role": "Storage + application owner",
+      "first_action": "Block generation if originals cannot be verified; isolate data loss."
+    },
+    {
+      "id": "readiness_blocked",
+      "enabled": false,
+      "production_route": "TBD",
+      "severity": "Sev1",
+      "kind": "count",
+      "window_minutes": 15,
+      "threshold": 1,
+      "event_codes": [
+        "readiness_blocked"
+      ],
+      "route_role": "Azure platform + application owner",
+      "first_action": "Investigate safe-save/generate probe, not only /_stcore/health."
+    },
+    {
+      "id": "conversion_failures",
+      "enabled": false,
+      "production_route": "TBD",
+      "severity": "Sev2",
+      "kind": "count",
+      "window_minutes": 15,
+      "threshold": 1,
+      "event_codes": [
+        "conversion_failed",
+        "conversion_timeout",
+        "conversion_invalid_pdf"
+      ],
+      "route_role": "Application/renderer owner",
+      "first_action": "Check LibreOffice exit class, memory/temp and approved source; preserve original DOCX."
+    },
+    {
+      "id": "conversion_p95_slow",
+      "enabled": false,
+      "production_route": "TBD",
+      "severity": "Sev2",
+      "kind": "p95_duration_ms",
+      "window_minutes": 15,
+      "threshold": 90000,
+      "event_codes": [
+        "conversion_completed"
+      ],
+      "route_role": "Application/renderer owner",
+      "first_action": "Review bounded durations, conversion slot queue and capacity; compare baseline."
+    },
+    {
+      "id": "memory_pressure",
+      "enabled": false,
+      "production_route": "TBD",
+      "severity": "Sev2",
+      "kind": "count",
+      "window_minutes": 15,
+      "threshold": 1,
+      "event_codes": [
+        "memory_pressure"
+      ],
+      "route_role": "Azure platform operations",
+      "first_action": "Check memory working set, active users, LibreOffice workers and OOM; avoid speculative scale-out."
+    },
+    {
+      "id": "temp_pressure",
+      "enabled": false,
+      "production_route": "TBD",
+      "severity": "Sev2",
+      "kind": "count",
+      "window_minutes": 15,
+      "threshold": 1,
+      "event_codes": [
+        "temp_pressure",
+        "disk_pressure"
+      ],
+      "route_role": "Azure platform + storage owner",
+      "first_action": "Check scratch-volume free space and orphaned intermediates; never delete authoritative files."
+    },
+    {
+      "id": "ai_throttling",
+      "enabled": false,
+      "production_route": "TBD",
+      "severity": "Sev2",
+      "kind": "count",
+      "window_minutes": 15,
+      "threshold": 1,
+      "event_codes": [
+        "ai_429",
+        "ai_unavailable"
+      ],
+      "route_role": "AI integration owner",
+      "first_action": "Check aggregate throttle/failure counts; retain draft; bounded retry only."
+    },
+    {
+      "id": "external_submission_uncertain",
+      "enabled": false,
+      "production_route": "TBD",
+      "severity": "Sev1",
+      "kind": "count",
+      "window_minutes": 15,
+      "threshold": 1,
+      "event_codes": [
+        "submission_uncertain",
+        "submission_state_untrusted"
+      ],
+      "route_role": "PO/integration owner",
+      "first_action": "Do not resubmit; reconcile external row ID and attachment fingerprints under lease before retry."
+    },
+    {
+      "id": "backup_failure",
+      "enabled": false,
+      "production_route": "TBD",
+      "severity": "Sev1",
+      "kind": "count",
+      "window_minutes": 15,
+      "threshold": 1,
+      "event_codes": [
+        "backup_failed",
+        "backup_overdue",
+        "restore_check_failed"
+      ],
+      "route_role": "Backup custodian/DBA",
+      "first_action": "Confirm last good cross-store recovery point; start isolated verification."
+    },
+    {
+      "id": "telemetry_gap",
+      "enabled": false,
+      "production_route": "TBD",
+      "severity": "Sev2",
+      "kind": "absence",
+      "window_minutes": 15,
+      "threshold": 1,
+      "event_codes": [
+        "telemetry_heartbeat"
+      ],
+      "route_role": "SRE/observability owner",
+      "first_action": "Independent Azure Monitor absence query: verify that a system heartbeat was emitted in the last 15 minutes; correlate with App Service HealthCheckStatus and known maintenance. Do not depend on an event from the failing process."
+    }
+  ],
+  "allowed_reason_codes": [
+    "SYNTHETIC_FAILURE",
+    "STARTUP_FAILURE",
+    "PROCESS_UNHEALTHY",
+    "APP_EXCEPTION",
+    "SAVE_FAILED",
+    "COMMIT_FAILED",
+    "GENERATION_FAILED",
+    "DATABASE_UNAVAILABLE",
+    "DATABASE_WRITE_FAILED",
+    "FILE_STORE_UNAVAILABLE",
+    "OBJECT_STORAGE_UNAVAILABLE",
+    "SOURCE_INTEGRITY_FAILED",
+    "READINESS_BLOCKED",
+    "CONVERSION_FAILED",
+    "CONVERSION_TIMEOUT",
+    "CONVERSION_INVALID_PDF",
+    "MEMORY_PRESSURE",
+    "TEMP_PRESSURE",
+    "DISK_PRESSURE",
+    "AI_THROTTLED",
+    "AI_UNAVAILABLE",
+    "SUBMISSION_UNCERTAIN",
+    "SUBMISSION_STATE_UNTRUSTED",
+    "BACKUP_FAILED",
+    "BACKUP_OVERDUE",
+    "RESTORE_CHECK_FAILED",
+    "TELEMETRY_GAP"
+  ],
+  "reason_code_policy": "Only use fixed, reviewed reason enums. Never normalize a private value (name, email, filename, contract, site) into reason_code.",
+  "telemetry_heartbeat_note": "Heartbeat absence is an independently evaluated query, not an app-generated failure event; alarm when fewer than one system heartbeat has arrived in a 15-minute evaluation window. App can emit telemetry_heartbeat, but the scheduled rule runs independently."
+}
