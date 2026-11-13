@@ -42,7 +42,9 @@ _UNTRUSTED_INSTRUCTION = re.compile(
     r"|reveal (?:your |the )?(?:secret|key|prompt))\b", re.I
 )
 _UNCLEAR = re.compile(r"\b(?:maybe|possibly|perhaps|apparently|unclear|unconfirmed|"
-                      r"might|possibly|probably|assumed|unknown)\b", re.I)
+                      r"might|probably|assumed|unknown|"
+                      r"may\s+(?:be|have|need|require|indicate|suggest|take|cause|"
+                      r"result|remain|become|occur))\b", re.I)
 _DATE = re.compile(r"\b(?:19|20)\d{2}[-/]\d{1,2}[-/]\d{1,2}\b|"
                    r"\b\d{1,2}/\d{1,2}/(?:19|20)?\d{2}\b")
 _UNIT = re.compile(r"\b(\d+(?:\.\d+)?)\s*(psi|psig|gpm|kwh|kw|"
