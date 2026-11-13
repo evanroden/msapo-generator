@@ -25,7 +25,7 @@ ALIASES = {
                    "wo", "woid", "ticketnumber", "requestid"},
     "site": {"facility", "site", "location", "building", "hospital", "campus"},
     "work_date": {"date", "workdate", "reporteddate", "servicedate", "eventdate",
-                  "createddate", "requestdate", "openeddate"},
+                  "createddate", "requestdate", "openeddate", "receiveddate", "datereceived"},
     "completed_date": {"completiondate", "finishdate", "finisheddate", "closeddate"},
     "status": {"status", "workorderstatus", "state", "currentstatus", "wostatus"},
     "work_type": {"worktype", "type", "maintenancecategory", "category",
@@ -199,6 +199,8 @@ def _classified(field, value, sites):
 
 def _issues(row, sites, period_key):
     questions = []
+    if _name(row.work_order) in {"total", "grandtotal", "subtotal", "summary", "header"}:
+        questions.append("summary/title row needs review")
     for field in REQUIRED:
         if not getattr(row, field):
             questions.append(field + " needs review")

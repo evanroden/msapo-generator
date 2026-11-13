@@ -28,8 +28,8 @@ class WorkOrderEvidence:
 _HEADERS = {
     "identity": {"workorder", "workordernumber", "workorderid", "wonumber", "wo", "woid", "id"},
     "status": {"status", "workorderstatus", "state", "currentstatus"},
-    "date": {"date", "workdate", "reporteddate", "servicedate", "completiondate", "finishdate",
-             "finisheddate", "eventdate"},
+    "date": {"date", "workdate", "receiveddate", "datereceived",
+             "reporteddate", "servicedate", "eventdate"},
     "facility": {"facility", "site", "location", "building", "hospital"},
 }
 _COMPLETE = {"completed", "complete", "closed", "finished", "done"}
@@ -120,7 +120,9 @@ def work_order_evidence(content: SourceContent, period: ReportPeriod,
             # value so conflicting source spellings cannot pick a winner.
             scoped_identity = (site_key, identity.casefold())
             value = (identity, when.isoformat(), "Completed" if state in _COMPLETE else "Open")
-            if scoped_identity in observations and observations[scoped_identity] != value:
+            if scoped_identity in observations:
+                # Even equal-value repeat records are ambiguous source duplicates.
+                # A complete-export count cannot silently collapse either row.
                 conflicts.add(scoped_identity)
             else:
                 observations[scoped_identity] = value
