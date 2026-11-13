@@ -60,6 +60,30 @@ _WORK_ORDER_MONTHS = frozenset(
 )
 
 
+_WORK_ORDER_METRICS = frozenset({
+    "wo received", "wo closed", "work orders received", "work orders closed",
+    "pm received", "pm closed", "non-pm received", "non-pm closed",
+    "non pm received", "non pm closed",
+})
+
+
+def _work_order_month_heading(value: str) -> tuple[int | None, int] | None:
+    """Recognize an actual month label, with or without an explicit year."""
+    label = " ".join(str(value).strip().casefold().split())
+    iso = re.fullmatch(r"(\d{4})-(0[1-9]|1[012])", label)
+    if iso:
+        return int(iso.group(1)), int(iso.group(2))
+    match = re.fullmatch(r"([a-z]{3,9})\.?(?:\s+(\d{4}))?", label)
+    if not match:
+        return None
+    names = {name.casefold(): number for number, name in
+             enumerate(month_name) if number and name}
+    names.update({name.casefold(): number for number, name in
+                  enumerate(month_abbr) if number and name})
+    month = names.get(match.group(1))
+    return (int(match.group(2)) if match.group(2) else None, month) if month else None
+
+
 def _heading(value: str, n: int, old_titles: set[str], *, slot: str = "") -> str:
     """Strict allowlist; do not infer a current client's name from the master."""
     normalized = " ".join(str(value).strip().split())
@@ -70,7 +94,9 @@ def _heading(value: str, n: int, old_titles: set[str], *, slot: str = "") -> str
     if n == 0 and len(normalized) == 1 and (normalized.isdigit() or normalized == "#"):
         return "#"
     safe_generic = key in _GENERIC_LABELS or (
-        slot == "work_orders" and key in _WORK_ORDER_MONTHS
+        slot == "work_orders" and (
+            key in _WORK_ORDER_METRICS or _work_order_month_heading(normalized) is not None
+        )
     )
     if key == "" or key in old_titles or not safe_generic:
         return f"Detail {n + 1}"
@@ -78,19 +104,30 @@ def _heading(value: str, n: int, old_titles: set[str], *, slot: str = "") -> str
 
 
 def _verified_work_order_month_frame(headers: tuple[str, ...]) -> bool:
-    """Recognize six consecutive month labels, never a lone client name.
-
-    The native seven-column WO frame has one label column followed by either
-    Jan–Jun or Jul–Dec. A short previous-client heading such as "May" alone
-    does not authorize itself as a safe new report field.
-    """
+    """Allow only verified six- or twelve-month native work-order headings."""
     labels = tuple(" ".join(str(value).strip().split()).casefold()
                    for value in headers)
-    if len(labels) != 7 or labels[0] not in ("wo received", "work order", "work order #"):
+    if len(labels) == 7:
+        if labels[0] not in ("wo received", "work order", "work order #"):
+            return False
+        return any(all(labels[index + 1] in (
+            month_abbr[start + index].casefold(), month_name[start + index].casefold()
+        ) for index in range(6)) for start in (1, 7))
+    if len(labels) != 13 or labels[0] not in _WORK_ORDER_METRICS:
         return False
-    return any(all(labels[index + 1] in (
-        month_abbr[start + index].casefold(), month_name[start + index].casefold())
-        for index in range(6)) for start in (1, 7))
+    months = tuple(_work_order_month_heading(label) for label in labels[1:])
+    if any(value is None for value in months):
+        return False
+    has_year = tuple(value[0] is not None for value in months)
+    if any(has_year) and not all(has_year):
+        return False  # A mixed year/no-year header cannot prove its ordering.
+    positions = tuple(year * 12 + month - 1 for year, month in months) if all(has_year) else (
+        tuple(month for _, month in months))
+    if all(has_year):
+        return all(next_value == value + 1 for value, next_value in
+                   zip(positions, positions[1:]))
+    return all(next_value == value % 12 + 1 for value, next_value in
+               zip(positions, positions[1:]))
 
 
 def from_inspection(inspection) -> tuple[MasterTable, ...]:
@@ -215,33 +252,83 @@ def initialize_master_tables(draft):
 
 
 def rebind_carried_master_tables(draft, previous_blocks, previous_template: str):
-    """Retain same-master physical table IDs on new-month rollover only.
+    """Reuse only identical pinned physical regions and explicit month history.
 
-    The ordinary design-seed operation deliberately drops source data and
-    provenance. Native *design frame identities*, unlike source facts, can be
-    carried when both reports have the identical immutable master pin. Fail
-    closed for changed master, mismatched columns or unrecognized old refs.
+    Ordinary table shapes still carry *no* previous-client facts. Recognized
+    13-column work-order history is different: each dated reported value
+    belongs to a specific month/site/metric, so those original values can be
+    retained in a new rolling view after unique identity checks. Conflicts
+    stop the rebind before any draft is changed. Previous reports stay immutable.
     """
     if draft.profile.template != previous_template:
+        # Old report history is still saved, but a new physical master cannot
+        # silently claim or discard its work-order month cells.
+        for block in draft.blocks:
+            prior = previous_blocks.get(block.key)
+            if (block.key == "work_orders" and block.source != "Omit" and prior
+                    and any(len(t.columns) == 13 and t.rows for t in prior.extra_tables)):
+                raise ValueError("The pinned master changed; review historical work-order grid migration.")
         return draft
     accepted = {table.reference: table for table in for_profile(draft.profile)}
     if not accepted:
         return draft
+    from app.monthly_report_work_order_rolling import (
+        explicit_grid_period, merge_carried_grid, rolling_labels,
+    )
+
     updated = []
     for block in draft.blocks:
         prior = previous_blocks.get(block.key)
-        if (prior is None or not block.extra_tables
-                or len(prior.extra_tables) != len(block.extra_tables)):
+        if prior is None or not block.extra_tables:
+            updated.append(block)
+            continue
+        if len(prior.extra_tables) != len(block.extra_tables):
+            if (block.key == "work_orders" and any(
+                    len(t.columns) == 13 and t.rows for t in prior.extra_tables)):
+                raise ValueError("Work-order master grid count changed; review all historical locations.")
             updated.append(block)
             continue
         tables = []
+        used = set()
         for current, former in zip(block.extra_tables, prior.extra_tables):
             master = accepted.get(former.reference)
-            if (master is not None and master.slot == block.key
-                    and len(current.columns) == len(master.columns)
-                    and not current.rows):
-                tables.append(replace(current, reference=former.reference))
-            else:
+            bound = (master is not None and master.slot == block.key
+                     and len(current.columns) == len(master.columns)
+                     and not current.rows)
+            if not bound:
+                if (block.key == "work_orders" and len(former.columns) == 13
+                        and former.rows and block.source != "Omit"):
+                    raise ValueError("A carried work-order grid has no matching pinned master region.")
                 tables.append(current)
+                continue
+            target = replace(current, reference=former.reference)
+            if (block.key == "work_orders" and block.source != "Omit"
+                    and len(former.columns) == 13 and former.rows):
+                if len(draft.profile.facilities) > 2:
+                    raise ValueError("More than two work-order locations need an approved overflow layout.")
+                previous_period = explicit_grid_period(former.columns)
+                if previous_period is None:
+                    raise ValueError("Historical work-order month labels lack explicit years; review before rollover.")
+                if (len(former.rows) != 1 or len(former.rows[0]) != 13
+                        or " ".join(former.columns[0].casefold().split())
+                        not in _WORK_ORDER_METRICS
+                        or " ".join(target.columns[0].casefold().split())
+                        != " ".join(former.columns[0].casefold().split())):
+                    raise ValueError("Historical work-order site or metric needs explicit review.")
+                label = " ".join(former.rows[0][0].casefold().split())
+                matches = [site for site in draft.profile.facilities
+                           if label in {" ".join(v.casefold().split()) for v
+                                        in (site.key, site.title, *site.aliases)}]
+                if len(matches) != 1:
+                    raise ValueError("Historical work-order site identity is missing or ambiguous.")
+                site = matches[0]
+                pair = (site.key, " ".join(former.columns[0].casefold().split()))
+                if pair in used:
+                    raise ValueError("Two physical grids claim the same historical site and metric.")
+                used.add(pair)
+                target = replace(target, columns=(target.columns[0], *rolling_labels(draft.period)))
+                target = merge_carried_grid(former, target, previous_period,
+                                            draft.period, site_title=site.title)
+            tables.append(target)
         updated.append(replace(block, extra_tables=tuple(tables)))
     return replace(draft, blocks=tuple(updated))
