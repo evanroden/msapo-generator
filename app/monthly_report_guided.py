@@ -489,6 +489,9 @@ def complete_guided_sections(draft):
                       for section in profile_sections(replace(draft.profile, excluded_sections=(), section_order=order))}
     sections_out = {section.key for section in draft.sections if not section.included and section.key in chosen}
     sections_out |= {key for key in draft.profile.excluded_sections if key not in present and key in standard_specs}
+    # Explicit whole-section choices retain every block and follow-up so
+    # checking the section again restores it without destructive conversion.
+    sections_out -= set(draft.omitted_sections)
     # Both the slots a legacy section still lists and the standard slots
     # restored below: a retained block in either stays left out.
     left_out = {block.key for key in sections_out for section in (present.get(key), standard_specs.get(key))
@@ -544,7 +547,7 @@ def complete_guided_sections(draft):
                 before_pages = next(i for i, block in enumerate(existing_blocks) if block.key == "water_reports")
                 existing_blocks = (*existing_blocks[:before_pages], update, *existing_blocks[before_pages:])
                 additions = tuple(block for block in additions if block is not update)
-        sections.append(replace(section, included=True,
+        sections.append(replace(section, included=key not in draft.omitted_sections,
                                 blocks=tuple(replace(block, required=False) for block in (*existing_blocks, *additions))))
     return replace(draft, sections=tuple(sections))
 
@@ -1675,6 +1678,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                         replace(draft, blocks=tuple(blocks.values())), assets, contract, period, state)
                     render_section_preview(proposed_draft, "cover", proposed_assets, prefix, deferred=True)
         from app.monthly_report_section_help import editor_section_title
+        from app.monthly_report_model import included_sections
+        section_choices = {}
         for section in draft.sections:
             title = editor_section_title(section) or section.key.replace("_", " ").capitalize()
             with workspace_section("monthly_" + section.key, title):
@@ -1690,8 +1695,15 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     if section != before:
                         draft = replace(draft, sections=tuple(
                             section if item is before else item for item in draft.sections))
-                st.subheader(title, anchor="report-section-" + section.key,
+                from app.monthly_report_section_inclusion import render_section_inclusion
+                section_choices[section.key] = render_section_inclusion(draft, section, prefix, field)
+                numbered = next((s for s in included_sections(draft.sections) if s.key == section.key), None)
+                heading = f"{numbered.number}. {title}" if numbered else title
+                st.subheader(heading, anchor="report-section-" + section.key,
                              help=editor_section_heading_help(section.key))
+                if not section.included:
+                    st.caption("Not included in this report. Its content is kept; check the box to restore it.")
+                    continue
                 guidance = editor_section_guidance(section.key)
                 if guidance:
                     st.caption(guidance)
@@ -1709,6 +1721,15 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         from app.monthly_report_source_manager_ui import render_guided_source_manager
         draft, blocks = render_guided_source_manager(
             draft, blocks, prefix, field, _apply_prepared, _keep_missing_sources, assets=assets)
+    changed_section_choices = {key: included for key, included in section_choices.items()
+                               if next(s for s in draft.sections if s.key == key).included != included}
+    if changed_section_choices:
+        from app.monthly_report_section_inclusion import set_section_included
+        draft = replace(draft, blocks=tuple(blocks.values()))
+        for key, included in changed_section_choices.items():
+            draft = set_section_included(draft, key, included)
+        st.session_state[draft_key] = draft
+        st.rerun()
     blocks = {key: refresh_asset_source_context(block, draft.sources) for key, block in blocks.items()}
     draft = complete_guided_sections(replace(draft, blocks=tuple(blocks.values())))
     footer = blocks.get("footer_text")
