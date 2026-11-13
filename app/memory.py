@@ -220,6 +220,17 @@ CREATE TABLE IF NOT EXISTS device_report_preferences (
     account_name TEXT NOT NULL,
     profile_key TEXT NOT NULL
 );
+-- Additive (#21): one row per accepted PO package, keyed by its context ID so
+-- a rerun or regeneration of the same package never adds a second row.
+CREATE TABLE IF NOT EXISTS po_history (
+    contract       TEXT NOT NULL,
+    context_id     TEXT NOT NULL,
+    recorded_at    REAL NOT NULL,
+    vendor         TEXT NOT NULL DEFAULT '',
+    total          TEXT NOT NULL DEFAULT '',
+    quote_filename TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (contract, context_id)
+);
 """
 
 
@@ -1669,6 +1680,271 @@ def forget_device_requester(device_token: str | None) -> bool:
             conn.execute("DELETE FROM device_requesters WHERE device_hash=?", (device,))
         return True
     except Exception:
+        return False
+    finally:
+        conn.close()
+
+
+
+# ---------------------------------------------------------------------------
+# Owner decisions for #21 (13 November 2026)
+#
+# * Only the owner may view or edit saved contacts. The screen that does so is
+#   gated by app.owner_access; these functions do no access checks themselves
+#   and must never be called from an ungated route.
+# * Saved contacts are kept for two years after their last use, then removed.
+#   A row whose last use is unknown (0) is never removed.
+# * One PO history row is kept per accepted PO package: date, vendor, total and
+#   quote file name. PO history is not pruned.
+# ---------------------------------------------------------------------------
+
+CONTACT_RETENTION_SECONDS = 730 * 24 * 60 * 60
+_PRUNE_INTERVAL_SECONDS = 24 * 60 * 60
+_last_prune_at = 0.0
+
+# (table, timestamp column) pairs covered by the two-year contact retention.
+_RETAINED_CONTACT_TABLES = (
+    ("vendor_contacts", "last_used"),
+    ("vendor_contact_events", "recorded_at"),
+    ("contacts", "last_used"),
+    ("admin_emails", "last_used"),
+    ("expense_approvers", "last_used"),
+    ("expense_approver_events", "recorded_at"),
+)
+
+
+def prune_stale_contacts(now: float | None = None) -> int:
+    """Remove saved contacts last used more than two years ago.
+
+    Returns the number of rows removed, or 0 when storage is unavailable.
+    Rows with an unknown (zero) timestamp are kept.
+    """
+    conn = _connect()
+    if conn is None:
+        return 0
+    cutoff = (time.time() if now is None else now) - CONTACT_RETENTION_SECONDS
+    removed = 0
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        for table, column in _RETAINED_CONTACT_TABLES:
+            removed += conn.execute(
+                f"DELETE FROM {table} WHERE {column} > 0 AND {column} < ?", (cutoff,)
+            ).rowcount
+        conn.commit()
+        return removed
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return 0
+    finally:
+        conn.close()
+
+
+def _maybe_prune_stale_contacts() -> None:
+    """Run the retention rule at most once a day per process."""
+    global _last_prune_at
+    now = time.time()
+    if now - _last_prune_at < _PRUNE_INTERVAL_SECONDS:
+        return
+    _last_prune_at = now
+    prune_stale_contacts(now)
+
+
+def record_po_history(
+    *,
+    contract: str,
+    context_id: str | None,
+    vendor: str | None,
+    total: str | None,
+    quote_filename: str | None,
+) -> bool:
+    """Keep one history row for an accepted PO package.
+
+    Idempotent per (contract, context_id): Streamlit reruns and regenerating
+    the identical package do not add rows. A corrected package has a new
+    context ID and therefore gets its own row. Storage failure returns False
+    and never blocks the PO workflow.
+    """
+    context = (context_id or "").strip()
+    if not contract or not context or len(context) > 200:
+        return False
+    conn = _connect()
+    if conn is None:
+        return False
+    try:
+        with conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO po_history "
+                "(contract,context_id,recorded_at,vendor,total,quote_filename) "
+                "VALUES (?,?,?,?,?,?)",
+                (contract, context, time.time(), _norm_vendor(vendor)[:240],
+                 str(total or "").strip()[:40],
+                 str(quote_filename or "").replace("\\", "/").rsplit("/", 1)[-1].strip()[:240]),
+            )
+        return True
+    except Exception:
+        return False
+    finally:
+        conn.close()
+        _maybe_prune_stale_contacts()
+
+
+def po_history(contract: str, limit: int = 500) -> list[dict]:
+    """Newest-first PO history for ONE contract (owner screen only)."""
+    conn = _connect()
+    if conn is None or not contract:
+        if conn is not None:
+            conn.close()
+        return []
+    try:
+        rows = conn.execute(
+            "SELECT recorded_at,vendor,total,quote_filename FROM po_history "
+            "WHERE contract=? ORDER BY recorded_at DESC LIMIT ?",
+            (contract, max(1, int(limit))),
+        ).fetchall()
+        return [
+            {"recorded_at": float(r[0]), "vendor": r[1], "total": r[2], "quote_filename": r[3]}
+            for r in rows
+        ]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def contracts_with_saved_contacts() -> list[str]:
+    """Contracts that have saved vendor contacts or PO history (owner screen only)."""
+    conn = _connect()
+    if conn is None:
+        return []
+    try:
+        rows = conn.execute(
+            "SELECT contract FROM vendor_contacts UNION SELECT contract FROM po_history "
+            "ORDER BY 1"
+        ).fetchall()
+        return [str(r[0]) for r in rows if r[0]]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def saved_vendor_contacts(contract: str) -> list[dict]:
+    """Every saved vendor representative for ONE contract (owner screen only)."""
+    conn = _connect()
+    if conn is None or not contract:
+        if conn is not None:
+            conn.close()
+        return []
+    try:
+        rows = conn.execute(
+            "SELECT vendor,name,email,count,last_used FROM vendor_contacts "
+            "WHERE contract=? ORDER BY vendor, count DESC, last_used DESC",
+            (contract,),
+        ).fetchall()
+        return [
+            {"vendor": r[0], "name": r[1], "email": r[2], "count": int(r[3]),
+             "last_used": float(r[4])}
+            for r in rows
+        ]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def delete_vendor_contact(contract: str, vendor: str, name: str, email: str) -> bool:
+    """Remove one saved representative from ONE contract, with its events.
+
+    Deleting the events too stops a later correction of an old package from
+    touching a pair the owner removed. Other contracts are never touched.
+    """
+    if not contract or not vendor or not name or not email:
+        return False
+    conn = _connect()
+    if conn is None:
+        return False
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        removed = conn.execute(
+            "DELETE FROM vendor_contacts WHERE contract=? AND vendor=? AND name=? AND email=?",
+            (contract, vendor, name, email),
+        ).rowcount
+        conn.execute(
+            "DELETE FROM vendor_contact_events WHERE contract=? AND vendor=? AND name=? AND email=?",
+            (contract, vendor, name, email),
+        )
+        conn.commit()
+        return removed > 0
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+    finally:
+        conn.close()
+
+
+def correct_vendor_contact(
+    contract: str,
+    vendor: str,
+    name: str,
+    email: str,
+    *,
+    new_name: str | None,
+    new_email: str | None,
+) -> bool:
+    """Correct one saved representative in ONE contract.
+
+    If the corrected pair already exists for the same vendor the two are merged:
+    counts are added and the latest use is kept. Events follow the correction.
+    Returns False for invalid input, a missing source row or unavailable storage.
+    """
+    target_name = _norm_name(new_name)
+    target_email = _norm_email(new_email)
+    if (not contract or not vendor or not name or not email or not target_name
+            or not target_email or not _looks_like_email(target_email) or len(target_name) > 160):
+        return False
+    if (target_name, target_email) == (name, email):
+        return True
+    conn = _connect()
+    if conn is None:
+        return False
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT count,last_used FROM vendor_contacts "
+            "WHERE contract=? AND vendor=? AND name=? AND email=?",
+            (contract, vendor, name, email),
+        ).fetchone()
+        if row is None:
+            conn.rollback()
+            return False
+        conn.execute(
+            "INSERT INTO vendor_contacts (contract,vendor,name,email,count,last_used) "
+            "VALUES (?,?,?,?,?,?) ON CONFLICT(contract,vendor,name,email) DO UPDATE SET "
+            "count=count+excluded.count,last_used=MAX(last_used,excluded.last_used)",
+            (contract, vendor, target_name, target_email, int(row[0]), float(row[1])),
+        )
+        conn.execute(
+            "DELETE FROM vendor_contacts WHERE contract=? AND vendor=? AND name=? AND email=?",
+            (contract, vendor, name, email),
+        )
+        conn.execute(
+            "UPDATE vendor_contact_events SET name=?,email=? "
+            "WHERE contract=? AND vendor=? AND name=? AND email=?",
+            (target_name, target_email, contract, vendor, name, email),
+        )
+        conn.commit()
+        return True
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         return False
     finally:
         conn.close()
