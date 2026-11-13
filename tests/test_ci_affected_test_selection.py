@@ -15,7 +15,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import ci_select_tests as selector
 
-
 def write_tree(root: Path, files: dict[str, str]) -> None:
     for rel, content in files.items():
         path = root / rel
@@ -37,6 +36,7 @@ def repo(tmp_path):
         "tests/test_ci_ubuntu_mirror_priority.py": "def test_guard():\n    assert True\n",
         "tests/test_ci_affected_test_selection.py": "def test_guard():\n    assert True\n",
     })
+
     return tmp_path
 
 
@@ -94,6 +94,38 @@ def test_entrypoint_change_runs_full_suite(repo):
         assert mode == "full", changed
 
 
+def test_app_init_change_runs_full_suite_even_when_selection_is_small(repo):
+    # app/__init__.py is package init: every `from app import ...` runs
+    # it, so it forces the full suite outright -- not just via the 70%
+    # rule. Pad the repo so the affected set stays small (5/11 files)
+    # and an "affected" answer would be possible without the explicit
+    # rule.
+    for name in ("test_extra_a.py", "test_extra_b.py", "test_extra_c.py",
+                 "test_extra_d.py", "test_extra_e.py"):
+        write_tree(repo, {f"tests/{name}": "def test_extra():\n    assert True\n"})
+    mode, selected, log = selector.select(repo, ["app/__init__.py"])
+    assert mode == "full"
+    assert selected == []
+    assert any("app/__init__.py" in line for line in log)
+
+
+def test_changed_test_helper_selects_its_consumers(repo):
+    # A test file that supplies shared helpers: changing it must run its
+    # consumers, whether they import it by bare name (pytest puts the
+    # tests directory on sys.path) or dotted name.
+    write_tree(repo, {
+        "tests/test_shared_ui.py": "def monthly():\n    return 'monthly'\n",
+        "tests/test_consumer_bare.py": "from test_shared_ui import monthly\n\ndef test_consumer():\n    assert monthly() == 'monthly'\n",
+        "tests/test_consumer_dotted.py": "from tests.test_shared_ui import monthly\n\ndef test_consumer():\n    assert monthly() == 'monthly'\n",
+    })
+    mode, selected, _ = selector.select(repo, ["tests/test_shared_ui.py"])
+    assert mode == "affected"
+    assert "tests/test_shared_ui.py" in selected
+    assert "tests/test_consumer_bare.py" in selected
+    assert "tests/test_consumer_dotted.py" in selected
+    assert "tests/test_unrelated.py" not in selected
+
+
 def test_requirements_change_runs_full_suite(repo):
     mode, _, _ = selector.select(repo, ["requirements-dev.lock"])
     assert mode == "full"
@@ -113,6 +145,31 @@ def test_docs_change_selects_tests_mentioning_it(repo):
     assert mode == "affected"
     assert "tests/test_docs.py" in selected
     assert "tests/test_core.py" not in selected
+
+
+def test_top_level_docs_change_selects_docs_index_test(repo):
+    # tests/test_docs_index.py discovers docs with DOCS.glob("*.md"), so
+    # it never mentions any one file by name; a top-level docs/*.md
+    # change must still select it.
+    write_tree(repo, {
+        "docs/NOTES.md": "# notes\n",
+        "tests/test_docs_index.py": "from pathlib import Path\n\nDOCS = Path('docs')\n\ndef test_docs_index():\n    assert sorted(p for p in DOCS.glob('*.md'))\n",
+    })
+    mode, selected, _ = selector.select(repo, ["docs/NOTES.md"])
+    assert mode == "affected"
+    assert "tests/test_docs_index.py" in selected
+
+
+def test_nested_docs_change_does_not_select_docs_index_test(repo):
+    # The glob is top-level only, so a docs change below docs/ does not
+    # select the index test.
+    write_tree(repo, {
+        "docs/sub/NOTES.md": "# notes\n",
+        "tests/test_docs_index.py": "from pathlib import Path\n\nDOCS = Path('docs')\n\ndef test_docs_index():\n    assert sorted(p for p in DOCS.glob('*.md'))\n",
+    })
+    mode, selected, _ = selector.select(repo, ["docs/sub/NOTES.md"])
+    assert mode == "affected"
+    assert "tests/test_docs_index.py" not in selected
 
 
 def test_wide_change_runs_full_suite(repo):
