@@ -170,6 +170,56 @@ def test_same_event_text_edit_is_collected_before_section_is_hidden(monkeypatch,
     assert next(b for b in value.blocks if b.key=='activity_summary').text=='SAME EVENT SYNTHETIC ACTIVITY'
 
 
+
+@pytest.mark.parametrize("category,section_key", [("issue", "issues"), ("proposal", "proposals")])
+def test_whole_section_omission_preserves_carried_items_without_blocking_generation(category, section_key):
+    from app.monthly_report_checks import preflight
+    from app.monthly_report_model import ReportFollowUp
+
+    carried = ReportFollowUp(
+        key="synthetic-follow-up", category=category,
+        text="Synthetic carried task: verify a later month.", carried_from="")
+    before = replace(draft(), follow_ups=(carried,))
+    omitted = set_section_included(before, section_key, False)
+    assert omitted.follow_ups == before.follow_ups
+    assert omitted.omitted_sections == (section_key,)
+
+    # A checkbox must not require the user to destroy or individually omit
+    # a retained item in the now-hidden section before generating the report.
+    assert not any(check.code == "follow_up_section"
+                   for check in preflight(omitted))
+    assert not any(check.block_key == carried.key and check.code == "follow_up"
+                   for check in preflight(omitted))
+    assert draft_from_dict(asdict(omitted)).follow_ups == before.follow_ups
+
+    # Legacy/profile-disabled sections still have the pre-existing explicit
+    # follow-up review gate, rather than silently approving a missing page.
+    unchosen = replace(omitted, omitted_sections=())
+    assert any(check.code == "follow_up_section"
+               for check in preflight(unchosen))
+
+
+def test_master_design_change_prunes_only_removed_optional_omission_keys():
+    before = draft()
+    assert "accounts_receivable" not in {section.key for section in before.sections}
+    # Model the old saved AR-inclusive master after a switch to one without
+    # AR. The old optional section no longer exists but its omission does.
+    orphaned = replace(before, omitted_sections=("accounts_receivable",))
+    updated = complete_guided_sections(orphaned)
+    assert updated.omitted_sections == ()
+    assert updated.blocks == before.blocks
+    assert updated.follow_ups == before.follow_ups
+    assert draft_from_dict(asdict(updated)) == updated
+
+    # Existing choices in the retained design must not be dropped by the
+    # same normalization path.
+    retained = set_section_included(before, "activity", False)
+    both = replace(retained, omitted_sections=("activity", "accounts_receivable"))
+    normalized = complete_guided_sections(both)
+    assert normalized.omitted_sections == ("activity",)
+    assert draft_from_dict(asdict(normalized)) == normalized
+
+
 def test_checkbox_native_default_matches_current_section_on_a_fresh_mount(monkeypatch):
     from app.monthly_report_section_inclusion import render_section_inclusion
     import streamlit as st
