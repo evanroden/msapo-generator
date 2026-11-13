@@ -63,6 +63,8 @@ def test_title_band_renders_full_width_over_the_real_headings(storage):
     assert [cell.text for cell in call.cells] == list(CALL)
     assert repeats_as_header(title) and repeats_as_header(headings) and not repeats_as_header(call)
     assert "Column 2" not in "".join(cell.text for row in table.rows for cell in row.cells)
+    assert {run.font.name for row in table.rows for cell in row.cells
+            for p in cell.paragraphs for run in p.runs} == {"Arial"}
 
 
 def test_group_band_rows_span_the_table_and_ordinary_rows_do_not(storage):
@@ -158,3 +160,110 @@ def test_a_priced_title_is_never_moved_onto_a_picture(storage):
     inspection, text, picture = picture_page(path, "Proposal total $1,597.32 for water treatment")
     with pytest.raises(ValueError, match="pricing"):
         imported(path, inspection, (text.id, picture.id), PROFILE)
+
+
+def test_tables_follow_their_source_heading_in_the_built_in_design(storage):
+    from app.monthly_report_model import AnchoredTable
+    from app.monthly_report_library import _report_table_from_dict
+    from dataclasses import asdict
+    rejected = AnchoredTable(("Equipment", "Status"), (("Boiler", "Rejected"),), "src:1", "Rejected Quotes")
+    pending = AnchoredTable(("Equipment", "Status"), (("Pump", "Pending"),), "src:2", "Pending Quotes")
+    second = AnchoredTable(("Equipment", "Status"), (("Fan", "Pending"),), "src:3", "Pending Quotes")
+    loose = ReportTable(("Equipment", "Status"), (("Valve", "Open"),), "src:4")
+    edited = AnchoredTable(("Equipment", "Status"), (("Tank", "Open"),), "src:5", "Wording that was changed")
+    draft = synthetic_draft(PROFILE, ReportPeriod(2026, 10))
+    first = replace(draft.blocks[0], text="Option B Quotes\nRejected Quotes\nPending Quotes\nClosing note",
+                    extra_tables=(rejected, pending, second, loose, edited))
+    draft = replace(draft, blocks=(first, *draft.blocks[1:]))
+    output = Document(BytesIO(assemble_docx(draft, acknowledged_fingerprint=draft.fingerprint)))
+    order = []
+    for node in output.element.body:
+        if node.tag == qn("w:p"):
+            text = "".join(node.xpath(".//w:t/text()")).strip()
+            if text in ("Option B Quotes", "Rejected Quotes", "Pending Quotes", "Closing note"):
+                order.append(text)
+        elif node.tag == qn("w:tbl"):
+            cells = [t for t in node.xpath(".//w:t/text()") if t.strip()]
+            if cells[:2] == ["Equipment", "Status"]:
+                order.append(cells[2])
+    assert order == ["Option B Quotes", "Rejected Quotes", "Boiler", "Pending Quotes", "Pump", "Fan",
+                     "Closing note", "Valve", "Tank"]
+    # The source position survives saving; a plain table stays plain.
+    assert _report_table_from_dict(asdict(rejected)) == rejected
+    assert type(_report_table_from_dict(asdict(loose))) is ReportTable
+
+
+def test_only_the_built_in_design_records_table_positions(storage):
+    from app.monthly_report_model import AnchoredTable
+    document = Document()
+    document.add_heading("10 Pending & Declined Proposals", 1)
+    document.add_paragraph("Rejected Quotes")
+    table = document.add_table(rows=2, cols=2)
+    for cell, value in zip(table.rows[0].cells, ("Equipment", "Status")):
+        cell.text = value
+    for cell, value in zip(table.rows[1].cells, ("Boiler", "Rejected")):
+        cell.text = value
+    path = storage / "proposals.docx"
+    document.save(path)
+    inspection = inspect_docx(path)
+    ids = [item.id for item in inspection.items if item.kind in ("text", "table") and item.text != "10 Pending & Declined Proposals"]
+    plan = {"key": "proposals", "target": "proposals", "approved": True, "selected": ids}
+    for profile, anchored in ((PROFILE, True), (None, False), (replace(PROFILE, template="enfra_master:synthetic"), False)):
+        mapped, _ = build_section_import(path, inspection, (plan,), profile=profile)
+        tables = [t for block in mapped.blocks for t in block.extra_tables]
+        assert len(tables) == 1
+        assert isinstance(tables[0], AnchoredTable) is anchored
+        if anchored:
+            assert tables[0].anchor == "Rejected Quotes"
+
+
+def png(size, color=(30, 90, 160)):
+    buffer = BytesIO()
+    Image.new("RGB", size, color).save(buffer, "PNG")
+    return buffer.getvalue()
+
+
+def test_two_same_size_wide_slides_share_a_page_but_other_pictures_do_not(storage):
+    from docx.shared import Inches
+    assets = {"wf1.png": png((1280, 720)), "wf2.png": png((1280, 720), (90, 30, 160)),
+              "matrix.png": png((2048, 1154)), "tall.png": png((600, 800))}
+    draft = synthetic_draft(PROFILE, ReportPeriod(2026, 10))
+    from app.monthly_report_asset_review import approve_all_assets
+    first = approve_all_assets(replace(draft.blocks[0], text="", asset_hashes=tuple(assets)))
+    draft = replace(draft, blocks=(first, *draft.blocks[1:]))
+    output = Document(BytesIO(assemble_docx(draft, acknowledged_fingerprint=draft.fingerprint,
+                                            asset_loader=assets.__getitem__)))
+    pictures = [p for p in output.paragraphs if p._p.xpath(".//pic:pic")]
+    heights = [p._p.xpath(".//wp:extent/@cy")[0] for p in pictures]
+    breaks = [bool(p.paragraph_format.page_break_before) for p in pictures]
+    assert breaks == [False, False, True, True]
+    assert int(heights[0]) + int(heights[1]) <= Inches(7.9)  # both fit one 9.5 in page
+
+
+def test_text_and_table_that_followed_pictures_in_the_source_follow_them_again(storage):
+    from app.monthly_report_model import AnchoredTable
+    from app.monthly_report_library import _report_table_from_dict
+    from app.monthly_report_asset_review import approve_all_assets
+    from dataclasses import asdict
+    assets = {"register.png": png((600, 800))}
+    assets_list = AnchoredTable(("Equipment", "Status"), (("Chiller", "Covered"),), "src:1",
+                                "Covered equipment list", "Status snapshot note")
+    assert _report_table_from_dict(asdict(assets_list)) == assets_list
+    draft = synthetic_draft(PROFILE, ReportPeriod(2026, 10))
+    first = approve_all_assets(replace(
+        draft.blocks[0], text="Training summary\nStatus snapshot note\nCovered equipment list",
+        asset_hashes=tuple(assets), asset_captions=("Course register",), extra_tables=(assets_list,)))
+    draft = replace(draft, blocks=(first, *draft.blocks[1:]))
+    output = Document(BytesIO(assemble_docx(draft, acknowledged_fingerprint=draft.fingerprint,
+                                            asset_loader=assets.__getitem__)))
+    order = []
+    for node in output.element.body:
+        text = "".join(node.xpath(".//w:t/text()")).strip()
+        if node.xpath(".//pic:pic"):
+            order.append("picture")
+        elif node.tag == qn("w:tbl") and text.startswith("Equipment"):
+            order.append("table")
+        elif text in ("Training summary", "Course register", "Status snapshot note", "Covered equipment list"):
+            order.append(text)
+    assert order == ["Training summary", "picture", "Course register", "Status snapshot note",
+                     "Covered equipment list", "table"]

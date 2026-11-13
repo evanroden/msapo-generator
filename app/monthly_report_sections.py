@@ -8,7 +8,7 @@ import re
 from app.monthly_report_content_policy import contains_price, page_status, table_price_columns, table_has_pricing, logical_table_columns
 from app.monthly_report_checks import placeholder_matches
 from app.monthly_report_import import MappedImport, ImportMapping, _heading, read_import_image, _read_import_image, MAX_NORMALIZED_BYTES, is_logo_artwork, is_header_artwork
-from app.monthly_report_model import ReportTable, ResolvedBlock, known_sections, layout_blocks
+from app.monthly_report_model import AnchoredTable, ReportTable, ResolvedBlock, known_sections, layout_blocks
 from app.monthly_report_asset_review import approve_all_assets
 
 
@@ -247,6 +247,8 @@ def _build_section_import(path, inspection, plans, *, source_view=None, _operati
         picture_titles = (_picture_titles(items, selected, plan.get("texts", {}))
                           if _builtin_design(profile) else {})
         title_owner = {text_id: image_id for image_id, (text_id, _) in picture_titles.items()}
+        # Per slot: the first text line written after the latest picture.
+        after_pictures = {}
         for identity in selected:
             item = items[identity]
             slot = plan.get("destinations", {}).get(identity)
@@ -286,6 +288,7 @@ def _build_section_import(path, inspection, plans, *, source_view=None, _operati
                 contexts = dict(block.asset_provenance)
                 contexts[digest] = tuple(dict.fromkeys((*contexts.get(digest, ()), reference)))
                 block = replace(block, asset_provenance=tuple(contexts.items()))
+                after_pictures[slot] = None
                 if identity in picture_titles:
                     title_id = picture_titles[identity][0]
                     block = replace(block, references=tuple(dict.fromkeys(
@@ -298,11 +301,20 @@ def _build_section_import(path, inspection, plans, *, source_view=None, _operati
                 if table:
                     if table_has_pricing(table.columns, table.rows):
                         raise ValueError("Remove pricing from the section table before continuing.")
-                    block = replace(block, extra_tables=(*block.extra_tables, replace(table, reference=reference)))
+                    table = replace(table, reference=reference)
+                    lines = [line.strip() for line in block.text.splitlines() if line.strip()]
+                    if lines and type(table) is ReportTable and _builtin_design(profile):
+                        # Remember the paragraph this table followed so the
+                        # built-in design can keep the source's order.
+                        table = AnchoredTable(table.columns, table.rows, table.reference, lines[-1],
+                                              after_pictures.get(slot) or "")
+                    block = replace(block, extra_tables=(*block.extra_tables, table))
             else:
                 text = plan.get("texts", {}).get(identity, item.text)
                 if contains_price(text):
                     raise ValueError("Remove pricing from the section text before continuing.")
+                if slot in after_pictures and after_pictures[slot] is None and text.strip():
+                    after_pictures[slot] = text.strip().splitlines()[0].strip()
                 block = replace(block, text="\n\n".join(t for t in (block.text, text.strip()) if t))
                 for original_id in plan.get("combined_text_ids", ()):
                     if original_id != identity:

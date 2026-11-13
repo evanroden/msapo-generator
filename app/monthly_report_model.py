@@ -155,6 +155,18 @@ class ReportTable:
 
 
 @dataclass(frozen=True)
+class AnchoredTable(ReportTable):
+    # The source paragraph this table followed in its Word section. Only the
+    # built-in design uses it to put the table back under that paragraph;
+    # plain/legacy tables keep their historical fingerprints and placement.
+    anchor: str = ""
+    # When pictures came first in the source, the first paragraph written
+    # after them; that paragraph, the rest up to this table, and the table
+    # follow the pictures again.
+    lead: str = ""
+
+
+@dataclass(frozen=True)
 class TrainingSessionTable(ReportTable):
     # Identity of each accepted row snapshot. Only explicit session mutations
     # add this metadata; plain/legacy tables keep their historical fingerprints.

@@ -266,6 +266,70 @@ def _display_page(document, *, label: str, title: str, subtitle: str = "", light
         paragraph.paragraph_format.right_indent = Inches(0.75)
 
 
+def _body_items(document):
+    body = document.element.body
+    return [node for node in body if node.tag != qn("w:sectPr")]
+
+
+def _plain_line(text: str) -> str:
+    text = text.strip()
+    for prefix in ("- ", "• ", "## "):
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+    return " ".join(text.split())
+
+
+def _follow_anchors(text_items, placed_tables) -> None:
+    """Move each anchored table under the paragraph it followed in the source.
+
+    Matching is by the paragraph's own words, in order, so edited or removed
+    wording simply leaves that table where it is (after the text).
+    """
+    texts = [_plain_line("".join(node.xpath(".//w:t/text()"))) if node.tag == qn("w:p") else None
+             for node in text_items]
+    cursor, last = 0, {}
+    for (anchor, nodes), _ in placed_tables:
+        anchor = _plain_line(anchor)
+        if not anchor or not nodes:
+            continue
+        index = next((i for i in range(cursor, len(texts)) if texts[i] == anchor), None)
+        if index is None:
+            continue
+        target = last.get(index, text_items[index])
+        for node in nodes:
+            target.addnext(node)
+            target = node
+        last[index] = target
+        cursor = index
+
+
+def _after_pictures(text_items, picture_items, placed_tables) -> None:
+    """Text that followed a section's pictures in the source follows them again.
+
+    Only an anchored table that recorded such a paragraph moves anything:
+    from that paragraph through the table, placed after the last picture.
+    """
+    if not picture_items:
+        return
+    texts = [_plain_line("".join(node.xpath(".//w:t/text()"))) if node.tag == qn("w:p") else None
+             for node in text_items]
+    for (anchor, nodes), table in placed_tables:
+        lead = _plain_line(getattr(table, "lead", ""))
+        if not lead or not nodes or lead not in texts:
+            continue
+        start = text_items[texts.index(lead)]
+        if start.getparent() is None or nodes[-1].getparent() is None:
+            continue
+        body = list(start.getparent())
+        first, last = body.index(start), body.index(nodes[-1])
+        if body.index(picture_items[0]) < first or last < first:
+            continue  # already after the pictures, or not where it was placed
+        target = picture_items[-1]
+        for node in body[first:last + 1]:
+            target.addnext(node)
+            target = node
+
+
 def _text(document, text: str) -> None:
     for line in text.splitlines():
         if not line.strip():
@@ -322,6 +386,16 @@ def _picture(document, raw: bytes, *, width: float = 7, height: float = 8,
     if page_break_before:
         paragraph.paragraph_format.page_break_before = True
     _fit_picture(paragraph.add_run(), raw, width, height)
+
+
+def _stacked_pair(first: bytes, second: bytes) -> bool:
+    """Two wide pictures exported at the same size fit one page together."""
+    sizes = []
+    for raw in (first, second):
+        with Image.open(BytesIO(raw)) as image:
+            sizes.append(image.size)
+    (width, height), other = sizes
+    return sizes[0] == other and height > 0 and width / height >= 1.6
 
 
 def _fit_picture(run, raw, width, height):
@@ -435,6 +509,9 @@ def _format_table(table, has_header, header_rows=1, partial_rows=()):
                 paragraph.paragraph_format.keep_with_next = heading or bool(band)
                 for run in paragraph.runs:
                     run.font.size = size
+                    # ENFRA's reports set tables in Arial (rendered with the
+                    # deployed metric-compatible Liberation Sans).
+                    run.font.name = "Arial"
                     if heading:
                         run.font.color.rgb = RGBColor(255, 255, 255)
                         run.bold = True
@@ -550,7 +627,10 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
                 # must be evaluated separately, never rewritten by this path.
                 heading = document.add_heading("Facility contacts", 2)
                 heading.paragraph_format.page_break_before = True
+            text_start = len(_body_items(document))
             _text(document, block.text)
+            text_items = _body_items(document)[text_start:]
+            placed_tables = []
             from app.monthly_report_visuals import org_groups, org_page, photo_count, photo_page
             if block.org_nodes:
                 for index in range(len(org_groups(block.org_nodes))):
@@ -573,15 +653,31 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
                             style_document_caption(document.add_paragraph(block.asset_captions[item], style="Caption"))
                     else:
                         _picture(document, photo_page(photo_run(block, indexes), asset_loader, 0), height=7.7)
-            for index, reference in enumerate(block.asset_hashes if not block.org_nodes and spec.type != "image_grid" else ()):
+            pictures = block.asset_hashes if not block.org_nodes and spec.type != "image_grid" else ()
+            captions = tuple(block.asset_captions) + ("",) * len(pictures)
+            index = page = 0
+            while index < len(pictures):
                 if asset_loader is None:
                     raise ValueError("Image and PDF-page assets require the library resolver.")
+                raw = asset_loader(pictures[index])
+                partner = (asset_loader(pictures[index + 1]) if index + 1 < len(pictures)
+                           and not captions[index] and not captions[index + 1] else None)
                 # The page break belongs to the next image paragraph. A
                 # standalone break paragraph can consume an unwanted page
                 # when a large preceding source page nearly fills the sheet.
-                _picture(document, asset_loader(reference), page_break_before=index > 0)
-                if index < len(block.asset_captions) and block.asset_captions[index]:
-                    document.add_paragraph(block.asset_captions[index], style="Caption")
+                if partner is not None and _stacked_pair(raw, partner):
+                    # Two slides of one deck (such as the two outage workflows)
+                    # share a page, one above the other, as in the source report.
+                    _picture(document, raw, height=3.95, page_break_before=page > 0)
+                    _picture(document, partner, height=3.95)
+                    index += 2
+                else:
+                    _picture(document, raw, page_break_before=page > 0)
+                    if captions[index]:
+                        document.add_paragraph(captions[index], style="Caption")
+                    index += 1
+                page += 1
+            picture_items = _body_items(document)[text_start + len(text_items):]
             if block.rows:
                 width = len(spec.columns) or max(map(len, block.rows))
                 table = document.add_table(rows=1 if spec.columns else 0, cols=width)
@@ -598,6 +694,7 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
             for imported in block.extra_tables:
                 if not imported.columns or not any(c is not None and str(c).strip() for row in imported.rows for c in row):
                     continue
+                table_start = len(_body_items(document))
                 from app.monthly_report_training import matrix_title
                 title = matrix_title(imported.reference)
                 if title:
@@ -630,6 +727,9 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
                     for cell, value in zip(table.add_row().cells, values):
                         cell.text = "" if value is None else str(value)
                 _format_table(table, True, header_rows=2 if titled else 1, partial_rows=partial)
+                placed_tables.append(((getattr(imported, "anchor", ""), _body_items(document)[table_start:]), imported))
+            _follow_anchors(text_items, placed_tables)
+            _after_pictures(text_items, picture_items, placed_tables)
             if spec.key == "org_chart" and (block.org_nodes or block.asset_hashes):
                 chart_emitted = True
         carried = [item for item in draft.follow_ups if item.included and ("issues" if item.category == "issue" else "proposals") == section.key]
