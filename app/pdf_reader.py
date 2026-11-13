@@ -68,7 +68,7 @@ class PyMuPDFReader:
     @staticmethod
     def _fitz():
         try:
-            import fitz
+            import pymupdf as fitz
         except ImportError as exc:
             raise PDFReaderError(
                 "PyMuPDF is selected but the PyMuPDF package is not installed."
