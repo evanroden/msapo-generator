@@ -8,6 +8,7 @@ on:
       - 'scripts/workspace_financial_pages.py'
       - 'tests/test_monthly_report_financial_policy.py'
       - 'tests/test_monthly_report_mbcx_financial_pages.py'
+      - 'tests/test_monthly_report_receivable_intake.py'
       - 'tests/test_financial_pages_fixture.py'
       - 'tests/fixtures/workspaces/monthly_app.py'
       - '.github/workflows/monthly-financial-pages.yml'
@@ -20,6 +21,7 @@ on:
       - 'scripts/workspace_financial_pages.py'
       - 'tests/test_monthly_report_financial_policy.py'
       - 'tests/test_monthly_report_mbcx_financial_pages.py'
+      - 'tests/test_monthly_report_receivable_intake.py'
       - 'tests/test_financial_pages_fixture.py'
       - 'tests/fixtures/workspaces/monthly_app.py'
       - '.github/workflows/monthly-financial-pages.yml'
@@ -54,10 +56,12 @@ jobs:
           python scripts/patch_streamlit_date_input.py
           python -m playwright install --with-deps chromium webkit
       - name: Financial policy and real Word/PDF gates (no skipped tests)
+        env:
+          FINANCIAL_OUTPUT: test-artifacts/financial-pages
         timeout-minutes: 5
         run: |
           mkdir -p test-artifacts/financial-pages
-          python -m pytest tests/test_monthly_report_financial_policy.py tests/test_monthly_report_mbcx_financial_pages.py tests/test_financial_pages_fixture.py -q --junitxml=test-artifacts/financial-pages/policy.xml
+          python -m pytest tests/test_monthly_report_financial_policy.py tests/test_monthly_report_mbcx_financial_pages.py tests/test_monthly_report_receivable_intake.py tests/test_financial_pages_fixture.py -q --junitxml=test-artifacts/financial-pages/policy.xml
           python - <<'PY'
           import xml.etree.ElementTree as ET
           root = ET.parse('test-artifacts/financial-pages/policy.xml').getroot()

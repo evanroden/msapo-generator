@@ -306,12 +306,14 @@ def _remove_unapproved_header_images(part, approved_digests, approved_occurrence
     """Drop only image-backed old-client header/footer art on a fresh master.
 
     Pure native rules/rectangles and Word geometry are left intact; approved
-    current ENFRA logo bytes and explicitly preserved native occurrences remain.
+    current ENFRA logo bytes, ENFRA's own verified header furniture and
+    explicitly preserved native occurrences remain.
     An approved native occurrence does not authorize another use of equal bytes.
     All other image relationships are facts about the imported source, even when
     PNG metadata is not visible on page.
     The package sanitizer prunes dangling image parts after saving.
     """
+    from app.monthly_report_static_branding import is_company_artwork_blob
     vml = "{urn:schemas-microsoft-com:vml}imagedata"
     for picture in list(part.element.iter()):
         if picture.tag not in (qn("w:drawing"), qn("w:pict")):
@@ -329,7 +331,8 @@ def _remove_unapproved_header_images(part, approved_digests, approved_occurrence
                 trusted = False
                 break
             if (node not in approved_occurrences
-                    and hashlib.sha256(rel.target_part.blob).hexdigest() not in approved_digests):
+                    and hashlib.sha256(rel.target_part.blob).hexdigest() not in approved_digests
+                    and not is_company_artwork_blob(rel.target_part.blob)):
                 trusted = False
                 break
         if not trusted and picture.getparent() is not None:
@@ -2568,6 +2571,38 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     mark_native_section_headings(document, original, headings, section_by_pos, navigable)
     if source_region_observer is not None:
         source_region_observer(body, page_plan)
+    # Issue page links belong to the issue, not the independent Report pages
+    # pipeline. Emit them inside the native Issues section only, after all
+    # template/section transformations have settled. No source is approved here.
+    if (section_key in (None, "issues")
+            and any(section.key == "issues" and section.included for section in draft.sections)):
+        from app.monthly_report_issue_evidence_render import selected_issue_pages, append_issue_evidence
+        if selected_issue_pages(draft):
+            anchor = section_ends.get("issues")
+            if anchor is None or anchor.getparent() is not body:
+                # Reflow can discard the original final Issues paragraph. Use
+                # the source-owned physical region map after cleanup; never
+                # append issue evidence after a different logical section.
+                positions = [p for p, sec in section_by_pos.items()
+                             if sec == "issues" and original[p - 1].tag != qn("w:sectPr")]
+                regions = {page_plan.owner.get(original[p - 1]) for p in positions}
+                regions.discard(None)
+                anchor = None
+                if regions:
+                    last_region = max(regions)
+                    anchor = next((node for node in body
+                                   if (region := page_plan.owner.get(node)) is not None
+                                   and region > last_region), None)
+                    # Only an Issues section that was last in the source may
+                    # append before the document's terminal section property.
+                    if anchor is None and not any(
+                            section_by_pos.get(p) != "issues"
+                            for p in range(max(positions) + 1, len(original) + 1)
+                            if original[p - 1].tag != qn("w:sectPr")):
+                        anchor = body.find(qn("w:sectPr"))
+            if anchor is None or anchor.getparent() is not body:
+                raise NativeLayoutError("The native Issues section has no safe evidence anchor. Review the selected design.")
+            append_issue_evidence(document, draft, before=anchor)
     result = BytesIO()
     document.save(result)
     # Prune image relationships which became unused after old payload removal.

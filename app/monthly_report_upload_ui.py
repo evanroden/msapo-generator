@@ -1467,29 +1467,48 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
         st.session_state[local_key + "_context"] = context
     additions = {}
 
-    def activity_input(content):
-        # The one managed intake also accepts sources for other sections.
-        # Their extracted operational values must not become Activity prose
-        # merely because Activity owns the shared source controls.
-        if not managed:
-            return True
-        source = content.source
+    def _classification_delivery_pending(content):
         # Classification is delivered by the native page owner later in this
         # render. Do not apply an older read (or native insertion) before that
         # exact mounted control commits its newly delivered routing decision.
         # A stale widget from another source/canonical class has no authority.
+        source = content.source
         p = evidence_key + "_" + source.id
         previous = st.session_state.get(p + "_canonical_view")
         delivered = st.session_state.get(p + "_classification")
-        if (st.session_state.get(prefix + "_source_active_selected") == source.id
+        return (st.session_state.get(prefix + "_source_active_selected") == source.id
                 and previous is not None and previous.id == source.id
                 and previous.sha256 == source.sha256
                 and previous.classification == source.classification
                 and delivered in sources.CLASSIFICATIONS
-                and delivered != source.classification):
+                and delivered != source.classification)
+
+    def activity_input(content):
+        # The one managed intake also accepts sources for other sections.
+        # Their extracted operational values must not become Activity prose
+        # merely because Activity owns the shared source controls.
+        # This is the paid-reader gate: only these classifications may
+        # start a paid reading.
+        if not managed:
+            return True
+        if _classification_delivery_pending(content):
             return False
-        return source.classification in {
+        return content.source.classification in {
             "Vendor service", "CMMS export", "Improvement / training photo",
+        }
+
+    def native_input(content):
+        # Native (free) plain-text merge into Activity. Reference-only
+        # sources auto-merge here, as they did under the pre-Oct-22
+        # blocklist rule; the paid-reader gate above stays unchanged, so
+        # Reference-only never starts a paid reading.
+        if not managed:
+            return True
+        if _classification_delivery_pending(content):
+            return False
+        return content.source.classification in {
+            "Vendor service", "CMMS export", "Improvement / training photo",
+            "Reference only",
         }
 
     def read_target():
@@ -1615,7 +1634,7 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
     st.session_state[local_key + "_read"] = signature
     processed = set(st.session_state.get(local_key + "_native_ids", ()))
     fresh = tuple(c for c in contents if c.source.id in picked_ids
-                  and c.source.id not in processed and activity_input(c))
+                  and c.source.id not in processed and native_input(c))
     if fresh:
         additions[destination] = structured.native_update(
             fresh, destination, additions.get(destination, blocks.get(destination)),

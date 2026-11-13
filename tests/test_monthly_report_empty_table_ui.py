@@ -126,6 +126,26 @@ def test_blank_and_removed_rows_do_not_enter_durable_data_or_actual_word_output(
     assert EMPTY_TABLES[key][0] not in table_text
 
 
+def open_card(app, key):
+    # Capital tables render as row cards: the add button carries the card
+    # label, not the empty-grid label.
+    next(button for button in app.button if button.label == CARD_TABLES[key][1]).click().run()
+
+
+def card_fields(app):
+    return (*app.text_input, *app.text_area)
+
+
+def card_identity(app):
+    # The mounted card editor's widget keys; a remount would change them.
+    return tuple(item.key for item in card_fields(app))
+
+
+def set_card_field(app, label, value):
+    next(item for item in card_fields(app) if item.label == label).set_value(value).run()
+    assert not app.exception
+
+
 @pytest.mark.parametrize('key', ('capital_renewal', 'end_of_life'))
 def test_omitted_imported_empty_capital_frame_keeps_schema_until_deliberate_entry(key):
     app = workspace(key)
@@ -135,15 +155,17 @@ def test_omitted_imported_empty_capital_frame_keeps_schema_until_deliberate_entr
     app.session_state['draft'] = replace(original, blocks=tuple(incoming if block.key == key else block for block in original.blocks))
     app.run()
     assert not app.dataframe and current(app, key) == incoming
-    open_entry(app, key)
-    identity = grid(app, key)
+    open_card(app, key)
+    identity = card_identity(app)
     assert current(app, key) == incoming
-    edit_grid(app, identity, edited={0: {'Timing': '   '}})
+    set_card_field(app, 'Timing', '   ')
     assert current(app, key) == incoming  # Whitespace never reincludes the omitted frame.
-    edit_grid(app, identity, edited={0: {'Source identifier': '0007', 'Asset / recommendation': 'Replace motor', 'Timing': 'Unknown'}})
+    set_card_field(app, 'Source identifier', '0007')
+    set_card_field(app, 'Asset / recommendation', 'Replace motor')
+    set_card_field(app, 'Timing', 'Unknown')
     result = current(app, key)
     assert not app.exception and result.source == 'This month'
     assert result.extra_tables[0].columns == frame.columns
     assert result.extra_tables[0].reference == frame.reference
     assert result.extra_tables[0].rows == (('0007', 'Replace motor', 'Unknown', ''),)
-    assert result.references == incoming.references and grid(app, key) == identity
+    assert result.references == incoming.references and card_identity(app) == identity
