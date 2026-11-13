@@ -14,6 +14,7 @@ def test_every_intervening_step_is_activated_once_and_verified(monkeypatch, keyb
 
     class Page:
         index = 0
+        swallow_next = 0
 
         def locator(self, selector):
             return Control(self, selector)
@@ -28,6 +29,9 @@ def test_every_intervening_step_is_activated_once_and_verified(monkeypatch, keyb
 
         def click(self):
             events.append(('click', self.selector))
+            if self.page.swallow_next and self.selector.endswith('next'):
+                self.page.swallow_next -= 1
+                return
             self.page.index += 1 if self.selector.endswith('next') else -1
 
         def press(self, key):
@@ -35,7 +39,7 @@ def test_every_intervening_step_is_activated_once_and_verified(monkeypatch, keyb
             events.append(('press', self.selector))
             self.page.index += 1 if self.selector.endswith('next') else -1
 
-        def to_have_attribute(self, name, value):
+        def to_have_attribute(self, name, value, timeout=None):
             if isinstance(value, str):
                 assert value == entries[self.page.index]['id']
                 events.append(('arrival', value))
@@ -61,3 +65,55 @@ def test_every_intervening_step_is_activated_once_and_verified(monkeypatch, keyb
         (('press' if keyboard else 'click'), '.epc-section-back')] * 3
     assert ('to_be_disabled', '.epc-section-next') in events
     assert ('to_be_disabled', '.epc-section-back') in events
+
+
+def test_swallowed_next_click_is_retried_once_and_arrival_still_verified(monkeypatch):
+    """A dropped navigation command (WebKit synthetic-dom, Nov 12) retries once."""
+    events = []
+    entries = [{'id': key, 'title': key} for key in ('cover', 'activity', 'final', 'report_review')]
+
+    class Page:
+        index = 0
+        swallow_next = 1
+
+        def locator(self, selector):
+            return Control(self, selector)
+
+    class Control:
+        def __init__(self, page, selector):
+            self.page, self.selector = page, selector
+
+        def get_attribute(self, name):
+            assert name == 'data-section'
+            return entries[self.page.index]['id']
+
+        def click(self):
+            events.append(('click', self.selector))
+            if self.page.swallow_next and self.selector.endswith('next'):
+                self.page.swallow_next -= 1
+                return
+            self.page.index += 1 if self.selector.endswith('next') else -1
+
+        def to_have_attribute(self, name, value, timeout=None):
+            if isinstance(value, str):
+                assert value == entries[self.page.index]['id']
+                events.append(('arrival', value))
+
+        def to_have_text(self, text):
+            if self.selector.endswith('progress'):
+                assert text == f"{self.page.index + 1} of 4 · {entries[self.page.index]['title']}"
+
+        def __getattr__(self, action):
+            return lambda *args, **kwargs: events.append((action, self.selector))
+
+    sync_api = ModuleType('playwright.sync_api')
+    sync_api.expect = lambda control: control
+    monkeypatch.setitem(sys.modules, 'playwright.sync_api', sync_api)
+    monkeypatch.setattr(qa, 'section_order', lambda page: entries)
+    page = Page()
+    qa.navigate_sections(page, 'report_review')
+    assert [event[1] for event in events if event[0] == 'arrival'] == [
+        'activity', 'final', 'report_review']
+    assert [event for event in events if event[0] == 'click'] == [
+        ('click', '.epc-section-next')] * 4
+    assert page.swallow_next == 0
