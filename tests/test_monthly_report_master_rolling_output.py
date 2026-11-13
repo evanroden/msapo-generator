@@ -58,12 +58,18 @@ def render_fixture(tmp_path):
         Row("b", "s", "WO-1", "2026-12-31", "", "Open", "Non-PM"),
     )
     source = review("synthetic:rolling", rows)
-    coverage = (CoveredMonth("n", "pm_received", "2026-11", source.source_reference),)
+    coverage = tuple(CoveredMonth(site, metric, month, source.source_reference)
+        for site, metric, month in (
+            ("n", "pm_received", "2026-11"),
+            ("n", "pm_received", "2026-12"),
+            ("n", "pm_closed", "2027-01"),
+            ("s", "non_pm_received", "2026-12")))
     counts = tally_reviewed_months((source,), PERIOD, SITES,
         approved_revisions={source.source_reference: source.revision},
         pm_categories=("Preventive",), closed_statuses=("Finished",),
         covered_months=coverage,
-        coverage_approvals={("n", "pm_received", "2026-11"): source.source_reference})
+        coverage_approvals={(item.site, item.metric, item.month): source.source_reference
+                            for item in coverage})
     tables = bind_template_grids(counts, PERIOD, shapes, bound, SITES)
     profile = ReportProfile("Entirely invented contract", "rolling-output",
         "Two QA facilities", SITES, scope_type="multi_site",
