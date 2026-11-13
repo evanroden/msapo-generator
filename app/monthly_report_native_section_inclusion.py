@@ -30,17 +30,54 @@ def apply_native_section_choices(document, draft, original, headings, section_by
     omitted = set(draft.omitted_sections)
     body = document.element.body
     included = {s.key:s for s in included_sections(draft.sections)}
-    # Freeze each original physical region's current closing properties before
-    # removing a logical section. A shared physical region keeps its exact
-    # chrome even when its last logical section is omitted.
-    def source_owner(node):
+    # A chart/contact split inserts a page-break-only paragraph after native
+    # reflow. It is a derivative node, not in the original region accounting.
+    # Attribute ONLY that exact separator to the next proven organization
+    # node; never guess ownership for content or unrelated page boundaries.
+    def region_owner(node):
         region = page_plan.owner.get(node)
-        return page_plan.source_word_sections[region] if region is not None else None
+        if region is not None:
+            return region
+        if node.tag != qn('w:p') or len(node) != 1:
+            return None
+        ppr = node.find(qn('w:pPr'))
+        next_node = node.getnext()
+        if (ppr is None or len(ppr) != 1 or ppr[0].tag != qn('w:pageBreakBefore')
+                or next_node is None or page_plan.logical_owner.get(next_node) != 'organization'):
+            return None
+        region = page_plan.owner.get(next_node)
+        if region is not None:
+            page_plan.owner[node] = region
+            page_plan.logical_owner[node] = 'organization'
+        return region
+
+    def effective_properties(region, boundary):
+        # The raw closing sectPr may inherit its header/footer from an
+        # omitted earlier section. Preserve the proved effective references
+        # for this exact physical region, without changing other properties.
+        result = deepcopy(boundary)
+        keys = {(ref.tag, ref.get(qn('w:type'), 'default')) for ref in result
+                if ref.tag in (qn('w:headerReference'), qn('w:footerReference'))}
+        for ref in page_plan.regions[region].properties:
+            key = (ref.tag, ref.get(qn('w:type'), 'default'))
+            if ref.tag in (qn('w:headerReference'), qn('w:footerReference')) and key not in keys:
+                result.insert(0, deepcopy(ref))
+                keys.add(key)
+        return result
+
+    # Reflow can split one source Word section into several independently
+    # paginated regions. Preserve each region's boundary rather than merging
+    # merely because its source_word_sections number happens to match.
     properties = {}
-    for node in body:
-        boundary = node if node.tag == qn('w:sectPr') else node.find('.//' + qn('w:sectPr'))
-        if boundary is not None and hasattr(page_plan, "source_word_sections"):
-            properties[source_owner(node)] = deepcopy(boundary)
+    if hasattr(page_plan, 'source_word_sections') and hasattr(page_plan, 'regions'):
+        properties = {region: deepcopy(item.properties)
+                      for region, item in enumerate(page_plan.regions)}
+        for node in body:
+            boundary = node if node.tag == qn('w:sectPr') else node.find('.//' + qn('w:sectPr'))
+            if boundary is not None:
+                region = region_owner(node)
+                if region is not None:
+                    properties[region] = effective_properties(region, boundary)
     # Each emitted node inherits its origin's logical section. Physical Word
     # sections can span more than one logical section and are not an authority.
     for node in list(body):
@@ -81,16 +118,16 @@ def apply_native_section_choices(document, draft, original, headings, section_by
             elif key in included:
                 _replace_span(paragraph, *match.span(1), included[key].number)
 
-    # Rebuild only the remaining source-owned boundaries. This avoids empty
-    # pages for removed sections and prevents a removed final section's page
-    # geometry from being applied to the remaining last section.
+    # Rebuild the remaining *region*-owned boundaries. Both original Word
+    # boundaries and independently proved reflow splits must survive; only
+    # boundaries whose logical content was removed may disappear.
     if properties and hasattr(page_plan, 'source_word_sections'):
         groups = []
         for node in list(body):
             if node.tag == qn('w:sectPr'):
                 body.remove(node)
                 continue
-            owner = source_owner(node)
+            owner = region_owner(node)
             for boundary in list(node.iter(qn('w:sectPr'))):
                 boundary.getparent().remove(boundary)
             if not groups or groups[-1][0] != owner:
