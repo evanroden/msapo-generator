@@ -6,6 +6,8 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 # Documentation index
 
+[Learned memory boundaries](LEARNED_MEMORY.md) - fail-closed contact management until real authentication, existing retention unchanged, optional purchase-order history deferred, and outage fallback behavior.
+
 [Issue #440 blocking-warning correction routes](ISSUE_440_WARNING_ROUTES.md) — exact Review warning-to-native-editor and explicit recovery matrix, scoped identity/stale-target guards, and pending acceptance evidence; this branch is not a production or browser acceptance claim.
 
 [Monthly Report ownership and carryover decisions](monthly_report_ownership_matrix.md) — audited contract, site and report behavior; explicit requirements, proposals and unresolved choices; synthetic scope examples and a migration proposal that preserves originals and history. This decision record does not approve policy changes or a production migration.
