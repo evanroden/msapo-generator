@@ -1,9 +1,8 @@
 """Visible source-row mapping, corrections, omissions and explicit report inclusion."""
 from dataclasses import replace
-from datetime import date
-
 import streamlit as st
 
+from app.config import operator_today
 from app.monthly_report_model import ResolvedBlock
 from app import monthly_report_work_order_review_flow as flow
 from app.monthly_report_work_order_coverage import (
@@ -13,6 +12,11 @@ from app.monthly_report_work_order_coverage import (
 LABELS = {"work_order": "Work-order ID", "work_date": "Work date", "completed_date": "Completion date",
           "status": "Recorded status", "site": "Site", "work_type": "PM / Non-PM", "trade": "Trade",
           "wo": "Work-order ID", "finished": "Finish date", "area": "Area", "task": "Work performed", "tag": "Equipment tag"}
+
+
+def _coverage_as_of():
+    """Use the operator's calendar day when identifying future source rows."""
+    return operator_today(getattr(getattr(st, "context", None), "timezone", None))
 
 
 def _queue(key, request, fields=()):
@@ -171,7 +175,7 @@ def render_reviewed_rows(draft, blocks, prefix, content):
                     if item.get("site") == chosen and item.get("table_number") == record.table_number)
                 months = summarize_coverage(record, confirmations,
                     contract=draft.profile.contract, profile_key=draft.profile.key,
-                    site=chosen, months=month_window(draft.period.key), as_of=date.today())
+                    site=chosen, months=month_window(draft.period.key), as_of=_coverage_as_of())
                 st.caption("A row's earliest/latest date does not prove complete export coverage. "
                            "Blank means missing or unresolved coverage; zero requires a confirmed covered month.")
                 st.dataframe([{"Month": item.month,
