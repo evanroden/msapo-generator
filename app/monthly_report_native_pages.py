@@ -295,3 +295,7 @@ class NativePages:
                 ppr.append(spacing); ppr.append(properties); paragraph.append(ppr)
                 self.body.append(paragraph)
                 self.owner[paragraph] = self.regions.index(region)
+                # The reflow separator closes the preceding logical content.
+                # Without this ownership a later report-only omission retains
+                # the empty boundary and may print a blank section page.
+                self.logical_owner[paragraph] = self.logical_owner.get(nodes[-1])
