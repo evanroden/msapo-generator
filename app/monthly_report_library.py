@@ -21,7 +21,7 @@ import tempfile
 from app.memory import _data_dir
 from app.monthly_report_model import (
     BLOCK_SOURCES, BlockSpec, ColumnSpec, Facility, ReportDraft, ReportPeriod, ReportProfile,
-    ResolvedBlock, ReportTable, TrainingSessionTable, OrgChartNode, ReportFollowUp, SectionSpec, ReportSource, EvidenceFact, DraftParagraph, default_sections, known_sections, layout_blocks, used_asset_references,
+    ResolvedBlock, ReportTable, AnchoredTable, TrainingSessionTable, OrgChartNode, ReportFollowUp, SectionSpec, ReportSource, EvidenceFact, DraftParagraph, default_sections, known_sections, layout_blocks, used_asset_references,
 )
 
 
@@ -234,6 +234,8 @@ def _report_table_from_dict(value: dict) -> ReportTable:
     reference = value.get("reference", "")
     if reference == "training:events:v1" and "row_tokens" in value:
         return TrainingSessionTable(columns, rows, reference, tuple(value["row_tokens"]))
+    if value.get("anchor"):
+        return AnchoredTable(columns, rows, reference, str(value["anchor"]), str(value.get("lead", "")))
     return ReportTable(columns, rows, reference)
 
 
@@ -317,7 +319,7 @@ def draft_from_dict(value: dict) -> ReportDraft:
                 or len(set(omitted)) != len(omitted)
                 or not set(omitted) <= {section.key for section in sections}):
             raise ValueError("Invalid report section choices.")
-        return ReportDraft(
+        draft = ReportDraft(
             profile=profile_from_dict(value["profile"]), period=ReportPeriod(**value["period"]),
             cover_recovery_request=request_from_dict(value.get("cover_recovery_request")),
             prepared_by=value["prepared_by"], sections=sections,
@@ -328,6 +330,9 @@ def draft_from_dict(value: dict) -> ReportDraft:
             source_row_reviews=tuple(reviews),
             omitted_sections=tuple(omitted),
         )
+        from app.monthly_report_section_control import verify_custom_page_scope
+        verify_custom_page_scope(draft)
+        return draft
     except (KeyError, TypeError, ValueError) as exc:
         raise LibraryError("Invalid report snapshot.") from exc
 
@@ -1219,6 +1224,8 @@ def save_snapshot(draft: ReportDraft, *, expected_revision: int, open_issues: tu
                   pending_proposals: tuple[str, ...] = (), assets: tuple[tuple[str, bytes], ...] = (),
                   entered_editor: str = "") -> SavedReport:
     from app.monthly_report_cover_recovery import validate_cover_occurrence
+    from app.monthly_report_section_control import verify_custom_page_scope
+    verify_custom_page_scope(draft)
     for block in draft.blocks:
         validate_cover_occurrence(draft.profile, block)
     path = _profile_path(draft.profile.contract, draft.profile.key, snapshots=True)
