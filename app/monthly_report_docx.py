@@ -518,6 +518,8 @@ def _format_table(table, has_header, header_rows=1, partial_rows=()):
 
 def assemble_docx(draft: ReportDraft, *, acknowledged_fingerprint: str = "",
                   asset_loader: Callable[[str], bytes] | None = None, source_view=None) -> bytes:
+    from app.monthly_report_section_control import verify_custom_page_scope
+    verify_custom_page_scope(draft)
     checks = preflight(draft, estimate_bytes(draft, asset_loader))
     blocking = [c.message for c in checks if c.blocking]
     if blocking:
