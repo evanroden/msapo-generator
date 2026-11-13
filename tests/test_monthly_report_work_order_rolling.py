@@ -188,6 +188,23 @@ def test_unapproved_review_or_coverage_without_source_is_rejected():
     with pytest.raises(ValueError, match="independently approved"):
         count((), coverage=(CoveredMonth("n", "pm_received", "2026-12", "other"),),
               coverage_approvals={("n", "pm_received", "2026-12"): "other"})
+    # An approval receipt alone is not a reviewed work-order export.  Even an
+    # exact revision string must not manufacture a covered zero when the
+    # corresponding source review was not included.
+    with pytest.raises(ValueError, match="independently approved"):
+        tally_reviewed_months(iter(()), JANUARY, (NORTH,),
+            approved_revisions={"missing": "missing:rev"}, pm_categories=("PM",),
+            covered_months=(CoveredMonth("n", "pm_received", "2026-12", "missing"),),
+            coverage_approvals={("n", "pm_received", "2026-12"): "missing"})
+
+
+def test_coverage_accepts_reviewed_sources_from_a_single_use_iterable():
+    source = review("complete", ())
+    result = tally_reviewed_months(iter((source,)), JANUARY, (NORTH,),
+        approved_revisions={"complete": "complete:rev"}, pm_categories=("PM",),
+        covered_months=(CoveredMonth("n", "pm_received", "2026-12", "complete"),),
+        coverage_approvals={("n", "pm_received", "2026-12"): "complete"})
+    assert result.cell("n", "pm_received", "2026-12").value == "0"
 
 
 def test_two_site_eight_frame_binding_is_order_explicit_and_overflow_fails_closed():

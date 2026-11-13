@@ -108,6 +108,10 @@ def tally_reviewed_months(
     sites = tuple(f.key for f in facilities)
     if not sites or len(set(sites)) != len(sites):
         raise ValueError("Explicit unique facility keys are required.")
+    # Callers can supply a one-shot iterator. Preserve it for row counting
+    # while checking that coverage actually references an included review.
+    reviews = tuple(reviews)
+    reviewed_sources = {review.source_reference for review in reviews}
     months = rolling_months(period)
     pm = {_review_category(value) for value in pm_categories if _key(value)}
     closed = {_review_closed_status(value) for value in closed_statuses if _key(value)}
@@ -122,7 +126,8 @@ def tally_reviewed_months(
         # monthly export. Require a separate month/site/metric coverage approval
         # tied to the exact same reviewed source identity.
         if (coverage_approvals.get(key) != item.source_reference
-                or item.source_reference not in approved_revisions):
+                or item.source_reference not in approved_revisions
+                or item.source_reference not in reviewed_sources):
             raise ValueError("Coverage needs an independently approved, current source receipt.")
         coverage[key].add(item.source_reference)
     identities = defaultdict(list)
