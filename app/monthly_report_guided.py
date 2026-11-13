@@ -1723,7 +1723,11 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                                    "[Enter Prepared by](#report-prepared-by) above to view them.")
                     else:
                         render_section_preview(replace(draft, blocks=tuple(blocks.values())), section.key, assets, prefix, deferred=True)
-    if not any(section.key == "activity" for section in draft.sections):
+    # This manager is report-wide, not part of Activity output. If Activity is
+    # explicitly unchecked its editor does not render, so mount the one shared
+    # source manager here instead of making all source corrections inaccessible.
+    if not any(section.key == "activity" and section.included
+               for section in draft.sections):
         from app.monthly_report_source_manager_ui import render_guided_source_manager
         draft, blocks = render_guided_source_manager(
             draft, blocks, prefix, field, _apply_prepared, _keep_missing_sources, assets=assets)
