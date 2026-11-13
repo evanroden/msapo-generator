@@ -205,6 +205,12 @@ def _table_headings(columns, rows):
         if any(re.fullmatch(r"(?:grand\s+)?total\s*:?[ ]*", str(cell).strip(), re.I)
                for cell in row):
             break
+        # A sentence is a data cell, not a wrapped heading label. Folding a
+        # digit-free data row ("Quote in preparation" under Status, beside a
+        # sentence of notes) would turn an ordinary Status column into a
+        # pricing heading and silently drop it from the report.
+        if any(len(str(cell).split()) >= 5 for cell in row):
+            break
         header_rows.append(row)
     # A standalone missing-reading dash is data, not a heading continuation.
     # Ignore it only in this inferred view; never rewrite the supplied cells
