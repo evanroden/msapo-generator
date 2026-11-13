@@ -441,6 +441,50 @@ def _divider_background(document, raw):
     inline.getparent().replace(inline, anchor)
 
 
+def _distribute_width(total, weights, *, minimum):
+    """Share ``total`` by weight, keeping every column at least ``minimum``."""
+    count = len(weights)
+    if count == 0 or total <= 0:
+        return []
+    weight_total = sum(weights)
+    if count * minimum >= total:
+        widths = [max(1, total * weight // weight_total) for weight in weights]
+    else:
+        widths = [max(minimum, total * weight // weight_total) for weight in weights]
+        if sum(widths) > total:
+            widths = [max(1, width * total // sum(widths)) for width in widths]
+    widths[widths.index(max(widths))] += total - sum(widths)
+    return widths
+
+
+def _fit_imported_table_columns(table, columns, rows):
+    """Size imported-table columns to their longest unbroken token.
+
+    Equal fixed widths split long values mid-word in the PDF, so a restored
+    value can be present in the Word file yet unsearchable in the actual PDF.
+    Widths stay within the table's existing total so the page layout is kept.
+    """
+    grid = table._tbl.find(qn("w:tblGrid"))
+    if grid is None or not columns:
+        return
+    total = sum(int(column.get(qn("w:w")) or 0) for column in grid)
+    if total <= 0:
+        return
+    weights = []
+    for index in range(len(columns)):
+        longest = 1
+        for values in (columns, *rows):
+            if index >= len(values) or values[index] is None:
+                continue
+            for token in str(values[index]).split():
+                longest = max(longest, len(token))
+        weights.append(longest)
+    widths = _distribute_width(total, weights, minimum=900)
+    table.autofit = False
+    for column, width in zip(table.columns, widths):
+        column.width = Inches(width / 1440)
+
+
 def _table_font_size(table, has_header, header_rows=1):
     """ENFRA's reports set wide schedules (asset lists, capacity tables) in 7 pt.
 
@@ -725,6 +769,7 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
                         partial.add(len(table.rows))
                     for cell, value in zip(table.add_row().cells, values):
                         cell.text = "" if value is None else str(value)
+                _fit_imported_table_columns(table, imported.columns, imported.rows)
                 _format_table(table, True, header_rows=2 if titled else 1, partial_rows=partial)
                 placed_tables.append(((getattr(imported, "anchor", ""), _body_items(document)[table_start:]), imported))
             _follow_anchors(text_items, placed_tables)
@@ -879,3 +924,4 @@ def _convert_report_pdf(draft, docx):
                 # A cleanup failure must not discard either finished download.
                 logging.getLogger(__name__).warning("Monthly-report temporary PDF cleanup failed")
     return pdf, error
+
