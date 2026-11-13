@@ -168,3 +168,21 @@ def test_same_event_text_edit_is_collected_before_section_is_hidden(monkeypatch,
     value=current(app)
     assert value.omitted_sections==('activity',)
     assert next(b for b in value.blocks if b.key=='activity_summary').text=='SAME EVENT SYNTHETIC ACTIVITY'
+
+
+def test_checkbox_native_default_matches_current_section_on_a_fresh_mount(monkeypatch):
+    from app.monthly_report_section_inclusion import render_section_inclusion
+    import streamlit as st
+    seen=[]
+    def native_checkbox(label, **kwargs):
+        seen.append(kwargs)
+        return kwargs.get('value', False)
+    monkeypatch.setattr(st, 'checkbox', native_checkbox)
+    value=draft()
+    section=next(s for s in value.sections if s.key=='activity')
+    assert render_section_inclusion(value,section,'synthetic',lambda key,default:key) is True
+    assert seen[-1]['value'] is True
+    omitted=set_section_included(value,'activity',False)
+    section=next(s for s in omitted.sections if s.key=='activity')
+    assert render_section_inclusion(omitted,section,'synthetic',lambda key,default:key) is False
+    assert seen[-1]['value'] is False
