@@ -1890,8 +1890,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 st.markdown(" · ".join(
                     f"[{editor_section_title(section)}](#report-section-{section.key})"
                     for section in without_new_monthly))
-        # Pre-generation page/size estimates are not client deliverables.
-        # Actual sizes and the >15 MB warning are shown after generation.
+        # The original size heuristic remains a preflight input, not an output-size forecast.
         loader = lambda ref: assets[ref] if ref in assets else library.read_asset(contract, selected, ref)
         estimated = estimate_bytes(draft, loader)
         checks = [check for check in preflight(draft, estimated) if check.code != "empty"]
@@ -1904,6 +1903,23 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 f"Cannot safely generate while {missing_names} is missing. "
                 "Replace the source or remove the content linked to it first.", True,
                 targets=tuple(source_target(draft, source) for source in dependent)))
+        # Planning ranges are deliberately separate from the preflight safety
+        # input estimate and from the exact bytes reported after generation.
+        # This is read-only: no additional DOCX assembly or PDF conversion.
+        if package is None:
+            from app.monthly_report_size_forecast import forecast_output_sizes, format_size_range
+            from app.config import PDF_BACKEND
+            sizes_forecast = forecast_output_sizes(
+                estimated, sources_ready=not bool(dependent), pdf_backend=PDF_BACKEND)
+            st.caption(
+                "Before creation · Word estimate: " + format_size_range(sizes_forecast.word)
+                + " · PDF estimate: " + format_size_range(sizes_forecast.pdf)
+                + ". Wide planning ranges; actual sizes appear after creation.")
+            if sizes_forecast.reason or sizes_forecast.pdf_reason:
+                st.caption(sizes_forecast.reason or sizes_forecast.pdf_reason)
+            if any(size and size.high > 15 * 1024 * 1024
+                   for size in (sizes_forecast.word, sizes_forecast.pdf)):
+                st.caption("This range crosses the 15 MB target; only the finished files confirm their size.")
         if checks:
             count = len(checks)
             st.markdown(f"**{count} {'item needs' if count == 1 else 'items need'} attention**")
@@ -2091,9 +2107,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     except ValueError as exc:
                         st.error(str(exc))
             from app.monthly_report_storage import readable_bytes
-            sizes = "DOCX " + readable_bytes(len(package.docx))
+            sizes = "Actual Word (DOCX): " + readable_bytes(len(package.docx))
             if package.pdf:
-                sizes += " · PDF " + readable_bytes(len(package.pdf))
+                sizes += " · Actual PDF: " + readable_bytes(len(package.pdf))
             st.caption(sizes)
             if max(len(package.docx), len(package.pdf or b"")) > 15 * 1024 * 1024:
                 st.warning("The finished report exceeds the 15 MB target. You can reduce selected attachment pages or use denser photo layouts, then generate it again.")
