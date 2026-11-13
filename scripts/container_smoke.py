@@ -39,7 +39,7 @@ def _convert(source: Path, output: Path, profile: Path) -> Path:
 def render_synthetic():
     from docx import Document
     from openpyxl import Workbook
-    import fitz
+    import pymupdf as fitz
 
     with tempfile.TemporaryDirectory(prefix="msapo-image-smoke-") as folder:
         root = Path(folder)
