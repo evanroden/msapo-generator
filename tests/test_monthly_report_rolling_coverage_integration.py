@@ -2,6 +2,7 @@
 from datetime import date
 from hashlib import sha256
 import json
+from pathlib import Path
 
 from app.monthly_report_model import Facility, ReportPeriod, ReportProfile, ReportSource
 from app.monthly_report_sources import SourceContent, SourceTable
@@ -15,16 +16,19 @@ def test_prior_month_review_and_rolling_metrics_require_separate_coverage():
     profile = ReportProfile("Synthetic contract", "coverage-grid", "Two synthetic sites",
         (Facility("north", "Synthetic North", ("North",)),
          Facility("south", "Synthetic South", ("South",))), scope_type="multi_site")
-    columns = ("Work Order", "Site", "Received Date", "Closed Date", "Status", "Type")
+    sample = json.loads((Path(__file__).parent / "fixtures" /
+                         "monthly_rolling_cross_month.json").read_text())
+    columns = tuple(sample["columns"])
 
     def reviewed(closed_date):
-        rows = (("WO-120", "North", "2026-12-20", closed_date, "Closed", "PM"),)
+        rows = ((sample["work_order"], sample["site"], sample["received_date"],
+                 closed_date, sample["status"], sample["type"]),)
         digest = sha256(json.dumps((columns, rows)).encode()).hexdigest()
         source = ReportSource(digest, "synthetic.csv", digest, ".csv")
         content = SourceContent(source, (SourceTable("Work orders", columns, rows),))
         return normalize_table(content, 1, profile, period)
 
-    review = reviewed("2027-01-06")
+    review = reviewed(sample["closed_date"])
     assert review.rows[0].issues == ("source date is outside this report period",)
     decision = CoverageDecision(profile.contract, profile.key, "north", review.source_sha256,
         review.source_fingerprint, review.table_number, "2026-12", "2027-01",
@@ -47,7 +51,7 @@ def test_prior_month_review_and_rolling_metrics_require_separate_coverage():
     assert result.cell("north", "pm_closed", "2027-01").value == "1"
     assert not result.review_notices
 
-    invalid = reviewed("not a date")
+    invalid = reviewed(sample["invalid_closed_date"])
     assert "completed_date needs review" in invalid.rows[0].issues
     rejected = tally_reviewed_months((invalid,), period, profile.facilities,
         approved_revisions={invalid.source_reference: invalid.revision}, pm_categories=("PM",))
