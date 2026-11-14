@@ -569,3 +569,73 @@ def test_duplicate_imported_priority_columns_have_distinct_literal_summary_value
     captions = '\n'.join(item.value for item in app.caption)
     assert 'Priority: P1' in captions and 'Priority: P2' in captions
     assert app.session_state['block'].extra_tables == (imported,)
+
+
+@pytest.mark.parametrize('external_change', [False, True])
+def test_rapid_stale_snapshot_clears_accept_only_their_own_intermediate_row(monkeypatch, external_change):
+    from app import monthly_report_row_cards_ui as cards
+    import streamlit as st
+    spec, block = example('capital_renewal', (('North', 'High', 'Inspect pump'),))
+    app = AppTest.from_string(SCRIPT.replace('INITIAL', repr(block)).replace('SPEC', repr(spec))).run()
+    button(app, 'Edit capital item').click().run()
+    state = dict(app.session_state.filtered_state)
+    key = next(k for k, value in state.items() if isinstance(value, dict) and value.get('group_args'))
+    expected, tokens, active_token, fields = state[key]['group_args']
+    # Model three blur callbacks delivered from one rendered snapshot while
+    # the parent report has committed only the first field's own transition.
+    with monkeypatch.context() as patch:
+        patch.setattr(st, 'session_state', state)
+        for field_key, *_ in fields:
+            state[field_key] = ''
+            cards._queue(key, expected, tokens, active_token, fields, group=(key,))
+            if field_key == fields[0][0]:
+                intermediate = state[key]['pending']['result']
+    app.session_state[key] = state[key]
+    app.session_state['block'] = replace(block, rows=(('Independent', 'High', 'Inspect pump'),)
+                                        if external_change else intermediate)
+    app.run()
+    assert not app.exception
+    if external_change:
+        assert any('Both versions are kept' in item.value for item in app.warning)
+        assert app.session_state['block'].rows[0][0] == 'Independent'
+    else:
+        assert not app.warning and not app.dataframe
+        assert app.session_state['block'].rows == ()
+
+@pytest.mark.parametrize('external_change', [False, True])
+def test_acknowledged_first_blur_retains_exact_stale_snapshot_lineage(monkeypatch, external_change):
+    from app import monthly_report_row_cards_ui as cards
+    import streamlit as st
+    spec, block = example('capital_renewal', (('North', 'High', 'Inspect pump'),))
+    app = AppTest.from_string(SCRIPT.replace('INITIAL', repr(block)).replace('SPEC', repr(spec))).run()
+    button(app, 'Edit capital item').click().run()
+    state = dict(app.session_state.filtered_state)
+    key = next(k for k, value in state.items() if isinstance(value, dict) and value.get('group_args'))
+    expected, tokens, active_token, fields = state[key]['group_args']
+    with monkeypatch.context() as patch:
+        patch.setattr(st, 'session_state', state)
+        state[fields[0][0]] = ''
+        cards._queue(key, expected, tokens, active_token, fields, group=(key,))
+        acknowledged = state[key]['pending']['result']
+    app.session_state[key] = state[key]
+    app.session_state[fields[0][0]] = ''
+    app.session_state['block'] = replace(block, rows=acknowledged)
+    app.run()
+    assert not app.session_state[key].get('pending')  # First blur was acknowledged.
+    state = dict(app.session_state.filtered_state)
+    with monkeypatch.context() as patch:
+        patch.setattr(st, 'session_state', state)
+        for field_key, *_ in fields[1:]:
+            state[field_key] = ''
+            cards._queue(key, expected, tokens, active_token, fields, group=(key,))
+    app.session_state[key] = state[key]
+    app.session_state['block'] = replace(block, rows=(('Independent', 'High', 'Inspect pump'),)
+                                        if external_change else acknowledged)
+    app.run()
+    assert not app.exception
+    if external_change:
+        assert any('Both versions are kept' in item.value for item in app.warning)
+        assert app.session_state['block'].rows[0][0] == 'Independent'
+    else:
+        assert not app.warning and not app.dataframe
+        assert app.session_state['block'].rows == ()

@@ -39,7 +39,7 @@ def test_report_order_all_editors_and_direct_previews(monkeypatch, tmp_path):
                         lambda draft, section, assets, prefix, **kwargs: calls.append((section, kwargs)))
     app.run()
     assert not app.exception
-    titles = [item.value for item in app.subheader]
+    titles = [item.value.split(". ", 1)[-1] for item in app.subheader]
     expected = [editor_section_title(section) for section in default_sections()]
     assert [title for title in titles if title in expected] == expected
     assert [key for key, _ in calls] == ["cover", *(section.key for section in default_sections())]

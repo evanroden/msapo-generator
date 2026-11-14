@@ -103,6 +103,33 @@ def require_siblings(profile, filename, bad, *, expected_message):
     return contents, notices
 
 
+@pytest.mark.parametrize('suffix', ['.png', '.jpg', '.tiff'])
+def test_actual_unrecognized_image_has_image_recovery_not_storage_notice(profile, suffix):
+    # Real rejected bytes, not a modeled storage outage or monkeypatched decoder.
+    _, notices = require_siblings(profile, 'bad-image' + suffix,
+        b'\x89PNG\r\n\x1a\nTEST ONLY invalid image header',
+        expected_message='Image data is damaged or unreadable. Export a fresh copy.')
+    assert 'Storage' not in notices[0]
+
+
+def test_decoder_truncation_has_image_recovery_without_exposing_internal_paths(profile, monkeypatch):
+    def broken_image(*args, **kwargs):
+        raise OSError('/private/server/model: truncated image raster')
+    monkeypatch.setattr(sources, 'normalize_report_image', broken_image)
+    require_siblings(profile, 'modeled-truncated.tiff', b'SYNTHETIC-RASTER-ERROR',
+                     expected_message='Image data is damaged or unreadable. Export a fresh copy.')
+
+
+def test_storage_outage_still_has_storage_recovery(profile, monkeypatch):
+    def broken_storage(*args, **kwargs):
+        raise OSError('/private/server/model: disk not writable')
+    monkeypatch.setattr(library, '_atomic_write', broken_storage)
+    contents, notices = sources.ingest_batch(profile, (('good.txt', FIRST),))
+    assert not contents and len(notices) == 1
+    assert 'Storage or file reader was unavailable; retry this file.' in notices[0]
+    assert '/private/' not in notices[0]
+
+
 def test_png_bomb_has_recoverable_image_validation_error_without_decoding(monkeypatch):
     raw = oversized_png_header()
     assert len(raw) < 100

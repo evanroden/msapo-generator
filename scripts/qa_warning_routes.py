@@ -437,6 +437,19 @@ def exercise(engine,name,mode,scenario,base):
         commit(warning_action(code,block,source_page=source_page,ordinal=ordinal));focus_proof(control)
     try:
         page.goto(URL,wait_until='domcontentloaded')
+        # Observe focus events only. Never replace a native focus method or
+        # install initialization hooks that could change acceptance behavior.
+        page.evaluate("""() => {
+          const records=[];window.__warningFocusCalls=records;
+          document.addEventListener('focusin',event=>{
+            const e=event.target;
+            records.push({at:Math.round(performance.now()),tag:e.tagName,
+              role:e.getAttribute('role'),id:e.id||null,
+              label:e.getAttribute('aria-label'),
+              stack:(new Error()).stack.split('\\n').slice(1,10).join('\\n')});
+            if(records.length>80)records.shift();
+          },true);
+        }""")
         select(page.get_by_role('combobox',name='Synthetic historical scenario',exact=True),scenario)
         activate(page.get_by_role('button',name='Load synthetic historical report with unresolved warnings',exact=True))
         initial=capture('unresolved-historical-report')
@@ -582,6 +595,7 @@ def exercise(engine,name,mode,scenario,base):
         try:
             focus=page.evaluate('''() => {const e=document.activeElement; return {tag:e?.tagName || null, role:e?.getAttribute('role') || null, id:e?.id || null, label:e?.getAttribute('aria-label') || null};}''')
             print('WARNING_ROUTE_FAILURE_FOCUS '+json.dumps({'case':key,'focus':focus}),flush=True)
+            print('WARNING_ROUTE_FOCUS_CALLS '+json.dumps({'case':key,'calls':page.evaluate('window.__warningFocusCalls || []')}),flush=True)
         except Exception as focus_error:
             print('WARNING_ROUTE_FAILURE_FOCUS_UNAVAILABLE '+str(focus_error)[:300],flush=True)
         try:
@@ -640,4 +654,3 @@ if __name__=='__main__':
     except Exception as exc:
         REPORT['result']='failed';REPORT['failures'].append(type(exc).__name__+': '+str(exc))
         OUT.mkdir(parents=True,exist_ok=True);(OUT/'results.json').write_text(json.dumps(REPORT,indent=2));raise
-
