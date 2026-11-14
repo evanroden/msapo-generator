@@ -95,7 +95,7 @@ def tally_reviewed_months(
     *,
     approved_revisions: dict[str, str],
     pm_categories: Iterable[str] = (),
-    closed_statuses: Iterable[str] = (),
+    closed_statuses: Iterable[str] = ("Closed", "Complete"),
     covered_months: Iterable[CoveredMonth] = (),
     coverage_approvals: dict[tuple[str, str, str], str] | None = None,
 ) -> RollingCounts:
@@ -165,6 +165,10 @@ def tally_reviewed_months(
             continue
         review, row = records[0]
         kind = _key(row.work_type)
+        if not pm and _review_category(kind) == "pm":
+            # A known PM row must not block independent non-PM grids when
+            # PM values were not selected; the PM cells remain unknown.
+            continue
         if pm and _review_category(kind) in pm:
             category = "pm"
         elif kind in ("non-pm", "non pm", "nonpm"):
@@ -205,7 +209,7 @@ def tally_reviewed_months(
 
 
 def bind_template_grids(counts: RollingCounts, period, frames, bindings, facilities):
-    """Bind each physical frame to an explicitly resolved site and metric.
+    """Bind each physical frame to explicit site(s) and one reviewed metric.
 
     More than two sites are retained in counts but require an approved
     overflow layout; this routine refuses a partial or duplicated output.
@@ -222,7 +226,23 @@ def bind_template_grids(counts: RollingCounts, period, frames, bindings, facilit
     frames = tuple(frames)
     if len(frames) != len(bindings) or set(bindings) != {f.reference for f in frames}:
         raise ValueError("Each native frame needs one site/metric binding.")
-    pairs = tuple(bindings[f.reference] for f in frames)
+    frame_bindings = []
+    pairs = []
+    for frame in frames:
+        binding = bindings[frame.reference]
+        if not isinstance(binding, (tuple, list)) or len(binding) != 2:
+            raise ValueError("Native frames must cover each site/metric exactly once.")
+        selected, metric = binding
+        if isinstance(selected, str):
+            selected = (selected,)
+        elif isinstance(selected, (tuple, list)):
+            selected = tuple(selected)
+        else:
+            raise ValueError("Native frames must cover each site/metric exactly once.")
+        if not selected or any(not isinstance(site, str) for site in selected) or not isinstance(metric, str):
+            raise ValueError("Native frames must cover each site/metric exactly once.")
+        frame_bindings.append((selected, metric))
+        pairs.extend((site, metric) for site in selected)
     expected = {(site, metric) for site in sites for metric in METRICS}
     if len(set(pairs)) != len(pairs) or set(pairs) != expected:
         raise ValueError("Native frames do not cover each site/metric exactly once.")
@@ -233,15 +253,15 @@ def bind_template_grids(counts: RollingCounts, period, frames, bindings, facilit
         "non_pm_closed": "non-pm closed",
     }
     tables = []
-    for frame in frames:
+    for frame, (selected, metric) in zip(frames, frame_bindings):
         if frame.slot != "work_orders" or len(frame.columns) != 13:
             raise ValueError("Expected a recognized 13-column native work-order grid.")
-        site, metric = bindings[frame.reference]
         if _key(frame.columns[0]).replace("non pm ", "non-pm ") != headings[metric]:
             raise ValueError("The native heading disagrees with the reviewed PM/status mapping.")
-        values = tuple(counts.cell(site, metric, month).value or "" for month in counts.months)
+        rows = tuple((sites[site].title, *(counts.cell(site, metric, month).value or ""
+                     for month in counts.months)) for site in selected)
         tables.append(ReportTable((frame.columns[0], *rolling_labels(period)),
-                    ((sites[site].title, *values),), frame.reference))
+                                  rows, frame.reference))
     return tuple(tables)
 
 
@@ -264,16 +284,40 @@ def explicit_grid_period(columns):
     return period if columns[1:] == rolling_labels(period) else None
 
 
-def merge_carried_grid(previous, current, prior_period, period, *, site_title: str):
+def merge_carried_grid(previous, current, prior_period, period, *,
+                       site_title: str | None = None, site_titles=None, site_aliases=()):
     """Merge two explicitly identified native frames by real year-month.
 
     Never alter the previous saved ReportTable. Conflicting manually entered
     or source-updated values require review, not last-writer-wins. The old
     reference must be exactly the same pinned physical master region.
     """
+    if site_titles is None:
+        titles = (site_title,) if isinstance(site_title, str) else ()
+    elif site_title is None and isinstance(site_titles, (tuple, list)):
+        titles = tuple(site_titles)
+    else:
+        titles = ()
+    if (not titles or len(titles) > 2 or any(not isinstance(t, str) or not _key(t) for t in titles)
+            or len({_key(t) for t in titles}) != len(titles)):
+        raise ValueError("Work-order site identities are missing or ambiguous.")
+    if not site_aliases:
+        aliases = ((),) * len(titles)
+    elif isinstance(site_aliases, (tuple, list)) and len(site_aliases) == len(titles):
+        aliases = tuple(site_aliases)
+    else:
+        raise ValueError("Work-order site identities are missing or ambiguous.")
+    if any(not isinstance(group, (tuple, list)) or any(not isinstance(v, str) for v in group)
+           for group in aliases):
+        raise ValueError("Work-order site identities are missing or ambiguous.")
+    names = tuple({_key(value) for value in (title, *group) if _key(value)}
+                  for title, group in zip(titles, aliases))
+    if any(names[i] & names[j] for i in range(len(names)) for j in range(i)):
+        raise ValueError("Work-order site identities are missing or ambiguous.")
     if (previous.reference != current.reference or not previous.reference
             or len(previous.columns) != 13 or len(current.columns) != 13
-            or len(previous.rows) != 1 or len(current.rows) > 1):
+            or len(previous.rows) != len(titles)
+            or len(current.rows) not in (0, len(titles))):
         raise ValueError("Review changed master regions or ambiguous work-order rows.")
     distance = ((period.year - prior_period.year) * 12
                 + period.month - prior_period.month)
@@ -285,22 +329,26 @@ def merge_carried_grid(previous, current, prior_period, period, *, site_title: s
     if (previous.columns[1:] != rolling_labels(prior_period)
             or current.columns[1:] not in (rolling_labels(period), previous.columns[1:])):
         raise ValueError("Unverified month headings cannot be carried as known history.")
-    if _key(previous.rows[0][0]) != _key(site_title):
-        raise ValueError("The previous work-order grid belongs to a different site.")
-    if len(previous.rows[0]) != 13:
+    if any(len(row) != 13 for row in previous.rows):
         raise ValueError("A historical month row has incomplete columns.")
-    if current.rows and (len(current.rows[0]) != 13
-                         or _key(current.rows[0][0]) != _key(site_title)):
+    if any(_key(row[0]) not in allowed for row, allowed in zip(previous.rows, names)):
+        raise ValueError("The previous work-order grid belongs to a different site.")
+    if current.rows and any(len(row) != 13 or _key(row[0]) not in allowed
+                            for row, allowed in zip(current.rows, names)):
         raise ValueError("Current month edits have ambiguous site identity.")
     if current.rows and current.columns[1:] != rolling_labels(period):
         raise ValueError("Edited current values require current year-month headings.")
-    old_values = dict(zip(rolling_months(prior_period), previous.rows[0][1:]))
-    new_values = dict(zip(rolling_months(period), current.rows[0][1:])) if current.rows else {}
-    merged = []
-    for month in rolling_months(period):
-        before, after = old_values.get(month, ""), new_values.get(month, "")
-        if before and after and before != after:
-            raise ValueError(f"{site_title} {month}: conflicting values require source review.")
-        merged.append(after or before)
+    rows = []
+    for index, (title, prior_row) in enumerate(zip(titles, previous.rows)):
+        old_values = dict(zip(rolling_months(prior_period), prior_row[1:]))
+        new_values = (dict(zip(rolling_months(period), current.rows[index][1:]))
+                      if current.rows else {})
+        merged = []
+        for month in rolling_months(period):
+            before, after = old_values.get(month, ""), new_values.get(month, "")
+            if before and after and before != after:
+                raise ValueError(f"{title} {month}: conflicting values require source review.")
+            merged.append(after or before)
+        rows.append((title, *merged))
     return replace(current, columns=(current.columns[0], *rolling_labels(period)),
-                   rows=((site_title, *merged),))
+                   rows=tuple(rows))

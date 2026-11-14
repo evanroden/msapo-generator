@@ -94,6 +94,20 @@ def test_selected_closure_and_pm_aliases_use_reviewed_normalized_values():
     assert counts.cell("n", "pm_closed", "2026-12").value == "1"
 
 
+def test_closed_status_defaults_apply_when_source_has_no_completion_column():
+    source = review("default-status", (
+        Row("r1", "n", "WO-1", "2026-12-15", "", "Closed", "PM"),
+        Row("r2", "n", "WO-2", "2026-12-16", "", "Complete", "PM")),
+        completion_column=False)
+    coverage, approvals = approved_coverage(("n", "pm_closed", "2026-12", "default-status"))
+    kwargs = dict(approved_revisions={source.source_reference: source.revision},
+                  pm_categories=("PM",), covered_months=coverage, coverage_approvals=approvals)
+    assert tally_reviewed_months((source,), JANUARY, (NORTH,), **kwargs).cell(
+        "n", "pm_closed", "2026-12").value == "2"
+    assert tally_reviewed_months((source,), JANUARY, (NORTH,), closed_statuses=(), **kwargs).cell(
+        "n", "pm_closed", "2026-12").value == "0"
+
+
 def test_rolling_window_accepts_valid_prior_month_rows_but_not_other_issues():
     historical = Row("historic", "n", "WO-12", "2026-12-20", "2027-01-06",
                      "Closed", "PM", issues=("source date is outside this report period",))
@@ -138,13 +152,39 @@ def test_present_but_blank_completion_date_never_falls_back_to_closed_status():
 
 def test_missing_pm_selection_leaves_pm_unknown_including_explicit_coverage():
     source = review("source", (
-        Row("r", "n", "W-1", "2026-12-01", "2026-12-02", "Closed", "PM"),))
-    attest = CoveredMonth("n", "pm_received", "2026-12", "source")
-    result = count((source,), pm=(), coverage=(attest,),
-                   coverage_approvals={("n", "pm_received", "2026-12"): "source"})
+        Row("r", "n", "W-1", "2026-12-01", "2026-12-02", "Closed", "PM"),
+        Row("s", "n", "W-2", "2026-12-01", "", "Open", "Non-PM")))
+    coverage, approvals = approved_coverage(
+        ("n", "pm_received", "2026-12", "source"),
+        ("n", "non_pm_received", "2026-12", "source"))
+    result = count((source,), pm=(), coverage=coverage, coverage_approvals=approvals)
     assert result.cell("n", "pm_received", "2026-12").value is None
     assert not result.cell("n", "pm_received", "2026-12").covered
-    assert any("unselected or unknown" in n for n in result.review_notices)
+    assert result.cell("n", "non_pm_received", "2026-12").value == "1"
+    assert not result.review_notices
+
+
+def test_four_metric_frames_can_hold_two_explicit_site_rows():
+    source = review("two-sites", (
+        Row("n1", "n", "N-1", "2026-12-02", "", "Open", "Non-PM"),
+        Row("s1", "s", "S-1", "2026-12-02", "", "Open", "Non-PM")))
+    coverage, approvals = approved_coverage(
+        ("n", "non_pm_received", "2026-12", "two-sites"),
+        ("s", "non_pm_received", "2026-12", "two-sites"))
+    counts = count((source,), pm=(), coverage=coverage, coverage_approvals=approvals)
+    frames = tuple(SimpleNamespace(reference=f"metric-{metric}",
+        columns=(("PM" if metric.startswith("pm_") else "Non-PM") +
+                 (" Received" if metric.endswith("received") else " Closed"),
+                 *rolling_labels(JANUARY)), slot="work_orders") for metric in METRICS)
+    bindings = {frame.reference: (("n", "s"), metric) for frame, metric in zip(frames, METRICS)}
+    tables = bind_template_grids(counts, JANUARY, frames, bindings, (NORTH, SOUTH))
+    assert len(tables) == 4
+    assert [row[0] for row in tables[1].rows] == ["North", "South"]
+    assert [row[-2] for row in tables[1].rows] == ["1", "1"]
+    assert all(row[-2] == "" for row in tables[0].rows)
+    bad = {**bindings, frames[1].reference: (("n", "n"), "non_pm_received")}
+    with pytest.raises(ValueError, match="exactly once"):
+        bind_template_grids(counts, JANUARY, frames, bad, (NORTH, SOUTH))
 
 
 def test_unknown_month_is_blank_and_covered_zero_is_literal_zero():
@@ -295,6 +335,26 @@ def test_rollover_rejects_a_different_work_order_metric():
     equivalent = ReportTable(("pm   closed", *rolling_labels(JANUARY)), (), previous.reference)
     assert merge_carried_grid(previous, equivalent, december, JANUARY,
                               site_title="North").rows[0][1] == "7"
+
+
+def test_two_site_frame_rollover_preserves_each_site_and_unknown_month():
+    december = ReportPeriod(2026, 12)
+    previous = ReportTable(("Non-PM Received", *rolling_labels(december)),
+        (("N", *("7" if i == 11 else "" for i in range(12))),
+         ("South", *("0" if i == 10 else "" for i in range(12)))), "master-table:shared")
+    current = ReportTable(("Non-PM Received", *rolling_labels(JANUARY)), (), previous.reference)
+    carried = merge_carried_grid(previous, current, december, JANUARY,
+        site_titles=("North", "South"), site_aliases=(("N",), ()))
+    assert [r[0] for r in carried.rows] == ["North", "South"]
+    assert carried.rows[0][11] == "7" and carried.rows[1][10] == "0"
+    assert all(r[-1] == "" for r in carried.rows)
+    assert previous.rows[0][0] == "N"
+    with pytest.raises(ValueError, match="different site"):
+        merge_carried_grid(previous, current, december, JANUARY,
+                           site_titles=("North", "South"))
+    with pytest.raises(ValueError, match="ambiguous"):
+        merge_carried_grid(previous, current, december, JANUARY,
+                           site_titles=("North", "North"), site_aliases=(("N",), ()))
 
 
 def test_undated_or_other_site_carry_is_rejected_not_backfilled():

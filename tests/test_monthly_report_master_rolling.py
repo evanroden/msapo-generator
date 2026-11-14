@@ -84,6 +84,22 @@ def test_rebind_preserves_two_explicit_locations_and_original_month_history(monk
     assert again == result
 
 
+def test_one_physical_grid_carries_two_verified_site_rows(monkeypatch):
+    sites = (Facility("n", "North", ("N",)), Facility("s", "South"))
+    draft, older, shapes = make_draft(sites, prior_rows=(row("N"),))
+    previous = replace(older.extra_tables[0], rows=(row("N"), row("South", 10, "0")))
+    older = replace(older, extra_tables=(previous,))
+    monkeypatch.setattr(master, "for_profile", lambda _: shapes)
+    result = master.rebind_carried_master_tables(draft, {"work_orders": older}, draft.profile.template)
+    table = result.blocks[0].extra_tables[0]
+    assert [r[0] for r in table.rows] == ["North", "South"]
+    assert table.rows[0][11] == "7" and table.rows[1][10] == "0"
+    assert all(r[-1] == "" for r in table.rows)
+    duplicate = replace(older, extra_tables=(replace(previous, rows=(row("N"), row("North"))),))
+    with pytest.raises(ValueError, match="same historical site"):
+        master.rebind_carried_master_tables(draft, {"work_orders": duplicate}, draft.profile.template)
+
+
 def test_ambiguous_or_wrong_site_is_blocked_without_cross_site_copy(monkeypatch):
     sites = (Facility("n", "West Plant", ("Shared",)),
              Facility("shared", "South"))

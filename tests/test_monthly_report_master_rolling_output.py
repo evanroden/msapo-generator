@@ -91,6 +91,74 @@ def render_fixture(tmp_path, monkeypatch):
     return path, draft, tables
 
 
+def render_four_frame_fixture(tmp_path, monkeypatch):
+    source = Document()
+    source.add_heading("MONTHLY ACTIVITY SUMMARY", 1)
+    source.add_paragraph("WORK ORDER STATUS")
+    for metric in METRICS:
+        source.add_paragraph(LABELS[metric])
+        table = source.add_table(rows=3, cols=13)
+        for col, value in enumerate((LABELS[metric], *rolling_labels(PERIOD))):
+            table.cell(0, col).text = value
+        table.cell(1, 0).text = "PREVIOUS SOURCE NORTH"
+        table.cell(2, 0).text = "PREVIOUS SOURCE SOUTH"
+    path = tmp_path / "four-metric-master.docx"
+    source.save(path)
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "data"))
+    digest = sha256(path.read_bytes()).hexdigest()
+    master_dir = tmp_path / "data" / "monthly_reports" / "designs" / "master"
+    master_dir.mkdir(parents=True)
+    (master_dir / (digest + ".docx")).write_bytes(path.read_bytes())
+    frames = tuple(shape for shape in from_inspection(inspect_docx(path))
+                   if shape.slot == "work_orders" and len(shape.columns) == 13)
+    assert len(frames) == 4
+    source_review = review("synthetic:four-frames", (
+        Row("n", "n", "N-1", "2026-12-05", "", "Open", "Non-PM"),
+        Row("s", "s", "S-1", "2026-12-06", "", "Open", "Non-PM")))
+    coverage = tuple(CoveredMonth(site.key, "non_pm_received", "2026-12", source_review.source_reference)
+                     for site in SITES)
+    counts = tally_reviewed_months((source_review,), PERIOD, SITES,
+        approved_revisions={source_review.source_reference: source_review.revision},
+        covered_months=coverage,
+        coverage_approvals={(v.site, v.metric, v.month): source_review.source_reference for v in coverage})
+    bindings = {frame.reference: (("n", "s"), metric) for frame, metric in zip(frames, METRICS)}
+    tables = bind_template_grids(counts, PERIOD, frames, bindings, SITES)
+    profile = ReportProfile("Entirely invented contract", "rolling-four-output",
+        "Two QA facilities", SITES, scope_type="multi_site", template="enfra_master:" + digest)
+    draft = ReportDraft(profile, PERIOD, "Synthetic reviewer", profile_sections(profile),
+        (ResolvedBlock("work_orders", "This month", extra_tables=tables),), synthetic=True)
+    return path, draft, tables
+
+
+def test_four_native_grids_render_two_distinct_site_rows(tmp_path, monkeypatch):
+    path, draft, tables = render_four_frame_fixture(tmp_path, monkeypatch)
+    original = path.read_bytes()
+    doc = Document(BytesIO(build_native_docx(draft, path, master=True)))
+    assert len(doc.tables) == 4
+    for word, expected in zip(doc.tables, tables):
+        assert [cell.text for cell in word.rows[0].cells] == list(expected.columns)
+        assert [[cell.text for cell in row.cells] for row in word.rows[1:]] == [list(row) for row in expected.rows]
+    assert [doc.tables[1].cell(row, 11).text for row in (1, 2)] == ["1", "1"]
+    assert [doc.tables[0].cell(row, 11).text for row in (1, 2)] == ["", ""]
+    assert path.read_bytes() == original
+
+
+@requires_libreoffice
+def test_four_native_grids_render_both_sites_in_pdf(tmp_path, monkeypatch):
+    path, draft, _ = render_four_frame_fixture(tmp_path, monkeypatch)
+    docx_path = tmp_path / "four-metric-output.docx"
+    docx_path.write_bytes(build_native_docx(draft, path, master=True))
+    monkeypatch.setattr(pdf_converter, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(pdf_converter, "PDF_BACKEND", "libreoffice")
+    pdf_path = pdf_converter.convert_to_pdf(docx_path)
+    with pymupdf.open(pdf_path) as document:
+        text = " ".join(" ".join(page.get_text().split()) for page in document)
+    for label in ("North QA", "South QA", "PM Received", "Non-PM Received",
+                  "PM Closed", "Non-PM Closed", "Dec 2026", "Jan 2027"):
+        assert label in text
+    assert "PREVIOUS SOURCE" not in text
+
+
 def test_actual_native_docx_has_both_sites_exact_month_labels_and_values(tmp_path, monkeypatch):
     path, draft, tables = render_fixture(tmp_path, monkeypatch)
     original = path.read_bytes()

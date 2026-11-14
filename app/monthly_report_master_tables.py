@@ -309,26 +309,31 @@ def rebind_carried_master_tables(draft, previous_blocks, previous_template: str)
                 previous_period = explicit_grid_period(former.columns)
                 if previous_period is None:
                     raise ValueError("Historical work-order month labels lack explicit years; review before rollover.")
-                if (len(former.rows) != 1 or len(former.rows[0]) != 13
+                if (not 1 <= len(former.rows) <= 2
+                        or any(len(row) != 13 for row in former.rows)
                         or " ".join(former.columns[0].casefold().split())
                         not in _WORK_ORDER_METRICS
                         or " ".join(target.columns[0].casefold().split())
                         != " ".join(former.columns[0].casefold().split())):
                     raise ValueError("Historical work-order site or metric needs explicit review.")
-                label = " ".join(former.rows[0][0].casefold().split())
-                matches = [site for site in draft.profile.facilities
-                           if label in {" ".join(v.casefold().split()) for v
-                                        in (site.key, site.title, *site.aliases)}]
-                if len(matches) != 1:
-                    raise ValueError("Historical work-order site identity is missing or ambiguous.")
-                site = matches[0]
-                pair = (site.key, " ".join(former.columns[0].casefold().split()))
-                if pair in used:
-                    raise ValueError("Two physical grids claim the same historical site and metric.")
-                used.add(pair)
+                frame_sites = []
+                for row in former.rows:
+                    label = " ".join(row[0].casefold().split())
+                    matches = [site for site in draft.profile.facilities
+                               if label in {" ".join(v.casefold().split()) for v
+                                            in (site.key, site.title, *site.aliases)}]
+                    if len(matches) != 1:
+                        raise ValueError("Historical work-order site identity is missing or ambiguous.")
+                    site = matches[0]
+                    pair = (site.key, " ".join(former.columns[0].casefold().split()))
+                    if pair in used:
+                        raise ValueError("Two physical grids claim the same historical site and metric.")
+                    used.add(pair)
+                    frame_sites.append(site)
                 target = replace(target, columns=(target.columns[0], *rolling_labels(draft.period)))
                 target = merge_carried_grid(former, target, previous_period,
-                                            draft.period, site_title=site.title)
+                    draft.period, site_titles=tuple(site.title for site in frame_sites),
+                    site_aliases=tuple((site.key, *site.aliases) for site in frame_sites))
             tables.append(target)
         updated.append(replace(block, extra_tables=tuple(tables)))
     return replace(draft, blocks=tuple(updated))
