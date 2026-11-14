@@ -155,6 +155,18 @@ class ReportTable:
 
 
 @dataclass(frozen=True)
+class AnchoredTable(ReportTable):
+    # The source paragraph this table followed in its Word section. Only the
+    # built-in design uses it to put the table back under that paragraph;
+    # plain/legacy tables keep their historical fingerprints and placement.
+    anchor: str = ""
+    # When pictures came first in the source, the first paragraph written
+    # after them; that paragraph, the rest up to this table, and the table
+    # follow the pictures again.
+    lead: str = ""
+
+
+@dataclass(frozen=True)
 class TrainingSessionTable(ReportTable):
     # Identity of each accepted row snapshot. Only explicit session mutations
     # add this metadata; plain/legacy tables keep their historical fingerprints.
@@ -363,6 +375,8 @@ class ReportDraft:
     # Report-owned, source-bound normalized row review receipts. JSON strings
     # keep the frozen draft immutable and travel with snapshots/recovery.
     source_row_reviews: tuple[str, ...] = ()
+    # Report-only section choices preserve content and never edit the design.
+    omitted_sections: tuple[str, ...] = ()
 
     @property
     def fingerprint(self) -> str:
@@ -395,6 +409,8 @@ def _digest(value: object) -> str:
         # Pending preparation is private workflow metadata, not report content
         # or an approval. Cover content changes remain bound by block hashes.
         record.pop("cover_recovery_request", None)
+        if not record.get("omitted_sections"):
+            record.pop("omitted_sections", None)
         if not record.get("source_row_reviews"):
             record.pop("source_row_reviews", None)
         for block in record["blocks"]:

@@ -83,6 +83,7 @@ from app.job_numbers import (
 )
 from app.memory import (
     record_device_account_manager,
+    record_po_history,
     record_vendor_contact,
     remembered_device_account_manager,
     remembered_vendor_contact,
@@ -1640,6 +1641,8 @@ def _render_footer(workflow: str = PURCHASE_WORKFLOW) -> None:
             st.button("Load synthetic quote", key="load_synthetic_test",
                       help="Replace this browser's current quote with the built-in synthetic example. No request is sent.",
                       on_click=_load_synthetic_quote_from_about)
+            from app.owner_contacts_ui import render_owner_contacts
+            render_owner_contacts()
 
 
 
@@ -3042,6 +3045,14 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
                         contact_name=context.fields.get("contact_name"),
                         contact_email=context.fields.get("contact_email"),
                         context_id=vendor_contact_memory_context_id(context),
+                    )
+                    record_po_history(
+                        contract=contract,
+                        context_id=context.context_id,
+                        vendor=context.fields.get("vendor"),
+                        total=context.fields.get("total"),
+                        quote_filename=(context.attachments[0][0]
+                                        if context.attachments else ""),
                     )
 
     # Rebuilt unconditionally, outside the click branch, and compared by context

@@ -184,11 +184,21 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
     from app.monthly_report_followups import problem_details
     from app.monthly_report_followup_navigation import followup_target
     for item in draft.follow_ups:
+        section_key = "issues" if item.category == "issue" else "proposals"
+        # Whole-section omission is a reversible report choice, not an edit
+        # to each carried item. A preserved item outside this output cannot
+        # block generation or contribute stale text/date warnings. Invalid
+        # categories, unchosen sections and duplicate IDs still fail closed.
+        explicitly_omitted = (item.category in {"issue", "proposal"}
+                              and section_key in draft.omitted_sections
+                              and any(s.key == section_key and not s.included
+                                      for s in draft.sections))
+        if explicitly_omitted:
+            continue
         for problem in problem_details(item, draft):
             checks.append(ReportCheck("follow_up", problem.message, True, item.key,
                                       (followup_target(draft, item, problem.reason),)))
         if item.included:
-            section_key = "issues" if item.category == "issue" else "proposals"
             if section_key not in {s.key for s in sections}:
                 message = ("Include the Proposals section or explicitly leave this proposal out." if item.category == "proposal"
                            else "Include the section containing carried work, or explicitly resolve and remove the item.")
@@ -280,7 +290,10 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
         if block.key in layout_keys and block.source != "Omit":
             texts.append((block.key, block.text, block))
             if not block.reviewed:
-                checks.append(ReportCheck("review", f"Review the AI draft: {block.key}.", True, block.key))
+                from app.monthly_report_ai_correction_targets import paragraph_target
+                checks.append(ReportCheck("review", f"Review the AI draft: {block.key}.", True, block.key,
+                    tuple(paragraph_target(draft, block, n, "review")
+                          for n in range(len(block.ai_paragraphs)))))
             if block.pending_library_save:
                 checks.append(ReportCheck("library_save", f"Confirm the library replacement for {block.key}, or choose Replace once.", True, block.key))
     for section in sections:
@@ -314,9 +327,19 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
             # Scan all included text, rather than only fully resolved payloads.
             if block and block.source != "Omit":
                 if not block.reviewed:
-                    checks.append(ReportCheck("review", f"Review the AI draft: {spec.key}.", True, spec.key))
+                    from app.monthly_report_ai_correction_targets import paragraph_target
+                    checks.append(ReportCheck("review", f"Review the AI draft: {spec.key}.", True, spec.key,
+                        tuple(paragraph_target(draft, block, n, "review")
+                              for n in range(len(block.ai_paragraphs)))))
                 texts.append((spec.key, block.text, block))
-                texts.extend((spec.key, caption) for caption in block.asset_captions)
+                # Include an immutable occurrence receipt when the problem
+                # is in a caption, not the adjacent narrative/table. Same
+                # image bytes and identical captions remain distinct targets.
+                from app.monthly_report_correction_targets import picture_target
+                texts.extend((spec.key, caption, None, False,
+                              (picture_target(draft, block, index),))
+                             for index, caption in enumerate(block.asset_captions)
+                             if index < len(block.asset_hashes))
                 texts.extend((spec.key, cell) for row in block.rows for cell in row)
                 if block.rows:
                     if table_has_pricing(tuple(c.title for c in spec.columns), block.rows, work_orders=spec.type == "work_order_grid"):
@@ -331,7 +354,8 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
     for item in texts:
         key, text = item[:2]
         narrative = item[2] if len(item) >= 3 else None
-        structural_month = len(item) == 4 and item[3]
+        structural_month = len(item) >= 4 and bool(item[3])
+        correction_targets = item[4] if len(item) >= 5 else ()
         # Word renderers split VT/FF and record separators into paragraphs.
         # Only reject characters that reach the XML writer unchanged.
         invalid = sorted(set(re.findall(r"[\x00-\x08\x0e-\x1b\x1f\ud800-\udfff\ufffe\uffff]", text)))
@@ -340,12 +364,12 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
             checks.append(ReportCheck(
                 "text_character",
                 f"Remove unsupported text characters ({codes}) from {key.replace('_', ' ')} before creating the report.",
-                True, key))
+                True, key, correction_targets))
         if contains_price(text):
-            checks.append(ReportCheck("pricing", f"Remove pricing from {key.replace('_', ' ')}. Client reports cannot contain prices.", True, key))
+            checks.append(ReportCheck("pricing", f"Remove pricing from {key.replace('_', ' ')}. Client reports cannot contain prices.", True, key, correction_targets))
         phrases = placeholder_matches(text)
         if phrases:
-            checks.append(ReportCheck("placeholder", f"Remove template instructions from {key}: {', '.join(phrases)}.", True, key))
+            checks.append(ReportCheck("placeholder", f"Remove template instructions from {key}: {', '.join(phrases)}.", True, key, correction_targets))
         if key != "report_identity" and not structural_month:
             if narrative is not None:
                 from app.monthly_report_period_items import apply_exclusions, unresolved_mentions
@@ -369,10 +393,31 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
         follow_up = next((item for item in draft.follow_ups if source_id in used_source_ids(
             replace(draft, blocks=(), follow_ups=(item,)))), None)
         key = block.key if block else follow_up.key if follow_up else ""
+        from app.monthly_report_correction_targets import CorrectionTarget, report_identity
+        # The original is gone, so it has no valid source hash/revision to
+        # approve. This receipt is navigation-only and names its missing ID;
+        # a same-name re-upload never inherits its source permission.
+        missing_target = CorrectionTarget(report_identity(draft), source_id=source_id)
         checks.append(ReportCheck("source_missing",
             "An included item refers to a source file that is no longer in this draft. "
-            "Restore the original source file or remove its linked report content.", True, key))
+            "Restore the original source file or remove its linked report content.", True, key,
+            (missing_target,)))
     from app.monthly_report_correction_targets import source_target
+    from app.monthly_report_sources import source_reference
+    from app.ocr import SUPPORTED_IMAGE_SUFFIXES
+    issue_page_refs = {ref for issue in draft.follow_ups
+                       if issue.category == "issue" and issue.included
+                       for ref in issue.references}
+    # Date acknowledgement also applies to a genuinely reviewed issue PDF/
+    # image page, even if general source-page inclusion was left off. Unreviewed
+    # legacy citations and non-image imports must not gain a new date ritual.
+    issue_page_sources = {
+        source.id for source in draft.sources
+        if source.suffix == ".pdf" or source.suffix in SUPPORTED_IMAGE_SUFFIXES
+        if any(1 <= n <= len(source.page_texts)
+               and source_reference(source, n) in issue_page_refs
+               for n, _ in source.client_page_reviews)
+    }
     for source in draft.sources:
         facility = source.facility.strip().casefold()
         foreign_included = bool(facility and facility not in names and source.id in included_sources)
@@ -389,7 +434,7 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                 "Choose the exact sites in its source details, or remove the linked content.", True, source.id,(source_target(draft,source),)))
         # Classification and intake selections do not remove already-included
         # text/tables. They must not bypass the required foreign-site check.
-        if source.classification == "Reference only" or not source.selected_pages:
+        if (source.classification == "Reference only" or not source.selected_pages) and source.id not in issue_page_sources:
             continue
         from app.monthly_report_source_scope import contribution_dates_bound
         # Verified row/totals dates already bind every included use to this

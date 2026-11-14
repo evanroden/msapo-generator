@@ -361,3 +361,53 @@ def test_missing_route_is_blocked_instead_of_guessing_during_export():
     assert context.fields["object_account"] == ""
     assert context.fields["agreement_type"] == ""
     assert any("Choose how the vendor" in warning for warning in context.warnings)
+
+
+@pytest.mark.parametrize(
+    "stale_source",
+    (
+        "changed_bytes",
+        "changed_extracted_text",
+        "missing_source_digest",
+        "missing_original_bytes",
+        "missing_original_name",
+        "missing_extracted_text",
+    ),
+)
+def test_explicit_uploaded_quote_cannot_silently_become_text_attachment(stale_source):
+    """An uploaded quote must retain provable original bytes to submit."""
+    state = _state(route=EQUIPMENT_PURCHASE, uploaded=True)
+    if stale_source == "changed_bytes":
+        state["uploaded_file_bytes"] = b"changed quote after analysis"
+    elif stale_source == "changed_extracted_text":
+        state["extracted_text"] = "a different quote"
+    elif stale_source == "missing_source_digest":
+        state.pop("extract_hash")
+    elif stale_source == "missing_original_bytes":
+        state.pop("uploaded_file_bytes")
+    elif stale_source == "missing_original_name":
+        state.pop("uploaded_file_name")
+    else:
+        state["extracted_text"] = ""
+
+    context = build_po_context(state, {})
+
+    assert context is not None
+    assert context.ready is False
+    assert any("re-upload" in issue.lower() for issue in context.warnings)
+    # A diagnostic text representation is allowed only while its warning
+    # prevents handoff. It must never make the original look verified.
+    assert context.attachments[0] == ("Vendor Quote.txt", b"quote text")
+
+
+def test_explicit_source_switch_to_paste_recovers_from_stale_upload():
+    state = _state(route=EQUIPMENT_PURCHASE, uploaded=True)
+    state["uploaded_file_bytes"] = b"stale file no longer matching review"
+    assert not build_po_context(state, {}).ready
+
+    state["quote_source"] = "paste"
+    pasted = build_po_context(state, {})
+
+    assert pasted is not None and pasted.ready
+    assert pasted.attachments[0] == ("Vendor Quote.txt", b"quote text")
+    assert not any("re-upload" in issue.lower() for issue in pasted.warnings)

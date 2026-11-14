@@ -45,6 +45,7 @@ class NativePages:
         from app.monthly_report_import import _is_native_divider_background, _text
         self.body, self.fresh = body, fresh
         self.owner, self.live, self.kinds, self.regions = {}, set(), {}, []
+        self.logical_owner = {node: section_by_pos.get(i + 1) for i, node in enumerate(original)}
         self.source_word_sections = []
         self.source_header_scope = source_header_scope
         self.reserved_source_sections = set()
@@ -99,6 +100,8 @@ class NativePages:
             return
         if root not in self.owner and source in self.owner:
             self.owner[root] = self.owner[source]
+        if source in self.logical_owner:
+            self.logical_owner[root] = self.logical_owner[source]
         self.live.add(root)
         self.kinds[root] = kind
 
@@ -106,6 +109,7 @@ class NativePages:
         root, source = self._root(element), self._root(origin)
         if root is not None and source in self.owner:
             self.owner[root] = self.owner[source]
+            self.logical_owner[root] = self.logical_owner.get(source)
 
     def trailing_picture_space(self, document, origin):
         """Reserve retained empty paragraphs through their next page boundary.
@@ -291,3 +295,7 @@ class NativePages:
                 ppr.append(spacing); ppr.append(properties); paragraph.append(ppr)
                 self.body.append(paragraph)
                 self.owner[paragraph] = self.regions.index(region)
+                # The reflow separator closes the preceding logical content.
+                # Without this ownership a later report-only omission retains
+                # the empty boundary and may print a blank section page.
+                self.logical_owner[paragraph] = self.logical_owner.get(nodes[-1])

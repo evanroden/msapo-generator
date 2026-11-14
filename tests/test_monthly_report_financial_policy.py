@@ -70,3 +70,24 @@ def test_decision_preserves_input_data():
     p,s,r,e=fixture();before=(asdict(r),asdict(e))
     evaluate(p,s,r,e)
     assert before==(asdict(r),asdict(e))
+
+
+@pytest.mark.parametrize('locator', ['accounts_receivable:row:1:amount', 'accounts_receivable:total',
+                                     ' Accounts_Receivable:row:2:balance', 'accounts_receivable_notes:paragraph:1'])
+@pytest.mark.parametrize('role,audience', [('contract','client'), ('contract','internal'), ('enfra_client_report','client')])
+def test_receivable_section_is_status_only_even_for_permitted_sources(locator, role, audience):
+    """#458 owner decision: no source review can put amounts in the AR section."""
+    p,s,r,e=fixture();r=replace(r,role=role,audience=audience)
+    e=replace(e,review_fingerprint=r.fingerprint,locator=locator)
+    decision=evaluate(p,s,r,e,locator=locator)
+    assert not decision.allowed
+    assert decision.reason == p.RECEIVABLE_STATUS_ONLY
+
+
+def test_receivable_rule_does_not_change_other_sections_or_internal_display():
+    p,s,r,e=fixture()
+    assert evaluate(p,s,r,e).allowed  # a permitted contract amount elsewhere still passes
+    lookalike=replace(e,locator='table:1:accounts_receivable_summary:amount')
+    assert evaluate(p,s,r,lookalike,locator=lookalike.locator).allowed
+    ar=replace(e,locator='accounts_receivable:row:1:amount')
+    assert evaluate(p,s,r,ar,locator=ar.locator,purpose='internal_display').allowed

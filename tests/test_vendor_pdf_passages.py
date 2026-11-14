@@ -196,6 +196,7 @@ def test_legacy_draft_fingerprint_and_saved_source_stay_unchanged(monkeypatch,tm
     old=asdict(draft)
     assert old.pop('cover_recovery_request') is None
     old.pop('source_row_reviews',None)
+    old.pop("omitted_sections", None)  # Absent from the historical schema.
     for source in old['sources']:
         source.pop('pdf_text_blocks'); source.pop('scope_review')
         assert source.pop('financial_source_review') is None
