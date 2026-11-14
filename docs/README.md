@@ -10,6 +10,12 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 [Issue #440 blocking-warning correction routes](ISSUE_440_WARNING_ROUTES.md) — exact Review warning-to-native-editor and explicit recovery matrix, scoped identity/stale-target guards, and pending acceptance evidence; this branch is not a production or browser acceptance claim.
 
+[Provider abstraction guide](PORTABILITY.md) — preparation-only adapter contracts and verification; no provider switch, Azure migration or deployment is implied.
+
+[Historical Smartsheet and portability handoff](NEXT_LLM_SMARTSHEET_AND_PORTABILITY_HANDOFF.md) — July 2026 background; its old branch topology and release instructions are superseded.
+
+[Historical project handoff dossier](PROJECT_HANDOFF_DOSSIER_2026-07-29.md) — July 2026 project context; current repository state and later decisions take precedence.
+
 [Monthly Report ownership and carryover decisions](monthly_report_ownership_matrix.md) — audited contract, site and report behavior; explicit requirements, proposals and unresolved choices; synthetic scope examples and a migration proposal that preserves originals and history. This decision record does not approve policy changes or a production migration.
 
 [Accounts Receivable schema discovery](MONTHLY_RECEIVABLE_SCHEMA_REVIEW.md) — source-bound read-only invoice-field inventory; owner financial-source policy recorded in #458, with field-level eligibility and AR Aging implementation still outstanding.
@@ -284,3 +290,4 @@ Inline section terminology: [COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_SECTION_TERM
 - [PO adaptive workspace: isolated original quote and current MSAPO pairing](PO_ADAPTIVE_WORKSPACE_2026-10-13.md).
 
 Preview run observations and exact QA action receipts: [PREVIEW_RUN_OBSERVATIONS_2026-10-13.md](PREVIEW_RUN_OBSERVATIONS_2026-10-13.md). Demonstrated full-app timer rerun repair, bounded synthetic-only browser counters, retained generation failures and explicit evidence limits.
+

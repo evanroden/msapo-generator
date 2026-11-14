@@ -1,0 +1,10 @@
+# Unpinned compatibility input for alternate builds. Production uses requirements.lock.
+# Includes all provider-neutral document, expense, and web dependencies.
+python-dotenv>=1.0.0
+python-docx>=1.1.0
+openpyxl>=3.1.5,<4.0.0
+defusedxml>=0.7.1
+olefile>=0.47,<0.48
+Pillow>=11.3.0
+streamlit>=1.61.0,<2.0.0
+requests>=2.32.0
