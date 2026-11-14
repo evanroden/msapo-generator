@@ -142,7 +142,15 @@ def tally_reviewed_months(
         for row in review.rows:
             if row.excluded:
                 continue
-            if row.issues or row.site not in sites or not row.work_order.strip():
+            # The normalizer reviews Activity for one month and labels valid
+            # earlier received dates as outside that period. Those dates are
+            # expected in a twelve-month grid; preserve every other issue and
+            # require unambiguous ISO dates before treating a row as evidence.
+            blocking_issues = tuple(issue for issue in row.issues
+                                    if issue != "source date is outside this report period")
+            if (blocking_issues or row.site not in sites or not row.work_order.strip()
+                    or _month(row.work_date) is None
+                    or (row.completed_date and _month(row.completed_date) is None)):
                 notices.append(f"{ref}#{row.key}: unresolved row excluded")
                 continue
             identities[(row.site, _key(row.work_order))].append((review, row))

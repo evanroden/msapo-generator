@@ -94,6 +94,34 @@ def test_selected_closure_and_pm_aliases_use_reviewed_normalized_values():
     assert counts.cell("n", "pm_closed", "2026-12").value == "1"
 
 
+def test_rolling_window_accepts_valid_prior_month_rows_but_not_other_issues():
+    historical = Row("historic", "n", "WO-12", "2026-12-20", "2027-01-06",
+                     "Closed", "PM", issues=("source date is outside this report period",))
+    source = review("historical", (historical,), period="2027-01")
+    coverage, approvals = approved_coverage(
+        ("n", "pm_received", "2026-12", "historical"),
+        ("n", "pm_closed", "2027-01", "historical"))
+    confirmed = count((source,), coverage=coverage, coverage_approvals=approvals)
+    assert confirmed.cell("n", "pm_received", "2026-12").value == "1"
+    assert confirmed.cell("n", "pm_closed", "2027-01").value == "1"
+    assert confirmed.cell("n", "pm_received", "2026-12").source_rows == ("historical#historic",)
+    assert not confirmed.review_notices
+    uncovered = count((source,))
+    assert uncovered.cell("n", "pm_received", "2026-12").value is None
+    assert uncovered.cell("n", "pm_closed", "2027-01").value is None
+
+    from dataclasses import replace
+    for bad in (
+        replace(historical, issues=historical.issues + ("site needs review",)),
+        replace(historical, completed_date="invalid"),
+        replace(historical, work_date="invalid"),
+    ):
+        result = count((review("historical", (bad,), period="2027-01"),),
+                       coverage=coverage, coverage_approvals=approvals)
+        assert result.review_notices
+        assert result.cell("n", "pm_received", "2026-12").source_rows == ()
+
+
 def test_present_but_blank_completion_date_never_falls_back_to_closed_status():
     source = review("has-date", (
         Row("r", "n", "W-1", "2026-12-01", "", "Closed", "PM"),))
