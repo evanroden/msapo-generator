@@ -70,6 +70,23 @@ def apply_request(draft, content, request):
         return remove(draft, old, expected_revision=request["expected"],
             expected_block=request["block"], confirmed=values.get("confirmed") is True,
             keep_manual=values.get("keep_manual") is True)
+    elif action == "maintenance_correct":
+        from app.monthly_report_maintenance_workflow import correct
+        value = correct(draft, old, index=request["group"], row_key=request["row"], changes=values)
+    elif action == "maintenance_classify":
+        from app.monthly_report_maintenance_workflow import classify_unknown
+        value = classify_unknown(draft, old, index=request["group"], site=values["site"],
+            performer=values["performer"], confirmed=values.get("confirmed") is True)
+    elif action == "maintenance_publish":
+        from app.monthly_report_maintenance_workflow import publish
+        return publish(draft, old, expected_revision=request["expected"],
+            expected_blocks=request["blocks"], index=request["group"],
+            confirmed=values.get("confirmed") is True)
+    elif action == "maintenance_remove":
+        from app.monthly_report_maintenance_workflow import remove
+        return remove(draft, old, expected_revision=request["expected"],
+            expected_blocks=request["blocks"], index=request["group"],
+            confirmed=values.get("confirmed") is True, keep_manual=values.get("keep_manual") is True)
     else:
         raise ValueError("Unknown row-review action.")
     return flow.store_bundle(draft, value, expected_revision=request["expected"])
@@ -86,9 +103,11 @@ def render_reviewed_rows(draft, blocks, prefix, content):
         try:
             draft = apply_request(draft, content, pending)
             blocks = {b.key: b for b in draft.blocks}
-            if pending.get("action") in ("publish", "publish_grid", "remove_grid"):
+            if pending.get("action") in ("publish", "publish_grid", "remove_grid", "maintenance_publish", "maintenance_remove"):
                 from app.monthly_report_guided import _forget_block_widgets
-                _forget_block_widgets(prefix, {"work_orders" if pending["kind"] == "workorders" else "service_calls"})
+                keys = ({"work_orders", "service_calls"} if pending["action"] in ("maintenance_publish", "maintenance_remove")
+                        else {"work_orders" if pending["kind"] == "workorders" else "service_calls"})
+                _forget_block_widgets(prefix, keys)
             st.session_state[prefix + "_period_editor_refresh"] = True
         except (ValueError, OSError, KeyError) as exc:
             st.warning(str(exc))
@@ -255,6 +274,9 @@ def render_reviewed_rows(draft, blocks, prefix, content):
                         st.form_submit_button("Remove the source link", on_click=_queue,
                             args=(request_key, {**base, "action": "remove_grid", "block": grid_block.fingerprint},
                                   (("keep_manual", manual_key), ("confirmed", confirm_key))))
+        if kind == "workorders" and any(s.key == "maintenance" and s.included for s in draft.sections):
+            from app.monthly_report_maintenance_workflow_ui import render as render_maintenance
+            render_maintenance(draft, blocks, bundle, index, local, base, request_key, _queue)
         if kind == "maintenance":
             for unmatched in record.unmatched:
                 st.caption(f"Unmatched source row {unmatched.number}: {unmatched.reason} — " + " | ".join(unmatched.cells))

@@ -158,6 +158,11 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
     if grid_problem is not None:
         checks.append(ReportCheck("work_order_grid_source", grid_problem,
                                   True, "work_orders"))
+    from app.monthly_report_maintenance_workflow import check_binding as check_maintenance_binding
+    maintenance_problem = check_maintenance_binding(draft)
+    if maintenance_problem is not None:
+        checks.append(ReportCheck("maintenance_source", maintenance_problem,
+                                  True, "service_calls"))
     from app.monthly_report_designs import is_master
     native_master = is_master(draft.profile)
     sections = included_sections(draft.sections)

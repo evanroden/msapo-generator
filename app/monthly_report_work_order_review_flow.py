@@ -68,6 +68,9 @@ def decoded(text):
         if "grid_receipt" in value:
             from app.monthly_report_rolling_workflow import validate_receipt
             validate_receipt(value["grid_receipt"])
+        if "maintenance_projection" in value:
+            from app.monthly_report_maintenance_workflow import validate_state
+            validate_state(value["maintenance_projection"])
         for group in value["groups"]:
             if (not isinstance(group, dict) or not isinstance(group.get("label"), str)
                     or any(not isinstance(group.get(key), list)
