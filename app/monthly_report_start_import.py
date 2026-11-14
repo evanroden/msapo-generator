@@ -305,9 +305,13 @@ def unresolved_cover_artwork(items, *, native_furniture_ids=()):
     items = tuple(items)
     photo_ids = {item.id for item in cover_photo_candidates(items, native_furniture_ids=native_furniture_ids)}
     cover_sections, stop = _cover_photo_window(items)
+    from app.monthly_report_static_branding import is_company_artwork_digest
     return tuple(item for item in items if item.kind == "image" and item.position
                  and item.id not in photo_ids
                  and item.suggested_slot not in ("brand_logo", "client_logo")
+                 # ENFRA's own verified header logo/panel is page design.
+                 and not (item.part.startswith(("word/header", "word/footer"))
+                          and is_company_artwork_digest(item.image_digest))
                  and not item.suggested_slot.startswith("divider_")
                  and (item.part != "word/document.xml"
                       or (item.word_section in cover_sections and item.position < stop)))

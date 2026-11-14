@@ -689,8 +689,27 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
                     else:
                         pdf_text_blocks.extend(spans)
     elif suffix in ocr.SUPPORTED_IMAGE_SUFFIXES:
-        normalize_report_image(raw, suffix)  # Validate before caching or paid work.
-        page_texts, needs_vision = [""], [1]
+        if suffix == ".mpo":
+            from app.mpo_images import frame_count
+            count = frame_count(raw)
+            for index in range(count):
+                try:
+                    normalize_report_image(raw, suffix, frame_index=index)
+                except (OSError, EOFError, SyntaxError) as exc:
+                    # Pillow can report truncated MPO raster data only when a
+                    # selected frame is decoded, after its header inventory.
+                    raise ValueError("MPO image data is damaged or truncated. Export a fresh copy.") from exc
+            page_texts, needs_vision = [""] * count, list(range(1, count + 1))
+            notices.append("MPO pictures are separate source pages in their original order; review each picture before inclusion.")
+        else:
+            try:
+                normalize_report_image(raw, suffix)  # Validate before caching or paid work.
+            except (OSError, EOFError, SyntaxError) as exc:
+                # These exceptions originate inside the bounded image decoder,
+                # not the surrounding original/cache storage operations. Do not
+                # mislabel invalid image bytes as a transient storage outage.
+                raise ValueError("Image data is damaged or unreadable. Export a fresh copy.") from exc
+            page_texts, needs_vision = [""], [1]
     elif suffix == ".txt":
         page_texts = [raw.decode("utf-8-sig")]
     elif suffix in (".csv", ".xlsx"):
@@ -732,6 +751,28 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
         **({"csv_unicode_policy": 1} if unicode_csv else {}),
         **({"csv_dialect_policy": 1} if suffix == ".csv" else {}), **asdict(content)}))
     return content, attachments
+
+
+def _discard_rejected(path, cache, digest, already_present, existing_cache):
+    """Delete only what a just-rejected upload wrote (#284 owner decision).
+
+    Rejected uploads are removed right away. Older files and accepted originals
+    are never touched: a blob that existed before this attempt, a blob whose
+    bytes no longer match the rejected upload, and a pre-existing cache all stay.
+    """
+    if not already_present:
+        try:
+            if path.is_file() and not path.is_symlink() and (
+                    hashlib.sha256(path.read_bytes()).hexdigest() == digest):
+                path.unlink()
+        except OSError:
+            pass
+    if not existing_cache:
+        try:
+            if not cache.is_symlink():
+                cache.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], existing: tuple[SourceContent, ...] = ()) -> tuple[tuple[SourceContent, ...], tuple[str, ...]]:
@@ -796,19 +837,7 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
                 raise ValueError(f"Total extracted text exceeds {MAX_REPORT_TEXT:,} characters. Remove unused sources or split the report.")
         except (ValueError, OSError, LookupError, csv.Error, RuntimeError, BadZipFile,
                 zlib.error, fitz.mupdf.FzErrorBase) as exc:
-            # Only newly rejected and content-addressed bytes may be cleaned.
-            # Never remove accepted originals or any pre-existing library file.
-            if not already_present:
-                try:
-                    if path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == digest:
-                        path.unlink()
-                except OSError:
-                    pass
-            if not existing_cache:
-                try:
-                    cache.unlink(missing_ok=True)
-                except OSError:
-                    pass
+            _discard_rejected(path, cache, digest, already_present, existing_cache)
             if isinstance(exc, OSError):
                 reason = "Storage or file reader was unavailable; retry this file."
             elif isinstance(exc, zlib.error):
@@ -827,6 +856,11 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
                 reason = str(exc)[:300]
             messages.append(f"Not read: {filename}. {reason}")
             continue
+        except BaseException:
+            # An unexpected fault is still raised (never hidden as a file
+            # failure), but the upload it rejected must not stay on disk.
+            _discard_rejected(path, cache, digest, already_present, existing_cache)
+            raise
         sources[digest] = content
         sizes += len(raw)
         counted_sizes[digest] = len(raw)
@@ -882,7 +916,8 @@ def page_image(profile: ReportProfile, content: SourceContent, number: int, *, p
             png = page.get_pixmap(dpi=dpi, alpha=False).tobytes("png")
         result = normalize_report_image(png, ".png", line_art=True, dpi=dpi)
     elif source.suffix in ocr.SUPPORTED_IMAGE_SUFFIXES:
-        result = normalize_report_image(raw, source.suffix, dpi=96 if preview else 200)
+        result = normalize_report_image(raw, source.suffix, dpi=96 if preview else 200,
+                                        **({"frame_index": number - 1} if source.suffix == ".mpo" else {}))
     elif source.suffix == ".docx":
         item_id = dict(content.image_items).get(number)
         if not item_id:

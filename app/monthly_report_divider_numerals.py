@@ -39,7 +39,11 @@ def _numeric_text(branch):
     paragraph = paragraphs[0]
     runs = [run for run in paragraph.iter(qn("w:r")) if next(
         (p for p in run.iterancestors(qn("w:p"))), None) is paragraph]
-    if len(runs) != 2 or ["".join(t.text or "" for t in r.iter(qn("w:t"))).strip() for r in runs] != ["1", "0"]:
+    texts = ["".join(t.text or "" for t in r.iter(qn("w:t"))).strip() for r in runs]
+    # The measured numeral appears as two runs ('1','0') in the Unity/USH
+    # source and as a single run ('10') in the RRH master. Run segmentation
+    # is an editing artifact; font, size, tracking and frame are identical.
+    if texts not in (["1", "0"], ["10"]):
         return False
     return all(run.find("./" + qn("w:rPr") + "/" + qn("w:spacing")) is not None
                and run.find("./" + qn("w:rPr") + "/" + qn("w:spacing")).get(qn("w:val")) == str(_LAST_SPACING)

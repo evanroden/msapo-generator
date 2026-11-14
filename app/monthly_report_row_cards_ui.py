@@ -135,6 +135,13 @@ def _queue(key, expected, tokens, active, fields, action="edit", target=None, *,
     # otherwise Close falsely conflicts with the still-current parent. Do
     # not extend this chain to a different result or different row tokens.
     previous = record.get("pending")
+    acknowledged = record.pop("acknowledged_delivery", None)
+    if (not previous and action == "edit" and acknowledged
+            and acknowledged.get("input_action") == "edit"
+            and acknowledged["expected"] == expected
+            and acknowledged.get("input_tokens") == tokens
+            and acknowledged.get("input_active") == active):
+        previous = acknowledged
     continues_pending = previous and (previous["result"] == expected or (
         previous["expected"] == expected and previous["result"] == tuple(rows)
         and previous["tokens"] == tuple(identities)))
@@ -324,6 +331,9 @@ def _edit_table(columns, rows, types, key, noun, add_label, field, *, onsite=Fal
         record.update(rows=rows, tokens=pending["tokens"], active=pending["active"],
                       draft_token=pending["draft_token"], draft_index=pending["draft_index"])
         if incoming == pending["result"]:
+            # Keep one bounded delivery lineage after parent acknowledgement.
+            # Later blurs can still name this same native snapshot.
+            record["acknowledged_delivery"] = pending
             record.pop("pending", None)
     elif pending:
         if group:

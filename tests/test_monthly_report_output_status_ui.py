@@ -326,6 +326,6 @@ def test_actual_synthetic_word_pdf_sizes_fall_within_displayed_pre_generate_rang
     assert before_word[0] <= len(package.docx) <= before_word[1]
     assert before_pdf[0] <= len(package.pdf) <= before_pdf[1]
     assert any(
-        c.value == f"DOCX {readable_bytes(len(package.docx))} · PDF {readable_bytes(len(package.pdf))}"
+        c.value == f"Actual Word (DOCX): {readable_bytes(len(package.docx))} · Actual PDF: {readable_bytes(len(package.pdf))}"
         for c in app.caption
     )
