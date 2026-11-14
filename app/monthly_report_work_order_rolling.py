@@ -108,6 +108,10 @@ def tally_reviewed_months(
     sites = tuple(f.key for f in facilities)
     if not sites or len(set(sites)) != len(sites):
         raise ValueError("Explicit unique facility keys are required.")
+    # Callers can supply a one-shot iterator. Preserve it for row counting
+    # while checking that coverage actually references an included review.
+    reviews = tuple(reviews)
+    reviewed_sources = {review.source_reference for review in reviews}
     months = rolling_months(period)
     pm = {_review_category(value) for value in pm_categories if _key(value)}
     closed = {_review_closed_status(value) for value in closed_statuses if _key(value)}
@@ -122,7 +126,8 @@ def tally_reviewed_months(
         # monthly export. Require a separate month/site/metric coverage approval
         # tied to the exact same reviewed source identity.
         if (coverage_approvals.get(key) != item.source_reference
-                or item.source_reference not in approved_revisions):
+                or item.source_reference not in approved_revisions
+                or item.source_reference not in reviewed_sources):
             raise ValueError("Coverage needs an independently approved, current source receipt.")
         coverage[key].add(item.source_reference)
     identities = defaultdict(list)
@@ -137,7 +142,15 @@ def tally_reviewed_months(
         for row in review.rows:
             if row.excluded:
                 continue
-            if row.issues or row.site not in sites or not row.work_order.strip():
+            # The normalizer reviews Activity for one month and labels valid
+            # earlier received dates as outside that period. Those dates are
+            # expected in a twelve-month grid; preserve every other issue and
+            # require unambiguous ISO dates before treating a row as evidence.
+            blocking_issues = tuple(issue for issue in row.issues
+                                    if issue != "source date is outside this report period")
+            if (blocking_issues or row.site not in sites or not row.work_order.strip()
+                    or _month(row.work_date) is None
+                    or (row.completed_date and _month(row.completed_date) is None)):
                 notices.append(f"{ref}#{row.key}: unresolved row excluded")
                 continue
             identities[(row.site, _key(row.work_order))].append((review, row))
@@ -266,6 +279,9 @@ def merge_carried_grid(previous, current, prior_period, period, *, site_title: s
                 + period.month - prior_period.month)
     if not 1 <= distance <= 12:
         raise ValueError("Work-order rollover needs a later month within one reporting year.")
+    if (not _key(previous.columns[0])
+            or _key(previous.columns[0]) != _key(current.columns[0])):
+        raise ValueError("The work-order metric changed; review before carrying values.")
     if (previous.columns[1:] != rolling_labels(prior_period)
             or current.columns[1:] not in (rolling_labels(period), previous.columns[1:])):
         raise ValueError("Unverified month headings cannot be carried as known history.")

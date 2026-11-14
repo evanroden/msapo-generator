@@ -94,6 +94,34 @@ def test_selected_closure_and_pm_aliases_use_reviewed_normalized_values():
     assert counts.cell("n", "pm_closed", "2026-12").value == "1"
 
 
+def test_rolling_window_accepts_valid_prior_month_rows_but_not_other_issues():
+    historical = Row("historic", "n", "WO-12", "2026-12-20", "2027-01-06",
+                     "Closed", "PM", issues=("source date is outside this report period",))
+    source = review("historical", (historical,), period="2027-01")
+    coverage, approvals = approved_coverage(
+        ("n", "pm_received", "2026-12", "historical"),
+        ("n", "pm_closed", "2027-01", "historical"))
+    confirmed = count((source,), coverage=coverage, coverage_approvals=approvals)
+    assert confirmed.cell("n", "pm_received", "2026-12").value == "1"
+    assert confirmed.cell("n", "pm_closed", "2027-01").value == "1"
+    assert confirmed.cell("n", "pm_received", "2026-12").source_rows == ("historical#historic",)
+    assert not confirmed.review_notices
+    uncovered = count((source,))
+    assert uncovered.cell("n", "pm_received", "2026-12").value is None
+    assert uncovered.cell("n", "pm_closed", "2027-01").value is None
+
+    from dataclasses import replace
+    for bad in (
+        replace(historical, issues=historical.issues + ("site needs review",)),
+        replace(historical, completed_date="invalid"),
+        replace(historical, work_date="invalid"),
+    ):
+        result = count((review("historical", (bad,), period="2027-01"),),
+                       coverage=coverage, coverage_approvals=approvals)
+        assert result.review_notices
+        assert result.cell("n", "pm_received", "2026-12").source_rows == ()
+
+
 def test_present_but_blank_completion_date_never_falls_back_to_closed_status():
     source = review("has-date", (
         Row("r", "n", "W-1", "2026-12-01", "", "Closed", "PM"),))
@@ -188,6 +216,23 @@ def test_unapproved_review_or_coverage_without_source_is_rejected():
     with pytest.raises(ValueError, match="independently approved"):
         count((), coverage=(CoveredMonth("n", "pm_received", "2026-12", "other"),),
               coverage_approvals={("n", "pm_received", "2026-12"): "other"})
+    # An approval receipt alone is not a reviewed work-order export.  Even an
+    # exact revision string must not manufacture a covered zero when the
+    # corresponding source review was not included.
+    with pytest.raises(ValueError, match="independently approved"):
+        tally_reviewed_months(iter(()), JANUARY, (NORTH,),
+            approved_revisions={"missing": "missing:rev"}, pm_categories=("PM",),
+            covered_months=(CoveredMonth("n", "pm_received", "2026-12", "missing"),),
+            coverage_approvals={("n", "pm_received", "2026-12"): "missing"})
+
+
+def test_coverage_accepts_reviewed_sources_from_a_single_use_iterable():
+    source = review("complete", ())
+    result = tally_reviewed_months(iter((source,)), JANUARY, (NORTH,),
+        approved_revisions={"complete": "complete:rev"}, pm_categories=("PM",),
+        covered_months=(CoveredMonth("n", "pm_received", "2026-12", "complete"),),
+        coverage_approvals={("n", "pm_received", "2026-12"): "complete"})
+    assert result.cell("n", "pm_received", "2026-12").value == "0"
 
 
 def test_two_site_eight_frame_binding_is_order_explicit_and_overflow_fails_closed():
@@ -238,6 +283,18 @@ def test_history_merges_by_real_month_and_preserves_edited_previous_report():
                            site_title="North")
     assert merge_carried_grid(old, current, december, JANUARY,
                               site_title="North") == merged
+
+
+def test_rollover_rejects_a_different_work_order_metric():
+    december = ReportPeriod(2026, 12)
+    previous = ReportTable(("PM Closed", *rolling_labels(december)),
+        (("North", *("7" for _ in range(12))),), "master-table:stable")
+    other = ReportTable(("Non-PM Closed", *rolling_labels(JANUARY)), (), previous.reference)
+    with pytest.raises(ValueError, match="metric"):
+        merge_carried_grid(previous, other, december, JANUARY, site_title="North")
+    equivalent = ReportTable(("pm   closed", *rolling_labels(JANUARY)), (), previous.reference)
+    assert merge_carried_grid(previous, equivalent, december, JANUARY,
+                              site_title="North").rows[0][1] == "7"
 
 
 def test_undated_or_other_site_carry_is_rejected_not_backfilled():

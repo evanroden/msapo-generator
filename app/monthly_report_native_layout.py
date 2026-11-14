@@ -2201,6 +2201,9 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                 _table(anchor, columns, rows, physical_indices=shape.indices if shape else (),
                        continuation=bool(shape and shape.continuation),
                        keep_all_rows_intact=(block.key == "contact_matrix"), template=prototype)
+                if master and shape and block.key == "work_orders" and rows:
+                    from app.monthly_report_rolling_grid_style import fit_narrow_rolling_grid
+                    fit_narrow_rolling_grid(anchor, columns)
                 page_plan.emitted(anchor, kind="table")
                 if block.key == "contact_matrix":
                     organization_contact_tables.append(anchor)

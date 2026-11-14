@@ -1,6 +1,8 @@
 """Native rolling WO grids are checked in real Word and rendered PDF output."""
 from dataclasses import replace
+from hashlib import sha256
 from io import BytesIO
+import re
 
 from docx import Document
 import pymupdf
@@ -46,8 +48,16 @@ def master_source(path):
     return path
 
 
-def render_fixture(tmp_path):
+def render_fixture(tmp_path, monkeypatch):
     path = master_source(tmp_path / "native-rolling-master.docx")
+    # Exercise the same immutable pin used by an installed master.  A fake
+    # digest fails once the installer verifies that the original exists.
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "data"))
+    original = path.read_bytes()
+    digest = sha256(original).hexdigest()
+    master_dir = tmp_path / "data" / "monthly_reports" / "designs" / "master"
+    master_dir.mkdir(parents=True)
+    (master_dir / (digest + ".docx")).write_bytes(original)
     shapes = tuple(shape for shape in from_inspection(inspect_docx(path))
                    if shape.slot == "work_orders" and len(shape.columns) == 13)
     assert len(shapes) == 8  # Do not quietly skip a native location/metric.
@@ -73,7 +83,7 @@ def render_fixture(tmp_path):
     tables = bind_template_grids(counts, PERIOD, shapes, bound, SITES)
     profile = ReportProfile("Entirely invented contract", "rolling-output",
         "Two QA facilities", SITES, scope_type="multi_site",
-        template="enfra_master:" + "a" * 64)
+        template="enfra_master:" + digest)
     draft = ReportDraft(profile, PERIOD, "Synthetic reviewer",
         profile_sections(profile),
         (ResolvedBlock("work_orders", "This month", extra_tables=tables),),
@@ -81,8 +91,8 @@ def render_fixture(tmp_path):
     return path, draft, tables
 
 
-def test_actual_native_docx_has_both_sites_exact_month_labels_and_values(tmp_path):
-    path, draft, tables = render_fixture(tmp_path)
+def test_actual_native_docx_has_both_sites_exact_month_labels_and_values(tmp_path, monkeypatch):
+    path, draft, tables = render_fixture(tmp_path, monkeypatch)
     original = path.read_bytes()
     doc = Document(BytesIO(build_native_docx(draft, path, master=True)))
     assert len(doc.tables) == 8
@@ -107,7 +117,7 @@ def test_actual_native_docx_has_both_sites_exact_month_labels_and_values(tmp_pat
 
 @requires_libreoffice
 def test_actual_pdf_reflects_word_tables_without_missing_site_or_fabricated_counts(tmp_path, monkeypatch):
-    path, draft, _ = render_fixture(tmp_path)
+    path, draft, _ = render_fixture(tmp_path, monkeypatch)
     docx_path = tmp_path / "rolling-output.docx"
     docx_path.write_bytes(build_native_docx(draft, path, master=True))
     monkeypatch.setattr(pdf_converter, "OUTPUT_DIR", tmp_path)
@@ -116,8 +126,14 @@ def test_actual_pdf_reflects_word_tables_without_missing_site_or_fabricated_coun
     with pymupdf.open(pdf_path) as document:
         assert len(document) >= 1
         text = "\n".join(page.get_text() for page in document)
+    # Word may wrap at a word boundary inside a narrow cell. A newline at a
+    # space is readable, but a break inside a word ("Nort h" or "Rece ived")
+    # must still fail these whole-label checks.
+    readable = " ".join(text.split())
     for expected in ("North QA", "South QA", "PM Received", "Non-PM Received",
                      "PM Closed", "Non-PM Closed", "Dec 2026", "Jan 2027"):
-        assert expected in text
-    assert "PREVIOUS SOURCE VALUE" not in text
+        assert expected in readable
+    assert re.search(r"(?<!Non-)PM Received", readable)
+    assert re.search(r"(?<!Non-)PM Closed", readable)
+    assert "PREVIOUS SOURCE VALUE" not in readable
     assert pdf_path.read_bytes().startswith(b"%PDF-")
