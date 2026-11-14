@@ -1,5 +1,6 @@
 """The source workspace publishes only confirmed, source-bound grid cells."""
 from dataclasses import replace
+from datetime import date
 
 import pytest
 from streamlit.testing.v1 import AppTest
@@ -46,7 +47,7 @@ def prepared(tmp_path, monkeypatch):
 def apply_grid(draft, bundle, **changes):
     block = next(b for b in draft.blocks if b.key == "work_orders")
     options = dict(expected_revision=flow.revision(bundle), expected_block=block.fingerprint,
-        group_index=0, metrics=("non_pm_received", "non_pm_closed"), confirmed=True)
+        group_index=0, metrics=("non_pm_received", "non_pm_closed"), confirmed=True, as_of=date(2027, 2, 1))
     return publish(draft, bundle, **{**options, **changes})
 
 
@@ -111,7 +112,22 @@ def test_unconfirmed_or_edited_grid_is_never_overwritten(tmp_path, monkeypatch):
         apply_grid(newer, saved, expected_block=block.fingerprint)
 
 
+def test_future_months_and_future_dated_events_are_not_counted(tmp_path, monkeypatch):
+    draft, _, bundle, _, _, _ = prepared(tmp_path, monkeypatch)
+    december = apply_grid(draft, bundle, as_of=date(2026, 12, 31))
+    received = december.blocks[0].extra_tables[1]
+    closed = december.blocks[0].extra_tables[3]
+    assert received.rows[0][-2:] == ('1', '')
+    assert closed.rows[0][-2:] == ('0', '')
+    with pytest.raises(ValueError, match='later than the review date'):
+        apply_grid(draft, bundle, as_of=date(2026, 12, 4))
+    with pytest.raises(ValueError, match='nonfuture month coverage'):
+        apply_grid(draft, bundle, as_of=date(2026, 11, 30))
+
+
 def test_ui_action_requires_explicit_metrics_and_current_receipt(tmp_path, monkeypatch):
+    from app import monthly_report_work_order_review_ui as ui
+    monkeypatch.setattr(ui, '_coverage_as_of', lambda: date(2027, 2, 1))
     draft, content, bundle, _, _, _ = prepared(tmp_path, monkeypatch)
     block = draft.blocks[0]
     request = {"scope": flow.scope(draft), "source": content.source.fingerprint,
@@ -150,6 +166,8 @@ def test_source_link_can_be_removed_without_losing_manual_edits(tmp_path, monkey
 
 
 def test_visible_source_workspace_applies_confirmed_grids(tmp_path, monkeypatch):
+    from app import monthly_report_work_order_review_ui as ui
+    monkeypatch.setattr(ui, '_coverage_as_of', lambda: date(2027, 2, 1))
     draft, content, _, _, _, _ = prepared(tmp_path, monkeypatch)
     script = """
 import streamlit as st

@@ -64,7 +64,8 @@ def apply_request(draft, content, request):
         statuses = tuple(value.strip() for value in str(values.get("closed_statuses", "")).split(",") if value.strip())
         return publish(draft, old, expected_revision=request["expected"],
             expected_block=request["block"], group_index=request["group"], metrics=metrics,
-            closed_statuses=statuses, confirmed=values.get("confirmed") is True)
+            closed_statuses=statuses, confirmed=values.get("confirmed") is True,
+            as_of=_coverage_as_of())
     elif action == "remove_grid":
         from app.monthly_report_rolling_workflow import remove
         return remove(draft, old, expected_revision=request["expected"],
@@ -240,7 +241,7 @@ def render_reviewed_rows(draft, blocks, prefix, content):
                     on_click=_queue, args=(request_key,
                         {**base, "action": "coverage_revoke", "table_number": record.table_number}, (("site", selected_key),)))
                 st.caption("Apply the same reviewed export to the installed master's monthly grids. "
-                           "Only confirmed site/month ranges and selected measures receive values; other months remain blank. "
+                           "Only confirmed site/month ranges and selected measures receive values; future and other unconfirmed months remain blank. "
                            "For closed counts, confirm the export includes work closed in the range even if received earlier.")
                 with st.form(local + "_grid_form"):
                     grid_fields = []

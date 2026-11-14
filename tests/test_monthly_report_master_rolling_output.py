@@ -1,5 +1,6 @@
 """Native rolling WO grids are checked in real Word and rendered PDF output."""
 from dataclasses import replace
+from datetime import date
 from hashlib import sha256
 from io import BytesIO
 import re
@@ -140,6 +141,33 @@ def test_four_native_grids_render_two_distinct_site_rows(tmp_path, monkeypatch):
         assert [[cell.text for cell in row.cells] for row in word.rows[1:]] == [list(row) for row in expected.rows]
     assert [doc.tables[1].cell(row, 11).text for row in (1, 2)] == ["1", "1"]
     assert [doc.tables[0].cell(row, 11).text for row in (1, 2)] == ["", ""]
+    assert path.read_bytes() == original
+
+
+def test_reviewed_source_counts_reach_the_actual_native_word_grid(tmp_path, monkeypatch):
+    from app import monthly_report_sources as sources
+    from app import monthly_report_work_order_review_flow as flow
+    from app.monthly_report_rolling_workflow import publish
+
+    path, draft, existing = render_four_frame_fixture(tmp_path, monkeypatch)
+    original = path.read_bytes()
+    source, _ = sources.ingest(draft.profile, 'synthetic-work-orders.csv',
+        b'Work Order,Site,Received Date,Closed Date,Status,Type\n'
+        b'N-1,n,2026-12-05,2027-01-03,Closed,Non-PM\n')
+    block = replace(draft.blocks[0], extra_tables=tuple(replace(table, rows=()) for table in existing))
+    draft = replace(draft, blocks=(block,), sources=(source.source,))
+    bundle = flow.prepare_bundle(draft, source)
+    bundle = flow.confirm_coverage(draft, bundle, table_number=1, site='n',
+        start_month='2026-12', end_month='2027-01',
+        evidence='Synthetic export range and closed dates checked', confirmed=True)
+    draft = flow.store_bundle(draft, bundle)
+    report = publish(draft, bundle, expected_revision=flow.revision(bundle),
+        expected_block=block.fingerprint, group_index=0,
+        metrics=('non_pm_received', 'non_pm_closed'), confirmed=True, as_of=date(2027, 2, 1))
+    word = Document(BytesIO(build_native_docx(report, path, master=True)))
+    assert word.tables[1].cell(1, 11).text == '1'  # December received.
+    assert word.tables[3].cell(1, 12).text == '1'  # January closed.
+    assert word.tables[1].cell(2, 11).text == ''   # South is not confirmed.
     assert path.read_bytes() == original
 
 

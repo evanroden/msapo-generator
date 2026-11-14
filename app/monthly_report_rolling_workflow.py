@@ -5,6 +5,7 @@ It preserves other report content, and a receipt lets preflight detect a
 changed review, coverage decision, source, or manually edited published grid.
 """
 from dataclasses import asdict, replace
+from datetime import date
 import json
 
 from app.monthly_report_model import ReportTable, ResolvedBlock
@@ -96,11 +97,14 @@ def _merge_base(base, proposed, period):
 
 
 def publish(draft, bundle, *, expected_revision, expected_block, group_index,
-            metrics, closed_statuses=("Closed", "Complete"), confirmed=False):
+            metrics, closed_statuses=("Closed", "Complete"), confirmed=False, as_of=None):
     from app import monthly_report_work_order_review_flow as flow
     from app.monthly_report_row_review_receipts import decoded
 
     flow._validate(draft, bundle)
+    as_of = date.today() if as_of is None else as_of
+    if type(as_of) is not date:
+        raise ValueError("Choose a valid review date for source coverage.")
     if (confirmed is not True or bundle["kind"] != "workorders"
             or type(group_index) is not int or not 0 <= group_index < len(bundle["groups"])):
         raise ValueError("Confirm the selected work-order table and grid coverage first.")
@@ -152,12 +156,21 @@ def publish(draft, bundle, *, expected_revision, expected_block, group_index,
         if decision.table_number != review.table_number:
             continue
         for month in rolling_months(draft.period):
-            if decision.start_month <= month <= decision.end_month:
+            if decision.start_month <= month <= decision.end_month and month <= as_of.strftime('%Y-%m'):
                 covered.extend(CoveredMonth(decision.site, metric, month, review.source_reference)
                                for metric in metrics)
     covered = tuple(dict.fromkeys(covered))
     if not covered:
-        raise ValueError("Confirm the source's complete month coverage for at least one site first.")
+        raise ValueError("Confirm the source's complete, nonfuture month coverage for at least one site first.")
+    covered_site_months = {(item.site, item.month) for item in covered}
+    for row in review.rows:
+        for value in (row.work_date, row.completed_date):
+            try:
+                when = date.fromisoformat(value) if value else None
+            except ValueError:
+                continue  # The rolling tally reports malformed dates as unresolved.
+            if when and when > as_of and (row.site, value[:7]) in covered_site_months:
+                raise ValueError("A source event is later than the review date. Review future-dated rows before applying counts.")
     counts = tally_reviewed_months((review,), draft.period, draft.profile.facilities,
         approved_revisions={review.source_reference: review.revision},
         pm_categories=("PM",) if any(m.startswith("pm_") for m in metrics) else (),
