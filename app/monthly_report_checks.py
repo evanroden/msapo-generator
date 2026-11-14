@@ -153,6 +153,11 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
     if receivable_problem is not None:
         checks.append(ReportCheck("receivable_source", receivable_problem,
                                   True, "accounts_receivable"))
+    from app.monthly_report_rolling_workflow import check_binding as check_grid_binding
+    grid_problem = check_grid_binding(draft)
+    if grid_problem is not None:
+        checks.append(ReportCheck("work_order_grid_source", grid_problem,
+                                  True, "work_orders"))
     from app.monthly_report_designs import is_master
     native_master = is_master(draft.profile)
     sections = included_sections(draft.sections)
@@ -458,3 +463,4 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
     # Same issue can be reached through the cover and a repeated section
     # binding. Preserve distinct fields/messages but show each exact concern once.
     return tuple(dict.fromkeys(checks))
+

@@ -54,6 +54,16 @@ def _review_closed_status(value: str) -> str:
     return _key(value)
 
 
+def _recorded_status(review, row):
+    """Use the reviewed source spelling when available, not a collapsed label."""
+    origin = getattr(row, "origin", None)
+    position = getattr(review.mapping, "status", None)
+    if origin is None or type(position) is not int or not 0 <= position < len(origin.cells):
+        return None
+    corrections = dict(getattr(row, "corrections", ()))
+    return corrections.get("status", origin.cells[position])
+
+
 @dataclass(frozen=True)
 class CoveredMonth:
     """A reviewed assertion that a particular source covers an entire cell."""
@@ -114,7 +124,9 @@ def tally_reviewed_months(
     reviewed_sources = {review.source_reference for review in reviews}
     months = rolling_months(period)
     pm = {_review_category(value) for value in pm_categories if _key(value)}
+    closed_statuses = tuple(closed_statuses)
     closed = {_review_closed_status(value) for value in closed_statuses if _key(value)}
+    recorded_closed = {_key(value) for value in closed_statuses if _key(value)}
     coverage: dict[tuple[str, str, str], set[str]] = defaultdict(set)
     coverage_approvals = coverage_approvals or {}
     for item in covered_months:
@@ -157,7 +169,8 @@ def tally_reviewed_months(
     totals: dict[tuple[str, str, str], int] = defaultdict(int)
     members: dict[tuple[str, str, str], set[str]] = defaultdict(set)
     for (site, identity), records in sorted(identities.items()):
-        facts = {(row.work_date, row.completed_date, _key(row.status),
+        facts = {(row.work_date, row.completed_date,
+                  _key(_recorded_status(review, row) if _recorded_status(review, row) is not None else row.status),
                   _key(row.work_type), review.mapping.completed_date is not None)
                  for review, row in records}
         if len(facts) != 1:
@@ -183,8 +196,11 @@ def tally_reviewed_months(
             totals[key] += 1
             members[key].update(origins)
         has_closed_date = review.mapping.completed_date is not None
+        raw_status = _recorded_status(review, row)
+        selected_closed = (_key(raw_status) in recorded_closed if raw_status is not None
+                           else _review_closed_status(row.status) in closed)
         completed = (_month(row.completed_date) if has_closed_date
-                     else received if _review_closed_status(row.status) in closed else None)
+                     else received if selected_closed else None)
         if has_closed_date and row.completed_date and completed is None:
             notices.append(f"{site}/{identity}: invalid completion date requires review")
         if completed in months:

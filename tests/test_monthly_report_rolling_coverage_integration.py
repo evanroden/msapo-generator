@@ -56,3 +56,28 @@ def test_prior_month_review_and_rolling_metrics_require_separate_coverage():
     rejected = tally_reviewed_months((invalid,), period, profile.facilities,
         approved_revisions={invalid.source_reference: invalid.revision}, pm_categories=("PM",))
     assert rejected.review_notices
+
+
+def test_selected_closed_statuses_match_original_source_values():
+    period = ReportPeriod(2027, 1)
+    profile = ReportProfile("Synthetic contract", "status-choice", "North",
+                            (Facility("north", "Synthetic North", ("North",)),))
+    columns = ("Work Order #", "Site", "Received Date", "Status", "PM/Non-PM")
+    rows = (("WO-1", "North", "2027-01-02", "Closed", "Non-PM"),
+            ("WO-2", "North", "2027-01-03", "Complete", "Non-PM"),
+            ("WO-3", "North", "2027-01-04", "Finished", "Non-PM"))
+    digest = sha256(json.dumps((columns, rows)).encode()).hexdigest()
+    source = ReportSource(digest, "synthetic.csv", digest, ".csv")
+    review = normalize_table(SourceContent(source, (SourceTable("Export", columns, rows),)),
+                             1, profile, period)
+    assert {row.status for row in review.rows} == {"Completed"}
+    covered = (CoveredMonth("north", "non_pm_closed", "2027-01", review.source_reference),)
+    options = dict(approved_revisions={review.source_reference: review.revision}, covered_months=covered,
+        coverage_approvals={("north", "non_pm_closed", "2027-01"): review.source_reference})
+    def result(**kwargs):
+        return tally_reviewed_months((review,), period, profile.facilities, **options, **kwargs).cell(
+            "north", "non_pm_closed", "2027-01").value
+    assert result() == "2"
+    assert result(closed_statuses=("Closed",)) == "1"
+    assert result(closed_statuses=("Finished",)) == "1"
+    assert result(closed_statuses=()) == "0"

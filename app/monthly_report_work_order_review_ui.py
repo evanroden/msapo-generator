@@ -57,6 +57,19 @@ def apply_request(draft, content, request):
         return flow.publish_bundle(draft, old, expected_revision=request["expected"],
             expected_block=request["block"], include_trades=bool(values.get("include_trades")),
             include_omitted=bool(values.get("include_omitted")))
+    elif action == "publish_grid":
+        from app.monthly_report_rolling_workflow import publish
+        from app.monthly_report_work_order_rolling import METRICS
+        metrics = tuple(name for name in METRICS if values.get(name) is True)
+        statuses = tuple(value.strip() for value in str(values.get("closed_statuses", "")).split(",") if value.strip())
+        return publish(draft, old, expected_revision=request["expected"],
+            expected_block=request["block"], group_index=request["group"], metrics=metrics,
+            closed_statuses=statuses, confirmed=values.get("confirmed") is True)
+    elif action == "remove_grid":
+        from app.monthly_report_rolling_workflow import remove
+        return remove(draft, old, expected_revision=request["expected"],
+            expected_block=request["block"], confirmed=values.get("confirmed") is True,
+            keep_manual=values.get("keep_manual") is True)
     else:
         raise ValueError("Unknown row-review action.")
     return flow.store_bundle(draft, value, expected_revision=request["expected"])
@@ -73,7 +86,7 @@ def render_reviewed_rows(draft, blocks, prefix, content):
         try:
             draft = apply_request(draft, content, pending)
             blocks = {b.key: b for b in draft.blocks}
-            if pending.get("action") == "publish":
+            if pending.get("action") in ("publish", "publish_grid", "remove_grid"):
                 from app.monthly_report_guided import _forget_block_widgets
                 _forget_block_widgets(prefix, {"work_orders" if pending["kind"] == "workorders" else "service_calls"})
             st.session_state[prefix + "_period_editor_refresh"] = True
@@ -150,6 +163,9 @@ def render_reviewed_rows(draft, blocks, prefix, content):
                 for name in fields:
                     widget = local + "_" + row.key + "_" + name
                     value = getattr(row, name)
+                    if kind == "workorders" and name == "status" and record.mapping.status is not None:
+                        # Preserve the original status spelling when an unrelated field is edited.
+                        value = dict(row.corrections).get(name, row.origin.cells[record.mapping.status])
                     if not value:
                         position = getattr(record.mapping, name)
                         value = dict(row.corrections).get(name,
@@ -204,6 +220,41 @@ def render_reviewed_rows(draft, blocks, prefix, content):
                 st.button("Revoke this site's coverage confirmations", key=local + "_coverage_revoke",
                     on_click=_queue, args=(request_key,
                         {**base, "action": "coverage_revoke", "table_number": record.table_number}, (("site", selected_key),)))
+                st.caption("Apply the same reviewed export to the installed master's monthly grids. "
+                           "Only confirmed site/month ranges and selected measures receive values; other months remain blank. "
+                           "For closed counts, confirm the export includes work closed in the range even if received earlier.")
+                with st.form(local + "_grid_form"):
+                    grid_fields = []
+                    for name, label, default in (
+                        ("non_pm_received", "Non-PM received", True),
+                        ("non_pm_closed", "Non-PM closed", True),
+                        ("pm_received", "PM received", False),
+                        ("pm_closed", "PM closed", False),
+                    ):
+                        widget = local + "_grid_" + name
+                        st.checkbox(label, value=default, key=widget)
+                        grid_fields.append((name, widget))
+                    widget = local + "_grid_closed_statuses"
+                    st.text_input("Closed statuses when no completion-date column exists", value="Closed, Complete", key=widget)
+                    grid_fields.append(("closed_statuses", widget))
+                    widget = local + "_grid_confirmed"
+                    st.checkbox("I reviewed the rows and confirmed coverage for the selected measures", key=widget)
+                    grid_fields.append(("confirmed", widget))
+                    grid_block = blocks.get("work_orders", ResolvedBlock("work_orders", "This month"))
+                    st.form_submit_button("Apply verified monthly grid counts", on_click=_queue,
+                        args=(request_key, {**base, "action": "publish_grid", "group": index,
+                                            "block": grid_block.fingerprint}, grid_fields))
+                if bundle.get("grid_receipt"):
+                    with st.form(local + "_remove_grid_form"):
+                        manual_key = local + "_grid_keep_manual"
+                        confirm_key = local + "_grid_remove_confirm"
+                        st.checkbox("Keep the current grid values as manual entries", key=manual_key,
+                            help="Leave this unchecked to restore the values from before this source was applied. Edited values are never overwritten.")
+                        st.checkbox("I confirm how to handle these grid values", key=confirm_key)
+                        grid_block = blocks.get("work_orders", ResolvedBlock("work_orders", "This month"))
+                        st.form_submit_button("Remove the source link", on_click=_queue,
+                            args=(request_key, {**base, "action": "remove_grid", "block": grid_block.fingerprint},
+                                  (("keep_manual", manual_key), ("confirmed", confirm_key))))
         if kind == "maintenance":
             for unmatched in record.unmatched:
                 st.caption(f"Unmatched source row {unmatched.number}: {unmatched.reason} — " + " | ".join(unmatched.cells))

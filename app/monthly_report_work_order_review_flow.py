@@ -65,6 +65,9 @@ def decoded(text):
             raise ValueError(message)
         for item in value.get("coverage", []):
             restore_decision(item)
+        if "grid_receipt" in value:
+            from app.monthly_report_rolling_workflow import validate_receipt
+            validate_receipt(value["grid_receipt"])
         for group in value["groups"]:
             if (not isinstance(group, dict) or not isinstance(group.get("label"), str)
                     or any(not isinstance(group.get(key), list)
