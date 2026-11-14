@@ -1,0 +1,71 @@
+name: Monthly joined section assembly
+
+on:
+  pull_request:
+    paths:
+      - 'tests/test_monthly_section_assembly_joined.py'
+      - 'app/monthly_report_*.py'
+      - '.github/workflows/monthly-section-assembly.yml'
+      - 'requirements*.lock'
+  push:
+    branches: [main]
+    paths:
+      - 'tests/test_monthly_section_assembly_joined.py'
+      - 'app/monthly_report_*.py'
+      - '.github/workflows/monthly-section-assembly.yml'
+      - 'requirements*.lock'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  joined-word-pdf:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      FONTCONFIG_FILE: ${{ github.workspace }}/runtime/fonts.conf
+      MSAPO_JOINED_OUTPUT: ${{ github.workspace }}/test-artifacts/section-assembly
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - name: Install actual Word/PDF renderer and locked dependencies
+        timeout-minutes: 20
+        run: |
+          sudo python3 scripts/ci_ubuntu_mirror_priority.py
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libreoffice-writer libreoffice-calc fontconfig fonts-dejavu-core \
+            fonts-liberation fonts-crosextra-carlito fonts-crosextra-caladea \
+            fonts-texgyre fonts-opensymbol
+          python -m pip install -r requirements-dev.lock
+      - name: Run joined nine-page saved Word/PDF acceptance (no skips)
+        timeout-minutes: 12
+        run: |
+          mkdir -p test-artifacts/section-assembly
+          python -m pytest -q tests/test_monthly_section_assembly_joined.py \
+            --junitxml=test-artifacts/section-assembly/junit.xml
+          python - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          root = ET.parse('test-artifacts/section-assembly/junit.xml').getroot()
+          assert not root.findall('.//skipped'), 'Real Word/PDF must run, not skip'
+          assert len(root.findall('.//testcase')) >= 1, 'Joined assembly check missing'
+          for name in ('joined-synthetic.docx', 'joined-synthetic.pdf', 'manifest.json'):
+              assert (Path('test-artifacts/section-assembly') / name).is_file(), name
+          PY
+      - name: Retain first failure, actual output and original-source hashes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monthly-joined-section-assembly-${{ github.run_attempt }}
+          path: test-artifacts/section-assembly/
+          if-no-files-found: error
+          retention-days: 7

@@ -379,12 +379,18 @@ def estimated_output_ranges(estimated_bytes: int) -> tuple[tuple[int, int], tupl
 
 
 def _picture(document, raw: bytes, *, width: float = 7, height: float = 8,
-             inset: float = 0, page_break_before: bool = False) -> None:
+             inset: float = 0, page_break_before: bool = False,
+             keep_with_next: bool = False) -> None:
     paragraph = document.add_paragraph()
     paragraph.paragraph_format.left_indent = Inches(inset)
     paragraph.paragraph_format.space_after = Pt(0)
     if page_break_before:
         paragraph.paragraph_format.page_break_before = True
+    if keep_with_next:
+        # A source-page image must stay on the same physical page as the
+        # caption paragraph that follows it; otherwise the renderer can
+        # leave an orphan caption alone on the next page.
+        paragraph.paragraph_format.keep_with_next = True
     _fit_picture(paragraph.add_run(), raw, width, height)
 
 
@@ -647,7 +653,8 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
                         document.add_page_break()
                     if is_document:
                         item = indexes[0]
-                        _picture(document, asset_loader(block.asset_hashes[item]), height=7.7)
+                        _picture(document, asset_loader(block.asset_hashes[item]), height=7.7,
+                                 keep_with_next=item < len(block.asset_captions) and bool(block.asset_captions[item]))
                         if item < len(block.asset_captions) and block.asset_captions[item]:
                             style_document_caption(document.add_paragraph(block.asset_captions[item], style="Caption"))
                     else:
@@ -671,7 +678,7 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
                     _picture(document, partner, height=3.95)
                     index += 2
                 else:
-                    _picture(document, raw, page_break_before=page > 0)
+                    _picture(document, raw, page_break_before=page > 0, keep_with_next=bool(captions[index]))
                     if captions[index]:
                         document.add_paragraph(captions[index], style="Caption")
                     index += 1
