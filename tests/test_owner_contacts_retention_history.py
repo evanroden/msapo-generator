@@ -98,6 +98,43 @@ def test_prune_runs_at_most_once_a_day(monkeypatch):
     assert len(calls) == 1
 
 
+def test_ordinary_read_prunes_old_contacts_without_po_activity(_isolated, monkeypatch):
+    contract = "Synthetic Retention Account"
+    vendor = "Fixture Supplier"
+    _contact(contract=contract, vendor=vendor, name="Expired Rep",
+             email="expired@example.com", ctx="expired")
+    _contact(contract=contract, vendor=vendor, name="Recent Rep",
+             email="recent@example.com", ctx="recent")
+    old = time.time() - CONTACT_RETENTION_SECONDS - 86400
+    with _db(_isolated) as conn:
+        conn.execute("UPDATE vendor_contacts SET last_used=? WHERE name='Expired Rep'", (old,))
+        conn.execute("UPDATE vendor_contact_events SET recorded_at=? WHERE name='Expired Rep'", (old,))
+
+    # No accepted PO: opening a normal memory read must run the daily prune.
+    monkeypatch.setattr(memory, "_last_prune_at", 0.0)
+    contacts = saved_vendor_contacts(contract)
+    assert [(row["name"], row["email"]) for row in contacts] == [
+        ("Recent Rep", "recent@example.com")
+    ]
+    with _db(_isolated) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM vendor_contact_events WHERE name='Expired Rep'").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM vendor_contact_events WHERE name='Recent Rep'").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM po_history").fetchone()[0] == 0
+
+
+def test_prune_failure_does_not_interrupt_ordinary_memory_read(_isolated, monkeypatch):
+    contract = "Synthetic Retention Account"
+    _contact(contract=contract, vendor="Fixture Supplier", name="Current Rep",
+             email="current@example.com", ctx="current")
+
+    def broken_prune(now=None):
+        raise RuntimeError("synthetic retention failure")
+
+    monkeypatch.setattr(memory, "prune_stale_contacts", broken_prune)
+    monkeypatch.setattr(memory, "_last_prune_at", 0.0)
+    assert [row["name"] for row in saved_vendor_contacts(contract)] == ["Current Rep"]
+
+
 # --- Owner contact management ------------------------------------------------
 
 def test_owner_can_list_delete_and_correct_contacts_for_one_account_only():
