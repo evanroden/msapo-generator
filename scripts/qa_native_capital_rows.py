@@ -111,7 +111,9 @@ def exercise(browser, name):
         decisions=capital.get_by_role("textbox",name="Decision",exact=True)
         expect(decisions).to_have_count(2)
         decisions.nth(1).fill(MARKER)
-        capital.get_by_role("button",name="Close editing",exact=True).click()
+        close=capital.get_by_role("button",name="Close editing",exact=True)
+        expect(close).to_have_count(1)
+        close.click()
         state=settled(page, key="capital_renewal", primary=0, imported=2, contains=MARKER)["working"]["capital_renewal"]
         assert state["rows"] == []
         assert state["extra"][0]["columns"] == ["Asset","Decision","Decision",""]
@@ -120,7 +122,9 @@ def exercise(browser, name):
         # A separate rerender must not switch the imported editor back to grid.
         capital.get_by_role("button",name="Edit capital item",exact=True).first.click()
         expect(capital.get_by_role("textbox",name="Decision",exact=True).nth(1)).to_have_value(MARKER)
-        capital.get_by_role("button",name="Close editing",exact=True).click()
+        close=capital.get_by_role("button",name="Close editing",exact=True)
+        expect(close).to_have_count(1)
+        close.click()
         # Remove/Undo retains only the removed imported sibling.
         capital.get_by_role("button",name="Remove capital item",exact=True).last.click()
         assert len(settled(page, key="capital_renewal", imported=1)["working"]["capital_renewal"]["extra"][0]["rows"]) == 1
@@ -146,7 +150,9 @@ def exercise(browser, name):
         capital=page.locator(".st-key-native_capital_renewal")
         capital.get_by_role("button",name="Edit capital item",exact=True).first.click()
         expect(capital.get_by_role("textbox",name="Decision",exact=True).nth(1)).to_have_value(MARKER)
-        capital.get_by_role("button",name="Close editing",exact=True).click()
+        close=capital.get_by_role("button",name="Close editing",exact=True)
+        expect(close).to_have_count(1)
+        close.click()
         page.screenshot(path=str(path/"narrow-reopen.png"),full_page=True)
         page.get_by_role("button",name="Generate synthetic Word and PDF",exact=True).click()
         files={}

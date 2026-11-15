@@ -29,6 +29,19 @@ def _paragraph(parent):
     return paragraph
 
 
+def _paragraph_single_run(parent):
+    """RRH-master variant: the same measured numeral as one run ('10')."""
+    paragraph = etree.SubElement(parent, W + 'p')
+    run = etree.SubElement(paragraph, W + 'r')
+    props = etree.SubElement(run, W + 'rPr')
+    etree.SubElement(props, W + 'b')
+    etree.SubElement(props, W + 'color', attrib={W + 'val': 'D6EF4B'})
+    etree.SubElement(props, W + 'spacing', attrib={W + 'val': '-400'})
+    etree.SubElement(props, W + 'sz', attrib={W + 'val': '420'})
+    etree.SubElement(run, W + 't').text = '10'
+    return paragraph
+
+
 def _number_element():
     # Public synthetic layout: geometry only, no client-specific pictures/art.
     node = etree.Element(MC + 'AlternateContent', nsmap={
@@ -87,6 +100,15 @@ def _synthetic_doc():
     return doc
 
 
+def _synthetic_doc_single_run():
+    doc = _synthetic_doc()
+    for content in doc.element.body.iter(W + 'txbxContent'):
+        for paragraph in list(content):
+            content.remove(paragraph)
+        _paragraph_single_run(content)
+    return doc
+
+
 def _geometry(document):
     anchor = next(document.element.body.iter(WP + 'anchor'))
     shape = next(document.element.body.iter(VML + 'shape'))
@@ -116,6 +138,20 @@ def test_alternate_branches_receive_identical_measured_digit_geometry():
     assert extent.get('cy') == anchor.get('cy') == '3657600'
     assert [node.text for node in doc.element.body.iter(W + 't')].count('1') == 2
     assert [node.text for node in doc.element.body.iter(W + 't')].count('0') == 2
+
+
+def test_single_run_numeral_in_the_same_measured_frame_is_also_fit():
+    # RRH masters author the same '10' (same frame, position, tracking and
+    # size) as a single run; run segmentation alone must not skip the fit.
+    doc = _synthetic_doc_single_run()
+    assert _geometry(doc)[0] == '2574290'
+    assert fit_proposals_numeral(doc, section_key='proposals')
+    width, vertical, fallback = _geometry(doc)
+    assert width == str(2574290 + 20 * 12700)
+    assert vertical == str(5596885 + 5 * 12700)
+    assert 'width:222.7pt' in fallback and 'margin-top:445.7pt' in fallback
+    assert [node.text for node in doc.element.body.iter(W + 't')].count('10') == 2
+    assert not fit_proposals_numeral(doc, section_key='proposals')  # idempotent
 
 
 def _docx_native_parts(raw):
