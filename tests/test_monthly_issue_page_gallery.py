@@ -1,4 +1,4 @@
-"""Source-specific issue evidence checkboxes and on-demand PDF thumbnails.
+"""Source-specific issue evidence checkboxes with lazily paged thumbnails.
 
 All files are synthetic; no genuine monthly reports or client references are
 committed. The existing issue multiselect and its stale-edit receipt remain
@@ -104,13 +104,16 @@ def test_repeated_page_numbers_are_distinct_and_choices_keep_other_issues(tmp_pa
 def test_page_range_and_on_demand_preview_are_bound_to_correct_original(tmp_path, monkeypatch):
     app, (alpha, beta), originals = setup_app(tmp_path, monkeypatch)
     before = app.session_state["draft"]
-    # First render has not decoded any preview. Only explicit Preview does.
-    assert not list(tmp_path.rglob("*-preview.json"))
+    # First visit shows only its bounded first page-group, not all five pages.
+    previews = list(tmp_path.rglob("*-preview.json"))
+    assert len(previews) == 4
+    assert not any(path.name == "5-preview.json" for path in previews)
     ranges = [item for item in app.selectbox if item.label == "Pages to review"]
     assert ranges
     ranges[0].set_value(4).run()
     assert not app.exception
     assert gallery_checkbox(app, "Include alpha-equipment.pdf · page 5 as issue evidence")
+    assert list(tmp_path.rglob("5-preview.json"))
     preview_button(app, "Preview alpha-equipment.pdf · page 5").click().run()
     assert not app.exception
     assert any("alpha-equipment.pdf · page 5 · Preview only" in caption.value
@@ -132,6 +135,19 @@ def test_missing_original_keeps_selection_and_warns_without_rewriting(tmp_path, 
     assert not app.exception
     assert app.session_state["draft"] == before
     assert any("Preview unavailable for alpha-equipment.pdf" in item.value for item in app.warning)
+    assert sources.source_bytes(before.profile, beta) == originals[1]
+
+
+def test_cached_thumbnail_cannot_hide_missing_saved_original(tmp_path, monkeypatch):
+    app, (alpha, beta), originals = setup_app(tmp_path, monkeypatch)
+    before = app.session_state["draft"]
+    assert list(tmp_path.rglob("1-preview.json"))
+    sources._path(before.profile, alpha.sha256, alpha.suffix).unlink()
+    app.run()
+    assert not app.exception
+    assert any("Restore the saved original" in warning.value for warning in app.warning)
+    assert app.session_state["draft"] == before
+    assert gallery_checkbox(app, "Include alpha-equipment.pdf · page 1 as issue evidence").value
     assert sources.source_bytes(before.profile, beta) == originals[1]
 
 

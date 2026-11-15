@@ -31,7 +31,7 @@ def include(app, *titles):
     step(app, 1)
     sections = working_state(app)[1].sections
     assert all(any(section.title == title and section.included for section in sections) for title in titles)
-    assert not any(value.label.startswith("Include ") and value.label != "Include thermal capacity" for value in app.checkbox)
+    assert any(value.label.startswith("Include ") and value.label.endswith(" in this report") for value in app.checkbox)
 
 
 def test_first_template_has_every_section_visible_with_one_editing_home(monkeypatch, tmp_path):
@@ -45,7 +45,7 @@ def test_first_template_has_every_section_visible_with_one_editing_home(monkeypa
     assert sum(value.label == "Activity summary" for value in app.text_area) == 1
     assert not any("logo" in value.label.lower() for value in app.get("file_uploader"))
     sections = working_state(app)[1].sections
-    headings = [value.value for value in app.subheader]
+    headings = [value.value.split(". ", 1)[-1] for value in app.subheader]
     assert all(headings.count(editor_section_title(section)) == 1 for section in sections)
     assert [title for title in headings if title in {editor_section_title(section) for section in sections}] == [editor_section_title(section) for section in sections]
     assert not any(value.label in ("Section to update", "Site information to update") for value in app.selectbox)
@@ -133,7 +133,7 @@ def test_unreviewed_proposal_still_blocks_download_and_issue_edits_are_independe
     step(app, 4)
     assert next(value for value in app.button if value.label == "Create Word and PDF").disabled
     assert review_destination(working_state(app)[1], issue.key) == (STEPS[1], "issues")
-    assert any(value.value == "Equipment Performance Issues" for value in app.subheader)
+    assert any(value.value.endswith(". Equipment Performance Issues") for value in app.subheader)
     assert any(value.label == "Issue description" for value in app.text_area)
     assert any(value.label == "Update proposal" for value in app.button)
     next(value for value in app.text_area if value.label == "Issue description").set_value("Corrected pump vibration finding.").run()
@@ -213,7 +213,7 @@ def test_live_previews_receive_each_section_and_current_edits(monkeypatch, tmp_p
     assert all(options.get("deferred") for _, _, options in previews)
     assert not full_previews
     assert not any("parts have content" in item.value or "sections selected" in item.value for item in app.caption)
-    assert not any(item.label.startswith("Include ") and item.label != "Include thermal capacity" for item in app.checkbox)
+    assert any(item.label.startswith("Include ") and item.label.endswith(" in this report") for item in app.checkbox)
     assert sum(item.label == "Starting report" for item in app.get("file_uploader")) == 1
     previews.clear()
     next(item for item in app.text_area if item.label == "Activity summary").set_value("Synthetic current repair.").run()

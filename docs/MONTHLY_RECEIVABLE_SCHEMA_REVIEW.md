@@ -11,6 +11,18 @@ MBCx). **Vendor-invoice totals must not appear in monthly client output**;
 other vendor financial fields are not implicitly approved. Unknown or mixed
 source/audience provenance is not an authorization.
 
+**Owner decision for the Accounts Receivable section, 13 November 2026 (#458):**
+the AR section of the monthly client report stays a status-only view. It shows
+invoice identity, status and dated aging, never invoice amounts, payments,
+credits, balances or aged dollar totals, whatever the source or its review. A
+separately scoped financial AR output is not authorized. The tool may still show
+amounts internally during review. `financial_permission` denies any
+`monthly_export` locator in the `accounts_receivable` or
+`accounts_receivable_notes` blocks with `RECEIVABLE_STATUS_ONLY`, even for an
+otherwise permitted contract or ENFRA client-facing source, so a future output
+integration cannot reopen AR amounts by accident. The general 28 October
+allowance for verified contract/ENFRA amounts in other sections is unchanged.
+
 `inspect_receivable_schema` is an isolated, read-only diagnostic, not a
 display/export permission check. No current editor, importer, serializer or
 renderer invokes it. It preserves source fields as evidence only; it does not
@@ -100,7 +112,7 @@ grant client-output permission. The Section 10 derivative in this first
 integration is explicitly a **nonfinancial open-invoice status and aging-bucket
 view**, not a complete monetary AR Aging statement. It displays the original
 invoice identity, confirmed report site, invoice/due dates (or a visible
-unknown/ambiguous date), normalized status and due-date aging as of a human
+unknown/ambiguous date), normalized status and historical due-date aging as of a human
 confirmed date. It does **not** display balances, sums, aged dollar buckets,
 payments, credit figures or vendor invoice totals in Word/PDF.
 
@@ -124,9 +136,10 @@ same-named file or identical invoice value is never substituted for another
 source/occurrence. Existing generic table/narrative/image financial exclusions
 remain authoritative outside this source-bound derivative.
 
-**Status and aging rules:** only explicit ISO YYYY-MM-DD is interpreted, with
-no locale inference for dates such as 03/04/2026. A human-specified aging
-as-of date and available due date determine Current, 1–30, 31–60, 61–90 or
+**Historical status and aging rules (old saved reviews):** only explicit ISO YYYY-MM-DD
+was interpreted, with no locale inference for dates such as 03/04/2026. A
+human-specified aging as-of date and available due date determined Current,
+1–30, 31–60, 61–90 or
 91+ days past due. Paid/closed invoices are not aged as open receivables;
 credits are distinguished, not silently treated as payment. Unknown due dates
 remain unknown, not zero. Partial payments retain their status and source
@@ -140,3 +153,57 @@ The independently authorized contract and ENFRA client-report monetary path
 must retain its established source/page approvals and cannot be inferred from
 a selected category or reused from an invoice receipt. Synthetic unit checks
 do not establish true original document or served Word/PDF acceptance.
+
+
+## Prompt 06 follow-on: invoice-date aging and conservative output (12 November 2026)
+
+New reviews of the shared CSV/XLSX source use **Invoice Date** and the selected
+report month's **last calendar day**, not the due date or an arbitrary current
+date. Current covers 0–30 days inclusive; then 31–60, 61–90, 91–120, and
+121+ days. Future invoices are explicitly not aged; missing or ambiguous invoice
+dates have unknown aging. Paid/closed rows and credit memos are not aged as open
+receivables. Due dates remain visible for review but do not determine the
+aging group. Excel 1900 date-system serials are accepted from XLSX only, with
+phantom serial 60 rejected; CSV numeric dates are never locale-guessed. Source
+days-past-due, when supplied, are checked separately against due dates.
+
+Existing saved source receipts with no `aging_basis` marker retain the prior
+due-date/as-of interpretation. Nothing silently recalculates installed reports.
+New receipts bind invoice-date/month-end rules to the report and source and are
+recomputed during output preflight. Fully supplied invoice, payment, credit and
+balance cells must reconcile; signed credits in the reviewed credit field
+reduce the open balance by their magnitude. Missing figures are unresolved, not
+zero or an inferred balance. This reconciliation is internal only. Original row
+strings and user corrections remain separate; a title/total masquerading as an
+invoice is rejected instead of added to the register.
+
+**Output restriction remains in force.** The app's current Section 10 client
+Word/PDF/preview contribution is only an explicitly nonfinancial status and
+aging-category derivative. Internally reviewed source amounts are **not**
+proof of client output eligibility. No 7-column monetary aging or 11-column
+financial detail is enabled until field/page-level source, audience, review
+invalidation and every output path are independently enforced. Vendor-invoice
+totals remain excluded even if copied elsewhere. Existing monetary gates
+remain unchanged.
+
+**Open gaps:** explicit per-site field mapping where aliases do not match;
+source exports with leading title/total rows that need non-destructive row
+selection; invoice-keyed notes carryover with contract/site conflict checks;
+partial payment history with only summary balance; currency scope and verified
+client amounts. The Tulane three-sheet workbook and Hampton PDF are separate
+intake contracts, not established by synthetic UNO-like CSV/XLSX testing.
+Physical browser/edit/reload, actual rendered DOCX/PDF and pixel-level
+price-leak validation are still required for served acceptance.
+
+**Explicit alias fallback:** a source with nonstandard column labels can map
+exact source column indexes to invoice roles during review. Duplicate/unknown
+role choices block the entire import; applied mappings are part of the
+source-bound review receipt and are checked again against original bytes at
+preflight. Standard aliases require no per-report mapping action. This does
+not interpret title rows as headers or authorize client monetary output.
+
+**Site attribution:** a missing source Location may default to a single-facility
+profile only when that exact saved source's facility identity independently
+matches the report facility key/title/alias. An unverified or missing source
+facility, a multi-site profile, or a conflicting location rejects. This is not
+site verification from filenames.

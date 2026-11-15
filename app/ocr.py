@@ -70,6 +70,7 @@ DIRECT_IMAGE_MEDIA_TYPES = {
     ".webp": "image/webp",
 }
 NORMALIZED_IMAGE_SUFFIXES = {
+    ".mpo",
     ".bmp",
     ".tif",
     ".tiff",
@@ -127,6 +128,10 @@ def image_blocks_for_vision(file_bytes: bytes, suffix: str) -> list[dict]:
     suffix = suffix.lower()
     if suffix not in SUPPORTED_IMAGE_SUFFIXES:
         raise ValueError(f"Unsupported image type: {suffix or '(no extension)'}")
+
+    if suffix == ".mpo":
+        from app.mpo_images import frame_count
+        frame_count(file_bytes)
 
     if suffix in {".heic", ".heif", ".hif"}:
         from pillow_heif import register_heif_opener
