@@ -21,7 +21,7 @@ URL = f"http://127.0.0.1:{PORT}"
 NAME = "data-native-capital-receipt"
 MARKER = "CAP-NATIVE-ROW-301"
 
-def settled(page, *, key=None, primary=None, imported=None, contains=None,
+def settled(page, *, step, key=None, primary=None, imported=None, contains=None,
             saved=False, revision=None):
     # A previous receipt can still be visible immediately after a native
     # click. Require the expected authoritative transition, not merely idle.
@@ -29,7 +29,9 @@ def settled(page, *, key=None, primary=None, imported=None, contains=None,
     # None-valued keys from the arg passed to wait_for_function, so an
     # unset optional arrives as `undefined`, not `null`; `!== null` would
     # treat "no check requested" as a check that can never pass.
-    page.wait_for_function("""args => {
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+    try:
+        page.wait_for_function("""args => {
       const node=document.querySelector('[' + args.name + ']');
       if (!node || document.querySelector('[data-testid=stApp]')
           ?.getAttribute('data-test-script-state')!=='notRunning') return false;
@@ -48,6 +50,20 @@ def settled(page, *, key=None, primary=None, imported=None, contains=None,
     }""", arg={"name": NAME, "key":key,"primary":primary,
                "imported":imported,"contains":contains,"saved":saved,
                "revision":revision}, timeout=35000)
+    except PlaywrightTimeoutError as error:
+        last = page.evaluate("""name => {
+          const app = document.querySelector('[data-testid=stApp]');
+          const node = document.querySelector('[' + name + ']');
+          return {script_state: app?.getAttribute('data-test-script-state') ?? null,
+                  receipt: node?.getAttribute(name) ?? null};
+        }""", NAME)
+        expected = {"key": key, "primary": primary, "imported": imported,
+                    "contains": contains, "saved": saved, "revision": revision}
+        raise AssertionError(
+            f"Native capital step {step!r} stalled; "
+            f"expected={json.dumps(expected, sort_keys=True)}; "
+            f"script_state={last['script_state']!r}; "
+            f"last_receipt={last['receipt']!r}") from error
     assert page.get_by_test_id("stException").count() == 0
     return json.loads(page.locator("[" + NAME + "]").get_attribute(NAME))
 
@@ -89,7 +105,7 @@ def exercise(browser, name):
     page.on("pageerror",lambda error:report["page_errors"].append(str(error)))
     try:
         page.goto(URL,wait_until="domcontentloaded")
-        initial=settled(page, key="capital_renewal", primary=1, imported=2)
+        initial=settled(page, step="initial receipt", key="capital_renewal", primary=1, imported=2)
         assert len(initial["working"]["capital_renewal"]["rows"]) == 1
         capital=page.locator(".st-key-native_capital_renewal")
         end=page.locator(".st-key-native_end_of_life")
@@ -106,7 +122,7 @@ def exercise(browser, name):
         # the row to drop first; switching editors immediately can capture
         # the row before the final clear arrives and the row survives.
         page.keyboard.press("Tab")
-        settled(page, key="capital_renewal", primary=0, imported=2)
+        settled(page, step="clear final primary capital row", key="capital_renewal", primary=0, imported=2)
         capital.get_by_role("button",name="Edit capital item",exact=True).first.click()
         decisions=capital.get_by_role("textbox",name="Decision",exact=True)
         expect(decisions).to_have_count(2)
@@ -114,7 +130,7 @@ def exercise(browser, name):
         close=capital.get_by_role("button",name="Close editing",exact=True)
         expect(close).to_have_count(1)
         close.click()
-        state=settled(page, key="capital_renewal", primary=0, imported=2, contains=MARKER)["working"]["capital_renewal"]
+        state=settled(page, step="commit imported decision", key="capital_renewal", primary=0, imported=2, contains=MARKER)["working"]["capital_renewal"]
         assert state["rows"] == []
         assert state["extra"][0]["columns"] == ["Asset","Decision","Decision",""]
         assert state["extra"][0]["rows"][0][2] == MARKER
@@ -127,9 +143,9 @@ def exercise(browser, name):
         close.click()
         # Remove/Undo retains only the removed imported sibling.
         capital.get_by_role("button",name="Remove capital item",exact=True).last.click()
-        assert len(settled(page, key="capital_renewal", imported=1)["working"]["capital_renewal"]["extra"][0]["rows"]) == 1
+        assert len(settled(page, step="remove imported sibling", key="capital_renewal", imported=1)["working"]["capital_renewal"]["extra"][0]["rows"]) == 1
         capital.get_by_role("button",name="Undo last removal",exact=True).click()
-        recovered=settled(page, key="capital_renewal", imported=2, contains=MARKER)["working"]["capital_renewal"]
+        recovered=settled(page, step="undo imported removal", key="capital_renewal", imported=2, contains=MARKER)["working"]["capital_renewal"]
         assert len(recovered["extra"][0]["rows"]) == 2
         assert recovered["extra"][0]["rows"][0][2] == MARKER
         # Existing replacement schema with type=date still accepts a year.
@@ -138,14 +154,14 @@ def exercise(browser, name):
         assert timing.get_attribute("type") == "text"
         timing.fill("2029")
         end.get_by_role("button",name="Close editing",exact=True).click()
-        assert settled(page, key="end_of_life", contains='"2029"')["working"]["end_of_life"]["rows"][0][-1] == "2029"
+        assert settled(page, step="commit replacement timing", key="end_of_life", contains='"2029"')["working"]["end_of_life"]["rows"][0][-1] == "2029"
         page.get_by_role("button",name="Save synthetic report",exact=True).click()
-        saved=settled(page, key="capital_renewal", primary=0, imported=2, contains=MARKER, saved=True, revision=1)
+        saved=settled(page, step="save report", key="capital_renewal", primary=0, imported=2, contains=MARKER, saved=True, revision=1)
         assert saved["working"] == saved["saved"] and saved["revision"] == 1
         page.screenshot(path=str(path/"desktop-saved.png"),full_page=True)
         page.set_viewport_size({"width":545,"height":757})
         page.reload(wait_until="domcontentloaded")
-        reopened=settled(page, key="capital_renewal", primary=0, imported=2, contains=MARKER, saved=True, revision=1)
+        reopened=settled(page, step="reload saved report", key="capital_renewal", primary=0, imported=2, contains=MARKER, saved=True, revision=1)
         assert reopened["working"] == saved["working"]
         capital=page.locator(".st-key-native_capital_renewal")
         capital.get_by_role("button",name="Edit capital item",exact=True).first.click()
@@ -202,14 +218,27 @@ def main():
                             if res.status == 200:break
                     except OSError:time.sleep(.1)
                 else:raise RuntimeError("Native fixture server did not become healthy")
+                webkit_runs = int(os.environ.get("EPC_NATIVE_CAPITAL_WEBKIT_RUNS", "1"))
+                if not 1 <= webkit_runs <= 20:
+                    raise ValueError("EPC_NATIVE_CAPITAL_WEBKIT_RUNS must be 1..20")
                 failures=[]
                 with sync_playwright() as playwright:
                     for engine in ("chromium","webkit"):
                         browser=getattr(playwright,engine).launch(headless=True)
-                        try:exercise(browser,engine)
-                        except Exception as error:failures.append(engine+": "+str(error))
-                        finally:browser.close()
+                        try:
+                            count = webkit_runs if engine == "webkit" else 1
+                            for attempt in range(1, count + 1):
+                                name = engine if count == 1 else f"{engine}-{attempt:02d}"
+                                try:
+                                    exercise(browser, name)
+                                except Exception as error:
+                                    failures.append(name + ": " + str(error))
+                                else:
+                                    print(f"PASS {name}", flush=True)
+                        finally:
+                            browser.close()
                 if failures:raise AssertionError("; ".join(failures))
+                print(f"PASS WebKit {webkit_runs}/{webkit_runs} independent journeys", flush=True)
             finally:
                 process.terminate()
                 try:process.wait(timeout=10)

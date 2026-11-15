@@ -639,3 +639,45 @@ def test_acknowledged_first_blur_retains_exact_stale_snapshot_lineage(monkeypatc
     else:
         assert not app.warning and not app.dataframe
         assert app.session_state['block'].rows == ()
+
+
+@pytest.mark.parametrize('external_change', [False, True])
+def test_capital_mixed_render_blurs_keep_exact_pending_lineage(monkeypatch, external_change):
+    """WebKit may deliver old, new, old snapshots while clearing three fields."""
+    from app import monthly_report_row_cards_ui as cards
+    import streamlit as st
+    spec, block = example('capital_renewal', (('North', 'High', 'Inspect pump'),))
+    app = AppTest.from_string(SCRIPT.replace('INITIAL', repr(block)).replace('SPEC', repr(spec))).run()
+    button(app, 'Edit capital item').click().run()
+    state = dict(app.session_state.filtered_state)
+    key = next(k for k, value in state.items()
+               if isinstance(value, dict) and value.get('group_args'))
+    original, tokens, active, fields = state[key]['group_args']
+
+    with monkeypatch.context() as patch:
+        patch.setattr(st, 'session_state', state)
+        state[fields[0][0]] = ''
+        cards._queue(key, original, tokens, active, fields, group=(key,))
+        first = state[key]['pending']['result']
+        assert first == (('', 'High', 'Inspect pump'),)
+        state[fields[1][0]] = ''
+        cards._queue(key, first, tokens, active, fields, group=(key,))
+        assert state[key]['pending']['result'] == (('', '', 'Inspect pump'),)
+        # Third blur can arrive with its original callback args even though
+        # the second blur was rendered against the first acknowledged edit.
+        state[fields[2][0]] = ''
+        cards._queue(key, original, tokens, active, fields, group=(key,))
+        assert state[key]['pending']['result'] == ()
+
+    app.session_state[key] = state[key]
+    changed = (replace(block, rows=(('Independent', 'High', 'Inspect pump'),))
+               if external_change else replace(block, rows=first))
+    app.session_state['block'] = changed
+    app.run()
+    assert not app.exception
+    if external_change:
+        assert app.session_state['block'] == changed
+        assert any('Both versions are kept' in item.value for item in app.warning)
+    else:
+        assert not app.warning and not app.dataframe
+        assert app.session_state['block'].rows == ()

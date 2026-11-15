@@ -136,27 +136,30 @@ def _queue(key, expected, tokens, active, fields, action="edit", target=None, *,
     # not extend this chain to a different result or different row tokens.
     previous = record.get("pending")
     acknowledged = record.pop("acknowledged_delivery", None)
-    if (not previous and action == "edit" and acknowledged
-            and acknowledged.get("input_action") == "edit"
-            and acknowledged["expected"] == expected
-            and acknowledged.get("input_tokens") == tokens
-            and acknowledged.get("input_active") == active):
+    def same_field_delivery(delivery):
+        # WebKit can deliver native blurs from alternating rerenders:
+        # original -> first acknowledged edit -> original. Keep the exact
+        # known intermediate snapshots; never admit a different row/token.
+        return (delivery is not None and action == "edit"
+                and delivery.get("input_action") == "edit"
+                and delivery.get("input_tokens") == tokens
+                and delivery.get("input_active") == active
+                and expected in (delivery["baseline"], delivery["expected"],
+                                 delivery["result"], *delivery.get("intermediates", ())))
+    if not previous and same_field_delivery(acknowledged):
         previous = acknowledged
+    same_lineage = same_field_delivery(previous)
     continues_pending = previous and (previous["result"] == expected or (
         previous["expected"] == expected and previous["result"] == tuple(rows)
         and previous["tokens"] == tuple(identities)))
-    baseline = previous["baseline"] if continues_pending else expected
-    # A browser can deliver several blurs from one native render while the
-    # parent has acknowledged only an earlier blur. Admit only exact results
-    # produced by that same table/row/token snapshot, never arbitrary changes
-    # to the current report. Bound the transient lineage; overflow conflicts
-    # rather than treating unknown content as our own acknowledged write.
+    baseline = previous["baseline"] if (continues_pending or same_lineage) else expected
+    # Only admit exact intermediate snapshots from this same native row.
+    # Independently edited report rows still raise the version conflict.
     intermediates = ()
-    if (previous and action == "edit" and previous.get("input_action") == "edit"
-            and previous["expected"] == expected
-            and previous.get("input_tokens") == tokens
-            and previous.get("input_active") == active):
-        intermediates = tuple(dict.fromkeys((*previous.get("intermediates", ()), previous["result"])))[:32]
+    if same_lineage:
+        intermediates = tuple(dict.fromkeys((
+            *previous.get("intermediates", ()), previous["expected"],
+            previous["result"])))[:32]
     record["pending"] = {"baseline": baseline, "expected": expected, "result": tuple(rows), "tokens": tuple(identities),
                          "active": active, "draft_token": draft_token, "draft_index": draft_index,
                          "input_action": action, "input_tokens": tokens, "input_active": active,
