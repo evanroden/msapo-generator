@@ -249,7 +249,6 @@ def narrative_visibility_writer(document):
     def identifiers():
         nonlocal reserved
         if reserved is None:
-            from lxml import etree
             reserved = set()
             selectors = {qn('w:' + name) for name in
                          ('pStyle', 'rStyle', 'tblStyle', 'basedOn', 'next', 'link')}

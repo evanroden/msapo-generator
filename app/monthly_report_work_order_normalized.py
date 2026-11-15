@@ -14,7 +14,7 @@ import json
 import re
 
 from app.monthly_report_model import ReportPeriod, ReportProfile, ReportTable
-from app.monthly_report_sources import SourceContent, SourceTable, source_reference
+from app.monthly_report_sources import SourceContent, SourceTable as SourceTable, source_reference
 
 FIELDS = ("work_order", "site", "work_date", "completed_date", "status", "work_type", "trade")
 REQUIRED = ("work_order", "site", "work_date", "status")

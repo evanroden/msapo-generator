@@ -14,16 +14,19 @@ from app.monthly_report_row_review_receipts import decoded as saved_receipt
 
 from app.monthly_report_model import ReportTable, ResolvedBlock
 from app.monthly_report_work_order_normalized import (
-    FIELDS, ColumnMapping, correct_row, exclude_row, restore_review, review_record,
+    FIELDS, ColumnMapping as ColumnMapping, correct_row, exclude_row, restore_review, review_record,
 )
 from app.monthly_report_work_order_counts import count_reviewed_work_orders
 from app.monthly_report_work_order_csv_review import review_spreadsheet
 from app.monthly_report_service_call_mapping import (
     FIELDS as CALL_FIELDS, correct_service_call, exclude_service_call,
-    exclude_unmatched_call, confirm_financial_exclusion, confirm_word_layout,
+    exclude_unmatched_call as exclude_unmatched_call, confirm_financial_exclusion as confirm_financial_exclusion, confirm_word_layout as confirm_word_layout,
     restore_service_call_review, service_call_review_record, review_service_calls,
     reviewed_service_call_block, suggest_call_mapping,
 )
+
+
+CALL_FIELDS = CALL_FIELDS  # Preserve the historical report-review export.
 
 
 def encoded(value):

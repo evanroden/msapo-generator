@@ -86,7 +86,7 @@ from app.expense_report import (
     is_same_person,
     parse_expense_amount,
     parse_mileage,
-    receipt_preview_bytes,
+    receipt_preview_bytes as receipt_preview_bytes,
     total_reimbursement,
     validate_expense_report,
     usd_review_signature,

@@ -515,7 +515,7 @@ def viewport(value, generation, pages=150):
 
 
 @lru_cache(maxsize=2)
-def _preview_component(runtime):
+def _preview_component(_runtime):
     return st.components.v2.component('report_preview_surface', html=HTML, css=CSS, js=JS)
 
 
