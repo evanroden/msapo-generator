@@ -198,3 +198,31 @@ def test_non_rrh_collision_rejected_without_mutating_saved_directory(monkeypatch
     assert choices[0].key == "north"
     assert choices[-1].key == "south-plant-b"
     assert directory.load_directory(contract) == original
+
+def test_capacity_column_sizing_does_not_reflow_onsite_imported_rows():
+    """Capacity-specific width fitting must not change unrelated row-card layouts."""
+    from docx.oxml.ns import qn
+    from app.monthly_report_model import ReportTable
+
+    saved, _ = _saved_report()
+    onsite = ResolvedBlock(
+        "service_calls", "This month",
+        extra_tables=(ReportTable(
+            ("WO #", "Date", "Area", "Task", "Asset"),
+            (("WO-TEST-1005", "2026-09-18", "Demo South",
+              "Synthetic onsite task: inspect AHU-TEST-04 and retain follow-up.",
+              "AHU-TEST-0042"),),
+        ),),
+    )
+    updated = replace(saved, blocks=(*saved.blocks, onsite))
+    word, _ = _word_text(updated)
+    document = Document(BytesIO(word))
+    matching = [table for table in document.tables if any(
+        "WO-TEST-1005" in cell.text for row in table.rows for cell in row.cells)]
+    assert len(matching) == 1, "Onsite source row is not present exactly once in Word"
+    grid = matching[0]._tbl.find(qn("w:tblGrid"))
+    widths = [int(column.get(qn("w:w"))) for column in grid]
+    assert len(widths) == 5, f"Unexpected onsite column count: {widths!r}"
+    assert len(set(widths)) == 1, (
+        f"Capacity-only column sizing changed onsite imported-table widths: {widths!r}"
+    )

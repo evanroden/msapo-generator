@@ -464,7 +464,7 @@ def _distribute_width(total, weights, *, minimum):
 
 
 def _fit_imported_table_columns(table, columns, rows):
-    """Size imported-table columns to their longest unbroken token.
+    """Size thermal-capacity columns to their longest unbroken token.
 
     Equal fixed widths split long values mid-word in the PDF, so a restored
     value can be present in the Word file yet unsearchable in the actual PDF.
@@ -776,7 +776,10 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
                         partial.add(len(table.rows))
                     for cell, value in zip(table.add_row().cells, values):
                         cell.text = "" if value is None else str(value)
-                _fit_imported_table_columns(table, imported.columns, imported.rows)
+                # Limit bespoke widths to capacity; resizing onsite row cards
+                # changes line breaks in otherwise unchanged PDF row values.
+                if spec.key == "thermal_capacity":
+                    _fit_imported_table_columns(table, imported.columns, imported.rows)
                 _format_table(table, True, header_rows=2 if titled else 1, partial_rows=partial)
                 placed_tables.append(((getattr(imported, "anchor", ""), _body_items(document)[table_start:]), imported))
             _follow_anchors(text_items, placed_tables)
