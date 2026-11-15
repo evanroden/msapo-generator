@@ -55,6 +55,13 @@ def conversion_slot(*, wait_seconds=10):
                 # decoded media while the office process starts allocating.
                 import gc
                 gc.collect()
+                # The prior native DOCX / Pillow allocations are no longer
+                # reachable at this point, but glibc may retain their freed
+                # arenas. Return those pages before launching LibreOffice in
+                # a memory-capped *preview* lease. This never changes the
+                # source assets, assembled DOCX, render guard or host limit.
+                if preview_memory_guard() is not None:
+                    _reclaim_preview_heap()
                 yield
             finally:
                 _CONVERSION_LOCAL.active = False
@@ -64,6 +71,24 @@ def conversion_slot(*, wait_seconds=10):
                     fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
     finally:
         _SLOT.release()
+
+
+def _reclaim_preview_heap():
+    """Release no-longer-live glibc arenas before a capped preview conversion.
+
+    Only a memory reclamation hint; the real cgroup headroom guard remains
+    authoritative and must still reject a conversion under pressure.
+    """
+    if os.name != "posix":
+        return
+    try:
+        import ctypes
+        trim = ctypes.CDLL(None).malloc_trim
+    except (AttributeError, OSError):
+        return
+    trim.argtypes = [ctypes.c_size_t]
+    trim.restype = ctypes.c_int
+    trim(0)
 
 
 def convert_to_pdf(path, *, wait_seconds=10, lossless_images=False):
