@@ -171,6 +171,111 @@ def test_owner_screen_delete_removes_the_contact():
     _contact()
     at = AppTest.from_string(_SCRIPT).run()
     at.checkbox(key="owner_contacts_open").check().run()
-    at.button(key="owner_delete_0").click().run()
+    # Buttons now identify a contact, not its former position in the list.
+    at.button[1].click().run()
     assert not at.exception
     assert saved_vendor_contacts(ACCOUNT) == []
+
+
+def test_owner_screen_delete_first_row_keeps_survivor_fields_and_only_edits_survivor():
+    from streamlit.testing.v1 import AppTest
+
+    contract = "Example Account Delete"
+    vendor = "Example Vendor"
+    _contact(contract=contract, vendor=vendor, name="First Example",
+             email="first@example.test", ctx="first")
+    _contact(contract=contract, vendor=vendor, name="Second Example",
+             email="second@example.test", ctx="second")
+    first, survivor = saved_vendor_contacts(contract)
+    at = AppTest.from_string(_SCRIPT).run()
+    at.checkbox(key="owner_contacts_open").check().run()
+    assert not at.exception
+    assert [w.value for w in at.text_input] == [
+        first["name"], first["email"], survivor["name"], survivor["email"]
+    ]
+
+    at.button[1].click().run()  # Delete the displayed first contact.
+    assert not at.exception
+    assert [w.value for w in at.text_input] == [survivor["name"], survivor["email"]]
+
+    at.text_input[0].set_value("Corrected Survivor").run()
+    at.button[0].click().run()  # Save the surviving contact with its own email.
+    assert not at.exception
+    assert [(r["name"], r["email"]) for r in saved_vendor_contacts(contract)] == [
+        ("Corrected Survivor", survivor["email"])
+    ]
+
+
+def test_owner_screen_switch_account_shows_its_contact_and_only_edits_that_account():
+    from streamlit.testing.v1 import AppTest
+
+    first_account = "Example Account A"
+    second_account = "Example Account B"
+    vendor = "Example Vendor"
+    _contact(contract=first_account, vendor=vendor, name="Account A Contact",
+             email="account-a@example.test", ctx="a")
+    _contact(contract=second_account, vendor=vendor, name="Account B Contact",
+             email="account-b@example.test", ctx="b")
+    at = AppTest.from_string(_SCRIPT).run()
+    at.checkbox(key="owner_contacts_open").check().run()
+    assert not at.exception
+    assert at.selectbox(key="owner_contract").value == first_account
+    assert [w.value for w in at.text_input] == [
+        "Account A Contact", "account-a@example.test"
+    ]
+
+    at.selectbox(key="owner_contract").set_value(second_account).run()
+    assert not at.exception
+    assert [w.value for w in at.text_input] == [
+        "Account B Contact", "account-b@example.test"
+    ]
+
+    at.text_input[0].set_value("Corrected Account B").run()
+    at.button[0].click().run()
+    assert not at.exception
+    assert [(r["name"], r["email"]) for r in saved_vendor_contacts(first_account)] == [
+        ("Account A Contact", "account-a@example.test")
+    ]
+    assert [(r["name"], r["email"]) for r in saved_vendor_contacts(second_account)] == [
+        ("Corrected Account B", "account-b@example.test")
+    ]
+
+
+def test_owner_screen_date_uses_browser_zone_and_configured_fallback(monkeypatch, _isolated):
+    from datetime import datetime, timezone
+
+    from streamlit.testing.v1 import AppTest
+    from app import config
+    from app.owner_contacts_ui import _when
+
+    timestamp = datetime(2026, 1, 1, 2, 30, tzinfo=timezone.utc).timestamp()
+    monkeypatch.setattr(config, "EPC_TIMEZONE", "America/Los_Angeles")
+    assert _when(timestamp) == "2025-12-31"
+    assert _when(timestamp, "Asia/Tokyo") == "2026-01-01"
+    assert _when(0) == "unknown"
+
+    contract = "Example Account Time"
+    _contact(contract=contract, vendor="Example Vendor",
+             name="Clock Contact", email="clock@example.test")
+    with _db(_isolated) as conn:
+        conn.execute("UPDATE vendor_contacts SET last_used=? WHERE contract=?",
+                     (timestamp, contract))
+    at = AppTest.from_string(_SCRIPT)
+    at.context["timezone"] = "Asia/Tokyo"
+    at.run()
+    at.checkbox(key="owner_contacts_open").check().run()
+    assert not at.exception
+    assert any("last 2026-01-01" in element.value for element in at.text)
+
+
+def test_owner_screen_contact_labels_are_plain_text():
+    from streamlit.testing.v1 import AppTest
+
+    _contact(contract="Example Account Labels", vendor="Example Vendor",
+             name="*Literal* Contact", email="literal@example.test")
+    at = AppTest.from_string(_SCRIPT).run()
+    at.checkbox(key="owner_contacts_open").check().run()
+    assert not at.exception
+    assert any("*Literal* Contact <literal@example.test>" in element.value
+               for element in at.text)
+    assert not any("literal@example.test" in element.value for element in at.markdown)
