@@ -6,6 +6,8 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 # Documentation index
 
+[Owner manual acceptance sessions (87 open issues, November 2026)](OWNER_CHECK_SESSIONS_2026-11.md) — six reusable synthetic setup workflows, numbered checks, per-issue step index and explicit served/owner-only acceptance limits.
+
 [Learned memory boundaries](LEARNED_MEMORY.md) - fail-closed contact management until real authentication, existing retention unchanged, optional purchase-order history deferred, and outage fallback behavior.
 
 [Issue #440 blocking-warning correction routes](ISSUE_440_WARNING_ROUTES.md) — exact Review warning-to-native-editor and explicit recovery matrix, scoped identity/stale-target guards, and pending acceptance evidence; this branch is not a production or browser acceptance claim.
