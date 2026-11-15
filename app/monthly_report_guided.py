@@ -1954,6 +1954,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         if checks:
             count = len(checks)
             st.markdown(f"**{count} {'item needs' if count == 1 else 'items need'} attention**")
+          st.caption("Review the items that need attention below.")
         # Several distinct preflight messages may describe the same underlying
         # table cell or schema. Show each message but mount each native editor
         # once per exact code/block owner to avoid duplicate Streamlit keys.
@@ -2050,9 +2051,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         # precisely, so expose conservative ranges without another conversion.
         from app.monthly_report_storage import readable_bytes
         (word_min, word_max), (pdf_min, pdf_max) = estimated_output_ranges(estimated)
-        st.caption(f"Word estimate: about {readable_bytes(word_min)}–{readable_bytes(word_max)}")
-        st.caption(f"PDF estimate: about {readable_bytes(pdf_min)}–{readable_bytes(pdf_max)}")
-        st.caption("Method: tracked text/image bytes with Word (0.1–7×) and PDF (0.05–6×) "
+        with st.expander("Page layout details (advanced)", expanded=False):
+            st.caption(f"Word estimate: about {readable_bytes(word_min)}–{readable_bytes(word_max)}")
+            st.caption(f"PDF estimate: about {readable_bytes(pdf_min)}–{readable_bytes(pdf_max)}")
+            st.caption("Method: tracked text/image bytes with Word (0.1–7×) and PDF (0.05–6×) "
                    "margins for packaging and conversion; check actual sizes against 15 MB.")
         st.caption("Creating files also attempts to save a shared version.")
         pressed = st.button("Create Word and PDF", key=prefix + "_generate",
