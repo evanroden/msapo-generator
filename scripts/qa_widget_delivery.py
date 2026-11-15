@@ -66,19 +66,18 @@ class WidgetDelivery:
                 result.update(widget=widget.label, id_hash=_hash(widget.id),
                               fragment=msg.delta.fragment_id,
                               path=list(msg.metadata.delta_path), cache_hash=msg.hash)
-                self.record('widget-wire', result)
+            elif element in {'text_area', 'text_input'}:
+                widget = getattr(msg.delta.new_element, element)
+                if ((element == 'text_area' and widget.label not in {
+                        'Activity summary', 'Training notes', 'Issue description'}) or
+                        (element == 'text_input' and widget.label != 'Prepared by')):
+                    return
+                result.update(widget=widget.label, id_hash=_hash(widget.id),
+                              default=_text(widget.default), value=_text(widget.value),
+                              set_value=widget.set_value, fragment=msg.delta.fragment_id,
+                              path=list(msg.metadata.delta_path), cache_hash=msg.hash)
+            else:
                 return
-            if element not in {'text_area', 'text_input'}:
-                return
-            widget = getattr(msg.delta.new_element, element)
-            if ((element == 'text_area' and widget.label not in {
-                    'Activity summary', 'Training notes', 'Issue description'}) or
-                    (element == 'text_input' and widget.label != 'Prepared by')):
-                return
-            result.update(widget=widget.label, id_hash=_hash(widget.id),
-                          default=_text(widget.default), value=_text(widget.value),
-                          set_value=widget.set_value, fragment=msg.delta.fragment_id,
-                          path=list(msg.metadata.delta_path), cache_hash=msg.hash)
             if msg.hash:
                 self.cache[msg.hash] = dict(result)
                 self.cache.move_to_end(msg.hash)

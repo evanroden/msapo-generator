@@ -91,3 +91,28 @@ def test_install_is_idempotent_and_calls_native_once(capsys):
     lines = capsys.readouterr().out.splitlines()
     assert len(lines) == 2
     assert all(line.startswith('ENFRA_QA_ROW_CALLBACK ') for line in lines)
+
+
+def test_hashed_row_buttons_are_cached_and_replayed_through_ref_hash():
+    for label in ('Close editing', 'Edit proposal'):
+        events = []
+        observer = WidgetDelivery(lambda kind, row: events.append(row))
+        rendered = ForwardMsg()
+        rendered.hash = 'synthetic-button-receipt-hash'
+        rendered.delta.new_element.button.id = 'synthetic-button-id'
+        rendered.delta.new_element.button.label = label
+        observer.message('received', rendered.SerializeToString(), 1)
+        assert rendered.hash in observer.cache
+        assert events[0]['widget'] == label
+
+        reference = ForwardMsg()
+        reference.ref_hash = rendered.hash
+        reference.metadata.delta_path.extend([4, 5])
+        observer.message('received', reference.SerializeToString(), 1)
+
+        assert len(events) == 2
+        assert events[1]['kind'] == 'ref_hash'
+        assert events[1]['path'] == [4, 5]
+        assert events[1]['referenced_widget'] == events[0]
+        assert events[1]['referenced_widget']['id_hash'] == _hash('synthetic-button-id')
+        assert 'synthetic-button-id' not in str(events)
