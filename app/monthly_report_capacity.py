@@ -544,6 +544,18 @@ def _row_key(table, row, site):
     # Preserve separate plants/services/units, and replace values only when their
     # observable labels and column meanings are unchanged.
     def dimension(column, cell):
+        # Notes, dates and status describe a reading, not a physical unit.
+        if re.search(r"\b(?:notes?|remarks?|comments?|status|condition|dates?|updated|reviewed)\b", column, re.I):
+            return False
+        # A bare Title is mutable only when another physical system/service
+        # column identifies the row. Where Title is the *sole* unit label,
+        # removing it would silently conflate different pieces of equipment.
+        if _normal(column) in {"title", "report title", "source title"} and any(
+                i != table.site_column and i < len(row) and str(row[i]).strip()
+                and re.search(r"\b(?:plant|equipment|asset|system|identifier|id|tag)\b",
+                              heading, re.I)
+                for i, heading in enumerate(table.columns)):
+            return False
         # "Capacity type" names the service; "Capacity (kW)" measures it.
         # Explicit identity labels take precedence over measurement vocabulary,
         # including numeric plant/equipment IDs that must not collapse together.
