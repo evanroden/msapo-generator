@@ -1,5 +1,5 @@
 """Synthetic equivalents of the master's two six-month work-order bands."""
-from dataclasses import replace
+from dataclasses import asdict, replace
 from hashlib import sha256
 from io import BytesIO
 
@@ -382,3 +382,103 @@ def test_different_sites_get_empty_legacy_master_grids(tmp_path, monkeypatch):
     tables = next(block for block in fresh.blocks if block.key == "work_orders").extra_tables[:4]
     assert tuple(t.reference for t in tables) == tuple(t.reference for t in previous.blocks[0].extra_tables[:4])
     assert all(not table.rows for table in tables)
+
+
+def test_empty_banded_reset_saves_and_reopens_as_an_empty_banded_table(tmp_path, monkeypatch):
+    """Clearing a prior report must not create an unreadable saved subtype."""
+    from app.monthly_report_setup import new_month_draft
+
+    _, draft, _, bundle, _ = banded_draft(tmp_path, monkeypatch)
+    published = apply_grid(draft, bundle)
+    block = published.blocks[0]
+    empty = tuple(replace(table, rows=()) if isinstance(table, BandedWorkOrderTable)
+                  else table for table in block.extra_tables)
+    previous = replace(published, blocks=(replace(block, extra_tables=empty),))
+    carried = new_month_draft(previous, ReportPeriod(2027, 2))
+    reset = carried.blocks[0].extra_tables[0]
+    assert isinstance(reset, BandedWorkOrderTable)
+    assert reset.rows == () and reset.reference == ""
+    assert (reset.band_site_key, reset.band_category) == ("north", "non_pm")
+
+    library.save_profile(carried.profile, expected_revision=0, actor="Synthetic AM", confirmed=True)
+    library.save_snapshot(carried, expected_revision=0)
+    reopened = library.load_snapshot(carried.profile.contract, carried.profile.key, carried.period).draft
+    assert reopened == carried
+    assert isinstance(reopened.blocks[0].extra_tables[0], BandedWorkOrderTable)
+
+    # Only an empty, reset band can omit its master reference.
+    invalid = replace(reset, rows=(("",) * 7,))
+    with pytest.raises(ValueError, match="Invalid saved work-order band identity"):
+        library._report_table_from_dict(asdict(invalid))
+
+
+def test_expanded_received_heading_preserves_every_inspected_band_identity(tmp_path):
+    path = banded_master(tmp_path / "expanded-received.docx",
+                         received_label="Work Orders Received")
+    frames = tuple(table for table in masters.from_inspection(inspect_docx(path))
+                   if table.slot == "work_orders")
+    assert len(frames) == 4
+    assert tuple((table.band_site_index, table.band_category) for table in frames) == (
+        (0, "non_pm"), (0, "pm"), (1, "non_pm"), (1, "pm"))
+    assert all(table.columns[0] == "Work Orders Received" for table in frames)
+    assert all("Detail" not in table.columns for table in frames)
+
+
+def test_manually_populated_plain_native_bands_export_with_verified_captions(tmp_path, monkeypatch):
+    """The ordinary row editor retains ReportTable even after filling all seven rows."""
+    path, draft, _, bundle, _ = banded_draft(tmp_path, monkeypatch)
+    example = apply_grid(draft, bundle)
+    manually_filled = tuple(ReportTable(table.columns, table.rows, table.reference)
+                            for table in example.blocks[0].extra_tables[:4])
+    assert all(len(table.rows) == 7 for table in manually_filled)
+    block = replace(draft.blocks[0], extra_tables=(
+        *manually_filled, draft.blocks[0].extra_tables[-1]))
+    manual = replace(draft, blocks=(block,), source_row_reviews=())
+    assert all(type(table) is ReportTable for table in manual.blocks[0].extra_tables[:4])
+    word = Document(BytesIO(build_native_docx(manual, path, master=True)))
+    assert word.tables[0].cell(3, 5).text == "1"
+    captions = "\n".join(paragraph.text for paragraph in word.paragraphs)
+    assert "Example North" in captions and "Example South" in captions
+    assert "Non-PM Work Orders" in captions and "PM Work Orders" in captions
+
+
+def test_advanced_rollover_error_still_offers_the_library_template(tmp_path, monkeypatch):
+    from datetime import date
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from app import monthly_report_editor as editor, monthly_report_setup as setup
+    from app import monthly_report_start as start
+
+    _, draft, _, bundle, _ = banded_draft(tmp_path, monkeypatch)
+    previous = apply_grid(draft, bundle)
+
+    class EnteredFreshTemplate(Exception):
+        pass
+
+    monkeypatch.setattr(editor.contracts, "contract_names", lambda: (previous.profile.contract,))
+    monkeypatch.setattr(editor.library, "list_profiles", lambda contract: (previous.profile,))
+    monkeypatch.setattr(editor.library, "load_profile", lambda *args:
+                        SimpleNamespace(profile=previous.profile, revision=1))
+    monkeypatch.setattr(editor.library, "load_snapshot", lambda *args: None)
+    monkeypatch.setattr(start, "latest_snapshot", lambda *args:
+                        SimpleNamespace(draft=previous))
+    monkeypatch.setattr(setup, "month_selector", lambda *args, **kwargs: ReportPeriod(2028, 4))
+    def blocked_rollover(*args, **kwargs):
+        raise setup.WorkOrderRolloverError("Work-order rollover needs a later month within one reporting year.")
+    monkeypatch.setattr(setup, "new_month_draft", blocked_rollover)
+    monkeypatch.setattr(editor, "operator_today", lambda *_: date(2028, 4, 15))
+    monkeypatch.setattr(editor, "remembered_report_preparer", lambda *args: "")
+    fake_st = SimpleNamespace(
+        subheader=Mock(), selectbox=Mock(side_effect=lambda label, options, **kw: options[0]),
+        error=Mock(), caption=Mock(), write=Mock(), session_state={},
+        radio=Mock(return_value="The profile's library template"),
+        text_input=Mock(side_effect=EnteredFreshTemplate),
+    )
+    monkeypatch.setattr(editor, "st", fake_st)
+    with pytest.raises(EnteredFreshTemplate):
+        editor.render_profile_workflow("synthetic-browser", "America/New_York",
+                                       lambda key, default=None: key, lambda *args: None)
+    fake_st.error.assert_called_once()
+    assert "needs review" in fake_st.error.call_args.args[0]
+    assert fake_st.radio.call_args.args[:2] == (
+        "Start from", ["The profile's library template"])
