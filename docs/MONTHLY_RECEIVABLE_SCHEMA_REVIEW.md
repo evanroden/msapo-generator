@@ -11,6 +11,18 @@ MBCx). **Vendor-invoice totals must not appear in monthly client output**;
 other vendor financial fields are not implicitly approved. Unknown or mixed
 source/audience provenance is not an authorization.
 
+**Owner decision for the Accounts Receivable section, 13 November 2026 (#458):**
+the AR section of the monthly client report stays a status-only view. It shows
+invoice identity, status and dated aging, never invoice amounts, payments,
+credits, balances or aged dollar totals, whatever the source or its review. A
+separately scoped financial AR output is not authorized. The tool may still show
+amounts internally during review. `financial_permission` denies any
+`monthly_export` locator in the `accounts_receivable` or
+`accounts_receivable_notes` blocks with `RECEIVABLE_STATUS_ONLY`, even for an
+otherwise permitted contract or ENFRA client-facing source, so a future output
+integration cannot reopen AR amounts by accident. The general 28 October
+allowance for verified contract/ENFRA amounts in other sections is unchanged.
+
 `inspect_receivable_schema` is an isolated, read-only diagnostic, not a
 display/export permission check. No current editor, importer, serializer or
 renderer invokes it. It preserves source fields as evidence only; it does not

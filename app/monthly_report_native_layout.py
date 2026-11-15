@@ -1231,7 +1231,7 @@ def _build_verified_native_docx(draft, source_path, *, asset_loader=None, sectio
     emission_proofs = []
     if native_art is not None:
         from app.monthly_report_native_art_scope import expected_header_scope, source_emission_proof
-        header_scope = expected_header_scope(source_view, section_key)
+        header_scope = expected_header_scope(source_view, section_key, omitted_sections=draft.omitted_sections)
     with rendition_file(source_view) as derivative:
         result = _build_native_docx(draft, derivative, asset_loader=asset_loader, section_key=section_key,
                                     master=master, source_view=source_view, original_path=Path(source_path),
@@ -2076,7 +2076,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
         if block.source == "Omit" or block.key not in specs or block.key in unchanged:
             continue
         sec, spec = specs[block.key]
-        if section_key and sec != section_key:
+        if (section_key and sec != section_key) or sec in draft.omitted_sections:
             continue
         if not any((block.text, block.rows, block.extra_tables, block.asset_hashes, block.org_nodes)):
             continue
@@ -2556,6 +2556,8 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                 target.addprevious(paragraph)
     # Occurrence-local transformation after #754-era native output assembly
     # and scorecard seam processing. Preserve original shared image parts.
+    from app.monthly_report_native_section_inclusion import apply_native_section_choices
+    apply_native_section_choices(document, draft, original, headings, section_by_pos, page_plan)
     from app.monthly_report_divider_monochrome import monochrome_divider_photos
     monochrome_divider_photos(document, divider_photo_roots)
     from app.monthly_report_divider_numerals import fit_proposals_numeral

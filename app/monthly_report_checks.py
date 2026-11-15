@@ -184,11 +184,21 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
     from app.monthly_report_followups import problem_details
     from app.monthly_report_followup_navigation import followup_target
     for item in draft.follow_ups:
+        section_key = "issues" if item.category == "issue" else "proposals"
+        # Whole-section omission is a reversible report choice, not an edit
+        # to each carried item. A preserved item outside this output cannot
+        # block generation or contribute stale text/date warnings. Invalid
+        # categories, unchosen sections and duplicate IDs still fail closed.
+        explicitly_omitted = (item.category in {"issue", "proposal"}
+                              and section_key in draft.omitted_sections
+                              and any(s.key == section_key and not s.included
+                                      for s in draft.sections))
+        if explicitly_omitted:
+            continue
         for problem in problem_details(item, draft):
             checks.append(ReportCheck("follow_up", problem.message, True, item.key,
                                       (followup_target(draft, item, problem.reason),)))
         if item.included:
-            section_key = "issues" if item.category == "issue" else "proposals"
             if section_key not in {s.key for s in sections}:
                 message = ("Include the Proposals section or explicitly leave this proposal out." if item.category == "proposal"
                            else "Include the section containing carried work, or explicitly resolve and remove the item.")

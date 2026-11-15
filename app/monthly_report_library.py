@@ -313,6 +313,12 @@ def draft_from_dict(value: dict) -> ReportDraft:
             ) for b in s["blocks"]), divider_asset=s.get("divider_asset", ""),
             included=s.get("included", True), appendix=s.get("appendix", False),
         ) for s in value["sections"])
+        omitted = value.get("omitted_sections", ())
+        if (not isinstance(omitted, (list, tuple))
+                or any(not isinstance(key, str) for key in omitted)
+                or len(set(omitted)) != len(omitted)
+                or not set(omitted) <= {section.key for section in sections}):
+            raise ValueError("Invalid report section choices.")
         draft = ReportDraft(
             profile=profile_from_dict(value["profile"]), period=ReportPeriod(**value["period"]),
             cover_recovery_request=request_from_dict(value.get("cover_recovery_request")),
@@ -322,6 +328,7 @@ def draft_from_dict(value: dict) -> ReportDraft:
             sources=tuple(source_from_dict(s) for s in value.get("sources", ())),
             follow_ups=tuple(ReportFollowUp(**{**item, "references":tuple(item.get("references",()))}) for item in value.get("follow_ups",())),
             source_row_reviews=tuple(reviews),
+            omitted_sections=tuple(omitted),
         )
         from app.monthly_report_section_control import verify_custom_page_scope
         verify_custom_page_scope(draft)

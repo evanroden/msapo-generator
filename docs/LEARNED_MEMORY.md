@@ -1,6 +1,6 @@
 # Learned contact memory: current behavior and limits
 
-This describes the existing store, not a new retention or access policy.
+This describes the learned-memory store and the owner's access and retention decisions for it.
 
 ## What is stored
 
@@ -16,20 +16,32 @@ entries or signature confirmation. It is a convenience store, not a durable
 searchable purchase-order audit history. Smartsheet duplicate-prevention state
 is a separate database with different failure behavior.
 
-## Access and retention limitations
+## Access and retention (owner decision, 13 November 2026, #21)
 
-The current internal-testing app has no authenticated administrator identity.
-An entered name, selected contract or browser token is not authentication.
-Existing anonymous Monthly administration must not be reused to expose learned
-contact CRUD. Contact management remains disabled until real server-side
-identity and contract permissions can be verified. No contact list or database
-export should be rendered by a disabled management route.
+The owner decided:
 
-The existing learned-contact store has no automatic age-based deletion policy.
-This change does not create one, delete old entries, change who can see existing
-suggestions, or authorize a new audience. A retention period and optional PO
-history fields remain unresolved product decisions. Do not treat frequency
-counters as a complete submission history.
+* **Only the owner views or edits saved contacts.** He is the app's only
+  user, and on 13 November 2026 he chose not to put a passcode on it. The app
+  still has no sign-in, so the screen (`app/owner_contacts_ui.py`) is open to
+  anyone who opens the purchase page's About section and ticks "Show saved
+  contacts and PO history". It lets the user pick one account, correct or
+  delete a saved vendor representative, and read that account's PO history.
+  There is no database export. Access is expected to come from the planned
+  move to Azure behind single sign-on; until then the link itself is the only
+  protection.
+* **Saved contacts are kept for two years after their last use.**
+  `prune_stale_contacts` removes vendor representatives, requester and
+  approver suggestions and their events last used more than 730 days ago. It
+  runs at most once a day per server process, after a PO history write. A row
+  whose last use is unknown (0) is never removed.
+* **One PO history row per accepted package**: date, vendor, total and quote
+  file name, in `po_history`. It is recorded when a PO package passes all three
+  readiness checks and is generated, keyed by its context ID, so reruns and
+  regenerating the same package never add rows. The app hands off to
+  Smartsheet by link and cannot see the final Smartsheet submit, so a row
+  means "package generated ready to submit", not "Smartsheet accepted it".
+  PO history is not pruned. Frequency counters are still not a submission
+  history.
 
 ## Failure and recovery
 
