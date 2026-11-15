@@ -29,6 +29,8 @@ class MasterTable:
     indices: tuple[int, ...]  # retained physical columns after price exclusions
     physical_width: int
     continuation: bool = False  # No repeated heading in the source frame.
+    band_site_index: int | None = None
+    band_category: str = ""
 
 
 # New clients may rename these labels, but no label from an original's data
@@ -130,6 +132,48 @@ def _verified_work_order_month_frame(headers: tuple[str, ...]) -> bool:
                zip(positions, positions[1:]))
 
 
+def _six_month_band_identity(inspection, item, columns):
+    """Recognize only a complete, explicitly identified native banded grid.
+
+    The installed master is geometry, not a source of client facts. A site's
+    position and the PM category must both be stated in nearby source labels;
+    physical table order alone never grants either identity.
+    """
+    rows = item.rows
+    if (item.suggested_slot != "work_orders" or len(columns) != 7
+            or " ".join(columns[0].casefold().split()) not in
+            {"wo received", "work orders received"}
+            or len(rows) != 8 or any(len(row) != 7 for row in rows)):
+        return None
+    expected = (tuple(range(1, 7)), tuple(range(7, 13)),
+                tuple(range(1, 7)), tuple(range(7, 13)))
+    for index, months in zip((0, 2, 4, 6), expected):
+        headings = tuple(_work_order_month_heading(value) for value in rows[index][1:])
+        if headings != tuple((None, month) for month in months):
+            return None
+    closed = " ".join(str(rows[4][0]).casefold().split())
+    if closed not in {"closed", "wo closed", "work orders closed"}:
+        return None
+    # Limit context to the same section and to text since the previous table.
+    previous_tables = [other.position for other in inspection.items
+                       if other.part == item.part and other.kind == "table"
+                       and other.position < item.position]
+    boundary = max(previous_tables, default=-1)
+    nearby = [other.text for other in inspection.items
+              if other.kind == "text" and other.part == item.part
+              and other.section == item.section and boundary < other.position < item.position
+              and item.position - other.position <= 4]
+    text = " ".join(nearby).casefold()
+    sites = {int(value) - 1 for value in re.findall(
+        r"\b(?:location|facility|site)\s*#?\s*([12])(?!\d)", text)}
+    has_non_pm = bool(re.search(r"\bnon[\s-]*pm\b", text))
+    without_non_pm = re.sub(r"\bnon[\s-]*pm\b", " ", text)
+    has_pm = bool(re.search(r"\bpm\b", without_non_pm))
+    if len(sites) != 1 or has_pm == has_non_pm:
+        return None
+    return next(iter(sites)), "non_pm" if has_non_pm else "pm"
+
+
 def from_inspection(inspection) -> tuple[MasterTable, ...]:
     """One independent safe schema per real data table; no source values."""
     from app.monthly_report_content_policy import logical_table_columns, table_price_columns
@@ -196,9 +240,12 @@ def from_inspection(inspection) -> tuple[MasterTable, ...]:
                                     slot=heading_slot) for i in keep)
             unique = tuple(label + (f" ({n + 1})" if label in labels[:n] else "")
                            for n, label in enumerate(labels))
+        band = _six_month_band_identity(inspection, item, tuple(unique))
         shape = MasterTable(item.suggested_slot, item.position,
                             f"master-table:{inspection.sha256}:{item.id}",
-                            tuple(unique), keep, physical_width, continuation=continuation)
+                            tuple(unique), keep, physical_width, continuation=continuation,
+                            band_site_index=band[0] if band else None,
+                            band_category=band[1] if band else "")
         tables.append(shape)
         last_by_slot[item.suggested_slot] = (item, shape)
     return tuple(tables)
@@ -260,20 +307,29 @@ def rebind_carried_master_tables(draft, previous_blocks, previous_template: str)
     retained in a new rolling view after unique identity checks. Conflicts
     stop the rebind before any draft is changed. Previous reports stay immutable.
     """
+    from app.monthly_report_model import BandedWorkOrderTable
+
+    def historical(table):
+        return bool(table.rows and (len(table.columns) == 13 or isinstance(table, BandedWorkOrderTable)))
+
     if draft.profile.template != previous_template:
         # Old report history is still saved, but a new physical master cannot
         # silently claim or discard its work-order month cells.
         for block in draft.blocks:
             prior = previous_blocks.get(block.key)
-            if (block.key == "work_orders" and block.source != "Omit" and prior
-                    and any(len(t.columns) == 13 and t.rows for t in prior.extra_tables)):
+            if (block.key == "work_orders" and prior
+                    and any(historical(t) and (block.source != "Omit"
+                            or isinstance(t, BandedWorkOrderTable)) for t in prior.extra_tables)):
                 raise ValueError("The pinned master changed; review historical work-order grid migration.")
         return draft
     accepted = {table.reference: table for table in for_profile(draft.profile)}
     if not accepted:
+        prior = previous_blocks.get("work_orders")
+        if prior and any(isinstance(t, BandedWorkOrderTable) and t.rows for t in prior.extra_tables):
+            raise ValueError("The pinned master is unavailable; review historical work-order grid migration.")
         return draft
     from app.monthly_report_work_order_rolling import (
-        explicit_grid_period, merge_carried_grid, rolling_labels,
+        carry_six_month_band, explicit_grid_period, merge_carried_grid, rolling_labels,
     )
 
     updated = []
@@ -283,8 +339,7 @@ def rebind_carried_master_tables(draft, previous_blocks, previous_template: str)
             updated.append(block)
             continue
         if len(prior.extra_tables) != len(block.extra_tables):
-            if (block.key == "work_orders" and any(
-                    len(t.columns) == 13 and t.rows for t in prior.extra_tables)):
+            if (block.key == "work_orders" and any(historical(t) for t in prior.extra_tables)):
                 raise ValueError("Work-order master grid count changed; review all historical locations.")
             updated.append(block)
             continue
@@ -296,12 +351,20 @@ def rebind_carried_master_tables(draft, previous_blocks, previous_template: str)
                      and len(current.columns) == len(master.columns)
                      and not current.rows)
             if not bound:
-                if (block.key == "work_orders" and len(former.columns) == 13
-                        and former.rows and block.source != "Omit"):
+                if (block.key == "work_orders" and historical(former)
+                        and (block.source != "Omit" or isinstance(former, BandedWorkOrderTable))):
                     raise ValueError("A carried work-order grid has no matching pinned master region.")
                 tables.append(current)
                 continue
             target = replace(current, reference=former.reference)
+            if (block.key == "work_orders" and isinstance(former, BandedWorkOrderTable)
+                    and former.rows):
+                if (master.band_site_index is None or master.band_category not in ("pm", "non_pm")
+                        or master.band_site_index >= len(draft.profile.facilities)):
+                    raise ValueError("Historical work-order location and category require review.")
+                site = draft.profile.facilities[master.band_site_index]
+                target = carry_six_month_band(former, target, draft.period,
+                                              site_key=site.key, category=master.band_category)
             if (block.key == "work_orders" and block.source != "Omit"
                     and len(former.columns) == 13 and former.rows):
                 if len(draft.profile.facilities) > 2:

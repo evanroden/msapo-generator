@@ -243,6 +243,10 @@ def render_reviewed_rows(draft, blocks, prefix, content):
                 st.caption("Apply the same reviewed export to the installed master's monthly grids. "
                            "Only confirmed site/month ranges and selected measures receive values; future and other unconfirmed months remain blank. "
                            "For closed counts, confirm the export includes work closed in the range even if received earlier.")
+                if draft.profile.facilities:
+                    locations = "; ".join(f"Location {index}: {site.title}"
+                                          for index, site in enumerate(draft.profile.facilities, 1))
+                    st.caption(f"Grid locations follow the selected site order: {locations}.")
                 with st.form(local + "_grid_form"):
                     grid_fields = []
                     for name, label, default in (

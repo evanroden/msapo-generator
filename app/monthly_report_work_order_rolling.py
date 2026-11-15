@@ -281,6 +281,42 @@ def bind_template_grids(counts: RollingCounts, period, frames, bindings, facilit
     return tuple(tables)
 
 
+def bind_six_month_bands(counts: RollingCounts, period, frames, facilities):
+    """Bind verified site/category frames with separate received/closed bands."""
+    from app.monthly_report_model import BandedWorkOrderTable, ReportTable
+
+    sites = tuple(facilities)
+    frames = tuple(frames)
+    if (counts.review_notices or tuple(site.key for site in sites) != counts.sites):
+        raise ValueError("Resolve source issues and confirm the work-order site order first.")
+    if not 1 <= len(sites) <= 2:
+        raise ValueError("Work-order locations need an approved overflow layout.")
+    pairs = [(frame.band_site_index, frame.band_category) for frame in frames]
+    expected = {(index, category) for index in (0, 1) for category in ("pm", "non_pm")}
+    if (len(frames) != 4 or len(set(pairs)) != 4 or set(pairs) != expected
+            or any(frame.slot != "work_orders" or len(frame.columns) != 7
+                   for frame in frames)):
+        raise ValueError("The master grid location and PM category mapping is missing or ambiguous.")
+    labels = rolling_labels(period)
+    tables = []
+    for frame in frames:
+        if frame.band_site_index >= len(sites):
+            # Keep an unused location blank; never bind it to another site.
+            tables.append(ReportTable(frame.columns, (), frame.reference))
+            continue
+        site = sites[frame.band_site_index].key
+        def values(metric):
+            return tuple(counts.cell(site, metric, month).value or "" for month in counts.months)
+        received = values(frame.band_category + "_received")
+        closed = values(frame.band_category + "_closed")
+        rows = (("", *received[:6]), ("", *labels[6:]), ("", *received[6:]),
+                ("Closed", *labels[:6]), ("", *closed[:6]),
+                ("", *labels[6:]), ("", *closed[6:]))
+        tables.append(BandedWorkOrderTable(("WO Received", *labels[:6]), rows,
+                                           frame.reference, site, frame.band_category))
+    return tuple(tables)
+
+
 def explicit_grid_period(columns):
     """Recover a historical period ONLY from twelve explicit year/month labels."""
     if len(columns) != 13:
@@ -298,6 +334,46 @@ def explicit_grid_period(columns):
     except (ValueError, IndexError):
         return None
     return period if columns[1:] == rolling_labels(period) else None
+
+
+def explicit_band_period(table):
+    """Recover a banded grid's period only from all four matching headers."""
+    from app.monthly_report_model import BandedWorkOrderTable
+
+    if (not isinstance(table, BandedWorkOrderTable) or len(table.columns) != 7
+            or len(table.rows) != 7 or any(len(row) != 7 for row in table.rows)
+            or _key(table.columns[0]) != "wo received"
+            or _key(table.rows[3][0]) != "closed"
+            or any(table.rows[index][0] for index in (0, 1, 2, 4, 5, 6))):
+        return None
+    first, last = table.columns[1:], table.rows[1][1:]
+    if table.rows[3][1:] != first or table.rows[5][1:] != last:
+        return None
+    return explicit_grid_period(("PM Received", *first, *last))
+
+
+def carry_six_month_band(previous, current, period, *, site_key, category):
+    """Carry proven year/month cells without changing the previous report."""
+    from app.monthly_report_model import BandedWorkOrderTable
+
+    prior_period = explicit_band_period(previous)
+    if (prior_period is None or previous.reference != current.reference or current.rows
+            or (previous.band_site_key, previous.band_category) != (site_key, category)):
+        raise ValueError("Historical work-order band identity or headings require review.")
+    distance = (period.year - prior_period.year) * 12 + period.month - prior_period.month
+    if not 1 <= distance <= 12:
+        raise ValueError("Work-order rollover needs a later month within one reporting year.")
+    old_months = rolling_months(prior_period)
+    old_received = dict(zip(old_months, (*previous.rows[0][1:], *previous.rows[2][1:])))
+    old_closed = dict(zip(old_months, (*previous.rows[4][1:], *previous.rows[6][1:])))
+    months, labels = rolling_months(period), rolling_labels(period)
+    received = tuple(old_received.get(month, "") for month in months)
+    closed = tuple(old_closed.get(month, "") for month in months)
+    rows = (("", *received[:6]), ("", *labels[6:]), ("", *received[6:]),
+            ("Closed", *labels[:6]), ("", *closed[:6]), ("", *labels[6:]),
+            ("", *closed[6:]))
+    return BandedWorkOrderTable(("WO Received", *labels[:6]), rows,
+                                current.reference, site_key, category)
 
 
 def merge_carried_grid(previous, current, prior_period, period, *,

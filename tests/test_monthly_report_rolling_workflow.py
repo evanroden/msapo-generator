@@ -202,6 +202,8 @@ st.session_state['draft'] = draft
     app.session_state['content'] = content
     app.run()
     assert not app.exception
+    assert any("Location 1: Example North" in item.value and "Location 2: Example South" in item.value
+               for item in app.caption)
     next(box for box in app.checkbox if box.label ==
          "I reviewed the rows and confirmed coverage for the selected measures").check()
     next(button for button in app.button if button.label == "Apply verified monthly grid counts").click().run()

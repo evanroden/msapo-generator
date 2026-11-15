@@ -9,10 +9,10 @@ from datetime import date
 import json
 
 from app import config
-from app.monthly_report_model import ReportTable, ResolvedBlock
+from app.monthly_report_model import BandedWorkOrderTable, ReportTable, ResolvedBlock
 from app.monthly_report_work_order_coverage import restore_decision
 from app.monthly_report_work_order_rolling import (
-    METRICS, CoveredMonth, bind_template_grids, rolling_labels, rolling_months,
+    METRICS, CoveredMonth, bind_six_month_bands, bind_template_grids, rolling_labels, rolling_months,
     tally_reviewed_months,
 )
 
@@ -26,13 +26,21 @@ _HEADINGS = {
 
 def _table(value):
     if (not isinstance(value, dict) or not isinstance(value.get("reference"), str)
-            or not isinstance(value.get("columns"), list) or len(value["columns"]) != 13
+            or not isinstance(value.get("columns"), list) or len(value["columns"]) not in (7, 13)
             or any(not isinstance(cell, str) for cell in value["columns"])
-            or not isinstance(value.get("rows"), list) or len(value["rows"]) > 2
-            or any(not isinstance(row, list) or len(row) != 13
+            or not isinstance(value.get("rows"), list)
+            or len(value["rows"]) > (7 if len(value["columns"]) == 7 else 2)
+            or any(not isinstance(row, list) or len(row) != len(value["columns"])
                    or any(not isinstance(cell, str) for cell in row) for row in value["rows"])):
         raise ValueError("Invalid saved work-order grid receipt.")
-    return ReportTable(tuple(value["columns"]), tuple(tuple(row) for row in value["rows"]), value["reference"])
+    columns, rows, reference = tuple(value["columns"]), tuple(tuple(row) for row in value["rows"]), value["reference"]
+    if "band_site_key" in value or "band_category" in value:
+        site, category = value.get("band_site_key"), value.get("band_category")
+        if (len(columns) != 7 or not reference.startswith("master-table:")
+                or not isinstance(site, str) or not site.strip() or category not in ("pm", "non_pm")):
+            raise ValueError("Invalid saved work-order grid receipt.")
+        return BandedWorkOrderTable(columns, rows, reference, site, category)
+    return ReportTable(columns, rows, reference)
 
 
 def validate_receipt(receipt):
@@ -51,7 +59,9 @@ def validate_receipt(receipt):
     bases = tuple(_table(item) for item in receipt["base_tables"])
     published = tuple(_table(item) for item in receipt["published_tables"])
     if (len({table.reference for table in published}) != 4
-            or tuple(t.reference for t in bases) != tuple(t.reference for t in published)):
+            or tuple(t.reference for t in bases) != tuple(t.reference for t in published)
+            or any(len(table.columns) == 7 and table.rows and not isinstance(table, BandedWorkOrderTable)
+                   for table in published)):
         raise ValueError("Invalid saved work-order grid receipt.")
     return bases, published
 
@@ -59,20 +69,35 @@ def validate_receipt(receipt):
 def _frames(draft):
     from app.monthly_report_master_tables import for_profile
     frames, metrics = [], []
-    for frame in for_profile(draft.profile):
+    available = for_profile(draft.profile)
+    if not 1 <= len(draft.profile.facilities) <= 2:
+        raise ValueError("This master needs an approved layout for more than two sites.")
+    for frame in available:
         if frame.slot != "work_orders" or len(frame.columns) != 13:
             continue
         label = " ".join(frame.columns[0].casefold().split())
         if label in _HEADINGS:
             frames.append(frame)
             metrics.append(_HEADINGS[label])
+    seven_column = [frame for frame in available
+                    if frame.slot == "work_orders" and len(frame.columns) == 7]
+    recognized_bands = [frame for frame in seven_column
+                        if frame.band_site_index is not None or frame.band_category]
+    if len(frames) == 4 and set(metrics) == set(METRICS):
+        if recognized_bands:
+            raise ValueError("The master contains competing work-order grid layouts; review its mapping.")
+        site_keys = tuple(site.key for site in draft.profile.facilities)
+        return tuple(frames), {frame.reference: (site_keys, metric)
+                               for frame, metric in zip(frames, metrics)}
+    if seven_column:
+        identities = [(frame.band_site_index, frame.band_category) for frame in seven_column]
+        required = {(site, category) for site in (0, 1) for category in ("pm", "non_pm")}
+        if (frames or len(seven_column) != 4 or len(set(identities)) != 4
+                or set(identities) != required):
+            raise ValueError("The master grid location and PM category mapping is missing or ambiguous.")
+        return tuple(seven_column), {}
     if len(frames) != 4 or set(metrics) != set(METRICS):
         raise ValueError("The installed master needs four distinct received/closed PM and non-PM grids. Review its layout before applying source counts.")
-    if not 1 <= len(draft.profile.facilities) <= 2:
-        raise ValueError("This master needs an approved layout for more than two sites.")
-    site_keys = tuple(site.key for site in draft.profile.facilities)
-    return tuple(frames), {frame.reference: (site_keys, metric)
-                           for frame, metric in zip(frames, metrics)}
 
 
 def _merge_base(base, proposed, period):
@@ -80,6 +105,27 @@ def _merge_base(base, proposed, period):
         raise ValueError("The master grid changed; reopen the report before applying counts.")
     if not base.rows:
         return proposed
+    if len(base.columns) == 7:
+        if not proposed.rows or len(base.rows) != 7 or len(proposed.rows) != 7:
+            raise ValueError("Existing location grid values need review before applying counts.")
+        if (not isinstance(base, BandedWorkOrderTable) or not isinstance(proposed, BandedWorkOrderTable)
+                or (base.band_site_key, base.band_category) != (proposed.band_site_key, proposed.band_category)):
+            raise ValueError("Existing location grid identity needs review before applying counts.")
+        if base.columns != proposed.columns or any(
+                base.rows[index] != proposed.rows[index] for index in (1, 3, 5)):
+            raise ValueError("Existing grid month labels require review before applying counts.")
+        merged = []
+        for index, (old, new) in enumerate(zip(base.rows, proposed.rows)):
+            if len(old) != 7 or len(new) != 7:
+                raise ValueError("Existing grid rows require review before applying counts.")
+            if index in (1, 3, 5):
+                merged.append(new)
+                continue
+            if old[0] != new[0] or any(before and after and before != after
+                                       for before, after in zip(old[1:], new[1:])):
+                raise ValueError("A saved grid value differs from the reviewed source. Keep your edit and review that month before replacing it.")
+            merged.append((new[0], *(before or after for before, after in zip(old[1:], new[1:]))))
+        return replace(proposed, rows=tuple(merged))
     if base.columns != (proposed.columns[0], *rolling_labels(period)):
         raise ValueError("Existing grid month labels require review before applying counts.")
     if len(base.rows) != len(proposed.rows):
@@ -177,7 +223,9 @@ def publish(draft, bundle, *, expected_revision, expected_block, group_index,
         pm_categories=("PM",) if any(m.startswith("pm_") for m in metrics) else (),
         closed_statuses=closed_statuses, covered_months=covered,
         coverage_approvals={(c.site, c.metric, c.month): c.source_reference for c in covered})
-    proposed = bind_template_grids(counts, draft.period, frame_set, bindings, draft.profile.facilities)
+    proposed = (bind_six_month_bands(counts, draft.period, frame_set, draft.profile.facilities)
+                if len(frame_set[0].columns) == 7 else
+                bind_template_grids(counts, draft.period, frame_set, bindings, draft.profile.facilities))
     published = tuple(_merge_base(old, new, draft.period) for old, new in zip(base, proposed))
     replacements = {table.reference: table for table in published}
     updated = replace(current, extra_tables=tuple(replacements.get(t.reference, t) for t in current.extra_tables),

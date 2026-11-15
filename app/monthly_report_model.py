@@ -155,6 +155,15 @@ class ReportTable:
 
 
 @dataclass(frozen=True)
+class BandedWorkOrderTable(ReportTable):
+    # The physical master reference alone does not prove a site's identity
+    # after a profile change. These are saved with the reviewed table, but are
+    # never emitted as hidden Word-cell values.
+    band_site_key: str = ""
+    band_category: str = ""
+
+
+@dataclass(frozen=True)
 class AnchoredTable(ReportTable):
     # The source paragraph this table followed in its Word section. Only the
     # built-in design uses it to put the table back under that paragraph;

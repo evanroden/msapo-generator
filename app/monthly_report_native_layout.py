@@ -830,7 +830,7 @@ def _data_row(element, continuation):
 
 
 def _table(element, columns, rows, *, physical_indices=(), continuation=False, keep_all_rows_intact=False,
-           template=None):
+           template=None, preserve_band_geometry=False):
     """Write current rows into a native table.
 
     ``template`` is the untouched source table when ``element`` was already
@@ -846,6 +846,24 @@ def _table(element, columns, rows, *, physical_indices=(), continuation=False, k
     width = len(columns) or max((len(row) for row in rows), default=0)
     if not width or width > 100 or any(len(row) > width for row in rows):
         raise NativeLayoutError("Current table columns do not match its row values.")
+    band_rows = template.findall(qn("w:tr")) if preserve_band_geometry and has_template else ()
+    if preserve_band_geometry:
+        if width != 7 or len(rows) != 7 or len(band_rows) != 8:
+            raise NativeLayoutError("The saved work-order band no longer matches its native table.")
+        merges = []
+        for band_row in band_rows:
+            cells = band_row.findall(qn("w:tc"))
+            if len(cells) != 7 or any(cell.find("./" + qn("w:tcPr") + "/" + qn("w:" + name)) is not None
+                                      for cell in cells for name in ("gridSpan", "hMerge")):
+                raise NativeLayoutError("The native work-order band has unsupported merged cells.")
+            for cell in cells[1:]:
+                if cell.find("./" + qn("w:tcPr") + "/" + qn("w:vMerge")) is not None:
+                    raise NativeLayoutError("The native work-order band has unsupported merged cells.")
+            merge = cells[0].find("./" + qn("w:tcPr") + "/" + qn("w:vMerge"))
+            merges.append(None if merge is None else merge.get(qn("w:val"), "continue"))
+        if merges not in ([None] * 8, ["restart", "continue", "continue", "continue",
+                                      "restart", "continue", "continue", "continue"]):
+            raise NativeLayoutError("The native work-order band has unsupported merged cells.")
     if not columns:
         columns = tuple(_text(cell) for cell in header.findall(qn("w:tc")))
         columns = (columns + ("",) * width)[:width]
@@ -877,7 +895,8 @@ def _table(element, columns, rows, *, physical_indices=(), continuation=False, k
     # report. An empty continuation keeps a blank shape, never an old row.
     output_rows = (rows or (("",) * width,)) if continuation else (columns, *rows)
     for index, values in enumerate(output_rows):
-        row = _skeleton(header) if index == 0 and not continuation else deepcopy(prototype)
+        row = (_skeleton(band_rows[index]) if preserve_band_geometry else
+               _skeleton(header) if index == 0 and not continuation else deepcopy(prototype))
         cells = row.findall(qn("w:tc"))
         for cell in cells:
             row.remove(cell)
@@ -890,7 +909,8 @@ def _table(element, columns, rows, *, physical_indices=(), continuation=False, k
             props = cell.find(qn("w:tcPr"))
             if props is not None:
                 for merged in list(props):
-                    if merged.tag in (qn("w:gridSpan"), qn("w:vMerge"), qn("w:hMerge"), qn("w:noWrap")):
+                    if merged.tag in ((qn("w:gridSpan"), qn("w:hMerge"), qn("w:noWrap")) if preserve_band_geometry else
+                                      (qn("w:gridSpan"), qn("w:vMerge"), qn("w:hMerge"), qn("w:noWrap"))):
                         props.remove(merged)
                 size = props.find(qn("w:tcW"))
                 if size is not None and (resized or len(cells) != width):
@@ -1275,7 +1295,8 @@ def _master_shapes_for_rendition(inspection, *, original_path=None):
 
     def identity(shape):
         return (shape.position, shape.slot, shape.columns, shape.indices,
-                shape.physical_width, shape.continuation)
+                shape.physical_width, shape.continuation,
+                shape.band_site_index, shape.band_category)
 
     if tuple(map(identity, originals)) != tuple(map(identity, shapes)):
         raise NativeLayoutError(
@@ -2238,9 +2259,31 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                         anchor = deepcopy(prototype)
                         last.addnext(anchor)
                         page_plan.assigned(anchor, last)
+                banded = bool(master and shape and shape.band_category and len(columns) == 7)
                 _table(anchor, columns, rows, physical_indices=shape.indices if shape else (),
                        continuation=bool(shape and shape.continuation),
-                       keep_all_rows_intact=(block.key == "contact_matrix"), template=prototype)
+                       keep_all_rows_intact=(block.key == "contact_matrix"), template=prototype,
+                       preserve_band_geometry=banded)
+                if banded:
+                    if shape.band_site_index >= len(draft.profile.facilities):
+                        raise NativeLayoutError("The native work-order location is no longer selected.")
+                    site = draft.profile.facilities[shape.band_site_index]
+                    from app.monthly_report_model import BandedWorkOrderTable
+                    current_band = next((t for t in block.extra_tables if t.reference == table_reference), None)
+                    if (not isinstance(current_band, BandedWorkOrderTable)
+                            or current_band.band_site_key != site.key
+                            or current_band.band_category != shape.band_category):
+                        raise NativeLayoutError("The work-order grid site or category changed; review it before export.")
+                    caption = OxmlElement("w:p")
+                    properties = OxmlElement("w:pPr")
+                    properties.append(OxmlElement("w:keepNext"))
+                    caption.append(properties)
+                    run = OxmlElement("w:r"); text = OxmlElement("w:t")
+                    text.text = f"{site.title} — {'Non-PM' if shape.band_category == 'non_pm' else 'PM'} Work Orders"
+                    run.append(text); caption.append(run)
+                    anchor.addprevious(caption)
+                    page_plan.assigned(caption, anchor)
+                    page_plan.emitted(caption, kind="table-title")
                 if master and shape and block.key == "work_orders" and rows:
                     from app.monthly_report_rolling_grid_style import fit_narrow_rolling_grid
                     fit_narrow_rolling_grid(anchor, columns)
