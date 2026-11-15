@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pymupdf as fitz
 from PIL import Image
 
+from app.image_open import open_image
 from app import monthly_report_preview_store as store
 
 
@@ -68,7 +69,7 @@ def benchmark(pages, repeats):
         assert cold_opens == replacement_opens == 1 and warm_opens == 0
         dimensions = []
         for index, image in cold:
-            with Image.open(BytesIO(image)) as decoded:
+            with open_image(BytesIO(image), formats=("JPEG",)) as decoded:
                 assert decoded.format == "JPEG"
                 assert decoded.width == 1020 and decoded.height == 1320
                 dimensions.append((index, decoded.width, decoded.height))

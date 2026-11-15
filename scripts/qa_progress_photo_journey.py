@@ -21,6 +21,7 @@ from zipfile import ZipFile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+from app.image_open import open_image
 PORT = 8530
 URL = f"http://127.0.0.1:{PORT}"
 OUT = ROOT / "test-artifacts" / "progress-photo-journey"
@@ -142,7 +143,7 @@ def assert_outputs(word, pdf, references, captions, assets):
         assert actual == digests, "Actual DOCX photo-page media/order/captions differ from the expected edited report."
     expected_images = []
     for raw in pages:
-        with Image.open(BytesIO(raw)) as image:
+        with open_image(BytesIO(raw), formats=("JPEG", "PNG")) as image:
             expected_images.append(image.convert("RGB"))
     actual, comparisons, active, found = [], [], False, False
     with pymupdf.open(stream=pdf, filetype="pdf") as document:

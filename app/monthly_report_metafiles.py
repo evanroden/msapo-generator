@@ -12,6 +12,7 @@ from zipfile import ZipFile, ZIP_DEFLATED
 
 from PIL import Image
 
+from app.image_open import open_image
 from app.monthly_report_metafile_cache import cached_vector_png
 
 
@@ -26,7 +27,7 @@ def supported_metafile(raw, suffix):
     if not {'.emf': _static_emf, '.wmf': _static_wmf}.get(suffix.lower(), lambda _: False)(raw):
         return False
     try:
-        with Image.open(BytesIO(raw)) as picture:
+        with open_image(BytesIO(raw), formats=("WMF",)) as picture:
             width, height = picture.size
         return 0 < min(width, height) and max(width, height) <= 20000 and width * height <= 100_000_000
     except (OSError, ValueError, SyntaxError, ZeroDivisionError, Image.DecompressionBombError):
@@ -36,7 +37,7 @@ def supported_metafile(raw, suffix):
 def _image_package(raw, suffix):
     if not supported_metafile(raw, suffix):
         raise ValueError('This drawing is not a supported static metafile.')
-    with Image.open(BytesIO(raw)) as picture:
+    with open_image(BytesIO(raw), formats=("WMF",)) as picture:
         width, height = picture.size
     if min(width, height) <= 0 or max(width, height) / min(width, height) > 30:
         raise ValueError('This drawing has unsupported dimensions.')

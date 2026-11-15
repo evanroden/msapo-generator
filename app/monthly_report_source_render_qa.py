@@ -29,6 +29,7 @@ from zipfile import ZipFile
 import pymupdf as fitz
 from PIL import Image, UnidentifiedImageError
 
+from app.image_open import open_image
 from app import monthly_report_testing as testing
 from app import monthly_report_library as library
 from app import monthly_report_render_jobs as jobs
@@ -475,7 +476,7 @@ def _raster_budget(path, *, budget_report=None):
             try:
                 with warnings.catch_warnings():
                     warnings.simplefilter('error', Image.DecompressionBombWarning)
-                    with package.open(member) as stream, Image.open(stream) as picture:
+                    with package.open(member) as stream, open_image(stream, formats=("PNG", "JPEG", "GIF", "TIFF", "BMP", "WEBP")) as picture:
                         if (picture.format not in {'PNG', 'JPEG', 'GIF', 'TIFF', 'BMP', 'WEBP'}
                                 or getattr(picture, 'n_frames', 1) != 1):
                             raise ValueError('unsupported image')

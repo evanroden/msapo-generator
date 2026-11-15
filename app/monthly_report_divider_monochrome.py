@@ -9,6 +9,7 @@ from io import BytesIO
 from docx.oxml.ns import qn
 from PIL import Image, ImageOps, ImageChops, UnidentifiedImageError
 
+from app.image_open import open_image
 from app.ocr import _MAX_PIXELS_PER_FRAME
 
 WP = '{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}'
@@ -60,7 +61,7 @@ def _has_already_gray_fallback(document, anchor, wrapper):
     if rel is None or rel.is_external:
         return False
     try:
-        with Image.open(BytesIO(rel.target_part.blob)) as image:
+        with open_image(BytesIO(rel.target_part.blob), formats=("JPEG",)) as image:
             if image.width*image.height>_MAX_PIXELS_PER_FRAME:
                 return False
             red, green, blue = image.convert('RGB').split()
@@ -103,7 +104,7 @@ def monochrome_divider_photos(document, roots):
             if rel is None or rel.is_external or rel.target_part.content_type != 'image/jpeg':
                 continue
             try:
-                with Image.open(BytesIO(rel.target_part.blob)) as source:
+                with open_image(BytesIO(rel.target_part.blob), formats=("JPEG",)) as source:
                     if (source.format != 'JPEG' or source.width * source.height > _MAX_PIXELS_PER_FRAME
                             or min(source.size) < 800 or source.getexif().get(274, 1) != 1):
                         continue

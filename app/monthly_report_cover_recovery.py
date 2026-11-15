@@ -13,6 +13,7 @@ import signal
 import subprocess
 import sys
 
+from app.image_open import open_image
 from app import monthly_report_library as library
 from app import monthly_report_cover_storage as private
 from app.monthly_report_cover_originals import cover_original_path
@@ -54,7 +55,7 @@ def _validated_image(raw):
     from app.monthly_report_docx import ReportImage
     if not 0 < len(raw) <= MAX_OUTPUT_BYTES:
         raise ValueError('Invalid recovered photograph size.')
-    with Image.open(BytesIO(raw)) as image:
+    with open_image(BytesIO(raw), formats=("JPEG",)) as image:
         if (image.format != 'JPEG' or image.width > 1400 or image.height > 1800
                 or getattr(image,'n_frames',1) != 1):
             raise ValueError('Invalid recovered photograph dimensions or format.')

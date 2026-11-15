@@ -19,6 +19,7 @@ from threading import Event, Thread
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+from app.image_open import open_image
 MIB = 1024 * 1024
 
 
@@ -99,7 +100,7 @@ def probe(args):
             return {'refusal':'busy' if str(exc).startswith('Another report') else 'memory'}
         assert assets['old'] == b'unchanged'
         normalized = assets[block.asset_hashes[0]]
-        with Image.open(BytesIO(normalized)) as image:
+        with open_image(BytesIO(normalized), formats=("JPEG",)) as image:
             dimensions = image.size
             assert image.format == 'JPEG' and image.width <= 1400 and image.height <= 1800
         assert len(normalized) < 30*MIB

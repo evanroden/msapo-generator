@@ -6,6 +6,7 @@ from zipfile import ZipFile, ZIP_DEFLATED
 
 from PIL import Image
 
+from app.image_open import open_image
 from app.monthly_report_media_privacy import clear_transparent_png_rgb
 
 
@@ -14,7 +15,7 @@ MAX_EDGE = 1800
 
 
 def _smaller_image(data):
-    with Image.open(BytesIO(data)) as image:
+    with open_image(BytesIO(data), formats=("JPEG", "PNG")) as image:
         if image.format not in ('JPEG', 'PNG'):
             return data
         width, height = image.size

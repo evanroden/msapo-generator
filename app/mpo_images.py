@@ -1,6 +1,7 @@
 """Bounded MPO frame inventory; callers retain the original and choose frames."""
 from io import BytesIO
 
+from app.image_open import open_image
 from PIL import Image
 
 
@@ -8,7 +9,7 @@ def frame_count(raw: bytes) -> int:
     from app.ocr import _MAX_IMAGE_FRAMES, _MAX_PIXELS_PER_FRAME
 
     try:
-        with Image.open(BytesIO(raw)) as image:
+        with open_image(BytesIO(raw), formats=("JPEG",)) as image:
             if image.format != "MPO":
                 raise ValueError("This MPO file is not a readable multi-picture image. Export a fresh copy.")
             try:

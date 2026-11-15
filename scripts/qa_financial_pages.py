@@ -18,6 +18,7 @@ from urllib.request import urlopen
 from zipfile import ZipFile
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
+from app.image_open import open_image
 from scripts.qa_about_logo_refresh import controller_environment
 from scripts.qa_import_receipts import wait_receipt
 from scripts.workspace_financial_pages import make_source
@@ -47,7 +48,7 @@ def independent_page_pixels(source):
     with fitz.open(source) as document:
         result=[]
         for page in document:
-            image=Image.open(BytesIO(page.get_pixmap(dpi=150,alpha=False).tobytes('png'))).convert('RGB')
+            image=open_image(BytesIO(page.get_pixmap(dpi=150,alpha=False).tobytes('png')), formats=("PNG",)).convert('RGB')
             image.thumbnail((1050,1350),Image.Resampling.LANCZOS)
             result.append(image)
     assert len(result)==3
@@ -64,7 +65,7 @@ def verify_outputs(directory, source):
     for name in ('preview.docx','report.docx'):
         raw=(directory/name).read_bytes()
         with ZipFile(BytesIO(raw)) as z:
-            media=[Image.open(BytesIO(z.read(n))).convert('RGB') for n in z.namelist() if n.startswith('word/media/')]
+            media=[open_image(BytesIO(z.read(n)), formats=("JPEG", "PNG")).convert('RGB') for n in z.namelist() if n.startswith('word/media/')]
             xml=' '.join(z.read(n).decode(errors='replace') for n in z.namelist() if n.endswith('.xml'))
             assert '$450' not in xml and 'Vendor invoice' not in xml
         assert len(media)>=len(expected_assets),(name,len(media))

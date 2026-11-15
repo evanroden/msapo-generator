@@ -7,6 +7,7 @@ from hashlib import sha256
 from io import BytesIO
 from urllib.parse import urljoin, urlparse
 
+from app.image_open import open_image
 from PIL import Image, ImageDraw
 
 
@@ -146,7 +147,7 @@ def exercise_cover_photo(page, identity, base, token, evidence, *, receipt, awai
         assert response.ok
         rendered = response.body()
         assert len(rendered) == asset["bytes"] and sha256(rendered).hexdigest() == asset["sha256"]
-        with Image.open(BytesIO(rendered)) as decoded:
+        with open_image(BytesIO(rendered), formats=("JPEG",)) as decoded:
             assert decoded.format == "JPEG" and decoded.size == PHOTO_SIZE
             assert all(abs(actual - expected) <= 4 for actual, expected in zip(decoded.convert("RGB").getpixel((2, 2)), PHOTO_COLOR))
         (output / "normalized-cover-photograph.jpg").write_bytes(rendered)

@@ -9,6 +9,7 @@ import os
 import stat
 import warnings
 
+from app.image_open import open_image
 from PIL import Image
 
 MAX_CACHED_VECTOR_PNG_BYTES = 24 * 1024 * 1024
@@ -44,7 +45,7 @@ def cached_vector_png(path, *, limit=MAX_CACHED_VECTOR_PNG_BYTES):
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
-            with Image.open(BytesIO(data)) as picture:
+            with open_image(BytesIO(data), formats=("PNG",)) as picture:
                 width, height = picture.size
                 if (picture.format != "PNG" or not 0 < width <= MAX_CACHED_VECTOR_PNG_EDGE
                         or not 0 < height <= MAX_CACHED_VECTOR_PNG_EDGE
@@ -52,7 +53,7 @@ def cached_vector_png(path, *, limit=MAX_CACHED_VECTOR_PNG_BYTES):
                     return None
                 picture.verify()
             # Valid chunk CRCs do not guarantee a decodable compressed pixel stream.
-            with Image.open(BytesIO(data)) as picture:
+            with open_image(BytesIO(data), formats=("PNG",)) as picture:
                 picture.load()
     except (OSError, ValueError, SyntaxError, Image.DecompressionBombWarning,
             Image.DecompressionBombError):

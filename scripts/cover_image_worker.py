@@ -70,7 +70,9 @@ def main():
     # It does not loosen Pillow's truncation/bomb settings or call a delegate.
     from pillow_heif import register_heif_opener
     register_heif_opener(thumbnails=False)
-    with Image.open(source) as image:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from app.image_open import open_image
+    with open_image(source, formats=("JPEG", "PNG", "WEBP", "HEIF")) as image:
         if (image.format not in ('JPEG', 'PNG', 'WEBP', 'HEIF')
                 or image.width * image.height > MAX_PIXELS
                 or getattr(image, 'n_frames', 1) != 1):

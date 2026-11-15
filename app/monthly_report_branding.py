@@ -16,6 +16,7 @@ import zlib
 from PIL import Image, ImageOps, UnidentifiedImageError
 import streamlit as st
 
+from app.image_open import open_image
 from app import monthly_report_library as library
 from app.monthly_report_model import ResolvedBlock
 
@@ -93,19 +94,19 @@ def _image(raw, reference):
     if not raw or len(raw) > MAX_IMAGE_BYTES or library.asset_reference(raw, "png") != reference:
         raise LogoArtworkError("A logo is empty, too large or does not match its fingerprint.")
     try:
-        with Image.open(BytesIO(raw)) as image:
+        with open_image(BytesIO(raw), formats=("PNG",)) as image:
             if image.format != "PNG" or not 1 <= image.width <= 2400 or not 1 <= image.height <= 1600:
                 raise LogoArtworkError("Logos must be PNG images no larger than 2400 × 1600 pixels.")
             image.verify()
         # PNG.verify checks framing/checksums, not the compressed pixel stream.
         # Decode within the bounds checked above before these bytes can become
         # shared artwork. Reopen because verify invalidates the first image.
-        with Image.open(BytesIO(raw)) as image:
+        with open_image(BytesIO(raw), formats=("PNG",)) as image:
             image.load()
     except LogoArtworkError:
         raise
     except (OSError, SyntaxError, ValueError, UnidentifiedImageError, Image.DecompressionBombError) as exc:
-        raise LogoArtworkError("A logo image could not be read.") from exc
+        raise LogoArtworkError("A logo image could not be read. Logos must be PNG images.") from exc
 
 
 def inspect_bundle(raw):
@@ -224,7 +225,7 @@ def card_image(raw):
     stores only small 480x192 UI images, never report originals or permissions.
     """
     # Uniform screen canvas only; printed logos retain their own proportions.
-    with Image.open(BytesIO(raw)) as image:
+    with open_image(BytesIO(raw), formats=("PNG",)) as image:
         image = image.convert("RGBA")
         corners = [image.getpixel(point) for point in ((0, 0), (image.width-1, 0), (0, image.height-1), (image.width-1, image.height-1))]
         background = corners[0] if len(set(corners)) == 1 and corners[0][3] == 255 else (255, 255, 255, 255)

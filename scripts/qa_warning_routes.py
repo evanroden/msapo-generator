@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 from urllib.request import urlopen
 from zipfile import ZipFile
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT))
+from app.image_open import open_image
 from scripts.workspace_warning_routes import SCENARIOS,CAPTIONS,PENDING,MISSING_FACT,BAD_DATE_FACT
 from scripts.qa_about_logo_refresh import controller_environment
 from scripts.qa_import_receipts import wait_receipt
@@ -270,22 +271,22 @@ def verify_outputs(directory,scenario,state,*,original,baseline_images=()):
         import posixpath
         with fitz.open(stream=original,filetype='pdf') as source:
             assert len(source)==1
-            expected=Image.open(BytesIO(source[0].get_pixmap(dpi=150,alpha=False).tobytes('png'))).convert('RGB')
+            expected=open_image(BytesIO(source[0].get_pixmap(dpi=150,alpha=False).tobytes('png')), formats=("PNG",)).convert('RGB')
             expected.thumbnail((1050,1350),Image.Resampling.LANCZOS)
         def identity(image):return image.size,sha256(image.convert('RGB').tobytes()).hexdigest()
-        expected_images={identity(Image.open(BytesIO(data))):Image.open(BytesIO(data)).convert('RGB') for data in baseline_images}
+        expected_images={identity(open_image(BytesIO(data), formats=("JPEG", "PNG"))):open_image(BytesIO(data), formats=("JPEG", "PNG")).convert('RGB') for data in baseline_images}
         expected_images[identity(expected)]=expected
-        wanted=Counter(identity(Image.open(BytesIO(data))) for data in baseline_images)
+        wanted=Counter(identity(open_image(BytesIO(data), formats=("JPEG", "PNG"))) for data in baseline_images)
         wanted[identity(expected)]+=2 if scenario=='shared' else 1
         with ZipFile(BytesIO(raw['report.docx'])) as package:
             rels=etree.fromstring(package.read('word/_rels/document.xml.rels'))
             paths={r.get('Id'):posixpath.normpath(posixpath.join('word',r.get('Target',''))) for r in rels if r.get('TargetMode')!='External'}
             for name in package.namelist():
                 if name.startswith('word/media/'):
-                    assert identity(Image.open(BytesIO(package.read(name)))) in expected_images,'Unexpected retained Word image resource'
+                    assert identity(open_image(BytesIO(package.read(name)), formats=("JPEG", "PNG"))) in expected_images,'Unexpected retained Word image resource'
             xml=etree.fromstring(package.read('word/document.xml'))
             ns={'a':'http://schemas.openxmlformats.org/drawingml/2006/main','r':'http://schemas.openxmlformats.org/officeDocument/2006/relationships'}
-            actual=Counter(identity(Image.open(BytesIO(package.read(paths[node.get('{'+ns['r']+'}embed')]))))
+            actual=Counter(identity(open_image(BytesIO(package.read(paths[node.get('{'+ns['r']+'}embed')])), formats=("JPEG", "PNG")))
                 for node in xml.findall('.//a:blip',ns) if node.get('{'+ns['r']+'}embed') in paths)
         assert actual==wanted,'Actual Word image occurrences differ from immutable original inputs'
         actual=Counter()
@@ -293,7 +294,7 @@ def verify_outputs(directory,scenario,state,*,original,baseline_images=()):
             for xref in range(1,pdf.xref_length()):
                 if pdf.xref_get_key(xref,'Subtype')[1]=='/Image':
                     resource=pdf.extract_image(xref)
-                    assert resource and identity(Image.open(BytesIO(resource['image']))) in expected_images,'Unexpected retained PDF image resource'
+                    assert resource and identity(open_image(BytesIO(resource['image']), formats=("JPEG", "PNG"))) in expected_images,'Unexpected retained PDF image resource'
             for page in pdf:
                 # get_image_info enumerates displayed occurrences, including
                 # a reused image appearing twice; unused resources don't count.
@@ -302,7 +303,7 @@ def verify_outputs(directory,scenario,state,*,original,baseline_images=()):
                     bounds=fitz.Rect(info['bbox'])
                     assert bounds.width>1 and bounds.height>1 and page.rect.contains(bounds),'Clipped or invisible PDF source image'
                     data=pdf.extract_image(info['xref'])['image']
-                    image_id=identity(Image.open(BytesIO(data)))
+                    image_id=identity(open_image(BytesIO(data), formats=("JPEG", "PNG")))
                     assert image_id in expected_images,'Unknown PDF image'
                     actual[image_id]+=1
                     # A correct hidden XObject under a black/white/text overlay

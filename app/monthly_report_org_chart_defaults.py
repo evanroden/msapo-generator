@@ -10,6 +10,7 @@ import re
 
 from PIL import Image
 
+from app.image_open import open_image
 from app import monthly_report_library as library
 from app.monthly_report_asset_review import approve_all_assets, asset_context, pending_asset_indexes, refresh_asset_source_context
 from app.monthly_report_model import ResolvedBlock
@@ -105,7 +106,7 @@ def _verify(reference, raw):
     # Inspect only the bounded copy, including on saved-default readback.
     expected = 'PNG' if reference.endswith('.png') else 'JPEG'
     try:
-        with Image.open(BytesIO(raw)) as picture:
+        with open_image(BytesIO(raw), formats=(expected,)) as picture:
             if picture.format != expected:
                 raise ValueError('The chart image does not match its saved file type.')
             if picture.width * picture.height > MAX_STANDING_PICTURE_PIXELS:
@@ -114,12 +115,12 @@ def _verify(reference, raw):
         if expected == 'PNG':
             # PNG verify() checks chunk CRCs, not complete pixel raster data.
             # Decode only after checking the pixel budget; do not expand bombs.
-            with Image.open(BytesIO(raw)) as picture:
+            with open_image(BytesIO(raw), formats=(expected,)) as picture:
                 picture.load()
         if expected == 'JPEG':
             # JPEG verify() accepts some truncated scans; a draft-resolution
             # decode checks the complete stream without full-size expansion.
-            with Image.open(BytesIO(raw)) as picture:
+            with open_image(BytesIO(raw), formats=(expected,)) as picture:
                 picture.draft('RGB', (1024, 1024))
                 picture.load()
     except (OSError, ValueError, SyntaxError, Image.DecompressionBombError) as exc:

@@ -45,7 +45,7 @@ def assert_visible_last_good(raster):
     PDF, not full cover layout fidelity (which still needs visual acceptance).
     """
     from PIL import Image
-    with Image.open(BytesIO(raster)) as image:
+    with open_image(BytesIO(raster), formats=("PNG",)) as image:
         image=image.convert('RGB')
         assert image.width*image.height<=2_000_000
         points=[[],[]]
@@ -134,6 +134,7 @@ def inventory(container, token):
     return docker_json(container, """
 import hashlib,json
 from pathlib import Path
+from app.image_open import open_image
 from scripts.qa_cover_recovery_service import runtime_bookkeeping
 base=Path('/qa-data')
 assert base.is_dir() and not base.is_symlink()

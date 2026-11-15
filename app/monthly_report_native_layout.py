@@ -20,6 +20,7 @@ from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
+from app.image_open import open_image
 from app.monthly_report_import import (
     _heading,
     _is_native_divider_background,
@@ -466,7 +467,7 @@ def _contain_replacement_picture(element, data):
     geometry for unsupported picture containers or grouped VML art.
     """
     from PIL import Image
-    with Image.open(BytesIO(data)) as image:
+    with open_image(BytesIO(data), formats=("JPEG", "PNG")) as image:
         width, height = image.size
         # Reading orientation metadata avoids a second full image decode just to
         # measure a current photograph on Render's memory-constrained instance.
@@ -961,7 +962,7 @@ def _native_photo_orientation_proved(node, document_part):
         if relation is None or relation.is_external:
             return False
         try:
-            with Image.open(BytesIO(relation.target_part.blob)) as source:
+            with open_image(BytesIO(relation.target_part.blob), formats=("PNG", "JPEG", "GIF", "TIFF", "BMP", "WEBP", "WMF")) as source:
                 if source.getexif().get(274, 1) != 1:
                     return False
         except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):

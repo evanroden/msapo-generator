@@ -20,6 +20,7 @@ from defusedxml import ElementTree as ET
 from defusedxml.common import DefusedXmlException
 from PIL import Image, UnidentifiedImageError
 
+from app.image_open import open_image, image_formats_for_suffix
 from app.monthly_report_docx import normalize_report_image
 from app.monthly_report_model import (
     BlockSpec,
@@ -595,7 +596,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                         digest = hashlib.file_digest(stream, "sha256").hexdigest()
                     width, height = 0, 0
                     try:
-                        with archive.open(target) as stream, Image.open(stream) as picture:
+                        with archive.open(target) as stream, open_image(stream, formats=image_formats_for_suffix(Path(target).suffix, word_media=True)) as picture:
                             width, height = picture.size  # Header only; no raster decode.
                     except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
                         pass

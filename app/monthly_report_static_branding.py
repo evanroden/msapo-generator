@@ -12,6 +12,7 @@ import re
 import zlib
 from zipfile import ZipFile, BadZipFile
 
+from app.image_open import open_image
 from PIL import Image
 
 # Two variants of the same 409x37 ENFRA Create/Sustain/Empower wordmark from
@@ -33,7 +34,7 @@ def _fingerprint(source_path: str, source_sha256: str, image_part: str) -> str:
             if not 0 < info.file_size <= 65536:
                 return ''
             raw = archive.read(image_part)
-        with Image.open(BytesIO(raw)) as image:
+        with open_image(BytesIO(raw), formats=("JPEG", "PNG")) as image:
             if image.size != (409, 37):
                 return ''
             image.load()
@@ -80,7 +81,7 @@ def is_company_artwork_blob(raw):
     if hashlib.sha256(raw).hexdigest() in _COMPANY_ARTWORK_BYTES:
         return True
     try:
-        with Image.open(BytesIO(raw)) as image:
+        with open_image(BytesIO(raw), formats=("JPEG", "PNG")) as image:
             expected = _COMPANY_ARTWORK_PIXELS.get(image.size)
             if expected is None:
                 return False

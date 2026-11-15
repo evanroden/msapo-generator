@@ -9,6 +9,7 @@ from uuid import uuid4
 from PIL import Image
 import streamlit as st
 
+from app.image_open import open_image
 from app import monthly_report_library as library
 from app.monthly_report_asset_review import (
     approve_asset, asset_context, asset_fingerprint, asset_reviewed,
@@ -50,13 +51,13 @@ def _read_picture(draft, assets, entry):
     if (not isinstance(raw, bytes) or not raw or len(raw) > MAX_IMAGE_BYTES
             or ref != library.asset_reference(raw, ref.rsplit('.', 1)[-1])):
         raise ValueError('Picture identity or byte budget changed.')
-    with Image.open(BytesIO(raw)) as image:
+    with open_image(BytesIO(raw), formats=("JPEG", "PNG")) as image:
         pixels = image.width * image.height
         if image.format not in ('PNG', 'JPEG') or not 0 < pixels <= MAX_IMAGE_PIXELS:
             raise ValueError('Picture is outside the bounded review size.')
         image.verify()
     # Header verification alone accepts some truncated JPEG payloads.
-    with Image.open(BytesIO(raw)) as image:
+    with open_image(BytesIO(raw), formats=("JPEG", "PNG")) as image:
         image.load()
     return raw, pixels
 

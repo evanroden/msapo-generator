@@ -16,6 +16,7 @@ import re
 from tempfile import TemporaryDirectory
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
+from app.image_open import open_image
 from app.monthly_report_import import ImportError, MAX_DOCX_BYTES, _package, _relations, inspect_docx
 from app.monthly_report_native_design import A, MC, PIC, R, W, WP, WPS, equivalent_native_alternatives
 from app.monthly_report_native_package import _xml, passive_docx
@@ -392,7 +393,7 @@ def _validate_picture_resource(blip, relations, archive):
     # Existing bounded header/format validation, never decoded-pixel proof.
     from PIL import Image, UnidentifiedImageError
     try:
-        with Image.open(BytesIO(raw)) as image:
+        with open_image(BytesIO(raw), formats=("JPEG", "PNG")) as image:
             if image.format not in ('PNG','JPEG') or image.width*image.height > 25_000_000:
                 _fail('image format/pixel budget')
             image.verify()

@@ -20,6 +20,7 @@ from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+from app.image_open import open_image
 from scripts.workspace_history_observations import namespace, storage_state
 from scripts.workspace_logo_refresh_observations import MODES, artwork
 from scripts.workspace_logo_click_observations import native_click_geometry, click_ready_native_output
@@ -111,7 +112,7 @@ def validate_native_outputs(directory, expected):
         from PIL import Image
         from hashlib import md5
         for raw in expected:
-            expected_digests.append(md5(Image.open(BytesIO(raw)).convert('RGB').tobytes()).digest())
+            expected_digests.append(md5(open_image(BytesIO(raw), formats=("PNG",)).convert('RGB').tobytes()).digest())
         assert [item['digest'] for item in images] == expected_digests
         pdf[0].get_pixmap().save(directory / 'native-output.png')
     return {'docx_sha256': sha256((directory / 'actual.docx').read_bytes()).hexdigest(),
