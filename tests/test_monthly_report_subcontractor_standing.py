@@ -71,8 +71,8 @@ def rows():
     {"rows": None},
     {"rows": {}},
     {"rows": ""},
-    # The parallel table-roster implementation uses the same contract path
-    # and schema number. Its approved entries must never mean empty rows.
+    # A foreign table-roster collection is invalid at the standing-data path.
+    # It must never be interpreted as approval of an empty standing roster.
     {"entries": [{"id": "a" * 32, "sites": ["north"],
                   "site_labels": [["north", ["north", "site north"]]],
                   "tables": [{"columns": ["Vendor"],
@@ -85,7 +85,7 @@ def rows():
 def test_unknown_roster_schema_cannot_be_read_as_empty_or_overwritten(
         contracts, payload):
     both, _, _, _ = contracts
-    folder = (library._root() / "subcontractor_rosters" /
+    folder = (library._root() / "subcontractor_standing" /
               library._contract_directory(both.contract))
     record = {"schema": 1, "contract": both.contract, "revision": 1,
               "actor": "Synthetic editor", "updated_at": "synthetic", **payload}
@@ -377,7 +377,7 @@ def test_report_source_category_and_provenance_remain_in_standing_history(contra
     assert current.selected[0].row.source_reference == source.source_reference
     assert report_vendor_block(north, current).rows[0][1] == "Mechanical / HVAC"
     raw = library._read(
-        library._root() / "subcontractor_rosters" /
+        library._root() / "subcontractor_standing" /
         library._contract_directory(both.contract) / "manifest.json")
     assert raw["schema"] == 1 and raw["contract"] == both.contract
     assert raw["rows"][0]["source_reference"] == source.source_reference
@@ -465,3 +465,89 @@ def test_pinned_older_approved_roster_remains_reusable_after_new_master_revision
     fresh = report_vendor_block(north, effective_vendor_rows(north, next_master, SEPTEMBER))
     assert fresh.rows[0][4] == "555-0808"
     assert fresh.references != before.references
+
+
+@pytest.mark.parametrize("standing_first", (True, False))
+def test_standing_and_table_rosters_have_independent_approved_history(
+        contracts, standing_first):
+    """Either approval order must preserve both distinct contact stores."""
+    from app.monthly_report_subcontractor_roster import load_rosters, save_roster
+
+    both, _, _, _ = contracts
+    spec = next(s for s in default_sections() if s.key == "subcontractors").blocks[0]
+    table_block = ResolvedBlock("subcontractor_matrix", "This month", rows=(
+        ("Site North", "HVAC", "Synthetic Table Vendor",
+         "Synthetic Table Contact", "555-0123", ""),
+    ))
+
+    def approve_table():
+        return save_roster(
+            both, table_block, spec, site_keys=("north",),
+            expected_revision=0, actor="Synthetic editor", confirmed=True)
+
+    if standing_first:
+        standing = approved(both)
+        table = approve_table()
+    else:
+        table = approve_table()
+        standing = approved(both)
+
+    assert standing.revision == table.revision == 1
+    assert load_vendor_roster(both.contract) == standing
+    assert roster_version(both.contract, 1) == standing
+    assert load_rosters(both.contract) == table
+    assert table.entries[0].tables[0].rows[0][2] == "Synthetic Table Vendor"
+    base = library._root() / library._contract_directory(both.contract)
+    standing_path = base.parent / "subcontractor_standing" / base.name
+    table_path = base.parent / "subcontractor_rosters" / base.name
+    assert standing_path != table_path
+    assert library._read(standing_path / "manifest.json")["rows"][0]["id"] == "shared-vendor"
+    assert library._read(table_path / "manifest.json")["entries"][0]["id"] == table.entries[0].id
+
+
+@pytest.mark.parametrize(("headings", "native_match"), (
+    (("Vendor", "Phone", "Facility", "MSA", "Contact", "Discipline"), True),
+    (("Facility", "Vendor", "Phone"), False),
+))
+def test_imported_headings_remain_correct_for_approved_standing_contacts(
+        contracts, headings, native_match):
+    """Reordered columns align by title; incompatible schemas keep a headed table."""
+    from app.monthly_report_model import ColumnSpec, profile_sections
+
+    both, north, _, _ = contracts
+    standing = approved(both)
+    native = next(s for s in default_sections() if s.key == "subcontractors").blocks[0]
+    override = replace(native, columns=tuple(
+        ColumnSpec(f"imported_{i}", title) for i, title in enumerate(headings)))
+    imported_profile = replace(north, block_overrides=(override,))
+    review = effective_vendor_rows(imported_profile, standing, SEPTEMBER)
+    block = report_vendor_block(imported_profile, review)
+    section = next(s for s in profile_sections(imported_profile)
+                   if s.key == "subcontractors")
+    assert tuple(c.title for c in section.blocks[0].columns) == headings
+    canonical = ("Facility", "Discipline", "Vendor", "Contact", "Phone", "MSA")
+    if native_match:
+        assert len(block.rows) == 2
+        assert len(block.extra_tables) == 1
+        expected_headings = headings
+    else:
+        assert block.rows == ()
+        assert block.extra_tables[0].columns == canonical
+        assert len(block.extra_tables) == 2
+        expected_headings = canonical
+
+    draft = ReportDraft(imported_profile, SEPTEMBER, "Synthetic Editor",
+                        (section,), (block,), synthetic=True)
+    document = Document(BytesIO(assemble_docx(
+        draft, acknowledged_fingerprint=draft.fingerprint)))
+    assert len(document.tables) == 2
+    contact_table, status_table = document.tables
+    rendered_headings = tuple(cell.text for cell in contact_table.rows[0].cells)
+    assert rendered_headings == expected_headings
+    first_contact = dict(zip(rendered_headings,
+                             (cell.text for cell in contact_table.rows[1].cells)))
+    assert first_contact == {
+        "Facility": "Site North", "Discipline": "Mechanical / HVAC",
+        "Vendor": "Synthetic Mechanical", "Contact": "Shared technician",
+        "Phone": "555-0101", "MSA": "Agreement on file"}
+    assert status_table.rows[1].cells[5].text == "Available"
