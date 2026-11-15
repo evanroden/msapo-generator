@@ -475,6 +475,7 @@ def new_month_draft(draft: ReportDraft, period: ReportPeriod, *, profile=None) -
     follow_ups = seed_followups(draft)
     carried_keys = {"equipment_issues", "proposals"}
     from app.monthly_report_training import new_month_training
+    from app.monthly_report_subcontractor_standing import rollover_subcontractor_block
     from app.monthly_report_model import BandedWorkOrderTable
 
     def cleared(table):
@@ -484,6 +485,7 @@ def new_month_draft(draft: ReportDraft, period: ReportPeriod, *, profile=None) -
         return replace(table, rows=(), reference="")
 
     blocks = tuple(
+        rollover_subcontractor_block(b, period) if b.key == "subcontractor_matrix" else
         new_month_training(b) if b.key == "training_summary" else
         _carry_period_content(b, draft.period)
         if b.key == "equipment_issues" and (b.ai_written or b.ai_paragraphs) else
