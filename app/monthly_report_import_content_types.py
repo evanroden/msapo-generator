@@ -34,6 +34,8 @@ def content_type_summary(items):
     if uncertain:
         parts.append(quantity(uncertain, "drawing/embedded item to review",
                               "drawing/embedded items to review"))
+    if not parts:
+        return ""
     return "Source content: " + " · ".join(parts) + "."
 
 

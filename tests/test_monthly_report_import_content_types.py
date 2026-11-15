@@ -48,7 +48,8 @@ def test_pictures_have_precise_but_noninvented_accessible_descriptions():
     for picture in (photograph, unknown_logo, client_logo, header):
         caption = picture_review_caption(picture)
         assert "Image only" in caption and "not editable" in caption
-        assert picture.text not in caption
+        if picture.text:
+            assert picture.text not in caption
     assert picture_review_caption(photograph).startswith("Imported picture")
     assert "owner unconfirmed" in picture_review_caption(unknown_logo)
     assert picture_review_caption(client_logo).startswith("Client logo image")
