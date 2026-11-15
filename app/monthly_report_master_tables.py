@@ -97,7 +97,8 @@ def _heading(value: str, n: int, old_titles: set[str], *, slot: str = "") -> str
         return "#"
     safe_generic = key in _GENERIC_LABELS or (
         slot == "work_orders" and (
-            key in _WORK_ORDER_METRICS or _work_order_month_heading(normalized) is not None
+            key in _WORK_ORDER_METRICS or key == "work orders received"
+            or _work_order_month_heading(normalized) is not None
         )
     )
     if key == "" or key in old_titles or not safe_generic:
@@ -110,7 +111,7 @@ def _verified_work_order_month_frame(headers: tuple[str, ...]) -> bool:
     labels = tuple(" ".join(str(value).strip().split()).casefold()
                    for value in headers)
     if len(labels) == 7:
-        if labels[0] not in ("wo received", "work order", "work order #"):
+        if labels[0] not in ("wo received", "work orders received", "work order", "work order #"):
             return False
         return any(all(labels[index + 1] in (
             month_abbr[start + index].casefold(), month_name[start + index].casefold()
@@ -325,7 +326,9 @@ def rebind_carried_master_tables(draft, previous_blocks, previous_template: str)
     accepted = {table.reference: table for table in for_profile(draft.profile)}
     if not accepted:
         prior = previous_blocks.get("work_orders")
-        if prior and any(isinstance(t, BandedWorkOrderTable) and t.rows for t in prior.extra_tables):
+        if prior and any(t.rows and (isinstance(t, BandedWorkOrderTable)
+                or len(t.columns) == 13 and t.reference.startswith("master-table:"))
+                for t in prior.extra_tables):
             raise ValueError("The pinned master is unavailable; review historical work-order grid migration.")
         return draft
     from app.monthly_report_work_order_rolling import (

@@ -486,8 +486,12 @@ def render_profile_workflow(browser_token: str, browser_timezone: str, field, mo
     from app.monthly_report_start import latest_snapshot
     prior = current or latest_snapshot(contract, profile.key, period)
     if prior and not current:
-        from app.monthly_report_setup import new_month_draft
-        prior = replace(prior, draft=new_month_draft(prior.draft, period))
+        from app.monthly_report_setup import WorkOrderRolloverError, new_month_draft
+        try:
+            prior = replace(prior, draft=new_month_draft(prior.draft, period, profile=profile))
+        except WorkOrderRolloverError as exc:
+            st.error(f"The previous work-order grid needs review before starting this month: {exc} Your saved reports are unchanged.")
+            return
     start_choices = (["Saved work for this month" if current else "Last month's report for this profile"] if prior else []) + ["The profile's library template"]
     start = st.radio("Start from", start_choices, key=field(prefix + "_start", start_choices[0]))
     from_prior = bool(prior and start == start_choices[0])

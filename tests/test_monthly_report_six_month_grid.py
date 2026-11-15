@@ -22,7 +22,8 @@ MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 
-def banded_master(path, *, duplicate_location=False, ambiguous_category=False):
+def banded_master(path, *, duplicate_location=False, ambiguous_category=False,
+                  received_label="WO Received"):
     document = Document()
     document.add_heading("MONTHLY ACTIVITY SUMMARY", 1)
     document.add_paragraph("WORK ORDER STATUS")
@@ -34,7 +35,7 @@ def banded_master(path, *, duplicate_location=False, ambiguous_category=False):
             document.add_paragraph(f"{label} Work Orders")
             table = document.add_table(rows=8, cols=7)
             for row, first, months in (
-                (0, "WO Received", MONTHS[:6]), (2, "", MONTHS[6:]),
+                (0, received_label, MONTHS[:6]), (2, "", MONTHS[6:]),
                 (4, "Closed", MONTHS[:6]), (6, "", MONTHS[6:]),
             ):
                 table.cell(row, 0).text = first
@@ -254,3 +255,130 @@ def test_omitted_legacy_grid_with_new_master_keeps_existing_behavior(tmp_path, m
     result = masters.rebind_carried_master_tables(
         next_draft, {"work_orders": previous.blocks[0]}, draft.profile.template)
     assert result == next_draft
+
+
+def test_expanded_received_heading_recognizes_and_populates_all_four_bands(tmp_path, monkeypatch):
+    _, draft, _, bundle, _ = banded_draft(tmp_path, monkeypatch,
+                                         received_label="Work Orders Received")
+    result = apply_grid(draft, bundle)
+    assert result.blocks[0].extra_tables[0].band_site_key == "north"
+    assert result.blocks[0].extra_tables[0].rows[2][5] == "1"
+
+
+def test_returning_report_carries_bands_and_reopens_the_next_month(tmp_path, monkeypatch):
+    from app.monthly_report_start import returning_draft
+    path, draft, _, bundle, _ = banded_draft(tmp_path, monkeypatch)
+    previous = apply_grid(draft, bundle)
+    state = library.save_profile(previous.profile, expected_revision=0, actor="Synthetic AM", confirmed=True)
+    library.save_snapshot(previous, expected_revision=0)
+    carried, saved = returning_draft(state, ReportPeriod(2027, 2), "Synthetic AM")
+    assert saved.draft == previous
+    north = carried.blocks[0].extra_tables[0]
+    assert isinstance(north, BandedWorkOrderTable)
+    assert north.band_site_key == "north" and north.rows[2][4:7] == ("1", "0", "")
+    library.save_snapshot(carried, expected_revision=0)
+    reopened = library.load_snapshot(carried.profile.contract, carried.profile.key, carried.period).draft
+    assert reopened == carried
+    word = Document(BytesIO(build_native_docx(reopened, path, master=True)))
+    assert word.tables[0].cell(3, 4).text == "1"
+    assert library.load_snapshot(previous.profile.contract, previous.profile.key, previous.period).draft == previous
+
+
+def test_next_month_blocks_changed_site_identity_before_carrying_bands(tmp_path, monkeypatch):
+    from app.monthly_report_setup import new_month_draft
+    _, draft, _, bundle, _ = banded_draft(tmp_path, monkeypatch)
+    previous = apply_grid(draft, bundle)
+    swapped = replace(previous.profile, facilities=tuple(reversed(previous.profile.facilities)))
+    with pytest.raises(ValueError, match="identity|location|category"):
+        new_month_draft(previous, ReportPeriod(2027, 2), profile=swapped)
+
+
+def test_normal_next_month_flow_carries_legacy_twelve_month_grid(tmp_path, monkeypatch):
+    from app.monthly_report_setup import new_month_draft
+    draft, _, bundle, _, _, _ = prepared(tmp_path, monkeypatch)
+    previous = apply_grid(draft, bundle)
+    carried = new_month_draft(previous, ReportPeriod(2027, 2))
+    non_pm = carried.blocks[0].extra_tables[1]
+    assert non_pm.reference == previous.blocks[0].extra_tables[1].reference
+    assert non_pm.rows[0][-3:] == ("1", "0", "")
+
+
+@pytest.mark.parametrize("banded", [True, False])
+def test_next_month_does_not_discard_values_when_master_is_missing(tmp_path, monkeypatch, banded):
+    from app.monthly_report_setup import new_month_draft
+    if banded:
+        _, draft, _, bundle, _ = banded_draft(tmp_path, monkeypatch)
+    else:
+        draft, _, bundle, _, _, _ = prepared(tmp_path, monkeypatch)
+    previous = apply_grid(draft, bundle)
+    monkeypatch.setattr(masters, "for_profile", lambda _: ())
+    with pytest.raises(ValueError, match="master is unavailable"):
+        new_month_draft(previous, ReportPeriod(2027, 2))
+    assert previous.blocks[0].extra_tables[0].rows
+
+
+def test_next_month_does_not_carry_across_report_profiles(tmp_path, monkeypatch):
+    from app.monthly_report_setup import new_month_draft
+    _, draft, _, bundle, _ = banded_draft(tmp_path, monkeypatch)
+    previous = apply_grid(draft, bundle)
+    other_profile = replace(previous.profile, key="another-profile")
+    with pytest.raises(ValueError, match="different report profile"):
+        new_month_draft(previous, ReportPeriod(2027, 2), profile=other_profile)
+
+
+def test_different_sites_can_reuse_master_layout_without_other_site_counts(tmp_path, monkeypatch):
+    from app.monthly_report_model import Facility
+    from app.monthly_report_start import design_seed
+    path, draft, _, bundle, _ = banded_draft(tmp_path, monkeypatch)
+    previous = apply_grid(draft, bundle)
+    state = library.save_profile(previous.profile, expected_revision=0, actor="Synthetic AM", confirmed=True)
+    library.save_snapshot(previous, expected_revision=0)
+    target = replace(previous.profile, key="other-sites", facilities=(
+        Facility("east", "Example East"), Facility("west", "Example West")))
+    fresh, _ = design_seed(target, ReportPeriod(2027, 2), "Synthetic AM", state)
+    source_tables = previous.blocks[0].extra_tables[:4]
+    target_tables = next(block for block in fresh.blocks if block.key == "work_orders").extra_tables[:4]
+    assert tuple(t.reference for t in target_tables) == tuple(t.reference for t in source_tables)
+    assert all(not t.rows and not isinstance(t, BandedWorkOrderTable) for t in target_tables)
+    content, _ = sources.ingest(fresh.profile, "east.csv",
+        b"Work Order #,Site,Received Date,Closed Date,Status,PM/Non-PM\n"
+        b"E-1,East,2027-02-05,,Open,Non-PM\n")
+    fresh = replace(fresh, sources=(content.source,))
+    review = flow.prepare_bundle(fresh, content)
+    review = flow.confirm_coverage(fresh, review, table_number=1, site="east",
+        start_month="2027-02", end_month="2027-02", evidence="Synthetic east export", confirmed=True)
+    fresh = flow.store_bundle(fresh, review)
+    from datetime import date
+    result = apply_grid(fresh, review, as_of=date(2027, 3, 1))
+    east = next(block for block in result.blocks if block.key == "work_orders").extra_tables[0]
+    assert east.band_site_key == "east" and east.rows[2][6] == "1"
+    assert previous.blocks[0].extra_tables[0].band_site_key == "north"
+    word = Document(BytesIO(build_native_docx(result, path, master=True)))
+    captions = "\n".join(paragraph.text for paragraph in word.paragraphs)
+    assert "Example East" in captions and "Example North" not in captions
+    assert word.tables[0].cell(3, 6).text == "1"
+
+
+def test_different_sites_get_empty_legacy_master_grids(tmp_path, monkeypatch):
+    from app.monthly_report_model import Facility
+    from app.monthly_report_start import design_seed
+    draft, _, bundle, _, _, _ = prepared(tmp_path, monkeypatch)
+    synthetic = Document()
+    synthetic.add_heading("MONTHLY ACTIVITY SUMMARY", 1)
+    path = tmp_path / "synthetic-legacy-master.docx"
+    synthetic.save(path)
+    raw = path.read_bytes()
+    digest = sha256(raw).hexdigest()
+    folder = tmp_path / "monthly_reports" / "designs" / "master"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / (digest + ".docx")).write_bytes(raw)
+    draft = replace(draft, profile=replace(draft.profile, template="enfra_master:" + digest))
+    previous = apply_grid(draft, bundle)
+    state = library.save_profile(previous.profile, expected_revision=0, actor="Synthetic AM", confirmed=True)
+    library.save_snapshot(previous, expected_revision=0)
+    target = replace(previous.profile, key="other-sites", facilities=(
+        Facility("east", "Example East"), Facility("west", "Example West")))
+    fresh, _ = design_seed(target, ReportPeriod(2027, 2), "Synthetic AM", state)
+    tables = next(block for block in fresh.blocks if block.key == "work_orders").extra_tables[:4]
+    assert tuple(t.reference for t in tables) == tuple(t.reference for t in previous.blocks[0].extra_tables[:4])
+    assert all(not table.rows for table in tables)
