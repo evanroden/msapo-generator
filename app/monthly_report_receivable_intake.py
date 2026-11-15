@@ -7,7 +7,7 @@ a stripped-amount status view is never called a complete AR Aging statement.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, replace
+from dataclasses import replace
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from hashlib import sha256
