@@ -196,6 +196,21 @@ def _table_headings(columns, rows):
     for row in rows[:3]:
         if any(re.search(r"\d", str(cell)) for cell in row):
             break
+        # A standalone total label marks a data row, not a heading
+        # continuation. An exact-cell correction can leave a totals row
+        # digit-free ("Grand total" / "Amount omitted"); folding it into the
+        # headings would invent an ambiguous/price heading from report data
+        # and keep flagging the corrected table as pricing. Use the same
+        # total-cell pattern as the total-row gate in table_has_pricing.
+        if any(re.fullmatch(r"(?:grand\s+)?total\s*:?[ ]*", str(cell).strip(), re.I)
+               for cell in row):
+            break
+        # A sentence is a data cell, not a wrapped heading label. Folding a
+        # digit-free data row ("Quote in preparation" under Status, beside a
+        # sentence of notes) would turn an ordinary Status column into a
+        # pricing heading and silently drop it from the report.
+        if any(len(str(cell).split()) >= 5 for cell in row):
+            break
         header_rows.append(row)
     # A standalone missing-reading dash is data, not a heading continuation.
     # Ignore it only in this inferred view; never rewrite the supplied cells

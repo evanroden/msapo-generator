@@ -489,6 +489,9 @@ def complete_guided_sections(draft):
                       for section in profile_sections(replace(draft.profile, excluded_sections=(), section_order=order))}
     sections_out = {section.key for section in draft.sections if not section.included and section.key in chosen}
     sections_out |= {key for key in draft.profile.excluded_sections if key not in present and key in standard_specs}
+    # Explicit whole-section choices retain every block and follow-up so
+    # checking the section again restores it without destructive conversion.
+    sections_out -= set(draft.omitted_sections)
     # Both the slots a legacy section still lists and the standard slots
     # restored below: a retained block in either stays left out.
     left_out = {block.key for key in sections_out for section in (present.get(key), standard_specs.get(key))
@@ -544,9 +547,15 @@ def complete_guided_sections(draft):
                 before_pages = next(i for i, block in enumerate(existing_blocks) if block.key == "water_reports")
                 existing_blocks = (*existing_blocks[:before_pages], update, *existing_blocks[before_pages:])
                 additions = tuple(block for block in additions if block is not update)
-        sections.append(replace(section, included=True,
+        sections.append(replace(section, included=key not in draft.omitted_sections,
                                 blocks=tuple(replace(block, required=False) for block in (*existing_blocks, *additions))))
-    return replace(draft, sections=tuple(sections))
+    # A newly chosen master can remove an optional section entirely. Keep
+    # the remembered content in the draft, but retire report-only omission
+    # keys for sections that no longer exist; otherwise the library correctly
+    # rejects the next save/reopen as an invalid section choice.
+    retained = {section.key for section in sections}
+    omitted = tuple(key for key in draft.omitted_sections if key in retained)
+    return replace(draft, sections=tuple(sections), omitted_sections=omitted)
 
 
 def _review_carried_update(block, period, prefix):
@@ -566,6 +575,9 @@ def _review_carried_update(block, period, prefix):
     # Equal content in a replacement editor is not the same acknowledgement.
     # Include the scope in the native widget identity, not only its callback.
     key = prefix + "_current_period_" + block.key + "_" + observed["token"]
+    from app.monthly_report_correction_ui import native_warning_marker
+    st.markdown(native_warning_marker(prefix, "carried_period", block.key,
+                                      block.fingerprint, key), unsafe_allow_html=True)
     if st.button(f"This update is correct for {period.label}", key=key):
         confirmed = confirm_current_period(block, period)
         st.session_state[marker] = {
@@ -628,7 +640,23 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
                   manage_saved_pictures=True, inline_photo_intake=False, page_actions_open=True,
                   text_label=None, text_height=140):
     block = _include_left_out(spec, block, prefix)
+    from app.monthly_report_correction_ui import render_inline_block_repairs
+    block = render_inline_block_repairs(spec, block, prefix)
+    if draft is not None:
+        from app.monthly_report_non_narrative_recovery import edit_active_cell
+        block, cell_editor_active = edit_active_cell(draft, block, prefix, field)
+        if cell_editor_active:
+            # One authoritative correction editor: the ordinary grid stays
+            # unmounted until this exact cell is applied or cancelled.
+            return block
     if draft is not None and spec.type == "image_grid":
+        # The existing photo slider rejects saved values outside its 1–6
+        # options before Review can display a correction. Keep the exact
+        # block and its photos intact until the explicit fix above is chosen.
+        if type(block.photos_per_page) is not int or not 1 <= block.photos_per_page <= 6:
+            st.caption("This photo grid has an invalid saved page density. "
+                       "Choose the correction above before editing its captions.")
+            return block
         from app.monthly_report_visual_ui import edit_photos
         return edit_photos(draft, block, prefix, assets, field, show_preview=False)
     key = prefix + "_edit_" + spec.key
@@ -664,6 +692,24 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
             source = "Omit" if retained_mbcx and block.source == "Omit" else "This month"
             block = replace(block, source=source, text=notes, reviewed_fingerprint="", client_reviewed_fingerprint="")
     if row_cards:
+        from app.monthly_report_table_column_recovery import (
+            fixed_width_defect, edit_missing_positions, missing_positions)
+        if fixed_width_defect(spec, block) > 0:
+            st.warning("This row table has more values than saved column headings. "
+                       "The original rows are unchanged. Confirm the positional "
+                       "column correction in Review before editing a row.")
+            return block
+        if block.extra_tables:
+            tables = tuple(edit_missing_positions(table, block, number, prefix, field)
+                           for number, table in enumerate(block.extra_tables))
+            if tables != block.extra_tables:
+                block = replace(block, extra_tables=tables, source="This month",
+                                reviewed_fingerprint="", client_reviewed_fingerprint="")
+            if any(missing_positions(table) for table in tables):
+                st.warning("An imported table has more values than headings. "
+                           "Enter and confirm its missing positional headings above; "
+                           "row-card editing remains closed to protect those values.")
+                return block
         from app.monthly_report_row_cards_ui import edit_row_cards
         quiet = not (block.text.strip() or block.asset_hashes or block.org_nodes or block.ai_paragraphs)
         block = edit_row_cards(spec, block, prefix, field, notice=request_notice,
@@ -673,6 +719,14 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
         tables = []
         rows_edited = False
         for n, table in enumerate(block.extra_tables):
+            from app.monthly_report_table_column_recovery import edit_missing_positions
+            table = edit_missing_positions(table, block, n, prefix, field)
+            if not table.columns:
+                # A headerless imported table has no native grid schema yet.
+                # Keep every positional source cell until headings are explicitly
+                # confirmed; never round-trip an empty dataframe into its rows.
+                tables.append(table)
+                continue
             from app.monthly_report_table_review_ui import review_table_headings
             table = review_table_headings(table, key + f"_imported_{n}", field)
             if spec.key == "work_orders" or len(block.extra_tables) > 1:
@@ -762,9 +816,12 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
         editor_anchor = "report-editor-" + spec.key
         if draft is not None:
             from html import escape
-            from app.monthly_report_correction_ui import text_warning_marker
+            from app.monthly_report_correction_ui import (
+                text_warning_marker, required_text_focus_markup)
             st.markdown('<span id="' + escape(editor_anchor, quote=True) + '"></span>' +
-                        text_warning_marker(draft, block, prefix, editor_key), unsafe_allow_html=True)
+                        text_warning_marker(draft, block, prefix, editor_key) +
+                        required_text_focus_markup(draft, block, prefix),
+                        unsafe_allow_html=True)
         from app.monthly_report_native_loading import reserve_text_area
         reserve_text_area(editor_key, text_height)
         st.text_area(
@@ -809,6 +866,14 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
                 section_title=section_title, editor_anchor=editor_anchor)
             block = _record_period_editor_transition(prefix, canonical_before, block, resolved, draft.period, editor_key)
     elif edit_tables and not row_cards and spec.type in ("table", "work_order_grid") and (block.rows or not block.extra_tables):
+        from app.monthly_report_table_column_recovery import fixed_width_defect
+        if fixed_width_defect(spec, block) > 0:
+            # The native grid can only display named columns; editing it now
+            # would irreversibly omit the trailing source cells. Review owns
+            # a positional schema repair and this canonical block is retained.
+            st.warning("Some saved rows have more cells than column headings. "
+                       "Use the exact column repair in Review; original cells stay unchanged.")
+            return block
         seed, config = _typed_table(spec, block.rows)
         if optional_table:
             seed = empty_text_seed(seed, spec)
@@ -1280,6 +1345,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     render_administration_links()
     from app.monthly_report_start_ui import choose_contract, select_sites, starting_choice, identity_summary
     with st.container(key="monthly_report_identity"):
+        st.markdown('<span id="report-contract-selector"></span>', unsafe_allow_html=True)
         contract = choose_contract(last_contract, field)
         if contract:
             period = month_selector(field, "report", suggested_period(operator_today(browser_timezone)))
@@ -1292,6 +1358,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     initial_sites_open = st.session_state.setdefault("report_sites_initially_open_" + _signature(contract), not returning)
     # Always use the same container/label. Remembering this report after its
     # first acknowledged edit must not move existing native editors.
+    st.markdown('<span id="report-profile-details"></span>', unsafe_allow_html=True)
     site_box = st.expander("Change report sites", expanded=initial_sites_open)
     with site_box:
         candidate, existing = select_sites(contract, profiles, remembered, field, completed_setup,
@@ -1437,12 +1504,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     draft, removed_prices = client_table_draft(complete_guided_sections(normalize_mbcx(refresh_profile_identity(st.session_state[draft_key], profile))))
     if removed_prices:
         st.info("Price columns were left out of this working report: " + ", ".join(removed_prices) + ". The saved original remains available. Check the remaining wording and images for prices before download.")
-    # A missing preparer must never strand someone in a distant section with
-    # only a generic instruction. This stable in-page anchor identifies the
-    # actual native text input immediately below it (not a fake proxy field).
-    st.markdown('<span id="report-prepared-by"></span>', unsafe_allow_html=True)
+    # The native preparer renderer owns the unique in-page anchor and
+    # correction marker immediately before the actual native input.
     from app.monthly_report_preparer_ui import render_preparer
-    prepared = render_preparer(prefix, draft.prepared_by, field)
+    prepared = render_preparer(prefix, draft.prepared_by, field, draft=draft)
     draft = replace(draft, prepared_by=prepared)
     if prepared.strip() and not st.session_state.get(prefix + "_directory_defaults_attempted"):
         from app.monthly_report_directory import apply_defaults
@@ -1458,13 +1523,58 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     # Shared contact maintenance belongs to the administration surface, not
     # a competing report editor above Organizational Chart. Keep the same
     # explicit shared-save scope, contact widget identity and return value.
+    from app.monthly_report_contact_apply_undo import (
+        DirectoryApplyUndo, capture_directory_apply, undo_directory_apply,
+        retire_inactive_directory_undo_receipts,
+    )
+    from app.monthly_report_directory_ui import _resume_contacts
+    undo_key = prefix + "_directory_apply_undo"
+    # Each selected report/month has a different prefix. Retire old actions
+    # before mounting this workspace, including when returning to a prior one.
+    retire_inactive_directory_undo_receipts(st.session_state, undo_key)
     with st.sidebar:
         updated_contacts = render_selected_directory(contract, profile.facilities, prepared, prefix, draft=draft)
+        # This is a report-only Undo. The shared directory revision remains
+        # immutable; changes to the applied directory-owned rows refuse Undo.
+        receipt = st.session_state.get(undo_key)
+        if isinstance(receipt, DirectoryApplyUndo) and (
+                receipt.profile.contract != draft.profile.contract
+                or receipt.profile.key != draft.profile.key
+                or receipt.period != draft.period):
+            # A report/month switch retires the old action permanently. It
+            # must not resurrect when the user later returns to that report.
+            st.session_state.pop(undo_key, None)
+            receipt = None
+        if (isinstance(receipt, DirectoryApplyUndo)
+                and receipt.profile.contract == draft.profile.contract
+                and receipt.profile.key == draft.profile.key
+                and receipt.period == draft.period):
+            st.caption("Undo affects this report only; saved shared contacts are unchanged.")
+            if st.button("Undo last directory Apply in this report", key=prefix + "_undo_directory_apply"):
+                try:
+                    restored = undo_directory_apply(draft, receipt)
+                except ValueError as exc:
+                    st.session_state.pop(undo_key, None)
+                    st.warning(str(exc) + " No changes were undone.")
+                else:
+                    st.session_state.pop(undo_key, None)
+                    _resume_contacts(restored, prefix)
     if updated_contacts is not None:
         from app.monthly_report_directory import apply_contacts
-        from app.monthly_report_directory_ui import _resume_contacts
+        previous_contacts = draft
         draft = apply_contacts(draft, updated_contacts, keep_report_rows=True)
+        try:
+            st.session_state[undo_key] = capture_directory_apply(
+                previous_contacts, draft, len(updated_contacts.rows))
+        except ValueError as exc:
+            # Shared directory save has already succeeded. Keep the saved
+            # report update, but never advertise an unprovable Undo.
+            st.session_state.pop(undo_key, None)
+            st.session_state[prefix + "_directory_undo_unavailable"] = str(exc)
         _resume_contacts(draft, prefix)
+    if st.session_state.pop(prefix + "_directory_undo_unavailable", ""):
+        st.warning("This directory Apply cannot safely be undone automatically. "
+                   "The report contacts remain available for manual editing.")
     from app.monthly_report_save_status import SaveStatus
     save_status = SaveStatus(prefix, recovery_available=recovery_available)
     from app.monthly_report_asset_review import refresh_asset_source_context
@@ -1574,12 +1684,32 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                         replace(draft, blocks=tuple(blocks.values())), assets, contract, period, state)
                     render_section_preview(proposed_draft, "cover", proposed_assets, prefix, deferred=True)
         from app.monthly_report_section_help import editor_section_title
+        from app.monthly_report_model import included_sections
+        section_choices = {}
         for section in draft.sections:
-            title = editor_section_title(section)
+            title = editor_section_title(section) or section.key.replace("_", " ").capitalize()
             with workspace_section("monthly_" + section.key, title):
                 st.divider()
-                st.subheader(title, anchor="report-section-" + section.key,
+                # A unique blank included section title is an editable field,
+                # never an invitation to normalize any existing literal heading.
+                from app.monthly_report_correction_ui import section_title_problems
+                if (section.included and (not section.title.strip() or section_title_problems(section))
+                        and sum(s.key == section.key for s in draft.sections) == 1):
+                    from app.monthly_report_correction_ui import edit_missing_section_title
+                    before = section
+                    section = edit_missing_section_title(section, prefix, field)
+                    if section != before:
+                        draft = replace(draft, sections=tuple(
+                            section if item is before else item for item in draft.sections))
+                from app.monthly_report_section_inclusion import render_section_inclusion
+                section_choices[section.key] = render_section_inclusion(draft, section, prefix, field)
+                numbered = next((s for s in included_sections(draft.sections) if s.key == section.key), None)
+                heading = f"{numbered.number}. {title}" if numbered else title
+                st.subheader(heading, anchor="report-section-" + section.key,
                              help=editor_section_heading_help(section.key))
+                if not section.included:
+                    st.caption("Not included in this report. Its content is kept; check the box to restore it.")
+                    continue
                 guidance = editor_section_guidance(section.key)
                 if guidance:
                     st.caption(guidance)
@@ -1593,10 +1723,23 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                                    "[Enter Prepared by](#report-prepared-by) above to view them.")
                     else:
                         render_section_preview(replace(draft, blocks=tuple(blocks.values())), section.key, assets, prefix, deferred=True)
-    if not any(section.key == "activity" for section in draft.sections):
+    # This manager is report-wide, not part of Activity output. If Activity is
+    # explicitly unchecked its editor does not render, so mount the one shared
+    # source manager here instead of making all source corrections inaccessible.
+    if not any(section.key == "activity" and section.included
+               for section in draft.sections):
         from app.monthly_report_source_manager_ui import render_guided_source_manager
         draft, blocks = render_guided_source_manager(
             draft, blocks, prefix, field, _apply_prepared, _keep_missing_sources, assets=assets)
+    changed_section_choices = {key: included for key, included in section_choices.items()
+                               if next(s for s in draft.sections if s.key == key).included != included}
+    if changed_section_choices:
+        from app.monthly_report_section_inclusion import set_section_included
+        draft = replace(draft, blocks=tuple(blocks.values()))
+        for key, included in changed_section_choices.items():
+            draft = set_section_included(draft, key, included)
+        st.session_state[draft_key] = draft
+        st.rerun()
     blocks = {key: refresh_asset_source_context(block, draft.sources) for key, block in blocks.items()}
     draft = complete_guided_sections(replace(draft, blocks=tuple(blocks.values())))
     footer = blocks.get("footer_text")
@@ -1778,8 +1921,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 st.markdown(" · ".join(
                     f"[{editor_section_title(section)}](#report-section-{section.key})"
                     for section in without_new_monthly))
-        # Pre-generation page/size estimates are not client deliverables.
-        # Actual sizes and the >15 MB warning are shown after generation.
+        # The original size heuristic remains a preflight input, not an output-size forecast.
         loader = lambda ref: assets[ref] if ref in assets else library.read_asset(contract, selected, ref)
         estimated = estimate_bytes(draft, loader)
         checks = [check for check in preflight(draft, estimated) if check.code != "empty"]
@@ -1787,12 +1929,36 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         dependent = used_missing_sources(draft, st.session_state.get(prefix + "_unavailable_sources", ()))
         if dependent:
             missing_names = ", ".join(safe_source_name(source) for source in dependent)
+            from app.monthly_report_correction_targets import source_target
             checks.append(ReportCheck("unavailable_source",
                 f"Cannot safely generate while {missing_names} is missing. "
-                "Replace the source or remove the content linked to it first.", True))
+                "Replace the source or remove the content linked to it first.", True,
+                targets=tuple(source_target(draft, source) for source in dependent)))
+        # Planning ranges are deliberately separate from the preflight safety
+        # input estimate and from the exact bytes reported after generation.
+        # This is read-only: no additional DOCX assembly or PDF conversion.
+        if package is None:
+            from app.monthly_report_size_forecast import forecast_output_sizes, format_size_range
+            from app.config import PDF_BACKEND
+            sizes_forecast = forecast_output_sizes(
+                estimated, sources_ready=not bool(dependent), pdf_backend=PDF_BACKEND)
+            st.caption(
+                "Before creation · Word estimate: " + format_size_range(sizes_forecast.word)
+                + " · PDF estimate: " + format_size_range(sizes_forecast.pdf)
+                + ". Wide planning ranges; actual sizes appear after creation.")
+            if sizes_forecast.reason or sizes_forecast.pdf_reason:
+                st.caption(sizes_forecast.reason or sizes_forecast.pdf_reason)
+            if any(size and size.high > 15 * 1024 * 1024
+                   for size in (sizes_forecast.word, sizes_forecast.pdf)):
+                st.caption("This range crosses the 15 MB target; only the finished files confirm their size.")
         if checks:
             count = len(checks)
             st.markdown(f"**{count} {'item needs' if count == 1 else 'items need'} attention**")
+        # Several distinct preflight messages may describe the same underlying
+        # table cell or schema. Show each message but mount each native editor
+        # once per exact code/block owner to avoid duplicate Streamlit keys.
+        rendered_cell_owners = set()
+        rendered_heading_owners = set()
         for check in checks:
             source = next((source for source in draft.sources if source.id == check.block_key), None)
             if source is not None and check.code in {"source_facility", "source_period", "source_date_unknown"}:
@@ -1821,6 +1987,51 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 render_financial_links(check,draft,prefix)
                 from app.monthly_report_ai_correction_ui import render_links as render_ai_links
                 render_ai_links(check,draft,prefix)
+                from app.monthly_report_correction_ui import (
+                    render_native_warning_links, render_source_recovery_links)
+                render_native_warning_links(check, draft, prefix)
+                render_source_recovery_links(check, draft, prefix)
+                from app.monthly_report_correction_ui import render_imported_table_warning_links
+                render_imported_table_warning_links(check, draft, prefix)
+                from app.monthly_report_correction_ui import render_followup_identity_recovery
+                render_followup_identity_recovery(check, draft, prefix)
+                from app.monthly_report_correction_ui import render_structure_and_followup_recovery
+                render_structure_and_followup_recovery(check, draft, prefix)
+                from app.monthly_report_non_narrative_recovery import render_links as render_cell_links
+                cell_owner = (check.code, check.block_key)
+                if not check.targets and cell_owner not in rendered_cell_owners:
+                    render_cell_links(check, draft, prefix)
+                    rendered_cell_owners.add(cell_owner)
+                from app.monthly_report_correction_ui import render_receivable_recovery
+                render_receivable_recovery(check, draft, prefix)
+                from app.monthly_report_correction_ui import (
+                    render_identity_warning_recovery, render_footer_warning_links)
+                render_identity_warning_recovery(check, draft, prefix)
+                render_footer_warning_links(check, draft, prefix)
+                from app.monthly_report_correction_ui import render_unmounted_library_recovery
+                render_unmounted_library_recovery(check, draft, prefix)
+                from app.monthly_report_table_column_recovery import (
+                    edit_fixed_column_schema, edit_unsafe_primary_heading)
+                edit_fixed_column_schema(check, draft, prefix, field)
+                if cell_owner not in rendered_heading_owners:
+                    edit_unsafe_primary_heading(check, draft, prefix, field)
+                    rendered_heading_owners.add(cell_owner)
+                from app.monthly_report_org_warning import render_chart_links, render_chart_text_safety
+                render_chart_links(check, draft, prefix)
+                render_chart_text_safety(check, draft, prefix)
+                from app.monthly_report_org_warning import render_required_chart_link
+                render_required_chart_link(check, draft, prefix)
+                from app.monthly_report_correction_ui import render_required_text_recovery
+                render_required_text_recovery(check, draft, prefix)
+        from app.monthly_report_correction_ui import render_footer_repair_editor
+        render_footer_repair_editor(draft, checks, prefix, field)
+        from app.monthly_report_org_warning import finish_chart_notice
+        finish_chart_notice(prefix)
+        from app.monthly_report_non_narrative_recovery import finish_notice as finish_cell_notice
+        finish_cell_notice(prefix)
+        recovery_notice = st.session_state.pop(prefix + "_warning_recovery_notice", None)
+        if recovery_notice:
+            st.warning(recovery_notice)
         notice = st.session_state.pop(prefix + "_page_navigation_notice", None)
         if notice:
             st.warning(notice)
@@ -1927,9 +2138,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     except ValueError as exc:
                         st.error(str(exc))
             from app.monthly_report_storage import readable_bytes
-            sizes = "DOCX " + readable_bytes(len(package.docx))
+            sizes = "Actual Word (DOCX): " + readable_bytes(len(package.docx))
             if package.pdf:
-                sizes += " · PDF " + readable_bytes(len(package.pdf))
+                sizes += " · Actual PDF: " + readable_bytes(len(package.pdf))
             st.caption(sizes)
             if max(len(package.docx), len(package.pdf or b"")) > 15 * 1024 * 1024:
                 st.warning("The finished report exceeds the 15 MB target. You can reduce selected attachment pages or use denser photo layouts, then generate it again.")
