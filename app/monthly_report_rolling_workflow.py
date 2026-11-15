@@ -8,6 +8,7 @@ from dataclasses import asdict, replace
 from datetime import date
 import json
 
+from app import config
 from app.monthly_report_model import ReportTable, ResolvedBlock
 from app.monthly_report_work_order_coverage import restore_decision
 from app.monthly_report_work_order_rolling import (
@@ -102,7 +103,7 @@ def publish(draft, bundle, *, expected_revision, expected_block, group_index,
     from app.monthly_report_row_review_receipts import decoded
 
     flow._validate(draft, bundle)
-    as_of = date.today() if as_of is None else as_of
+    as_of = config.operator_today() if as_of is None else as_of
     if type(as_of) is not date:
         raise ValueError("Choose a valid review date for source coverage.")
     if (confirmed is not True or bundle["kind"] != "workorders"
