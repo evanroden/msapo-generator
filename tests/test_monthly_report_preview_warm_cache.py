@@ -7,7 +7,7 @@ from dataclasses import replace
 from io import BytesIO
 from unittest.mock import patch
 
-import fitz
+import pymupdf as fitz
 from PIL import Image
 import pytest
 

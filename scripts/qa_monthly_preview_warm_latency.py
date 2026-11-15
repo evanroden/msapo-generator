@@ -12,10 +12,14 @@ from __future__ import annotations
 from argparse import ArgumentParser
 from io import BytesIO
 import json
+from pathlib import Path
+import sys
 from statistics import median
 from time import perf_counter
 from types import SimpleNamespace
 from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pymupdf as fitz
 from PIL import Image
