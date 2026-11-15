@@ -105,13 +105,51 @@ def capture_directory_apply(
     )
 
 
-def undo_directory_apply(draft: ReportDraft, receipt: DirectoryApplyUndo) -> ReportDraft:
+
+
+def pending_contact_editor_input(session, prefix: str) -> bool:
+    """Find contact-card input delivered before the guided sidebar Undo.
+
+    Contact cards queue their edits in a revision-bound widget record, and a
+    same-click native field can be newer than its on_change receipt. Inspect
+    the current editor binding without consuming or deleting either value.
+    """
+    stem = prefix + "_contacts_contact_matrix_"
+    for key in tuple(session):
+        if not (isinstance(key, str) and key.startswith(stem)
+                and key.endswith("_compact_editor_key")):
+            continue
+        editor_key = session.get(key)
+        if not isinstance(editor_key, str) or not editor_key.startswith(stem):
+            continue
+        record = session.get(editor_key)
+        if not isinstance(record, dict):
+            continue
+        pending = record.get("pending")
+        if isinstance(pending, dict) and (
+                pending.get("corrected") != pending.get("expected")
+                or pending.get("result") != pending.get("expected")):
+            return True
+        for field_key, original in record.get("fields") or ():
+            if session.get(field_key, original) != original:
+                return True
+    return False
+
+def undo_directory_apply(
+    draft: ReportDraft, receipt: DirectoryApplyUndo, *,
+    pending_contact_input: bool = False,
+) -> ReportDraft:
     """Revert only the acknowledged directory-owned delta, or refuse stale work.
 
     A subsequent local row addition/edit in the suffix is preserved. Changes
     to directory-owned rows, links, source or contact layout are a conflict.
     Directory revisions and all other report blocks are never rewritten.
     """
+    # The sidebar mounts before the report's contact and notes editors.
+    # Refuse Undo until a same-click delivered edit reaches the canonical
+    # draft; _resume_contacts would otherwise erase its queued widget state.
+    if pending_contact_input:
+        raise ValueError("A newer contact or note edit is pending. Review that edit before another Apply.")
     if not isinstance(receipt, DirectoryApplyUndo):
         raise ValueError("A legacy directory Undo receipt cannot be verified.")
     if (_report_scope(draft.profile) != _report_scope(receipt.profile)

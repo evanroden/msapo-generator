@@ -1525,7 +1525,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     # explicit shared-save scope, contact widget identity and return value.
     from app.monthly_report_contact_apply_undo import (
         DirectoryApplyUndo, capture_directory_apply, undo_directory_apply,
-        retire_inactive_directory_undo_receipts,
+        retire_inactive_directory_undo_receipts, pending_contact_editor_input,
     )
     from app.monthly_report_directory_ui import _resume_contacts
     undo_key = prefix + "_directory_apply_undo"
@@ -1551,8 +1551,17 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 and receipt.period == draft.period):
             st.caption("Undo affects this report only; saved shared contacts are unchanged.")
             if st.button("Undo last directory Apply in this report", key=prefix + "_undo_directory_apply"):
+                # Native callbacks have arrived, but the contact editor and
+                # pending notes reconcile only later in this full render.
+                # Refuse this Undo before _resume_contacts can discard them.
+                contact_block = next((b for b in draft.blocks
+                                      if b.key == "contact_matrix"), None)
+                pending_input = (pending_contact_editor_input(st.session_state, prefix)
+                                 or (contact_block is not None
+                                     and _pending_rich_text_edit(prefix, contact_block) is not None))
                 try:
-                    restored = undo_directory_apply(draft, receipt)
+                    restored = undo_directory_apply(draft, receipt,
+                                                    pending_contact_input=pending_input)
                 except ValueError as exc:
                     st.session_state.pop(undo_key, None)
                     st.warning(str(exc) + " No changes were undone.")
