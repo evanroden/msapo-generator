@@ -367,6 +367,9 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
     targets = [key for key in LABELS if allowed_keys is None or key in allowed_keys]
     if not targets:
         return draft, edit_linked_paragraphs(draft, blocks, prefix, field, allowed_keys)
+    from app.monthly_report_activity_notes_draft import render_activity_notes
+    draft, blocks = render_activity_notes(draft, blocks, prefix, field,
+                                          enabled="activity_summary" in targets)
     # Keep optional writing mechanics out of the primary Activity editor.
     # Everything still renders in the same section so a reviewed suggestion
     # can be accepted without navigating away or overwriting manual work.
