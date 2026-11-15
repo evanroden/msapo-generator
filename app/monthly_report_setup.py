@@ -475,13 +475,12 @@ def new_month_draft(draft: ReportDraft, period: ReportPeriod, *, profile=None) -
     follow_ups = seed_followups(draft)
     carried_keys = {"equipment_issues", "proposals"}
     from app.monthly_report_training import new_month_training
-    from app.monthly_report_model import BandedWorkOrderTable, ReportTable
+    from app.monthly_report_model import BandedWorkOrderTable
 
     def cleared(table):
-        # A band with no reference cannot carry a proven site/category identity.
-        # Rebinding below recreates the subtype only after checking the master.
-        if isinstance(table, BandedWorkOrderTable):
-            return ReportTable(table.columns, (), "")
+        # Keep the band subtype for an empty next-month draft. Only a reset
+        # table with no rows may temporarily lack the original master reference.
+        # A populated historical band is rebound against the pinned master below.
         return replace(table, rows=(), reference="")
 
     blocks = tuple(

@@ -2270,9 +2270,19 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                     site = draft.profile.facilities[shape.band_site_index]
                     from app.monthly_report_model import BandedWorkOrderTable
                     current_band = next((t for t in block.extra_tables if t.reference == table_reference), None)
-                    if (not isinstance(current_band, BandedWorkOrderTable)
-                            or current_band.band_site_key != site.key
-                            or current_band.band_category != shape.band_category):
+                    if isinstance(current_band, BandedWorkOrderTable):
+                        # Reviewed-source bands must retain their explicit saved identity.
+                        valid_identity = (current_band.band_site_key == site.key
+                                          and current_band.band_category == shape.band_category)
+                    else:
+                        # The manual row editor preserves ReportTable. Its identity
+                        # comes from this verified physical master region, not from
+                        # an invented site label or from a reviewed-source receipt.
+                        from app.monthly_report_model import ReportTable
+                        valid_identity = (type(current_band) is ReportTable
+                                          and len(current_band.rows) == 7
+                                          and all(len(row) == 7 for row in current_band.rows))
+                    if not valid_identity:
                         raise NativeLayoutError("The work-order grid site or category changed; review it before export.")
                     caption = OxmlElement("w:p")
                     properties = OxmlElement("w:pPr")

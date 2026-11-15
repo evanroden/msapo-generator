@@ -491,7 +491,8 @@ def render_profile_workflow(browser_token: str, browser_timezone: str, field, mo
             prior = replace(prior, draft=new_month_draft(prior.draft, period, profile=profile))
         except WorkOrderRolloverError as exc:
             st.error(f"The previous work-order grid needs review before starting this month: {exc} Your saved reports are unchanged.")
-            return
+            # A blocked carry cannot hide the independent fresh-template path.
+            prior = None
     start_choices = (["Saved work for this month" if current else "Last month's report for this profile"] if prior else []) + ["The profile's library template"]
     start = st.radio("Start from", start_choices, key=field(prefix + "_start", start_choices[0]))
     from_prior = bool(prior and start == start_choices[0])

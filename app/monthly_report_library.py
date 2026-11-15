@@ -235,7 +235,8 @@ def _report_table_from_dict(value: dict) -> ReportTable:
     if "band_site_key" in value or "band_category" in value:
         site, category = value.get("band_site_key"), value.get("band_category")
         if (not isinstance(site, str) or not site.strip() or category not in ("pm", "non_pm")
-                or not reference.startswith("master-table:") or len(columns) != 7):
+                or not isinstance(reference, str) or len(columns) != 7
+                or (not reference.startswith("master-table:") and (reference != "" or rows))):
             raise ValueError("Invalid saved work-order band identity.")
         return BandedWorkOrderTable(columns, rows, reference, site, category)
     if reference == "training:events:v1" and "row_tokens" in value:
