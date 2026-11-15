@@ -145,18 +145,6 @@ def test_physical_boundary_drift_blocks_next_mutation(base, tmp_path, drift):
     assert item.events == []
 
 
-def test_workflow_runs_only_local_native_preflight():
-    source = (local.ROOT / ".github/workflows/directory-retention-local.yml").read_text()
-    assert "pull_request:" in source and "workflow_run:" not in source and "workflow_dispatch:" not in source
-    assert "push:" not in source and "schedule:" not in source
-    assert "permissions:\n  contents: read" in source
-    assert "persist-credentials: false" in source
-    assert "python scripts/qa_directory_retention_local.py" in source
-    assert "python -m scripts.qa_directory_retention_live" not in source
-    assert "MONTHLY_QA_DIRECTORY_ACCEPTANCE:" not in source
-    assert "MONTHLY_QA_PUBLIC_URL:" not in source
-
-
 @pytest.mark.parametrize("field,value", [("blocked_requests", ["late HTTP"]),
     ("page_errors", ["late error"]), ("server_guard", ["late outbound"]),
     ("ordinary_canary_unchanged", False)])

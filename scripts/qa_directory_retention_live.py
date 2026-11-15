@@ -224,6 +224,22 @@ class Journey:
             expect(radio).to_be_checked()
         return self.action(label, select)
 
+    def confirm_review(self):
+        from playwright.sync_api import expect
+        def confirm():
+            # React Aria hides the checkbox input; click the visible label.
+            checkbox = self.page.get_by_role("checkbox", name=CONFIRM, exact=True)
+            label = self.page.get_by_test_id("stCheckbox").locator("label").filter(has=checkbox)
+            expect(checkbox).to_have_count(1)
+            expect(checkbox).to_be_enabled()
+            expect(checkbox).not_to_be_checked()
+            expect(label).to_have_count(1)
+            expect(label).to_be_visible()
+            self.guard()  # Readiness waits can change the isolation boundary.
+            label.click()
+            expect(checkbox).to_be_checked()
+        return self.action("Confirm reviewed synthetic contact", confirm)
+
     def fill(self, label, value):
         def enter():
             field = self.page.get_by_role("textbox", name=label, exact=True)
@@ -305,7 +321,7 @@ class Journey:
         preview = self.expand("All included contacts before saving")
         verify_contacts(self.download_grid(preview, "reviewed-contacts"))
         expect(self.page.get_by_role("button", name="Save contract directory", exact=True)).to_be_disabled()
-        self.action("Confirm reviewed synthetic contact", lambda: self.page.get_by_role("checkbox", name=CONFIRM, exact=True).check())
+        self.confirm_review()
         self.button("Save contract directory")
         expect(self.page.get_by_text("Directory saved. Existing reports and their selected sites were not changed. You can review another tab or return to report setup.", exact=True)).to_be_visible()
         before = self.saved_receipt(contract, "saved")

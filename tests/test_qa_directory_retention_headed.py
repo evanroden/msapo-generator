@@ -224,17 +224,8 @@ def test_launcher_requires_pr_workflow(monkeypatch):
         headed.launch()
 
 
-def test_separate_workflow_cannot_opt_into_production():
-    workflow = (local.ROOT / ".github/workflows/directory-retention-headed.yml").read_text()
-    assert "pull_request:" in workflow
-    for forbidden in ("workflow_run:", "workflow_dispatch:", "schedule:", "push:",
-                      "MONTHLY_QA_DIRECTORY_ACCEPTANCE", "MONTHLY_QA_PUBLIC_URL"):
-        assert forbidden not in workflow
-    assert "permissions:\n  contents: read" in workflow
-    assert "persist-credentials: false" in workflow
-    assert "python scripts/qa_directory_retention_headed.py" in workflow
-    assert "python scripts/qa_directory_retention_live.py" not in workflow
-    assert "retention-days: 7" in workflow
+def test_headed_script_avoids_forced_or_synthetic_input():
+    # Script-level prohibition remains testable without an extracted workflow.
     source = Path(headed.__file__).read_text()
     for forbidden in ("force=True", "showSaveFilePicker =", "add_init_script", "xdotool", "pyautogui", ".press(", ".keyboard"):
         assert forbidden not in source

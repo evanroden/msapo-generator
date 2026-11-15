@@ -184,14 +184,49 @@ def test_generated_workbook_and_real_save_stay_in_temporary_qa_scope(tmp_path, m
     assert list(control.parent.iterdir()) == [control]
 
 
-def test_workflow_has_no_new_trigger_and_is_explicitly_disabled_by_default():
-    from pathlib import Path
-    source = (Path(__file__).resolve().parents[1] / ".github/workflows/monthly-live-qa.yml").read_text()
-    assert "workflow_dispatch:" not in source and "schedule:" not in source
-    assert "permissions:\n  contents: read" in source
-    assert "group: monthly-isolated-live-production\n  cancel-in-progress: false" in source
-    assert "if: steps.still-current.outputs.run == 'true' && vars.MONTHLY_QA_DIRECTORY_ACCEPTANCE == 'synthetic-only-v1'" in source
-    assert source.count("run: python -m scripts.qa_directory_retention_live") == 1
+def test_confirmation_uses_visible_label_and_guards_native_checked_state(monkeypatch, tmp_path):
+    from types import ModuleType
+    import sys
+    from scripts import qa_directory_retention_local as local
+
+    page, container, label, checkbox = [Mock() for _ in range(4)]
+    page.get_by_role.return_value = checkbox
+    page.get_by_test_id.return_value = container
+    container.locator.return_value.filter.return_value = label
+    checkbox.check.side_effect = AssertionError("Hidden React Aria input was targeted")
+    pressed = []
+
+    class NativeExpect:
+        def __init__(self, target):
+            self.target = target
+        def to_have_count(self, count):
+            assert count == 1 and self.target in (label, checkbox)
+        def to_be_enabled(self):
+            assert self.target is checkbox
+        def not_to_be_checked(self):
+            assert self.target is checkbox and not pressed
+        def to_be_visible(self):
+            assert self.target is label
+        def to_be_checked(self):
+            assert self.target is checkbox and pressed
+
+    label.click.side_effect = lambda: pressed.append(True)
+    fake = ModuleType("playwright.sync_api")
+    fake.expect = NativeExpect
+    monkeypatch.setitem(sys.modules, "playwright", ModuleType("playwright"))
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", fake)
+    item = qa.Journey(page, None, TOKEN, qa.Config(SHA), tmp_path)
+    item.guard = Mock()
+    item.confirm_review()
+
+    page.get_by_role.assert_called_once_with("checkbox", name=qa.CONFIRM, exact=True)
+    page.get_by_test_id.assert_called_once_with("stCheckbox")
+    container.locator.return_value.filter.assert_called_once_with(has=checkbox)
+    label.click.assert_called_once_with()
+    checkbox.check.assert_not_called()
+    assert item.guard.call_count == 3
+    assert item.events == [{"action": "Confirm reviewed synthetic contact", "status": "completed"}]
+    assert local.LocalJourney.confirm_review is qa.Journey.confirm_review
 
 
 def radio_controls(monkeypatch, tmp_path, *, option_count=1, group_count=1, input_count=1,

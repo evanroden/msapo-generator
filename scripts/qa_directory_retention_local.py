@@ -420,7 +420,7 @@ class LocalJourney(live.Journey):
         preview = self.expand("All included contacts before saving")
         verify_contacts(self.download_grid(preview, "reviewed-contacts"))
         expect(self.page.get_by_role("button", name="Save contract directory", exact=True)).to_be_disabled()
-        self.action("Confirm reviewed synthetic contact", lambda: self.page.get_by_role("checkbox", name=CONFIRM, exact=True).check())
+        self.confirm_review()
         self.button("Save contract directory")
         expect(self.page.get_by_text("Directory saved. Existing reports and their selected sites were not changed. You can review another tab or return to report setup.", exact=True)).to_be_visible()
         before = self.saved_receipt(contract, "saved")

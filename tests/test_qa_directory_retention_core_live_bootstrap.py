@@ -148,26 +148,14 @@ def test_concrete_arm_requires_challenge_and_fresh_api_not_callback(job_case):
         a.check_current_state()
 
 
-def test_workflow_installs_before_poll_and_has_no_unscoped_triggers_or_write_permissions():
-    text = (runner.ROOT / runner.WORKFLOW_PATH).read_text()
-    assert text.index('pip install') < text.index('qa_directory_retention_core_live_bootstrap.py')
-    for required in ('pull_request:', 'types: [opened, synchronize, reopened]', 'github.event.pull_request.number == 800',
-                     'github.run_attempt == 1', 'persist-credentials: false', 'pull-requests: read', 'actions: read',
-                     'contents: read', 'playwright==1.58.0', 'requirements-dev.lock', 'timeout-minutes: 26',
-                     'name: core_live', 'ref: ${{ github.event.pull_request.head.sha }}', 'github.run_id'):
-        assert required in text
-    for forbidden in ('workflow_dispatch', 'pull_request_target', 'push:', ': write', 'prodoptin', 'qa_directory_retention_native'):
-        assert forbidden not in text
+def test_disabled_bootstrap_retains_exact_harness_identity_binding():
+    # The disabled permit keeps its exact workflow-path digest requirement,
+    # even though the extracted PR does not include workflow YAML.
     assert 'core_live_bootstrap' in str(runner.HARNESS_FILES)
     assert runner.WORKFLOW_PATH in runner.HARNESS_FILES
 
 
-def test_bootstrap_publishes_challenge_artifact_before_wait_and_arm():
-    text = (runner.ROOT / runner.WORKFLOW_PATH).read_text()
-    assert text.index('bootstrap.py --prepare') < text.index('name: Publish challenge artifact') < text.index('bootstrap.py --execute')
-    assert 'steps.prepare.outputs.job_id' in text
-    assert 'group: monthly-isolated-live-production' in text
-    assert 'cancel-in-progress: false' in text
+def test_bootstrap_waits_for_permit_before_arming_executor():
     source = inspect.getsource(bootstrap.execute_prepared)
     assert source.index('await_permit(') < source.index('authority.arm(') < source.index('runner.execute(')
     assert 'os.environ.pop("GITHUB_TOKEN", "")' in inspect.getsource(bootstrap.main)

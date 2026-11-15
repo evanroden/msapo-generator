@@ -199,17 +199,6 @@ def test_native_input_and_mutation_interfaces_absent():
     assert 'signal.alarm(15)' in inspect.getsource(reader.main)
 
 
-def test_workflow_pr_only_and_production_off():
-    source = Path('.github/workflows/directory-retention-atspi.yml').read_text()
-    assert '  pull_request:\n' in source
-    for forbidden in ('workflow_dispatch:', 'pull_request_target:', '  push:', 'schedule:',
-                      'MONTHLY_QA_DIRECTORY_ACCEPTANCE', 'xdotool', 'secrets.'):
-        assert forbidden not in source
-    assert 'contents: read' in source
-    assert 'python3-pyatspi' in source
-    assert 'persist-credentials: false' in source
-
-
 def entry(text='synthetic.csv'):
     node = Node('text', 'Name')
     node.states = ['editable', 'focused', 'showing', 'visible', 'enabled', 'sensitive']

@@ -164,14 +164,8 @@ def test_native_journey_not_replaced_by_store_or_csv():
     assert 'path.unlink(missing_ok=True)' in snapshot
 
 
-def test_workflow_and_cli_remain_separate_pr_only():
-    text = (core.ROOT / '.github/workflows/directory-retention-core.yml').read_text()
-    for required in ('pull_request:', 'contents: read', 'persist-credentials: false', 'requirements-dev.lock', 'playwright==1.58.0', '--minutes 9', 'github.run_attempt', 'retention-days: 7'):
-        assert required in text
-    for forbidden in ('workflow_dispatch:', 'push:', 'prodoptin', 'secrets.', 'MONTHLY_QA_PUBLIC_URL'):
-        assert forbidden not in text
-    assert 'qa_directory_retention_core.py' in text
-    assert 'qa_directory_retention_local.py\n' not in text
+def test_core_cli_keeps_disabled_unreviewed_execution_and_csv_scope():
+    # No directory-retention workflow YAML is included in this PR.
     source = inspect.getsource(core)
     assert 'if sys.argv[1:]:' in source
     assert '"native_csv_acceptance": False' in source
