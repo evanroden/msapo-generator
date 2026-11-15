@@ -13,7 +13,7 @@ from hashlib import sha256
 import re
 
 from app import monthly_report_library as library
-from app.monthly_report_model import ReportPeriod, ReportProfile, ReportTable, ResolvedBlock
+from app.monthly_report_model import ReportPeriod, ReportProfile, ReportTable, ResolvedBlock, profile_sections
 
 MAX_ROWS = 250
 MAX_SITES = 60
@@ -74,7 +74,7 @@ class VendorReportReuse:
 
 
 def _root(contract):
-    return library._root() / "subcontractor_rosters" / library._contract_directory(contract)
+    return library._root() / "subcontractor_standing" / library._contract_directory(contract)
 
 
 def _validate_fields(row):
@@ -134,10 +134,9 @@ def _decode(value, contract):
             or value.get("contract") != contract or
             type(value.get("revision")) is not int or value["revision"] < 0):
         raise library.LibraryError("The contract subcontractor roster has an invalid saved identity.")
-    # A missing/foreign collection is not an intentionally empty roster.
-    # The table-roster candidate shares this namespace and schema number but
-    # stores ``entries``. Never discard those approved records by decoding
-    # them as zero rows and then allowing a confirmed CAS update to replace it.
+    # A missing or foreign collection must never be interpreted as empty.
+    # Reject an ``entries`` manifest even if it was placed here by mistake:
+    # a confirmed CAS update must not erase records with an unknown shape.
     if not isinstance(value.get("rows"), list) or "entries" in value:
         raise library.LibraryError(
             "The saved subcontractor roster uses an unsupported format. "
@@ -295,8 +294,26 @@ def report_vendor_block(profile: ReportProfile, review: VendorReportReuse, *,
     if instructions and table_has_pricing(status_cols, tuple(instructions)):
         raise ValueError("Subcontractor status/instruction data contains unreviewed pricing.")
     extra = (ReportTable(status_cols, tuple(instructions), review.master_reference),) if instructions else ()
+    # Imported source tables can override the native six columns, including
+    # their order and width. Align only when every heading matches exactly
+    # once; otherwise keep approved contacts under their own explicit headings
+    # instead of assigning them misleading profile column titles.
+    design = next((block for section in profile_sections(profile)
+                   for block in section.blocks if block.key == "subcontractor_matrix"), None)
+    if design is None:
+        raise ValueError("This profile has no subcontractor table.")
+    actual = tuple(" ".join(column.title.casefold().split()) for column in design.columns)
+    canonical = tuple(" ".join(heading.casefold().split()) for heading in headers)
+    if (len(actual) == len(canonical)
+            and len(set(actual)) == len(actual)
+            and set(actual) == set(canonical)):
+        positions = tuple(canonical.index(heading) for heading in actual)
+        contact_rows = tuple(tuple(row[index] for index in positions) for row in contacts)
+    else:
+        contact_rows = ()
+        extra = (ReportTable(headers, tuple(contacts), review.master_reference), *extra)
     candidate = ResolvedBlock("subcontractor_matrix", "Library",
-                              rows=tuple(contacts),
+                              rows=contact_rows,
                               references=(review.master_reference,),
                               extra_tables=extra)
     if existing is None:
