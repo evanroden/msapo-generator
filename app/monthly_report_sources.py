@@ -852,6 +852,8 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
                 reason = "The Word or workbook package is damaged. Export a fresh copy and upload it again."
             elif isinstance(exc, RecursionError):
                 reason = "The file structure is too deeply nested. Export a simpler copy and upload it again."
+            elif isinstance(exc, fitz.FileDataError):
+                reason = "The PDF is damaged or is not a valid PDF. Export a fresh copy and upload it again."
             else:
                 reason = str(exc)[:300]
             messages.append(f"Not read: {filename}. {reason}")
