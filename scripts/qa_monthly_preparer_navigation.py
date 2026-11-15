@@ -125,7 +125,7 @@ def exercise(browser, engine, width, method):
         organization = page.locator(".st-key-epc_pair_monthly_organization")
         if width < 600:
             organization.get_by_role("button", name="View preview", exact=True).click()
-        link = organization.get_by_role("link", name="Enter Prepared by", exact=True).first()
+        link = organization.get_by_role("link", name="Enter Prepared by", exact=True).first
         link.scroll_into_view_if_needed()
         expect(link).to_be_visible()
         record["phase"] = "one native correction-link activation"
