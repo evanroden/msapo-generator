@@ -16,6 +16,7 @@ import time
 import urllib.request
 
 from playwright.sync_api import sync_playwright, expect
+from qa_device_metadata import browser_evidence
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'test-artifacts' / 'adaptive-workspaces'
@@ -102,6 +103,7 @@ def loaded_page(preview,index,name):
 def exercise(browser_type, name):
     browser=browser_type.launch(headless=True)
     page=browser.new_page(viewport={'width':1440,'height':900})
+    REPORT.setdefault('environments',{})[name]=browser_evidence(page,engine=name,input_method='Playwright pointer/keyboard; injected segments; no physical touch')
     errors=[]; page.on('pageerror',lambda exc:errors.append(getattr(exc,'stack',None) or str(exc)))
     try:
         page.goto(URL,wait_until='domcontentloaded')

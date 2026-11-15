@@ -173,12 +173,20 @@ def test_failure_retains_original_exception_screenshot_and_browser_close(tmp_pat
     browser = SimpleNamespace(new_page=lambda **kwargs: page, close=lambda: events.append("browser-close"))
     engine = SimpleNamespace(launch=lambda **kwargs: browser)
     def fail(*args): raise original
-    namespace = {"OUT": tmp_path, "exercise_page": fail}
+    observed_methods = []
+    def method_receipt(page, *, engine, input_method):
+        observed_methods.append((engine, input_method))
+        return {"engine": engine, "physical_device": False}
+    report = {}
+    namespace = {"OUT": tmp_path, "exercise_page": fail,
+                 "REPORT": report, "browser_evidence": method_receipt}
     exec(compile(ast.Module(body=[exercise], type_ignores=[]), str(source), "exec"), namespace)
     with pytest.raises(RuntimeError) as caught:
         namespace["exercise"](engine, "webkit")
     assert caught.value is original
     assert events == ["start", "snapshot", "screenshot", "diagnostics-close", "browser-close"]
+    assert observed_methods and observed_methods[0][0] == "webkit"
+    assert report["environments"]["webkit"]["physical_device"] is False
 
 
 def test_snapshot_is_observational_and_existing_image_wait_has_no_extension():
@@ -212,3 +220,29 @@ console.log(JSON.stringify(eval('('+process.argv[1]+')')()));
     panel, = observed["panels"]
     assert panel["state"]["requestFailed"] is True and panel["state"]["requestAttempts"] == 3
     assert observed["scriptState"] == "notRunning" and panel["display"] == "flex"
+
+
+def test_metadata_failure_still_preserves_diagnostics_and_browser_cleanup(tmp_path, monkeypatch):
+    source = Path(__file__).resolve().parents[1] / "scripts/qa_po_adaptive.py"
+    tree = ast.parse(source.read_text())
+    exercise = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "exercise")
+    events = []
+    failure = RuntimeError("metadata unavailable")
+    class Observer:
+        def __init__(self, *args): pass
+        def start(self, page): events.append("start")
+        def failure_snapshot(self, page): events.append("snapshot")
+        def close(self): events.append("diagnostics-close")
+    monkeypatch.setitem(sys.modules, "qa_po_diagnostics", SimpleNamespace(PODiagnostics=Observer))
+    page = SimpleNamespace(on=lambda *args: None, screenshot=lambda **kwargs: events.append("screenshot"))
+    browser = SimpleNamespace(new_page=lambda **kwargs: page, close=lambda: events.append("browser-close"))
+    engine = SimpleNamespace(launch=lambda **kwargs: browser)
+    def fail_metadata(*args, **kwargs):
+        raise failure
+    namespace = {"OUT": tmp_path, "exercise_page": lambda *args: events.append("journey"),
+                 "REPORT": {}, "browser_evidence": fail_metadata}
+    exec(compile(ast.Module(body=[exercise], type_ignores=[]), str(source), "exec"), namespace)
+    with pytest.raises(RuntimeError) as caught:
+        namespace["exercise"](engine, "webkit")
+    assert caught.value is failure
+    assert events == ["start", "snapshot", "screenshot", "diagnostics-close", "browser-close"]
