@@ -19,7 +19,9 @@ from zipfile import BadZipFile, ZipFile
 from defusedxml import ElementTree as ET
 from defusedxml.common import DefusedXmlException
 from PIL import Image, UnidentifiedImageError
+from lxml import etree
 
+from app.monthly_report_xml_parser import parse_xml_stream
 from app.monthly_report_docx import normalize_report_image
 from app.monthly_report_model import (
     BlockSpec,
@@ -195,7 +197,7 @@ def _relations(archive: ZipFile, part: str) -> dict[str, tuple[str, str]]:
     if name not in archive.namelist():
         return {}
     with archive.open(name) as source:
-        root = ET.parse(source, forbid_dtd=True).getroot()
+        root = parse_xml_stream(source).getroot()
     result = {}
     for rel in root:
         identity = rel.get("Id", "")
@@ -951,7 +953,7 @@ def inspect_docx(path: Path) -> DocxInspection:
             if risky:
                 for name in sorted(risky):
                     add("unsupported", name, 0, note="Embedded object or macro; not opened or executed.")
-    except (BadZipFile, KeyError, DefusedXmlException, ET.ParseError, OSError, RuntimeError) as exc:
+    except (BadZipFile, KeyError, DefusedXmlException, ET.ParseError, etree.XMLSyntaxError, OSError, RuntimeError) as exc:
         raise ImportError("This DOCX could not be safely read. No library content was changed.") from exc
     # Full-page native divider art can precede its title (and many empty anchor
     # paragraphs). Associate it with the next heading in that same Word section.

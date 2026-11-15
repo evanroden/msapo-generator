@@ -11,7 +11,9 @@ from dataclasses import dataclass, replace
 from io import BytesIO
 from zipfile import ZipFile, BadZipFile
 
-from defusedxml import ElementTree as ET
+from lxml import etree
+
+from app.monthly_report_xml_parser import parse_xml
 
 from app import monthly_report_sources as sources
 from app.monthly_report_import import DocxInspection, ImportItem, inspect_docx
@@ -93,8 +95,8 @@ def _native_body(raw: bytes):
                 raise ValueError(
                     "Word body XML exceeds the safe layout-review budget. "
                     "Review a smaller original without flattening its tables.")
-            root = ET.fromstring(archive.read(member))
-    except (BadZipFile, KeyError, ET.ParseError) as exc:
+            root = parse_xml(archive.read(member))
+    except (BadZipFile, KeyError, etree.XMLSyntaxError) as exc:
         raise ValueError("Word table structure could not be reviewed safely.") from exc
     body = root.find(W + "body")
     if body is None:
