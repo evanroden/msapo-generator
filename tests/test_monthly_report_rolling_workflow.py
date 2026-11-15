@@ -5,7 +5,7 @@ from datetime import date
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from app import monthly_report_library as library, monthly_report_sources as sources
+from app import config, monthly_report_library as library, monthly_report_sources as sources
 from app import monthly_report_master_tables as masters
 from app import monthly_report_work_order_review_flow as flow
 from app.monthly_report_model import (
@@ -123,6 +123,27 @@ def test_future_months_and_future_dated_events_are_not_counted(tmp_path, monkeyp
         apply_grid(draft, bundle, as_of=date(2026, 12, 4))
     with pytest.raises(ValueError, match='nonfuture month coverage'):
         apply_grid(draft, bundle, as_of=date(2026, 11, 30))
+
+
+def test_default_coverage_date_uses_operator_day_and_explicit_date_wins(tmp_path, monkeypatch):
+    draft, _, bundle, _, _, _ = prepared(tmp_path, monkeypatch)
+    calls = []
+
+    def operator_day():
+        calls.append(True)
+        return date(2026, 12, 31)
+
+    monkeypatch.setattr(config, "operator_today", operator_day)
+    december = apply_grid(draft, bundle, as_of=None)
+    assert calls == [True]
+    received = december.blocks[0].extra_tables[1]
+    closed = december.blocks[0].extra_tables[3]
+    assert received.rows[0][-2:] == ("1", "")
+    assert closed.rows[0][-2:] == ("0", "")
+
+    january = apply_grid(draft, bundle, as_of=date(2027, 1, 31))
+    assert calls == [True]  # A browser-supplied date must remain authoritative.
+    assert january.blocks[0].extra_tables[3].rows[0][-2:] == ("0", "1")
 
 
 def test_ui_action_requires_explicit_metrics_and_current_receipt(tmp_path, monkeypatch):
