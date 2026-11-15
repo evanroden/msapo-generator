@@ -6,6 +6,8 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 # Documentation index
 
+[External monthly dev-patch provenance and source crosswalk](EXTERNAL_MONTHLY_PATCH_PROVENANCE_2026-11-12.md) — pinned source-unverified audit; no code port or release approval. External source recovery remains open (#876).
+
 [Learned memory boundaries](LEARNED_MEMORY.md) - fail-closed contact management until real authentication, existing retention unchanged, optional purchase-order history deferred, and outage fallback behavior.
 
 [Issue #440 blocking-warning correction routes](ISSUE_440_WARNING_ROUTES.md) — exact Review warning-to-native-editor and explicit recovery matrix, scoped identity/stale-target guards, and pending acceptance evidence; this branch is not a production or browser acceptance claim.
