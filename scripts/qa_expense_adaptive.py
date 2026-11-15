@@ -19,6 +19,7 @@ import pymupdf as fitz
 from dotenv import dotenv_values
 from openpyxl import load_workbook
 from playwright.sync_api import sync_playwright, expect
+from qa_device_metadata import browser_evidence
 
 ROOT=Path(__file__).resolve().parents[1]
 OUT=ROOT/'test-artifacts'/'expense-adaptive'
@@ -327,6 +328,7 @@ def packet_journey(page, first, name):
 def run(browser_type,name):
     browser=browser_type.launch(headless=True)
     page=browser.new_page(viewport={'width':1440,'height':1000})
+    EVIDENCE.setdefault('environments',{})[name]=browser_evidence(page,engine=name,input_method='Playwright pointer/keyboard and semantic labels; simulated fold segments')
     from workspace_wire_observations import WireObservations
     wire=WireObservations(8518)
     wire.attach(page)
