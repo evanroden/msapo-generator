@@ -14,7 +14,9 @@ olefile>=0.47,<0.48
 PyMuPDF>=1.24.0
 
 # Bounded image normalization (all supported formats -> vision-safe JPEG)
-Pillow>=13.0.0,<14.0.0
+# Pillow 13.0.0 fixes 42 advisories but needs Streamlit >= 1.66 (1.61.1 pins pillow<13).
+# Until then every untrusted image is opened through app/image_open.py with an explicit format allowlist.
+Pillow>=11.3.0,<13
 pillow-heif>=1.1.1
 
 # Web UI. 1.61 adds the per-widget upload cap used to enforce Smartsheet's
