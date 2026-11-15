@@ -4,6 +4,7 @@ import re
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
+from app.monthly_report_xml_parser import parse_xml
 from app.monthly_report_native_notes import plain_visible, _PPR
 
 
@@ -257,8 +258,7 @@ def narrative_visibility_writer(document):
                 if not (content_type.endswith('+xml') or content_type in ('application/xml', 'text/xml')
                         or str(part.partname).casefold().endswith('.xml')):
                     continue
-                root = etree.fromstring(part.blob, parser=etree.XMLParser(
-                    resolve_entities=False, no_network=True))
+                root = parse_xml(part.blob)
                 for node in root.iter():
                     if node.tag in selectors and node.get(qn('w:val')):
                         reserved.add(node.get(qn('w:val')))

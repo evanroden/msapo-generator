@@ -11,6 +11,8 @@ import sys
 from zipfile import ZipFile
 
 from lxml import etree
+
+from app.monthly_report_xml_parser import parse_xml
 from PIL import Image, ImageChops, ImageStat
 
 VERSION = 4
@@ -110,8 +112,8 @@ def _divider_evidence(source):
     from app.monthly_report_import import _is_native_divider_background, _text
     result, pixels = [], 0
     with ZipFile(source) as archive:
-        root = etree.fromstring(archive.read("word/document.xml"), etree.XMLParser(resolve_entities=False, no_network=True))
-        relations = etree.fromstring(archive.read("word/_rels/document.xml.rels"))
+        root = parse_xml(archive.read("word/document.xml"))
+        relations = parse_xml(archive.read("word/_rels/document.xml.rels"))
         targets = {node.get("Id"): posixpath.normpath(posixpath.join("word", node.get("Target", "")))
                    for node in relations if node.get("TargetMode") != "External"}
         for paragraph in root.findall(".//w:p", NS):
@@ -197,8 +199,7 @@ def _divider_title_evidence(source):
     with ZipFile(source) as archive:
         if "word/styles.xml" not in archive.namelist():
             return []
-        parser = etree.XMLParser(resolve_entities=False, no_network=True)
-        styles = etree.fromstring(archive.read("word/styles.xml"), parser)
+        styles = parse_xml(archive.read("word/styles.xml"))
         before = {style.get(word + "styleId"): etree.tostring(style) for style in styles.findall(word + "style")}
         _divider_text_fill(styles)
         eligible = {style.get(word + "styleId") for style in styles.findall(word + "style")
@@ -234,10 +235,10 @@ def _divider_title_evidence(source):
         if len(stories) > 512 or sum(item.file_size for item in stories) > MAX_PDF_BYTES:
             return []
         for item in stories:
-            story = etree.fromstring(archive.read(item), parser)
+            story = parse_xml(archive.read(item))
             if any(affected_text(paragraph).strip() for paragraph in story.findall(".//w:p", NS)):
                 return []
-        root = etree.fromstring(archive.read("word/document.xml"), parser)
+        root = parse_xml(archive.read("word/document.xml"))
         groups = {}
         for paragraph in root.findall(".//w:p", NS):
             text = affected_text(paragraph)
@@ -387,7 +388,7 @@ def inspect_companion(path, dividers=(), divider_titles=(), *, cover_queries=())
 
 def _cover_evidence(source):
     with ZipFile(source) as archive:
-        root = etree.fromstring(archive.read("word/document.xml"), etree.XMLParser(resolve_entities=False, no_network=True))
+        root = parse_xml(archive.read("word/document.xml"))
         body = root.find("w:body", NS)
         cover = []
         for node in body:
@@ -402,7 +403,7 @@ def _cover_evidence(source):
                 text = ''.join(paragraph.xpath('./w:r/w:t/text()', namespaces=NS))
                 if text.strip() and text.strip().casefold() not in {'=', 'insert client logo', 'insert logo'}:
                     texts.append(text)
-        rels = etree.fromstring(archive.read('word/_rels/document.xml.rels'))
+        rels = parse_xml(archive.read('word/_rels/document.xml.rels'))
         targets = {n.get('Id'):posixpath.normpath(posixpath.join('word',n.get('Target',''))) for n in rels if n.get('TargetMode') != 'External'}
         images = []
         for node in cover:
