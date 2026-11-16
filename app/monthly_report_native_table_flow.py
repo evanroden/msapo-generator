@@ -10,6 +10,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from lxml import etree
 
+from app.monthly_report_xml_parser import parse_xml
 from app.monthly_report_import import _text
 from app.monthly_report_native_table_context import _plain
 
@@ -135,7 +136,7 @@ def _visible_native_note(document, kind, note_id, item, reference):
     if len(parts) != 1:
         return False
     try:
-        root = etree.fromstring(parts[0].blob)
+        root = parse_xml(parts[0].blob)
     except (etree.XMLSyntaxError, AttributeError, TypeError, ValueError):
         return False
     notes = [node for node in root if node.tag == qn("w:" + kind)

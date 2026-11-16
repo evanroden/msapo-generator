@@ -18,8 +18,8 @@ import re
 from app.monthly_report_model import ReportTable, ReportPeriod, ReportProfile, ResolvedBlock
 from app.monthly_report_sources import SourceContent, source_reference
 from app.monthly_report_training import (
-    EVENT_COLUMNS, EVENT_REF, FORMATS, MATRIX_REF, STATUSES,
-    add_event, apply_tables, events_for_period, session_row_tokens, validate_matrix,
+    EVENT_COLUMNS, EVENT_REF, FORMATS, MATRIX_REF as MATRIX_REF, STATUSES,
+    add_event, apply_tables, events_for_period as events_for_period, session_row_tokens as session_row_tokens, validate_matrix,
     is_matrix_reference, year_matrix_reference,
 )
 

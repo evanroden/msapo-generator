@@ -11,7 +11,7 @@ import re
 from app.monthly_report_checks import stale_period_mentions
 from app.monthly_report_import import DocxInspection, ImportMapping, _heading
 from app.monthly_report_model import BlockSpec, ReportDraft, ReportPeriod, ResolvedBlock, default_sections, known_sections, layout_blocks
-from app.monthly_report_asset_review import asset_fingerprint, normalize_asset_reviews, pending_asset_indexes, preserve_asset_reviews
+from app.monthly_report_asset_review import asset_fingerprint, normalize_asset_reviews as normalize_asset_reviews, pending_asset_indexes, preserve_asset_reviews
 
 
 MONTHLY_BLOCKS = frozenset({"work_orders", "activity_summary", "improvements", "mbcx_report", "service_calls",

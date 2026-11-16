@@ -58,6 +58,28 @@ def test_explicit_promotion_never_writes_before_confirmation(monkeypatch, tmp_pa
     assert not (tmp_path / "monthly_reports" / "subcontractor_rosters").exists()
 
 
+@pytest.mark.parametrize("unsupported", ({"schema": 2}, {"schema": True}, {"rows": []}))
+def test_incompatible_roster_is_preserved_on_read_and_save(monkeypatch, tmp_path, unsupported):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    north = profile("Synthetic Contract A")
+    block = rows(row(north.facilities[0].title, "Synthetic Vendor"))
+    publish(north, block)
+    root = tmp_path / "monthly_reports" / "subcontractor_rosters"
+    manifest = next(root.glob("*/manifest.json"))
+    history = manifest.parent / "history"
+    previous = {item.name: item.read_bytes() for item in history.iterdir()}
+    incompatible = library._json({**library._read(manifest), **unsupported})
+    manifest.write_bytes(incompatible)
+
+    with pytest.raises(library.LibraryError):
+        load_rosters(north.contract)
+    with pytest.raises(library.LibraryError):
+        publish(north, block, revision=1)
+
+    assert manifest.read_bytes() == incompatible
+    assert {item.name: item.read_bytes() for item in history.iterdir()} == previous
+
+
 def test_two_sites_and_contracts_have_independent_approved_rosters(monkeypatch, tmp_path):
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
     both = profile("Synthetic Contract A", "all-sites", ("north", "south"))
