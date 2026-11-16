@@ -60,7 +60,7 @@ def _has_already_gray_fallback(document, anchor, wrapper):
     if rel is None or rel.is_external:
         return False
     try:
-        with open_image(BytesIO(rel.target_part.blob), formats=("JPEG",)) as image:
+        with open_image(BytesIO(rel.target_part.blob), formats=("JPEG", "PNG", "GIF", "TIFF", "BMP", "WEBP")) as image:
             if image.width*image.height>_MAX_PIXELS_PER_FRAME:
                 return False
             red, green, blue = image.convert('RGB').split()

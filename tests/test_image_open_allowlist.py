@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CODE_DIRS = ("app", "scripts", "pages", "runtime")
 
 
-@pytest.mark.parametrize("disguised", ["TIFF", "EPS", "BMP"])
+@pytest.mark.parametrize("disguised", ["EPS"])
 def test_disguised_photo_rejected_before_disallowed_decoder(monkeypatch, disguised):
     raw = BytesIO()
     Image.new("RGB", (16, 12), "blue").save(raw, format=disguised)
@@ -32,12 +32,41 @@ def test_disguised_photo_rejected_before_disallowed_decoder(monkeypatch, disguis
 
 
 @pytest.mark.parametrize(
-    ("suffix", "format_name"), [(".jpg", "JPEG"), (".png", "PNG"),
-                                (".gif", "GIF"), (".webp", "WEBP"),
-                                (".bmp", "BMP"), (".tiff", "TIFF"), (".mpo", "JPEG")]
+    "suffix", [".jpg", ".png", ".gif", ".webp", ".bmp", ".tiff", ".mpo"]
 )
-def test_existing_admitted_formats_keep_explicit_decoder_mapping(suffix, format_name):
-    assert image_formats_for_suffix(suffix) == (format_name,)
+def test_existing_admitted_suffixes_keep_context_raster_decoders(suffix):
+    assert image_formats_for_suffix(suffix) == (
+        "JPEG", "PNG", "GIF", "WEBP", "BMP", "TIFF", "HEIF"
+    )
+
+
+@pytest.mark.parametrize(
+    ("real_format", "incorrect_suffix"),
+    [("JPEG", ".png"), ("PNG", ".jpg"), ("GIF", ".jpg"),
+     ("WEBP", ".png"), ("BMP", ".jpg"), ("TIFF", ".png")],
+)
+def test_supported_rasters_with_mismatched_suffix_still_normalize(real_format, incorrect_suffix):
+    raw = BytesIO()
+    Image.new("RGB", (16, 12), "blue").save(raw, format=real_format)
+    result = normalize_report_image(raw.getvalue(), incorrect_suffix)
+    assert result.extension == "jpg"
+    with open_image(BytesIO(result.data), formats=("JPEG",)) as image:
+        assert image.format == "JPEG" and image.size == (16, 12)
+
+
+@pytest.mark.parametrize("real_format", ["TIFF", "BMP"])
+def test_cover_photo_cannot_open_disallowed_raster_even_with_photo_suffix(real_format):
+    raw = BytesIO()
+    Image.new("RGB", (16, 12), "blue").save(raw, format=real_format)
+    with pytest.raises(UnidentifiedImageError):
+        normalize_report_image(raw.getvalue(), ".jpg", cover_photo=True)
+
+
+def test_word_media_mislabeled_raster_uses_image_header():
+    raw = BytesIO()
+    Image.new("RGB", (16, 12), "blue").save(raw, format="PNG")
+    with open_image(BytesIO(raw.getvalue()), formats=image_formats_for_suffix(".jpeg", word_media=True)) as image:
+        assert image.format == "PNG"
 
 
 def test_mpo_detection_uses_jpeg_plugin_without_rejecting_real_phone_frames():
@@ -51,13 +80,22 @@ def test_mpo_detection_uses_jpeg_plugin_without_rejecting_real_phone_frames():
 
 
 def test_word_vectors_only_in_word_context_and_photo_formats_stay_narrow():
-    assert image_formats_for_suffix(".emf", word_media=True) == ("WMF",)
-    assert image_formats_for_suffix(".wmf", word_media=True) == ("WMF",)
+    raster = image_formats_for_suffix(".png")
+    assert image_formats_for_suffix(".emf", word_media=True) == (*raster, "WMF")
+    assert image_formats_for_suffix(".wmf", word_media=True) == (*raster, "WMF")
+    assert image_formats_for_suffix(".jpg", cover_photo=True) == (
+        "JPEG", "PNG", "WEBP", "HEIF"
+    )
     for suffix in (".emf", ".wmf", ".eps", ".tiff", ".bmp", ".gif", ".mpo"):
         with pytest.raises(ValueError):
             image_formats_for_suffix(suffix, cover_photo=True)
+    for suffix in (".wmf", ".eps", ".fpx", ".dcx", ".mic", ".spi"):
+        with pytest.raises(ValueError):
+            image_formats_for_suffix(suffix)
     with pytest.raises(ValueError):
-        image_formats_for_suffix(".wmf")
+        open_image(BytesIO(b""), formats=("EPS",))
+    with pytest.raises(ValueError):
+        open_image(BytesIO(b""), formats=("FPX",))
 
 
 def _unrestricted_opens(tree: ast.AST) -> list[int]:
