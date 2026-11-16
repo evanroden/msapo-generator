@@ -490,14 +490,16 @@ def _fit_imported_table_columns(table, columns, rows):
         for values in (columns, *rows):
             if index >= len(values) or values[index] is None:
                 continue
-            words = sorted((len(word) for word in str(values[index]).split()), reverse=True)
-                if not words:
-                    continue
-                    candidate = words[0]
-                    if "-" in str(values[index]) and len(words) > 1:
-                        candidate += words[1]
-                longest = max(longest, candidate)
-            weights.append(longest)
+            words = str(values[index]).split()
+            if not words:
+                continue
+            candidate = max(map(len, words))
+            for position, word in enumerate(words):
+                if "-" in word and len(words) > 1:
+                    line_mate = max(len(other) for offset, other in enumerate(words) if offset != position)
+                    candidate = max(candidate, len(word) + 1 + line_mate)
+            longest = max(longest, candidate)
+        weights.append(longest)
     widths = _distribute_width(total, weights, minimum=900)
     table.autofit = False
     for column, width in zip(table.columns, widths):
