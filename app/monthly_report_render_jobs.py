@@ -105,6 +105,7 @@ _WORK_SLOT = threading.Lock()
 _WORK_LOCAL = threading.local()
 _PRIORITY_LOCK = threading.Lock()
 _FOREGROUND_WAITING = 0
+_REVIEW_WAITING = 0
 PREVIEW_HEADROOM_BYTES = 160 * 1024 * 1024
 
 
@@ -173,20 +174,50 @@ def preview_memory_guard():
     return getattr(_WORK_LOCAL, 'preview_guard', None) if getattr(_WORK_LOCAL, 'active', False) else None
 
 
+def _wait_for_review_slot(wait_seconds):
+    """Reserve a short Review turn; final exports keep first claim.
+
+    Automatic section previews must yield while this deliberate request waits.
+    Never stop an existing job, and never hold the priority lock while waiting.
+    """
+    global _REVIEW_WAITING
+    deadline = time.monotonic() + max(0, min(float(wait_seconds), 10))
+    with _PRIORITY_LOCK:
+        _REVIEW_WAITING += 1
+    try:
+        while True:
+            with _PRIORITY_LOCK:
+                if not _FOREGROUND_WAITING and _WORK_SLOT.acquire(blocking=False):
+                    return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            time.sleep(min(.05, remaining))
+    finally:
+        with _PRIORITY_LOCK:
+            _REVIEW_WAITING -= 1
+
+
 @contextmanager
-def work_slot(*, preview=False, wait_seconds=130):
-    """Admit one heavy monthly job; background work yields to foreground export."""
+def work_slot(*, preview=False, review=False, wait_seconds=130):
+    """Admit one heavy job: final export, deliberate Review, automatic preview."""
+    if review and not preview:
+        raise ValueError("Review priority requires the preview memory guard.")
     global _FOREGROUND_WAITING
     if getattr(_WORK_LOCAL, 'active', False):
         yield
         return
     if preview:
-        with _PRIORITY_LOCK:
-            waiting = _FOREGROUND_WAITING
         headroom = memory_headroom()
-        if waiting or (headroom is not None and headroom < PREVIEW_HEADROOM_BYTES):
+        if headroom is not None and headroom < PREVIEW_HEADROOM_BYTES:
             raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
-        acquired = _WORK_SLOT.acquire(blocking=False)
+        if review:
+            acquired = _wait_for_review_slot(wait_seconds)
+        else:
+            with _PRIORITY_LOCK:
+                if _FOREGROUND_WAITING or _REVIEW_WAITING:
+                    raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
+                acquired = _WORK_SLOT.acquire(blocking=False)
     else:
         with _PRIORITY_LOCK:
             _FOREGROUND_WAITING += 1
