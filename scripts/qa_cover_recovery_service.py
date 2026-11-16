@@ -45,7 +45,7 @@ def assert_visible_last_good(raster):
     PDF, not full cover layout fidelity (which still needs visual acceptance).
     """
     from app.image_open import open_image
-    with open_image(BytesIO(raster), formats=("PNG",)) as image:
+    with open_image(BytesIO(raster), formats=("JPEG", "PNG")) as image:
         image=image.convert('RGB')
         assert image.width*image.height<=2_000_000
         points=[[],[]]
