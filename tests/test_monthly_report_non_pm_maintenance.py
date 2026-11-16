@@ -148,6 +148,25 @@ def test_site_specific_business_rule_requires_explicit_original_value():
         project(review, site_performer_rules={"uno": {"ENFRA": "ENFRA onsite"}})
 
 
+def test_site_rules_cannot_invent_or_ambiguously_classify_a_performer():
+    missing = fixture(COLUMNS, (row("0051", performer=""),))
+    assert project(missing).onsite_table is None
+    with pytest.raises(ValueError, match="map sites"):
+        project(missing, site_performer_rules=[])
+    for blank in ("", "  ", "---"):
+        with pytest.raises(ValueError, match="nonempty"):
+            project(missing, site_performer_rules={"north": {blank: "ENFRA onsite"}})
+    review = fixture(COLUMNS, (row("0052", performer="Contract-X"),))
+    with pytest.raises(ValueError, match="conflict"):
+        project(review, site_performer_rules={"north": {
+            "Contract-X": "ENFRA onsite", "Contract X": "Vendor/leased"}})
+    # Equivalent spellings are safe if they all mean the same category.
+    result = project(review, site_performer_rules={"north": {
+        "Contract-X": "Vendor/leased", "Contract X": "Vendor/leased"}})
+    assert result.onsite_table is None
+    assert result.vendor_activity_table.rows[0][0] == "0052"
+
+
 def test_empty_eligible_cohort_does_not_create_blank_maintenance_tables():
     review = fixture(COLUMNS, (row("9001", category="PM"),
                                row("9002", status="Open"),))

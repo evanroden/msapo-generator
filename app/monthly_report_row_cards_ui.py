@@ -54,6 +54,16 @@ def _values(fields):
                  for key, original, kind, default in fields)
 
 
+def _same_edit_lineage(delivery, expected, tokens, active):
+    """Recognize only exact snapshots previously delivered for this row."""
+    if (not delivery or delivery.get("input_action") != "edit"
+            or delivery.get("input_tokens") != tokens
+            or delivery.get("input_active") != active):
+        return False
+    return expected in (delivery["baseline"], delivery["expected"], delivery["result"],
+                        *delivery.get("intermediates", ()))
+
+
 def _queue(key, expected, tokens, active, fields, action="edit", target=None, *, preserve_empty=False, group=()):
     """One delivered native action includes the currently open row's text."""
     record = dict(st.session_state.get(key, {}))
@@ -132,34 +142,27 @@ def _queue(key, expected, tokens, active, fields, action="edit", target=None, *,
     # Consecutive callbacks may arrive before the parent commits. A field's
     # blur and Close can also share the same rendered snapshot and deliver
     # the same complete row. Keep that row's original uncommitted baseline;
-    # otherwise Close falsely conflicts with the still-current parent. Do
-    # not extend this chain to a different result or different row tokens.
+    # otherwise Close falsely conflicts with the still-current parent. Only
+    # continue exact snapshots from the same row and token lineage.
     previous = record.get("pending")
     acknowledged = record.pop("acknowledged_delivery", None)
-    def same_field_delivery(delivery):
-        # WebKit can deliver native blurs from alternating rerenders:
-        # original -> first acknowledged edit -> original. Keep the exact
-        # known intermediate snapshots; never admit a different row/token.
-        return (delivery is not None and action == "edit"
-                and delivery.get("input_action") == "edit"
-                and delivery.get("input_tokens") == tokens
-                and delivery.get("input_active") == active
-                and expected in (delivery["baseline"], delivery["expected"],
-                                 delivery["result"], *delivery.get("intermediates", ())))
-    if not previous and same_field_delivery(acknowledged):
+    if (not previous and action == "edit"
+            and _same_edit_lineage(acknowledged, expected, tokens, active)):
         previous = acknowledged
-    same_lineage = same_field_delivery(previous)
+    same_lineage = action == "edit" and _same_edit_lineage(previous, expected, tokens, active)
     continues_pending = previous and (previous["result"] == expected or (
         previous["expected"] == expected and previous["result"] == tuple(rows)
-        and previous["tokens"] == tuple(identities)))
-    baseline = previous["baseline"] if (continues_pending or same_lineage) else expected
-    # Only admit exact intermediate snapshots from this same native row.
-    # Independently edited report rows still raise the version conflict.
+        and previous["tokens"] == tuple(identities)) or same_lineage)
+    baseline = previous["baseline"] if continues_pending else expected
+    # A browser can deliver several blurs from one native render while the
+    # parent has acknowledged only an earlier blur. Admit only exact results
+    # produced by that same table/row/token snapshot, never arbitrary changes
+    # to the current report. Bound the transient lineage; overflow conflicts
+    # rather than treating unknown content as our own acknowledged write.
     intermediates = ()
     if same_lineage:
-        intermediates = tuple(dict.fromkeys((
-            *previous.get("intermediates", ()), previous["expected"],
-            previous["result"])))[:32]
+        intermediates = tuple(dict.fromkeys((*previous.get("intermediates", ()),
+            previous["baseline"], previous["expected"], previous["result"])))[:32]
     record["pending"] = {"baseline": baseline, "expected": expected, "result": tuple(rows), "tokens": tuple(identities),
                          "active": active, "draft_token": draft_token, "draft_index": draft_index,
                          "input_action": action, "input_tokens": tokens, "input_active": active,

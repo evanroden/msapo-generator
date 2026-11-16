@@ -681,3 +681,61 @@ def test_capital_mixed_render_blurs_keep_exact_pending_lineage(monkeypatch, exte
     else:
         assert not app.warning and not app.dataframe
         assert app.session_state['block'].rows == ()
+
+
+@pytest.mark.parametrize('external_change', [False, True])
+def test_mixed_old_and_new_blurs_preserve_only_own_acknowledged_rows(monkeypatch, external_change):
+    from app import monthly_report_row_cards_ui as cards
+    import streamlit as st
+    spec, block = example('capital_renewal', (('North', 'High', 'Inspect pump'),))
+    app = AppTest.from_string(SCRIPT.replace('INITIAL', repr(block)).replace('SPEC', repr(spec))).run()
+    button(app, 'Edit capital item').click().run()
+    state = dict(app.session_state.filtered_state)
+    key = next(k for k, value in state.items() if isinstance(value, dict) and value.get('group_args'))
+    old_expected, tokens, active, old_fields = state[key]['group_args']
+    with monkeypatch.context() as patch:
+        patch.setattr(st, 'session_state', state)
+        state[old_fields[0][0]] = ''
+        cards._queue(key, old_expected, tokens, active, old_fields, group=(key,))
+        acknowledged = state[key]['pending']['result']
+    app.session_state[key] = state[key]
+    app.session_state[old_fields[0][0]] = ''
+    app.session_state['block'] = replace(block, rows=acknowledged)
+    app.run()
+    state = dict(app.session_state.filtered_state)
+    fresh_expected, fresh_tokens, fresh_active, fresh_fields = state[key]['group_args']
+    assert fresh_expected == acknowledged and fresh_tokens == tokens and fresh_active == active
+    with monkeypatch.context() as patch:
+        patch.setattr(st, 'session_state', state)
+        state[fresh_fields[1][0]] = ''
+        cards._queue(key, fresh_expected, tokens, active, fresh_fields, group=(key,))
+        state[old_fields[2][0]] = ''
+        cards._queue(key, old_expected, tokens, active, old_fields, group=(key,))
+    app.session_state[key] = state[key]
+    app.session_state['block'] = replace(block, rows=(('Independent', 'High', 'Inspect pump'),)
+                                        if external_change else acknowledged)
+    app.run()
+    assert not app.exception
+    if external_change:
+        assert any('Both versions are kept' in item.value for item in app.warning)
+        assert app.session_state['block'].rows[0][0] == 'Independent'
+    else:
+        assert not app.warning and not app.dataframe
+        assert app.session_state['block'].rows == ()
+
+
+def test_acknowledged_lineage_requires_the_same_row_tokens_and_exact_snapshot():
+    from app.monthly_report_row_cards_ui import _same_edit_lineage
+
+    old = (('North', 'High', 'Inspect pump'),)
+    middle = (('', 'High', 'Inspect pump'),)
+    latest = (('', '', 'Inspect pump'),)
+    delivery = {'input_action': 'edit', 'input_tokens': ('row-1',),
+                'input_active': 'row-1', 'baseline': old, 'expected': middle,
+                'result': latest, 'intermediates': (old, middle)}
+    assert _same_edit_lineage(delivery, old, ('row-1',), 'row-1')
+    assert _same_edit_lineage(delivery, latest, ('row-1',), 'row-1')
+    assert not _same_edit_lineage(delivery, latest, ('row-2',), 'row-1')
+    assert not _same_edit_lineage(delivery, latest, ('row-1',), 'row-2')
+    assert not _same_edit_lineage(delivery, (('Independent', '', ''),), ('row-1',), 'row-1')
+    assert not _same_edit_lineage({**delivery, 'input_action': 'remove'}, latest, ('row-1',), 'row-1')

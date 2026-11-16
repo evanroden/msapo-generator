@@ -28,8 +28,8 @@ class WorkOrderEvidence:
 _HEADERS = {
     "identity": {"workorder", "workordernumber", "workorderid", "wonumber", "wo", "woid", "id"},
     "status": {"status", "workorderstatus", "state", "currentstatus"},
-    "date": {"date", "workdate", "reporteddate", "servicedate", "completiondate", "finishdate",
-             "finisheddate", "eventdate"},
+    "date": {"date", "workdate", "receiveddate", "datereceived",
+             "reporteddate", "servicedate", "eventdate"},
     "facility": {"facility", "site", "location", "building", "hospital"},
 }
 _COMPLETE = {"completed", "complete", "closed", "finished", "done"}
@@ -121,6 +121,8 @@ def work_order_evidence(content: SourceContent, period: ReportPeriod,
             scoped_identity = (site_key, identity.casefold())
             value = (identity, when.isoformat(), "Completed" if state in _COMPLETE else "Open")
             if scoped_identity in observations and observations[scoped_identity] != value:
+                # Differing case, date, or status is ambiguous; do not pick a winner.
+                # Identical observations remain one order in this legacy summary.
                 conflicts.add(scoped_identity)
             else:
                 observations[scoped_identity] = value

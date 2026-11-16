@@ -11,9 +11,12 @@ permissions:
 
 # Avoid duplicating full browser and renderer work for superseded PR heads.
 # Every new PR revision still starts all applicable required checks.
-# Main pushes retain the active run and replace pending runs; dispatch uses unique run IDs.
+# GitHub can deliver main pushes out of order and retains just one pending run per
+# concurrency group. Give each main commit its own pending slot so an older
+# push cannot displace the newest commit's required full Tests run.
+# PR revisions still cancel superseded runs; dispatch uses unique run IDs.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && github.ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && format('push-{0}-{1}', github.ref, github.sha) || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
