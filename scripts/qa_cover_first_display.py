@@ -17,6 +17,7 @@ from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+from app.image_open import open_image
 from scripts.qa_about_logo_refresh import controller_environment
 from scripts.workspace_cover_first_display import MODES, COLORS
 from scripts.workspace_history_observations import storage_state
@@ -34,7 +35,7 @@ def receipt(page):
 
 def circle_geometry(path, roles, *, absent_roles=()):
     from PIL import Image
-    image = Image.open(path).convert('RGB')
+    image = open_image(path, formats=("PNG",)).convert('RGB')
     observed = {}
     for role in roles:
         color = COLORS[role]

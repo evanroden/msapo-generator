@@ -12,6 +12,7 @@ from zipfile import ZipFile
 
 from lxml import etree
 
+from app.image_open import open_image
 from app.monthly_report_xml_parser import parse_xml
 from PIL import Image, ImageChops, ImageStat
 
@@ -50,7 +51,7 @@ def identity(source_hash, pdf_hash, profile):
 
 
 def _thumbnail(raw):
-    with Image.open(BytesIO(raw)) as image:
+    with open_image(BytesIO(raw), formats=("JPEG", "PNG")) as image:
         if image.width * image.height > 20_000_000:
             raise ValueError("Reference cover image exceeds the calibration image limit.")
         image.load()
@@ -149,7 +150,7 @@ def _divider_evidence(source):
                     crop = {side: int(crops[0].get(side, "0")) if crops else 0 for side in ("l", "t", "r", "b")}
                     if any(value < 0 or value >= 100000 for value in crop.values()) or crop["l"] + crop["r"] >= 100000 or crop["t"] + crop["b"] >= 100000:
                         return []
-                    with Image.open(BytesIO(archive.read(target))) as image:
+                    with open_image(BytesIO(archive.read(target)), formats=("PNG", "JPEG", "GIF", "TIFF", "BMP", "WEBP")) as image:
                         pixels += image.width * image.height
                         if pixels > 20_000_000:
                             return []

@@ -84,7 +84,7 @@ def test_dimensions_rejected_before_raster_decode(monkeypatch, width, height):
         def load(self): raise AssertionError('must not decode')
     header = Header()
     header.width, header.height = width,height
-    monkeypatch.setattr(docx.Image, 'open', lambda *a: header)
+    monkeypatch.setattr(docx.Image, 'open', lambda *a, **kwargs: header)
     with pytest.raises(ValueError, match='too large to decode'):
         replace_cover_picture(ResolvedBlock('cover_photo','Omit'), b'x', '.png', {})
 
@@ -194,7 +194,7 @@ def test_low_headroom_refuses_before_decoder_open(monkeypatch):
     from app import monthly_report_docx as docx
     from app import monthly_report_render_jobs as jobs
     monkeypatch.setattr(jobs, 'memory_headroom', lambda: 1)
-    monkeypatch.setattr(docx.Image, 'open', lambda *a: pytest.fail('decoder must not open'))
+    monkeypatch.setattr(docx.Image, 'open', lambda *a, **kwargs: pytest.fail('decoder must not open'))
     with pytest.raises(ValueError,match='needs more memory'):
         replace_cover_picture(ResolvedBlock('cover_photo','Omit'),b'input','.png',{})
 
@@ -252,7 +252,7 @@ def test_progressive_jpeg_coefficients_reserved_before_pillow(monkeypatch):
     header = cover_codec_header(raw)
     assert header.format == 'JPEG' and header.coefficient_bytes >= 240_000_000
     monkeypatch.setattr(jobs,'memory_headroom',lambda: 350*MIB)
-    monkeypatch.setattr(docx.Image,'open',lambda *a: pytest.fail('progressive decode must not initialize'))
+    monkeypatch.setattr(docx.Image,'open',lambda *a, **kwargs: pytest.fail('progressive decode must not initialize'))
     with pytest.raises(ValueError,match='needs more memory'):
         replace_cover_picture(ResolvedBlock('cover_photo','Omit'),raw,'.jpg',{})
 
@@ -267,7 +267,7 @@ def test_webp_headers_checked_before_anim_decoder_initialization(monkeypatch):
     header = cover_codec_header(raw)
     assert (header.width,header.height) == (8000,5000)
     monkeypatch.setattr(jobs,'memory_headroom',lambda: 350*MIB)
-    monkeypatch.setattr(docx.Image,'open',lambda *a: pytest.fail('WebP AnimDecoder must not initialize'))
+    monkeypatch.setattr(docx.Image,'open',lambda *a, **kwargs: pytest.fail('WebP AnimDecoder must not initialize'))
     with pytest.raises(ValueError,match='needs more memory'):
         replace_cover_picture(ResolvedBlock('cover_photo','Omit'),raw,'.png',{})
 
@@ -311,7 +311,7 @@ def test_oversized_webp_dimensions_rejected_without_initializing_decoder(monkeyp
     payload = b'\x2f' + bits.to_bytes(4,'little')
     chunk = b'VP8L' + len(payload).to_bytes(4,'little') + payload + b'\0'
     raw = b'RIFF' + (4+len(chunk)).to_bytes(4,'little') + b'WEBP' + chunk
-    monkeypatch.setattr(docx.Image,'open',lambda *a: pytest.fail('oversized WebP must not initialize'))
+    monkeypatch.setattr(docx.Image,'open',lambda *a, **kwargs: pytest.fail('oversized WebP must not initialize'))
     with pytest.raises(ValueError,match='too large to decode safely'):
         replace_cover_picture(ResolvedBlock('cover_photo','Omit'),raw,'.webp',{})
 

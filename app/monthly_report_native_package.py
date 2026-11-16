@@ -14,6 +14,7 @@ from defusedxml import ElementTree as SafeET
 from lxml import etree as XML
 from PIL import Image, UnidentifiedImageError
 
+from app.image_open import open_image
 from app.monthly_report_xml_parser import parse_xml
 from app.monthly_report_import import ImportError, _package, _resolve
 
@@ -355,7 +356,7 @@ def passive_docx(path: Path) -> bytes:
                         if not _static_wmf(raw):
                             raise ValueError('unsupported metafile')
                     else:
-                        with Image.open(BytesIO(raw)) as picture:
+                        with open_image(BytesIO(raw), formats=("PNG", "JPEG", "GIF", "TIFF", "BMP", "WEBP")) as picture:
                             if picture.format not in {'PNG', 'JPEG', 'GIF', 'TIFF', 'BMP', 'WEBP'}:
                                 raise ValueError('unsupported raster')
                             picture.verify()
@@ -411,7 +412,7 @@ def passive_docx(path: Path) -> bytes:
                             break
                         layer_target = _resolve(name, relation.get('Target', ''))
                         try:
-                            with Image.open(BytesIO(archive.read(layer_target))) as layer_image:
+                            with open_image(BytesIO(archive.read(layer_target)), formats=("JPEG", "PNG")) as layer_image:
                                 if layer_image.format not in {'PNG', 'JPEG'}:
                                     supported_layers = False
                                 layer_image.verify()
@@ -427,7 +428,7 @@ def passive_docx(path: Path) -> bytes:
                     if target not in names:
                         raise ImportError('A native HD Photo editing layer has no local rendered fallback.')
                     try:
-                        with Image.open(BytesIO(archive.read(target))) as image:
+                        with open_image(BytesIO(archive.read(target)), formats=("JPEG", "PNG")) as image:
                             if image.format not in {'PNG', 'JPEG'} or min(image.size) < 256:
                                 raise ImportError('A native HD Photo editing layer has no usable rendered fallback.')
                             image.verify()

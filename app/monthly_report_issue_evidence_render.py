@@ -9,6 +9,7 @@ import re
 from docx.shared import Inches, Pt
 from PIL import Image
 
+from app.image_open import open_image
 from app import monthly_report_sources as sources
 from app.monthly_report_content_policy import page_allowed
 from app.monthly_report_page_reference import page_identity
@@ -185,7 +186,7 @@ def append_issue_evidence(document, draft, *, before=None):
             separate = True
         photo = paragraph(page_break=separate)
         try:
-            with Image.open(BytesIO(picture.data)) as image:
+            with open_image(BytesIO(picture.data), formats=("JPEG", "PNG")) as image:
                 if image.width * image.height > _MAX_PIXELS_PER_FRAME:
                     raise ValueError("Issue evidence page image exceeds the pixel limit.")
                 scale = min(6.8 / image.width, 7.2 / image.height)

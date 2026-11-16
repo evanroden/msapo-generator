@@ -19,6 +19,7 @@ from pathlib import Path
 
 import anthropic
 
+from app.image_open import open_image, image_formats_for_suffix
 from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
 from app.api_retry import (
     OPERATION_BUDGET_SECONDS,
@@ -141,7 +142,7 @@ def image_blocks_for_vision(file_bytes: bytes, suffix: str) -> list[dict]:
     from PIL import Image, ImageOps, ImageSequence
 
     blocks: list[dict] = []
-    with Image.open(BytesIO(file_bytes)) as image:
+    with open_image(BytesIO(file_bytes), formats=image_formats_for_suffix(suffix)) as image:
         frame_count = int(getattr(image, "n_frames", 1))
         if frame_count > _MAX_IMAGE_FRAMES:
             raise ValueError(

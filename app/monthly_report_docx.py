@@ -26,6 +26,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
+from app.image_open import open_image, image_formats_for_suffix
 from app.monthly_report_render_compat import rendering_docx
 from app import pdf_converter
 from app import monthly_report_render_jobs as monthly_render_jobs
@@ -84,7 +85,7 @@ def normalize_report_image(raw: bytes, suffix: str, *, line_art: bool = False,
         from pillow_heif import register_heif_opener
         register_heif_opener(thumbnails=False)
     try:
-        opened = Image.open(BytesIO(raw))
+        opened = open_image(BytesIO(raw), formats=image_formats_for_suffix(suffix, cover_photo=cover_photo))
     except Image.DecompressionBombError as exc:
         raise ValueError("Image is too large to decode safely. Resize it before uploading.") from exc
     with opened as image:
@@ -398,14 +399,14 @@ def _stacked_pair(first: bytes, second: bytes) -> bool:
     """Two wide pictures exported at the same size fit one page together."""
     sizes = []
     for raw in (first, second):
-        with Image.open(BytesIO(raw)) as image:
+        with open_image(BytesIO(raw), formats=("JPEG", "PNG")) as image:
             sizes.append(image.size)
     (width, height), other = sizes
     return sizes[0] == other and height > 0 and width / height >= 1.6
 
 
 def _fit_picture(run, raw, width, height):
-    with Image.open(BytesIO(raw)) as image:
+    with open_image(BytesIO(raw), formats=("JPEG", "PNG")) as image:
         if image.width * image.height > _MAX_PIXELS_PER_FRAME:
             raise ValueError("Resolved image exceeds the pixel limit.")
         scale = min(width / image.width, height / image.height)
@@ -415,7 +416,7 @@ def _fit_picture(run, raw, width, height):
 def _divider_background(document, raw):
     """Full-page photo behind editable Word text; crop only divider artwork."""
     normalized = normalize_report_image(raw, ".png", frame=(8.5, 11), dpi=150)
-    with Image.open(BytesIO(normalized.data)) as image:
+    with open_image(BytesIO(normalized.data), formats=("JPEG",)) as image:
         # Monochrome only the photo; the bands drawn below stay colored.
         # The original user-supplied artwork is never modified.
         page = ImageOps.fit(ImageOps.grayscale(image).convert("RGB"), (1275, 1650), Image.Resampling.LANCZOS)

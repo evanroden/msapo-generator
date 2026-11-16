@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import re
 
+from app.image_open import open_image
 from scripts.workspace_browser_observations import require_synthetic_root
 
 
@@ -219,7 +220,7 @@ def prepared_cover_storage(base, token, original):
         raise ValueError('Cover recovery receipt has inconsistent original/derivative provenance.')
     from io import BytesIO
     from PIL import Image
-    with Image.open(BytesIO(normalized)) as image:
+    with open_image(BytesIO(normalized), formats=("JPEG",)) as image:
         if image.format != 'JPEG' or image.size != (420,250):
             raise ValueError('Synthetic recovered cover geometry changed.')
     entries = storage_state(base, token)['entries']

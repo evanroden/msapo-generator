@@ -10,6 +10,7 @@ import re
 
 from PIL import Image
 
+from app.image_open import open_image
 from app import monthly_report_library as library
 from app.monthly_report_asset_review import approve_all_assets, asset_context, pending_asset_indexes, refresh_asset_source_context
 from app.monthly_report_model import ResolvedBlock, profile_sections
@@ -96,7 +97,7 @@ def _verify_asset(reference, raw):
     # Check only the disposable in-memory bytes, never rewrite the original.
     expected = "PNG" if reference.endswith(".png") else "JPEG"
     try:
-        with Image.open(BytesIO(raw)) as picture:
+        with open_image(BytesIO(raw), formats=(expected,)) as picture:
             if picture.format != expected:
                 raise ValueError("Picture bytes do not match the saved file type.")
             if picture.width * picture.height > MAX_STANDING_PICTURE_PIXELS:
@@ -105,13 +106,13 @@ def _verify_asset(reference, raw):
         if expected == "PNG":
             # PNG verify() checks chunk CRCs, not that IDAT decodes enough
             # scanlines for the declared dimensions. Limit pixels first.
-            with Image.open(BytesIO(raw)) as picture:
+            with open_image(BytesIO(raw), formats=(expected,)) as picture:
                 picture.load()
         if expected == "JPEG":
             # Pillow's verify() checks JPEG headers but accepts some incomplete
             # entropy streams. Decode a draft-resolution copy to detect them
             # without expanding an original full-size photograph in memory.
-            with Image.open(BytesIO(raw)) as picture:
+            with open_image(BytesIO(raw), formats=(expected,)) as picture:
                 picture.draft("RGB", (1024, 1024))
                 picture.load()
     except (OSError, ValueError, SyntaxError, Image.DecompressionBombError) as exc:

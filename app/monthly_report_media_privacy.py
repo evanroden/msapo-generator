@@ -20,6 +20,7 @@ not change the pixel-preserving contract of the metadata-only functions.
 """
 from __future__ import annotations
 
+from app.image_open import open_image
 import struct
 import zlib
 from io import BytesIO
@@ -100,7 +101,7 @@ def clear_transparent_png_rgb(raw: bytes) -> bytes:
         return raw
     from PIL import Image, ImageStat
     try:
-        with Image.open(BytesIO(raw)) as image:
+        with open_image(BytesIO(raw), formats=("PNG",)) as image:
             if image.mode != "RGBA" or getattr(image, "n_frames", 1) != 1:
                 return raw
             hidden = image.getchannel("A").point([255] + [0] * 255)

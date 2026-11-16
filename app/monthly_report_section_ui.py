@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import streamlit as st
 
+from app.image_open import open_image
 from app import monthly_report_library as library
 from app.monthly_report_content_policy import contains_price, table_has_pricing
 from app.monthly_report_docx import normalize_report_image
@@ -735,7 +736,7 @@ def _native_art_preservation_review(path, source_view, profile, period, actor, p
                     from app.monthly_report_operational_source import lookup_original
                     _, rendered = lookup_original(operation.view, occurrences[0].original_id)
                     with ZipFile(operation.rendition_path) as package:
-                        with Image.open(BytesIO(package.read(rendered.image_part))) as source_image:
+                        with open_image(BytesIO(package.read(rendered.image_part)), formats=("PNG",)) as source_image:
                             if (source_image.format != "PNG" or source_image.mode not in ("RGB", "RGBA")
                                     or source_image.info or source_image.getexif()):
                                 raise ValueError("Rendered-location review is required for encoded display metadata.")

@@ -14,6 +14,7 @@ from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
 from zipfile import ZipFile
+from app.image_open import open_image
 import ctypes
 import gc
 import sys
@@ -74,7 +75,7 @@ def compact_native_photos_for_pdf(raw: bytes, *, pinned_source: Path,
             data = original.read(info.filename)
             if (_photograph(info.filename) and sha256(data).hexdigest() in allowed):
                 try:
-                    with Image.open(BytesIO(data)) as source:
+                    with open_image(BytesIO(data), formats=("JPEG",)) as source:
                         width, height = source.size
                         dpi = source.info.get("dpi")
                         # The JPEG writer rounds density to 16-bit integer DPI.

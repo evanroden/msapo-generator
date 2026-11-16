@@ -7,6 +7,7 @@ import json
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
+from app.image_open import open_image
 from app.ocr import _MAX_PIXELS_PER_FRAME
 from app.monthly_report_model import OrgChartNode, ReportTable
 
@@ -320,7 +321,7 @@ def photo_page(block, loader, index=0):
         caption_h = 32 * len(lines) + 20 if lines else 12
         frame = (cell_w - 32, cell_h - caption_h - 24)
         raw = loader(ref)
-        with Image.open(BytesIO(raw)) as source:
+        with open_image(BytesIO(raw), formats=("JPEG", "PNG")) as source:
             if source.width * source.height > _MAX_PIXELS_PER_FRAME:
                 raise ValueError("Photo exceeds the image pixel limit.")
             image = ImageOps.exif_transpose(source)

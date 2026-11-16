@@ -50,6 +50,7 @@ from openpyxl.styles import Alignment, Font
 from openpyxl.worksheet.pagebreak import Break
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
+from app.image_open import open_image, image_formats_for_suffix
 from app.config import GOTENBERG_URL, PDF_BACKEND
 from app.content_cache import ContentDigests
 from app.job_numbers import (
@@ -1217,7 +1218,7 @@ def receipt_attachment_pages(
                     if render_limit is not None and len(pages) >= render_limit:
                         continue
                     pixmap = page.get_pixmap(dpi=150, alpha=False)
-                    image = Image.open(BytesIO(pixmap.tobytes("png")))
+                    image = open_image(BytesIO(pixmap.tobytes("png")), formats=("PNG",))
                     pages.append(_compact_receipt_image(image))
         # Re-raise our OWN errors untouched, then blanket-wrap the rest. The
         # order is the whole point: without the first clause the specific
@@ -1243,7 +1244,7 @@ def receipt_attachment_pages(
         register_heif_opener(thumbnails=False)
     try:
         pages = []
-        with Image.open(BytesIO(file_bytes)) as image:
+        with open_image(BytesIO(file_bytes), formats=image_formats_for_suffix(suffix)) as image:
             # Animated GIF and multi-page TIFF receipts are real. getattr with
             # a default because single-frame formats do not define n_frames at
             # all -- a bare image.n_frames would raise AttributeError on every
