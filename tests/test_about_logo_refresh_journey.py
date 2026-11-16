@@ -207,7 +207,9 @@ const document={querySelectorAll:()=>[{dataset:{enfraLogoRefresh:JSON.stringify(
  querySelector:()=>({getAttribute:()=>process.argv[3]})};
 console.log(JSON.stringify(eval('('+process.argv[4]+')')(JSON.parse(process.argv[2]))));'''
     result = subprocess.run(['node', '-e', script, json.dumps(state), json.dumps(wanted), running, expression],
-        capture_output=True, text=True, check=True, timeout=5)
+        # CI shards run concurrently; allow a cold Node process to start without
+        # mistaking scheduler contention for a failed predicate assertion.
+        capture_output=True, text=True, check=True, timeout=30)
     return json.loads(result.stdout)
 
 
