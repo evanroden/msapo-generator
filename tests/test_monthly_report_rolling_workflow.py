@@ -92,6 +92,24 @@ def test_review_or_coverage_change_blocks_old_grid_until_reapplied(tmp_path, mon
     assert check_binding(revoked_draft)
 
 
+def test_rollover_rejects_stale_source_linked_grid_before_clearing_receipts(tmp_path, monkeypatch):
+    from app.monthly_report_setup import WorkOrderRolloverError, new_month_draft
+
+    draft, content, bundle, _, _, _ = prepared(tmp_path, monkeypatch)
+    accepted = apply_grid(draft, bundle)
+    saved = flow.saved_bundle(accepted, content.source.id, "workorders")
+    row = flow.restored_group(saved, saved["groups"][0]).rows[0]
+    changed = flow.change_row(saved, 0, row.key, {"work_date": "2026-11-05"})
+    stale = flow.store_bundle(accepted, changed, expected_revision=flow.revision(saved))
+    assert check_binding(stale)
+
+    with pytest.raises(WorkOrderRolloverError, match="grid, source or coverage review changed"):
+        new_month_draft(stale, ReportPeriod(2027, 2))
+
+    # The failed carry must not discard the saved source review or edit history.
+    assert stale.source_row_reviews and stale.blocks == accepted.blocks
+
+
 def test_unconfirmed_or_edited_grid_is_never_overwritten(tmp_path, monkeypatch):
     draft, content, bundle, _, _, _ = prepared(tmp_path, monkeypatch)
     with pytest.raises(ValueError, match="Confirm"):
