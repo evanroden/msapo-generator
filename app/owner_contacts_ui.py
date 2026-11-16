@@ -8,8 +8,13 @@ and edit these contacts.
 from __future__ import annotations
 
 from datetime import datetime
+import hashlib
+import json
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import streamlit as st
+
+from app import config
 
 from app.memory import (
     contracts_with_saved_contacts,
@@ -20,10 +25,26 @@ from app.memory import (
 )
 
 
-def _when(ts: float) -> str:
+def _when(ts: float, browser_timezone: str | None = None) -> str:
     if not ts:
         return "unknown"
+    # Follow config.operator_today: prefer the browser's zone, then EPC_TIMEZONE.
+    for zone in (str(browser_timezone or "").strip(), config.EPC_TIMEZONE):
+        if not zone:
+            continue
+        try:
+            return datetime.fromtimestamp(ts, ZoneInfo(zone)).strftime("%Y-%m-%d")
+        except (ZoneInfoNotFoundError, ValueError):
+            continue
     return datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+
+
+def _contact_key(contract: str, row: dict) -> str:
+    """Opaque, account-scoped widget identity; no contact details in widget keys."""
+    identity = json.dumps(
+        [contract, row["vendor"], row["name"], row["email"]], ensure_ascii=False
+    )
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]
 
 
 def render_owner_contacts() -> None:
@@ -36,26 +57,28 @@ def render_owner_contacts() -> None:
         st.caption("Nothing saved yet.")
         return
     contract = st.selectbox("Account", contracts, key="owner_contract")
+    browser_timezone = st.context.timezone
 
     st.markdown("Saved vendor contacts (removed two years after last use)")
     contacts = saved_vendor_contacts(contract)
     if not contacts:
         st.caption("No saved vendor contacts for this account.")
-    for index, row in enumerate(contacts):
-        st.write(
+    for row in contacts:
+        key = _contact_key(contract, row)
+        st.text(
             f"{row['vendor']}: {row['name']} <{row['email']}> "
-            f"(used {row['count']}x, last {_when(row['last_used'])})"
+            f"(used {row['count']}x, last {_when(row['last_used'], browser_timezone)})"
         )
         cols = st.columns(3)
-        new_name = cols[0].text_input("Name", value=row["name"], key=f"owner_name_{index}")
-        new_email = cols[1].text_input("Email", value=row["email"], key=f"owner_email_{index}")
-        if cols[2].button("Save", key=f"owner_save_{index}"):
+        new_name = cols[0].text_input("Name", value=row["name"], key=f"owner_name_{key}")
+        new_email = cols[1].text_input("Email", value=row["email"], key=f"owner_email_{key}")
+        if cols[2].button("Save", key=f"owner_save_{key}"):
             if correct_vendor_contact(contract, row["vendor"], row["name"], row["email"],
                                       new_name=new_name, new_email=new_email):
                 st.rerun()
             else:
                 st.error("Could not save that change. Check the name and email.")
-        if cols[2].button("Delete", key=f"owner_delete_{index}"):
+        if cols[2].button("Delete", key=f"owner_delete_{key}"):
             delete_vendor_contact(contract, row["vendor"], row["name"], row["email"])
             st.rerun()
 
@@ -65,7 +88,7 @@ def render_owner_contacts() -> None:
         st.caption("No PO history for this account yet.")
     else:
         st.table([
-            {"Date": _when(h["recorded_at"]), "Vendor": h["vendor"],
+            {"Date": _when(h["recorded_at"], browser_timezone), "Vendor": h["vendor"],
              "Total": h["total"], "Quote file": h["quote_filename"]}
             for h in history
         ])
