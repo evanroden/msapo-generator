@@ -22,7 +22,7 @@ st.session_state["result"] = render_organization(draft, blocks, specs, "test", {
 '''
     app = AppTest.from_string(script, default_timeout=20).run()
     assert not app.exception and not app.dataframe and not app.button and not app.get("image")
-    assert any("Enter your name" in item.value for item in app.info)
+    assert any("[Enter Prepared by](#report-prepared-by)" in item.value for item in app.info)
     assert app.session_state["result"]["contact_matrix"].rows[0][2] == "Synthetic Private Person"
     app.session_state["actor"] = "Synthetic Editor"
     app.run()
@@ -74,3 +74,24 @@ def test_saved_original_uses_current_actor_and_hides_staged_content_when_name_cl
     # The original entered-name gate remains an access boundary here: the
     # inline hint must never print the hidden saved contact details itself.
     assert not any('private@example.invalid' in str(w.value) for w in app.caption)
+
+
+def test_guided_section_gates_link_to_prepared_by(monkeypatch):
+    from types import SimpleNamespace
+
+    from app import monthly_report_guided as guided
+
+    draft = SimpleNamespace(prepared_by="")
+    blocks = {"contact_matrix": object()}
+    notices = []
+    monkeypatch.setattr(guided.st, "info", notices.append)
+    monkeypatch.setattr(guided, "_capture_pending_rich_text_edits", lambda prefix, blocks: blocks)
+
+    for key in ("organization", "subcontractors", "training"):
+        result = guided._render_ordered_section(
+            draft, SimpleNamespace(key=key), blocks, None, None, "test", None, None,
+        )
+        assert result == (draft, blocks)
+
+    assert len(notices) == 3
+    assert all("[Enter Prepared by](#report-prepared-by)" in notice for notice in notices)
