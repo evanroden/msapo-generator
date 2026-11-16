@@ -511,8 +511,11 @@ def new_month_draft(draft: ReportDraft, period: ReportPeriod, *, profile=None) -
                      follow_ups=follow_ups, blocks=blocks, cover_recovery_request=None,
                      source_row_reviews=())
     prior = next((block for block in draft.blocks if block.key == "work_orders"), None)
+    from app.monthly_report_master_tables import is_work_order_history_grid
+    # Only month-by-month history is rebound. Any other populated native
+    # table, whatever its width, keeps the ordinary clearing above.
     if prior and any(table.rows and (isinstance(table, BandedWorkOrderTable)
-            or len(table.columns) == 13 and table.reference.startswith("master-table:"))
+            or is_work_order_history_grid(table) and table.reference.startswith("master-table:"))
             for table in prior.extra_tables):
         try:
             if ((target_profile.contract, target_profile.key) !=

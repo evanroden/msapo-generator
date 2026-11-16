@@ -152,3 +152,75 @@ def test_unrelated_master_shape_and_manual_values_are_not_copied(monkeypatch):
     carried = master.rebind_carried_master_tables(omitted,
         {"work_orders": older}, draft.profile.template)
     assert not carried.blocks[0].extra_tables[0].rows
+
+
+DETAIL_COLUMNS = ("#", "Work order #", "Date", *(f"Detail {n}" for n in range(4, 14)))
+DETAIL_ROW = ("1", "WO-7", "2026-12-03", *("" for _ in range(10)))
+
+
+def with_detail_table(draft, older, shapes):
+    """Add a populated 13-column detail table beside whatever the block holds."""
+    detail = ReportTable(DETAIL_COLUMNS, (), "master-table:synthetic:detail")
+    older = replace(older, extra_tables=(*older.extra_tables,
+                                         replace(detail, rows=(DETAIL_ROW,))))
+    current = replace(draft.blocks[0], extra_tables=(
+        *draft.blocks[0].extra_tables, replace(detail, reference="")))
+    shapes = (*shapes, master.MasterTable("work_orders", 9, detail.reference,
+                                          detail.columns, tuple(range(13)), 13))
+    return replace(draft, blocks=(current,)), older, shapes, detail
+
+
+def test_only_metric_or_month_headed_grids_count_as_month_history():
+    grid = ReportTable(("PM Received", *rolling_labels(OLD)), (row("North"),), "")
+    undated = replace(grid, columns=("PM Received", *"Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split()))
+    relabelled = replace(grid, columns=("Detail 1", *rolling_labels(OLD)))
+    detail = ReportTable(DETAIL_COLUMNS, (DETAIL_ROW,), "")
+    assert all(master.is_work_order_history_grid(t) for t in (grid, undated, relabelled))
+    assert not master.is_work_order_history_grid(detail)
+    assert not master.is_work_order_history_grid(replace(grid, rows=()))
+    assert not master.is_work_order_history_grid(replace(detail, columns=DETAIL_COLUMNS[:7]))
+
+
+def test_thirteen_column_detail_table_is_cleared_beside_carried_history(monkeypatch):
+    draft, older, shapes = make_draft((Facility("n", "North"),), prior_rows=(row("North"),))
+    draft, older, shapes, detail = with_detail_table(draft, older, shapes)
+    monkeypatch.setattr(master, "for_profile", lambda _: shapes)
+    result = master.rebind_carried_master_tables(draft, {"work_orders": older},
+                                                  draft.profile.template)
+    grid, plain = result.blocks[0].extra_tables
+    assert grid.columns[1:] == rolling_labels(NEW) and grid.rows[0][11] == "7"
+    # The ordinary table keeps its pinned region and columns but no old row.
+    assert plain.rows == () and plain.columns == DETAIL_COLUMNS
+    assert plain.reference == detail.reference
+    assert older.extra_tables[1].rows == (DETAIL_ROW,)
+
+
+def test_next_month_clears_a_thirteen_column_detail_table_without_blocking(monkeypatch):
+    from app.monthly_report_setup import WorkOrderRolloverError, new_month_draft
+
+    def previous_month(*, grid_columns=None):
+        options = {} if grid_columns is None else {"columns": grid_columns}
+        draft, older, shapes = make_draft((Facility("n", "North"),),
+                                          prior_rows=(row("North"),), **options)
+        draft, older, shapes, detail = with_detail_table(draft, older, shapes)
+        monkeypatch.setattr(master, "for_profile", lambda _: shapes)
+        return replace(draft, period=OLD, blocks=(older,)), detail
+
+    # Alone, the detail table takes the ordinary path: emptied, not rebound.
+    previous, detail = previous_month()
+    only_detail = replace(previous, blocks=(replace(previous.blocks[0],
+        extra_tables=previous.blocks[0].extra_tables[1:]),))
+    alone = new_month_draft(only_detail, NEW).blocks[0].extra_tables
+    assert [(t.columns, t.rows, t.reference) for t in alone] == [(DETAIL_COLUMNS, (), "")]
+
+    # Beside real month history, the history is carried and the detail cleared.
+    grid, plain = new_month_draft(previous, NEW).blocks[0].extra_tables
+    assert grid.rows[0][11] == "7" and grid.columns[1:] == rolling_labels(NEW)
+    assert plain.rows == () and plain.reference == detail.reference
+
+    # A real grid without explicit years still stops instead of being cleared.
+    undated, _ = previous_month(grid_columns=(
+        "PM Received", *"Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split()))
+    with pytest.raises(WorkOrderRolloverError, match="explicit years"):
+        new_month_draft(undated, NEW)
+    assert undated.blocks[0].extra_tables[0].rows[0][12] == "7"

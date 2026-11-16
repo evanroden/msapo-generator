@@ -133,6 +133,23 @@ def _verified_work_order_month_frame(headers: tuple[str, ...]) -> bool:
                zip(positions, positions[1:]))
 
 
+def is_work_order_history_grid(table) -> bool:
+    """Whether a populated 13-column table reports a metric month by month.
+
+    Width alone is not evidence. A master may also hold a 13-column detail
+    table in its work-order section, and that ordinary table is cleared for a
+    new month like every other one. A table counts as month history when its
+    first heading is a recognized work-order metric or any other heading is a
+    month, so an undated or partly relabelled grid still stops for review
+    rather than being cleared.
+    """
+    if not table.rows or len(table.columns) != 13:
+        return False
+    first = " ".join(str(table.columns[0]).casefold().split())
+    return first in _WORK_ORDER_METRICS or any(
+        _work_order_month_heading(value) is not None for value in table.columns[1:])
+
+
 def _six_month_band_identity(inspection, item, columns):
     """Recognize only a complete, explicitly identified native banded grid.
 
@@ -311,7 +328,8 @@ def rebind_carried_master_tables(draft, previous_blocks, previous_template: str)
     from app.monthly_report_model import BandedWorkOrderTable
 
     def historical(table):
-        return bool(table.rows and (len(table.columns) == 13 or isinstance(table, BandedWorkOrderTable)))
+        return bool(table.rows and isinstance(table, BandedWorkOrderTable)
+                    or is_work_order_history_grid(table))
 
     if draft.profile.template != previous_template:
         # Old report history is still saved, but a new physical master cannot
@@ -327,7 +345,7 @@ def rebind_carried_master_tables(draft, previous_blocks, previous_template: str)
     if not accepted:
         prior = previous_blocks.get("work_orders")
         if prior and any(t.rows and (isinstance(t, BandedWorkOrderTable)
-                or len(t.columns) == 13 and t.reference.startswith("master-table:"))
+                or is_work_order_history_grid(t) and t.reference.startswith("master-table:"))
                 for t in prior.extra_tables):
             raise ValueError("The pinned master is unavailable; review historical work-order grid migration.")
         return draft
@@ -369,7 +387,7 @@ def rebind_carried_master_tables(draft, previous_blocks, previous_template: str)
                 target = carry_six_month_band(former, target, draft.period,
                                               site_key=site.key, category=master.band_category)
             if (block.key == "work_orders" and block.source != "Omit"
-                    and len(former.columns) == 13 and former.rows):
+                    and is_work_order_history_grid(former)):
                 if len(draft.profile.facilities) > 2:
                     raise ValueError("More than two work-order locations need an approved overflow layout.")
                 previous_period = explicit_grid_period(former.columns)
