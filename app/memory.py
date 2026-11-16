@@ -392,7 +392,7 @@ _INITIALIZATION_LOCK = threading.Lock()
 _INITIALIZED_DATABASES: dict[str, tuple[int, int, int]] = {}
 
 
-def _connect() -> sqlite3.Connection | None:
+def _connect(*, _run_retention: bool = True) -> sqlite3.Connection | None:
     """Open (and initialize) the database; None if storage is unavailable.
 
     Returns an open connection the CALLER must close -- every public function
@@ -436,6 +436,13 @@ def _connect() -> sqlite3.Connection | None:
                     _INITIALIZED_DATABASES.clear()
                 if switched:
                     _INITIALIZED_DATABASES[str(path)] = (stat.st_dev, stat.st_ino, version)
+        # Ordinary memory reads trigger the daily retention check, without
+        # holding the initialization lock. A failed prune cannot block a read.
+        if _run_retention:
+            try:
+                _maybe_prune_stale_contacts()
+            except Exception:
+                pass
         return conn
     except Exception:
         if conn is not None:
@@ -1701,6 +1708,10 @@ def forget_device_requester(device_token: str | None) -> bool:
 CONTACT_RETENTION_SECONDS = 730 * 24 * 60 * 60
 _PRUNE_INTERVAL_SECONDS = 24 * 60 * 60
 _last_prune_at = 0.0
+_PRUNE_LOCK = threading.Lock()
+# Bind the maintenance clock separately: patching record timestamps via
+# time.time must not consume the exact-count clocks used by requester features.
+_retention_clock = time.time
 
 # (table, timestamp column) pairs covered by the two-year contact retention.
 _RETAINED_CONTACT_TABLES = (
@@ -1719,7 +1730,8 @@ def prune_stale_contacts(now: float | None = None) -> int:
     Returns the number of rows removed, or 0 when storage is unavailable.
     Rows with an unknown (zero) timestamp are kept.
     """
-    conn = _connect()
+    # Avoid re-entering the daily throttle when cleanup opens its own connection.
+    conn = _connect(_run_retention=False)
     if conn is None:
         return 0
     cutoff = (time.time() if now is None else now) - CONTACT_RETENTION_SECONDS
@@ -1743,13 +1755,18 @@ def prune_stale_contacts(now: float | None = None) -> int:
 
 
 def _maybe_prune_stale_contacts() -> None:
-    """Run the retention rule at most once a day per process."""
+    """Best-effort retention check, at most once a day per process."""
     global _last_prune_at
-    now = time.time()
-    if now - _last_prune_at < _PRUNE_INTERVAL_SECONDS:
-        return
-    _last_prune_at = now
-    prune_stale_contacts(now)
+    with _PRUNE_LOCK:
+        now = _retention_clock()
+        if now - _last_prune_at < _PRUNE_INTERVAL_SECONDS:
+            return
+        _last_prune_at = now
+    try:
+        prune_stale_contacts(now)
+    except Exception:
+        # Retention maintenance must never interrupt a PO or report workflow.
+        pass
 
 
 def record_po_history(
