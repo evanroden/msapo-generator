@@ -22,7 +22,6 @@ from app.monthly_report_import_ui import _stage
 from app.monthly_report_model import (
     Facility,
     ReportProfile,
-    ReportTable,
     known_sections,
 )
 from app.monthly_report_section_help import section_help

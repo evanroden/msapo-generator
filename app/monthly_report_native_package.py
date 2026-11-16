@@ -15,6 +15,7 @@ from lxml import etree as XML
 from PIL import Image, UnidentifiedImageError
 
 from app.image_open import open_image
+from app.monthly_report_xml_parser import parse_xml
 from app.monthly_report_import import ImportError, _package, _resolve
 
 W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
@@ -177,7 +178,7 @@ def _xml(raw):
             else:
                 depth -= 1
                 element.clear()
-        return XML.fromstring(raw, XML.XMLParser(resolve_entities=False, no_network=True, load_dtd=False))
+        return parse_xml(raw)
     except ImportError:
         raise
     except Exception as exc:

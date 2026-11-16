@@ -112,12 +112,20 @@ def exercise(browser, engine, width, method):
         # DOM captions here, then open the actual pane and require its semantic
         # link to be visible/actionable below. Hidden controls are not a pass.
         links = page.locator('a[href="#report-prepared-by"]')
-        expect(links).to_have_count(3, timeout=45000)
+        # Each of these three section pairs provides an editor hint and a
+        # preview correction link. Count both; native activation below still
+        # has to focus the actual Prepared-by field.
+        expect(links).to_have_count(6, timeout=45000)
+        for section_name in ("organization", "subcontractors", "training"):
+            section_links = page.locator(
+                f'.st-key-epc_pair_monthly_{section_name} a[href="#report-prepared-by"]'
+            )
+            expect(section_links).to_have_count(2)
         expect(field).to_have_value("")
         organization = page.locator(".st-key-epc_pair_monthly_organization")
         if width < 600:
             organization.get_by_role("button", name="View preview", exact=True).click()
-        link = organization.get_by_role("link", name="Enter Prepared by", exact=True)
+        link = organization.get_by_role("link", name="Enter Prepared by", exact=True).first
         link.scroll_into_view_if_needed()
         expect(link).to_be_visible()
         record["phase"] = "one native correction-link activation"

@@ -30,7 +30,7 @@ def _key(value: str) -> str:
 
 
 @lru_cache(maxsize=2)
-def _adapter(runtime):
+def _adapter(_runtime):
     # Register once, not once per section/fragment. No user data enters code.
     source = "\n".join((_ASSETS / name).read_text() for name in
                        ("workspace_geometry.js", "monthly_report_source_navigation.js",

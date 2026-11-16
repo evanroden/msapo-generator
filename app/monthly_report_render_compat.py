@@ -7,6 +7,7 @@ from zipfile import ZipFile, is_zipfile
 
 from lxml import etree
 
+from app.monthly_report_xml_parser import parse_xml
 from app.monthly_report_render_wrap import normalize_divider_wraps, normalize_invisible_wraps
 from app.monthly_report_render_profile import validate_profile
 from app.monthly_report_cover_metrics import apply_cover_metrics
@@ -126,7 +127,6 @@ def rendering_docx(raw, *, profile=None):
     profile = validate_profile(profile)
     if not is_zipfile(BytesIO(raw)):
         return raw
-    parser = etree.XMLParser(resolve_entities=False, no_network=True)
     changes = {}
     with ZipFile(BytesIO(raw)) as source:
         names = set(source.namelist())
@@ -138,7 +138,7 @@ def rendering_docx(raw, *, profile=None):
             color_styles = part == "word/styles.xml" and profile.get("divider_white_text", False)
             if part != "word/document.xml" and not color_styles and _V.encode() not in data:
                 continue
-            root = etree.fromstring(data, parser)
+            root = parse_xml(data)
             changed = part == "word/document.xml" and normalize_invisible_wraps(root)
             if color_styles:
                 changed = _divider_text_fill(root) or changed
@@ -151,7 +151,7 @@ def rendering_docx(raw, *, profile=None):
             shapes = root.findall(".//{" + _V + "}shape")
             relpart = posixpath.join(posixpath.dirname(part), "_rels", posixpath.basename(part) + ".rels")
             relationships = {node.get("Id"): node.get("Target", "")
-                             for node in (etree.fromstring(source.read(relpart), parser)
+                             for node in (parse_xml(source.read(relpart))
                                           if relpart in names else ())
                              if node.get("TargetMode") != "External"}
             for shape in shapes:

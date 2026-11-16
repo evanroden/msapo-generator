@@ -11,13 +11,17 @@ permissions:
 
 # Avoid duplicating full browser and renderer work for superseded PR heads.
 # Every new PR revision still starts all applicable required checks.
-# Main pushes retain the active run and replace pending runs; dispatch uses unique run IDs.
+# GitHub can deliver main pushes out of order and retains just one pending run per
+# concurrency group. Give each main commit its own pending slot so an older
+# push cannot displace the newest commit's required full Tests run.
+# PR revisions still cancel superseded runs; dispatch uses unique run IDs.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && github.ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && format('push-{0}-{1}', github.ref, github.sha) || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   pytest:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     # Pull requests run only the tests affected by the PR; pushes to main
     # always run the complete suite here. scripts/ci_select_tests.py picks
@@ -110,6 +114,88 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # Separate runners isolate HOME, temporary files, Streamlit and LibreOffice.
+  pytest-shards:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4]
+    env:
+      FONTCONFIG_FILE: ${{ github.workspace }}/runtime/fonts.conf
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install document renderers
+        timeout-minutes: 20
+        run: |
+          sudo python3 scripts/ci_ubuntu_mirror_priority.py
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libreoffice-writer \
+            libreoffice-calc \
+            fontconfig \
+            fonts-dejavu-core \
+            fonts-dejavu-extra \
+            fonts-liberation \
+            fonts-crosextra-carlito \
+            fonts-crosextra-caladea \
+            fonts-texgyre \
+            fonts-opensymbol \
+            fonts-urw-base35
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.lock
+            requirements-dev.lock
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.lock
+      - name: Validate environment and Python sources
+        run: |
+          python -m pip check
+          python runtime/check_renderer.py
+          python -m compileall -q app pages scripts run_web.py
+      - name: Select exactly one full-suite shard
+        run: python scripts/ci_full_test_shards.py --shard "${{ matrix.shard }}" --shards 5 --out selected-tests.txt
+      - name: Run shard tests
+        env:
+          ANTHROPIC_API_KEY: test-key-not-used
+          INDEPENDENT_OUTPUT: ${{ github.workspace }}/test-artifacts/independent-synthetic
+          MSAPO_SHA: ${{ github.sha }}
+        run: |
+          test -s selected-tests.txt
+          python -m pytest -q --junitxml=test-results.xml $(cat selected-tests.txt)
+      - name: Retain independent synthetic output, including first failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: independent-synthetic-output-${{ matrix.shard }}
+          path: test-artifacts/independent-synthetic/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Export real synthetic Word/PDF for acceptance
+        if: matrix.shard == 4
+        run: python -m scripts.qa_monthly_report_outputs
+      - name: Upload synthetic Word/PDF with page and hash manifest
+        if: matrix.shard == 4
+        uses: actions/upload-artifact@v4
+        with:
+          name: monthly-synthetic-docx-pdf
+          path: test-artifacts/monthly-synthetic/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload shard test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-results-${{ matrix.shard }}
+          path: test-results.xml
+          if-no-files-found: error
+          retention-days: 7
+
   container:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -181,3 +267,29 @@ jobs:
       - name: Remove synthetic resource container
         if: always()
         run: docker rm --force msapo-resource-check || true
+
+  # Live acceptance sees success only after all matrix legs and release checks.
+  complete:
+    name: Tests complete
+    if: always()
+    needs: [pytest, pytest-shards, container, monthly-report-resources]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Gate every test and release check on this commit
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_PYTEST: ${{ needs.pytest.result }}
+          MAIN_SHARDS: ${{ needs.pytest-shards.result }}
+          CONTAINER: ${{ needs.container.result }}
+          RESOURCES: ${{ needs.monthly-report-resources.result }}
+        run: |
+          test "$CONTAINER" = success
+          test "$RESOURCES" = success
+          if [ "$EVENT_NAME" = pull_request ]; then
+            test "$PR_PYTEST" = success
+            test "$MAIN_SHARDS" = skipped
+          else
+            test "$PR_PYTEST" = skipped
+            test "$MAIN_SHARDS" = success
+          fi
