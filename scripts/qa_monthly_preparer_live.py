@@ -45,10 +45,16 @@ def exercise(browser, method):
         field.fill("")
         field.press("Tab")
         links = page.locator('a[href="#report-prepared-by"]')
-        expect(links).to_have_count(3, timeout=45000)
+        # The three compact sections each expose an editor hint and a preview
+        # correction link. Keep the exact count, then activate one real link.
+        expect(links).to_have_count(6, timeout=45000)
+        for section in ("organization", "subcontractors", "training"):
+            expect(page.locator(
+                f'.st-key-epc_pair_monthly_{section} a[href="#report-prepared-by"]'
+            )).to_have_count(2)
         expect(field).to_have_value("")
         link = page.locator('.st-key-epc_pair_monthly_organization').get_by_role(
-            'link', name='Enter Prepared by', exact=True)
+            'link', name='Enter Prepared by', exact=True).first
         link.scroll_into_view_if_needed()
         expect(link).to_be_visible()
         if method == "pointer":
