@@ -926,6 +926,15 @@ def _table(element, columns, rows, *, physical_indices=(), continuation=False, k
     if explicit_header and rows:
         from app.monthly_report_table_pagination import keep_current_header_with_rows
         keep_current_header_with_rows(element, keep_all_rows_intact=keep_all_rows_intact)
+        if preserve_band_geometry:
+            # The received/closed bands share vertically merged label cells.
+            # Keep this bounded eight-row grid together with its site caption;
+            # otherwise Writer can emit an orphan repeated header on the next page.
+            band_output = element.findall(qn("w:tr"))
+            from docx.text.paragraph import Paragraph
+            for index, row in enumerate(band_output):
+                for node in row.iter(qn("w:p")):
+                    Paragraph(node, None).paragraph_format.keep_with_next = index < len(band_output) - 1
 
 
 def _cover(element, draft, *, preserve_issue_date=False):
