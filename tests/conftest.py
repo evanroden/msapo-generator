@@ -13,6 +13,30 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+# pytest's own entry point, captured before any test runs. Streamlit's AppTest
+# installs the script it runs as ``sys.modules['__main__']`` (see the fixture
+# below); this snapshot is what spawned children must start from again.
+_REAL_MAIN_MODULE = sys.modules.get("__main__")
+
+
+@pytest.fixture(autouse=True)
+def _restore_script_main_module():
+        """Undo AppTest's replacement of ``sys.modules['__main__']`` after each test.
+
+            A script run from a string lives in a temporary file, and
+                multiprocessing's spawn start method re-executes ``__main__`` by path in
+                    every child it starts. A child spawned after such a test therefore
+                        re-runs that temporary script instead of the test target and dies on its
+                            first session-state read (``st.session_state['date_draft']``), so the
+                                fixture-process tests exit with code 1 instead of the expected 23 and
+                                    the lifecycle events other tests wait for never fire. Restoring the
+                                        genuine entry point after each test keeps spawned children starting
+                                            from pytest's own no-op main.
+                                                """
+        yield
+        if _REAL_MAIN_MODULE is not None:
+                    sys.modules["__main__"] = _REAL_MAIN_MODULE
+
 
 def libreoffice_can_convert() -> bool:
     """Whether LibreOffice can actually open a DOCX or XLSX here.
