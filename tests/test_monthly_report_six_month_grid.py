@@ -213,7 +213,13 @@ def test_banded_grids_have_readable_site_and_month_labels_in_pdf(tmp_path, monke
     monkeypatch.setattr(pdf_converter, "PDF_BACKEND", "libreoffice")
     pdf_path = pdf_converter.convert_to_pdf(docx_path)
     with pymupdf.open(pdf_path) as pdf:
-        text = " ".join(" ".join(page.get_text().split()) for page in pdf)
+        pages = [" ".join(page.get_text().split()) for page in pdf]
+        text = " ".join(pages)
+    # Each bounded grid stays with its site/category caption. A split across
+    # the last row used to emit an extra, unlabelled Received header.
+    assert text.count("WO Received") == 4
+    for page in pages:
+        assert page.count("WO Received") == page.count("Work Orders")
     for expected in ("Example North", "Example South", "Non-PM", "PM", "Dec 2026", "Jan 2027"):
         assert expected in text
     assert "OLD TEMPLATE VALUE" not in text
