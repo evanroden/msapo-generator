@@ -1954,7 +1954,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         if checks:
             count = len(checks)
             st.markdown(f"**{count} {'item needs' if count == 1 else 'items need'} attention**")
-          st.caption("Review the items that need attention below.")
+            st.caption("Review the items that need attention below.")
         # Several distinct preflight messages may describe the same underlying
         # table cell or schema. Show each message but mount each native editor
         # once per exact code/block owner to avoid duplicate Streamlit keys.
