@@ -95,16 +95,25 @@ def assert_outputs(word, pdf):
         onsite = next(table for table in tables if any('WO-TEST-1005' in row for row in table))
         request = next((table for table in tables if any(REQUEST in row for row in table)), None)
         assert request is not None, 'Word lacks the entered request'
-        assert [row for row in request if REQUEST in row] == [[REQUEST_SITE, REQUEST, '']]
-        assert not any(row and not any(cell.strip() for cell in row) for row in request[1:])
-        assert any('Q-TEST-731' in row and STATUS in row and NOTE in row for row in proposal)
-        assert any('WO-TEST-1005' in row and TASK in row and ASSET in row for row in onsite)
-        assert 'Status' in proposal[0] and 'Asset' in onsite[0]
+        request_rows = [row for row in request if REQUEST in row]
+        assert request_rows == [[REQUEST_SITE, REQUEST, '']], f"Word request row differs: {request_rows!r}"
+        assert not any(row and not any(cell.strip() for cell in row) for row in request[1:]), "Word request table includes an unexpected empty row"
+        assert any('Q-TEST-731' in row and STATUS in row and NOTE in row for row in proposal), "Word proposal row is missing the edited Status or Technical Notes"
+        assert any('WO-TEST-1005' in row and TASK in row and ASSET in row for row in onsite), "Word onsite row is missing the edited Task or Asset"
+        assert 'Status' in proposal[0] and 'Asset' in onsite[0], f"Word row headings changed: proposal={proposal[0]!r}, onsite={onsite[0]!r}"
         full='\n'.join(root.xpath('.//w:t/text()', namespaces=ns))
-        assert full.count(NOTE)==1 and full.count(TASK)==1 and full.count(REQUEST)==1
+        counts = (full.count(NOTE), full.count(TASK), full.count(REQUEST))
+        assert counts == (1, 1, 1), f"Word edited-text counts (Notes, Task, Request) expected (1, 1, 1), got {counts!r}"
     with pymupdf.open(stream=pdf, filetype='pdf') as doc:
         text=' '.join(' '.join(page.get_text().split()) for page in doc)
-        assert all(' '.join(value.split()) in text for value in (STATUS, NOTE, TASK, ASSET, REQUEST))
+        expected = {'Status': STATUS, 'Technical Notes': NOTE, 'Task': TASK,
+                    'Asset': ASSET, 'Requested item': REQUEST}
+        missing = [label for label, value in expected.items()
+                   if ' '.join(value.split()) not in text]
+        at = text.find('Synthetic onsite task')
+        onsite_excerpt = text[max(0, at - 40):at + 200] if at >= 0 else ''
+        assert not missing, (f"PDF output missing exact row text for {missing!r}; "
+                             f"onsite PDF excerpt={onsite_excerpt!r}")
         pages=len(doc)
     return {'docx': {'bytes':len(word),'sha256':sha256(word).hexdigest()},
             'pdf': {'bytes':len(pdf),'sha256':sha256(pdf).hexdigest(),'pages':pages},
@@ -195,7 +204,7 @@ def browser_task(browser_type, name):
         onsite.get_by_role('button',name='Close editing',exact=True).click()
         state=capture('narrow-task-delivered-with-close',field='Task',value=TASK)
         page.reload(wait_until='domcontentloaded')
-        assert capture('reload-exact-rows')==state
+        assert capture('reload-exact-rows')==state, "Reload changed the durable row-card receipt"
         onsite=page.locator(ONSITE)
         requests=page.locator(REQUESTS)
         requests.get_by_role('button',name='Edit request',exact=True).click()
@@ -215,8 +224,8 @@ def browser_task(browser_type, name):
         transition=page.evaluate('index=>window.ENFRARowObservation.events.slice(index)',event_index)
         record['rapid_transition']=transition
         activated=[event for event in transition if event['label']=='Edit proposal']
-        assert [event['type'] for event in activated]==['pointerdown','pointerup','click']
-        assert len({event['node'] for event in activated})==1
+        assert [event['type'] for event in activated]==['pointerdown','pointerup','click'], f"Edit proposal pointer sequence incomplete: {activated!r}"
+        assert len({event['node'] for event in activated})==1, f"Edit proposal pointer events targeted different nodes: {activated!r}"
         close_proposal(page, proposal, expect)
         capture('narrow-proposal-and-onsite-reentry')
         qa.capture(page,name,'row-cards-narrow')

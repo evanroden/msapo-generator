@@ -1,4 +1,4 @@
-"""Every PR/push CI workflow must coalesce superseded queued runs."""
+"""PR heads coalesce; each Tests push on main must retain its own queue slot."""
 
 from pathlib import Path
 import re
@@ -11,6 +11,7 @@ EXEMPT = {
     "shared-fixture-redeploy-readonly.yml",
 }
 EXPECTED_GROUP = "  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && github.ref || github.run_id }}"
+EXPECTED_TESTS_GROUP = "  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && format('push-{0}-{1}', github.ref, github.sha) || github.run_id }}"
 EXPECTED_CANCEL = "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}"
 
 
@@ -24,7 +25,8 @@ def test_pr_push_workflows_share_per_pr_or_ref_concurrency():
             continue
         checked.append(path.name)
         assert "\nconcurrency:\n" in "\n" + content, path.name
-        assert EXPECTED_GROUP in content, path.name
+        expected = EXPECTED_TESTS_GROUP if path.name == "tests.yml" else EXPECTED_GROUP
+        assert expected in content, path.name
         assert EXPECTED_CANCEL in content, path.name
 
     assert checked, "Expected at least one PR/push workflow"

@@ -14,16 +14,20 @@ from app.monthly_report_row_review_receipts import decoded as saved_receipt
 
 from app.monthly_report_model import ReportTable, ResolvedBlock
 from app.monthly_report_work_order_normalized import (
-    FIELDS, ColumnMapping, correct_row, exclude_row, restore_review, review_record,
+    FIELDS, ColumnMapping as ColumnMapping, correct_row, exclude_row, restore_review, review_record,
 )
 from app.monthly_report_work_order_counts import count_reviewed_work_orders
+from app.monthly_report_work_order_coverage import CoverageDecision, restore_decision
 from app.monthly_report_work_order_csv_review import review_spreadsheet
 from app.monthly_report_service_call_mapping import (
     FIELDS as CALL_FIELDS, correct_service_call, exclude_service_call,
-    exclude_unmatched_call, confirm_financial_exclusion, confirm_word_layout,
+    exclude_unmatched_call as exclude_unmatched_call, confirm_financial_exclusion as confirm_financial_exclusion, confirm_word_layout as confirm_word_layout,
     restore_service_call_review, service_call_review_record, review_service_calls,
     reviewed_service_call_block, suggest_call_mapping,
 )
+
+
+CALL_FIELDS = CALL_FIELDS  # Preserve the historical report-review export.
 
 
 def encoded(value):
@@ -59,6 +63,17 @@ def decoded(text):
                 or not isinstance(value.get("published"), list)
                 or ("include_trades" in value and type(value["include_trades"]) is not bool)):
             raise ValueError(message)
+        if (not isinstance(value.get("coverage", []), list)
+                or len(value.get("coverage", [])) > 50):
+            raise ValueError(message)
+        for item in value.get("coverage", []):
+            restore_decision(item)
+        if "grid_receipt" in value:
+            from app.monthly_report_rolling_workflow import validate_receipt
+            validate_receipt(value["grid_receipt"])
+        if "maintenance_projection" in value:
+            from app.monthly_report_maintenance_workflow import validate_state
+            validate_state(value["maintenance_projection"])
         for group in value["groups"]:
             if (not isinstance(group, dict) or not isinstance(group.get("label"), str)
                     or any(not isinstance(group.get(key), list)
@@ -94,6 +109,15 @@ def _validate(draft, value):
         raise ValueError("Unknown row-review destination.")
     if len(encoded(value)) > 4_000_000:
         raise ValueError("This row review exceeds the saved-review budget. Use a smaller source table.")
+    for item in value.get("coverage", []):
+        entry = restore_decision(item)
+        if (value["kind"] != "workorders" or entry.contract != draft.profile.contract
+                or entry.profile_key != draft.profile.key
+                or entry.site not in {site.key for site in draft.profile.facilities}
+                or entry.source_sha256 != source.sha256
+                or entry.source_fingerprint != source.fingerprint
+                or not 1 <= entry.table_number <= len(value["groups"])):
+            raise ValueError("Coverage belongs to another contract, site, source or table.")
     for group in value["groups"]:
         if group.get("record"):
             restored = restored_group(value, group)
@@ -134,6 +158,40 @@ def store_bundle(draft, value, *, expected_revision=""):
     return replace(draft, source_row_reviews=tuple(records))
 
 
+def confirm_coverage(draft, bundle, *, table_number, site, start_month, end_month,
+                     evidence, confirmed):
+    """Explicit AM act, scoped to one reviewed row table and its original bytes."""
+    _validate(draft, bundle)
+    source = next(s for s in draft.sources if s.id == bundle["source_id"])
+    if (bundle["kind"] != "workorders" or confirmed is not True
+            or source.suffix not in (".csv", ".xlsx")
+            or type(table_number) is not int
+            or not 1 <= table_number <= len(bundle["groups"])):
+        raise ValueError("Confirm one source table's coverage before saving it.")
+    group = bundle["groups"][table_number - 1]
+    if not group["record"] or restore_review(group["record"]).kind != "records":
+        raise ValueError("Coverage requires a reviewed row-based source table.")
+    value = json.loads(encoded(bundle))
+    entry = CoverageDecision(draft.profile.contract, draft.profile.key, site,
+        source.sha256, source.fingerprint, table_number, start_month, end_month,
+        "am_confirmed", evidence)
+    if entry.to_record() not in value.setdefault("coverage", []):
+        value["coverage"].append(entry.to_record())
+    return _validate(draft, value)
+
+
+def revoke_coverage(draft, bundle, *, site, table_number):
+    """Revoke exactly one site's table coverage without touching row edits."""
+    _validate(draft, bundle)
+    if type(table_number) is not int:
+        raise ValueError("Select a source table before revoking coverage.")
+    value = json.loads(encoded(bundle))
+    value["coverage"] = [item for item in value.get("coverage", [])
+                         if not (restore_decision(item).site == site
+                                 and restore_decision(item).table_number == table_number)]
+    return _validate(draft, value)
+
+
 def restored_group(bundle, group):
     return (restore_review(group["record"]) if bundle["kind"] == "workorders"
             else restore_service_call_review(group["record"]))
@@ -149,7 +207,8 @@ def prepare_bundle(draft, content, *, kind="workorders", mapping=None, date_orde
     source = content.source
     value = {"schema": 1, "scope": scope(draft), "source_id": source.id,
         "source_fingerprint": source.fingerprint, "filename": source.filename,
-        "kind": kind, "date_order": date_order, "groups": [], "published": []}
+        "kind": kind, "date_order": date_order, "groups": [], "published": [],
+        "coverage": []}
     # A source-detail edit changes its fingerprint, not its original byte
     # identity. Re-review may replace only the last exact published tables;
     # it must not append a second copy or erase intervening manual edits.

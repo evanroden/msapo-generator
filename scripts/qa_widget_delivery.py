@@ -51,22 +51,33 @@ class WidgetDelivery:
         if direction == 'sent' and kind == 'rerun_script':
             run = msg.rerun_script
             result.update(fragment=run.fragment_id, automatic=run.is_auto_rerun,
+                          actions=[{'id_hash': _hash(w.id), 'pressed': w.trigger_value}
+                                   for w in list(run.widget_states.widgets)[:256]
+                                   if w.WhichOneof('value') == 'trigger_value'],
                           widgets=[{'id_hash': _hash(w.id), **_text(w.string_value)}
                                    for w in list(run.widget_states.widgets)[:256]
                                    if w.WhichOneof('value') == 'string_value'])
         elif direction == 'received' and kind == 'delta':
             element = msg.delta.new_element.WhichOneof('type')
-            if element not in {'text_area', 'text_input'}:
+            if element == 'button':
+                widget = msg.delta.new_element.button
+                if widget.label not in {'Close editing', 'Edit proposal'}:
+                    return
+                result.update(widget=widget.label, id_hash=_hash(widget.id),
+                              fragment=msg.delta.fragment_id,
+                              path=list(msg.metadata.delta_path), cache_hash=msg.hash)
+            elif element in {'text_area', 'text_input'}:
+                widget = getattr(msg.delta.new_element, element)
+                if ((element == 'text_area' and widget.label not in {
+                        'Activity summary', 'Training notes', 'Issue description'}) or
+                        (element == 'text_input' and widget.label != 'Prepared by')):
+                    return
+                result.update(widget=widget.label, id_hash=_hash(widget.id),
+                              default=_text(widget.default), value=_text(widget.value),
+                              set_value=widget.set_value, fragment=msg.delta.fragment_id,
+                              path=list(msg.metadata.delta_path), cache_hash=msg.hash)
+            else:
                 return
-            widget = getattr(msg.delta.new_element, element)
-            if ((element == 'text_area' and widget.label not in {
-                    'Activity summary', 'Training notes', 'Issue description'}) or
-                    (element == 'text_input' and widget.label != 'Prepared by')):
-                return
-            result.update(widget=widget.label, id_hash=_hash(widget.id),
-                          default=_text(widget.default), value=_text(widget.value),
-                          set_value=widget.set_value, fragment=msg.delta.fragment_id,
-                          path=list(msg.metadata.delta_path), cache_hash=msg.hash)
             if msg.hash:
                 self.cache[msg.hash] = dict(result)
                 self.cache.move_to_end(msg.hash)

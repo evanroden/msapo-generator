@@ -6,6 +6,8 @@ import re
 
 from lxml import etree
 
+from app.monthly_report_xml_parser import parse_xml
+
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 _R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 _WP = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"
@@ -16,10 +18,9 @@ def header_fingerprint(archive, part):
     """Bind visibility evidence to header geometry and the exact image bytes."""
     if not re.fullmatch(r"word/header[0-9]+\.xml", part):
         return None
-    parser = etree.XMLParser(resolve_entities=False, no_network=True)
     try:
-        root = etree.fromstring(archive.read(part), parser)
-        relations = etree.fromstring(archive.read("word/_rels/" + part[5:] + ".rels"), parser)
+        root = parse_xml(archive.read(part))
+        relations = parse_xml(archive.read("word/_rels/" + part[5:] + ".rels"))
         targets = {node.get("Id"): node for node in relations}
         anchors = list(root.iter(_WP + "anchor"))
         if not 1 <= len(anchors) <= 8 or root.find(".//" + _WP + "inline") is not None:
@@ -73,8 +74,7 @@ def hidden_divider_header_overrides(archive, document, evidence=()):
     body = document.find(_W + "body")
     if body is None:
         return {}
-    relations = etree.fromstring(archive.read("word/_rels/document.xml.rels"),
-                                 etree.XMLParser(resolve_entities=False, no_network=True))
+    relations = parse_xml(archive.read("word/_rels/document.xml.rels"))
     targets = {node.get("Id"): posixpath.normpath(posixpath.join("word", node.get("Target", "")))
                for node in relations if node.get("TargetMode") != "External"}
     usage, inherited, content = {}, {}, []

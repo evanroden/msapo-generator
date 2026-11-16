@@ -11,7 +11,7 @@ from app import monthly_report_library as library
 from app import monthly_report_section_assembly_cache as assembly_cache
 from app.monthly_report_render_jobs import RenderBusy
 from app.monthly_report_preview import (
-    _section_scope, preview_page, preview_section, section_preview_fingerprint,
+    _section_scope, preview_page, preview_section, section_preview_fingerprint,  # noqa: F401 (tests patch preview_page here)
 )
 from app.monthly_report_preview_store import STORE, PreviewTicket
 from app.monthly_report_preview_view import render_view, viewport
