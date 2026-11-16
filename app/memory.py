@@ -1709,6 +1709,9 @@ CONTACT_RETENTION_SECONDS = 730 * 24 * 60 * 60
 _PRUNE_INTERVAL_SECONDS = 24 * 60 * 60
 _last_prune_at = 0.0
 _PRUNE_LOCK = threading.Lock()
+# Bind the maintenance clock separately: patching record timestamps via
+# time.time must not consume the exact-count clocks used by requester features.
+_retention_clock = time.time
 
 # (table, timestamp column) pairs covered by the two-year contact retention.
 _RETAINED_CONTACT_TABLES = (
@@ -1755,7 +1758,7 @@ def _maybe_prune_stale_contacts() -> None:
     """Best-effort retention check, at most once a day per process."""
     global _last_prune_at
     with _PRUNE_LOCK:
-        now = time.time()
+        now = _retention_clock()
         if now - _last_prune_at < _PRUNE_INTERVAL_SECONDS:
             return
         _last_prune_at = now
