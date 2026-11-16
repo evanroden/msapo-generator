@@ -518,6 +518,12 @@ def new_month_draft(draft: ReportDraft, period: ReportPeriod, *, profile=None) -
             or is_work_order_history_grid(table) and table.reference.startswith("master-table:"))
             for table in prior.extra_tables):
         try:
+            # Verify the prior source-linked counts before discarding their
+            # review receipts. Otherwise stale counts become unlinked history.
+            from app.monthly_report_rolling_workflow import check_binding as check_grid_binding
+            binding_problem = check_grid_binding(draft)
+            if binding_problem:
+                raise WorkOrderRolloverError(binding_problem)
             if ((target_profile.contract, target_profile.key) !=
                     (draft.profile.contract, draft.profile.key)):
                 raise ValueError("Historical work-order grids belong to a different report profile.")
