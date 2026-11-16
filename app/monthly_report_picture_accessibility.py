@@ -7,7 +7,7 @@ from streamlit.runtime import Runtime
 
 
 @lru_cache(maxsize=2)
-def _adapter(runtime):
+def _adapter(_runtime):
     return st.components.v2.component("monthly_import_picture_description",
         js=Path(__file__).with_suffix(".js").read_text(), isolate_styles=False)
 

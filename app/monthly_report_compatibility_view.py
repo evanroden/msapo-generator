@@ -7,7 +7,7 @@ A receipt is evidence only: consumers must rederive it from the original.
 """
 from collections import defaultdict
 from copy import deepcopy
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass
 import hashlib
 from io import BytesIO
 import json
@@ -16,7 +16,7 @@ import re
 from tempfile import TemporaryDirectory
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
-from app.monthly_report_import import ImportError, MAX_DOCX_BYTES, _package, _relations, inspect_docx
+from app.monthly_report_import import ImportError, MAX_DOCX_BYTES as MAX_DOCX_BYTES, _package, _relations, inspect_docx
 from app.monthly_report_native_design import A, MC, PIC, R, W, WP, WPS, equivalent_native_alternatives
 from app.monthly_report_native_package import _xml, passive_docx
 

@@ -1,0 +1,10 @@
+{
+  "columns": ["Work Order", "Site", "Received Date", "Closed Date", "Status", "Type"],
+  "work_order": "WO-120",
+  "site": "North",
+  "received_date": "2026-12-20",
+  "closed_date": "2027-01-06",
+  "status": "Closed",
+  "type": "PM",
+  "invalid_closed_date": "not a date"
+}
