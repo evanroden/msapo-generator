@@ -69,6 +69,22 @@ def test_word_media_mislabeled_raster_uses_image_header():
         assert image.format == "PNG"
 
 
+def test_unregistered_heif_plugin_is_not_sent_to_pillow(monkeypatch):
+    """An exotic header must fail normally, not trigger Pillow's HEIF KeyError."""
+    monkeypatch.delitem(Image.OPEN, "HEIF", raising=False)
+    seen = {}
+
+    def fake_open(source, *, formats):
+        seen["formats"] = formats
+        raise UnidentifiedImageError("unsupported input")
+
+    monkeypatch.setattr(Image, "open", fake_open)
+    with pytest.raises(UnidentifiedImageError):
+        open_image(BytesIO(b"%!PS-Adobe-3.0 EPSF-3.0"), formats=image_formats_for_suffix(".jpg"))
+    assert "HEIF" not in seen["formats"]
+    assert set(seen["formats"]) == {"JPEG", "PNG", "GIF", "WEBP", "BMP", "TIFF"}
+
+
 def test_mpo_detection_uses_jpeg_plugin_without_rejecting_real_phone_frames():
     buffer = BytesIO()
     Image.new("RGB", (20, 12), "red").save(

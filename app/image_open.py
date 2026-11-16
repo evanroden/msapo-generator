@@ -23,7 +23,7 @@ _RASTER_FORMATS = ("JPEG", "PNG", "GIF", "WEBP", "BMP", "TIFF", "HEIF")
 _COVER_FORMATS = ("JPEG", "PNG", "WEBP", "HEIF")
 _WORD_MEDIA_FORMATS = (*_RASTER_FORMATS, "WMF")
 _ALLOWED_FORMATS = frozenset(_WORD_MEDIA_FORMATS)
-_HEIF_BRANDS = frozenset({b"heic", b"heix", b"hevc", b"hevx", b"mif1", b"msf1"})
+_HEIF_BRANDS = frozenset({b"heic", b"heix", b"hevc", b"hevx"})
 
 
 def image_formats_for_suffix(
@@ -52,13 +52,18 @@ def _register_heif_from_header(source) -> None:
     try:
         offset = source.tell()
         try:
-            header = source.read(12)
+            header = source.read(4096)
         finally:
             source.seek(offset)
     except (AttributeError, OSError, ValueError):
         return
-    if (len(header) >= 12 and header[4:8] == b"ftyp"
-            and header[8:12] in _HEIF_BRANDS):
+    if len(header) < 16 or header[4:8] != b"ftyp":
+        return
+    size = int.from_bytes(header[:4], "big")
+    if not 16 <= size <= len(header) or size % 4:
+        return
+    brands = (header[8:12], *(header[i:i + 4] for i in range(16, size, 4)))
+    if any(brand in _HEIF_BRANDS for brand in brands):
         from pillow_heif import register_heif_opener
         register_heif_opener(thumbnails=False)
 
@@ -70,4 +75,8 @@ def open_image(source, *, formats: tuple[str, ...]):
         raise ValueError("An explicit supported image-format allowlist is required.")
     if "HEIF" in formats:
         _register_heif_from_header(source)
+        # Pillow raises KeyError for unknown plugin names if no decoder matches.
+        # Leave HEIF out until the optional plugin is actually registered.
+        if "HEIF" not in Image.OPEN:
+            formats = tuple(fmt for fmt in formats if fmt != "HEIF")
     return Image.open(source, formats=formats)
