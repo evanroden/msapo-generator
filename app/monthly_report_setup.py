@@ -21,6 +21,10 @@ PERIOD_REVIEW_BLOCKS = frozenset({"utility_analysis", "mbcx_status", "equipment_
 DECISIONS = ("Needs review", "Keep in report", "Save for reference", "Exclude from this draft")
 
 
+class WorkOrderRolloverError(ValueError):
+    """A saved grid cannot be carried without a verified master/site match."""
+
+
 def suggested_period(today: date) -> ReportPeriod:
     """During closeout (1–10) suggest last month, otherwise the current month."""
     return ReportPeriod.previous(today) if today.day <= 10 else ReportPeriod(today.year, today.month)
@@ -460,11 +464,11 @@ def _carry_period_content(block: ResolvedBlock, period: ReportPeriod) -> Resolve
                    reviewed_fingerprint="", client_reviewed_fingerprint=""))
 
 
-def new_month_draft(draft: ReportDraft, period: ReportPeriod) -> ReportDraft:
+def new_month_draft(draft: ReportDraft, period: ReportPeriod, *, profile=None) -> ReportDraft:
     """Only an explicitly new month drops period-specific attachments, never a mixed import."""
     draft = normalize_mbcx(draft)
     if period == draft.period:
-        return draft
+        return replace(draft, profile=profile) if profile is not None else draft
     from app.monthly_report_issues import canonical_issues
     draft = canonical_issues(draft)
     from app.monthly_report_followups import seed_followups
@@ -472,6 +476,14 @@ def new_month_draft(draft: ReportDraft, period: ReportPeriod) -> ReportDraft:
     carried_keys = {"equipment_issues", "proposals"}
     from app.monthly_report_training import new_month_training
     from app.monthly_report_subcontractor_standing import rollover_subcontractor_block
+    from app.monthly_report_model import BandedWorkOrderTable
+
+    def cleared(table):
+        # Keep the band subtype for an empty next-month draft. Only a reset
+        # table with no rows may temporarily lack the original master reference.
+        # A populated historical band is rebound against the pinned master below.
+        return replace(table, rows=(), reference="")
+
     blocks = tuple(
         rollover_subcontractor_block(b, period) if b.key == "subcontractor_matrix" else
         new_month_training(b) if b.key == "training_summary" else
@@ -486,7 +498,7 @@ def new_month_draft(draft: ReportDraft, period: ReportPeriod) -> ReportDraft:
                                         if not ref.startswith("issue-statement-removed:"))
                                   if b.key == "equipment_issues" else
                                   b.references if b.key in carried_keys and b.asset_hashes else ()),
-                      extra_tables=tuple(replace(t, rows=(), reference="") for t in b.extra_tables))), draft.period)
+                      extra_tables=tuple(cleared(t) for t in b.extra_tables))), draft.period)
         if b.key in MONTHLY_BLOCKS or b.key in carried_keys else _carry_period_content(b, draft.period) for b in draft.blocks)
     # Keep evidence backing carried content at its original date and hash;
     # removing all sources would strand reviewed wording and attached charts.
@@ -494,4 +506,29 @@ def new_month_draft(draft: ReportDraft, period: ReportPeriod) -> ReportDraft:
                                                *(r for p in b.ai_paragraphs for r in p.references))}
     references.update(r for item in follow_ups for r in item.references)
     sources = tuple(s for s in draft.sources if any(r == s.id or r.startswith(s.id + ":") for r in references))
-    return replace(draft, period=period, sources=sources, follow_ups=follow_ups, blocks=blocks, cover_recovery_request=None, source_row_reviews=())
+    target_profile = profile if profile is not None else draft.profile
+    result = replace(draft, profile=target_profile, period=period, sources=sources,
+                     follow_ups=follow_ups, blocks=blocks, cover_recovery_request=None,
+                     source_row_reviews=())
+    prior = next((block for block in draft.blocks if block.key == "work_orders"), None)
+    from app.monthly_report_master_tables import is_work_order_history_grid
+    # Only month-by-month history is rebound. Any other populated native
+    # table, whatever its width, keeps the ordinary clearing above.
+    if prior and any(table.rows and (isinstance(table, BandedWorkOrderTable)
+            or is_work_order_history_grid(table) and table.reference.startswith("master-table:"))
+            for table in prior.extra_tables):
+        try:
+            # Verify the prior source-linked counts before discarding their
+            # review receipts. Otherwise stale counts become unlinked history.
+            from app.monthly_report_rolling_workflow import check_binding as check_grid_binding
+            binding_problem = check_grid_binding(draft)
+            if binding_problem:
+                raise WorkOrderRolloverError(binding_problem)
+            if ((target_profile.contract, target_profile.key) !=
+                    (draft.profile.contract, draft.profile.key)):
+                raise ValueError("Historical work-order grids belong to a different report profile.")
+            from app.monthly_report_master_tables import rebind_carried_master_tables
+            result = rebind_carried_master_tables(result, {prior.key: prior}, draft.profile.template)
+        except ValueError as exc:
+            raise WorkOrderRolloverError(str(exc)) from exc
+    return result

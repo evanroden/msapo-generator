@@ -4,7 +4,7 @@ from dataclasses import asdict, replace
 import hashlib
 
 from app import monthly_report_library as library
-from app.monthly_report_model import ReportDraft, ReportPeriod, ResolvedBlock, profile_sections, layout_blocks
+from app.monthly_report_model import BandedWorkOrderTable, ReportDraft, ReportPeriod, ReportTable, ResolvedBlock, profile_sections, layout_blocks
 from app.monthly_report_setup import new_month_draft
 
 
@@ -139,7 +139,13 @@ def design_seed(profile, period, actor, source=None):
             # Table schemas are retained in profile overrides. No copied values,
             # org charts, site photographs or contact records can be mistaken for
             # this site's information.
-            block = ResolvedBlock(spec.key, "This month", extra_tables=tuple(replace(t, columns=tuple(c for c in t.columns if not price_column(c)), rows=(), reference="") for t in prior.extra_tables) if prior else ())
+            tables = ()
+            if prior:
+                tables = tuple(ReportTable(tuple(c for c in t.columns if not price_column(c)), (), "")
+                    if isinstance(t, BandedWorkOrderTable) else
+                    replace(t, columns=tuple(c for c in t.columns if not price_column(c)), rows=(), reference="")
+                    for t in prior.extra_tables)
+            block = ResolvedBlock(spec.key, "This month", extra_tables=tables)
         blocks.append(block)
     from app.monthly_report_branding import apply_defaults
     from app.monthly_report_designs import pin
@@ -156,7 +162,22 @@ def design_seed(profile, period, actor, source=None):
         from app.monthly_report_master_tables import rebind_carried_master_tables
         prior = {b.key: prior_blocks.get(b.key) or source.block(b.key)
                  for b in blocks}
+        different_sites = membership_key(source.profile.facilities) != membership_key(profile.facilities)
+        work = prior.get("work_orders") if different_sites else None
+        required = {t.reference for t in work.extra_tables
+                    if t.reference.startswith("master-table:")} if work else set()
+        if work:
+            if required and draft.profile.template != source.profile.template:
+                raise ValueError("The pinned master changed; choose a fresh design for the new sites.")
+            # A different site group may reuse the physical master frames,
+            # never the previous group's month cells or band identity.
+            prior["work_orders"] = replace(work, extra_tables=tuple(
+                ReportTable(table.columns, (), table.reference) for table in work.extra_tables))
         draft = rebind_carried_master_tables(draft, prior, source.profile.template)
+        if required:
+            new = next((block for block in draft.blocks if block.key == "work_orders"), None)
+            if new is None or not required.issubset({t.reference for t in new.extra_tables}):
+                raise ValueError("The pinned master is unavailable; choose a fresh design for the new sites.")
     return draft, assets
 
 
@@ -196,5 +217,5 @@ def save_design_start(draft, assets, *, actor, confirmed):
 def returning_draft(state, period, actor):
     prior = latest_snapshot(state.profile.contract, state.profile.key, period)
     if prior:
-        return replace(new_month_draft(prior.draft, period), profile=state.profile, prepared_by=actor), prior
+        return replace(new_month_draft(prior.draft, period, profile=state.profile), prepared_by=actor), prior
     return None, None

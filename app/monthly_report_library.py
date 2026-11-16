@@ -21,7 +21,7 @@ import tempfile
 from app.memory import _data_dir
 from app.monthly_report_model import (
     BLOCK_SOURCES, BlockSpec, ColumnSpec, Facility, ReportDraft, ReportPeriod, ReportProfile,
-    ResolvedBlock, ReportTable, AnchoredTable, TrainingSessionTable, OrgChartNode, ReportFollowUp, SectionSpec, ReportSource, EvidenceFact, DraftParagraph, default_sections, known_sections, layout_blocks, used_asset_references,
+    ResolvedBlock, ReportTable, BandedWorkOrderTable, AnchoredTable, TrainingSessionTable, OrgChartNode, ReportFollowUp, SectionSpec, ReportSource, EvidenceFact, DraftParagraph, default_sections, known_sections, layout_blocks, used_asset_references,
 )
 
 
@@ -232,6 +232,13 @@ def profile_from_dict(value: dict) -> ReportProfile:
 def _report_table_from_dict(value: dict) -> ReportTable:
     columns, rows = tuple(value["columns"]), tuple(tuple(row) for row in value["rows"])
     reference = value.get("reference", "")
+    if "band_site_key" in value or "band_category" in value:
+        site, category = value.get("band_site_key"), value.get("band_category")
+        if (not isinstance(site, str) or not site.strip() or category not in ("pm", "non_pm")
+                or not isinstance(reference, str) or len(columns) != 7
+                or (not reference.startswith("master-table:") and (reference != "" or rows))):
+            raise ValueError("Invalid saved work-order band identity.")
+        return BandedWorkOrderTable(columns, rows, reference, site, category)
     if reference == "training:events:v1" and "row_tokens" in value:
         return TrainingSessionTable(columns, rows, reference, tuple(value["row_tokens"]))
     if value.get("anchor"):
