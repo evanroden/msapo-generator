@@ -44,7 +44,7 @@ def assert_visible_last_good(raster):
     This proves the invented chosen art survived failed replacement in rendered
     PDF, not full cover layout fidelity (which still needs visual acceptance).
     """
-    from PIL import Image
+    from app.image_open import open_image
     with open_image(BytesIO(raster), formats=("PNG",)) as image:
         image=image.convert('RGB')
         assert image.width*image.height<=2_000_000

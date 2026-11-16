@@ -128,6 +128,18 @@ def _unrestricted_opens(tree: ast.AST) -> list[int]:
     return sorted(set(found))
 
 
+def test_recovery_service_raster_checker_imports_image_allowlist():
+    """The standalone browser QA path must resolve the helper at call time."""
+    from scripts.qa_cover_recovery_service import (
+        assert_visible_last_good,
+        synthetic_photo,
+    )
+
+    measured = assert_visible_last_good(synthetic_photo(0))
+    assert measured["raster_size"] == (420, 250)
+    assert all(count > 100 for count in measured["matching_pixels"])
+
+
 def test_only_shared_helper_calls_pillow_image_open():
     direct = []
     for folder in CODE_DIRS:
