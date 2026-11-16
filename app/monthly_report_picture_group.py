@@ -26,7 +26,7 @@ CSS = '''
 .picture-review [role=status]{padding:.5rem 0}'''
 
 @lru_cache(maxsize=2)
-def _component(runtime):
+def _component(_runtime):
     return st.components.v2.component('report_picture_group', html=HTML, css=CSS,
         js=Path(__file__).with_suffix('.js').read_text())
 

@@ -1,5 +1,5 @@
 """Explicit publication and reuse beside the existing chart editor."""
-from dataclasses import asdict, replace
+from dataclasses import asdict
 import streamlit as st
 from app import monthly_report_org_chart_defaults as charts
 from app.monthly_report_editor import _signature

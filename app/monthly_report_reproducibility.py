@@ -19,7 +19,9 @@ import posixpath
 import re
 from zipfile import ZipFile, BadZipFile
 
-from defusedxml import ElementTree as ET
+from lxml import etree
+
+from app.monthly_report_xml_parser import parse_xml
 
 from app.monthly_report_model import (
     COVER_ASSET_KEYS, included_sections, used_asset_references,
@@ -139,7 +141,7 @@ def _relationships(package, part, names):
     if package.getinfo(relpath).file_size > MAX_XML_BYTES:
         raise ValueError("DOCX relationships exceed the reproducibility budget.")
     links = {}
-    for rel in ET.fromstring(package.read(relpath)):
+    for rel in parse_xml(package.read(relpath)):
         if rel.tag != PKGREL + "Relationship":
             continue
         rid = rel.get("Id", "")
@@ -234,7 +236,7 @@ def canonical_docx_manifest(data: bytes):
             for part in parts:
                 if package.getinfo(part).file_size > MAX_XML_BYTES:
                     raise ValueError("Word content exceeds the reproducibility budget.")
-                root = ET.fromstring(package.read(part))
+                root = parse_xml(package.read(part))
                 story = root.find(W + "body") if part == "word/document.xml" else root
                 if story is None:
                     raise ValueError("Generated Word package has no document body.")
@@ -243,7 +245,7 @@ def canonical_docx_manifest(data: bytes):
                 sha256(package.read(name)).hexdigest()
                 for name in names if name.startswith("word/media/") and not name.endswith("/")
             ))
-    except (BadZipFile, OSError, ET.ParseError) as exc:
+    except (BadZipFile, OSError, etree.XMLSyntaxError) as exc:
         raise ValueError("Generated Word package cannot be inspected safely.") from exc
     manifest = {"schema": 1, "stories": stories, "media_sha256": media}
     return {"sha256": _digest(manifest), "manifest": manifest}
