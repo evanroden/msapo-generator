@@ -141,6 +141,11 @@ def exercise(browser, name):
         close=capital.get_by_role("button",name="Close editing",exact=True)
         expect(close).to_have_count(1)
         close.click()
+        # Let the close rerun finish before the next click. A Remove issued
+        # while that rerun replaced the row buttons was dropped in one of 20
+        # WebKit runs (the receipt never changed and the script sat idle).
+        expect(close).to_have_count(0, timeout=35000)
+        settled(page, step="close imported editor", key="capital_renewal", primary=0, imported=2, contains=MARKER)
         # Remove/Undo retains only the removed imported sibling.
         capital.get_by_role("button",name="Remove capital item",exact=True).last.click()
         assert len(settled(page, step="remove imported sibling", key="capital_renewal", imported=1)["working"]["capital_renewal"]["extra"][0]["rows"]) == 1
@@ -169,6 +174,8 @@ def exercise(browser, name):
         close=capital.get_by_role("button",name="Close editing",exact=True)
         expect(close).to_have_count(1)
         close.click()
+        expect(close).to_have_count(0, timeout=35000)
+        settled(page, step="close reopened editor", key="capital_renewal", primary=0, imported=2, contains=MARKER, saved=True, revision=1)
         page.screenshot(path=str(path/"narrow-reopen.png"),full_page=True)
         page.get_by_role("button",name="Generate synthetic Word and PDF",exact=True).click()
         files={}
