@@ -14,7 +14,7 @@ from app.monthly_report_model import ReportPeriod, ReportSource, synthetic_draft
 
 
 FORMATS = ((".png", "PNG"), (".jpg", "JPEG"))
-RECOVERY = "Image structure or metadata could not be read."
+RECOVERY = "Image data is damaged or unreadable."
 FIRST = b"Inspected synthetic pump P-61; bearing temperature was 76 F."
 LAST = b"Inspected synthetic valve V-62; the isolation label remained legible."
 
@@ -50,7 +50,7 @@ def test_real_unreadable_exif_has_recoverable_image_ingest_error(profile, suffix
     with pytest.raises(ValueError, match=RECOVERY) as rejected:
         sources.ingest(profile, "bad-metadata" + suffix, raw)
     assert isinstance(rejected.value.__cause__, SyntaxError)
-    assert "Export a fresh PNG or JPEG copy" in str(rejected.value)
+    assert "Export a fresh copy" in str(rejected.value)
     assert "invalid!" not in str(rejected.value)
 
 

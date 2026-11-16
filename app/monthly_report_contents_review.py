@@ -7,8 +7,9 @@ instead of letting a cached source index appear to have been recalculated.
 import re
 from zipfile import BadZipFile
 
-from defusedxml import ElementTree as ET
-from defusedxml.common import DefusedXmlException
+from lxml import etree
+
+from app.monthly_report_xml_parser import parse_xml
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
@@ -60,9 +61,9 @@ def contents_notice_for(profile):
         if source is None:
             return ""  # The generated fallback has a current title-only list.
         with _package(source) as archive:
-            root = ET.fromstring(archive.read("word/document.xml"))
+            root = parse_xml(archive.read("word/document.xml"))
         kind = contents_kind(root)
-    except (OSError, ValueError, BadZipFile, ET.ParseError, DefusedXmlException):
+    except (OSError, ValueError, BadZipFile, etree.XMLSyntaxError):
         # Finished files must not disappear if their original becomes
         # unavailable after assembly. This does not bypass assembly's checks.
         return ("Contents verification is unavailable for these files. Check the contents "

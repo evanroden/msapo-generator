@@ -1,10 +1,11 @@
-"""Source-specific issue evidence checkboxes and on-demand PDF thumbnails.
+"""Source-specific issue evidence checkboxes with lazily paged thumbnails.
 
 All files are synthetic; no genuine monthly reports or client references are
 committed. The existing issue multiselect and its stale-edit receipt remain
 the single authoritative way to commit supporting-page associations.
 """
 from dataclasses import replace
+from base64 import b64decode
 
 import pymupdf as fitz
 from streamlit.testing.v1 import AppTest
@@ -104,13 +105,16 @@ def test_repeated_page_numbers_are_distinct_and_choices_keep_other_issues(tmp_pa
 def test_page_range_and_on_demand_preview_are_bound_to_correct_original(tmp_path, monkeypatch):
     app, (alpha, beta), originals = setup_app(tmp_path, monkeypatch)
     before = app.session_state["draft"]
-    # First render has not decoded any preview. Only explicit Preview does.
-    assert not list(tmp_path.rglob("*-preview.json"))
+    # First visit shows only its bounded first page-group, not all five pages.
+    previews = list(tmp_path.rglob("*-preview.json"))
+    assert len(previews) == 4
+    assert not any(path.name == "5-preview.json" for path in previews)
     ranges = [item for item in app.selectbox if item.label == "Pages to review"]
     assert ranges
     ranges[0].set_value(4).run()
     assert not app.exception
     assert gallery_checkbox(app, "Include alpha-equipment.pdf · page 5 as issue evidence")
+    assert list(tmp_path.rglob("5-preview.json"))
     preview_button(app, "Preview alpha-equipment.pdf · page 5").click().run()
     assert not app.exception
     assert any("alpha-equipment.pdf · page 5 · Preview only" in caption.value
@@ -135,6 +139,19 @@ def test_missing_original_keeps_selection_and_warns_without_rewriting(tmp_path, 
     assert sources.source_bytes(before.profile, beta) == originals[1]
 
 
+def test_cached_thumbnail_cannot_hide_missing_saved_original(tmp_path, monkeypatch):
+    app, (alpha, beta), originals = setup_app(tmp_path, monkeypatch)
+    before = app.session_state["draft"]
+    assert list(tmp_path.rglob("1-preview.json"))
+    sources._path(before.profile, alpha.sha256, alpha.suffix).unlink()
+    app.run()
+    assert not app.exception
+    assert any("Restore the saved original" in warning.value for warning in app.warning)
+    assert app.session_state["draft"] == before
+    assert gallery_checkbox(app, "Include alpha-equipment.pdf · page 1 as issue evidence").value
+    assert sources.source_bytes(before.profile, beta) == originals[1]
+
+
 def test_stale_gallery_checkbox_does_not_retarget_a_new_month(tmp_path, monkeypatch):
     app, (alpha, beta), _ = setup_app(tmp_path, monkeypatch)
     old = app.session_state["draft"]
@@ -148,3 +165,52 @@ def test_stale_gallery_checkbox_does_not_retarget_a_new_month(tmp_path, monkeypa
     assert not app.exception
     assert app.session_state["draft"].follow_ups[0].references == old.follow_ups[0].references
     assert app.session_state["draft"].follow_ups[1].references == old.follow_ups[1].references
+
+
+def test_gallery_thumbnails_survive_rerenders_without_changing_sources(tmp_path, monkeypatch):
+    from app import monthly_report_issue_page_gallery as gallery
+
+    rendered = []
+    original_image = gallery.st.image
+
+    def capture_image(image, *args, **kwargs):
+        if "alpha-equipment.pdf · page" in kwargs.get("caption", ""):
+            rendered.append((image, kwargs["caption"]))
+        return original_image(image, *args, **kwargs)
+
+    monkeypatch.setattr(gallery.st, "image", capture_image)
+    app, (alpha, beta), originals = setup_app(tmp_path, monkeypatch)
+    before = app.session_state["draft"]
+    first = next(uri for uri, caption in rendered if "page 1 · Selected" in caption)
+    assert first.startswith(("data:image/png;base64,", "data:image/jpeg;base64,"))
+    expected = sources.page_image(before.profile, sources.SourceContent(alpha), 1, preview=True)
+    assert b64decode(first.partition(",")[2]) == expected.data
+
+    rendered.clear()
+    preview_button(app, "Preview alpha-equipment.pdf · page 1").click().run()
+    assert not app.exception
+    assert len([uri for uri, caption in rendered if "page 1" in caption]) >= 2
+    assert all(uri.startswith(("data:image/png;base64,", "data:image/jpeg;base64,"))
+               for uri, _ in rendered)
+    assert app.session_state["draft"] == before
+    assert sources.source_bytes(before.profile, alpha) == originals[0]
+    assert sources.source_bytes(before.profile, beta) == originals[1]
+
+
+def test_unavailable_inline_preview_keeps_the_original_selection(tmp_path, monkeypatch):
+    from app import monthly_report_issue_page_gallery as gallery
+
+    def unavailable(_picture):
+        raise ValueError("preview too large")
+
+    monkeypatch.setattr(gallery, "source_thumbnail_uri", unavailable)
+    app, (alpha, beta), originals = setup_app(tmp_path, monkeypatch)
+    before = app.session_state["draft"]
+    preview_button(app, "Preview alpha-equipment.pdf · page 1").click().run()
+    assert not app.exception
+    assert any("Preview unavailable for alpha-equipment.pdf" in item.value for item in app.warning)
+    assert gallery_checkbox(app, "Include alpha-equipment.pdf · page 1 as issue evidence").value
+    assert app.session_state["draft"] == before
+    assert sources.source_bytes(before.profile, alpha) == originals[0]
+    assert sources.source_bytes(before.profile, beta) == originals[1]
+

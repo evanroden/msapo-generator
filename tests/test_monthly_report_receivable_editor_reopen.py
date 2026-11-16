@@ -14,7 +14,7 @@ def saved(monkeypatch):
     draft, content, review, edits, _ = fixture(monkeypatch)
     edits[review.rows[0].reference] = {"credit_amount": "40", "balance": "360"}
     edits[review.rows[2].reference] = {"due_date": "2026-10-07"}
-    report, block = prepare_review(draft, content, 1, as_of="2026-10-28",
+    report, block = prepare_review(draft, content, 1, as_of="2026-10-31",
                                    edited=edits, source_kind="vendor_invoice", confirmed=True)
     return draft_from_dict(asdict(report)), content, review, edits
 
@@ -29,7 +29,7 @@ def test_saved_invoice_corrections_restore_without_changing_original_cells(monke
     report = restored.draft
     receipt = saved_review_for_editor(report, report.blocks[0], content, 1, review)
     assert receipt is not None
-    assert (receipt["as_of"], receipt["source_kind"]) == ("2026-10-28", "vendor_invoice")
+    assert (receipt["as_of"], receipt["source_kind"]) == ("2026-10-31", "vendor_invoice")
     rows = reviewed_editor_defaults(review, receipt)
     assert rows[0]["credit_amount"] == "40" and rows[0]["balance"] == "360"
     assert rows[2]["due_date"] == "2026-10-07"
@@ -86,7 +86,7 @@ def test_native_form_reloads_asof_and_row_values_but_new_month_resets(monkeypatc
     app.session_state["synthetic_ar_evidence"] = (content,)
     app.run()
     assert not app.exception
-    assert next(item for item in app.text_input if item.label.startswith("Aging as of")).value == "2026-10-28"
+    assert next(item for item in app.text_input if item.label.startswith("Aging as of")).value == "2026-10-31"
     assert next(item for item in app.selectbox if item.label == "Exact source category").value == "vendor_invoice"
     assert captured[-1][0][0]["balance"] == "360"
     assert captured[-1][0][2]["due_date"] == "2026-10-07"
@@ -98,7 +98,7 @@ def test_native_form_reloads_asof_and_row_values_but_new_month_resets(monkeypatc
     app2.session_state["synthetic_ar_evidence"] = (content,)
     app2.run()
     assert not app2.exception
-    assert next(item for item in app2.text_input if item.label.startswith("Aging as of")).value == ""
+    assert next(item for item in app2.text_input if item.label.startswith("Aging as of")).value == "2026-11-30"
     assert captured[-1][0][0]["balance"] == "350"
     assert captured[-1][1] != old_key
     assert app2.warning

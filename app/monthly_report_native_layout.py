@@ -306,12 +306,14 @@ def _remove_unapproved_header_images(part, approved_digests, approved_occurrence
     """Drop only image-backed old-client header/footer art on a fresh master.
 
     Pure native rules/rectangles and Word geometry are left intact; approved
-    current ENFRA logo bytes and explicitly preserved native occurrences remain.
+    current ENFRA logo bytes, ENFRA's own verified header furniture and
+    explicitly preserved native occurrences remain.
     An approved native occurrence does not authorize another use of equal bytes.
     All other image relationships are facts about the imported source, even when
     PNG metadata is not visible on page.
     The package sanitizer prunes dangling image parts after saving.
     """
+    from app.monthly_report_static_branding import is_company_artwork_blob
     vml = "{urn:schemas-microsoft-com:vml}imagedata"
     for picture in list(part.element.iter()):
         if picture.tag not in (qn("w:drawing"), qn("w:pict")):
@@ -329,7 +331,8 @@ def _remove_unapproved_header_images(part, approved_digests, approved_occurrence
                 trusted = False
                 break
             if (node not in approved_occurrences
-                    and hashlib.sha256(rel.target_part.blob).hexdigest() not in approved_digests):
+                    and hashlib.sha256(rel.target_part.blob).hexdigest() not in approved_digests
+                    and not is_company_artwork_blob(rel.target_part.blob)):
                 trusted = False
                 break
         if not trusted and picture.getparent() is not None:
@@ -1220,7 +1223,15 @@ def _build_verified_native_docx(draft, source_path, *, asset_loader=None, sectio
                                  master=False, operation):
     source_view, native_art = operation.view, operation.native_art
     if source_view is None:
-        return _build_native_docx(draft, source_path, asset_loader=asset_loader, section_key=section_key, master=master)
+        original_path = Path(source_path)
+        if master:
+            from app.monthly_report_designs import is_master, render_source_for
+            # Direct synthetic/native callers may supply an uninstalled source.
+            # Only explicitly pinned installed masters select a normalized copy.
+            if is_master(draft.profile):
+                source_path = render_source_for(draft.profile)
+        return _build_native_docx(draft, source_path, asset_loader=asset_loader,
+                                  section_key=section_key, master=master, original_path=original_path)
     if master:
         raise NativeLayoutError("Experimental native source views do not support master or foreign-branding reuse.")
     from app.monthly_report_operational_source import rendition_file
@@ -1228,7 +1239,7 @@ def _build_verified_native_docx(draft, source_path, *, asset_loader=None, sectio
     emission_proofs = []
     if native_art is not None:
         from app.monthly_report_native_art_scope import expected_header_scope, source_emission_proof
-        header_scope = expected_header_scope(source_view, section_key)
+        header_scope = expected_header_scope(source_view, section_key, omitted_sections=draft.omitted_sections)
     with rendition_file(source_view) as derivative:
         result = _build_native_docx(draft, derivative, asset_loader=asset_loader, section_key=section_key,
                                     master=master, source_view=source_view, original_path=Path(source_path),
@@ -1245,6 +1256,34 @@ def _build_verified_native_docx(draft, source_path, *, asset_loader=None, sectio
         verify_native_art_output(result, native_art, source_scope=header_scope,
                                  emission_proof=emission_proofs[0])
     return result
+
+
+def _master_shapes_for_rendition(inspection, *, original_path=None):
+    """Match detached master tables to the *original* immutable pinned identity.
+
+    A master is seeded from the original report. A normalized working copy has
+    a different package hash even when every native table is untouched. Match
+    complete geometry and safe schema before mapping physical cells to original
+    references; never infer a table by ordinal alone.
+    """
+    from app.monthly_report_master_tables import from_inspection
+
+    shapes = from_inspection(inspection)
+    if original_path is None:
+        return shapes
+    originals = from_inspection(inspect_docx(Path(original_path)))
+
+    def identity(shape):
+        return (shape.position, shape.slot, shape.columns, shape.indices,
+                shape.physical_width, shape.continuation)
+
+    if tuple(map(identity, originals)) != tuple(map(identity, shapes)):
+        raise NativeLayoutError(
+            "The compatible master working copy changed native table geometry "
+            "or safe column schema. The original was preserved; inspect the master.")
+    from dataclasses import replace
+    return tuple(replace(working, reference=original.reference)
+                 for working, original in zip(shapes, originals))
 
 
 def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=None, master=False,
@@ -1283,8 +1322,9 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             "A screenshot or replacement asset cannot approve a hidden alternate representation. "
             "Correct the affected source drawing before building this native report.")
     if master:
-        from app.monthly_report_master_tables import from_inspection
-        master_shapes = from_inspection(inspection)
+        original_master = Path(original_path) if Path(original_path) != source_path else None
+        master_shapes = _master_shapes_for_rendition(
+            inspection, original_path=original_master)
         master_by_position = {shape.position: shape for shape in master_shapes}
     else:
         master_by_position = {}
@@ -2073,7 +2113,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
         if block.source == "Omit" or block.key not in specs or block.key in unchanged:
             continue
         sec, spec = specs[block.key]
-        if section_key and sec != section_key:
+        if (section_key and sec != section_key) or sec in draft.omitted_sections:
             continue
         if not any((block.text, block.rows, block.extra_tables, block.asset_hashes, block.org_nodes)):
             continue
@@ -2201,6 +2241,9 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                 _table(anchor, columns, rows, physical_indices=shape.indices if shape else (),
                        continuation=bool(shape and shape.continuation),
                        keep_all_rows_intact=(block.key == "contact_matrix"), template=prototype)
+                if master and shape and block.key == "work_orders" and rows:
+                    from app.monthly_report_rolling_grid_style import fit_narrow_rolling_grid
+                    fit_narrow_rolling_grid(anchor, columns)
                 page_plan.emitted(anchor, kind="table")
                 if block.key == "contact_matrix":
                     organization_contact_tables.append(anchor)
@@ -2553,6 +2596,8 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                 target.addprevious(paragraph)
     # Occurrence-local transformation after #754-era native output assembly
     # and scorecard seam processing. Preserve original shared image parts.
+    from app.monthly_report_native_section_inclusion import apply_native_section_choices
+    apply_native_section_choices(document, draft, original, headings, section_by_pos, page_plan)
     from app.monthly_report_divider_monochrome import monochrome_divider_photos
     monochrome_divider_photos(document, divider_photo_roots)
     from app.monthly_report_divider_numerals import fit_proposals_numeral
@@ -2568,6 +2613,38 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     mark_native_section_headings(document, original, headings, section_by_pos, navigable)
     if source_region_observer is not None:
         source_region_observer(body, page_plan)
+    # Issue page links belong to the issue, not the independent Report pages
+    # pipeline. Emit them inside the native Issues section only, after all
+    # template/section transformations have settled. No source is approved here.
+    if (section_key in (None, "issues")
+            and any(section.key == "issues" and section.included for section in draft.sections)):
+        from app.monthly_report_issue_evidence_render import selected_issue_pages, append_issue_evidence
+        if selected_issue_pages(draft):
+            anchor = section_ends.get("issues")
+            if anchor is None or anchor.getparent() is not body:
+                # Reflow can discard the original final Issues paragraph. Use
+                # the source-owned physical region map after cleanup; never
+                # append issue evidence after a different logical section.
+                positions = [p for p, sec in section_by_pos.items()
+                             if sec == "issues" and original[p - 1].tag != qn("w:sectPr")]
+                regions = {page_plan.owner.get(original[p - 1]) for p in positions}
+                regions.discard(None)
+                anchor = None
+                if regions:
+                    last_region = max(regions)
+                    anchor = next((node for node in body
+                                   if (region := page_plan.owner.get(node)) is not None
+                                   and region > last_region), None)
+                    # Only an Issues section that was last in the source may
+                    # append before the document's terminal section property.
+                    if anchor is None and not any(
+                            section_by_pos.get(p) != "issues"
+                            for p in range(max(positions) + 1, len(original) + 1)
+                            if original[p - 1].tag != qn("w:sectPr")):
+                        anchor = body.find(qn("w:sectPr"))
+            if anchor is None or anchor.getparent() is not body:
+                raise NativeLayoutError("The native Issues section has no safe evidence anchor. Review the selected design.")
+            append_issue_evidence(document, draft, before=anchor)
     result = BytesIO()
     document.save(result)
     # Prune image relationships which became unused after old payload removal.

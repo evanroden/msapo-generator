@@ -87,6 +87,26 @@ def test_live_preview_mode_has_no_duplicate_picture_or_table_previews():
     assert at.session_state["blocks"] == at.session_state["original"]
 
 
+def test_live_preview_mode_shows_native_chart_positions_as_literal_text():
+    from app.monthly_report_ui_text import literal
+
+    script = SCRIPT.replace(
+        'st.session_state.setdefault("original", original)',
+        '''from app.monthly_report_model import OrgChartNode
+original["org_chart"] = replace(
+    original["org_chart"], asset_hashes=(), extra_tables=(),
+    org_nodes=(OrgChartNode("manager", "Synthetic *Manager*", "Lead"), OrgChartNode("vacant")),
+)
+st.session_state.setdefault("original", original)''',
+    ).replace('"test", assets, _field, editor)', '"test", assets, _field, editor, show_preview=False)')
+    at = AppTest.from_string(script).run()
+    assert not at.exception
+    assert not at.get("image") and not at.dataframe
+    captions = {caption.value for caption in at.caption}
+    assert {literal("Synthetic *Manager* · Lead"), "Position details not entered"} <= captions
+    assert at.session_state["blocks"] == at.session_state["original"]
+
+
 def test_after_hours_change_preserves_other_three_parts_and_provenance():
     at = app()
     click(at, "Edit after-hours outage procedure")

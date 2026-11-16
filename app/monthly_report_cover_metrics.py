@@ -14,6 +14,8 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 from lxml import etree as E
 
+from app.monthly_report_xml_parser import parse_xml
+
 NS = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
       'wp': 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing',
       'wp14': 'http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing',
@@ -141,7 +143,7 @@ def apply_cover_metrics(root, records):
 def cover_package(raw):
     """Keep first-section semantics and dependencies while dropping later pages."""
     with ZipFile(BytesIO(raw)) as archive:
-        root = E.fromstring(archive.read('word/document.xml'), E.XMLParser(resolve_entities=False, no_network=True))
+        root = parse_xml(archive.read('word/document.xml'))
         nodes = _cover(root)
         if not nodes:
             raise ValueError('No bounded first cover section was found.')
@@ -220,7 +222,7 @@ def _matched_lines(evidence, texts):
 
 def _patch_package(raw, records):
     with ZipFile(BytesIO(raw)) as archive:
-        root = E.fromstring(archive.read('word/document.xml'), E.XMLParser(resolve_entities=False, no_network=True))
+        root = parse_xml(archive.read('word/document.xml'))
         if records and not apply_cover_metrics(root, records):
             raise ValueError('Cover metrics no longer match their source.')
         result = BytesIO()
@@ -248,7 +250,7 @@ def calibrate_cover_metrics(source, companion, profile):
     try:
         raw = cover_package(passive_docx(source))
         with ZipFile(BytesIO(raw)) as archive:
-            items = candidates(E.fromstring(archive.read('word/document.xml')))
+            items = candidates(parse_xml(archive.read('word/document.xml')))
         # Keep one calibration bounded and reject overlapping/ambiguous boxes.
         if len(items) != 1:
             return records, audit
