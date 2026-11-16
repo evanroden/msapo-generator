@@ -19,7 +19,7 @@ from app.monthly_report_editor import _grid, _signature, _typed_table
 from app.monthly_report_model import (ReportDraft, ResolvedBlock,
                                      layout_blocks, profile_sections, picture_replacement_references)
 from app.monthly_report_setup import MONTHLY_BLOCKS, merge_blocks, month_selector, new_month_draft, suggested_period
-from app.monthly_report_section_help import section_help, editor_section_guidance, editor_section_heading_help
+from app.monthly_report_section_help import editor_section_guidance, editor_section_heading_help
 
 # UI location is separate from next-month clearing: issues and renewal plans carry forward.
 MONTHLY_EDIT_KEYS = MONTHLY_BLOCKS | {"equipment_issues", "utility_analysis", "capital_renewal", "end_of_life", "proposals", "rfi_matrix", "mbcx_status"}
@@ -1965,7 +1965,6 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 from html import escape
                 from hashlib import sha256
                 from app.monthly_report_source_detail_navigation import render_link as render_source_detail_link
-                target = "site" if check.code == "source_facility" else "date"
                 with st.container(key="monthly_source_warning_" + source.id + "_" + check.code):
                     st.markdown('<span class="enfra-source-warning" data-source-id="' +
                         escape(source.id, quote=True) + '" data-report-identity="' +

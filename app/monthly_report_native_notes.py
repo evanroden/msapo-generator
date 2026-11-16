@@ -5,6 +5,8 @@ Unknown markup/formatting retains the author's line, even if that duplicates a n
 """
 from collections import Counter
 from lxml import etree
+
+from app.monthly_report_xml_parser import parse_xml
 from docx.oxml.ns import qn
 
 _PPR = tuple(qn('w:' + x) for x in (
@@ -171,7 +173,7 @@ def note_proofs(document, original, inspection, section_by_pos, default_slots):
                  if not rel.is_external and rel.reltype.endswith('/' + kind + 's')]
         if len(parts) != 1:
             continue
-        root = etree.fromstring(parts[0].blob)
+        root = parse_xml(parts[0].blob)
         notes = [n for n in root if n.tag == qn('w:' + kind) and n.get(qn('w:id')) == identity]
         if len(notes) != 1 or len(notes[0]) != 1:
             continue

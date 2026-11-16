@@ -6,7 +6,6 @@ original source assets are deliberately left alone.
 """
 from io import BytesIO
 
-from docx.oxml.ns import qn
 from PIL import Image, ImageOps, ImageChops, UnidentifiedImageError
 
 from app.ocr import _MAX_PIXELS_PER_FRAME
