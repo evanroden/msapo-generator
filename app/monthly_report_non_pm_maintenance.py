@@ -132,13 +132,26 @@ def project_completed_non_pm(
     if {key for key, _ in review.allowed_sites} != set(allowed):
         raise ValueError("Maintenance review belongs to a different site profile.")
     corrections = corrections or {}
-    rules = site_performer_rules or {}
+    rules = {} if site_performer_rules is None else site_performer_rules
+    if not isinstance(rules, Mapping):
+        raise ValueError("Site performer rules must map sites to recorded values.")
     if any(site not in allowed for site in rules):
         raise ValueError("Unknown site-specific performer rule.")
     if any(not isinstance(items, Mapping) or any(
         not isinstance(key, str) or value not in ("ENFRA onsite", "Vendor/leased")
         for key, value in items.items()) for items in rules.values()):
         raise ValueError("Site rules must explicitly classify recorded performer values.")
+    normalized_rules = {}
+    for site, items in rules.items():
+        aliases = {}
+        for source_value, classification in items.items():
+            alias = _norm(source_value)
+            if not alias:
+                raise ValueError("Site performer rules require a nonempty recorded value.")
+            if alias in aliases and aliases[alias] != classification:
+                raise ValueError("Site performer rules conflict for the same recorded value.")
+            aliases[alias] = classification
+        normalized_rules[site] = aliases
     if any(key not in {row.key for row in review.rows}
            or not isinstance(changes, Mapping)
            or any(name not in ("area", "task", "tag", "performer")
@@ -177,9 +190,8 @@ def project_completed_non_pm(
                 "ENFRA onsite", "Vendor/leased", "Unknown"):
             raise ValueError("Choose ENFRA onsite, Vendor/leased or Unknown explicitly.")
         # Site policies may clarify source-specific *organization codes*.
-        if "performer" not in changed and row.site in rules:
-            aliases = {_norm(k): v for k, v in rules[row.site].items()}
-            rule_performer = aliases.get(_norm(performer_raw))
+        if "performer" not in changed and performer_raw and row.site in normalized_rules:
+            rule_performer = normalized_rules[row.site].get(_norm(performer_raw))
             if rule_performer:
                 performer = rule_performer
                 performer_basis = "site-rule"

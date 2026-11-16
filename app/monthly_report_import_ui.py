@@ -100,6 +100,15 @@ def render_import(state: library.LibraryState, field, browser_timezone: str = ""
         document_key = prefix + "_" + inspection.sha256[:16]
         mappings = st.session_state.setdefault(prefix + "_mappings", {})
         st.caption(f"{len(inspection.items)} items · {inspection.word_sections} Word sections. Word section counts do not determine report membership or layout.")
+        from app.monthly_report_import_content_types import (
+            content_type_summary, picture_review_caption, unsupported_content_guidance,
+        )
+        content_types = content_type_summary(inspection.items)
+        if content_types:
+            st.caption(content_types)
+        unsupported_note = unsupported_content_guidance(inspection.items)
+        if unsupported_note:
+            st.caption(unsupported_note)
         for notice in inspection.notices:
             st.warning(notice)
         if inspection.title_candidates:
@@ -118,6 +127,8 @@ def render_import(state: library.LibraryState, field, browser_timezone: str = ""
             item_id = st.selectbox("Item to inspect", list(by_id), format_func=lambda key: by_id[key].label, key=select_key)
             item = by_id[item_id]
             st.caption(content_kind_description(item))
+            if item.kind == "image":
+                st.caption(picture_review_caption(item))
             st.caption(f"{item.part} · position {item.position} · Word section {item.word_section} · suggested destination: {item.suggested_slot or 'unmatched'}")
             if item.note:
                 st.info(item.note)

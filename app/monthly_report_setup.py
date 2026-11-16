@@ -11,7 +11,7 @@ import re
 from app.monthly_report_checks import stale_period_mentions
 from app.monthly_report_import import DocxInspection, ImportMapping, _heading
 from app.monthly_report_model import BlockSpec, ReportDraft, ReportPeriod, ResolvedBlock, default_sections, known_sections, layout_blocks
-from app.monthly_report_asset_review import asset_fingerprint, normalize_asset_reviews, pending_asset_indexes, preserve_asset_reviews
+from app.monthly_report_asset_review import asset_fingerprint, normalize_asset_reviews as normalize_asset_reviews, pending_asset_indexes, preserve_asset_reviews
 
 
 MONTHLY_BLOCKS = frozenset({"work_orders", "activity_summary", "improvements", "mbcx_report", "service_calls",
@@ -471,7 +471,9 @@ def new_month_draft(draft: ReportDraft, period: ReportPeriod) -> ReportDraft:
     follow_ups = seed_followups(draft)
     carried_keys = {"equipment_issues", "proposals"}
     from app.monthly_report_training import new_month_training
+    from app.monthly_report_subcontractor_standing import rollover_subcontractor_block
     blocks = tuple(
+        rollover_subcontractor_block(b, period) if b.key == "subcontractor_matrix" else
         new_month_training(b) if b.key == "training_summary" else
         _carry_period_content(b, draft.period)
         if b.key == "equipment_issues" and (b.ai_written or b.ai_paragraphs) else

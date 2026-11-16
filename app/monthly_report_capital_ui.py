@@ -80,8 +80,7 @@ def reviewed_capital_items(draft, block, master):
         if not row[1].strip() or not row[2].strip():
             raise ValueError("Every approved capital entry needs a priority and recommendation.")
     # Identity by content first: a row equal to an approved occurrence keeps that
-    # occurrence even after rows of one facility were reordered. Position is only
-    # the fallback for edited text, and only while the facility sequence holds.
+    # occurrence even after rows of one facility were reordered.
     sources = [None] * len(block.rows)
     for position, (row, site) in enumerate(zip(block.rows, sites)):
         exact = next((occ for occ in unused if occ.site_key == site.key and
@@ -90,16 +89,23 @@ def reviewed_capital_items(draft, block, master):
             sources[position] = exact
             unused.remove(exact)
     if same_order:
-        for position, site in enumerate(sites):
-            fallback = occurrences[position]
-            if sources[position] is None and fallback in unused and fallback.site_key == site.key:
-                sources[position] = fallback
-                unused.remove(fallback)
+        for site in profile.facilities:
+            pending = [position for position, row_site in enumerate(sites)
+                       if row_site.key == site.key and sources[position] is None]
+            candidates = [occ for occ in unused if occ.site_key == site.key]
+            if pending and candidates:
+                if len(pending) != 1 or len(candidates) != 1:
+                    raise ValueError(
+                        "Several capital rows changed at the same site; their IDs cannot be "
+                        "verified. Restore the approved rows and review one change at a time.")
+                sources[pending[0]] = candidates[0]
+    consumed_details = set()
     for position, (row, site) in enumerate(zip(block.rows, sites)):
         priority, recommendation = row[1].strip(), row[2].strip()
         source = sources[position]
         if source is not None:
             matched.add((site.key, source.item.key))
+            consumed_details.add((row[0], source.item.key))
         old = source.item if source else None
         has_details = old is not None and any(
             table.rows and table.columns == DETAILS for table in block.extra_tables)
@@ -129,6 +135,10 @@ def reviewed_capital_items(draft, block, master):
             raise ValueError("A capital row identity conflicts across selected sites.")
         proposed[candidate.key] = candidate
 
+    if detail_rows.keys() - consumed_details:
+        raise ValueError(
+            "Capital details have no verified main-table row. Review their facility and "
+            "Capital ID before approval; no detail fields were discarded.")
     if any(not occ.item.site_keys and (occ.site_key, occ.item.key) not in matched
            for occ in occurrences):
         raise ValueError("A contract-wide capital entry cannot be removed from one report.")

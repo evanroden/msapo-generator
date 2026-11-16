@@ -13,6 +13,8 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches
 from lxml import etree
+
+from app.monthly_report_xml_parser import parse_xml
 import pymupdf as fitz
 
 PREFIX = "mr_contents_"
@@ -73,7 +75,7 @@ def synchronize(docx, pdf, sections):
     """
     with ZipFile(BytesIO(docx)) as archive:
         xml = archive.read("word/document.xml")
-        root = etree.fromstring(xml, etree.XMLParser(resolve_entities=False, no_network=True))
+        root = parse_xml(xml)
         generated = [field for field in root.iter(qn("w:fldSimple"))
                      if field.get(qn("w:instr"), "").strip().startswith("PAGEREF " + PREFIX)]
         if not generated:
@@ -146,8 +148,7 @@ def only_generated_cache_changed(before, after):
                 return False
             if any(old.read(name) != new.read(name) for name in old.namelist() if name != "word/document.xml"):
                 return False
-            roots = [etree.fromstring(archive.read("word/document.xml"),
-                                     etree.XMLParser(resolve_entities=False, no_network=True)) for archive in (old, new)]
+            roots = [parse_xml(archive.read("word/document.xml")) for archive in (old, new)]
             values = []
             for root in roots:
                 cached = []
