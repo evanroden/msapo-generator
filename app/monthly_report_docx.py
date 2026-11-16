@@ -469,6 +469,14 @@ def _fit_imported_table_columns(table, columns, rows):
     Equal fixed widths split long values mid-word in the PDF, so a restored
     value can be present in the Word file yet unsearchable in the actual PDF.
     Widths stay within the table's existing total so the page layout is kept.
+
+    A hyphenated token needs more than its own length: it usually shares its
+    line with other words, and the PDF renderer may break after a hyphen when
+    the line runs out mid-token (e.g. "AHU-TEST-04" printed as "AHU-" /
+    "TEST-04", unsearchable). So a column holding a hyphenated token is sized
+    for that token plus the longest other word that can share its line.
+    Space-separated words break cleanly between words and stay searchable
+    after whitespace normalisation, so they need no extra room.
     """
     grid = table._tbl.find(qn("w:tblGrid"))
     if grid is None or not columns:
@@ -482,8 +490,15 @@ def _fit_imported_table_columns(table, columns, rows):
         for values in (columns, *rows):
             if index >= len(values) or values[index] is None:
                 continue
-            for token in str(values[index]).split():
-                longest = max(longest, len(token))
+            words = str(values[index]).split()
+            if not words:
+                continue
+            candidate = max(map(len, words))
+            for position, word in enumerate(words):
+                if "-" in word and len(words) > 1:
+                    line_mate = max(len(other) for offset, other in enumerate(words) if offset != position)
+                    candidate = max(candidate, len(word) + 1 + line_mate)
+            longest = max(longest, candidate)
         weights.append(longest)
     widths = _distribute_width(total, weights, minimum=900)
     table.autofit = False
