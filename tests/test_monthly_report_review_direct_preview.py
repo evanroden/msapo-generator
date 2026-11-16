@@ -6,6 +6,7 @@ installed client-master and native Word/PDF parity remain separate gates.
 from dataclasses import replace
 
 import pymupdf as fitz
+import pytest
 from streamlit.testing.v1 import AppTest
 
 from app import monthly_report_review_preview_ui as review_ui
@@ -242,3 +243,58 @@ def test_full_guided_review_preview_uses_current_draft_after_all_editors(
         assert any('Current draft · page 1 of 1' in c.value for c in app.caption)
     finally:
         cache.close()
+
+
+@pytest.mark.parametrize("message", [
+    "Another report is being prepared. Your saved work is unchanged; retry generation shortly.",
+    "Preview is queued while the service is busy. Your edits are still here.",
+])
+def test_expected_render_busy_is_actionable_and_retry_preserves_draft(monkeypatch, tmp_path, message):
+    from app.monthly_report_render_jobs import RenderBusy
+    app, store = setup(monkeypatch, tmp_path)
+    try:
+        original = app.session_state['draft']
+        def busy(draft, loader):
+            raise RenderBusy(message)
+        monkeypatch.setattr(review_ui, 'preview_report', busy)
+        click_preview(app)
+        assert [w.value for w in app.warning] == [message]
+        assert not preview_state(app)
+        assert app.session_state['draft'] == original
+        assert store.stats()['pdf_entries'] == 0
+        monkeypatch.setattr(review_ui, 'preview_report', synthetic_preview)
+        click_preview(app)
+        assert preview_state(app)
+        assert app.session_state['draft'] == original
+    finally:
+        store.close()
+
+
+def test_real_busy_work_slot_keeps_its_reason_without_starting_conversion(monkeypatch, tmp_path):
+    from app import monthly_report_render_jobs as jobs
+    app, store = setup(monkeypatch, tmp_path)
+    original = app.session_state['draft']
+    jobs._WORK_SLOT.acquire()
+    try:
+        click_preview(app)
+        assert any('Another report is being prepared' in w.value for w in app.warning)
+        assert not preview_state(app)
+        assert app.session_state['draft'] == original
+        assert store.stats()['pdf_entries'] == 0
+    finally:
+        jobs._WORK_SLOT.release()
+        store.close()
+
+
+def test_unexpected_render_failure_remains_generic(monkeypatch, tmp_path):
+    app, store = setup(monkeypatch, tmp_path)
+    try:
+        def unexpected(draft, loader):
+            raise RuntimeError('Synthetic private internal diagnostic')
+        monkeypatch.setattr(review_ui, 'preview_report', unexpected)
+        click_preview(app)
+        assert [w.value for w in app.warning] == [
+            'The draft preview could not finish. Your edits are unchanged; retry when ready.']
+        assert not preview_state(app)
+    finally:
+        store.close()

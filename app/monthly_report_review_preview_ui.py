@@ -14,6 +14,7 @@ import streamlit as st
 from app import monthly_report_library as library
 from app.monthly_report_model import included_sections
 from app.monthly_report_preview import preview_report
+from app.monthly_report_render_jobs import RenderBusy
 from app.monthly_report_preview_store import STORE, PreviewTicket
 from app.monthly_report_source_view_runtime import preview_fingerprint
 
@@ -102,7 +103,7 @@ def render_review_preview(draft, assets, prefix):
                 if preview.fingerprint != identity:
                     raise ValueError("The report changed while its draft preview was being prepared. Retry with the current version.")
                 ticket = STORE.put(owner, preview)
-        except (ValueError, OSError) as exc:
+        except (ValueError, OSError, RenderBusy) as exc:
             st.warning(str(exc))
             st.caption("The report is unchanged. Correct the named issue or retry the draft preview.")
         except Exception:
