@@ -364,3 +364,48 @@ def test_receipts_from_other_report_or_month_are_retired_without_touching_row_un
     assert state["report_guided_new_month_directory_undo_unavailable"] == "unrelated"
     undo.retire_inactive_directory_undo_receipts(state, active_key)
     assert state[active_key] is receipt
+
+
+@pytest.mark.parametrize("delivery", ["queued-card", "same-click-field"])
+def test_pending_card_edit_refuses_undo_before_widget_state_is_cleared(
+    scenario, delivery,
+):
+    _, _, before, incoming = scenario
+    applied = directory.apply_contacts(before, incoming, keep_report_rows=True)
+    receipt = undo.capture_directory_apply(before, applied, len(incoming.rows))
+    original = contacts(applied)
+    prefix = "report_guided_synthetic_contact_input"
+    binding = prefix + "_contacts_contact_matrix_scope_compact_editor_key"
+    editor = prefix + "_contacts_contact_matrix_scope_compact_identity"
+    columns = ("Facility", "Role", "Name", "Phone", "Email")
+    tables = (ReportTable(columns, original.rows),)
+    changed_row = (*original.rows[0][:3], "202-555-0126", *original.rows[0][4:])
+    revised = (replace(tables[0], rows=(changed_row, *original.rows[1:])),)
+    field_key = editor + "_field_3"
+    record = {"tables": tables, "fields": ((field_key, original.rows[0][3]),)}
+    if delivery == "queued-card":
+        record["pending"] = {"expected": tables, "corrected": revised,
+                             "result": revised, "action": "edit", "active": (0, 0)}
+    session = {binding: editor, editor: record}
+    if delivery == "same-click-field":
+        session[field_key] = changed_row[3]
+    assert undo.pending_contact_editor_input(session, prefix)
+    assert not undo.pending_contact_editor_input(session, "report_guided_other_month")
+    with pytest.raises(ValueError, match="newer contact or note edit is pending"):
+        undo.undo_directory_apply(
+            applied, receipt, pending_contact_input=undo.pending_contact_editor_input(
+                session, prefix))
+    assert contacts(applied) == original
+    assert session[editor] is record  # Refusal must not consume the queued edit.
+    assert undo.UNDO_MARKER not in original.references
+
+
+def test_delivered_note_blocks_undo_until_full_render_reconciles_it(scenario):
+    _, _, before, incoming = scenario
+    applied = directory.apply_contacts(before, incoming)
+    receipt = undo.capture_directory_apply(before, applied, len(incoming.rows))
+    with pytest.raises(ValueError, match="newer contact or note edit is pending"):
+        undo.undo_directory_apply(applied, receipt, pending_contact_input=True)
+    assert contacts(applied).rows == contacts(directory.apply_contacts(
+        before, incoming)).rows
+    assert undo.UNDO_MARKER not in contacts(applied).references
