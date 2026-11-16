@@ -127,6 +127,13 @@ def test_guided_undo_keeps_contact_input_delivered_on_the_undo_click(
     current = current_draft(app, profile.key)
     assert len(next(b for b in current.blocks if b.key == "contact_matrix").rows) == 3
 
+    # A summary row must be opened first: this mounts the same compact
+    # contact-card binding that receives a native same-click correction.
+    actions = [button for button in app.button if button.label == "Edit contact"]
+    assert len(actions) == 3
+    actions[0].click().run()
+    assert not app.exception
+
     state = app.session_state.filtered_state
     draft_key = next(k for k, value in state.items()
                      if isinstance(value, ReportDraft) and value.profile.key == profile.key)
@@ -136,6 +143,7 @@ def test_guided_undo_keeps_contact_input_delivered_on_the_undo_click(
                    and k.endswith("_compact_editor_key"))
     editor_key = state[binding]
     record = dict(state[editor_key])
+    assert record["active"] == (0, 0)
     tables = record["tables"]
     first_row = tables[0].rows[0]
     changed = (*first_row[:3], "202-555-0148", *first_row[4:])
