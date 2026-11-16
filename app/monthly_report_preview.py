@@ -73,7 +73,7 @@ _REVIEW_CODES = {
 
 
 def preview_report(draft, asset_loader=None, *, source_view=None):
-    with monthly_render_jobs.work_slot(preview=True):
+    with monthly_render_jobs.work_slot(preview=True, review=True, wait_seconds=10):
         return _preview_report(draft, asset_loader, source_view=source_view)
 
 
