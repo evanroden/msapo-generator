@@ -374,3 +374,36 @@ def test_multiline_header_before_site_column_is_held(ingest):
     assert SAFE in result.text and "Repaired foreign pump" not in result.text
     assert "site-specific" in structured.reader_notices((item,), "activity_summary")[0]
     assert structured.reader_sources((item,), "activity_summary") == ()
+
+
+@pytest.mark.parametrize("title_bands", [1, 2])
+@pytest.mark.parametrize("site_last", [False, True])
+def test_merged_title_bands_do_not_hide_site_header_or_replay_raw_rows(ingest, title_bands, site_last):
+    doc = Document()
+    doc.add_paragraph(SAFE)
+    table = doc.add_table(rows=title_bands + 1, cols=3)
+    for row in table.rows[:title_bands]:
+        row.cells[0].merge(row.cells[-1]).text = "Work Order Status"
+    headers = ("Work Order", "Status", "Site") if site_last else ("Site", "Work Order", "Status")
+    values = ("000001", "Open", "Foreign South") if site_last else ("Foreign South", "000001", "Open")
+    for cell, value in zip(table.rows[-1].cells, headers):
+        cell.text = value
+    for cell, value in zip(table.add_row().cells, values):
+        cell.text = value
+    stream = BytesIO()
+    doc.save(stream)
+    raw = stream.getvalue()
+    item, _ = sources.ingest(PROFILE, "synthetic-title-band.docx", raw)
+    before = asdict(item)
+    manual = ResolvedBlock("activity_summary", "This month", text=MANUAL)
+    result = structured.native_update((item,), "activity_summary", manual)
+    assert result.text == MANUAL + "\n\n" + SAFE
+    assert "000001" not in result.text and "Open" not in result.text
+    assert structured.reader_sources((item,), "activity_summary") == ()
+    assert "site-specific" in structured.reader_notices((item,), "activity_summary")[0]
+    assert asdict(item) == before and sources.source_bytes(PROFILE, item.source) == raw
+
+
+def test_merged_title_and_header_without_data_do_not_create_site_hold(ingest):
+    item = content("Work Order Status\t\t\nSite\tWork Order\tStatus")
+    assert not structured.reader_notices((item,), "activity_summary")
