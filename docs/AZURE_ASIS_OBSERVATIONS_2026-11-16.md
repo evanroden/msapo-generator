@@ -5,7 +5,7 @@
 **Read:** 16 Nov 2026 20:30–21:05 UTC and 17 Nov 02:40–02:50 UTC, in the owner's signed-in Azure Cloud Shell, with the owner's own access: Contributor on one resource group and secrets officer on its vault.
 **Refs:** #270, #877.
 
-This is the first independent read of the existing Azure footprint. It replaces "unverified" and "unknown" with an observed state for the facts listed here in the [reconciliation](azure/ACA_APP_SERVICE_RECONCILIATION_2026-11-12.md), the [readiness delta](azure/ACA_ASIS_APP_SERVICE_READINESS_DELTA_20261112.md) and the [identity boundaries](azure/IDENTITY_SECRETS_AI_BOUNDARIES_2026-11-12.md). It does not change the App Service decision of record in the [migration manifest](azure/MIGRATION_MANIFEST.md), and it authorizes nothing.
+This is the first independent read of the existing Azure footprint. It replaces "unverified" and "unknown" with an observed state for the facts listed here in the [reconciliation](azure/ACA_APP_SERVICE_RECONCILIATION_2026-11-12.md), the [readiness delta](azure/ACA_ASIS_APP_SERVICE_READINESS_DELTA_20261112.md) and the [identity boundaries](azure/IDENTITY_SECRETS_AI_BOUNDARIES_2026-11-12.md). It authorizes nothing. **17 Nov 2026:** the owner has since decided to finish the move on these Container Apps instead of App Service and to keep this repository, made private later; the decisions and the task list are in [AZURE_CUTOVER_PLAN.md](AZURE_CUTOVER_PLAN.md).
 
 ## 1. How it was read
 
@@ -71,7 +71,7 @@ Eleven audit-only policy results on the resource group are non-compliant; none b
 
 ## 7. What follows from this
 
-These are decisions for the owner and IT. None has been taken.
+These were decisions for the owner and IT on 16 Nov. On 17 Nov the owner took them as tasks M1 to M12 of [AZURE_CUTOVER_PLAN.md](AZURE_CUTOVER_PLAN.md); this list is kept as it was read.
 
 1. **Close R-1.**
 2. **Say what the two apps are for.** The prod-like app has run a 4 Nov build untouched while main has taken 226 merged pull requests; Render is what serves main. Keep, stop or retire each app deliberately, and record which store is authoritative.
@@ -85,3 +85,42 @@ These are decisions for the owner and IT. None has been taken.
 ## 8. What this does not show
 
 Which commit either Azure app runs; whether the WebSocket works behind the sign-in; what is on the share; whether logs are arriving; whether any backup could be restored; cost; anything outside the one resource group. None of the three workflows was exercised on Azure.
+
+## 9. Further detail (added 17 Nov)
+
+Facts from the same two reads that the sections above summarise. Counts, dates and settings only; the names and identifiers are in `AZ-RO-20261116`.
+
+**Requests per day** (the platform's request metric, both apps, UTC days):
+
+| App | 4 Nov | 5 Nov | 6 Nov | 7 Nov | 8 Nov | 9 Nov | 10 Nov | 11 Nov | 12 Nov | 13–15 Nov |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Prod-like | 352 | 543 | 3 | 0 | 376 | 193 | 51 | 6 | 0 | 0 |
+| Dev-like | – | – | – | – | 571 | 351 | 690 | 8 | 7 | 0 |
+
+The prod-like app had one replica every day. Nobody has used either app since 12 Nov; Render took every request in that time.
+
+**Timeline** (activity log, 20 days, successful operations):
+
+- 4 Nov, 20:24 to 21:36 UTC: an administrator account other than the owner's created everything in one evening by individual commands: the log workspace, network, storage and share, registry, vault, identity, five role assignments, the delete lock, the environment and its storage definition, the prod-like app, its sign-in configuration (three writes) and one registry build; the prod-like app's only replica started at 21:36.
+- 6 Nov: one more role assignment by the same account.
+- 9 Nov: the dev-like app was created, its sign-in configuration written three times, and about seven registry builds were run from an uploaded folder.
+- 10 and 11 Nov: about nine and then more than a dozen further builds, the same way. The last development image is from 11 Nov 19:28 UTC; the dev-like app's last revision followed a minute later. On 11 Nov the owner's account only fetched sign-in tokens.
+- 12 to 16 Nov: no changes.
+
+**Prod-like app.** Revision created 4 Nov 21:15 UTC, never replaced; 0 restarts. 1 vCPU, 2 GiB memory, 4 GiB ephemeral storage. Liveness probe after 20 s, every 30 s; readiness after 10 s, every 10 s; both on the health path. Scale rule: none beyond min = max = 1. Ingress redirects http to https; no IP restrictions, custom domain, sticky sessions, CORS or client certificates. Its image is about 417 MB (amd64, 11 layers).
+
+**Sign-in (prod-like).** Microsoft Entra as the only provider; signed-out requests are sent to the login page; no excluded paths; no token store; single tenant; ID tokens on; one redirect address. The registration's client secret is stored on the app, not in the vault, and expires on 4 Nov 2027. The enterprise application does not require assignment.
+
+**Environment.** Public network access on, not zone redundant, peer-to-peer encryption off, Consumption profile only.
+
+**Storage.** Secure transfer off (NFS needs it), minimum TLS 1.0, shared-key access allowed, Microsoft-managed encryption, trusted Azure services allowed through the firewall. About 166 MiB used on 16 Nov.
+
+**Registry.** About 0.45 GB of the Basic tier's 10 GiB used. No tasks, webhooks, tokens or scope maps.
+
+**Vault.** Its three secrets were created on 4 Nov and have no expiry dates. Two users can manage secrets: the owner and one other user.
+
+**Log workspace.** Public ingestion and query on.
+
+**Access.** On the resource group: Contributor for the owner and for one other user. Above it: four subscription owners, platform service principals, and two User Access Administrators at the root. Nobody else with write access was seen.
+
+**Development images.** Each is the 4 Nov image plus thin layers; the number of extra layers grows from 2 on the first to 18 on the thirtieth. A tag can still be overwritten or deleted.

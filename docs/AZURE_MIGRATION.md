@@ -5,6 +5,11 @@ changes for people and for QA. Written for the Render → Azure Container Apps
 move; most of it applies to any container host. No secrets or real names
 belong in this file: the repository is public.
 
+**17 Nov 2026:** the owner chose to finish the move on the existing Container
+Apps. The ordered tasks that carry it out, one agent at a time, are in
+[AZURE_CUTOVER_PLAN.md](AZURE_CUTOVER_PLAN.md); this guide stays the reference
+they rely on.
+
 ## 1. Settings
 
 Copy these from the Render dashboard (msapo-generator → Environment). Values
@@ -118,9 +123,12 @@ on the target until every file and database has been checked.
 3. **Transfer** through a short-lived Azure Blob SAS URL (write-only to upload,
    read-only to download). Keep the URL out of shell history:
    ```
-   read -rs SAS && curl --fail -T /tmp/msapo-data.tar.gz -H "x-ms-blob-type: BlockBlob" "$SAS"
+   read -rs SAS && curl --fail -T /tmp/msapo-data.tar.gz -H "x-ms-blob-type: BlockBlob" \
+     -H "x-ms-version: 2021-12-02" "$SAS"
    ```
-   One upload handles up to about 5 GB; use azcopy for more.
+   One upload handles up to about 5 GB; use azcopy for more. The existing
+   Azure storage account holds file shares only, so the blob needs a standard
+   storage account (task M2 of the cutover plan makes one).
 4. **Restore, on Azure** (`az containerapp exec ... --command bash`), right after
    the first deployment and before anyone uses it:
    ```
