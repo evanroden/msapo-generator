@@ -13,7 +13,11 @@ the data folder, removed at the end; the app's own files are only read.
 
 It also asks Anthropic's Models API about the configured model, a free call
 that uses no tokens: it proves the key, the outbound network path and the
-model in one go. --offline skips it.
+model in one go. When the app uses Claude in Microsoft Foundry instead
+(ANTHROPIC_FOUNDRY_RESOURCE or ANTHROPIC_FOUNDRY_BASE_URL is set), Foundry has
+no Models API, so it sends one request of a single output token to the
+deployment named by ANTHROPIC_MODEL: that proves the sign-in, the network path
+and the deployment. --offline skips it.
 
 Exit status: 0 when nothing failed (warnings allowed), 1 otherwise.
 """
@@ -175,7 +179,14 @@ def check_databases(report: Report, data: Path) -> None:
 
 
 def check_settings(report: Report) -> None:
+    from app.ai_client import foundry_settings
+    foundry = foundry_settings()
     for name in SECRETS:
+        if name == "ANTHROPIC_API_KEY" and foundry is not None:
+            report.line("INFO", f"Claude runs through Microsoft Foundry at {foundry.address}, signing in "
+                        f"with {foundry.sign_in}; ANTHROPIC_API_KEY is "
+                        + ("set but not used" if os.getenv(name, "").strip() else "not needed"))
+            continue
         report.line("PASS" if os.getenv(name, "").strip() else "FAIL", f"secret {name} is "
                     + ("set" if os.getenv(name, "").strip() else "missing"))
     for name in OPTIONAL_SECRETS:
@@ -196,7 +207,53 @@ def check_settings(report: Report) -> None:
         report.line("", "  " + problem)
 
 
+def check_foundry(report: Report, model: str, http_client=None) -> None:
+    import anthropic
+    from app.ai_client import foundry_settings, make_client
+    settings = foundry_settings()
+    # One request of a single output token: Foundry has no Models API. Only
+    # status codes and error class names are printed.
+    try:
+        with make_client("", max_retries=0, timeout=30, http_client=http_client) as client:
+            client.messages.create(model=model, max_tokens=1,
+                                   messages=[{"role": "user", "content": "Reply with OK."}])
+    except anthropic.AuthenticationError:
+        report.line("FAIL", "Foundry rejected the sign-in (401): " + (
+            "copy the Foundry key again" if settings.api_key else
+            "give the app's identity the Cognitive Services User role on the Foundry resource "
+            "and set AZURE_CLIENT_ID to its client ID (new roles take a few minutes)"))
+    except anthropic.PermissionDeniedError:
+        report.line("FAIL", "Foundry refused the request (403): the app's identity needs the Cognitive "
+                    "Services User role on the Foundry resource (new roles take a few minutes)")
+    except anthropic.NotFoundError:
+        report.line("FAIL", f"Foundry has no deployment named {model} (404): ANTHROPIC_MODEL must be the "
+                    "deployment name")
+    except anthropic.RateLimitError:
+        report.line("WARN", "Foundry answered 429 (rate limited); the sign-in and the network path work")
+    except anthropic.APIStatusError as error:
+        report.line("WARN" if error.status_code >= 500 else "FAIL",
+                    f"Foundry answered {error.status_code}"
+                    + ("; a problem on the service's side, try again" if error.status_code >= 500 else ""))
+    except anthropic.APIConnectionError as error:
+        cause = type(error.__cause__ or error).__name__
+        report.line("FAIL", f"cannot reach Microsoft Foundry or get a sign-in token from this host ({cause}): "
+                    "check the managed identity, AZURE_CLIENT_ID and outbound https to "
+                    "*.services.ai.azure.com")
+    else:
+        report.line("PASS", f"Microsoft Foundry reachable from this host, sign-in accepted, deployment {model} "
+                    "answered")
+
+
 def check_anthropic(report: Report, http_client=None) -> None:
+    from app.ai_client import foundry_settings
+    if foundry_settings() is not None:
+        from app import config
+        model = os.getenv("ANTHROPIC_MODEL", config.ANTHROPIC_MODEL).strip()
+        if not model:
+            report.line("FAIL", "ANTHROPIC_MODEL is empty: every AI feature would fail")
+            return
+        check_foundry(report, model, http_client=http_client)
+        return
     key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     if not key:
         return  # check_settings has already failed it
@@ -250,7 +307,7 @@ def check_build(report: Report) -> None:
 
 def main(argv=()) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
-    parser.add_argument("--offline", action="store_true", help="skip the call to Anthropic's API")
+    parser.add_argument("--offline", action="store_true", help="skip the call to Anthropic's API or Foundry")
     args = parser.parse_args(list(argv))
     report = Report()
     data = _data_dir()

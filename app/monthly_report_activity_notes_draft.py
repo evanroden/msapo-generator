@@ -255,7 +255,7 @@ def render_activity_notes(draft, blocks, prefix, field, *, enabled: bool):
                 content, notices, reviewed_input = draft_request(combined, draft.period.key)
                 for notice in notices:
                     st.caption(notice)
-                if not ai.ANTHROPIC_API_KEY:
+                if not ai.configured():
                     raise ValueError("The document reader is not configured. Continue with entered text.")
                 scope = (draft.profile.contract, draft.profile.key, draft.period.key,
                          _rich_text_scope(prefix))

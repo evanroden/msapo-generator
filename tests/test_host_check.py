@@ -166,3 +166,73 @@ def test_a_configured_director_map_passes(host, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "PASS  expense directors configured for 1 of " in out
     assert "Synthetic Director" not in out and "example.invalid" not in out
+
+
+FOUNDRY_TOKEN = "entra-token-NEVER-PRINT-ME"
+
+
+def _foundry(monkeypatch, capsys, respond):
+    """The check against Claude in Microsoft Foundry, signing in with a managed identity."""
+    from app import ai_client
+    ai_client._PROVIDERS.clear()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", SECRET)  # present on purpose: it must never be sent
+    monkeypatch.setenv("ANTHROPIC_FOUNDRY_RESOURCE", "example-resource")
+    monkeypatch.delenv("ANTHROPIC_FOUNDRY_BASE_URL", raising=False)
+    monkeypatch.delenv("ANTHROPIC_FOUNDRY_API_KEY", raising=False)
+    monkeypatch.setenv("AZURE_CLIENT_ID", "client-guid")
+    monkeypatch.setenv("ANTHROPIC_MODEL", "claude-synthetic-deployment")
+    monkeypatch.setattr(ai_client, "fetch_identity_token", lambda client_id="": (FOUNDRY_TOKEN, 4102444800.0))
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return respond(request)
+
+    report = host_check.Report()
+    host_check.check_anthropic(report, http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    out = capsys.readouterr().out
+    ai_client._PROVIDERS.clear()
+    assert SECRET not in out and FOUNDRY_TOKEN not in out
+    assert [(request.method, str(request.url)) for request in seen] == [
+        ("POST", "https://example-resource.services.ai.azure.com/anthropic/v1/messages")]
+    assert seen[0].headers["Authorization"] == "Bearer " + FOUNDRY_TOKEN
+    assert "x-api-key" not in seen[0].headers
+    assert json.loads(seen[0].content)["max_tokens"] == 1
+    return report, out
+
+
+def test_the_foundry_check_proves_sign_in_network_and_deployment(monkeypatch, capsys):
+    report, out = _foundry(monkeypatch, capsys, lambda request: httpx.Response(200, json={
+        "id": "msg_1", "type": "message", "role": "assistant", "model": "claude-synthetic-deployment",
+        "content": [{"type": "text", "text": "OK"}], "stop_reason": "max_tokens", "stop_sequence": None,
+        "usage": {"input_tokens": 9, "output_tokens": 1}}))
+    assert report.failures == 0
+    assert ("PASS  Microsoft Foundry reachable from this host, sign-in accepted, deployment "
+            "claude-synthetic-deployment answered") in out
+
+
+@pytest.mark.parametrize("status, expected", [
+    (401, "FAIL  Foundry rejected the sign-in (401): give the app's identity the Cognitive Services User role"),
+    (403, "FAIL  Foundry refused the request (403)"),
+    (404, "FAIL  Foundry has no deployment named claude-synthetic-deployment (404)"),
+    (400, "FAIL  Foundry answered 400"),
+    (429, "WARN  Foundry answered 429 (rate limited)"),
+    (529, "WARN  Foundry answered 529; a problem on the service's side"),
+])
+def test_foundry_answers_are_explained_without_echoing_them(monkeypatch, capsys, status, expected):
+    report, out = _foundry(monkeypatch, capsys, _error(status))
+    assert expected in out
+    assert "echoed" not in out
+    assert report.failures == (1 if expected.startswith("FAIL") else 0)
+
+
+def test_foundry_settings_replace_the_claude_key_in_the_settings_check(host, monkeypatch, capsys):
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    monkeypatch.setenv("ANTHROPIC_FOUNDRY_RESOURCE", "example-resource")
+    monkeypatch.delenv("ANTHROPIC_FOUNDRY_BASE_URL", raising=False)
+    monkeypatch.delenv("ANTHROPIC_FOUNDRY_API_KEY", raising=False)
+    assert host_check.main(OFFLINE) == 0
+    out = capsys.readouterr().out
+    assert ("INFO  Claude runs through Microsoft Foundry at https://example-resource.services.ai.azure.com/"
+            "anthropic/, signing in with the app's managed identity; ANTHROPIC_API_KEY is not needed") in out
+    assert "secret ANTHROPIC_API_KEY is missing" not in out

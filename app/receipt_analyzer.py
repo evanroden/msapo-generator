@@ -32,6 +32,7 @@ from typing import Any
 
 import anthropic
 
+from app.ai_client import ai_available, make_client
 from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
 from app.api_retry import (
     OPERATION_BUDGET_SECONDS,
@@ -244,7 +245,7 @@ def prepare_receipt_content(file_bytes: bytes, filename: str) -> list[dict[str, 
       included, with one aggregate payload budget. A thumbnail is not a full
       analysis payload: TIFF receipts may have several pages.
     """
-    if not ANTHROPIC_API_KEY:
+    if not ai_available(ANTHROPIC_API_KEY):
         raise ReceiptAnalysisError(
             "Automatic receipt reading is not configured. Complete the required "
             "receipt fields manually."
@@ -294,7 +295,7 @@ def analyze_receipt(file_bytes: bytes, filename: str) -> ReceiptAnalysis:
 
 def analyze_prepared_receipt(content: list[dict[str, Any]]) -> ReceiptAnalysis:
     """Network-only phase: safe to run in a worker without Streamlit/PDF APIs."""
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY, max_retries=0, timeout=REQUEST_TIMEOUT_SECONDS)
+    client = make_client(ANTHROPIC_API_KEY, max_retries=0, timeout=REQUEST_TIMEOUT_SECONDS)
     until = time.monotonic() + OPERATION_BUDGET_SECONDS
     parse_error: ReceiptAnalysisError | None = None
     # Two SHAPE attempts wrapping the transport retries inside

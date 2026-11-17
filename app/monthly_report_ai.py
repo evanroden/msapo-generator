@@ -18,6 +18,7 @@ from app.api_retry import (
     complete_response_text,
     request_with_retry,
 )
+from app.ai_client import ai_available, make_client
 from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
 from app.monthly_report_content_policy import contains_price
 from app.monthly_report_model import EvidenceFact, DraftParagraph, ResolvedBlock
@@ -286,14 +287,19 @@ def vendor_names(draft):
     return tuple(dict.fromkeys(names))
 
 
+def configured() -> bool:
+    """Whether the document reader can run: a Claude API key or Microsoft Foundry settings."""
+    return ai_available(ANTHROPIC_API_KEY)
+
+
 def request_json(content):
     """Network worker: no Streamlit, filesystem, image, PDF or cache operations."""
-    if not ANTHROPIC_API_KEY:
+    if not configured():
         raise ValueError(
             "The document reader is not configured. Continue with entered text."
         )
     until = time.monotonic() + OPERATION_BUDGET_SECONDS
-    with anthropic.Anthropic(api_key=ANTHROPIC_API_KEY, max_retries=0) as client:
+    with make_client(ANTHROPIC_API_KEY, max_retries=0) as client:
         message = request_with_retry(
             lambda timeout: client.messages.create(
                 model=ANTHROPIC_MODEL,

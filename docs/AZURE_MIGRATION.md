@@ -18,7 +18,10 @@ anything extra too.
 
 | Kind | Name | Notes |
 |---|---|---|
-| Secret | `ANTHROPIC_API_KEY` | |
+| Secret | `ANTHROPIC_API_KEY` | Not used on Azure when Claude runs through Microsoft Foundry (next rows). |
+| Foundry | `ANTHROPIC_FOUNDRY_RESOURCE` | The Foundry resource name. Makes the app call Claude in Microsoft Foundry on the company's own Azure subscription instead of the Claude API, so no personal key is involved. `ANTHROPIC_FOUNDRY_BASE_URL` (the full `https://<resource>.services.ai.azure.com/anthropic/`) may replace it; set one, not both. |
+| Foundry | `ANTHROPIC_MODEL` | With Foundry, the deployment name (for example `claude-opus-5-5`), not render.yaml's value. |
+| Foundry | `AZURE_CLIENT_ID` | Client ID of the app's user-assigned managed identity, which signs in to Foundry with no key; that identity needs the Cognitive Services User role on the Foundry resource. `ANTHROPIC_FOUNDRY_API_KEY` (a secret, from Key Vault) signs in with a Foundry key instead. |
 | Secret | `EXPENSE_ACCOUNT_DIRECTORS_JSON` | One JSON object keyed by account: `{"<account>": {"name": "...", "email": "..."}}`. Account names must match the app's; a bad entry shows a warning on the expense page. Holds real names and emails: never commit it. |
 | Secret | `SMARTSHEET_FORM_URL` | |
 | Secret | `SMARTSHEET_API_TOKEN`, `SMARTSHEET_SHEET_ID` | Only if set on Render. |
