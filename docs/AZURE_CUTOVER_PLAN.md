@@ -79,7 +79,7 @@ while it is closed to people.
 | M3 | Recover the external patch from the registry (#877) | Nothing in Azure (reads the registry) | M2 |
 | C1 | "Closed copy" switch in the app | Code, through a pull request | now |
 | M4 | Build main by commit in the registry | One new, locked image tag | C1 merged, D1 |
-| M5 | Rehearse the move on the prod-like app | That app's image and data (nobody uses it) | M2, M4 |
+| M5 | Rehearse the move on the prod-like app | That app's image, settings and data; closed to people throughout | M2, M4 |
 | M6 | Daily backups, alerts and hygiene | A backup job, alerts, two settings | M2, M5 |
 | M7 | Cutover | Render closed; Azure opened with Render's data | M5, M6, D2 |
 | M8 | First week after cutover | Records only | M7 |
@@ -148,12 +148,15 @@ Render's address is public already: `https://msapo-generator.onrender.com`.
    share.
 7. Don't open an app's address signed out unless the task says so: a request
    can wake a scaled-to-zero app.
-8. Record every task twice: one public comment on #941 (what was done, each
+8. While Render is the writer, the Azure copy is either closed (C1) or reachable
+   only from the operator's own address (an `operator-check` allow rule). It is
+   never open to everyone while Render is still the copy people use.
+9. Record every task twice: one public comment on #941 (what was done, each
    check and its result, what is left; no names, addresses, identifiers, digests
    or secret values), and the detail privately, in the session's final message
    to the owner and, from M2 on, as a file in the `records` container.
-9. Render changes go through the Render dashboard or Render's tools. The
-   dashboard's Shell tab runs commands in the live container.
+10. Render changes go through the Render dashboard or Render's tools. The
+    dashboard's Shell tab runs commands in the live container.
 
 ## 7. Tasks
 
@@ -261,16 +264,24 @@ The build log ends with the pushed digest; the image is used by digest
 
 ### M5. Rehearse the move on the prod-like app
 
-Changes the prod-like app's image and data. Nobody uses that app, and Render
-stays the writer. Everything this task restores is replaced at the cutover.
+Changes the prod-like app's image, settings and data. Render stays the only
+writer, so the Azure copy is closed (C1) from the moment the new image runs,
+and is opened only to the operator's own address for the browser checks.
+Everything this task restores is replaced at the cutover.
 
-1. Read the app's state (revision, image, replicas, ingress, sign-in) and the
-   checker's result; snapshot the data share.
-2. Update the image by digest and wait until the new revision is healthy:
-   `az containerapp update -n <PROD_APP> -g <RG> --image <REGISTRY>.azurecr.io/<IMAGE_REPO>@<digest>`,
-   then `az containerapp revision list -n <PROD_APP> -g <RG> -o table`.
+1. Read the app's state (revision, image, replicas, ingress, sign-in, access
+   restrictions) and the checker's result; snapshot the data share.
+2. Deploy the new image **closed**, in one update, and wait until the new
+   revision is healthy:
+   ```
+   az containerapp update -n <PROD_APP> -g <RG> --image <REGISTRY>.azurecr.io/<IMAGE_REPO>@<digest> \
+     --set-env-vars MSAPO_SERVICE_MOVED_TO=https://msapo-generator.onrender.com
+   az containerapp revision list -n <PROD_APP> -g <RG> -o table
+   ```
+   A signed-in browser now shows the notice that points to Render.
 3. Inside the app (`az containerapp exec -n <PROD_APP> -g <RG> --command bash`,
-   from `/app`): `python scripts/host_check.py`. No failures allowed.
+   from `/app`): `python scripts/host_check.py`. No failures allowed. The switch
+   closes the pages only; scripts run normally.
 4. Compare the secret settings with Render's by fingerprint (both sides):
    ```
    python -c "import os,hashlib;[print(n, hashlib.sha256(os.environ.get(n,'').encode()).hexdigest()[:12] if os.environ.get(n) else 'unset') for n in ('ANTHROPIC_API_KEY','EXPENSE_ACCOUNT_DIRECTORS_JSON','SMARTSHEET_FORM_URL','SMARTSHEET_API_TOKEN','SMARTSHEET_SHEET_ID')]"
@@ -292,7 +303,8 @@ stays the writer. Everything this task restores is replaced at the cutover.
    read -rs SAS && curl --fail -T /tmp/msapo-data-rehearsal.tar.gz \
      -H "x-ms-blob-type: BlockBlob" -H "x-ms-version: 2021-12-02" "$SAS" && rm /tmp/msapo-data-rehearsal.tar.gz
    ```
-7. Restore inside the prod-like app with a read-only SAS (`--permissions r`):
+7. Restore inside the prod-like app, still closed, with a read-only SAS
+   (`--permissions r`):
    ```
    cd /tmp && read -rs SAS && curl --fail -o msapo-data.tar.gz "$SAS"
    sha256sum msapo-data.tar.gz          # must match step 5
@@ -302,16 +314,34 @@ stays the writer. Everything this task restores is replaced at the cutover.
    ```
    Whatever was on the share (the 4 to 11 Nov data and the dev-like app's
    folder) moves to `/test1/.pre-restore-<time>/`; nothing is deleted.
-8. Restart the revision (`az containerapp revision restart`), run
-   `scripts/host_check.py` again, and in a signed-in browser check: About shows
+8. Open the copy **to the operator only**. Read the operator's public IPv4
+   address in the browser that will do the checks (for example a "what is my
+   IP" page), then:
+   ```
+   az containerapp ingress access-restriction set -n <PROD_APP> -g <RG> --rule-name operator-check \
+     --ip-address <operator IPv4>/32 --action Allow --description "M5 browser checks"
+   curl -s -o /dev/null -w '%{http_code}\n' https://<PROD_ADDRESS>/_stcore/health   # from Cloud Shell: refused
+   az containerapp update -n <PROD_APP> -g <RG> --remove-env-vars MSAPO_SERVICE_MOVED_TO
+   ```
+   An allow rule refuses every other address ("RBAC: Access Denied"), so
+   Cloud Shell's own request is refused. If the operator's browser is refused
+   too, its traffic leaves from another address (a VPN or proxy): ask the owner
+   rather than widening the rule. Removing the setting starts a new
+   revision, which opens the restored databases. Wait until it is healthy, run
+   `scripts/host_check.py` again, and in the signed-in browser check: About shows
    the commit; a saved Monthly report opens with its history; the contract and
    site directory lists the expected contracts; an expense form shows a director
-   per account; the PO form builds its prefilled link (do not submit).
-9. Clean up: delete the blob, then renew the account key that signed the SAS
-   (`az storage account keys renew -g <RG> -n <BACKUP_ACCOUNT> --key key1 -o none`).
-10. Close the copy again:
-    `az containerapp update -n <PROD_APP> -g <RG> --set-env-vars MSAPO_SERVICE_MOVED_TO=https://msapo-generator.onrender.com`,
-    and check that a signed-in browser shows the notice.
+   per account; the PO form builds its prefilled link (do not submit). Save
+   nothing.
+9. Close the copy again, then lift the restriction so that everyone sees the
+   notice instead of an error:
+   ```
+   az containerapp update -n <PROD_APP> -g <RG> --set-env-vars MSAPO_SERVICE_MOVED_TO=https://msapo-generator.onrender.com
+   az containerapp ingress access-restriction remove -n <PROD_APP> -g <RG> --rule-name operator-check
+   ```
+   Lift it only once the closed revision is healthy.
+10. Clean up: delete the blob, then renew the account key that signed the SAS
+    (`az storage account keys renew -g <RG> -n <BACKUP_ACCOUNT> --key key1 -o none`).
 11. Record the export size and the time each step took: that sizes the window
     for D2.
 
@@ -381,8 +411,8 @@ stays the writer. Everything this task restores is replaced at the cutover.
 ### M7. Cutover
 
 In the window from D2. The production image already runs on `<PROD_APP>`,
-closed with `MSAPO_SERVICE_MOVED_TO` pointing at Render (M5 step 10, or M9 for a
-newer release).
+closed with `MSAPO_SERVICE_MOVED_TO` pointing at Render (M5 step 9, or M9 for a
+newer release), with no access restriction left over.
 
 1. Turn off the live acceptance:
    `gh workflow disable "Monthly Isolated Live Acceptance" -R evanroden/msapo-generator`.
@@ -391,21 +421,41 @@ newer release).
    saved anywhere.
 3. Export on Render (dashboard Shell) as in M5 step 5, to
    `/tmp/msapo-data-final.tar.gz`; note the SHA-256 and the file count.
-4. Snapshot the data share. Transfer and restore as in M5 steps 6 and 7, with
-   `--replace-existing`.
-5. Open Azure: `az containerapp update -n <PROD_APP> -g <RG> --remove-env-vars MSAPO_SERVICE_MOVED_TO`.
-   The new revision starts with the restored databases. Wait until it is healthy.
-6. `scripts/host_check.py` inside the app; the browser checks of M5 step 8,
-   and the restored file count equals the exported one.
-7. Delete the blob and renew key1 as in M5 step 9.
+4. Snapshot the data share. Transfer and restore into the still-closed
+   `<PROD_APP>` as in M5 steps 6 and 7, with `--replace-existing`. The restored
+   file count must equal the exported one.
+5. Open Azure **to the operator only**, exactly as M5 step 8: the
+   `operator-check` allow rule first, then
+   `az containerapp update -n <PROD_APP> -g <RG> --remove-env-vars MSAPO_SERVICE_MOVED_TO`.
+   The new revision starts with the restored databases. Wait until it is
+   healthy, run `scripts/host_check.py` inside it, and do the browser checks of
+   M5 step 8, saving nothing.
+6. Open Azure to everyone:
+   `az containerapp ingress access-restriction remove -n <PROD_APP> -g <RG> --rule-name operator-check`.
+   From now on people can save work on Azure.
+7. Delete the blob and renew key1 as in M5 step 10.
 8. The owner announces the new address.
 
-**Going back before the announcement:** set `MSAPO_SERVICE_MOVED_TO` on
-`<PROD_APP>` back to Render's address, remove it from Render, re-enable the
-live acceptance. Render's data has not changed since step 2, so nothing is lost.
-**After the announcement** going back means moving Azure's data to Render the
-same way in reverse (export inside `<PROD_APP>`, transfer, restore on Render with
-`--replace-existing`), then swapping the setting on both sides.
+**Going back.** Never reopen Render while Azure can still accept work, and never
+reopen it without Azure's latest data unless Azure provably accepted none.
+
+- **Before step 6** (only the operator's address could reach Azure, and the
+  checks saved nothing): close Azure again
+  (`--set-env-vars MSAPO_SERVICE_MOVED_TO=https://msapo-generator.onrender.com`),
+  wait until that revision is healthy, then remove the `operator-check` rule,
+  remove the setting from Render, and re-enable the live acceptance. Render's
+  data has not changed since step 2, so nothing is lost.
+- **From step 6 on** (anyone could have saved on Azure), in this order:
+  1. Close Azure first: set `MSAPO_SERVICE_MOVED_TO` back to Render's address
+     (and, if wanted, `MSAPO_SERVICE_NOTICE` with the expected time) and wait
+     until that revision is healthy. Render stays closed.
+  2. Export inside `<PROD_APP>`:
+     `python /app/scripts/migrate_data.py export --source /test1 --output /tmp/msapo-data-back.tar.gz`.
+  3. Transfer it the other way: a write SAS used from the Azure container, a read
+     SAS used in Render's Shell; check the SHA-256 on both sides.
+  4. Restore on Render with `--replace-existing`, then remove the setting from
+     Render; its redeploy opens the restored databases.
+  5. Leave Azure closed, pointing at Render, until the problem is understood.
 
 ### M8. First week after cutover
 
@@ -457,10 +507,15 @@ After D5.
    M9 releases, delete the 4 Nov tag (`az acr repository delete -n <REGISTRY> --image <IMAGE_REPO>:<tag> --yes`).
    If the lock refuses, leave them for IT.
 3. The dev-like app: IT deletes it (M12).
-4. Code, through one pull request: remove `render.yaml` and the two Render-only
-   QA scripts, set the Dockerfile's default `PUBLIC_SITE_ORIGIN` to the new
-   address, and turn the migration guide into an operations guide. The live
-   acceptance stays off until it can sign in.
+4. Code, through one pull request: remove the two Render-only QA scripts (with
+   their tests and workflow references), set the Dockerfile's default
+   `PUBLIC_SITE_ORIGIN` to the new address, and turn the migration guide into an
+   operations guide. Keep `render.yaml`: it is the settings contract that
+   `scripts/azure_config_check.py`, `scripts/host_check.py` and several tests
+   read, so it no longer deploys anything but still defines every setting.
+   Renaming it to a host-neutral file is a separate change that moves every
+   reader (`grep -rn render.yaml`) and its tests in one go. The live acceptance
+   stays off until it can sign in.
 5. Delete the 12 Azure branches listed on #270 once nothing on them is needed.
 6. The `.pre-restore-*` folders on the share: delete only with the owner's
    approval and after a snapshot.
