@@ -8,7 +8,7 @@ import json
 import pytest
 
 from scripts.qa_shared_fixture_redeploy_readonly import (
-    KIND, ORIGIN, _browser_route, _native_fixture_id, _save_new,
+    KIND, MAX_ORIGINAL, ORIGIN, _browser_route, _native_fixture_id, _save_new,
     _valid_commit, _valid_hash, _valid_id, _selector_id,
     _validate_manifest, compare, verify_one,
 )
@@ -34,6 +34,31 @@ def sample(phase="before", *, commit=BEFORE, when=None):
             "original_download_sha256", "served_commit_after_download",
         ],
     }
+
+
+@pytest.mark.parametrize("size", [
+    25 * 1024 * 1024 + 1,
+    28 * 1024 * 1024,
+    32 * 1024 * 1024,
+])
+def test_admitted_large_shared_fixture_is_accepted_by_readonly_redeploy_receipt(size):
+    # The production fixture uploader already accepts 32 MiB originals.
+    # A 25 MiB verifier cap must not block a valid persisted larger original.
+    assert MAX_ORIGINAL == 32 * 1024 * 1024
+    before = sample()
+    after = sample("after", commit=AFTER)
+    before["original_size"] = after["original_size"] = size
+    result = compare(before, after)
+    assert result["original_size"] == size
+    assert result["hash_identical_across_distinct_served_builds"] is True
+
+
+@pytest.mark.parametrize("size", [0, MAX_ORIGINAL + 1, True, 1.5])
+def test_readonly_redeploy_receipts_still_reject_out_of_bounds_sizes(size):
+    before = sample()
+    before["original_size"] = size
+    with pytest.raises(ValueError, match="outside the shared fixture limit"):
+        _validate_manifest(before, "before")
 
 
 def test_valid_hash_only_before_and_after_distinct_served_builds():
@@ -78,7 +103,7 @@ def test_comparison_rejects_reversed_timeline():
     ("before", {"fixture_id": "abc"}),
     ("before", {"original_sha256": "short"}),
     ("before", {"original_size": -1}),
-    ("before", {"original_size": 25 * 1024 * 1024 + 1}),
+    ("before", {"original_size": MAX_ORIGINAL + 1}),
     ("before", {"served_commit": "x" * 40}),
     ("before", {"verified_at_utc": "2026-10-14T03:00:00"}),
 ])
