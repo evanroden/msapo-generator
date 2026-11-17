@@ -27,7 +27,9 @@ _ID_PREFIX = re.compile(r"[0-9a-f]{8}\Z")
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
 _COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 KIND = "enfra-shared-fixture-redeploy-readonly-v1"
-MAX_ORIGINAL = 25 * 1024 * 1024
+# Match the existing 32 MiB shared-fixture admission cap; do not refuse a
+# previously admitted 25–32 MiB original during read-only persistence checks.
+MAX_ORIGINAL = 32 * 1024 * 1024
 
 
 def _valid_id(value: str) -> str:
