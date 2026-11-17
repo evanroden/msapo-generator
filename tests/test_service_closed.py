@@ -82,7 +82,9 @@ def test_bad_address_still_closes_without_link_or_data_writes(
 
     warnings = [r for r in caplog.records if r.name == "app.service_closed"]
     assert len(warnings) == 1
-    assert bad_url not in warnings[0].message
+    assert warnings[0].getMessage() == (
+        "MSAPO_SERVICE_MOVED_TO is not a valid HTTPS URL; link omitted"
+    )
     assert list(data_dir.iterdir()) == []
 
 
