@@ -40,6 +40,9 @@ STALE_WHEN_SET = ("APP_GIT_COMMIT", "RENDER_GIT_COMMIT")
 JOURNAL_MODES = ("wal", "delete")  # what app/sqlite_storage.py honours; anything else is ignored
 # Microsoft's issuers that accept accounts from more than one organisation.
 ANY_TENANT = ("common", "organizations", "consumers")
+# Claude in Microsoft Foundry (app/ai_client.py): either name selects it.
+FOUNDRY_TARGETS = ("ANTHROPIC_FOUNDRY_RESOURCE", "ANTHROPIC_FOUNDRY_BASE_URL")
+FOUNDRY_SETTINGS = (*FOUNDRY_TARGETS, "ANTHROPIC_FOUNDRY_API_KEY", "AZURE_CLIENT_ID")
 
 
 class InputError(Exception):
@@ -233,8 +236,21 @@ def check_environment(report: Report, config: dict, container: dict,
             report.line("WARN", f"setting {item.get('name')} is listed more than once")
         by_name[str(item.get("name"))] = item
     secrets = {str(secret.get("name")): secret for secret in config.get("secrets") or []}
+    foundry = any(_present(by_name.get(name)) for name in FOUNDRY_TARGETS)
+    if foundry:
+        check_foundry_settings(report, by_name, secrets)
     for name, value in expected:
         item = by_name.get(name)
+        if foundry and name == "ANTHROPIC_API_KEY":
+            report.line("INFO", "ANTHROPIC_API_KEY is " + ("set but not used" if item else "not needed")
+                        + ": Claude runs through Microsoft Foundry")
+            continue
+        if foundry and name == "ANTHROPIC_MODEL":
+            named = item is not None and str(item.get("value") or "").strip()
+            report.line("PASS" if named else "FAIL", "setting ANTHROPIC_MODEL "
+                        + (f"names the Foundry deployment {named} (render.yaml's model is for the Claude API)"
+                           if named else "must name the Foundry deployment"))
+            continue
         if value is None:
             _check_secret(report, name, item, secrets)
             continue
@@ -266,7 +282,7 @@ def check_environment(report: Report, config: dict, container: dict,
         if name in by_name:
             report.line("WARN", f"{name} is an app setting: it goes stale when the image changes; "
                         "pass APP_GIT_COMMIT as a build argument instead")
-    known = {name for name, _value in expected} | {"EPC_SQLITE_JOURNAL_MODE", *STALE_WHEN_SET}
+    known = {name for name, _value in expected} | {"EPC_SQLITE_JOURNAL_MODE", *STALE_WHEN_SET, *FOUNDRY_SETTINGS}
     extra = sorted(set(by_name) - known)
     if extra:
         report.line("INFO", "also set: " + ", ".join(extra))
@@ -274,6 +290,29 @@ def check_environment(report: Report, config: dict, container: dict,
     unused = sorted(set(secrets) - used)
     if unused:
         report.line("INFO", "secrets no setting uses: " + ", ".join(unused))
+
+
+def _present(item: dict | None) -> bool:
+    return item is not None and (_from_secret(item) or bool(str(item.get("value") or "").strip()))
+
+
+def check_foundry_settings(report: Report, by_name: dict[str, dict], secrets: dict) -> None:
+    """Claude in Microsoft Foundry: the target, and how the app signs in to it."""
+    if all(_present(by_name.get(name)) for name in FOUNDRY_TARGETS):
+        report.line("FAIL", "both ANTHROPIC_FOUNDRY_RESOURCE and ANTHROPIC_FOUNDRY_BASE_URL are set; "
+                    "the Claude SDK accepts only one")
+    else:
+        report.line("PASS", "Claude runs through Microsoft Foundry ("
+                    + ", ".join(name for name in FOUNDRY_TARGETS if _present(by_name.get(name))) + ")")
+    key = by_name.get("ANTHROPIC_FOUNDRY_API_KEY")
+    if key is not None:
+        _check_secret(report, "ANTHROPIC_FOUNDRY_API_KEY", key, secrets)
+    elif _present(by_name.get("AZURE_CLIENT_ID")):
+        report.line("PASS", "the app signs in to Foundry with its managed identity (AZURE_CLIENT_ID); "
+                    "that identity needs the Cognitive Services User role on the Foundry resource")
+    else:
+        report.line("FAIL", "no way to sign in to Foundry: set AZURE_CLIENT_ID to the client ID of the "
+                    "app's user-assigned identity, or ANTHROPIC_FOUNDRY_API_KEY from Key Vault")
 
 
 def _check_secret(report: Report, name: str, item: dict | None, secrets: dict) -> None:

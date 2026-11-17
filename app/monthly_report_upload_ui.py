@@ -1710,7 +1710,7 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                     raise ValueError("A newer shared report was saved before reading started. Nothing was sent. Compare the shared version and continue with your draft before reading again.")
                 if testing.scope() is not None:
                     raise ValueError("External reading is off in isolated testing. Native extracted text and manual editing remain available.")
-                if not ai.ANTHROPIC_API_KEY:
+                if not ai.configured():
                     raise ValueError("The document reader is not configured. Native extracted text and manual editing remain available.")
                 def prepare():
                     payloads = structured.reader_batches(profile, scoped, destination,
@@ -1760,7 +1760,7 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
     elif scoped and not completed and local_key + "_pending" not in st.session_state:
         if testing.scope() is not None:
             st.caption("External reading is off in isolated testing. Native extracted text and manual editing remain available.")
-        elif ai.ANTHROPIC_API_KEY:
+        elif ai.configured():
             st.caption("Reading sends these selected files to the external document reader and uses this report's reading allowance. Charges may apply.")
             request = read_request()
             label = "Retry reading uploaded files" if local_key + "_error" in st.session_state else "Read selected files"

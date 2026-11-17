@@ -20,6 +20,7 @@ from pathlib import Path
 import anthropic
 
 from app.image_open import open_image, image_formats_for_suffix
+from app.ai_client import make_client
 from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
 from app.api_retry import (
     OPERATION_BUDGET_SECONDS,
@@ -349,8 +350,8 @@ def _ocr_pdf(payload: bytes, *, until: float) -> str:
 
 def _ocr_request(content: list[dict], *, until: float | None = None) -> str:
     until = until if until is not None else time.monotonic() + OPERATION_BUDGET_SECONDS
-    with anthropic.Anthropic(
-        api_key=ANTHROPIC_API_KEY, max_retries=0, timeout=REQUEST_TIMEOUT_SECONDS,
+    with make_client(
+        ANTHROPIC_API_KEY, max_retries=0, timeout=REQUEST_TIMEOUT_SECONDS,
     ) as client:
         message = request_with_retry(
             lambda timeout: client.messages.create(

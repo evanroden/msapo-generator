@@ -26,6 +26,7 @@ from app.api_retry import (
     complete_response_text,
     request_with_retry,
 )
+from app.ai_client import make_client
 from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL, FACILITIES, alias_matches
 from app.equipment_policy import GROUP_A_PROMPT_LIST
 from app.job_numbers import UNITY_DISAMBIGUATION_GUIDANCE
@@ -315,7 +316,7 @@ def _call_api_with_retry(client, quote_text: str, max_retries: int = 3, *, until
 
 def analyze_quote(quote_text: str) -> QuoteAnalysis:
     """Send quote text to the Anthropic API and return structured analysis."""
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY, max_retries=0, timeout=REQUEST_TIMEOUT_SECONDS)
+    client = make_client(ANTHROPIC_API_KEY, max_retries=0, timeout=REQUEST_TIMEOUT_SECONDS)
     until = time.monotonic() + OPERATION_BUDGET_SECONDS
 
     # Transport retries do not cover a syntactically malformed model response.

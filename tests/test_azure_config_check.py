@@ -379,3 +379,62 @@ def test_the_check_runs_on_a_plain_cloud_shell_python(relative):
                 assert name in ("app.sqlite_storage",), (relative, name)
             if top == "scripts":
                 assert name in ("scripts.host_check",), (relative, name)
+
+
+def foundry_app(*, sign_in="identity"):
+    """The planned app calling Claude in Microsoft Foundry instead of the Claude API."""
+    app = planned_app()
+    container = _container(app)
+    container["env"] = [item for item in container["env"] if item["name"] != "ANTHROPIC_API_KEY"]
+    _env(app, "ANTHROPIC_MODEL")["value"] = "claude-synthetic-deployment"
+    container["env"].append({"name": "ANTHROPIC_FOUNDRY_RESOURCE", "value": "aif-example"})
+    if sign_in == "identity":
+        container["env"].append({"name": "AZURE_CLIENT_ID", "value": ZERO_ID})
+    elif sign_in == "key":
+        container["env"].append({"name": "ANTHROPIC_FOUNDRY_API_KEY", "secretRef": "anthropic-foundry-api-key"})
+        app["properties"]["configuration"]["secrets"].append({
+            "name": "anthropic-foundry-api-key", "identity": IDENTITY,
+            "keyVaultUrl": "https://kv-example.vault.azure.net/secrets/anthropic-foundry-api-key"})
+    app["properties"]["configuration"]["secrets"] = [
+        secret for secret in app["properties"]["configuration"]["secrets"] if secret["name"] != "anthropic-api-key"]
+    return app
+
+
+def test_foundry_with_the_managed_identity_passes_without_the_claude_key(tmp_path, capsys):
+    code, out = check(tmp_path, capsys, foundry_app())
+    assert code == 0, out
+    assert "PASS  Claude runs through Microsoft Foundry (ANTHROPIC_FOUNDRY_RESOURCE)" in out
+    assert "PASS  the app signs in to Foundry with its managed identity (AZURE_CLIENT_ID)" in out
+    assert "INFO  ANTHROPIC_API_KEY is not needed: Claude runs through Microsoft Foundry" in out
+    assert ("PASS  setting ANTHROPIC_MODEL names the Foundry deployment claude-synthetic-deployment") in out
+    assert "secret ANTHROPIC_API_KEY is missing" not in out
+    assert "also set" not in out
+    assert ZERO_ID not in out and "aif-example" not in out
+
+
+def test_foundry_with_a_key_from_key_vault_passes(tmp_path, capsys):
+    code, out = check(tmp_path, capsys, foundry_app(sign_in="key"))
+    assert code == 0, out
+    assert "PASS  secret ANTHROPIC_FOUNDRY_API_KEY comes from Key Vault (anthropic-foundry-api-key)" in out
+
+
+@pytest.mark.parametrize("problem, expected", [
+    ("no sign-in", "FAIL  no way to sign in to Foundry"),
+    ("both targets", "FAIL  both ANTHROPIC_FOUNDRY_RESOURCE and ANTHROPIC_FOUNDRY_BASE_URL are set"),
+    ("no model", "FAIL  setting ANTHROPIC_MODEL must name the Foundry deployment"),
+    ("plain key", "FAIL  secret ANTHROPIC_FOUNDRY_API_KEY is a plain value"),
+])
+def test_foundry_gaps_are_reported(tmp_path, capsys, problem, expected):
+    app = foundry_app(sign_in="none" if problem == "no sign-in" else "identity")
+    container = _container(app)
+    if problem == "both targets":
+        container["env"].append({"name": "ANTHROPIC_FOUNDRY_BASE_URL",
+                                 "value": "https://aif-example.services.ai.azure.com/anthropic/"})
+    elif problem == "no model":
+        _env(app, "ANTHROPIC_MODEL")["value"] = ""
+    elif problem == "plain key":
+        container["env"].append({"name": "ANTHROPIC_FOUNDRY_API_KEY", "value": PLAIN_SECRET})
+    code, out = check(tmp_path, capsys, app)
+    assert code == 1, out
+    assert expected in out
+    assert PLAIN_SECRET not in out
