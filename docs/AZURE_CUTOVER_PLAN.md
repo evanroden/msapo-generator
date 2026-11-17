@@ -1,9 +1,10 @@
 # Finishing the move to Azure Container Apps
 
-**Status, 17 Nov 2026:** agreed with the owner. M1, M2 and M4 are done; M5 and
-M6 are under way, and the owner has since decided to run both copies side by
-side for now (section 1, last row). Progress is tracked in
-[#941](https://github.com/evanroden/msapo-generator/issues/941).
+**Status, 17 Nov 2026 (evening):** M1, M2, M4, M5 and M6 are done. Following
+the owner's decision (section 1), Azure runs current main with Render's data
+and is open to the company tenant next to Render. Its AI calls Claude in
+Microsoft Foundry on the company's subscription (section 1, Foundry row).
+Progress is tracked in [#941](https://github.com/evanroden/msapo-generator/issues/941).
 
 This is the working plan for moving the app from Render to the Azure Container
 Apps that already exist. It is written for the agents who will carry it out, one
@@ -26,6 +27,7 @@ use the placeholders in section 5, and the owner holds the key to them.
 | Who changes Azure | Agents, each carrying out one task below from a prompt the owner gives them, with the owner's own Azure access. The prompt approves exactly the changes its task lists, nothing more. | Nothing: no one had been assigned. |
 | Private details | Kept out of this repository while it is public. Agents get them from the owner: the Render service's environment variable `MIGRATION_PRIVATE_AZURE_KEY_JSON` (Render dashboard, service msapo-generator, Environment) and the owner's private prompt page. From M2 on, task records also go to a private storage container. After M10 the key moves into this repository. | Records "only in an approved restricted change record", which did not exist. |
 | Data authority | Render is the only place where work is saved until the cutover (M7). Every Azure copy before then is a rehearsal and is closed to people (C1). | Not decided before. |
+| Claude through the company's Azure (owner, 17 Nov) | The Azure copy does not use the owner's personal Claude API key: it calls Claude in Microsoft Foundry on the company's subscription (Opus, Azure-hosted, US data zone, billed on the company's Azure invoice). `app/ai_client.py` selects it from `ANTHROPIC_FOUNDRY_RESOURCE`; `ANTHROPIC_MODEL` names the deployment. Keyless sign-in needs IT to give the app's identity the Cognitive Services User role on the Foundry resource; until then the app uses the resource's key from Key Vault. Render keeps the Claude API. | The model key copied from Render into Key Vault. |
 | Both copies for now (owner, later on 17 Nov) | Render keeps running. Azure is brought up to main with a copy of Render's data, checked, and opened to the company tenant next to Render. Render stays the copy where work is saved until the owner announces the switch; the two copies do not sync, so anything saved on Azure before then is not on Render, and the switch (M7) copies Render's data over Azure's again. | M5 ending with Azure closed again, and M7 closing Render in the same window that opens Azure. |
 
 Unchanged: everything in [AZURE_MIGRATION.md](AZURE_MIGRATION.md) still
@@ -360,6 +362,27 @@ closed the copy from the first deploy instead of the switch. Following the
 owner's decision (section 1, last row), step 9 is replaced: once the checks
 pass, the rule is removed and the switch stays unset, so Azure is open to the
 company tenant next to Render. Note the time of the restore: M7 needs it.
+
+How the data moved that day, which M7 can repeat:
+
+- The owner's network blocked Cloud Shell, so the Azure steps ran from an
+  Azure CLI signed in with a device code.
+- Render's web shell adds bracketed-paste markers to pasted text. The command
+  typed into it therefore read the upload link with `read -rs` and extracted
+  the token, so only the short link was pasted. The link was write-only for
+  the `transfer` container and short-lived, and the storage key was rotated
+  right after the upload.
+- No read link was needed. A server-side copy put the archive into the backup
+  share. One run of the backup job, with its arguments temporarily replaced by
+  the restore script, checked the archive's SHA-256, then ran `verify` and
+  `restore --replace-existing` into `/test1`. The job was then put back from
+  its YAML.
+- `az containerapp job start` with an override that changes only `--args`
+  loses the job's command, and the container never starts. The `-c`
+  argument cannot be passed on that command line either, so change the job,
+  not the execution.
+- An app update that changes settings starts a new revision, which opens the
+  restored databases.
 
 ### M6. Daily backups, alerts and hygiene
 
