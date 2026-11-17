@@ -6,6 +6,8 @@ This is a **delta/crosswalk**, not a replacement for the retained unmerged accep
 
 **2026-11-15 PR status:** Azure code PRs #850–#856, #859 and #868 closed without merge on 2026-11-15; all branches were retained. #857 and #858 had already merged. The closed branches are historical proposals, not active live work.
 
+**2026-11-16 observation:** the existing container apps have now been read with the owner's own access. [AZURE_ASIS_OBSERVATIONS_2026-11-16.md](../AZURE_ASIS_OBSERVATIONS_2026-11-16.md) answers ACA-01 to ACA-08 in section 2 with a sanitized PASS, FAIL or PARTLY for each; where it differs from the 12 November owner snapshot used below, it is the newer evidence. The NO-GO decision is unchanged.
+
 ## 1. Evidence ledger and superseded assumptions
 
 | Item | Evidence source and bounded observation | State |

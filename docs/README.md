@@ -6,6 +6,7 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 # Documentation index
 
+[As-is Azure Container Apps: read-only control-plane observations](AZURE_ASIS_OBSERVATIONS_2026-11-16.md) — what the existing Azure footprint actually is on 16 November 2026, read with the owner's own access and sanitized: both container apps, the checker's results, answers to ACA-01 to ACA-08 and follow-ons 13 to 16, and the decisions that follow. No names, hostnames or digests; nothing in Azure was changed.
 [External monthly dev-patch provenance and source crosswalk](EXTERNAL_MONTHLY_PATCH_PROVENANCE_2026-11-12.md) — pinned source-unverified audit; no code port or release approval. External source recovery remains open (#876).
 [Owner manual acceptance sessions (87 open issues, November 2026)](OWNER_CHECK_SESSIONS_2026-11.md) — six reusable synthetic setup workflows, numbered checks, per-issue step index and explicit served/owner-only acceptance limits.
 

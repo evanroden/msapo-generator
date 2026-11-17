@@ -96,6 +96,8 @@ on the target until every file and database has been checked.
      setting, each secret coming from Key Vault, and who can get past the
      Microsoft sign-in (only the company's tenant: no skipped paths, no other
      sign-in providers). It prints names, never values, and changes nothing.
+     The 16 November 2026 results for the two existing apps are in
+     [AZURE_ASIS_OBSERVATIONS_2026-11-16.md](AZURE_ASIS_OBSERVATIONS_2026-11-16.md).
    - **Host,** in the Azure container (`az containerapp exec ... --command
      bash`, from `/app`): `python scripts/host_check.py`. It tests the real
      share: owner-only folders, file locks between processes, SQLite in the

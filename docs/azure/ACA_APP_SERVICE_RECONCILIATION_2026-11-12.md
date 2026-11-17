@@ -8,6 +8,8 @@ This file is a **sanitized public source-of-truth crosswalk**. It does not super
 
 **2026-11-15 PR status:** Azure code PRs #850–#856, #859 and #868 closed without merge on 2026-11-15; their branches were retained for reference, not deployment. #857 and #858 had already merged. Earlier draft/open descriptions below are historical.
 
+**2026-11-16 observation:** the control plane and registry have now been read with the owner's own access. [AZURE_ASIS_OBSERVATIONS_2026-11-16.md](../AZURE_ASIS_OBSERVATIONS_2026-11-16.md) answers follow-ons 13 to 16 in section 7 and replaces the "unknown" entries for the two existing container apps in sections 2 to 4 for the facts it lists. The App Service decision of record is unchanged.
+
 ## 1. Evidence and decision vocabulary
 
 - **VERIFIED — repository:** independently fetched public main/ref/file or current PR metadata; proves what is checked in, not what an Azure container executes.
