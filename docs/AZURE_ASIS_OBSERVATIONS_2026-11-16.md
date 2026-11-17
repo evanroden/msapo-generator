@@ -64,6 +64,7 @@ The owner has Contributor on the resource group. Subscription owners and platfor
 Detail is in `AZ-RO-20261116` only.
 
 - **R-1, dev-like app.** One access-control setting needs the owner's or IT's action before that app is used again.
+  **Closed on 17 Nov 2026 (task M1, #941):** the app had sign-in switched off and public ingress while holding real secrets and the data share. Its ingress is now off, its secret settings and the client-price switch are removed, its secrets deleted and its revision deactivated; a signed-out request to its old address answers 404.
 
 ## 6. Audit policies
 
