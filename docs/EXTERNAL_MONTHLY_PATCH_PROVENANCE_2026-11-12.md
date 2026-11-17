@@ -6,6 +6,8 @@
 
 **2026-11-15 status:** Source-path and Git blob observations below are pinned to the 2026-11-12 audit, not current main. Related Azure code PRs #850–#856, #859 and #868 closed without merge on 2026-11-15; their branches were retained, not deployed.
 
+**2026-11-16 status:** a read-only registry inspection with the owner's own access shows every development image is the earlier product image plus thin top layers (2 on the first build, 18 on the latest, under 1 MB in all). The patch is therefore recoverable byte for byte from those layers; layer contents were not extracted, and digests are held privately. See [AZURE_ASIS_OBSERVATIONS_2026-11-16.md](AZURE_ASIS_OBSERVATIONS_2026-11-16.md) and #877.
+
 ## Evidence tiers and search limits
 
 - **Verified GitHub inventory:** the repository contains all three workflows in one app. `README.md` lists Purchase Order/Smartsheet, Expense Reimbursement and Monthly Report; `run_web.py` dispatches through the same Streamlit entrypoint. The root contains no `AGENTS.md`; `.github/` contains workflows only as of this SHA.

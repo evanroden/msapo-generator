@@ -7,6 +7,8 @@
 
 **2026-11-15 PR status:** #853 (AI/provider), #854 (identity), #868 (portability), and other Azure code PRs #850–#856 and #859 closed without merge on 2026-11-15; branches retained. References below are historical proposals, not deployed controls. #857 and #858 had already merged.
 
+**2026-11-16 observation:** identity, vault references and sign-in on the two existing container apps were read with the owner's own access; see [AZURE_ASIS_OBSERVATIONS_2026-11-16.md](../AZURE_ASIS_OBSERVATIONS_2026-11-16.md). No secret value was read, and the reported model-provider 401 in section 4 was not investigated.
+
 ## 1. Current platform vs future target: do not interchange controls
 
 | Boundary | Current reported ACA prod/dev (*owner snapshot; unverified*) | Proposed App Service target (*manifest on main; not deployed*) |
