@@ -20,11 +20,35 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  pytest:
+  # Classify PRs before installing renderers or dependencies. An empty
+  # selection means the conservative selector requested all five shards.
+  select-pr-tests:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
-    # Pull requests run only the tests affected by the PR; pushes to main
-    # always run the complete suite here. scripts/ci_select_tests.py picks
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.mode.outputs.mode }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Select PR tests
+        run: python scripts/ci_select_tests.py --event pull_request --base "${{ github.event.pull_request.base.sha }}" --head "${{ github.event.pull_request.head.sha }}" --out selected-tests.txt
+      - name: Choose affected tests or full-suite shards
+        id: mode
+        run: |
+          if test -s selected-tests.txt; then
+            echo "mode=affected" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=full" >> "$GITHUB_OUTPUT"
+          fi
+
+  pytest:
+    needs: select-pr-tests
+    if: needs.select-pr-tests.result == 'success' && needs.select-pr-tests.outputs.mode == 'affected'
+    runs-on: ubuntu-24.04
+    # Pull requests with an affected selection run here; all full-suite
+    # selections run in the five shards below. scripts/ci_select_tests.py picks
     # the affected files (direct importers of changed modules, tests that
     # mention them, changed test files) and falls back to the full suite
     # whenever the change touches shared code, fixtures, workflows,
@@ -82,6 +106,8 @@ jobs:
           python -m compileall -q app pages scripts run_web.py
       - name: Select tests for this event
         run: python scripts/ci_select_tests.py --event "${{ github.event_name }}" --base "${{ github.event.pull_request.base.sha }}" --head "${{ github.event.pull_request.head.sha || github.sha }}" --out selected-tests.txt
+      - name: Require a nonempty affected-test selection
+        run: test -s selected-tests.txt
       - name: Run tests
         env:
           ANTHROPIC_API_KEY: test-key-not-used
@@ -116,7 +142,10 @@ jobs:
 
   # Separate runners isolate HOME, temporary files, Streamlit and LibreOffice.
   pytest-shards:
-    if: github.event_name == 'push'
+    needs: select-pr-tests
+    # A skipped selector on main must not skip the main full-suite run.
+    # On PRs, only a successful explicit full selection starts the matrix.
+    if: ${{ always() && !cancelled() && (github.event_name == 'push' || (needs.select-pr-tests.result == 'success' && needs.select-pr-tests.outputs.mode == 'full')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     strategy:
@@ -272,24 +301,34 @@ jobs:
   complete:
     name: Tests complete
     if: always()
-    needs: [pytest, pytest-shards, container, monthly-report-resources]
+    needs: [select-pr-tests, pytest, pytest-shards, container, monthly-report-resources]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Gate every test and release check on this commit
         env:
           EVENT_NAME: ${{ github.event_name }}
+          PR_SELECTION: ${{ needs.select-pr-tests.result }}
+          PR_MODE: ${{ needs.select-pr-tests.outputs.mode }}
           PR_PYTEST: ${{ needs.pytest.result }}
-          MAIN_SHARDS: ${{ needs.pytest-shards.result }}
+          FULL_SHARDS: ${{ needs.pytest-shards.result }}
           CONTAINER: ${{ needs.container.result }}
           RESOURCES: ${{ needs.monthly-report-resources.result }}
         run: |
           test "$CONTAINER" = success
           test "$RESOURCES" = success
           if [ "$EVENT_NAME" = pull_request ]; then
-            test "$PR_PYTEST" = success
-            test "$MAIN_SHARDS" = skipped
+            test "$PR_SELECTION" = success
+            if [ "$PR_MODE" = full ]; then
+              test "$PR_PYTEST" = skipped
+              test "$FULL_SHARDS" = success
+            else
+              test "$PR_MODE" = affected
+              test "$PR_PYTEST" = success
+              test "$FULL_SHARDS" = skipped
+            fi
           else
+            test "$PR_SELECTION" = skipped
             test "$PR_PYTEST" = skipped
-            test "$MAIN_SHARDS" = success
+            test "$FULL_SHARDS" = success
           fi
