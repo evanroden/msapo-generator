@@ -114,6 +114,16 @@ def _same(actual: str, expected: str) -> bool:
         return False
 
 
+def _from_secret(item: dict) -> bool:
+    """Whether a setting takes its value from a secret.
+
+    Azure can return an empty "value" beside "secretRef" (seen on an app whose
+    settings were edited after it was created), so the key being present does
+    not make the setting a plain value. A value with any content does.
+    """
+    return bool(item.get("secretRef")) and not item.get("value")
+
+
 def check_status(report: Report, app: dict) -> None:
     state = app.get("provisioningState") or "unknown"
     running = app.get("runningStatus") or "unknown"
@@ -231,7 +241,7 @@ def check_environment(report: Report, config: dict, container: dict,
         shown = f" (render.yaml: {value})" if len(value) <= 40 else " (see render.yaml)"
         if item is None:
             report.line("FAIL", f"setting {name} is missing{shown}")
-        elif "value" not in item:
+        elif "value" not in item or _from_secret(item):
             report.line("WARN", f"setting {name} comes from a secret; render.yaml has a fixed value{shown}")
         elif not _same(str(item.get("value")), value):
             report.line("FAIL", f"setting {name} differs from render.yaml{shown}")
@@ -242,7 +252,7 @@ def check_environment(report: Report, config: dict, container: dict,
     if journal is None:
         report.line("INFO", "EPC_SQLITE_JOURNAL_MODE is not set: the app detects the NFS share and uses "
                     "SQLite's rollback journal (host_check.py confirms it)")
-    elif "value" not in journal:
+    elif "value" not in journal or _from_secret(journal):
         report.line("WARN", "EPC_SQLITE_JOURNAL_MODE comes from a secret, so its value cannot be checked "
                     "here; set it as a plain value (delete), and check the mode with host_check.py")
     elif mode == "delete":
@@ -273,7 +283,7 @@ def _check_secret(report: Report, name: str, item: dict | None, secrets: dict) -
         else:
             report.line("FAIL", f"secret {name} is missing")
         return
-    if "value" in item:
+    if "value" in item and not _from_secret(item):
         report.line("FAIL", f"secret {name} is a plain value that anyone who can read the app's settings "
                     "sees; store it in Key Vault and use secretRef")
         return

@@ -180,6 +180,15 @@ DEFECTS = {
                                   "WARN  setting PDF_BACKEND comes from a secret"),
     "plain secret": (_env_set("ANTHROPIC_API_KEY", {"value": PLAIN_SECRET}),
                      "FAIL  secret ANTHROPIC_API_KEY is a plain value"),
+    "plain secret beside a reference": (_env_set("ANTHROPIC_API_KEY", {"value": PLAIN_SECRET,
+                                                                       "secretRef": "anthropic-api-key"}),
+                                        "FAIL  secret ANTHROPIC_API_KEY is a plain value"),
+    "fixed value from a secret, empty value": (_env_set("PDF_BACKEND", {"value": "", "secretRef": "anthropic-api-key"}),
+                                               "WARN  setting PDF_BACKEND comes from a secret"),
+    "journal from a secret, empty value": (_env_set("EPC_SQLITE_JOURNAL_MODE",
+                                                    {"value": "", "secretRef": "anthropic-api-key"}),
+                                           "WARN  EPC_SQLITE_JOURNAL_MODE comes from a secret, so its value "
+                                           "cannot be checked"),
     "dangling secret": (_env_set("SMARTSHEET_FORM_URL", {"secretRef": "smartsheet-url"}),
                         "FAIL  secret SMARTSHEET_FORM_URL refers to smartsheet-url, which the app does not define"),
     "secret kept in the app": (_secret_set("expense-account-directors-json", value=PLAIN_SECRET),
@@ -227,6 +236,27 @@ def test_tolerated_differences_pass(tmp_path, capsys):
     assert "PASS  EPC_SQLITE_JOURNAL_MODE pins SQLite's rollback journal" in out
     assert "INFO  also set: EPC_TIMEZONE" in out
     assert "INFO  secrets no setting uses: smartsheet-api-token, smartsheet-sheet-id" in out
+    assert PLAIN_SECRET not in out
+
+
+@pytest.mark.parametrize("empty", ["", None])
+def test_an_empty_value_beside_a_secret_reference_is_not_a_plain_value(tmp_path, capsys, empty):
+    """Azure returned {"name", "secretRef", "value": ""} for an app edited after creation."""
+    app = planned_app()
+    for item in _container(app)["env"]:
+        if "secretRef" in item:
+            item["value"] = empty
+    code, out = check(tmp_path, capsys, app)
+    assert code == 0, out
+    assert "is a plain value" not in out
+    assert "PASS  secret ANTHROPIC_API_KEY comes from Key Vault (anthropic-api-key)" in out
+
+    # The same shape with the secret kept on the app is a warning, as it is without the empty value.
+    _secret_set("anthropic-api-key", value=PLAIN_SECRET)(app)
+    code, out = check(tmp_path, capsys, app)
+    assert code == 0, out
+    assert ("WARN  secret ANTHROPIC_API_KEY is stored in the app (anthropic-api-key) "
+            "rather than in Key Vault") in out
     assert PLAIN_SECRET not in out
 
 
