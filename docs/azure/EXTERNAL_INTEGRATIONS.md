@@ -1,5 +1,7 @@
 # MSAPO external integrations — Azure App Service preparation
 
+> **17 Nov 2026 — decision changed.** The owner chose to finish the move on the existing Azure Container Apps and to keep the code in this repository, made private once the move is accepted. Agents carry out the Azure changes one task at a time from the owner's prompts. Where this document assumes App Service, [AZURE_CUTOVER_PLAN.md](../AZURE_CUTOVER_PLAN.md) takes precedence; the integration rules themselves (Smartsheet, the expense director map, PDF rendering, the model provider) are unchanged.
+
 **Status: PREPARATION / NO LIVE SUBMISSIONS.** Source main SHA: 57c5cd87e3e441dfea3cddbc666248f8e469d986 (2026-11-11). Reference: A01's draft migration manifest, PR #849. The enterprise destination, real URLs, service accounts and named approvers are not available in this public repository; do not invent them, print their values, or treat this document as infrastructure/provisioning authorization.
 
 ## Existing behavior to preserve

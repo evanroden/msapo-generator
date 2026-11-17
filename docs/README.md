@@ -6,6 +6,7 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 # Documentation index
 
+[Finishing the move to Azure Container Apps](AZURE_CUTOVER_PLAN.md) — the owner's decisions of 17 November 2026 (existing Container Apps, this repository made private later, agents carrying out Azure changes from the owner's prompts), the end state, and twelve ordered tasks with commands, checks and rollback, written with placeholders instead of real names. Tracker #941.
 [As-is Azure Container Apps: read-only control-plane observations](AZURE_ASIS_OBSERVATIONS_2026-11-16.md) — what the existing Azure footprint actually is on 16 November 2026, read with the owner's own access and sanitized: both container apps, the checker's results, answers to ACA-01 to ACA-08 and follow-ons 13 to 16, and the decisions that follow. No names, hostnames or digests; nothing in Azure was changed.
 [External monthly dev-patch provenance and source crosswalk](EXTERNAL_MONTHLY_PATCH_PROVENANCE_2026-11-12.md) — pinned source-unverified audit; no code port or release approval. External source recovery remains open (#876).
 [Owner manual acceptance sessions (87 open issues, November 2026)](OWNER_CHECK_SESSIONS_2026-11.md) — six reusable synthetic setup workflows, numbered checks, per-issue step index and explicit served/owner-only acceptance limits.
@@ -192,6 +193,7 @@ Not tied to one change; expected to stay true.
 | [`JOB_NUMBER_CATALOG_AND_UNITY_DISAMBIGUATION_2026-08-10.md`](JOB_NUMBER_CATALOG_AND_UNITY_DISAMBIGUATION_2026-08-10.md) | The verified 87-value job catalog and the Arkansas-versus-RRH Unity rule. |
 | [`RRH_UNIFIED_REVIEW_BRAND_BROWSER_HARDENING_2026-08-09.md`](RRH_UNIFIED_REVIEW_BRAND_BROWSER_HARDENING_2026-08-09.md) | The three-step UI, brand-aligned theme, browser matrix, release hardening. |
 | [`LINK_PREVIEW_METADATA_2026-08-11.md`](LINK_PREVIEW_METADATA_2026-08-11.md) | Page title, favicon, Open Graph/Twitter card, the build-time patch, and the production verification contract. |
+| [`AZURE_CUTOVER_PLAN.md`](AZURE_CUTOVER_PLAN.md) | The working plan for finishing the move on Azure Container Apps: decisions, rules for agents, placeholders, tasks M1 to M12 and C1. |
 | [`AZURE_MIGRATION.md`](AZURE_MIGRATION.md) | Moving off Render: every setting and build argument, the one-instance rule, SQLite on a network share, the checked data move (`scripts/migrate_data.py`), and what people and QA notice. |
 
 ## 5. Historical — read for reasoning, not for current behaviour

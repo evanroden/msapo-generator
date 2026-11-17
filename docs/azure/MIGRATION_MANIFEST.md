@@ -1,5 +1,7 @@
 # MSAPO migration manifest — ENFRA GitHub → Azure App Service
 
+> **17 Nov 2026 — decision changed.** The owner chose to finish the move on the existing Azure Container Apps and to keep the code in this repository, made private once the move is accepted. Agents carry out the Azure changes one task at a time from the owner's prompts. Where this document assumes App Service, a new ENFRA repository or unassigned owners, [AZURE_CUTOVER_PLAN.md](../AZURE_CUTOVER_PLAN.md) takes precedence; the platform and repository rows of section 2 are superseded, and the rest is kept as the record of 11 Nov.
+
 **Status:** PREPARATION / proposed architecture; no migration, infrastructure provisioning, repository transfer, production routing or data transfer authorized.
 **Audit date:** 2026-11-11 (UTC).
 **Source:** https://github.com/evanroden/msapo-generator

@@ -1,5 +1,7 @@
 # MSAPO architecture reconciliation: current container apps vs planned App Service
 
+> **17 Nov 2026 — decision changed.** The owner chose to finish the move on the existing Azure Container Apps and to keep the code in this repository, made private once the move is accepted. Agents carry out the Azure changes one task at a time from the owner's prompts. Where this document assumes that App Service is the target, [AZURE_CUTOVER_PLAN.md](../AZURE_CUTOVER_PLAN.md) takes precedence; the question this document reconciles is now answered: the Container Apps are the target.
+
 **Version:** 1.0 · **Evidence checkpoint:** 2026-11-12 (UTC) · **Status:** RECONCILIATION / PREPARATION ONLY · **Scope:** documentation, no infrastructure or data changes.
 
 **Source repository:** [MSAPO](https://github.com/evanroden/msapo-generator) · **Ledger:** [#270](https://github.com/evanroden/msapo-generator/issues/270) · **Architecture decision of record:** [merged A01 #849](https://github.com/evanroden/msapo-generator/pull/849) and [migration manifest](MIGRATION_MANIFEST.md) · **Integration authority:** P20 under #270.

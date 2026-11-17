@@ -1,5 +1,7 @@
 # MSAPO — Render/personal GitHub to ENFRA App Service/enterprise GitHub cutover
 
+> **17 Nov 2026 — decision changed.** The owner chose to finish the move on the existing Azure Container Apps and to keep the code in this repository, made private once the move is accepted. Agents carry out the Azure changes one task at a time from the owner's prompts. Where this document assumes App Service or an enterprise repository, [AZURE_CUTOVER_PLAN.md](../AZURE_CUTOVER_PLAN.md) takes precedence; its cutover steps are replaced by tasks M5 and M7 there. Its acceptance and rollback principles still apply.
+
 **Document status:** PREPARATION ONLY — not a change authorization. **Readiness:** **BLOCKED** as of 2026-11-11.  **Version:** 0.1.  **Coordinator:** A12 change/cutover coordinator (individual not assigned).  **Business signoff:** ENFRA MSAPO business owner (individual not assigned).
 
 **Scope:** Monthly, PO and Expense; saved versions/history, learning/directory/designs, originals, approvals and external submission claims. **Excluded from preparation:** enterprise repository transfer/import, DNS or traffic changes, Render suspension, live export/import, resource provisioning and employee notification.
