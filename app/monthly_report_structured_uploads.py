@@ -258,12 +258,13 @@ def _docx_site_table(text):
     if first_tab is None:
         return False
     headings = " ".join(lines[:first_tab + 1]).split("\t")
-    if sum(bool(value.strip()) for value in headings) < 2:
-        return False
+    # A merged title band has one nonblank cell and can precede the actual
+    # header. It cannot establish site scope, but must not hide a later header.
+    has_columns = sum(bool(value.strip()) for value in headings) >= 2
     # Cell line breaks can split both headers and rows across physical lines.
     # If the site label is in a later header fragment, conservatively hold the
     # item too. Original source bytes and unrelated source items are retained.
-    if any(_site_identity_heading(value) for value in headings):
+    if has_columns and any(_site_identity_heading(value) for value in headings):
         return bool(lines[first_tab + 1:])
     return any(i + 1 < len(lines) and any(_site_identity_heading(value) for value in line.split("\t"))
                for i, line in enumerate(lines[first_tab + 1:], first_tab + 1))
