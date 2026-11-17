@@ -108,6 +108,16 @@ def test_unset_or_empty_switch_keeps_normal_first_screen(
         monkeypatch.setenv("MSAPO_SERVICE_MOVED_TO", open_value)
     monkeypatch.setenv("MSAPO_SERVICE_NOTICE", "unused notice")
 
+    # AppTest runs a pages/ file on its own, without the page registry that
+    # st.page_link needs (it raises KeyError 'url_pathname'), so record the
+    # call instead of rendering it.
+    import streamlit
+
+    page_links = []
+    monkeypatch.setattr(
+        streamlit, "page_link", lambda page, *args, **kwargs: page_links.append(page)
+    )
+
     app = _app(entry)
     assert not app.text or _DEFAULT_NOTICE not in [x.value for x in app.text]
     if entry.name == "run_web.py":
@@ -116,6 +126,7 @@ def test_unset_or_empty_switch_keeps_normal_first_screen(
     else:
         assert any("Smartsheet PO handoff" in x.value for x in app.get("title"))
         assert app.get("info")
+        assert page_links == ["run_web.py"]
 
 
 @pytest.mark.parametrize(
