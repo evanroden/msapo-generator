@@ -1,7 +1,9 @@
 # Finishing the move to Azure Container Apps
 
-**Status, 17 Nov 2026:** agreed with the owner. No task below has been carried
-out yet. Progress is tracked in [#941](https://github.com/evanroden/msapo-generator/issues/941).
+**Status, 17 Nov 2026:** agreed with the owner. M1, M2 and M4 are done; M5 and
+M6 are under way, and the owner has since decided to run both copies side by
+side for now (section 1, last row). Progress is tracked in
+[#941](https://github.com/evanroden/msapo-generator/issues/941).
 
 This is the working plan for moving the app from Render to the Azure Container
 Apps that already exist. It is written for the agents who will carry it out, one
@@ -24,6 +26,7 @@ use the placeholders in section 5, and the owner holds the key to them.
 | Who changes Azure | Agents, each carrying out one task below from a prompt the owner gives them, with the owner's own Azure access. The prompt approves exactly the changes its task lists, nothing more. | Nothing: no one had been assigned. |
 | Private details | Kept out of this repository while it is public. Agents get them from the owner: the Render service's environment variable `MIGRATION_PRIVATE_AZURE_KEY_JSON` (Render dashboard, service msapo-generator, Environment) and the owner's private prompt page. From M2 on, task records also go to a private storage container. After M10 the key moves into this repository. | Records "only in an approved restricted change record", which did not exist. |
 | Data authority | Render is the only place where work is saved until the cutover (M7). Every Azure copy before then is a rehearsal and is closed to people (C1). | Not decided before. |
+| Both copies for now (owner, later on 17 Nov) | Render keeps running. Azure is brought up to main with a copy of Render's data, checked, and opened to the company tenant next to Render. Render stays the copy where work is saved until the owner announces the switch; the two copies do not sync, so anything saved on Azure before then is not on Render, and the switch (M7) copies Render's data over Azure's again. | M5 ending with Azure closed again, and M7 closing Render in the same window that opens Azure. |
 
 Unchanged: everything in [AZURE_MIGRATION.md](AZURE_MIGRATION.md) still
 applies; the open acceptance work in #270 (authentic reports, devices, PO and
@@ -65,7 +68,8 @@ while it is closed to people.
   14 days; a share snapshot before every change; alerts to the owner.
 - The dev-like app closed, then deleted by IT.
 - Render closed with a notice that links to the new address, suspended after
-  acceptance, then deleted.
+  acceptance, then deleted. Until the owner announces the switch, both copies
+  run (section 1).
 - Releases deployed by a written procedure (M9) until IT grants a deploy
   identity (M12).
 - This repository private, with CI sized for a private repository's minutes.
@@ -81,7 +85,7 @@ while it is closed to people.
 | M4 | Build main by commit in the registry | One new, locked image tag | C1 merged, D1 |
 | M5 | Rehearse the move on the prod-like app | That app's image, settings and data; closed to people throughout | M2, M4 |
 | M6 | Daily backups, alerts and hygiene | A backup job, alerts, two settings | M2, M5 |
-| M7 | Cutover | Render closed; Azure opened with Render's data | M5, M6, D2 |
+| M7 | Cutover | Render closed; Azure given Render's latest data | M5, M6, D2 |
 | M8 | First week after cutover | Records only | M7 |
 | M9 | Deploy a release (repeatable) | Production image and backup job image | M7 |
 | M10 | Make the repository private | GitHub visibility; private key into the repository | M8, D6 |
@@ -351,6 +355,12 @@ Everything this task restores is replaced at the cutover.
 11. Record the export size and the time each step took: that sizes the window
     for D2.
 
+**As run on 17 Nov.** C1 was still in review, so the `operator-check` rule
+closed the copy from the first deploy instead of the switch. Following the
+owner's decision (section 1, last row), step 9 is replaced: once the checks
+pass, the rule is removed and the switch stays unset, so Azure is open to the
+company tenant next to Render. Note the time of the restore: M7 needs it.
+
 ### M6. Daily backups, alerts and hygiene
 
 1. Register the `backups` share with the environment, using the account's
@@ -407,7 +417,8 @@ Everything this task restores is replaced at the cutover.
    share.
 3. Alerts to `<OWNER_EMAIL>` through one action group: the production app
    restarted, has no replica, or answers with server errors; the backup job
-   failed. List the metric names first
+   failed. (On 17 Nov the owner chose to leave alerts out for now.) List the
+   metric names first
    (`az monitor metrics list-definitions --resource <id> --query "[].name.value" -o tsv`)
    rather than guessing them.
 4. Hygiene: minimum TLS 1.2 on `<DATA_ACCOUNT>` (NFS is unaffected); lock image
@@ -419,6 +430,16 @@ Everything this task restores is replaced at the cutover.
 In the window from D2. The production image already runs on `<PROD_APP>`,
 closed with `MSAPO_SERVICE_MOVED_TO` pointing at Render (M5 step 9, or M9 for a
 newer release), with no access restriction left over.
+
+While both copies run (section 1), Azure is open when this task starts. First
+close it: `az containerapp update -n <PROD_APP> -g <RG> --set-env-vars MSAPO_SERVICE_MOVED_TO=https://msapo-generator.onrender.com`,
+and wait until that revision is healthy. Then, inside it, list what changed
+since the M5 restore:
+`find /test1 -type f -newermt '<restore time>' -not -path '/test1/.pre-restore-*'`.
+Databases change on their own when the app starts, but saved reports, uploads
+or other new files mean people worked on Azure: show the list to the owner and
+continue only when he says so. Step 4 moves Azure's data aside, so nothing is
+deleted, but it is no longer what the app shows.
 
 1. Turn off the live acceptance:
    `gh workflow disable "Monthly Isolated Live Acceptance" -R evanroden/msapo-generator`.
