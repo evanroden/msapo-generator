@@ -21,6 +21,8 @@ that the submitting/email routes live nowhere but the root page.
 
 import streamlit as st
 
+from app.service_closed import close_if_moved
+
 
 st.set_page_config(
     page_title="Smartsheet PO handoff moved",
@@ -28,6 +30,7 @@ st.set_page_config(
     layout="centered",
     initial_sidebar_state="collapsed",
 )
+close_if_moved()
 
 st.title("Smartsheet PO handoff")
 st.info(
