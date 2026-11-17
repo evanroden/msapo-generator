@@ -162,9 +162,15 @@ Render's address is public already: `https://msapo-generator.onrender.com`.
 
 ### M1. Close R-1
 
-Changes the dev-like app only. The steps are restricted and are in the owner's
-private prompt. Afterwards its agent replaces this paragraph with what was done,
-and the observations document records R-1 as closed.
+**Done on 17 Nov 2026, 16:52 to 16:56 UTC** (recorded on #941). R-1 was the
+dev-like app answering without sign-in: its sign-in was configured but switched
+off and its ingress was public, while it held the real model key, the expense
+director map and the Smartsheet form address and mounted the data share. Its
+ingress is now off; the three settings that read those secrets and the
+client-price switch are removed; the three secrets are deleted from the app;
+its only active revision is deactivated. A signed-out request to its old address
+now answers 404 (200 before). The prod-like app was not touched. The app itself
+can only be deleted by IT (M12); until then it cannot run or be reached.
 
 ### M2. Storage for transfers, backups and records; first snapshot
 
