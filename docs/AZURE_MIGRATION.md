@@ -26,6 +26,8 @@ anything extra too.
 | Fixed | `EPC_DATA_DIR=/test1` | Mount the data share at `/test1` so every path stays as it was. |
 | Optional | `EPC_TIMEZONE` | Defaults to America/New_York. |
 | Optional | `EPC_SQLITE_JOURNAL_MODE` | `wal` or `delete`; normally leave unset (see section 3). |
+| Optional | `MSAPO_SERVICE_MOVED_TO` | Closes this copy and links to the other; used at the cutover. Only a valid HTTPS address is shown as a link. Leave unset to keep this copy open. |
+| Optional | `MSAPO_SERVICE_NOTICE` | Plain-text replacement for the closed-copy notice; used at the cutover. Has no effect unless `MSAPO_SERVICE_MOVED_TO` is set. |
 | Not needed | `GOTENBERG_URL`, `FONTCONFIG_FILE` | Other PDF engine only; already set in the image. |
 
 Build arguments (no effect on Render, which supplies its own):

@@ -47,6 +47,8 @@ from pathlib import Path
 
 import streamlit as st
 
+from app.service_closed import close_if_moved
+
 from app import contracts
 from app.ui_highlight import highlight_needed_fields
 from app.asset_guess import guess_asset_uid, lowest_numbered_of_type
@@ -1724,6 +1726,7 @@ def main() -> None:
         layout="wide",
         initial_sidebar_state="collapsed",
     )
+    close_if_moved()
     # Split deliberately. Previously one try/except wrapped BOTH the cookie read
     # and the bootstrap, which caused two problems: a read failure skipped
     # bootstrap entirely (so the cookie could never be created), and a bootstrap
