@@ -51,7 +51,7 @@ def test_single_required_result_gates_both_pr_selection_modes_and_main():
     assert "name: Tests complete" in complete
     assert "needs: [select-pr-tests, pytest, pytest-shards, container, monthly-report-resources]" in complete
     assert 'test "$PR_SELECTION" = success' in complete
-    assert 'test "$PR_MODE" = full' in complete
+    assert 'if [ "$PR_MODE" = full ]; then' in complete
     assert 'test "$PR_MODE" = affected' in complete
     assert 'test "$FULL_SHARDS" = success' in complete
     assert 'test "$PR_PYTEST" = success' in complete
