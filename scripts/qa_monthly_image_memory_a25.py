@@ -196,7 +196,13 @@ def main():
     for scenario in ("photos", "preview", "line_art", "transparency", "heif"):
         command = [sys.executable, __file__, "--worker", scenario, "--code-root", args.code_root,
                    "--fixtures", args.fixtures]
-        run = subprocess.run(command, check=True, capture_output=True, text=True, timeout=600)
+        try:
+            run = subprocess.run(command, check=True, capture_output=True, text=True, timeout=600)
+        except subprocess.CalledProcessError as exc:
+            print("worker failed:", scenario, exc, file=sys.stderr)
+            print(exc.stdout, file=sys.stderr)
+            print(exc.stderr, file=sys.stderr)
+            raise
         results.append(json.loads(run.stdout))
     result = {"code_root": args.code_root, "scenarios": results}
     data = json.dumps(result, indent=2, sort_keys=True)
