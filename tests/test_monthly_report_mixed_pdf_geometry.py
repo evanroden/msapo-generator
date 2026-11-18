@@ -6,6 +6,9 @@ PDF rasterization separately from the actual Word-derived PDF renderer.
 from dataclasses import replace
 from hashlib import sha256
 from io import BytesIO
+import json
+import os
+from pathlib import Path
 
 import numpy as np
 import pymupdf as fitz
@@ -248,6 +251,33 @@ def test_mixed_mbcx_pages_keep_all_corners_and_order_in_final_word_pdf(tmp_path,
             if following in page.get_text()
         ]
         assert following_pages and following_pages[0] > captions[-1]
+        # CI retains the exact validated artifacts and a reproducible layout
+        # receipt, rather than relying on DOCX text extraction or screenshots.
+        if root := os.environ.get("INDEPENDENT_OUTPUT"):
+            destination = Path(root) / "a79-mixed-page-geometry"
+            destination.mkdir(parents=True, exist_ok=True)
+            (destination / "synthetic-source.pdf").write_bytes(original)
+            (destination / "rendered-report.docx").write_bytes(package.docx)
+            (destination / "rendered-report.pdf").write_bytes(package.pdf)
+            receipt = {
+                "test_level": "synthetic generated DOCX and LibreOffice PDF",
+                "source_sha256": source_sha,
+                "docx_sha256": sha256(package.docx).hexdigest(),
+                "pdf_sha256": sha256(package.pdf).hexdigest(),
+                "source_pages": list(GEOMETRIES),
+                "source_page_count": len(GEOMETRIES),
+                "report_pdf_page_count": len(output),
+                "attachment_pdf_pages": [index + 1 for index in captions],
+                "attachment_pdf_sizes_points": [
+                    [round(output[index].rect.width, 2), round(output[index].rect.height, 2)]
+                    for index in captions
+                ],
+                "following_section_first_page": following_pages[0] + 1,
+                "all_corner_quadrants_and_aspect_checks": "passed",
+            }
+            (destination / "geometry-receipt.json").write_text(
+                json.dumps(receipt, indent=2, sort_keys=True) + "\\n", encoding="utf-8"
+            )
 
 
 def test_rotated_price_sheet_cannot_be_included_with_technical_pages(tmp_path, monkeypatch):
