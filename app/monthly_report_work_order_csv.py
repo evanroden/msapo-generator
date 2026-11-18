@@ -9,6 +9,7 @@ import re
 
 from app.monthly_report_sources import SourceContent, source_reference
 from app.monthly_report_model import ReportPeriod, ReportProfile
+from app.monthly_report_work_order_normalized import source_header_positions
 
 
 @dataclass(frozen=True)
@@ -41,7 +42,7 @@ def _name(value):
 
 
 def _column(columns, kind):
-    positions = [i for i, title in enumerate(columns) if _name(title) in _HEADERS[kind]]
+    positions = source_header_positions(columns, _HEADERS[kind])
     return positions[0] if len(positions) == 1 else None
 
 
@@ -57,7 +58,7 @@ def _date(value):
 
 def is_work_order_source(content: SourceContent) -> bool:
     return (content.source.suffix in (".csv", ".xlsx")
-            and any(all(_column(table.columns, kind) is not None
+            and any(not table.hidden and all(_column(table.columns, kind) is not None
                         for kind in ("identity", "status", "date"))
                     for table in content.tables))
 
@@ -77,6 +78,8 @@ def work_order_evidence(content: SourceContent, period: ReportPeriod,
             if normalized:
                 sites.setdefault(normalized, set()).add(facility_profile.key)
     for number, table in enumerate(content.tables, 1):
+        if table.hidden:
+            continue  # Hidden worksheets require explicit row review; never auto-count.
         wo, status, dated = (_column(table.columns, kind)
                              for kind in ("identity", "status", "date"))
         if None in (wo, status, dated):
