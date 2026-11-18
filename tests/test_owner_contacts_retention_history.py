@@ -355,4 +355,10 @@ def test_owner_screen_two_sessions_stale_identity_cannot_overwrite_updated_row()
     assert [(row["name"], row["email"]) for row in saved_vendor_contacts(contract)] == [
         ("Current Rep", "original@example.invalid")
     ]
-    assert older.error  # The stale original identity was rejected.
+    # The old identity-hashed Save widget is no longer rendered when the
+    # other session changes that identity. Its obsolete click is a no-op,
+    # rather than a database correction attempt that must show st.error.
+    assert [widget.value for widget in older.text_input] == [
+        "Current Rep", "original@example.invalid"
+    ]
+    assert "Stale Rep" not in [widget.value for widget in older.text_input]
