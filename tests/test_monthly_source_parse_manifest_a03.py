@@ -302,3 +302,38 @@ def test_interrupted_stage_is_invalidated_on_parser_policy_upgrade(profile, monk
         patch.setattr(sources, "_spreadsheet", lambda *args: (count.append(True), original(*args))[1])
         sources.ingest(profile, "stage.csv", CSV)
     assert count == [True]
+
+
+def test_disk_cache_ttl_reparses_derived_metadata_but_not_immutable_original(profile, monkeypatch):
+    import os
+    import time
+    from app import monthly_source_parse_manifest as parse
+    original, _ = sources.ingest(profile, "ttl.csv", CSV)
+    cache = cache_for(profile, original)
+    source = sources._path(profile, original.source.sha256, ".csv")
+    source_stat = source.stat()
+    old = time.time() - parse.DISK_PARSE_TTL_SECONDS - 60
+    os.utime(cache, (old, old))
+    calls = []
+    parser = sources._spreadsheet
+    monkeypatch.setattr(sources, "_spreadsheet", lambda *args: (calls.append(True), parser(*args))[1])
+    again, _ = sources.ingest(profile, "ttl.csv", CSV)
+    assert again == original and calls == [True]
+    assert (source.stat().st_ino, source.stat().st_mtime_ns) == (
+        source_stat.st_ino, source_stat.st_mtime_ns)
+    sources.ingest(profile, "ttl.csv", CSV)
+    assert calls == [True]
+
+
+def test_local_qa_metrics_do_not_expose_filename_contract_or_digest(profile, monkeypatch, caplog):
+    import logging
+    monkeypatch.setenv("MSAPO_LOCAL_QA_SOURCE_CACHE", "1")
+    with caplog.at_level(logging.INFO, logger="msapo.local.source_cache"):
+        first, _ = sources.ingest(profile, "private-FILE-source.csv", CSV)
+        sources.ingest(profile, "private-FILE-source.csv", CSV)
+    messages = "\n".join(r.getMessage() for r in caplog.records
+                         if r.name == "msapo.local.source_cache")
+    assert "outcome=miss" in messages and "outcome=hit" in messages
+    assert "wall_ms=" in messages and "derived_bytes=" in messages
+    assert "private-FILE" not in messages
+    assert profile.contract not in messages and first.source.sha256 not in messages
