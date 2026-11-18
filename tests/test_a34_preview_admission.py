@@ -42,13 +42,19 @@ def test_two_preview_leases_overlap_but_third_fails_fast(high_tier):
 
 
 def test_pressure_does_not_spend_same_headroom_twice(high_tier):
-    high_tier.setattr(jobs, 'memory_headroom', lambda: 600 * MIB)
-    with jobs.work_slot(preview=True):
-        with pytest.raises(jobs.RenderBusy, match='edits are still here'):
-            with jobs.work_slot(preview=True):
-                pass
-        assert jobs._ACTIVE_WORK == 1
-    assert jobs._ACTIVE_WORK == 0 and not jobs._WORK_SLOT.locked()
+        high_tier.setattr(jobs, 'memory_headroom', lambda: 600 * MIB)
+        with jobs.work_slot(preview=True):
+                    # A second preview in the SAME thread is a nested operation and takes
+                    # no second lease by design, so it can never be rejected. Run it in
+                    # another thread, where it must go through admission and fail.
+                    with ThreadPoolExecutor(max_workers=1) as pool:
+                                    def second():
+                                                        with pytest.raises(jobs.RenderBusy, match='edits are still here'):
+                                                                                with jobs.work_slot(preview=True):
+                                                                                                            pass
+                                                                                                pool.submit(second).result(timeout=5)
+                                                                    assert jobs._ACTIVE_WORK == 1
+                                            assert jobs._ACTIVE_WORK == 0 and not jobs._WORK_SLOT.locked()
 
 
 def test_unknown_live_counter_fails_closed_on_high_tier(high_tier):
