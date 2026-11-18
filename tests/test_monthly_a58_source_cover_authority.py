@@ -121,6 +121,21 @@ def test_unknown_site_with_only_body_alias_is_not_approved(tmp_path):
                for title in inspection.cover_title_candidates)
 
 
+def test_standalone_cover_month_is_authority_but_issue_date_is_not(tmp_path):
+    profile = synthetic_profiles()[0]
+    for title in ("Sept 2026", "09/2026", "September 2026"):
+        path = fixture(tmp_path, title=profile.facilities[0].title)
+        source = Document(path)
+        source.paragraphs[1].text = title
+        source.save(path)
+        assert cover_report_periods(inspect_docx(path)) == ((2026, 9),)
+    path = fixture(tmp_path, title=profile.facilities[0].title)
+    source = Document(path)
+    source.paragraphs[1].text = "Issued Date: September 11, 2026"
+    source.save(path)
+    assert cover_report_periods(inspect_docx(path)) == ()
+
+
 def test_two_conflicting_report_month_titles_demand_one_source_bound_choice(tmp_path):
     profile = synthetic_profiles()[0]
     path = fixture(tmp_path, title=profile.facilities[0].title,

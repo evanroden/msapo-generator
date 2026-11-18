@@ -94,6 +94,13 @@ def cover_report_periods(inspection):
                             maxsplit=1, flags=re.I)[0]
         if re.search(r"\b(?:monthly\s+(?:report|review)|report(?:ing)?\s+(?:month|period))\b", headline, re.I):
             periods.update(mentioned_periods(headline))
+        # Covers sometimes put the report month on a line of its own.
+        # A standalone month/year is authoritative; a signature or issue
+        # date, service event, or incidental narrative remains untrusted.
+        if re.fullmatch(r"\s*(?:month\s*(?:of|:)\s*)?"
+                        r"(?:[A-Za-z]{3,9}\.?\s+20\d{2}|(?:0?[1-9]|1[0-2])/20\d{2})\s*",
+                        title, re.I):
+            periods.update(mentioned_periods(title))
     return tuple(sorted(periods))
 
 
