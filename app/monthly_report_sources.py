@@ -767,8 +767,8 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes | StagedUpload, *, 
         # Validation and review-budget checks precede publication. The common
         # object store verifies the streamed digest and atomically deduplicates
         # identical originals; a rejected stage was never made persistent.
-        from app.monthly_report_objects import store_file
-        store_file(path, staged.path)
+        from app.monthly_report_streamed_upload import publish_staged_original
+        publish_staged_original(path, staged)
     library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1,
         "native_action_policy": 1, "vendor_passage_policy": 7,
         **({"xlsx_currency_policy": 1} if suffix == ".xlsx" else {}),
@@ -844,8 +844,8 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
             except (ValueError, OSError):
                 try:
                     if isinstance(raw, StagedUpload):
-                        from app.monthly_report_objects import store_file
-                        store_file(_path(profile, digest, existing_source.suffix), raw.path)
+                        from app.monthly_report_streamed_upload import publish_staged_original
+                        publish_staged_original(_path(profile, digest, existing_source.suffix), raw)
                     else:
                         library._atomic_write(_path(profile, digest, existing_source.suffix), raw)
                     _verified_original(profile, existing_source)
