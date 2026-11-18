@@ -163,7 +163,7 @@ def count_reviewed_work_orders(review: WorkOrderReview, *, approved_revision: st
             key, label = _trade(row)
             # Trade capitalization/spacing is not a distinct discipline.
             # Keep the first reviewed spelling as the display/key contract.
-            canonical = re.sub(r"\\s+", " ", key).casefold()
+            canonical = re.sub(r"\s+", " ", key).casefold()
             key = aliases.setdefault(canonical, key)
             labels.setdefault(key, label)
             members.setdefault(key, []).append(row)
