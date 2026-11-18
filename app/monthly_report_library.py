@@ -314,8 +314,8 @@ def draft_from_dict(value: dict) -> ReportDraft:
         coverage_receipts = value.get("source_coverage_receipts", ())
         if (not isinstance(coverage_receipts, (list, tuple))
                 or len(coverage_receipts) > 2500
-                or sum(len(item) for item in coverage_receipts if isinstance(item, str)) > 1_000_000
-                or any(not isinstance(item, str) or len(item) > 500 for item in coverage_receipts)):
+                or sum(len(item) for item in coverage_receipts if isinstance(item, str)) > 4_000_000
+                or any(not isinstance(item, str) or len(item) > 1500 for item in coverage_receipts)):
             raise ValueError("Invalid source coverage receipts.")
         sections = tuple(SectionSpec(
             key=s["key"], number=s["number"], title=s["title"],
