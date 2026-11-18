@@ -597,7 +597,15 @@ def seed_followups(draft):
         for columns, rows, table_references in tables:
             width = max((len(row) for row in rows), default=len(columns))
             columns = (*columns, *(f"Detail {n+1}" for n in range(len(columns), width)))
-            prices = table_price_columns(columns, rows)
+            prices = set(table_price_columns(columns, rows))
+            if category == "proposal":
+                # Financial summary grids often use bare Total and Unit Rate
+                # headings. In a proposal those are amounts, not technical
+                # measurements; preserve the original cells in the source table.
+                prices.update(n for n, title in enumerate(columns)
+                              if " ".join(title.casefold().split()) in {
+                                  "unit rate", "unit rates", "total", "totals", "grand total",
+                              })
             for row in rows:
                 if category == "proposal":
                     entries.append((*_proposal_table_details(columns, row, prices), table_references))
