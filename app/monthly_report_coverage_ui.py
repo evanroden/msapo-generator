@@ -1,5 +1,6 @@
 """Minimal native coverage view; no AI calls and no export admission changes."""
 from dataclasses import replace
+from hashlib import sha256
 import streamlit as st
 
 from app.monthly_report_extraction_coverage import (
@@ -60,9 +61,11 @@ def render_coverage(draft, contents, prefix, blocks):
               args=(prefix, item.source_id, "page" if item.page else "site",
                     item.page if item.page else None))
     if item.state == "review":
+        # A reason typed for a different item must not follow a new selection.
+        item_key = sha256((item.source_id + item.item_id + item.digest).encode()).hexdigest()[:16]
         reason = st.text_input("Reason to exclude this item from completeness accounting",
-                               key=prefix + "_coverage_reason", max_chars=300)
-        if st.button("Record intentional exclusion", key=prefix + "_coverage_exclude"):
+                               key=prefix + "_coverage_reason_" + item_key, max_chars=300)
+        if st.button("Record intentional exclusion", key=prefix + "_coverage_exclude_" + item_key):
             # Recompute against live state to prevent a stale selectbox click
             # silently excluding another item or bypassing report safeguards.
             current_item = next((entry for entry in source_coverage(
