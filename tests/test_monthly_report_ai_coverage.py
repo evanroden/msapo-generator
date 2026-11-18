@@ -1,0 +1,289 @@
+"""A09: deterministic coverage proofs; all model responses are simulated.
+
+No external provider is contacted. These tests prove planner/validator contracts,
+not real-service accuracy, authentic-source ingestion or served UI performance.
+"""
+from dataclasses import asdict, replace
+import json
+import time
+from threading import Lock
+
+import pytest
+
+from app import monthly_report_ai as ai
+from app import monthly_report_ai_coverage as cover
+from app.monthly_report_model import ReportPeriod, ReportSource, synthetic_profiles
+
+PROFILE = synthetic_profiles()[0]
+PERIOD = ReportPeriod(2026, 9)
+TEXT = "Synthetic vendor inspected pump on 2026-09-03."
+
+
+def source(pages, *, needs_vision=(), text=TEXT):
+    return ReportSource(
+        id="a" * 64, filename="synthetic-coverage.pdf",
+        sha256="b" * 64, suffix=".pdf",
+        page_texts=tuple(text for _ in range(pages)),
+        selected_pages=tuple(range(1, pages + 1)),
+        needs_vision=tuple(needs_vision),
+    )
+
+
+def fake_reply(payload, *, with_fact=True):
+    text = payload[0]["text"]
+    data = json.loads(text.split("\n")[-1])
+    facts = [
+        {"source": data["source_id"], "region": region["id"],
+         "page": region["page"], "kind": "finding",
+         "text": "inspected pump", "quote": "inspected pump"}
+        for region in data["regions"]
+        if with_fact and "inspected pump" in region["text"]
+    ]
+    return {"reviewed_regions": [r["id"] for r in data["regions"]],
+            "unsupported_regions": [], "facts": facts}
+
+
+def prepared(plan, *, answer=fake_reply):
+    return {"cached": (), "requests": tuple(
+        (batch.key, cover._payload(batch, SOURCE_FOR_TEST(plan)))
+        for batch in plan.batches), "unavailable": ()}
+
+
+def SOURCE_FOR_TEST(plan):
+    # The planner already uses this identity in every batch key.
+    return replace(source(len(plan.pages)), id=plan.source_id)
+
+
+def result_for(plan, original, *, read=fake_reply):
+    prepared_value = {
+        "cached": (),
+        "requests": tuple((batch.key, cover._payload(batch, original))
+                          for batch in plan.batches),
+        "unavailable": (),
+    }
+    return cover.run(prepared_value, read=read)
+
+
+@pytest.mark.parametrize("count,batches", [(1, 1), (20, 1), (21, 2), (96, 5)])
+def test_every_native_page_accounted_under_bounded_chunks(count, batches):
+    original = source(count)
+    before = asdict(original)
+    planned = cover.plan(original)
+    assert len(planned.pages) == count and len(planned.batches) == batches
+    assert {r.page for b in planned.batches for r in b.regions} == set(range(1, count + 1))
+    assert all(len(b.regions) <= 20 and sum(len(r.text) for r in b.regions) <= 48_000
+               for b in planned.batches)
+    completed = cover.collect(
+        planned, result_for(planned, original), original, PROFILE, PERIOD)
+    assert len(completed["inventory"]) == count
+    assert all(v == "ready" for v in completed["inventory"].values())
+    assert len(completed["facts"]) == count
+    assert all(f.source_id == original.id and f.quote == "inspected pump"
+               and f.page in planned.pages for f in completed["facts"])
+    assert len({f.id for f in completed["facts"]}) == count, "Repeated text on different pages is distinct evidence."
+    assert before == asdict(original), "Upload identities and originals are immutable."
+
+
+def test_single_oversized_page_is_losslessly_split_not_rejected():
+    text = ("A" * 60_001) + " inspected pump"
+    original = source(1, text=text)
+    with pytest.raises(ValueError, match="60,000"):
+        ai.extraction_request(original, (1,))  # Documented main failure-before.
+    planned = cover.plan(original)
+    regions = [r for b in planned.batches for r in b.regions]
+    assert len(regions) >= 4
+    assert "".join(r.text for r in regions) == text
+    assert all(len(r.text) <= 20_000 for r in regions)
+    done = cover.collect(
+        planned, result_for(planned, original), original, PROFILE, PERIOD)
+    assert done["inventory"] == {1: "ready"}
+    assert len(done["facts"]) == 1  # Only the last region has this quote.
+
+
+def test_bad_claims_remain_accounted_but_are_not_promoted():
+    original = source(21)
+    planned = cover.plan(original)
+
+    def invented(payload):
+        result = fake_reply(payload, with_fact=False)
+        data = json.loads(payload[0]["text"].split("\n")[-1])
+        region = data["regions"][0]
+        result["facts"] = [
+            {"source": original.id, "region": region["id"], "page": region["page"],
+             "kind": "action", "quote": "inspected pump",
+             "text": "Completed 600 pump repairs.", "vendor": "Unknown vendor"},
+            {"source": original.id, "region": region["id"], "page": region["page"],
+             "kind": "action", "quote": "fabricated source quote",
+             "text": "Completed work."},
+        ]
+        return result
+
+    done = cover.collect(
+        planned, result_for(planned, original, read=invented),
+        original, PROFILE, PERIOD)
+    assert len(done["inventory"]) == 21
+    assert done["facts"] == ()
+    assert done["rejected_claims"] == 4
+    assert all(status == "needs_review" for status in done["inventory"].values())
+
+
+def test_pending_maintenance_not_recast_as_completed_work():
+    original = source(1, text="Synthetic contractor repair scheduled for 2026-09-03.")
+    planned = cover.plan(original)
+
+    def misleading(payload):
+        data = json.loads(payload[0]["text"].split("\n")[-1])
+        return {
+            "reviewed_regions": [data["regions"][0]["id"]],
+            "unsupported_regions": [],
+            "facts": [{
+                "source": original.id, "region": "1.1", "page": 1,
+                "kind": "action", "quote": "repair scheduled",
+                "text": "Repaired pump.", "vendor": ""}],
+        }
+
+    done = cover.collect(
+        planned, result_for(planned, original, read=misleading),
+        original, PROFILE, PERIOD)
+    assert done["facts"] == () and done["rejected_claims"] == 1
+    assert done["inventory"][1] == "needs_review"
+
+
+@pytest.mark.parametrize("mode", ["timeout", "truncated_json", "missing_region"])
+def test_partial_or_incomplete_reply_preserves_successful_siblings(mode):
+    original = source(21)
+    planned = cover.plan(original)
+    first_region = planned.batches[0].regions[0].identity
+
+    def partly_failing(payload):
+        data = json.loads(payload[0]["text"].split("\n")[-1])
+        if first_region in [r["id"] for r in data["regions"]]:
+            if mode == "timeout":
+                raise TimeoutError("simulated model timeout")
+            if mode == "truncated_json":
+                raise ValueError("simulated truncated JSON")
+            return {"reviewed_regions": [], "unsupported_regions": [],
+                    "facts": []}
+        return fake_reply(payload)
+
+    result = result_for(planned, original, read=partly_failing)
+    done = cover.collect(planned, result, original, PROFILE, PERIOD)
+    assert len(done["inventory"]) == 21
+    assert done["inventory"][21] == "ready"
+    assert all(done["inventory"][n] == "retry" for n in range(1, 21))
+    assert len(done["facts"]) == 1
+    assert len(done["cacheable"]) == 1
+    assert len(result["responses"]) == len(planned.batches)
+
+
+def test_visual_required_and_blank_page_cannot_be_mislabeled_completed():
+    original = replace(source(3, needs_vision=(2,)),
+                       page_texts=(TEXT, "", ""))
+    planned = cover.plan(original)
+    assert set(planned.pages) == {1, 2, 3}
+    assert planned.empty_pages == (3,)
+    visual = [r for b in planned.batches for r in b.regions if r.visual]
+    assert len(visual) == 1 and visual[0].page == 2
+    done = cover.collect(
+        planned, result_for(planned, original), original, PROFILE, PERIOD)
+    assert done["inventory"] == {
+        1: "ready", 2: "visual_review", 3: "needs_review"}
+    assert all(f.page == 1 for f in done["facts"])
+
+
+def test_cache_hits_and_quota_exhaustion_preserve_all_missing_pages(monkeypatch):
+    original = source(96)
+    planned = cover.plan(original)
+    cache = {}
+    admitted = []
+    monkeypatch.setattr(cover, "prepare_batch",
+                        lambda batch, content, profile: cover._payload(batch, content.source))
+
+    class Quota:
+        _date_supported = staticmethod(ai._date_supported)
+        normalize_facts = staticmethod(ai.normalize_facts)
+
+        @staticmethod
+        def cached(profile, kind, key):
+            return cache.get(key)
+
+        @staticmethod
+        def reserve_call(profile, period):
+            if len(admitted) >= 2:
+                raise ValueError("Monthly reader allowance exhausted")
+            admitted.append(1)
+
+    content = type("Content", (), {"source": original})()
+    prepared_value = cover.prepare_run(
+        planned, content, PROFILE, PERIOD, ai_module=Quota)
+    assert len(prepared_value["requests"]) == 2
+    assert len(prepared_value["unavailable"]) == 3
+    first = cover.collect(
+        planned, cover.run(prepared_value, read=fake_reply),
+        original, PROFILE, PERIOD)
+    assert len(first["inventory"]) == 96 and len(first["facts"]) == 40
+    assert all(s == "ready" for s in list(first["inventory"].values())[:40])
+    assert all(s == "needs_review" for s in list(first["inventory"].values())[40:])
+    for key, value in first["cacheable"]:
+        cache[key] = value
+    repeated = cover.prepare_run(planned, content, PROFILE, PERIOD, ai_module=Quota)
+    assert len(repeated["cached"]) == 2 and not repeated["requests"]
+    assert len(admitted) == 2, "Cache reuse cannot spend allowance again."
+
+
+def test_bounded_concurrency_exact_receipts_and_model_cache_partition():
+    original = source(96)
+    planned = cover.plan(original)
+    active, peak = 0, 0
+    lock = Lock()
+
+    def measured(payload):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(active, peak)
+        try:
+            time.sleep(0.01)
+            return fake_reply(payload)
+        finally:
+            with lock:
+                active -= 1
+
+    result = result_for(planned, original, read=measured)
+    assert 1 <= peak <= cover.MAX_PARALLEL_READS
+    assert result["first_response_seconds"] is not None
+    assert result["total_seconds"] >= result["first_response_seconds"]
+    assert len({b.key for b in planned.batches}) == len(planned.batches)
+    assert [b.key for b in cover.plan(original, model="other-model").batches] != [
+        b.key for b in planned.batches]
+    assert [b.key for b in cover.plan(replace(original, sha256="c" * 64)).batches] != [
+        b.key for b in planned.batches]
+    assert result["responses"] and all(not error for _, _, error, _ in result["responses"])
+
+
+def test_unsupported_regions_are_explicit_and_unlisted_regions_never_ready():
+    original = source(21)
+    planned = cover.plan(original)
+
+    def unsupported(payload):
+        data = json.loads(payload[0]["text"].split("\n")[-1])
+        regions = data["regions"]
+        return {"reviewed_regions": [],
+                "unsupported_regions": [
+                    {"region": r["id"], "reason": "No technical work evidenced"}
+                    for r in regions],
+                "facts": []}
+
+    done = cover.collect(
+        planned, result_for(planned, original, read=unsupported),
+        original, PROFILE, PERIOD)
+    assert all(status == "ready" for status in done["inventory"].values())
+    assert done["facts"] == ()
+
+
+def test_missing_invalid_or_duplicate_page_identifiers_are_rejected():
+    original = source(2)
+    for selection in ((), (0,), (3,), (1, True)):
+        with pytest.raises(ValueError):
+            cover.plan(original, selection)
+    assert cover.plan(original, (1, 1, 2)).pages == (1, 2)
