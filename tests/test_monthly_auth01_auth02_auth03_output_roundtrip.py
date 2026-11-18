@@ -16,7 +16,7 @@ import pytest
 
 from app import monthly_report_library as library
 from app.monthly_report_docx import generate_report
-from app.monthly_report_model import ReportPeriod, ResolvedBlock, synthetic_profiles
+from app.monthly_report_model import OrgChartNode, ReportPeriod, ResolvedBlock, synthetic_profiles
 from tests.conftest import requires_libreoffice
 from tests.test_monthly_report_start_import import report_file, save_start, start_app
 
@@ -67,6 +67,9 @@ def _reviewed_export_ready(draft):
             updated.append(ResolvedBlock(key, "This month", text=text))
         else:
             updated[existing] = replace(updated[existing], text=text)
+    org_index = next((i for i, item in enumerate(updated) if item.key == "org_chart"), None)
+    if org_index is not None:
+        updated[org_index] = replace(updated[org_index], org_nodes=(OrgChartNode("lead", "Synthetic Lead", "Lead"),))
     ready = replace(draft, blocks=tuple(updated))
     assert not [c for c in preflight(ready) if c.blocking], (
         "Synthetic reviewer fixture must resolve the actual preflight, not waive it.")
