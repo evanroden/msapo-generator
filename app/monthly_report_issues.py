@@ -57,7 +57,7 @@ def canonical_issues(draft):
     tables += [(table.columns, table.rows, table.reference) for table in block.extra_tables]
     # Accepted table rows have a source-row identity separate from their
     # editable text. Reimporting that source must not recreate a changed card.
-    candidates = [(text, block.references, None, "ongoing", "", "", "", "") for text in texts]
+    candidates = [(text, block.references, None, "ongoing", "", "", "", ()) for text in texts]
     row_occurrences = {}
     source_offsets, seen_source_tables = {}, set()
     for columns, rows, reference in tables:
@@ -80,7 +80,7 @@ def canonical_issues(draft):
                 row_refs = (reference,) if reference else block.references
                 candidates.append((record.text, row_refs,
                                    record.key, record.status, record.update, record.legacy_text,
-                                   reference, record.legacy_key))
+                                   reference, (record.legacy_key, record.generic_key)))
             continue
         width = max((len(row) for row in rows), default=len(columns))
         columns = (*columns, *(f"Detail {n + 1}" for n in range(len(columns), width)))
@@ -98,12 +98,12 @@ def canonical_issues(draft):
                 row_key = "follow-" + _digest((identity, occurrence))[:20]
                 row_refs = (reference,) if reference else block.references
                 candidates.append((text, row_refs,
-                                   row_key, "ongoing", "", text, reference, ""))
+                                   row_key, "ongoing", "", text, reference, ()))
     items = list(draft.follow_ups)
     keys = {item.key for item in items if item.category == "issue"}
     seen = {item.text.strip() for item in items if item.category == "issue"}
     statements = []
-    for text, references, row_key, status, update, legacy_text, table_reference, legacy_key in candidates:
+    for text, references, row_key, status, update, legacy_text, table_reference, legacy_keys in candidates:
         if _no_equipment_issues(text):
             if _REMOVED_STATEMENT + _digest(text) not in block.references:
                 statements.append(text)
@@ -115,7 +115,7 @@ def canonical_issues(draft):
         if key in keys or (row_key is None and text.strip() in seen):
             continue
         if row_key and any(
-            item.category == "issue" and item.key in (issue_key(legacy_text), legacy_key)
+            item.category == "issue" and item.key in (issue_key(legacy_text), *legacy_keys)
             and (not table_reference or not item.references or table_reference in item.references)
             for item in legacy_items
         ):
