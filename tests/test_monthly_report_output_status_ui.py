@@ -262,9 +262,12 @@ def test_retry_before_concurrency_decision_cannot_save_after_base_is_accepted(mo
                           entered_editor='Concurrent editor')
     app.run()
     widget(app, 'checkbox', 'I compared the saved version and want to save my draft as the next version').check().run()
+    for choice in [item for item in app.radio if item.label.startswith('Resolve ')]:
+        choice.set_value('Use this page value').run()
     widget(app, 'button', 'Continue with my draft').click().run()
-    assert not widget(app, 'button', 'Retry saving this version').disabled
-    assert widget(app, 'button', 'Retry saving this version').key != earlier_retry.key
+    # A package generated before the merge must be retired; it cannot be
+    # saved as the post-merge version using an old Retry button identity.
+    assert not any(item.label == 'Retry saving this version' for item in app.button)
     earlier_retry.click().run()
     assert not app.exception
     assert library.load_snapshot(draft.profile.contract, draft.profile.key, draft.period) == newer
