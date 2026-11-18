@@ -275,7 +275,8 @@ def test_complete_twelve_section_application_export_audit(monkeypatch, tmp_path)
     package = generate_report(draft, acknowledged_fingerprint=draft.fingerprint,
                               asset_loader=persisted_asset)
     manifest = audit_golden_package(package, draft)
-    assert "A17-OPERATOR-EDIT-RELOADED" in "\\n".join(\n        paragraph.text for paragraph in Document(BytesIO(package.docx)).paragraphs)
+    assert "A17-OPERATOR-EDIT-RELOADED" in " ".join(
+        paragraph.text for paragraph in Document(BytesIO(package.docx)).paragraphs)
     with fitz.open(stream=package.pdf, filetype="pdf") as pdf:
         assert any("A17-OPERATOR-EDIT-RELOADED" in page.get_text() for page in pdf)
     assert list(manifest["sections"]) == [section.key for section in included_sections(draft.sections)]
