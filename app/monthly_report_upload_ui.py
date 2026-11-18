@@ -636,7 +636,7 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                 # Only the current file needs an editable route widget. Other
                 # delivered routes still participate in bulk Add unchanged.
                 for filename, identity, control in route_controls:
-                    if identity == selected:
+                    if selected_source_id is None or identity == selected:
                         st.selectbox("Report section for " + filename,
                                      ("Do not embed", *sources.PAGE_DESTINATIONS),
                                      format_func=labels.get, key=control)
