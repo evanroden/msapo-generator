@@ -60,6 +60,20 @@ def generate(draft, *, owner="visitor-A", assets=()):
     )
 
 
+def test_persisted_and_reloaded_revision_keeps_same_content(draft, backend):
+    from app import monthly_report_library as library
+    saved = library.save_snapshot(draft, expected_revision=0, entered_editor=draft.prepared_by)
+    loaded = library.load_snapshot(draft.profile.contract, draft.profile.key, draft.period)
+    assert loaded.revision == saved.revision
+    assert loaded.draft == draft
+    first = generate(loaded.draft)
+    second = generate(loaded.draft)
+    assert first.docx == second.docx and first.pdf == second.pdf
+    assert len(backend) == 1
+    reloaded = library.load_snapshot(draft.profile.contract, draft.profile.key, draft.period)
+    assert reloaded.draft == draft and reloaded.revision == saved.revision
+
+
 def test_same_immutable_report_reuses_one_conversion_and_identical_bytes(draft, backend):
     first = generate(draft)
     second = generate(draft)
