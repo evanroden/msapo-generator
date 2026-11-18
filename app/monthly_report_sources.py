@@ -800,7 +800,11 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
             # source identity, citations, or completed historical snapshots.
             existing_source = sources[digest].source
             try:
-                source_bytes(profile, existing_source)
+                # A repeat upload already supplies the same SHA-addressed
+                # bytes. UI duplicate checks need only the verified original
+                # revision; actual consumers still read/hash the full source.
+                from app.monthly_report_source_revision import verified_source_revision
+                verified_source_revision(profile, existing_source)
             except (ValueError, OSError):
                 try:
                     library._atomic_write(_path(profile, digest, existing_source.suffix), raw)
