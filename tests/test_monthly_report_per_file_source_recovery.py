@@ -244,3 +244,29 @@ render_failed_file_retries(profile, ReportPeriod(2026, 9), 0, "fixture",
 """).run()
     assert not app.exception
     assert any(b.label == "Retry failed file · failed.txt" for b in app.button)
+
+
+def test_failed_original_keeps_single_source_workspace_pending_then_clears(scope):
+    """A failed chooser item stays actionable even if every sibling is resolved."""
+    app = AppTest.from_string("""
+import streamlit as st
+from app.monthly_report_model import synthetic_profiles, ReportPeriod
+from app.monthly_report_source_recovery_ui import render_failed_file_retries
+from app.monthly_report_source_manager_ui import _pending_source_selection
+profile = synthetic_profiles()[0]
+raw = b"synthetic rejected csv"
+selected = st.session_state.get("selected", True)
+render_failed_file_retries(profile, ReportPeriod(2026,9), 0,
+    "report_evidence_structured_activity_summary",
+    (("broken.csv", raw),) if selected else (), (),
+    messages=("Not read: broken.csv. Invalid CSV.",) if selected else ())
+st.session_state["workspace_has_pending_source"] = _pending_source_selection("report")
+""").run()
+    assert not app.exception
+    assert app.session_state["workspace_has_pending_source"] is True
+    assert any(b.label == "Retry failed file · broken.csv" for b in app.button)
+    app.session_state["selected"] = False
+    app.run()
+    assert not app.exception
+    assert app.session_state["workspace_has_pending_source"] is False
+    assert not any(b.label.startswith("Retry failed file") for b in app.button)
