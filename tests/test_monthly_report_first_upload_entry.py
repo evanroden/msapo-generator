@@ -88,6 +88,17 @@ st.session_state["synthetic_result"] = (stage[2].sha256 if stage else "", contra
     app.run()
     assert cleaned == [b"synthetic-good-a", b"synthetic-good-b"]
     assert app.session_state["synthetic_result"] == ("", ())
+    # A committed file remains idempotent while mounted, but clearing the
+    # picker allows an intentional same-byte re-import later.
+    selected["upload"] = _upload(b"synthetic-good-b")
+    app.session_state[entry.ENTRY_COMMITTED] = hashlib.sha256(b"synthetic-good-b").hexdigest()
+    app.run()
+    assert calls == [b"synthetic-good-a", b"synthetic-bad", b"synthetic-good-b"]
+    selected["upload"] = None
+    app.run()
+    selected["upload"] = _upload(b"synthetic-good-b")
+    app.run()
+    assert calls[-1] == b"synthetic-good-b" and len(calls) == 4
 
 
 def test_preselected_sites_do_not_cross_a_changed_source_digest(monkeypatch):
