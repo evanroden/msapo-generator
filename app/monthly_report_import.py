@@ -803,9 +803,11 @@ def inspect_docx(path: Path) -> DocxInspection:
                             try:
                                 drawing_labels = collect_drawing_labels(
                                     element, part=part, position=position, word_section=word_section
-                                ) if (has_native_frame or any(node.tag in (
-                                    A + "t", V + "group", W + "object"
-                                ) for node in element.iter())) else ()
+                                ) if (has_native_frame or any(
+                                    node.tag in (A + "t", V + "group", W + "object")
+                                    or (node.tag == A + "graphicData"
+                                        and not node.get("uri", "").endswith("/picture"))
+                                    for node in element.iter())) else ()
                             except ValueError as exc:
                                 raise ImportError(str(exc)) from exc
                             # Shape text is evidence, not permission to flatten its geometry.
