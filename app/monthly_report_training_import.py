@@ -28,11 +28,21 @@ EVENT_HEADERS = {
     "title": {"training", "topic", "trainingtopic", "session", "sessionname", "course"},
     "when": {"date", "trainingdate", "sessiondate", "completiondate", "completedon"},
     "mode": {"format", "method", "mode", "deliverymethod"},
-    "participants": {"participants", "attendees", "learners", "staffattending"},
+    "participants": {"participants", "participant", "attendees", "attendee",
+                     "learners", "staffattending", "staffname", "employeename"},
     "hours": {"hours", "durationhours", "traininghours"},
     "status": {"status", "trainingstatus", "completionstatus"},
 }
 PERSON = {"teammember", "person", "staffmember", "employee", "employee name", "staffname"}
+# Only a specifically labelled staffing column can classify a roster attendee.
+# "Organization" by itself is not a safe staff-role signal.
+STAFF_ROLE_HEADERS = {"stafftype", "participanttype", "personneltype"}
+HOSPITAL_STAFF = {"hospital", "hospitalstaff", "client", "clientstaff", "customerstaff"}
+PROVIDER_STAFF = {"serviceprovider", "serviceproviderstaff", "servicestaff",
+                  "vendor", "vendorstaff", "contractor", "contractorstaff",
+                  "enfra", "enfrastaff"}
+HOSPITAL_LABEL = "Hospital/client staff: "
+PROVIDER_LABEL = "Service provider staff: "
 SITE = {"site", "facility", "hospital", "location"}
 COMPLETE = {"complete", "completed", "attended", "done"}
 UNFINISHED = {"scheduled", "planned", "pending", "open", "cancelled", "canceled", "notcompleted"}
@@ -257,9 +267,42 @@ def _normalize_site(value, profile):
     return matches[0] if len(matches) == 1 else ""
 
 
+def _scoped_participants(columns, cells, people):
+    """Represent explicit hospital/provider roster roles without changing originals.
+
+    Ambiguous or unsupported role columns require a reviewed correction or
+    omission. A human may provide a labelled participant for an unknown role;
+    no inferred employer or session completion is created.
+    """
+    headings = _source_header_bases(columns)
+    positions = _column_positions(headings, STAFF_ROLE_HEADERS)
+    if not positions:
+        return people, ""
+    if len(positions) != 1 or headings[positions[0]] != columns[positions[0]]:
+        return people, "Ambiguous Training participant staff type columns require source review."
+    role = _name(cells[positions[0]])
+    label = (HOSPITAL_LABEL if role in HOSPITAL_STAFF else
+             PROVIDER_LABEL if role in PROVIDER_STAFF else "")
+    if not label:
+        if people.startswith((HOSPITAL_LABEL, PROVIDER_LABEL)) and people.split(": ", 1)[1].strip():
+            return people, ""  # A deliberate, inspectable human correction.
+        return people, "Training participant staff type is unknown; label participants or omit the row."
+    parts = [part.strip() for part in re.split(r";\\s*", people) if part.strip()]
+    if not parts:
+        return people, ""
+    return "; ".join(part if part.startswith(label) else label + part
+                     for part in parts), ""
+
+
 def _event_issues(row, period):
     title, when, mode, people, hours = row.values
     errors = []
+    expected_people, staff_issue = _scoped_participants(
+        row.origin.columns, row.origin.cells, people)
+    if staff_issue:
+        errors.append(staff_issue)
+    elif expected_people != people:
+        errors.append("Training participant staff type label must match the source role.")
     if not title:
         errors.append("Training topic is missing.")
     try:
@@ -317,7 +360,7 @@ def review_training_event_source(review, profile):
         return review
     headings = _source_header_bases(review.original_columns)
     questions = list(review.issues)
-    for name, aliases in EVENT_HEADERS.items():
+    for name, aliases in (*EVENT_HEADERS.items(), ("participant staff type", STAFF_ROLE_HEADERS)):
         positions = _column_positions(headings, aliases)
         question = ""
         if len(positions) > 1:
@@ -359,7 +402,13 @@ def _mark_training_duplicates(rows, kind):
         else:
             continue
         groups.setdefault(key, []).append(index)
+    # Exact repeated evidence is represented once by add_event; it must not
+    # force duplicate manual entry. Conflicting facts for the same attendance
+    # identity still block import until reviewed. All physical source rows,
+    # including exact repeats, stay present in the review receipt.
     duplicates = {n for indices in groups.values() if len(indices) > 1
+                  and len({(cleared[i].values, cleared[i].status.casefold().strip())
+                           for i in indices}) > 1
                   for n in indices}
     return tuple(replace(row, issues=(*row.issues, label))
                  if index in duplicates else row
@@ -405,9 +454,10 @@ def review_training_table(source: TrainingTableSource, profile: ReportProfile,
             def value(key):
                 position = header_map[key]
                 return values[position].strip() if position is not None else ""
+            participants, _ = _scoped_participants(columns, values, value("participants"))
             current = (
                 value("title"), value("when"), value("mode"),
-                value("participants"), value("hours"))
+                participants, value("hours"))
             status = value("status")
         else:
             current = (
