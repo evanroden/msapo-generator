@@ -14,7 +14,7 @@ import pymupdf as fitz
 import pytest
 
 from app.monthly_report_contents_pagination import (
-    add_entry, anchor_for, mark_target, synchronize,
+    add_entry, anchor_for, ensure_pdf_page_links, mark_target, synchronize, only_generated_cache_changed,
 )
 
 
@@ -171,3 +171,67 @@ def test_missing_or_malformed_pdf_never_fills_unknown_page_numbers():
         assert unchanged == word
         assert "could not be verified" in notice
         assert set(_cache(unchanged).values()) == {"?"}
+
+
+@pytest.mark.parametrize("size", [2, 15, 40])
+def test_real_writer_pdf_crosswalk_repairs_only_missing_number_links(tmp_path, size):
+    """Exercise real LibreOffice field rendering, not only injected PDF metadata."""
+    from tests.conftest import libreoffice_can_convert
+    if not libreoffice_can_convert():
+        pytest.skip("LibreOffice Writer and Calc filters are unavailable")
+    from app import pdf_converter
+
+    sections = _sections(1 if size == 2 else 2)
+    document = Document()
+    document.add_paragraph("Table of contents")
+    for section in sections:
+        add_entry(document, section)
+    document.add_page_break()
+    mark_target(document.add_heading(f"1. {sections[0].title}", 1), sections[0].key, 0)
+    if len(sections) > 1:
+        # One explicit break per synthetic attachment page; last heading starts
+        # on the 15th or 40th page, respectively.
+        for index in range(size - 3):
+            document.add_page_break()
+            document.add_paragraph(f"Synthetic attachment continuation {index + 1}")
+        document.add_page_break()
+        mark_target(document.add_heading(f"2. {sections[1].title}", 1), sections[1].key, 1)
+    path = tmp_path / f"a77-{size}.docx"
+    document.save(path)
+    word_before = path.read_bytes()
+    original_hash = sha256(word_before).hexdigest()
+
+    converted = pdf_converter.convert_to_pdf(path, lossless_images=True)
+    try:
+        pdf_before = converted.read_bytes()
+    finally:
+        converted.unlink(missing_ok=True)
+    expected_pages = (2,) if size == 2 else (2, size)
+    with fitz.open(stream=pdf_before, filetype="pdf") as report:
+        assert len(report) == size
+        assert [entry[2] for entry in report.get_toc()] == list(expected_pages)
+        for section, page in zip(sections, expected_pages):
+            assert f"{section.number}. {section.title}" in report[page - 1].get_text()
+
+    repaired_pdf = ensure_pdf_page_links(pdf_before, sections)
+    word_after, notice = synchronize(word_before, repaired_pdf, sections)
+    assert notice == ""
+    assert list(_cache(word_after).values()) == list(map(str, expected_pages))
+    assert only_generated_cache_changed(word_before, word_after)
+    assert sha256(path.read_bytes()).hexdigest() == original_hash  # source untouched
+    assert ensure_pdf_page_links(repaired_pdf, sections) == repaired_pdf  # no extra PDF rewrite
+    with fitz.open(stream=repaired_pdf, filetype="pdf") as report:
+        assert len(report) == size
+        links = [link for link in report[0].get_links() if link["kind"] == fitz.LINK_GOTO]
+        assert len(links) == 2 * len(sections)
+        for page in expected_pages:
+            assert sum(link["page"] == page - 1 for link in links) == 2
+
+
+@pytest.mark.parametrize("damage", ["missing_heading", "reversed_outline", "reversed_visible"])
+def test_pdf_page_link_repair_does_not_alter_ambiguous_or_false_contents(damage):
+    sections = _sections(2)
+    corrupted = _pdf(sections, (1, 14), 15, **{damage: True})
+    assert ensure_pdf_page_links(corrupted, sections) == corrupted
+    assert ensure_pdf_page_links(None, sections) is None
+    assert ensure_pdf_page_links(b"not-a-pdf", sections) == b"not-a-pdf"
