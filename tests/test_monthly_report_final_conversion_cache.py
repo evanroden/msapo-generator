@@ -82,8 +82,9 @@ def test_different_owner_site_month_activity_or_logo_reconverts(draft, backend, 
     elif dimension == "month":
         next_draft = replace(draft, period=ReportPeriod(2026, 10))
     elif dimension == "activity":
-        block = draft.blocks[0]
-        next_draft = replace(draft, blocks=(replace(block, text=block.text + " Confirmed inspection."), *draft.blocks[1:]))
+        blocks = tuple(replace(block, rows=(("Synthetic Activity row: completed",),))
+                       if block.key == "demo_activity" else block for block in draft.blocks)
+        next_draft = replace(draft, blocks=blocks)
     else:
         # Same labelled unsaved logo, changed pixels: no digest aliasing.
         assets = (("client-logo.png", sha256(b"changed synthetic pixels").digest()),)
@@ -188,8 +189,9 @@ def test_actual_libreoffice_cold_warm_and_changed_activity(draft, monkeypatch):
         with fitz.open(stream=warm.pdf, filetype="pdf") as repeated:
             assert len(original) == len(repeated)
             assert [tuple(p.rect) for p in original] == [tuple(p.rect) for p in repeated]
-    block = draft.blocks[0]
-    changed = replace(draft, blocks=(replace(block, text=block.text + " Inspection confirmed."), *draft.blocks[1:]))
+    changed = replace(draft, blocks=tuple(
+        replace(block, text=block.text + " Inspection confirmed.")
+        if block.key == "demo_activity" else block for block in draft.blocks))
     edited = generate(changed)
     assert edited.pdf, edited.pdf_error
     assert len(conversions) == 2
