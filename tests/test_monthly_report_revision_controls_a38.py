@@ -123,3 +123,65 @@ def test_unwrapped_range_start_without_end_fails_closed(tmp_path):
     doc.save(path)
     with pytest.raises(ImportError, match="range|structur|tracked"):
         inspect_docx(path)
+
+
+def test_mixed_content_control_is_not_silently_imported_as_prose(tmp_path):
+    doc = Document()
+    doc.add_heading("MONTHLY ACTIVITY SUMMARY", 1)
+    table = doc.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "Heading"
+    table.cell(1, 0).text = "Data"
+    body, node = doc.element.body, table._tbl
+    at = body.index(node)
+    control = XML.Element(W + "sdt")
+    content = XML.SubElement(control, W + "sdtContent")
+    para = XML.SubElement(content, W + "p")
+    run = XML.SubElement(para, W + "r")
+    XML.SubElement(run, W + "t").text = "Context before separate table"
+    content.append(node)
+    body.insert(at, control)
+    path = tmp_path / "mixed-control.docx"
+    doc.save(path)
+    original = path.read_bytes()
+    inspected = inspect_docx(path)
+    assert any(i.kind == "unsupported" and "mixed or multiple table" in i.note for i in inspected.items)
+    assert not any(i.kind == "table" for i in inspected.items)
+    assert not any(i.kind == "text" and "Context before separate table" in i.text for i in inspected.items)
+    assert path.read_bytes() == original
+
+
+def test_missing_and_malformed_docx_do_not_create_any_import_items(tmp_path):
+    with pytest.raises((FileNotFoundError, OSError)):
+        inspect_docx(tmp_path / "not-uploaded.docx")
+    malformed = tmp_path / "malformed.docx"
+    malformed.write_bytes(b"not a DOCX")
+    with pytest.raises((ImportError, Exception)) as exc:
+        inspect_docx(malformed)
+    assert exc.value is not None
+
+
+def test_passive_docx_pdf_layout_and_accepted_cells(tmp_path):
+    from conftest import requires_libreoffice
+    from app.pdf_converter import convert_to_pdf
+    import pymupdf
+
+    @requires_libreoffice
+    def render():
+        path = _fixture(tmp_path)
+        output = tmp_path / "a38-passive.docx"
+        output.write_bytes(passive_docx(path))
+        pdf_path = convert_to_pdf(output)
+        try:
+            with pymupdf.open(pdf_path) as pages:
+                assert pages.page_count >= 1
+                page = pages[0]
+                assert abs(page.rect.width - 792) < 2
+                assert abs(page.rect.height - 612) < 2
+                content = "".join(p.get_text() for p in pages)
+                assert "ACCEPTED-CELL" in content
+                assert "Merged accepted" in content
+                assert all(s not in content for s in (DELETED, COMMENT, MOVED))
+        finally:
+            pdf_path.unlink(missing_ok=True)
+
+    render()
