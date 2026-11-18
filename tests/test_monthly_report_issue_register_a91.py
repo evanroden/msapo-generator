@@ -190,3 +190,19 @@ def test_source_linked_photo_provenance_survives_card_migration():
     assert review.blocks[0].asset_captions == photo_block.asset_captions
     assert review.blocks[0].asset_provenance == photo_block.asset_provenance
     assert review.follow_ups[0].references == (source_ref,)
+
+def test_preexisting_generic_card_is_not_recreated_when_schema_becomes_recognized():
+    draft = fixture()
+    reference = draft.blocks[0].extra_tables[0].reference
+    generic_identity = hashlib.sha256(json.dumps(
+        ("issue-table-row-v1", reference, 0, COLUMNS, ROWS[0]),
+        sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    generic_digest = hashlib.sha256(json.dumps(
+        (generic_identity, 0), sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:20]
+    prior = ReportFollowUp("follow-" + generic_digest, "issue",
+                           "Manually reviewed legacy generic issue", draft.period.key,
+                           references=(reference,), status="updated", included=False)
+    imported = canonical_issues(replace(draft, follow_ups=(prior,)))
+    assert imported.follow_ups[0] == prior
+    assert len(imported.follow_ups) == 2
+    assert imported.follow_ups[1].text.startswith("Valve leak")
