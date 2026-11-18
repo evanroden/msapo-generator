@@ -30,6 +30,20 @@ def issue_key(text):
     return "follow-" + _digest(("issue", text))[:20]
 
 
+def _register_original_identity(draft, reference):
+    """Bind a row to immutable uploaded bytes, not edited source metadata."""
+    for source in draft.sources:
+        prefix = source.id + ":"
+        if not reference.startswith(prefix):
+            continue
+        page, separator, stamp = reference[len(prefix):].partition(":")
+        if (separator and page.isdecimal() and len(stamp) == 64
+                and all(char in "0123456789abcdef" for char in stamp)
+                and source.sha256):
+            return f"original:{source.id}:{source.sha256}:{page}"
+    return reference
+
+
 def canonical_issues(draft):
     """Migrate legacy issue prose/rows once without mutating a saved snapshot.
 
@@ -63,16 +77,18 @@ def canonical_issues(draft):
     for columns, rows, reference in tables:
         # A second upload of the same source table must not create more cards,
         # even when the importer has renamed its display headings.
-        source_table = (reference, tuple(tuple(row) for row in rows))
+        source_key = _register_original_identity(draft, reference) if reference else ""
+        source_table = (source_key, tuple(tuple(row) for row in rows))
         if reference and source_table in seen_source_tables:
             continue
         if reference:
             seen_source_tables.add(source_table)
-        row_offset = source_offsets.get(reference, 0) if reference else 0
+        row_offset = source_offsets.get(source_key, 0) if reference else 0
         if reference:
-            source_offsets[reference] = row_offset + len(rows)
+            source_offsets[source_key] = row_offset + len(rows)
         from app.monthly_report_issue_register import mapped_issue_register
-        mapped = mapped_issue_register(columns, rows, reference, row_offset=row_offset)
+        mapped = mapped_issue_register(columns, rows, reference,
+                                       row_offset=row_offset, source_key=source_key)
         if mapped is not None:
             for record in mapped:
                 # A table with its own source/page never inherits citations
