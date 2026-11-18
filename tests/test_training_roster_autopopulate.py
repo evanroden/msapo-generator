@@ -100,10 +100,11 @@ def test_roster_fails_closed_on_unverified_completion_hours_staff_role_and_old_d
             expected_revision=stale_revision, profile=PROFILE, period=PERIOD)
     assert restore_training_review(training_review_record(updated)) == updated
 
+
 def test_older_saved_review_cannot_bypass_new_staff_role_scope(storage):
     original = (
-        b"Course,Date,Method,Attendee,Hours,Status,Personnel type\\n"
-        b"Generator safety,2026-09-08,Virtual,Morgan,1,Completed,Vendor\\n"
+        b"Course,Date,Method,Attendee,Hours,Status,Personnel type\n"
+        b"Generator safety,2026-09-08,Virtual,Morgan,1,Completed,Vendor\n"
     )
     review = reviewed(ingest("prior_undifferentiated_roster.csv", original), "events")
     assert review.ready_for_import
