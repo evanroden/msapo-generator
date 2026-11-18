@@ -150,8 +150,14 @@ def render_training_import(draft, blocks, prefix):
                 st.text("Original columns: " + " | ".join(table.columns))
                 # Preview only rows that the retained, source-bound validator
                 # can verify now. Nothing is included or saved by this read.
-                candidate = review_training_table(table, draft.profile, draft.period)
-                if candidate.kind == "events" and not candidate.issues and not candidate.unmatched:
+                try:
+                    candidate = review_training_table(table, draft.profile, draft.period)
+                except (ValueError, OSError):
+                    # Preview is optional: an unsupported source shape must
+                    # not suppress the explicit original-review workflow.
+                    candidate = None
+                if (candidate is not None and candidate.kind == "events"
+                        and not candidate.issues and not candidate.unmatched):
                     verified = [row for row in candidate.rows
                                 if not row.issues and not row.excluded]
                     if verified:
