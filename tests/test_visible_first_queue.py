@@ -53,6 +53,7 @@ def test_one_running_large_two_small_and_one_waiting_large_visible_first():
         bulk = pool.submit(waiting_bulk)
         until(lambda: jobs.queue_state()['exports'] == 1)
         first_small = pool.submit(small, 'small-a')
+        until(lambda: jobs.queue_state()['visible'] == 1)
         second_small = pool.submit(small, 'small-b')
         until(lambda: jobs.queue_state() == {'depth': 3, 'visible': 2, 'exports': 1})
         released_at = monotonic()
