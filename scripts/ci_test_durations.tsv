@@ -1,4 +1,6 @@
 # Per-file pytest duration (seconds) from main 5526fd2b, Tests run 43742773280.
+# Frontend compatibility duration refreshed using main f0af9956, Tests run
+# 44203272158 (17 Nov 2026): 66 passed in 1041.26 seconds on shard 0.
 # Slowest 120 of 954 files cover 84.5% of 14,436 tests' execution time.
 # Unknown/new files use the measured remaining-file average in the selector.
 tests/test_about_logo_refresh_journey.py	39.1
@@ -112,7 +114,7 @@ tests/test_streamlit_dataframe_action_owners.py	119.8
 tests/test_streamlit_date_input_compat.py	72.1
 tests/test_streamlit_expander_motion.py	36.9
 tests/test_streamlit_forward_cache.py	27.8
-tests/test_streamlit_frontend_compat.py	1486.6
+tests/test_streamlit_frontend_compat.py	1041.3
 tests/test_streamlit_text_input_default.py	72.0
 tests/test_training_rollover_outputs.py	6.3
 tests/test_warning_routes_fixture.py	35.6
