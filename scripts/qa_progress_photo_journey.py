@@ -544,7 +544,7 @@ def browser_task(engine, name, base):
         native_geometry("390-activity-with-done")
         record["action_delivery"].append(action_delivery(delivery, start, "Done editing photos", ACTIVITY))
         # A68: pending photos keep direct order controls outside edit mode.
-                expect(page.locator(PAIR).get_by_role("button", name="Move earlier", exact=True)).to_have_count(2)
+        expect(page.locator(PAIR).get_by_role("button", name="Move earlier", exact=True)).to_have_count(2)
         block = review(block)
         capture("narrow-reviewed-ready", block, activity=ACTIVITY)
         page.screenshot(path=str(output / "narrow-progress-ready.png"), full_page=False)
