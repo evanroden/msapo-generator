@@ -323,3 +323,38 @@ def test_blank_page_has_explicit_error_and_preserves_accepted_cache(sample):
     with pytest.raises(ValueError, match="No readable text"):
         ai.extraction_request(blank, (2,))
     assert items.status(profile, period, valid) == "accepted"
+
+
+def test_empty_middle_page_does_not_omit_surrounding_eligible_pages(
+    sample, monkeypatch
+):
+    profile, period, original, draft = sample
+    source = replace(original, page_texts=("Serviced unit 1.", " ", "Serviced unit 3."))
+    state = {"unit_evidence": (SourceContent(source),)}
+    warnings, calls = [], []
+    monkeypatch.setattr(ui, "st", SimpleNamespace(
+        session_state=state, warning=warnings.append,
+        info=lambda _: None, rerun=lambda: None,
+    ))
+
+    def start(prepare, read):
+        content = prepare()
+        page = json.loads(content[0]["text"].split("\n")[-1])["pages"][0]["page"]
+        calls.append(page)
+        future = Future()
+        future.set_result({"facts": [{
+            "page": page, "kind": "action",
+            "text": f"Serviced unit {page}.",
+            "quote": f"Serviced unit {page}.",
+        }]})
+        return future
+
+    monkeypatch.setattr(ui, "start_receipt", start)
+    ui._queue_page_reads(draft, "unit", source, (1, 2, 3))
+    for _ in range(4):
+        ui._finish_job(draft, "unit")
+        ui._advance_page_reads(draft, "unit")
+    assert calls == [1, 3]
+    assert {f.page for f in state["unit_ai_facts"][2]} == {1, 3}
+    assert any("Page 2: No readable text" in w for w in warnings)
+    assert source.page_texts[1] == " "
