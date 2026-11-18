@@ -18,6 +18,10 @@ import resource
 from threading import Barrier, Event, Thread
 import tempfile
 import time
+import sys
+
+# This script is run by path in the production container, not as a module.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from docx import Document
 
