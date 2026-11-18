@@ -138,6 +138,7 @@ _ACTIVE_WORK = 0
 _WORK_LOCAL = threading.local()
 _PRIORITY_LOCK = threading.Lock()
 _FOREGROUND_WAITING = 0
+_FOREGROUND_ACTIVE = 0
 _REVIEW_WAITING = 0
 PREVIEW_HEADROOM_BYTES = 160 * 1024 * 1024
 
@@ -224,7 +225,7 @@ def _wait_for_review_slot(wait_seconds):
     try:
         while True:
             with _PRIORITY_LOCK:
-                if not _FOREGROUND_WAITING and _WORK_SLOT.acquire(blocking=False):
+                if not _FOREGROUND_WAITING and not _FOREGROUND_ACTIVE and _WORK_SLOT.acquire(blocking=False):
                     return True
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -240,7 +241,7 @@ def work_slot(*, preview=False, review=False, wait_seconds=130):
     """Admit one heavy job: final export, deliberate Review, automatic preview."""
     if review and not preview:
         raise ValueError("Review priority requires the preview memory guard.")
-    global _FOREGROUND_WAITING
+    global _FOREGROUND_WAITING, _FOREGROUND_ACTIVE
     if getattr(_WORK_LOCAL, 'active', False):
         yield
         return
@@ -252,7 +253,7 @@ def work_slot(*, preview=False, review=False, wait_seconds=130):
             acquired = _wait_for_review_slot(wait_seconds)
         else:
             with _PRIORITY_LOCK:
-                if _FOREGROUND_WAITING or _REVIEW_WAITING:
+                if _FOREGROUND_WAITING or _FOREGROUND_ACTIVE or _REVIEW_WAITING:
                     raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
                 acquired = _WORK_SLOT.acquire(blocking=False)
     else:
@@ -263,6 +264,10 @@ def work_slot(*, preview=False, review=False, wait_seconds=130):
         finally:
             with _PRIORITY_LOCK:
                 _FOREGROUND_WAITING -= 1
+                if acquired:
+                    # Transition waiting -> running atomically for Review
+                    # and automatic-preview priority checks.
+                    _FOREGROUND_ACTIVE += 1
     if not acquired:
         raise RenderBusy('Another report is being prepared. Your saved work is unchanged; retry generation shortly.')
     # Admission is fail-closed only on explicitly opted-in high-resource hosts.
@@ -293,4 +298,7 @@ def work_slot(*, preview=False, review=False, wait_seconds=130):
         if reserved:
             with _ADMISSION_LOCK:
                 _ACTIVE_WORK -= 1
+        if not preview:
+            with _PRIORITY_LOCK:
+                _FOREGROUND_ACTIVE -= 1
         _WORK_SLOT.release()
