@@ -25,7 +25,7 @@ def test_pr_push_workflows_share_per_pr_or_ref_concurrency():
             continue
         checked.append(path.name)
         assert "\nconcurrency:\n" in "\n" + content, path.name
-        expected = EXPECTED_TESTS_GROUP if path.name == "tests.yml" else EXPECTED_GROUP
+        expected = EXPECTED_TESTS_GROUP if path.name in {"tests.yml", "monthly-simplicity.yml"} else EXPECTED_GROUP
         assert expected in content, path.name
         assert EXPECTED_CANCEL in content, path.name
 
