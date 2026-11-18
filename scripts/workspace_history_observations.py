@@ -16,6 +16,7 @@ from scripts.workspace_browser_observations import require_synthetic_root
 # unexpected file there must remain visible to the durable equality check.
 CONVERSION_RUNTIME_PATHS = frozenset({
     "render-jobs/.active-office.json", "render-jobs/.active-office.tmp",
+    "render-jobs/.active-office-1.json", "render-jobs/.active-office-1.tmp",
     "render-jobs/.conversion-lock",
 })
 
