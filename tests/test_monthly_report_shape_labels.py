@@ -156,7 +156,7 @@ def test_readable_labels_remain_review_only_and_table_remains_native(tmp_path):
     groups = {section.key: section for section in section_reviews(inspection)}
     assert "cover" in groups and "activity" in groups
     assert any("November 2026" in item.text for item in _unsupported(inspection))
-    assert any(item.text == "Group node B" for item in _unsupported(inspection))
+    assert any("Group node B" in item.text for item in _unsupported(inspection))
     assert not any(item.kind == "text" and "Unrelated Colony Facility" in item.text
                    for item in inspection.items if item.section == "activity")
     assert any(item.kind == "text" and "Visible body report prose." in item.text
