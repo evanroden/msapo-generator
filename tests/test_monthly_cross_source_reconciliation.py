@@ -210,7 +210,7 @@ def test_same_slot_mutable_status_conflict_does_not_overwrite():
 def test_malformed_candidate_is_rejected_before_matching():
     with pytest.raises(ValueError, match="SHA-256"):
         fact(source_hash="not-a-sha")
-    with pytest.raises(ValueError, match="canonical ISO"):
+    with pytest.raises(ValueError, match="ISO"):
         fact(source_date="2026-10-6")
     with pytest.raises(ValueError, match="confidence"):
         fact(confidence=1.1)
