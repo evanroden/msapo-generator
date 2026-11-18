@@ -385,8 +385,10 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                 status.update(label=f"Finished processing {len(receipts)} file(s).", state="complete")
             # Remount the native uploader; it owns the original browser bytes
             # until its widget is retired. Only small receipts survive reruns.
+            # The next user rerun remounts the uploader. Do not force a
+            # mid-render rerun: other editors in this same Streamlit delivery
+            # must first consume their pending human changes.
             st.session_state[generation_key] = generation + 1
-            st.rerun()
     for filename, result, message in st.session_state.get(key + "_upload_receipts", ()):
         if result == "accepted":
             st.success(message)
