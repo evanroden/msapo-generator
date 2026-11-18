@@ -245,6 +245,7 @@ def work_slot(*, preview=False, review=False, wait_seconds=130):
     if getattr(_WORK_LOCAL, 'active', False):
         yield
         return
+    acquired = False
     if preview:
         headroom = memory_headroom()
         if headroom is not None and headroom < PREVIEW_HEADROOM_BYTES:
