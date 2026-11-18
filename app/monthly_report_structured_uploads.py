@@ -778,9 +778,25 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
                 if not tagged_txt and not useful_activity(text):
                     continue
                 # Preserve qualifiers, dates and tense: this is grounded extractive writing.
-                activity_lines = (tuple((p.text, "") for p in passage_pages[number][0])
-                                  if number in passage_pages else
-                                  _activity_lines(text, content.source.suffix, with_dates=True))
+                if number in passage_pages:
+                    confirmed, pending = passage_pages[number]
+                    activity_lines = tuple((p.text, "") for p in confirmed)
+                    if (not activity_lines and pending
+                            and content.source.classification == "Vendor service"
+                            and (contains_price(content.source.page_texts[number - 1])
+                                 or contains_private_contact(content.source.page_texts[number - 1]))):
+                        # Vendor span parser correctly holds mixed original pages
+                        # with unknown fields. Permit a narrow, price/contact-
+                        # only recovery when the remaining labelled work has no
+                        # unknown fields and no omitted completion/status qualifier.
+                        from app.monthly_report_vendor_passages import unsupported_fields, _STATUS
+                        if (not unsupported_fields(text)
+                                and not _STATUS.search(content.source.page_texts[number - 1])):
+                            activity_lines = _activity_lines(
+                                text, content.source.suffix, with_dates=True)
+                else:
+                    activity_lines = _activity_lines(
+                        text, content.source.suffix, with_dates=True)
                 for line, header_date in activity_lines:
                     line = _activity_text(line)
                     if contains_price(line) or contains_private_contact(line):
