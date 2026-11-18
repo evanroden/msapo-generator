@@ -109,7 +109,6 @@ def main() -> None:
             })
         assert {key: sha256(value).hexdigest() for key, value in assets.items()} == asset_hashes
         try:
-            import resource
             maxrss_mib = round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 2)
         except (ImportError, AttributeError):
             maxrss_mib = None

@@ -100,8 +100,7 @@ def _reclaim_preview_heap():
 
 def convert_to_pdf(path, *, wait_seconds=10, lossless_images=False):
     with conversion_slot(wait_seconds=wait_seconds):
-        # The nested converter shares this lease. Subprocess + validation
-        # + publication are measured separately from lock admission.
+        # Do not count thread/process-lock admission as office execution.
         with measure_span("office_execution"):
             if lossless_images is not False:
                 return pdf_converter.convert_to_pdf(path, lossless_images=lossless_images)
@@ -111,37 +110,36 @@ def convert_to_pdf(path, *, wait_seconds=10, lossless_images=False):
 # Assembly can hold decoded pictures and an entire OOXML package. Serialize that
 # phase separately from the backend lock: a metafile helper may itself convert a
 # document, so holding the conversion lock around assembly would deadlock it.
-from app.monthly_report_job_capacity import heavy_job_capacity
+from app.monthly_preview_memory_budget import preview_worker_budget, required_free_bytes
 
 
 class _ParallelWorkSlots:
-    """A bounded semaphore retaining the old lock's diagnostic .locked() API."""
+    """Capped, in-process slots; keep .locked() for diagnostic/test callers."""
     def __init__(self, capacity):
         self._slots = threading.BoundedSemaphore(capacity)
-        self._guard = threading.Lock()
+        self._state_lock = threading.Lock()
         self._held = 0
 
     def acquire(self, blocking=True, timeout=None):
-        result = self._slots.acquire(blocking=blocking, timeout=timeout)
-        if result:
-            with self._guard:
+        acquired = self._slots.acquire(blocking=blocking, timeout=timeout)
+        if acquired:
+            with self._state_lock:
                 self._held += 1
-        return result
+        return acquired
 
     def release(self):
-        with self._guard:
+        with self._state_lock:
             self._slots.release()
             self._held -= 1
 
     def locked(self):
-        with self._guard:
+        with self._state_lock:
             return self._held > 0
 
 
-# Only explicit opt-in and finite CPU/RAM quotas enable parallel assembly.
-# The default remains the exact threading.Lock contract. LibreOffice and shared
-# filesystem conversion locks remain exclusive on every configuration.
-_WORK_CAPACITY = heavy_job_capacity()
+# Default remains the identical single mutex. Explicit higher tiers require
+# finite cgroup CPU/RAM quotas and use the measured eight-photo peak budget.
+_WORK_CAPACITY = preview_worker_budget()
 _WORK_SLOT = (threading.Lock() if _WORK_CAPACITY == 1
               else _ParallelWorkSlots(_WORK_CAPACITY))
 _ADMISSION_LOCK = threading.Lock()
@@ -149,6 +147,7 @@ _ACTIVE_WORK = 0
 _WORK_LOCAL = threading.local()
 _PRIORITY_LOCK = threading.Lock()
 _FOREGROUND_WAITING = 0
+_FOREGROUND_ACTIVE = 0
 _REVIEW_WAITING = 0
 PREVIEW_HEADROOM_BYTES = 160 * 1024 * 1024
 
@@ -209,8 +208,12 @@ class _PreviewMemoryGuard:
                 raise RenderBusy('Preview memory could not be checked. Your edits are still here.')
         if headroom is not None:
             self.finite = True
-            if headroom < PREVIEW_HEADROOM_BYTES:
-                raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
+            required = PREVIEW_HEADROOM_BYTES
+            if _WORK_CAPACITY > 1:
+                with _ADMISSION_LOCK:
+                    required = required_free_bytes(max(0, _ACTIVE_WORK - 1))
+            if headroom < required:
+                raise RenderBusy('Preview is queued while the service is busy. Your edits are still here. Retry shortly.')
 
 
 def preview_memory_guard():
@@ -231,7 +234,7 @@ def _wait_for_review_slot(wait_seconds):
     try:
         while True:
             with _PRIORITY_LOCK:
-                if not _FOREGROUND_WAITING and _WORK_SLOT.acquire(blocking=False):
+                if not _FOREGROUND_WAITING and not _FOREGROUND_ACTIVE and _WORK_SLOT.acquire(blocking=False):
                     return True
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -247,11 +250,12 @@ def work_slot(*, preview=False, review=False, wait_seconds=130):
     """Admit one heavy job: final export, deliberate Review, automatic preview."""
     if review and not preview:
         raise ValueError("Review priority requires the preview memory guard.")
-    global _FOREGROUND_WAITING
+    global _FOREGROUND_WAITING, _FOREGROUND_ACTIVE
     if getattr(_WORK_LOCAL, 'active', False):
         yield
         return
     queue_started = time.monotonic()
+    acquired = False
     if preview:
         headroom = memory_headroom()
         if headroom is not None and headroom < PREVIEW_HEADROOM_BYTES:
@@ -261,7 +265,7 @@ def work_slot(*, preview=False, review=False, wait_seconds=130):
             acquired = _wait_for_review_slot(wait_seconds)
         else:
             with _PRIORITY_LOCK:
-                if _FOREGROUND_WAITING or _REVIEW_WAITING:
+                if _FOREGROUND_WAITING or _FOREGROUND_ACTIVE or _REVIEW_WAITING:
                     record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
                     raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
                 acquired = _WORK_SLOT.acquire(blocking=False)
@@ -273,36 +277,57 @@ def work_slot(*, preview=False, review=False, wait_seconds=130):
         finally:
             with _PRIORITY_LOCK:
                 _FOREGROUND_WAITING -= 1
-    record_span("work_queue", time.monotonic() - queue_started,
-                outcome="ok" if acquired else "busy")
+                if acquired:
+                    # Transition waiting -> running atomically for Review
+                    # and automatic-preview priority checks.
+                    _FOREGROUND_ACTIVE += 1
     if not acquired:
+        record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
         raise RenderBusy('Another report is being prepared. Your saved work is unchanged; retry generation shortly.')
-
-    # Conservative, process-local reservation. A new parallel job needs
-    # headroom for itself AND every currently admitted heavy job. The first
-    # job always retains the former single-worker fallback, including when
-    # cgroup usage briefly becomes unreadable or the host is scaled down.
+    # Admission is fail-closed only on explicitly opted-in high-resource hosts.
+    # Check before allocating another DOCX/Pillow package, counting admissions
+    # under one lock so two contenders cannot both spend the same headroom.
+    # Previews use the measured A34 budget and fail closed even for the first
+    # preview. Foreground work keeps the A19 rule: the first job always
+    # retains the single-worker fallback, and later jobs need the A19 margin.
     global _ACTIVE_WORK
+    reserved = False
     try:
-        with _ADMISSION_LOCK:
-            if _WORK_CAPACITY > 1 and _ACTIVE_WORK:
-                headroom_now = memory_headroom()
-                required = (512 + 768 * (_ACTIVE_WORK + 1)) * 1024 * 1024
-                if headroom_now is None or headroom_now < required:
-                    raise RenderBusy('Additional report work is queued while memory is busy. Your saved work is unchanged.')
-            _ACTIVE_WORK += 1
-    except BaseException:
-        _WORK_SLOT.release()
-        raise
-    _WORK_LOCAL.active = True
-    _WORK_LOCAL.preview_guard = _PreviewMemoryGuard(headroom) if preview else None
-    try:
-        if preview:
-            _WORK_LOCAL.preview_guard()
-        yield
+        if _WORK_CAPACITY > 1:
+            with _ADMISSION_LOCK:
+                available = memory_headroom()
+                if preview:
+                    if available is None or available < required_free_bytes(_ACTIVE_WORK):
+                        record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
+                        raise RenderBusy(
+                            'Additional preview work is queued while memory is busy. '
+                            'Your edits are still here. Retry shortly.')
+                elif _ACTIVE_WORK:
+                    required = (512 + 768 * (_ACTIVE_WORK + 1)) * 1024 * 1024
+                    if available is None or available < required:
+                        record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
+                        raise RenderBusy('Additional report work is queued while memory is busy. Your saved work is unchanged.')
+                _ACTIVE_WORK += 1
+                reserved = True
+        _WORK_LOCAL.active = True
+        _WORK_LOCAL.preview_guard = _PreviewMemoryGuard(headroom) if preview else None
+        try:
+            try:
+                if preview:
+                    _WORK_LOCAL.preview_guard()
+            except RenderBusy:
+                record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
+                raise
+            record_span("work_queue", time.monotonic() - queue_started)
+            yield
+        finally:
+            _WORK_LOCAL.preview_guard = None
+            _WORK_LOCAL.active = False
     finally:
-        _WORK_LOCAL.preview_guard = None
-        _WORK_LOCAL.active = False
-        with _ADMISSION_LOCK:
-            _ACTIVE_WORK -= 1
+        if reserved:
+            with _ADMISSION_LOCK:
+                _ACTIVE_WORK -= 1
+        if not preview:
+            with _PRIORITY_LOCK:
+                _FOREGROUND_ACTIVE -= 1
         _WORK_SLOT.release()
