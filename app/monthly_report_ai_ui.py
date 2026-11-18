@@ -431,7 +431,7 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
             from app import monthly_report_structured_uploads as structured
             names = {
                 name.casefold() for facility in draft.profile.facilities
-                for name in (facility.title, *facility.aliases)
+                for name in (facility.key, facility.title, *facility.aliases)
             }
             eligible_all = tuple(
                 c for c in structured.reader_sources(contents, "activity_summary")
