@@ -247,8 +247,16 @@ def test_different_overlapping_exports_cannot_double_count_accepted_source_rows(
     other, _ = sources.ingest(PROFILE, "second.csv", CSV+b"\n")
     combined = replace(accepted, sources=(*accepted.sources, other.source))
     combined, review = stored(combined, other)
-    with pytest.raises(ValueError, match="Another included source"):
-        publish(combined, review)
+    reconciled = publish(combined, review)
+    assert next(b for b in reconciled.blocks if b.key == "work_orders") == next(
+        b for b in accepted.blocks if b.key == "work_orders")
+    receipt = flow.saved_bundle(reconciled, other.source.id, "workorders")
+    assert receipt["published"] == []
+    assert {entry["kind"] for entry in receipt["cross_source_receipts"]} == {"duplicate"}
+    # All original source rows and both immutable uploads remain intact.
+    assert flow.restored_group(receipt, receipt["groups"][0]).rows
+    assert sources.source_bytes(PROFILE, content.source) == CSV
+    assert sources.source_bytes(PROFILE, other.source) == CSV + b"\n"
 
 
 def test_native_maintenance_layout_and_incomplete_rows_need_review(storage):
