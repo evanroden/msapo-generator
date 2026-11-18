@@ -39,24 +39,30 @@ def test_aba_source_replacement_cannot_accept_first_generation(monkeypatch):
     monkeypatch.setattr(ui, "STORE", store)
     monkeypatch.setattr(ui, "_PREVIEW_WORKER", worker)
     monkeypatch.setattr(ui, "_PREVIEW_SLOT", slot)
+    monkeypatch.setattr(ui, "DEBOUNCE_SECONDS", 0)
+    a = ReportSource("a" * 64, "same.pdf", "a" * 64, ".pdf")
+    b = replace(a, sha256="b" * 64)
+    original = synthetic_draft(synthetic_profiles()[0], ReportPeriod(2026, 9))
+    draft_a = replace(original, sources=(a,))
+    draft_b = replace(original, sources=(b,))
     state = {
-        "owner": "qa-a32-owner", "wanted": {"activity": "A"},
-        "generations": {"activity": 1},
-        "queue": {"activity": ("A", {"filename": "same.pdf", "bytes": b"A"}, {}, "Activity")},
-        "requests": {}, "visible": {"activity": True},
+        "owner": "qa-a32-owner", "wanted": {}, "generations": {},
+        "queue": {}, "requests": {}, "visible": {"activity": True},
         "ready_after": {}, "cache": {}, "last_good": {}, "running": None,
     }
     try:
+        ui._register_preview_request(state, "activity", "A", draft_a, {}, "Activity")
+        ui._enqueue_visible(state, "activity")
         ui._advance_preview_queue(state)
         assert len(worker.futures) == 1
         assert state["running"][1] == "A"
 
-        # Exact content A is selected again after B, while request A#1 is running.
-        state["wanted"]["activity"] = "B"
-        state["generations"]["activity"] = 2
-        state["wanted"]["activity"] = "A"
-        state["generations"]["activity"] = 3
-        state["queue"]["activity"] = ("A", {"filename": "same.pdf", "bytes": b"A"}, {}, "Activity")
+        # Actual admission path, same source filename and a returning SHA.
+        ui._register_preview_request(state, "activity", "B", draft_b, {}, "Activity")
+        ui._enqueue_visible(state, "activity")
+        ui._register_preview_request(state, "activity", "A", draft_a, {}, "Activity")
+        ui._enqueue_visible(state, "activity")
+        assert state["generations"]["activity"] == 3
 
         stale = store.put(state["owner"], _pdf("OLD A request 1"))
         worker.futures[0].set_result({"ticket": stale, "pages": 1})
@@ -110,6 +116,33 @@ def test_two_owners_same_filename_retire_only_own_pdf_and_rasters():
         assert store.stats()["pdf_entries"] == store.stats()["raster_entries"] == 1
         store.discard("qa:bob:lease:site-b", bob)
         assert store.stats()["pdf_bytes"] == store.stats()["raster_bytes"] == 0
+    finally:
+        store.close()
+
+
+def test_source_replacement_retires_old_images_without_discarding_other_owner(monkeypatch):
+    store = PreviewStore()
+    monkeypatch.setattr(ui, "STORE", store)
+    draft = synthetic_draft(synthetic_profiles()[0], ReportPeriod(2026, 9))
+    source_a = ReportSource("a" * 64, "same.pdf", "a" * 64, ".pdf")
+    source_b = replace(source_a, sha256="b" * 64)
+    state = {"owner": "qa:alice:lease:site-a", "wanted": {}, "queue": {},
+             "requests": {}, "cache": {}, "last_good": {}, "ready_after": {}}
+    try:
+        ui._register_preview_request(state, "activity", "A",
+                                     replace(draft, sources=(source_a,)), {}, "Activity")
+        first = store.put(state["owner"], _pdf("first stale preview"))
+        neighbor = store.put("qa:bob:lease:site-b", _pdf("neighbor current preview"))
+        assert store.pages(state["owner"], first, (0,))
+        neighbor_jpeg = store.pages("qa:bob:lease:site-b", neighbor, (0,))
+        state["cache"]["activity"] = {"fingerprint": "A", "ticket": first}
+        ui._register_preview_request(state, "activity", "B",
+                                     replace(draft, sources=(source_b,)), {}, "Activity")
+        assert not store.available(state["owner"], first)
+        assert "activity" not in state["last_good"]
+        assert "activity" not in state["cache"]
+        assert store.pages("qa:bob:lease:site-b", neighbor, (0,)) == neighbor_jpeg
+        assert store.stats()["pdf_entries"] == store.stats()["raster_entries"] == 1
     finally:
         store.close()
 

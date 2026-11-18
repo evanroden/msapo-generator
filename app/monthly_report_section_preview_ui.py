@@ -374,6 +374,34 @@ def _request_scope(draft, section_key, assets):
     return scope, {ref: assets[ref] for ref in used if ref in assets}
 
 
+def _register_preview_request(state, section_key, fingerprint, draft, assets, title):
+    """Admit one immutable request incarnation, including ABA re-selection.
+
+    This runs before asynchronous scheduling, not inside a worker. It also
+    decides whether a prior ticket is safe to show as an explicitly stale
+    text-edit preview or must vanish after a source revision changes.
+    """
+    prior = state['wanted'].get(section_key)
+    if prior == fingerprint:
+        return
+    source_revision = source_revision_identity(draft)
+    old_revision = state.setdefault('source_revisions', {}).get(section_key)
+    state['source_revisions'][section_key] = source_revision
+    state['generation_sequence'] = state.get('generation_sequence', 0) + 1
+    state.setdefault('generations', {})[section_key] = state['generation_sequence']
+    state['wanted'][section_key] = fingerprint
+    previous = state['cache'].pop(section_key, {})
+    if prior is not None and old_revision != source_revision:
+        _discard(state, previous)
+        _discard(state, state.setdefault('last_good', {}).pop(section_key, {}))
+    else:
+        _remember_previous_preview(state, section_key, previous)
+    state['queue'].pop(section_key, None)
+    scope, needed_assets = _request_scope(draft, section_key, assets)
+    state['requests'][section_key] = (fingerprint, scope, needed_assets, title)
+    state['ready_after'][section_key] = monotonic() + DEBOUNCE_SECONDS if prior else 0
+
+
 def render_ordered_section_preview(draft, section_key, assets, prefix):
     title = 'Cover' if section_key == 'cover' else next(
         (section.title for section in draft.sections if section.key == section_key), 'Report section')
@@ -387,27 +415,7 @@ def render_ordered_section_preview(draft, section_key, assets, prefix):
     except Exception:
         st.warning('The section preview is unavailable. Your edits are still here.')
         return None
-    prior = state['wanted'].get(section_key)
-    if prior != fingerprint:
-        # Do not recycle a stale page from a replaced source while rebuilding.
-        # For text-only edits the prior page remains available, explicitly
-        # labeled older, exactly as before.
-        source_revision = source_revision_identity(draft)
-        old_revision = state.setdefault('source_revisions', {}).get(section_key)
-        state['source_revisions'][section_key] = source_revision
-        state['generation_sequence'] = state.get('generation_sequence', 0) + 1
-        state.setdefault('generations', {})[section_key] = state['generation_sequence']
-        state['wanted'][section_key] = fingerprint
-        previous = state['cache'].pop(section_key, {})
-        if prior is not None and old_revision != source_revision:
-            _discard(state, previous)
-            _discard(state, state.setdefault('last_good', {}).pop(section_key, {}))
-        else:
-            _remember_previous_preview(state, section_key, previous)
-        state['queue'].pop(section_key, None)
-        scope, needed_assets = _request_scope(draft, section_key, assets)
-        state['requests'][section_key] = (fingerprint, scope, needed_assets, title)
-        state['ready_after'][section_key] = monotonic() + DEBOUNCE_SECONDS if prior else 0
+    _register_preview_request(state, section_key, fingerprint, draft, assets, title)
     _enqueue_visible(state, section_key)
     _advance_preview_queue(state)
     # Component polling reruns only its preview fragment while visible and
