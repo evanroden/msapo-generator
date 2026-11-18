@@ -88,7 +88,7 @@ def sample(raw, count, route, repetition):
         first_two_ms = (perf_counter() - started) * 1000
         assert len(visible) == min(count, 2)
         started = perf_counter()
-image = open_image(BytesIO(visible[0][1]), formats=("JPEG",))
+        image = open_image(BytesIO(visible[0][1]), formats=("JPEG",))
         image.load()
         first_decode_ms = (perf_counter() - started) * 1000
         started = perf_counter()
