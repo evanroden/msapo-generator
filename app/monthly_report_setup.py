@@ -480,7 +480,7 @@ def new_month_draft(draft: ReportDraft, period: ReportPeriod, *, profile=None) -
         or {site.key for site in profile.facilities} != {site.key for site in draft.profile.facilities}
     ):
         raise ValueError(
-            "A different contract, report profile or site membership cannot inherit standing data. "
+            "A different contract, report profile or site membership changes report identity and cannot inherit standing data. "
             "Start a separate report for those sites.")
     if period.start < draft.period.start:
         raise ValueError("An earlier reporting month must be reopened, not rolled backward.")
