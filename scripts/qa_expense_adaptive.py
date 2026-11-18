@@ -92,7 +92,7 @@ _LOADED_PAGE_READY = r"""expected => {
  const rect=image.getBoundingClientRect();
  return image.isConnected && image.getClientRects().length>0 && rect.width>0 && rect.height>0
    && style.visibility!=='hidden' && style.visibility!=='collapse' && style.display!=='none'
-   && /^data:image\/jpeg;base64,.+/.test(src||'') && image.currentSrc===src
+   && /^\/(?:[A-Za-z0-9_-]+\/)*media\/[a-f0-9]{32}\.jpe?g$/.test(src||'') && image.currentSrc===src
    && image.complete===true && image.naturalWidth>0 && image.naturalHeight>0;
 }"""
 
