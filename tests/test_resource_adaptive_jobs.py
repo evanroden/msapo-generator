@@ -103,4 +103,4 @@ def test_killed_conversion_owner_releases_persistent_lock(tmp_path, monkeypatch)
         child.stdout.close()
         child.stderr.close()
     with jobs.conversion_slot(wait_seconds=3):
-        assert (Path(tmp_path) / 'monthly_reports' / 'render-jobs' / '.conversion-lock').exists() or True
+        assert (Path(tmp_path) / 'monthly_reports' / 'render-jobs' / '.conversion-lock').is_file()
