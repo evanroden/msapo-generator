@@ -324,3 +324,25 @@ def test_preflight_does_not_delete_human_work_but_blocks_private_technical_conta
     corrected = replace(original, text=TECH)
     clean = replace(draft, blocks=(corrected,))
     assert not any(item.code == "private_contact" for item in preflight(clean))
+
+
+
+def test_labeled_vendor_work_survives_separate_quote_but_status_ambiguity_holds():
+    from dataclasses import replace
+
+    original = source("Actions: " + TECH + "\n" + PRICE)
+    classified = replace(original, classification="Vendor service")
+    before = asdict(classified)
+    result = structured.native_update((SourceContent(classified, ()),),
+                                      "activity_summary")
+    assert TECH in result.text and PRICE not in result.text
+    assert result.references
+    assert asdict(classified) == before
+    # Removing the completion qualifier would turn a pending task into work.
+    unsure = replace(classified,
+                     page_texts=("Actions: " + TECH
+                                 + "\nStatus: Pending approval"
+                                 + "\n" + PRICE,))
+    withheld = structured.native_update((SourceContent(unsure, ()),),
+                                        "activity_summary")
+    assert not withheld.text
