@@ -42,12 +42,10 @@ def test_monthly_po_expense_monthly_preserves_identity_and_corrected_workbook(
     app, gate = populated_workflows
     monthly_text = "A90_MONTHLY_ONLY: manually accepted September activity."
     _control(app, "text_area", "Activity summary").set_value(monthly_text).run()
-    monthly_keys = [
+    monthly_key = next(
         key for key in app.session_state.filtered_state
         if key.startswith("report_guided_") and key.endswith("_draft")
-    ]
-    assert len(monthly_keys) == 1
-    monthly_key = monthly_keys[0]
+    )
     monthly_draft = app.session_state[monthly_key]
     monthly_route = app.query_params["workflow"]
     assert monthly_route == ["monthly"]
@@ -148,6 +146,18 @@ def test_monthly_po_expense_monthly_preserves_identity_and_corrected_workbook(
     assert po_scope not in cell_text
     assert "A90 PO-only reviewer" not in cell_text
     assert workbook_hash and generated_form_hash
+
+    # A malformed corrected receipt must fail closed. Restore the exact prior
+    # amount before navigating, and do not reuse the valid workbook for it.
+    receipt_field(app, "expense_amount_" + first).set_value("not a price").run()
+    assert _control(app, "button", "Generate expense report and email draft").disabled
+    assert validate_expense_report(
+        replace(snapshots[-1][0], employee_signature_confirmed=True),
+        list(snapshots[-1][1]), snapshots[-1][2],
+    )
+    assert "expense_generated_package" not in app.session_state
+    receipt_field(app, "expense_amount_" + first).set_value("17.25").run()
+    assert total_reimbursement(snapshots[-1][1], snapshots[-1][2]) == Decimal("42.00")
 
     # Allow Streamlit to remove hidden widget keys on idle reruns. The session
     # mirrors must restore reviewed values without re-running builders or I/O.
