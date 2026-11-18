@@ -192,7 +192,9 @@ def prepare_run(plan_value, content, profile, period, *, ai_module=None):
             saved = ai.cached(profile, "full_coverage", batch.key)
             if saved is not None:
                 # An old/poisoned cache is never authority to mark pages done.
-                validate_batch(batch, saved, content.source, profile, period, ai_module=ai)
+                _, rejected = validate_batch(batch, saved, content.source, profile, period, ai_module=ai)
+                if rejected:
+                    raise ValueError("Cached reader claims require fresh verification.")
                 cached.append((batch.key, saved))
                 continue
         except (ValueError, TypeError, KeyError, OSError):
