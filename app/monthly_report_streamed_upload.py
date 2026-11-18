@@ -110,6 +110,7 @@ def ingest_uploaded_selection(profile, uploads, existing=(), *, on_progress=None
             with stage_upload(upload, limit, on_progress=(
                     (lambda n, name=filename, declared=getattr(upload, "size", None):
                      on_progress(name, n, declared)) if on_progress else None)) as staged:
+                previous = contents
                 before = {c.source.sha256 for c in contents}
                 contents, new_messages = sources.ingest_batch(
                     profile, ((filename, staged),), contents)
@@ -127,7 +128,7 @@ def ingest_uploaded_selection(profile, uploads, existing=(), *, on_progress=None
                     receipts.append((filename, "restored", f"Restored: {filename}. Existing source reviews are unchanged."))
                 else:
                     receipts.append((filename, "duplicate", f"Duplicate skipped: {filename}. Existing source reviews are unchanged."))
-                if on_checkpoint is not None:
+                if on_checkpoint is not None and contents != previous:
                     on_checkpoint(contents)
         except (ValueError, OSError) as exc:
             if isinstance(exc, OSError):
