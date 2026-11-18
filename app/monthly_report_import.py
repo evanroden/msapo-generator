@@ -804,54 +804,64 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 if mint_divider_background(element, text):
                                     mint_background_positions.add((position, word_section))
                             if element.tag == W + "tbl":
-                                rows = []
-                                full_width_bands = []
-                                for row in element.findall(W + "tr"):
-                                    cells = []
-                                    before = row.find(f"{W}trPr/{W}gridBefore")
-                                    cells.extend([""] * min(100, int(before.get(W + "val", "0"))) if before is not None else [])
-                                    row_cells = row.findall(W + "tc")
-                                    if len(row_cells) == 1 and before is None:
-                                        merged = row_cells[0].find(f"{W}tcPr/{W}gridSpan")
-                                        if merged is not None:
-                                            full_width_bands.append((len(rows), int(merged.get(W + "val", "1"))))
-                                    for cell in row_cells:
-                                        cells.append(_text(cell))
-                                        span = cell.find(f"{W}tcPr/{W}gridSpan")
-                                        count = int(span.get(W + "val", "1")) if span is not None else 1
-                                        if count < 1 or count > 100 or len(cells) > 100:
-                                            raise ImportError("Table is too wide to review safely.")
-                                        cells.extend([""] * (count - 1))
-                                    rows.append(tuple(cells))
-                                # Cell text extraction cannot represent floating frames or
-                                # non-picture drawings. Keep this source occurrence in review
-                                # instead of offering a flattened, editable replacement.
-                                complex_table = any(
-                                    node.tag in (W + "txbxContent", V + "group")
-                                    or (node.tag == A + "graphicData"
-                                        and not node.get("uri", "").endswith("/picture"))
-                                    for node in element.iter())
-                                if complex_table:
-                                    add("unsupported", part, position, text=text,
-                                        note="Word table contains text boxes or unsupported drawings and needs manual layout review. "
-                                             "Retain its source page or add a reviewed replacement; extracted text does not preserve the layout.")
-                                elif rows and not picture_table:
-                                    width = max(map(len, rows))
-                                    rows = tuple(row + ("",) * (width - len(row)) for row in rows)
-                                    title_band = _service_call_title_band(element, rows, section)
-                                    table_id = add("table", part, position, rows=rows,
-                                        table_header_row=1 if title_band else 0,
-                                        suggested_slot=content_slot or _suggest("table", text, section),
-                                        merged_title_rows=tuple(index for index, count in full_width_bands
-                                                                if width >= 2 and count == width),
-                                        note="Merged cells retain text in the first column of their span. Confirm headers and columns.")
-                                    if title_band:
-                                        # A derived ID avoids renumbering any later source item.
-                                        # Separate context survives edited/plain output as well as
-                                        # an unchanged native table, without becoming a data row.
-                                        add("text", part, position, item_id=table_id + "-title",
-                                            text=rows[0][0], suggested_slot="service_calls",
-                                            note="Native table title")
+                                from app.monthly_report_docx_tables import native_grid
+                                # Word allows full data tables nested inside cells. The
+                                # parent is a layout container, not a flattened child
+                                # grid: keep it in review and expose every descendant
+                                # as its own stable, independently editable occurrence.
+                                table_ids = {}
+                                child_counts = defaultdict(int)
+                                for native_table in element.iter(W + "tbl"):
+                                    ancestor = parents.get(native_table)
+                                    while ancestor is not None and ancestor.tag != W + "tbl":
+                                        ancestor = parents.get(ancestor)
+                                    parent_id = table_ids.get(ancestor, "")
+                                    if parent_id:
+                                        child_counts[parent_id] += 1
+                                    nested_id = (f"{parent_id}-nested-{child_counts[parent_id]:03d}"
+                                                 if parent_id else None)
+                                    grid = native_grid(native_table, text_of=_text, error_type=ImportError)
+                                    direct_text = _text(native_table, exclude=set(grid.descendants))
+                                    # Graphics inside a child do not silently make
+                                    # the parent editable, or vice versa.
+                                    complex_table = any(
+                                        node.tag in (W + "txbxContent", V + "group")
+                                        or (node.tag == A + "graphicData"
+                                            and not node.get("uri", "").endswith("/picture"))
+                                        for node in native_table.iter())
+                                    if grid.descendants:
+                                        recorded = add("unsupported", part, position,
+                                            item_id=nested_id, text=direct_text,
+                                            note="Native Word table contains nested table grids. "
+                                                 "Keep the parent layout in source-page review; "
+                                                 "its child grids are inventoried separately for explicit "
+                                                 "editable mapping. Do not flatten child cells into this table.")
+                                    elif complex_table:
+                                        recorded = add("unsupported", part, position,
+                                            item_id=nested_id, text=direct_text,
+                                            note="Word table contains text boxes or unsupported drawings and needs manual layout review. "
+                                                 "Retain its source page or add a reviewed replacement; extracted text does not preserve the layout.")
+                                    elif grid.rows and (native_table is not element or not picture_table):
+                                        title_band = _service_call_title_band(native_table, grid.rows, section)
+                                        width = len(grid.rows[0])
+                                        recorded = add("table", part, position, item_id=nested_id,
+                                            rows=grid.rows, table_header_row=1 if title_band else 0,
+                                            suggested_slot=content_slot or _suggest("table", direct_text, section),
+                                            merged_title_rows=tuple(index for index, count in grid.full_width_bands
+                                                                    if width >= 2 and count == width),
+                                            note=("Nested Word table; confirm its own headers, columns and parent layout."
+                                                  if parent_id else
+                                                  "Merged cells retain text in the first column of their span. Confirm headers and columns."))
+                                        if title_band:
+                                            add("text", part, position, item_id=recorded + "-title",
+                                                text=grid.rows[0][0], suggested_slot="service_calls",
+                                                note="Native table title")
+                                    else:
+                                        # A picture-only Word table was already exposed
+                                        # through independently inventoried image nodes.
+                                        # It has no nested grid that can disappear here.
+                                        continue
+                                    table_ids[native_table] = recorded
                             elif standalone_frame:
                                 note = ("Word text frame needs manual layout review. Preserve and review its complete page "
                                         "or add a reviewed replacement; extracted labels do not preserve the layout.")
