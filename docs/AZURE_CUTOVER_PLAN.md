@@ -4,6 +4,9 @@
 the owner's decision (section 1), Azure runs current main with Render's data
 and is open to the company tenant next to Render. Its AI calls Claude in
 Microsoft Foundry on the company's subscription (section 1, Foundry row).
+Azure will follow main by itself, as Render does, once IT has granted the
+deploy identity (M12) and the owner has turned the deploy workflow on (M9);
+until then it changes only with a release by hand.
 Progress is tracked in [#941](https://github.com/evanroden/msapo-generator/issues/941).
 
 This is the working plan for moving the app from Render to the Azure Container
@@ -28,6 +31,7 @@ use the placeholders in section 5, and the owner holds the key to them.
 | Private details | Kept out of this repository while it is public. Agents get them from the owner: the Render service's environment variable `MIGRATION_PRIVATE_AZURE_KEY_JSON` (Render dashboard, service msapo-generator, Environment) and the owner's private prompt page. From M2 on, task records also go to a private storage container. After M10 the key moves into this repository. | Records "only in an approved restricted change record", which did not exist. |
 | Data authority | Render is the only place where work is saved until the cutover (M7). Every Azure copy before then is a rehearsal and is closed to people (C1). | Not decided before. |
 | Claude through the company's Azure (owner, 17 Nov) | The Azure copy does not use the owner's personal Claude API key: it calls Claude in Microsoft Foundry on the company's subscription (Opus, Azure-hosted, US data zone, billed on the company's Azure invoice). `app/ai_client.py` selects it from `ANTHROPIC_FOUNDRY_RESOURCE`; `ANTHROPIC_MODEL` names the deployment. Keyless sign-in needs IT to give the app's identity the Cognitive Services User role on the Foundry resource; until then the app uses the resource's key from Key Vault. Render keeps the Claude API. | The model key copied from Render into Key Vault. |
+| Azure follows main (owner, evening of 17 Nov) | Azure deploys each commit on main once Tests has passed on that exact commit, as Render deploys each merge. `.github/workflows/azure-deploy.yml` runs `scripts/azure_release.py` as a deploy identity that only IT can grant (M12), and stays off until the owner turns it on (M9). Each deploy restarts the app, briefly runs the old and new revision side by side ([AZURE_MIGRATION.md](AZURE_MIGRATION.md) section 3), and is not preceded by a snapshot; the nightly backup covers the data. | M9 by hand for every release, in a quiet time, after a snapshot. |
 | Both copies for now (owner, later on 17 Nov) | Render keeps running. Azure is brought up to main with a copy of Render's data, checked, and opened to the company tenant next to Render. Render stays the copy where work is saved until the owner announces the switch; the two copies do not sync, so anything saved on Azure before then is not on Render, and the switch (M7) copies Render's data over Azure's again. | M5 ending with Azure closed again, and M7 closing Render in the same window that opens Azure. |
 
 Unchanged: everything in [AZURE_MIGRATION.md](AZURE_MIGRATION.md) still
@@ -89,7 +93,7 @@ while it is closed to people.
 | M6 | Daily backups, alerts and hygiene | A backup job, alerts, two settings | M2, M5 |
 | M7 | Cutover | Render closed; Azure given Render's latest data | M5, M6, D2 |
 | M8 | First week after cutover | Records only | M7 |
-| M9 | Deploy a release (repeatable) | Production image and backup job image | M7 |
+| M9 | Deploy a release: automatic after Tests once turned on, by hand until then | Production image and backup job image | M5; automatic once M12's deploy identity exists |
 | M10 | Make the repository private | GitHub visibility; private key into the repository | M8, D6 |
 | M11 | Retire Render, the dev-like app and old images | Render, registry tags, code, docs, branches | M3, M10, D5 |
 | M12 | Requests for IT | Nothing: drafts requests for the owner to send | any time |
@@ -109,7 +113,8 @@ while it is closed to people.
 - **D5 Retirement.** When to suspend and delete Render (suggested: two weeks
   after a cutover with no rollback); what happens to the folders the restores
   move aside.
-- **D6 GitHub Actions minutes** once the repository is private (M10).
+- **D6 GitHub Actions minutes** once the repository is private (M10). The
+  Azure deploy (M9) adds one image build per merge.
 
 ## 5. Placeholders
 
@@ -515,7 +520,39 @@ the backup job's last run and newest archive, the alerts. Then record on #941,
 update AZURE_MIGRATION.md and the observations to say what now runs where, and
 tick the items in #270 that the move settled (and only those).
 
-### M9. Deploy a release (repeatable)
+### M9. Deploy a release
+
+**Automatic, once turned on.** The "Deploy to Azure" workflow
+(`.github/workflows/azure-deploy.yml`) runs after every Tests run on main and
+calls `scripts/azure_release.py`, signed in as the deploy identity. When Tests
+passed on main's head, it builds that commit (stamped for About, with
+`PUBLIC_SITE_ORIGIN` set to the app's address), pushes it to the registry and
+repository the app already runs from, tagged with the commit, and deploys it to
+`<PROD_APP>` by digest under a revision named for the commit
+(`c<first 12 hex>-<run>-<attempt>`). It waits until that revision serves;
+otherwise it puts the previous image back and fails. Then it moves
+`<BACKUP_JOB>` to the same image. A run for an older commit deploys nothing,
+and a commit Azure already runs is skipped. Every name comes from the `azure`
+environment's secrets and is masked in the public log. "Run workflow" deploys
+main's head, or a given commit on main that passed Tests, also while automatic
+runs are off.
+
+Turning it on, after IT has created the deploy identity (M12):
+
+1. Settings > Environments > New environment `azure`; deployment branches:
+   `main` only.
+2. Its secrets: `AZURE_CLIENT_ID` (the deploy identity's client ID),
+   `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP` (`<RG>`),
+   `AZURE_APP` (`<PROD_APP>`), `AZURE_BACKUP_JOB` (`<BACKUP_JOB>`); and
+   `AZURE_PUBLIC_ORIGIN` only if a company address replaces the app's own
+   (D1). They are names and IDs, not passwords, but the repository is public.
+3. Actions > Deploy to Azure > Run workflow. Check: the run is green, a revision
+   named for main's head serves, About shows the commit, and the backup job
+   has the same image. Record it on #941.
+4. Settings > Secrets and variables > Actions > Variables:
+   `AZURE_DEPLOY_ENABLED` = `true`. Any other value pauses automatic runs.
+
+**By hand**, while the workflow is off or to repair a release:
 
 1. The release commit is main's head with Tests green on that exact commit.
 2. Build it as in M4.
@@ -526,8 +563,11 @@ tick the items in #270 that the move settled (and only those).
 5. Update the backup job: `az containerapp job update -n <BACKUP_JOB> -g <RG> --image <REGISTRY>.azurecr.io/<IMAGE_REPO>@<digest>`.
 6. Record the commit on #941 and the digest privately.
 
-Going back: update `<PROD_APP>` to the previous digest. Database changes made by
-the new release are not undone by that; restore from the snapshot only with the
+Going back: set `AZURE_DEPLOY_ENABLED` to `false` so the next merge does not
+move Azure forward again, then run the workflow with the earlier commit (it
+must be on main with Tests green), or update `<PROD_APP>` and the job to the
+previous digest by hand. Database changes made by the newer release are not
+undone by that; restore from a snapshot or the nightly archive only with the
 owner's approval.
 
 ### M10. Make the repository private
@@ -574,10 +614,19 @@ After D5.
 
 Drafts for the owner to send; no agent sends anything.
 
-- A deploy identity for GitHub Actions: a user-assigned identity with a
-  federated credential for this repository's `main` branch, allowed to push to
-  `<REGISTRY>` and to update `<PROD_APP>` and `<BACKUP_JOB>`. This needs an Owner
-  to make the role assignments.
+- A deploy identity for GitHub Actions (M9), drafted for the owner on 17 Nov:
+  a user-assigned managed identity in `<RG>` with a federated credential
+  (issuer `https://token.actions.githubusercontent.com`, subject
+  `repo:evanroden/msapo-generator:environment:azure`, audience
+  `api://AzureADTokenExchange`) and these roles: AcrPush on `<REGISTRY>`;
+  Contributor on `<PROD_APP>` and on `<BACKUP_JOB>`; on `<ENV>`, the join
+  permission (`Microsoft.App/managedEnvironments/join/action`) that every app
+  or job update needs, through Contributor or a custom role with only that;
+  Reader on `<RG>`. Only an Owner can make the role assignments. IT sends back
+  the identity's client ID.
+- Keyless Foundry sign-in, drafted in the same request: Cognitive Services User
+  on the Foundry resource for `<IDENTITY>`. The app then signs in with its
+  identity and the Foundry key setting comes off the app.
 - Delete the dev-like app, which needs the lock lifted.
 - DNS for a company address, if D1 chose one.
 - Optionally, require assignment on the sign-in enterprise application and
