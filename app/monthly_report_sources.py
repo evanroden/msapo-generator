@@ -69,7 +69,7 @@ class SourceContent:
     tables: tuple[SourceTable, ...] = ()
     # DOCX raster images correspond to item indices, not invented page numbers.
     image_items: tuple[tuple[int, str], ...] = ()
-    # Disposable OCR evidence: (page, start, end, confidence, displayed bbox).
+    # Disposable OCR evidence: (page, start, end, confidence, unrotated-page bbox).
     # This is retained in the source extraction cache, not human report edits.
     ocr_spans: tuple[tuple[int, int, int, float, tuple[float, float, float, float]], ...] = ()
 
