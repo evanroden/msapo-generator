@@ -210,6 +210,18 @@ def _linked_input_pending(prefix, block):
     return False
 
 
+def _forget_proposal_text_widgets(prefix):
+    """A dismissed/replaced suggestion cannot revive an old text-area edit."""
+    stem = prefix + "_ai_p_"
+    for key in tuple(st.session_state):
+        if key.startswith(stem):
+            del st.session_state[key]
+    st.session_state["report_draft_mirror"] = {
+        key: value for key, value in st.session_state.get("report_draft_mirror", {}).items()
+        if not key.startswith(stem)
+    }
+
+
 def _forget_accepted_text_widgets(prefix, block_key):
     """Retire obsolete native mirrors only after the exact choice was accepted."""
     stems = (prefix + "_edit_" + block_key + "_text_",
@@ -653,6 +665,7 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                 from app.monthly_report_ai_suggestion_action import request_receipt, finish_receipt
                 request = request_receipt(draft, blocks.get(target), target, _rich_text_scope(prefix))
                 # An in-flight new read must not leave an earlier proposal actionable.
+                _forget_proposal_text_widgets(prefix)
                 for suffix in ("_ai_suggestion", "_ai_suggestion_receipt",
                                "_ai_pending_choice", "_ai_editing"):
                     st.session_state.pop(prefix + suffix, None)
@@ -735,6 +748,7 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                 st.session_state[prefix + "_ai_editing"] = True
                 st.rerun()
             if st.button("Dismiss suggestion", key=prefix + "_ai_dismiss"):
+                _forget_proposal_text_widgets(prefix)
                 for suffix in ("_ai_suggestion", "_ai_suggestion_receipt",
                                "_ai_pending_choice", "_ai_editing"):
                     st.session_state.pop(prefix + suffix, None)
@@ -782,6 +796,7 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                                        "_ai_pending_choice", "_ai_editing"):
                             st.session_state.pop(prefix + suffix, None)
                         _forget_accepted_text_widgets(prefix, revised.key)
+                        _forget_proposal_text_widgets(prefix)
                         st.success("Accepted wording saved to this section. Existing pictures and tables were retained.")
     from contextlib import nullcontext
     with editor_container if editor_container is not None else nullcontext():
