@@ -95,7 +95,7 @@ def _valid_site(source, profile):
     if label and label in names:
         return True
     # An unresolved or foreign label cannot be waived by a page classification.
-    return not label and reviewed_scope(source, profile) is not None
+    return not label and bool((reviewed_scope(source, profile) or {}).get("kind") == "sites")
 
 
 def _valid_period(source, period):
@@ -157,12 +157,17 @@ def route_pages(contents, profile=None, *, period=None, overrides=None, owned=No
             if not period_ok:
                 result.append(PageRoute(*base, None, "blocked", "Confirm this file's report month before including its pages."))
                 continue
-            if dict(source.client_page_exclusions).get(number) == page_fingerprint(source, number) or number not in source.selected_pages:
+            if dict(source.client_page_exclusions).get(number) == page_fingerprint(source, number):
                 result.append(PageRoute(*base, None, "excluded", "Explicitly left out of this report."))
                 continue
+            # Even auto-unselected unsafe pages are named. The adjacent
+            # technical page remains independently eligible for inclusion.
             kind, _ = page_status(text, unreadable=number in source.needs_vision)
             if kind in {"pricing", "legal", "blank", "signature"} or contains_price(dict(source.captions).get(number, "")):
                 result.append(PageRoute(*base, None, "blocked", "Client output excludes priced, legal-only, blank or signature-only pages."))
+                continue
+            if number not in source.selected_pages:
+                result.append(PageRoute(*base, None, "excluded", "Not selected for this report."))
                 continue
             if ambiguous and override is None:
                 result.append(PageRoute(*base, None, "review", "Multiple section headings; choose a destination for this page."))
