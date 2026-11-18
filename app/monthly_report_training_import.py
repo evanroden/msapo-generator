@@ -294,15 +294,21 @@ def _scoped_participants(columns, cells, people):
                      for part in parts), ""
 
 
+def _participant_scope_issue(row):
+    expected, issue = _scoped_participants(
+        row.origin.columns, row.origin.cells, row.values[3])
+    if issue:
+        return issue
+    if expected != row.values[3]:
+        return "Training participant staff type label must match the source role."
+    return ""
+
+
 def _event_issues(row, period):
     title, when, mode, people, hours = row.values
     errors = []
-    expected_people, staff_issue = _scoped_participants(
-        row.origin.columns, row.origin.cells, people)
-    if staff_issue:
-        errors.append(staff_issue)
-    elif expected_people != people:
-        errors.append("Training participant staff type label must match the source role.")
+    if scope_issue := _participant_scope_issue(row):
+        errors.append(scope_issue)
     if not title:
         errors.append("Training topic is missing.")
     try:
@@ -358,6 +364,14 @@ def review_training_event_source(review, profile):
     review = review_training_event_sites(review, profile)
     if review.kind != "events":
         return review
+    # Old saved receipts also require role validation. Merely retaining an
+    # earlier unlabelled row must not grant permission to misclassify staff.
+    checked = []
+    for row in review.rows:
+        issue = _participant_scope_issue(row)
+        checked.append(replace(row, issues=(*row.issues, issue))
+                       if issue and issue not in row.issues else row)
+    review = replace(review, rows=tuple(checked))
     headings = _source_header_bases(review.original_columns)
     questions = list(review.issues)
     for name, aliases in (*EVENT_HEADERS.items(), ("participant staff type", STAFF_ROLE_HEADERS)):
