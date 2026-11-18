@@ -174,7 +174,7 @@ def test_monthly_cache_preserves_original_pages_review_and_source_digest(tmp_pat
         assert any(f"Page {number}:" in note for note in first.source.notices)
     assert any("blank at preview scale" in note for note in first.source.notices)
     assert "SEARCH_LAYER_ROW_00" in first.source.page_texts[5]
-    original_path, _ = sources._path(profile, digest, ".pdf")
+    original_path = sources._path(profile, digest, ".pdf")
     assert sha256(original_path.read_bytes()).hexdigest() == digest
 
     # Cache reuse must not recalculate, lose notices, or mutate the original.
