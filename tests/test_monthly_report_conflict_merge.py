@@ -1,5 +1,6 @@
 """A84: synthetic stale-write controls and explicit field-level reconciliation."""
 from dataclasses import replace
+import json
 
 import pytest
 
@@ -172,3 +173,59 @@ def test_standing_training_manifest_interruption_preserves_prior_revision(monkey
     assert after["sites"]["north"]["rows"][1] == first["sites"]["north"]["rows"][1]
     with pytest.raises(library.RevisionConflict):
         save_training(profile, table, expected_revision=1, actor="Synthetic stale editor")
+
+
+def test_source_review_distinct_receipts_merge_without_decoding_or_dropping():
+    base = draft()
+    base = replace(base, source_row_reviews=())
+    def receipt(source, state):
+        return json.dumps({"schema": 1, "kind": "training", "scope": "synthetic-scope",
+                           "source_id": source, "source_fingerprint": "a" * 64,
+                           "table": 1, "state": state}, sort_keys=True)
+    first = receipt("synthetic-source-a", "human-approved-a")
+    second = receipt("synthetic-source-b", "human-approved-b")
+    page = replace(base, source_row_reviews=(first,))
+    remote = replace(base, source_row_reviews=(second,))
+    merged, conflicts = merge_drafts(base, page, remote)
+    assert not conflicts and merged.source_row_reviews == (second, first)
+    older = replace(base, source_row_reviews=(first,))
+    ours = replace(older, source_row_reviews=(receipt("synthetic-source-a", "corrected-on-page"),))
+    newer = replace(older, source_row_reviews=(receipt("synthetic-source-a", "corrected-newer"),))
+    unresolved, conflicts = merge_drafts(older, ours, newer)
+    assert unresolved is None and len(conflicts) == 1
+    assert "source synthetic-source-a" in conflicts[0].path
+    assert first == older.source_row_reviews[0]
+
+
+def test_contact_matrix_same_site_different_people_are_independent():
+    base = draft()
+    rows = (("North", "Client manager", "Alice", "555-0101", "alice@example.test"),
+            ("North", "Client engineer", "Bob", "555-0102", "bob@example.test"))
+    base = replace(base, blocks=(*base.blocks, ResolvedBlock("contact_matrix", "This month", rows=rows)))
+    local = update(base, "contact_matrix", rows=(("North", "Client manager", "Alice", "555-1111",
+                                                 "alice@example.test"), rows[1]))
+    remote = update(base, "contact_matrix", rows=(rows[0], ("North", "Client engineer", "Bob",
+                                                           "555-0102", "bob+corrected@example.test")))
+    merged, conflicts = merge_drafts(base, local, remote)
+    assert not conflicts
+    assert block(merged, "contact_matrix").rows[0][3] == "555-1111"
+    assert block(merged, "contact_matrix").rows[1][4] == "bob+corrected@example.test"
+    stale = update(base, "contact_matrix", rows=(("North", "Client manager", "Alice", "555-2222",
+                                                 "alice@example.test"), rows[1]))
+    _, collisions = merge_drafts(base, local, stale)
+    assert "row 1: North" in collisions[0].path
+    assert "column 4" in collisions[0].path
+
+
+def test_duplicate_contact_identity_cannot_be_positionally_merged():
+    base = draft()
+    duplicate_rows = (("North", "Client", "Alice", "111", ""),
+                      ("North", "Client", "Alice", "222", ""))
+    base = replace(base, blocks=(*base.blocks, ResolvedBlock("contact_matrix", "This month",
+                                                             rows=duplicate_rows)))
+    ours = update(base, "contact_matrix", rows=(("North", "Client", "Alice", "111", "first@example.test"),
+                                                duplicate_rows[1]))
+    theirs = update(base, "contact_matrix", rows=(duplicate_rows[0],
+                                                  ("North", "Client", "Alice", "222", "second@example.test")))
+    merged, conflicts = merge_drafts(base, ours, theirs)
+    assert merged is None and [c.path for c in conflicts] == ["blocks[contact_matrix].rows"]
