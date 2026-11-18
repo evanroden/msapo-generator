@@ -1814,7 +1814,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 open_issues, pending_proposals = inherited_metadata_for_save()
                 saved = library.save_snapshot(draft, expected_revision=current_revision, assets=tuple(assets.items()), entered_editor=prepared,
                                               open_issues=open_issues,
-                                              pending_proposals=pending_proposals
+                                              pending_proposals=pending_proposals)
             except (ValueError, OSError) as exc:
                 st.error("Shared version could not be saved: " + str(exc))
                 st.caption("Your draft remains on this page. Check its recovery status before leaving, then retry saving.")
@@ -2121,7 +2121,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 open_issues, pending_proposals = inherited_metadata_for_save()
                 saved = library.save_snapshot(draft, expected_revision=current_revision, assets=tuple(assets.items()), entered_editor=prepared,
                                               open_issues=open_issues,
-                                              pending_proposals=pending_proposals
+                                              pending_proposals=pending_proposals)
                 st.session_state[prefix + "_revision"] = saved.revision
                 st.session_state[draft_key] = saved.draft
                 if recovery_available:
@@ -2157,7 +2157,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                         open_issues, pending_proposals = inherited_metadata_for_save()
                         saved = library.save_snapshot(draft, expected_revision=current_revision, assets=tuple(assets.items()), entered_editor=prepared,
                             open_issues=open_issues,
-                            pending_proposals=pending_proposals
+                            pending_proposals=pending_proposals)
                         st.session_state[prefix + "_revision"] = saved.revision
                         st.session_state[draft_key] = saved.draft
                         record_shared_save(prefix, package, saved=saved)
