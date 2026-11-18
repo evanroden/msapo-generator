@@ -74,6 +74,7 @@ def _legacy_fingerprint(draft, section_key, source_identity=""):
 def test_twelve_sections_warm_rerun_does_not_reserialize_unchanged_values(report, monkeypatch):
     keys = [section.key for section in included_sections(report.sections)][:12]
     assert len(keys) == 12
+    preview._cached_section_fingerprint.cache_clear()
     original = json.dumps
     serializations = []
 
@@ -179,3 +180,24 @@ def test_native_assembly_reuses_training_after_activity_edit(report, monkeypatch
         assert calls == ["training"], "Unrelated Activity must not rebuild native Training"
     finally:
         assembly.clear()
+
+def test_unhashable_legacy_metadata_falls_back_without_poisoning_cache(report):
+    """The old v6 hash ignores this unrelated imported metadata field."""
+    altered = replace(report, blocks=tuple(
+        replace(block, asset_provenance=(("legacy", {"unhashable": "record"}),))
+        if block.key == "training_summary" else block for block in report.blocks
+    ))
+    expected = _legacy_fingerprint(altered, "training")
+    assert preview.section_preview_fingerprint(altered, "training") == expected
+    assert preview.section_preview_fingerprint(altered, "training") == expected
+
+
+def test_unavailable_source_identity_cannot_be_hidden_by_warm_cache(report, monkeypatch):
+    preview.section_preview_fingerprint(report, "training")
+
+    def vanished(draft):
+        raise ValueError("Synthetic source receipt missing")
+
+    monkeypatch.setattr(source_runtime, "cache_identity", vanished)
+    with pytest.raises(ValueError, match="receipt missing"):
+        preview.section_preview_fingerprint(report, "training")
