@@ -4,6 +4,9 @@ Chart text is review evidence only. Chart series, numeric values, workbook
 references and geometry are NOT treated as editable report tables or approved
 images; the original chart remains in native drawing review.
 """
+from defusedxml import ElementTree as ET
+from defusedxml.common import DefusedXmlException
+
 from app.monthly_report_xml_parser import parse_xml_stream
 
 C = "{http://schemas.openxmlformats.org/drawingml/2006/chart}"
@@ -33,7 +36,7 @@ def chart_relationship_evidence(archive, graphics, relations, names):
         try:
             with archive.open(target) as source:
                 root = parse_xml_stream(source).getroot()
-        except (ValueError, OSError, RuntimeError) as exc:
+        except (ET.ParseError, DefusedXmlException, ValueError, OSError, RuntimeError) as exc:
             notices.append(f"Chart {identity} could not be read safely ({type(exc).__name__}); review the original.")
             continue
         # Only chart titles, series names and category labels are text evidence.
