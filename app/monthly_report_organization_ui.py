@@ -202,15 +202,38 @@ def _contact_summary_tables(spec, block):
     return tuple(_contact_block_tables(block, spec, has_primary))
 
 
-def _open_contact_from_summary(prefix, active_key, spec, block, table_index, row_index, scope):
-    """Open an existing native row directly, without creating a second editor."""
+def _visible_contact_summary(columns, row, index):
+    """Show identifying fields without normalizing the imported table schema."""
+    from app.monthly_report_visual_ui import _contact_label
+
+    summary = _contact_label(columns, row, index)
+    details = tuple((str(name).strip().casefold(), str(value or "").strip())
+                    for name, value in zip(columns, row))
+
+    def first(names):
+        return next((value for name, value in details if name in names and value), "")
+
+    # Role and site are included in _contact_label; vendor and email should
+    # not be hidden behind an extra click. Duplicate imported headings and
+    # special characters remain literal, while every native cell is retained.
+    return " · ".join(dict.fromkeys(value for value in (
+        summary,
+        first({"vendor", "vendor name", "contractor", "company", "supplier"}),
+        first({"email", "email address"}),
+    ) if value))
+
+
+def _open_contact_from_summary(prefix, active_key, spec, block, table_index, row_index, scope, signature):
+    """Open only the row represented by the current visible summary snapshot."""
     from uuid import uuid4
     from app.monthly_report_editor import _signature
     from app.monthly_report_guided import _rich_text_scope
     from app.monthly_report_visual_ui import _contact_widget_prefix
 
-    if scope != _rich_text_scope(prefix):
-        return  # An obsolete report/incarnation's click cannot select a new row.
+    if (scope != _rich_text_scope(prefix)
+            or st.session_state.get(prefix + "_organization_contact_binding") != (scope, signature)
+            or st.session_state.get(active_key) == "contact_matrix"):
+        return  # A stale/hidden row action cannot target a different contact.
     tables = _contact_summary_tables(spec, block)
     if (table_index >= len(tables) or row_index >= len(tables[table_index].rows)):
         return
@@ -249,16 +272,17 @@ def _render_contact_summary_actions(spec, block, prefix, active_key):
         return
     signature = _signature((tuple((table.columns, table.rows) for table in tables), block.references))
     scope = _rich_text_scope(prefix)
+    st.session_state[prefix + "_organization_contact_binding"] = (scope, signature)
     for table_index, table in enumerate(tables):
         for row_index, row in enumerate(table.rows):
             description, action = st.columns([5, 1])
             with description:
-                st.text(_contact_label(table.columns, row, row_index))
+                st.text(_visible_contact_summary(table.columns, row, row_index))
             with action:
                 st.button("Edit contact",
                           key=f"{prefix}_organization_contact_{scope}_{signature}_{table_index}_{row_index}",
                           on_click=_open_contact_from_summary,
-                          args=(prefix, active_key, spec, block, table_index, row_index, scope))
+                          args=(prefix, active_key, spec, block, table_index, row_index, scope, signature))
 
 
 def render_organization(draft, blocks, specs, prefix, assets, field, edit_content, *, show_preview=True):
