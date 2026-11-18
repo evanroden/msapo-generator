@@ -389,10 +389,10 @@ def publish_bundle(draft, bundle, *, expected_revision, expected_block, include_
     for text in draft.source_row_reviews:
         other = saved_receipt(text)
         if (other.get("kind") != bundle["kind"] or other.get("source_id") == bundle["source_id"]
-                or other.get("scope") != bundle["scope"] or not other.get("published")):
+                or other.get("scope") != bundle["scope"]):
             continue
         still_included = any(ReportTable(tuple(t["columns"]), tuple(tuple(r) for r in t["rows"]), t["reference"])
-                             in remaining for t in other["published"])
+                             in remaining for t in other.get("published", ()))
         if still_included:
             old_ids = {((row.site, row.work_date, row.work_order.casefold())
                         if bundle["kind"] == "workorders" else (row.site, row.wo.casefold()))
@@ -400,6 +400,21 @@ def publish_bundle(draft, bundle, *, expected_revision, expected_block, include_
                 for row in restored_group(other, group).rows if not row.excluded}
             if incoming & old_ids:
                 raise ValueError("Another included source already contains these work-order identities. Compare the sources and remove or omit duplicate rows before adding them.")
+        # A second export's annual grids can contain the same accepted rows
+        # even though that source never published a detailed row list.
+        if bundle["kind"] == "workorders" and other.get("grid_receipt"):
+            from app.monthly_report_rolling_workflow import validate_receipt
+            _, bound = validate_receipt(other["grid_receipt"])
+            group_index = other["grid_receipt"]["group_index"]
+            if (any(table.reference in {t.reference for t in remaining} for table in bound)
+                    and 0 <= group_index < len(other["groups"])):
+                group = other["groups"][group_index]
+                if group["record"] and not group["omitted"]:
+                    grid_ids = {(row.site, row.work_date, row.work_order.casefold())
+                        for row in restored_group(other, group).rows
+                        if not row.excluded and not row.issues}
+                    if incoming & grid_ids:
+                        raise ValueError("Another source already publishes these work orders in annual grids. Compare the source rows before adding list totals.")
     # Existing manual/native rows remain separate and are never retyped.
     updated = replace(current, source="This month", extra_tables=tuple(remaining) + tables,
         references=tuple(dict.fromkeys((*current.references, *(t.reference for t in tables)))),
