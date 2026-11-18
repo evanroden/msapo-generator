@@ -38,7 +38,7 @@ jobs:
             docker run --name "msapo-a25-$stage" --memory=512m --memory-swap=512m --cpus=0.5 \
               -v "$PWD/baseline:/baseline:ro" -v "$PWD/results:/results" \
               --entrypoint python msapo-a25-image scripts/qa_monthly_image_memory_a25.py \
-              --code-root "/$stage" --output "/results/$stage.json"
+              --code-root "$(test "$stage" = candidate && echo /app || echo /baseline)" --output "/results/$stage.json"
             test "$(docker inspect --format='{{.State.OOMKilled}}' "msapo-a25-$stage")" = false
           done
       - name: Verify source, output geometry and candidate privacy
