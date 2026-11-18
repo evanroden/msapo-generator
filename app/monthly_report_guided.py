@@ -2092,9 +2092,11 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     from hashlib import sha256
                     asset_versions = tuple(sorted((ref, sha256(raw).digest())
                                                   for ref, raw in assets.items()))
-                    package = generate_report(
-                        draft, acknowledged_fingerprint=draft.fingerprint, asset_loader=loader,
-                        reuse_owner=browser_token, reuse_asset_versions=asset_versions)
+                    from app import monthly_report_final_conversion_cache as final_cache
+                    report_identity = (draft.profile.contract, draft.profile.key, draft.period.key)
+                    with final_cache.owner_scope(browser_token, report_identity, asset_versions):
+                        package = generate_report(
+                            draft, acknowledged_fingerprint=draft.fingerprint, asset_loader=loader)
             except ValueError as exc:
                 st.error(str(exc))
                 st.caption("Your edits and saved versions are unchanged. Retry generation when the service is ready.")
