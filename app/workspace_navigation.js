@@ -480,7 +480,15 @@ globalThis.ENFRAWorkspaceNavigation = {
                 if (nextButton.textContent !== label) nextButton.textContent = label;
             }
             if (progress && index >= 0) {
-                const text = `${index + 1} of ${entries.length} · ${entries[index].title}`;
+                // Only the settled preflight from the mounted report owns this status.
+                // This is display-only; it cannot change content or validations.
+                const marker = app.querySelector('.epc-review-attention-source');
+                const raw = marker && !marker.closest('[data-stale="true"]')
+                    ? Number(marker.dataset.count) : 0;
+                const count = Number.isSafeInteger(raw) && raw > 0 ? raw : 0;
+                const attention = count === 1 ? '1 item needs attention · '
+                    : count > 1 ? `${count} items need attention · ` : '';
+                const text = `${attention}${index + 1} of ${entries.length} · ${entries[index].title}`;
                 if (progress.textContent !== text) progress.textContent = text;
                 if (progress.dataset.section !== active) progress.dataset.section = active;
             }
