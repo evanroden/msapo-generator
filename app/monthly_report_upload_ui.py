@@ -1594,8 +1594,10 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                     earlier = {}
                 processed = set(earlier.get("processed", ())) | set(accepted)
                 skipped = set(earlier.get("skipped", ())) | set(oversized) | set(visually_skipped)
-                failed_pages = (set(earlier.get("failed", ())) | set(failed)) - processed - skipped
                 all_pages = set(earlier.get("eligible", ())) | set(eligible)
+                # A missing receipt is an unresolved page, not a silent success.
+                failed_pages = (set(earlier.get("failed", ())) | set(failed)
+                                | (all_pages - processed - skipped)) - processed - skipped
                 coverage_state = {
                     "target": job["request"], "eligible": tuple(sorted(all_pages)),
                     "processed": tuple(sorted(processed)), "skipped": tuple(sorted(skipped)),
