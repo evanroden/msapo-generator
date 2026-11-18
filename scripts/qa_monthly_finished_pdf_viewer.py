@@ -43,7 +43,7 @@ def image_ready(page):
     assert value and re.fullmatch(r"/(?:[A-Za-z0-9_-]+/)*media/[a-f0-9]{32}\.jpe?g", value), value
     # Independently fetch the real decoded page bytes by its current scoped
     # media URL. Do not reuse the fixture's Python PDF or old inline payload.
-    response = page.request.get(urljoin(URL, value))
+    response = page.context.request.get(urljoin(URL, value))
     assert response.ok and response.headers.get("content-type", "").startswith("image/jpeg")
     return response.body()
 
