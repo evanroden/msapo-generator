@@ -42,7 +42,6 @@ import hashlib
 import html
 import re
 from dataclasses import dataclass
-from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
@@ -65,6 +64,7 @@ from app.config import (
     WORK_CATEGORY_DISPLAY,
     facility_key_from_name,
     lookup_cost_code,
+    operator_today,
     valid_categories_for_site,
 )
 from app.device_identity import device_token, ensure_device_cookie
@@ -2963,7 +2963,7 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
         st.session_state.get("scope_pdf_bytes")
         and st.session_state.get("scope_pdf_signature") == current_pdf_signature
     ):
-        st.session_state.setdefault("scope_pdf_generated_on", date.today().isoformat())
+        st.session_state.setdefault("scope_pdf_generated_on", operator_today().isoformat())
 
     presentation.close()
     presentation.enter_context(workspace_section("purchase_package", "Generated package review"))
@@ -3035,9 +3035,9 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
             st.session_state["scope_pdf_bytes"] = scope_pdf
             st.session_state["scope_pdf_signature"] = current_pdf_signature
             if not reused_pdf:
-                st.session_state["scope_pdf_generated_on"] = date.today().isoformat()
+                st.session_state["scope_pdf_generated_on"] = operator_today().isoformat()
             else:
-                st.session_state.setdefault("scope_pdf_generated_on", date.today().isoformat())
+                st.session_state.setdefault("scope_pdf_generated_on", operator_today().isoformat())
             context = build_po_context(st.session_state)
             if context is not None:
                 st.session_state[generated_key] = context.context_id

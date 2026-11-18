@@ -51,6 +51,7 @@ from app.config import (
     FACILITY_SHORT_NAMES,
     WORK_CATEGORY_DISPLAY,
     lookup_cost_code,
+    operator_today,
 )
 from app.job_numbers import JOB_NUMBER_OPTIONS, RRH_JOB_NUMBERS
 from app.smartsheet import AGREEMENT_TYPE_OPTIONS, OBJECT_ACCOUNT_OPTIONS
@@ -223,7 +224,11 @@ def _safe_basename(
         if not short:
             short = _filename_segment(description)[:20].rstrip("-")
     short = short or "PO"
-    package_date = date.fromisoformat(generated_on).isoformat() if generated_on else date.today().isoformat()
+    package_date = (
+        date.fromisoformat(generated_on).isoformat()
+        if generated_on
+        else operator_today().isoformat()
+    )
     return f"{site_code}_{short}_{package_date}"
 
 def _selected_contract(state: Mapping[str, Any], token: str) -> str:
