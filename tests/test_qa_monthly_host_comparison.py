@@ -139,3 +139,17 @@ def test_cli_ignores_extra_private_keys_and_fails_closed_without_echo(tmp_path):
                                capture_output=True, text=True)
     assert completed.returncode == 2
     assert secret not in completed.stdout + completed.stderr
+
+def test_verified_region_mismatch_is_confounder_without_leaking_private_identity():
+    left, right = bundle(), bundle()
+    private1, private2 = "PRIVATE-REGION-A", "PRIVATE-REGION-B"
+    left["region"] = private1
+    right["region"] = private2
+    left["service_resource_verified"] = True
+    right["service_resource_verified"] = True
+    result = compare(left, right)
+    assert not result["controlled_comparison"]
+    assert result["region_relation"] == "different"
+    assert "different declared regions" in result["confounders"]
+    assert private1 not in json.dumps(result)
+    assert private2 not in json.dumps(result)
