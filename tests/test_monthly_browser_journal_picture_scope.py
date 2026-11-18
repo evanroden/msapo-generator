@@ -33,8 +33,11 @@ def picture(large=False):
 
 
 def with_picture(draft, reference, text="Local text survives reconnect"):
+    # The synthetic report uses demo_* block keys rather than regular monthly
+    # keys. Pick a genuinely included section for the runtime ownership check.
+    block_key = next(s.blocks[0].key for s in draft.sections if s.included)
     return replace(draft, prepared_by="Synthetic browser editor", blocks=(
-        ResolvedBlock("improvements", "This month", text=text,
+        ResolvedBlock(block_key, "This month", text=text,
                       asset_hashes=(reference,), asset_captions=("Synthetic photo",)),))
 
 
