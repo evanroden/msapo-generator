@@ -95,3 +95,27 @@ def test_constrained_control_retains_original_mutex(monkeypatch):
 def _contended_preview():
     with jobs.work_slot(preview=True):
         yield
+
+
+def test_foreground_export_keeps_priority_with_spare_parallel_slot(high_tier):
+    with jobs.work_slot():
+        assert jobs._FOREGROUND_ACTIVE == 1
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            def background():
+                with pytest.raises(jobs.RenderBusy, match='queued'):
+                    with jobs.work_slot(preview=True):
+                        pass
+            pool.submit(background).result(timeout=5)
+        assert jobs._ACTIVE_WORK == 1
+    assert jobs._FOREGROUND_ACTIVE == 0 and jobs._ACTIVE_WORK == 0
+
+
+def test_review_yields_to_active_foreground_even_with_two_slots(high_tier):
+    with jobs.work_slot():
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            def review():
+                with pytest.raises(jobs.RenderBusy, match='Another report'):
+                    with jobs.work_slot(preview=True, review=True, wait_seconds=0):
+                        pass
+            pool.submit(review).result(timeout=5)
+    assert jobs._REVIEW_WAITING == 0 and jobs._FOREGROUND_ACTIVE == 0
