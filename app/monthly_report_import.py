@@ -122,6 +122,9 @@ class ImportItem:
     # Original rows stay intact for source identity and native geometry checks.
     # Only a proved full-width service-call title may precede the real header.
     table_header_row: int = 0
+    # Relationship identity is stable within the original source part and
+    # must not be replaced with a guessed image/shape role.
+    relationship_id: str = ""
 
     @property
     def label(self) -> str:
@@ -943,7 +946,8 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 item_id = f"{prior_id}-occurrence-{occurrence + 1}" if target and prior_id else None
                                 added_id = add("image" if supported else "unsupported", part, position, text=caption,
                                     item_id=item_id,
-                                    image_part=target if safe else "", suggested_slot=_suggest("image", text, section, heading=bool(detected), part=part) if supported else "",
+                                    image_part=target if safe else "", relationship_id=rid,
+                                    suggested_slot=_suggest("image", text, section, heading=bool(detected), part=part) if supported else "",
                                     note="" if supported else "External, missing or unsupported image. Export this drawing as PNG/JPEG and replace it after review.",
                                     image_role=role if supported else "",
                                     **(metadata(target) if supported else {}))
