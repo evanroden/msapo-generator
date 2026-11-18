@@ -363,10 +363,13 @@ def _section_preview():
 
 def _cpu_stat():
     try:
-        return dict((label, int(value)) for label, value in
-                    (line.split() for line in Path("/sys/fs/cgroup/cpu.stat").read_text().splitlines())
-                    if len(line.split()) == 2)
-    except (OSError, ValueError):
+            stats = {}
+        for line in Path("/sys/fs/cgroup/cpu.stat").read_text().splitlines():
+                        parts = line.split()
+            if len(parts) == 2:
+                                stats[parts[0]] = int(parts[1])
+        return stats
+except (OSError, ValueError):
         return {}
 
 
