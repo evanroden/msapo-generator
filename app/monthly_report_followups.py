@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from app.monthly_report_model import ReportFollowUp, STOCK_TEXTS, followup_record
 from app.monthly_report_sources import source_reference
-from app.monthly_report_content_policy import table_price_columns
+from app.monthly_report_content_policy import table_price_columns, proposal_price_columns
 
 PROPOSAL_STATUSES = ("pending", "approved", "declined", "on_hold", "not_confirmed")
 ISSUE_STATUSES = ("ongoing", "updated", "resolved")
@@ -597,15 +597,8 @@ def seed_followups(draft):
         for columns, rows, table_references in tables:
             width = max((len(row) for row in rows), default=len(columns))
             columns = (*columns, *(f"Detail {n+1}" for n in range(len(columns), width)))
-            prices = set(table_price_columns(columns, rows))
-            if category == "proposal":
-                # Financial summary grids often use bare Total and Unit Rate
-                # headings. In a proposal those are amounts, not technical
-                # measurements; preserve the original cells in the source table.
-                prices.update(n for n, title in enumerate(columns)
-                              if " ".join(title.casefold().split()) in {
-                                  "unit rate", "unit rates", "total", "totals", "grand total",
-                              })
+            prices = (proposal_price_columns(columns, rows) if category == "proposal"
+                      else table_price_columns(columns, rows))
             for row in rows:
                 if category == "proposal":
                     entries.append((*_proposal_table_details(columns, row, prices), table_references))
