@@ -198,6 +198,13 @@ export default function(component) {
             reference.prepend(titleNode);
         }
         if (titleNode.textContent !== title) titleNode.textContent = title;
+        // A keyed Streamlit container is not natively focusable. After opening
+        // a compact preview, move focus to its named group so Tab reaches the
+        // Back button instead of traversing the hidden-away editor again.
+        // -1 permits explicit focus without adding another Tab stop.
+        reference.tabIndex = -1;
+        reference.setAttribute('role', 'group');
+        reference.setAttribute('aria-label', title + ' preview');
         let back = reference.querySelector('.epc-compact-back');
         if (!back) {
             back = document.createElement('button');
