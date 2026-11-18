@@ -1,6 +1,7 @@
 """A08 synthetic CSV/XLSX source-conservation and ambiguity canaries."""
 from dataclasses import replace
 from io import BytesIO
+from zipfile import BadZipFile
 import json
 
 import pytest
@@ -111,5 +112,5 @@ def test_xlsx_30_sheet_control_31_sheet_rejected_and_malformed_input(context):
     with pytest.raises(ValueError, match="30 worksheets"):
         _ingest(profile, "thirty-one.xlsx",
                 _workbook(hidden=False, formula=False, sheet_count=31))
-    with pytest.raises((ValueError, Exception)):
+    with pytest.raises((ValueError, BadZipFile)):
         _ingest(profile, "broken.xlsx", b"not-a-valid-workbook")
