@@ -30,6 +30,7 @@ def fixture(count):
 def benchmark(raw, count, mode):
     selected = count - 1
     store = PreviewStore()
+    original_sha = hashlib.sha256(raw).hexdigest()
     wall, cpu = perf_counter(), process_time()
     try:
         ticket = store.put("a28-synthetic-owner", SimpleNamespace(pdf=raw, initial_page=selected))
@@ -52,7 +53,7 @@ def benchmark(raw, count, mode):
             assert pages and pages[0][0] == index
         full_ms = (perf_counter() - wall) * 1000
         full_cpu_ms = (process_time() - cpu) * 1000
-        assert hashlib.sha256(raw).hexdigest() == hashlib.sha256(fixture(count)).hexdigest()
+        assert hashlib.sha256(raw).hexdigest() == original_sha
         return {
             "pages": count, "mode": mode,
             "first_selected_raster_wall_ms": round(first_ms, 3),
