@@ -9,6 +9,9 @@ from __future__ import annotations
 
 from hashlib import sha256
 import json
+import logging
+import os
+from time import perf_counter
 
 PARSER_POLICY_VERSION = 1
 STAGE_POLICY_VERSION = 1
@@ -91,3 +94,13 @@ def stage_valid(record, digest: str, suffix: str) -> bool:
         return actual == _digest({k: v for k, v in record.items() if k != "payload_sha256"})
     except (ValueError, TypeError, OverflowError, UnicodeError):
         return False
+
+
+def qa_stage(stage: str, started: float, outcome: str, *, byte_count: int = 0) -> None:
+    """Local-only, sanitized timings. Never include site, filename or digest."""
+    if os.environ.get("MSAPO_LOCAL_QA_SOURCE_CACHE") != "1":
+        return
+    logging.getLogger("msapo.local.source_cache").info(
+        "source_cache stage=%s outcome=%s wall_ms=%.3f derived_bytes=%d",
+        stage, outcome, (perf_counter() - started) * 1000, byte_count,
+    )
