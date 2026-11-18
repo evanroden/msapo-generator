@@ -70,7 +70,7 @@ def _replace_headers(draft, titles):
             replace(block, columns=tuple(
                 ColumnSpec(f"imported_{i}", title) for i, title in enumerate(titles)
             )) if block.key == "capital_renewal" else block
-            for block in section.blocks,
+            for block in section.blocks
         )) for section in draft.sections
     ))
 
