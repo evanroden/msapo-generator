@@ -140,7 +140,7 @@ def test_shared_snapshot_reload_equals_the_accepted_visible_choice(monkeypatch, 
     reopened = library.load_snapshot(draft.profile.contract, draft.profile.key, draft.period)
     assert reopened is not None
     persisted = next(b for b in reopened.draft.blocks if b.key == "activity_summary")
-    assert persisted.text == "Prior manual note.\\n- " + display
+    assert persisted.text == "Prior manual note.\n- " + display
     assert persisted.ai_paragraphs == accepted.ai_paragraphs
     assert persisted.reviewed and persisted.references == accepted.references
     assert reopened.draft.sources == draft.sources
