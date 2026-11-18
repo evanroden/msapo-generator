@@ -48,7 +48,8 @@ def make(content, source_size: int) -> dict:
         "assets": [[number, identifier] for number, identifier in content.image_items],
         "warnings_sha256": _digest(source.notices),
         "passages_sha256": _digest(source.pdf_text_blocks),
-        "selected_page_numbers": list(source.selected_pages),
+        # Page selection/captions are editable review decisions, not immutable
+        # parser identity. Legacy review recovery may update them in place.
     }
 
 
