@@ -21,6 +21,11 @@ def conversion_slot(*, wait_seconds=10):
     if getattr(_CONVERSION_LOCAL, 'active', False):
         yield
         return
+    from app import monthly_report_resource_scheduler as scheduler
+    if scheduler.parallel_enabled():
+        with _parallel_conversion_slot(wait_seconds=wait_seconds):
+            yield
+        return
     deadline = time.monotonic() + max(0, min(float(wait_seconds), 130))
     if not _SLOT.acquire(timeout=max(0, deadline - time.monotonic())):
         raise RenderBusy("Another report is rendering. Please try again shortly.")
@@ -207,6 +212,11 @@ def work_slot(*, preview=False, review=False, wait_seconds=130):
     if getattr(_WORK_LOCAL, 'active', False):
         yield
         return
+    from app import monthly_report_resource_scheduler as scheduler
+    if scheduler.parallel_enabled():
+        with _parallel_work_slot(preview=preview, review=review, wait_seconds=wait_seconds):
+            yield
+        return
     if preview:
         headroom = memory_headroom()
         if headroom is not None and headroom < PREVIEW_HEADROOM_BYTES:
@@ -238,3 +248,73 @@ def work_slot(*, preview=False, review=False, wait_seconds=130):
         _WORK_LOCAL.preview_guard = None
         _WORK_LOCAL.active = False
         _WORK_SLOT.release()
+
+
+@contextmanager
+def _parallel_work_slot(*, preview, review, wait_seconds):
+    """Independent native assemblies on high-memory hosts only.
+
+    The legacy lock remains untouched on constrained and unconfigured hosts.
+    LO called from an assembly borrows its admitted heavy reservation.
+    """
+    from app.monthly_report_resource_scheduler import AdmissionUnavailable, lease
+    headroom = memory_headroom()
+    if preview and headroom is not None and headroom < PREVIEW_HEADROOM_BYTES:
+        raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
+    priority = 'review' if review else 'visible' if preview else 'export'
+    timeout = min(wait_seconds, 10) if review else 0 if preview else wait_seconds
+    try:
+        with lease('heavy', priority=priority, wait_seconds=timeout,
+                   headroom=memory_headroom):
+            _WORK_LOCAL.active = True
+            _WORK_LOCAL.preview_guard = _PreviewMemoryGuard(headroom) if preview else None
+            try:
+                if preview:
+                    _WORK_LOCAL.preview_guard()
+                yield
+            finally:
+                _WORK_LOCAL.preview_guard = None
+                _WORK_LOCAL.active = False
+    except AdmissionUnavailable as exc:
+        raise RenderBusy(str(exc)) from exc
+
+
+@contextmanager
+def _parallel_conversion_slot(*, wait_seconds):
+    """Two separate office children, private profiles and independent markers.
+
+    Every path through this context releases both owned leases on exceptions,
+    timeouts and Streamlit script disconnection. No user data is stored here.
+    """
+    from contextlib import nullcontext
+    from app.monthly_report_resource_scheduler import AdmissionUnavailable, lease
+    from app import office_process
+
+    # Standalone PO/Expense conversion owns heavy memory too. A Monthly job
+    # already has a reservation that must not be reacquired (or deadlock).
+    own_heavy = not getattr(_WORK_LOCAL, 'active', False)
+    inherited_priority = 'visible' if preview_memory_guard() else 'export'
+    try:
+        outer = (lease('heavy', priority=inherited_priority,
+                       wait_seconds=wait_seconds, headroom=memory_headroom)
+                 if own_heavy else nullcontext())
+        with outer:
+            with lease('conversion', priority=inherited_priority,
+                       wait_seconds=wait_seconds, headroom=memory_headroom) as index:
+                office_process._OFFICE_MARKER_LOCAL.slot = index
+                try:
+                    try:
+                        office_process.require_idle()
+                    except office_process.OfficeCleanupPending as exc:
+                        raise RenderBusy(str(exc)) from exc
+                    _CONVERSION_LOCAL.active = True
+                    import gc
+                    gc.collect()
+                    if preview_memory_guard() is not None:
+                        _reclaim_preview_heap()
+                    yield
+                finally:
+                    _CONVERSION_LOCAL.active = False
+                    del office_process._OFFICE_MARKER_LOCAL.slot
+    except AdmissionUnavailable as exc:
+        raise RenderBusy(str(exc)) from exc
