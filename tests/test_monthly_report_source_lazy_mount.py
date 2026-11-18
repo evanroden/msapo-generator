@@ -41,6 +41,10 @@ draft, blocks = render_guided_source_manager(
     lambda prefix, sources: sources,
 )
 st.session_state["current"] = replace(draft, blocks=tuple(blocks.values()))
+# Like the guided page, apply a manager close or source switch with the one
+# post-commit refresh rerun (monthly_report_guided._refresh_period_editors_after_commit).
+if st.session_state.pop("a30_period_editor_refresh", False):
+    st.rerun()
 """
 
 
@@ -109,7 +113,7 @@ def test_fifty_cold_warm_eager_comparator_and_lazy_widget_budget(monkeypatch, tm
         with monkeypatch.context() as patch:
             if eager:
                 patch.setattr(manager, "_resident_source_forms",
-                    lambda prefix, available, requested, selected, opened: tuple(available))
+                    lambda prefix, available, requested, selected, opened, needed=(): tuple(available))
             else:
                 patch.setattr(manager, "_resident_source_forms", original)
             app = app_for(report, contents)

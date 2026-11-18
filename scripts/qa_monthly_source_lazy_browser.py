@@ -8,6 +8,7 @@ fixture explicitly performs one neutral rerun to exercise that handoff.
 from contextlib import contextmanager
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import subprocess
@@ -65,18 +66,55 @@ def refresh(page):
 
 
 def select_file(page, name):
-    from scripts.qa_water_fresh_page_journey import select
-    select(page, "File to review", name)
+    control = page.get_by_role("combobox", name="File to review", exact=True)
+    control.click()
+    # Fifty files form a virtualized option list; typing filters this file
+    # into view, as a person would, before choosing it.
+    control.press_sequentially(name)
+    page.get_by_role("option", name=name, exact=True).click()
     settled(page)
     # The current manager commits the previous file's delivered page inputs
     # before moving its active source. This read-only rerun completes it.
     refresh(page)
 
 
+def same_date(value):
+    """The typed date in any separator the field displays.
+
+    Source date uses format="YYYY-MM-DD". Typing shows the keyed separators,
+    and a rerender redraws the same unsent value with the mask's own
+    separator ("2026\u201309\u201321"); both are the same native value.
+    """
+    year, month, day = re.split(r"\D", value)
+    return re.compile(rf"^{year}\D{month}\D{day}$")
+
+
 def type_date(page, field, value, stage):
-    from scripts.qa_monthly_training_date import replace_date
-    replace_date(page, field, value, stage)
-    expect(field).to_have_value(value)
+    """Type a Source date with the keyboard and leave it unsent in the form.
+
+    The Training date helper asserts its own YYYY/MM/DD display; this field
+    redraws the same date with its mask separator once it loses focus.
+    """
+    field.click()
+    field.press("ControlOrMeta+A")
+    field.press("Backspace")
+    expect(field).to_have_value("")
+    field.press_sequentially(value)
+    field.press("Tab")
+    expect(field).to_have_value(same_date(value))
+
+
+def wait_receipt(page, check, what, timeout=30):
+    """Poll the fixture receipt: a settled page can still precede the rerun."""
+    deadline = time.monotonic() + timeout
+    while True:
+        settled(page)
+        value = receipt(page)
+        if check(value):
+            return value
+        if time.monotonic() > deadline:
+            raise AssertionError(what + ": " + json.dumps(value, sort_keys=True))
+        page.wait_for_timeout(100)
 
 
 @contextmanager
@@ -168,8 +206,8 @@ def exercise(browser, label):
                                                     for key in wire}
             record["steps"]["open_panel_elements"] = page.locator(PANEL).locator("[data-testid]").count()
             expect(page.locator(PANEL)).to_be_visible()
-            assert receipt(page)["residents"] == 1
-            assert len(page.locator('[data-testid="stDateInput"]').all()) == 1
+            wait_receipt(page, lambda r: r["residents"] == 1, "opening mounts one visited source form")
+            expect(page.locator('[data-testid="stDateInput"]')).to_have_count(1)
             assert page.get_by_role("combobox", name="File to review", exact=True).count() == 1
             first = date_for(page, SOURCE_A)
             type_date(page, first, "2026/09/21", "a30-first-unsubmitted")
@@ -178,31 +216,29 @@ def exercise(browser, label):
             begin = time.monotonic()
             select_file(page, SOURCE_B)
             record["steps"]["switch_s"] = round(time.monotonic() - begin, 3)
-            assert receipt(page)["residents"] == 2
+            wait_receipt(page, lambda r: r["residents"] == 2, "switching keeps both visited forms")
             assert receipt(page)["dates"][SOURCE_A] != "2026-09-21"
-            expect(first).to_have_value("2026/09/21")
+            expect(first).to_have_value(same_date("2026/09/21"))
             second = date_for(page, SOURCE_B)
             type_date(page, second, "2026/09/22", "a30-second-submission")
             second_panel = page.locator('[class*="st-key-a30_managed_source_"]').filter(has_text=SOURCE_B)
             second_panel.get_by_role("button", name="Use these source details").click()
-            settled(page)
-            assert receipt(page)["dates"][SOURCE_B] == "2026-09-22"
+            wait_receipt(page, lambda r: r["dates"][SOURCE_B] == "2026-09-22", "second source date saved")
             assert receipt(page)["dates"][SOURCE_A] != "2026-09-21"
             select_file(page, SOURCE_A)
             first = date_for(page, SOURCE_A)
-            expect(first).to_have_value("2026/09/21")
+            expect(first).to_have_value(same_date("2026/09/21"))
             page.get_by_role("button", name="Done with source files", exact=True).click()
             settled(page)
             expect(page.locator(PANEL)).not_to_be_visible()
-            assert receipt(page)["residents"] == 2
+            wait_receipt(page, lambda r: r["residents"] == 2 and not r["opened"], "Done hides both visited forms")
             page.get_by_role("button", name="Manage source files", exact=True).click()
             settled(page)
             first = date_for(page, SOURCE_A)
-            expect(first).to_have_value("2026/09/21")
+            expect(first).to_have_value(same_date("2026/09/21"))
             source = page.locator('[class*="st-key-a30_managed_source_"]').filter(has_text=SOURCE_A)
             source.get_by_role("button", name="Use these source details").click()
-            settled(page)
-            assert receipt(page)["dates"][SOURCE_A] == "2026-09-21"
+            wait_receipt(page, lambda r: r["dates"][SOURCE_A] == "2026-09-21", "first source's unsent date saved")
             assert receipt(page)["dates"][SOURCE_B] == "2026-09-22"
             refresh(page)
             assert receipt(page)["dates"][SOURCE_A] == "2026-09-21"

@@ -61,9 +61,10 @@ def test_switching_sources_captures_old_caption_and_keeps_each_form_identity(mon
     draft = current_draft(app)
     first, second = draft.sources
     first_date = next(item for item in app.date_input if first.id in item.key)
-    # Unopened metadata forms do not mount. The visited first form must
-    # survive when another source is selected, including its unsent date.
-    assert not any(second.id in item.key for item in app.date_input)
+    # The second file has no date or site yet, so it keeps its canonical resolver
+    # mounted without a visit (A30 defers only forms that need nothing).
+    second_date = next(item for item in app.date_input if second.id in item.key)
+    ids = first_date.id, second_date.id
     first_date.set_value(date(2026, 9, 27))
     next(item for item in app.text_input if item.label == "Page caption").set_value("Delivered with file selection")
     select(app, "File to review").set_value(second.id).run()
@@ -72,8 +73,6 @@ def test_switching_sources_captures_old_caption_and_keeps_each_form_identity(mon
     assert dict(current.sources[0].captions)[1] == "Delivered with file selection"
     assert dict(current.sources[1].captions).get(1) != "Delivered with file selection"
     assert current.sources[0].service_date == first.service_date, "A separate file click must not submit a metadata form."
-    second_date = next(item for item in app.date_input if second.id in item.key)
-    ids = first_date.id, second_date.id
     assert (next(item for item in app.date_input if first.id in item.key).id,
             next(item for item in app.date_input if second.id in item.key).id) == ids
     select(app, "File to review").set_value(first.id).run()

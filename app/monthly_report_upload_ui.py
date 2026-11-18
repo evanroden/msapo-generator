@@ -614,13 +614,24 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
     # delivered value in ordinary session state when its selectbox is unmounted,
     # otherwise Streamlit widget cleanup drops a previous explicit route.
     routes_key = key + "_destination_route_values"
+    rendered_key = key + "_destination_route_rendered"
     route_values = st.session_state.get(routes_key, {})
+    previously_rendered = set(st.session_state.get(rendered_key, ()))
+    rendered_routes = []
     for item in contents:
         if not sources.image_numbers(item):
             continue
         control_key = key + "_destination_" + item.source.id + "_" + item.source.classification
-        if control_key not in st.session_state and control_key in route_values:
+        visible = selected_source_id is None or item.source.id == selected
+        # Once a selectbox is unmounted Streamlit drops its widget value, and
+        # reading the key can fall back to the default first seeded for it.
+        # Only a selectbox shown on the previous render can carry a newer
+        # choice; otherwise the last delivered route is authoritative.
+        if control_key in route_values and (control_key not in st.session_state or not (
+                visible and control_key in previously_rendered)):
             st.session_state[control_key] = route_values[control_key]
+        if visible:
+            rendered_routes.append(control_key)
         control = field(control_key, defaults.get(item.source.classification, "Do not embed"))
         options = ("Do not embed", *sources.PAGE_DESTINATIONS)
         if st.session_state[control] not in options:
@@ -642,6 +653,7 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                                      format_func=labels.get, key=control)
     st.session_state[routes_key] = {control: st.session_state[control]
                                   for _, _, control in route_controls}
+    st.session_state[rendered_key] = tuple(rendered_routes)
     for _, identity, control in route_controls:
         slot = st.session_state[control]
         if (slot != "Do not embed"

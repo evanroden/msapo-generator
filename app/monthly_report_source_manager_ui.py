@@ -57,23 +57,25 @@ def open_source_review(prefix, source_id, target, page=None):
     st.session_state[prefix + "_source_review_context"] = source_id
 
 
-def _resident_source_forms(prefix, available, requested, selected, opened):
+def _resident_source_forms(prefix, available, requested, selected, opened, needed=()):
     """Mount only visited source forms, never drop an unsubmitted native form.
 
     Streamlit form fields are sent to Python only on Submit. Simply caching
     their defaults cannot recover a user's browser-only, unsubmitted date/site
     edits. Keep every *visited* form mounted, even when hidden or Done, in
     first-visit order so earlier delta paths do not move during source switches.
-    Unvisited files require no metadata widgets. Drop forms for removed IDs.
+    A source that needs a date/site correction (``needed``) keeps its one
+    canonical resolver from a cold render, as before lazy mounting: resumed
+    reports and source warnings correct it there. Other unvisited files
+    require no metadata widgets. Drop forms for removed IDs.
     """
     key = prefix + "_source_resident_forms"
     available_ids = set(available)
     resident = [identity for identity in st.session_state.get(key, ())
                 if identity in available_ids]
-    if opened:
-        for identity in (selected, requested):
-            if identity in available_ids and identity not in resident:
-                resident.append(identity)
+    for identity in (*((selected, requested) if opened else ()), *needed):
+        if identity in available_ids and identity not in resident:
+            resident.append(identity)
     st.session_state[key] = tuple(resident)
     return tuple(resident)
 
@@ -172,9 +174,15 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
             # Lightweight anchor shells stay at their original source positions
             # so cold source-warning links and later browser delta paths remain
             # valid. Only a visited source installs date/site/native form widgets.
-            residents = set(_resident_source_forms(prefix, ids, requested, selected, opened))
+            current_sources = {source_id: _current_source_detail(ordered[source_id], contents)
+                               for source_id in ids}
+            problems = {source_id: detail_problems(source, draft.profile, draft.period,
+                                                   in_report=source_id in included, draft=current)
+                        for source_id, source in current_sources.items()}
+            residents = set(_resident_source_forms(prefix, ids, requested, selected, opened,
+                                                   needed=tuple(i for i in ids if problems[i])))
             for source_id in ids:
-                source = _current_source_detail(ordered[source_id], contents)
+                source = current_sources[source_id]
                 owner_key = prefix + "_managed_source_" + source.id
                 st.markdown('<style>.st-key-' + owner_key + '{display:' +
                             ("block" if source.id == selected else "none") + ';}</style>',
@@ -210,8 +218,7 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
                         source, draft.profile, prefix + "_evidence_" + source.id, field,
                         artwork_keys=artwork_scope_keys(current, source.id), manager_owner=True,
                         source_preview=source_preview,
-                        compact_problems=detail_problems(source, draft.profile, draft.period,
-                            in_report=source.id in included, draft=current))
+                        compact_problems=problems[source.id])
                     _remember_delivered_source_edit(prefix, source, corrected[source.id])
                     from app.monthly_report_source_detail_navigation import render_marker
                     from app.monthly_report_guided import _rich_text_scope

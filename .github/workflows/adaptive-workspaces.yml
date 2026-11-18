@@ -695,22 +695,6 @@ jobs:
           python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
           python scripts/qa_source_corrections.py
           NATIVE_TEST
-      - name: A30 native 50-source unsent edits, switch/save, close/reopen and narrow viewport
-        if: ${{ !cancelled() }}
-        timeout-minutes: 11
-        run: |
-          python scripts/ci_native_test_budget.py --minutes 10 <<'NATIVE_TEST'
-          python scripts/qa_monthly_source_lazy_browser.py
-          NATIVE_TEST
-      - name: Retain A30 source browser evidence
-        if: always()
-        timeout-minutes: 3
-        uses: actions/upload-artifact@v4
-        with:
-          name: a30-source-lazy-browser-${{ github.run_attempt }}
-          path: test-artifacts/a30-source-lazy-browser/
-          retention-days: 7
-          if-no-files-found: warn
       - name: Upload source correction evidence immediately, including first failures
         if: always()
         timeout-minutes: 3

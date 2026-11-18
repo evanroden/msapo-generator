@@ -6,6 +6,13 @@ widget state. Never opens a client profile, reads remotely or writes production.
 from dataclasses import replace
 from html import escape
 import json
+from pathlib import Path
+import sys
+
+# Streamlit puts this directory first on sys.path, where app.py is another
+# fixture. Import the repository's app package, as the other fixtures do.
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT))
 
 import pymupdf as fitz
 import streamlit as st
@@ -53,6 +60,10 @@ draft, blocks = render_guided_source_manager(
 )
 draft = replace(draft, blocks=tuple(blocks.values()))
 st.session_state["a30_fixture_report"] = draft
+# Like the guided page, apply a manager close or source switch with the one
+# post-commit refresh rerun (monthly_report_guided._refresh_period_editors_after_commit).
+if st.session_state.pop("a30_period_editor_refresh", False):
+    st.rerun()
 
 # Browser-only observation; the UI never reads/writes this marker.
 receipt = {
