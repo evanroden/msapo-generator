@@ -1610,7 +1610,7 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                 raise ValueError("New source suggestions are ready. Your edits were kept; add the suggestions below when ready.")
             result, pages = structured.reader_update(job["contents"], destination, value, current,
                 table_columns=job.get("table_columns"), corrections=job.get("corrections"),
-                accepted_pages=job.get("accepted_pages", ()))
+                accepted_pages=job.get("accepted_pages", ()), profile=profile, period=period)
             prepared = ()
             if destination == "activity_summary" and pages:
                 selected = []
@@ -1718,6 +1718,12 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
         profile, scoped, destination, period=period, corrections=corrections,
         accepted_pages=accepted_pages,
         native_mapped=structured._native_reader_page_pairs(scoped, destination, table_columns)))
+    skipped = sum(len(c.source.page_texts) for c in scoped) - len(eligible)
+    if skipped:
+        st.caption(f"{skipped} source page(s) are not sent to the document reader: "
+                   "already accepted, native mapped, different section, "
+                   "unrelated site/month or awaiting destination correction. "
+                   "Originals remain available.")
     scoped = tuple(c for c in scoped if any((c.source.id, n) in eligible
                    for n in range(1, len(c.source.page_texts) + 1)))
     target = read_target()
