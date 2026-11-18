@@ -111,7 +111,41 @@ def convert_to_pdf(path, *, wait_seconds=10, lossless_images=False):
 # Assembly can hold decoded pictures and an entire OOXML package. Serialize that
 # phase separately from the backend lock: a metafile helper may itself convert a
 # document, so holding the conversion lock around assembly would deadlock it.
-_WORK_SLOT = threading.Lock()
+from app.monthly_report_job_capacity import heavy_job_capacity
+
+
+class _ParallelWorkSlots:
+    """A bounded semaphore retaining the old lock's diagnostic .locked() API."""
+    def __init__(self, capacity):
+        self._slots = threading.BoundedSemaphore(capacity)
+        self._guard = threading.Lock()
+        self._held = 0
+
+    def acquire(self, blocking=True, timeout=None):
+        result = self._slots.acquire(blocking=blocking, timeout=timeout)
+        if result:
+            with self._guard:
+                self._held += 1
+        return result
+
+    def release(self):
+        with self._guard:
+            self._slots.release()
+            self._held -= 1
+
+    def locked(self):
+        with self._guard:
+            return self._held > 0
+
+
+# Only explicit opt-in and finite CPU/RAM quotas enable parallel assembly.
+# The default remains the exact threading.Lock contract. LibreOffice and shared
+# filesystem conversion locks remain exclusive on every configuration.
+_WORK_CAPACITY = heavy_job_capacity()
+_WORK_SLOT = (threading.Lock() if _WORK_CAPACITY == 1
+              else _ParallelWorkSlots(_WORK_CAPACITY))
+_ADMISSION_LOCK = threading.Lock()
+_ACTIVE_WORK = 0
 _WORK_LOCAL = threading.local()
 _PRIORITY_LOCK = threading.Lock()
 _FOREGROUND_WAITING = 0
@@ -243,6 +277,23 @@ def work_slot(*, preview=False, review=False, wait_seconds=130):
                 outcome="ok" if acquired else "busy")
     if not acquired:
         raise RenderBusy('Another report is being prepared. Your saved work is unchanged; retry generation shortly.')
+
+    # Conservative, process-local reservation. A new parallel job needs
+    # headroom for itself AND every currently admitted heavy job. The first
+    # job always retains the former single-worker fallback, including when
+    # cgroup usage briefly becomes unreadable or the host is scaled down.
+    global _ACTIVE_WORK
+    try:
+        with _ADMISSION_LOCK:
+            if _WORK_CAPACITY > 1 and _ACTIVE_WORK:
+                headroom_now = memory_headroom()
+                required = (512 + 768 * (_ACTIVE_WORK + 1)) * 1024 * 1024
+                if headroom_now is None or headroom_now < required:
+                    raise RenderBusy('Additional report work is queued while memory is busy. Your saved work is unchanged.')
+            _ACTIVE_WORK += 1
+    except BaseException:
+        _WORK_SLOT.release()
+        raise
     _WORK_LOCAL.active = True
     _WORK_LOCAL.preview_guard = _PreviewMemoryGuard(headroom) if preview else None
     try:
@@ -252,4 +303,6 @@ def work_slot(*, preview=False, review=False, wait_seconds=130):
     finally:
         _WORK_LOCAL.preview_guard = None
         _WORK_LOCAL.active = False
+        with _ADMISSION_LOCK:
+            _ACTIVE_WORK -= 1
         _WORK_SLOT.release()

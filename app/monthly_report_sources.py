@@ -183,6 +183,17 @@ def _labeled_facility(text, profile):
 
 def suggest_facts(source: ReportSource, profile: ReportProfile) -> ReportSource:
     text = "\n".join(source.page_texts)
+    from app.monthly_report_vendor_passages import passage_notice
+    # Never infer date/site/vendor from page furniture next to unrelated
+    # physical columns. The original page text remains available for review.
+    uncertain_pdf_pages = {
+        number for number in range(1, len(source.page_texts) + 1)
+        if source.suffix == ".pdf"
+        and passage_notice(number, reason="geometry") in source.notices
+    }
+    metadata_text = "\n".join(
+        value for number, value in enumerate(source.page_texts, 1)
+        if number not in uncertain_pdf_pages)
     sample = (source.filename + "\n" + text[:30_000]).casefold()
     patterns = (("Water treatment", ("water treatment", "conductivity", "water analysis")),
                 ("CMMS export", ("work order", "cmms", "task code")),
@@ -197,16 +208,16 @@ def suggest_facts(source: ReportSource, profile: ReportProfile) -> ReportSource:
     if not hits and source.suffix in ocr.SUPPORTED_IMAGE_SUFFIXES:
         classification = "Improvement / training photo"
     def labeled(label):
-        match = re.search(r"(?im)^[ \t]*(?:" + label + r")[ \t]*[:=][ \t]*([^\r\n]{1,160})", text)
+        match = re.search(r"(?im)^[ \t]*(?:" + label + r")[ \t]*[:=][ \t]*([^\r\n]{1,160})", metadata_text)
         return match[1].strip() if match else ""
     raw_date = labeled("service date|report date|completed date|date")
     date_match = re.search(r"\b(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}/\d{1,2}/\d{2,4})\b", raw_date)
-    facility = _labeled_facility(text, profile)
+    facility = _labeled_facility(metadata_text, profile)
     if facility is None:
         # Filenames can suggest a document type, but cannot establish which
         # site's facts its contents describe. Scope needs native source text
         # or the user's explicit item-specific correction.
-        scope_text = text[:30_000].casefold()
+        scope_text = metadata_text[:30_000].casefold()
         matches = [f.title for f in profile.facilities if any(re.search(r"(?<!\w)" + re.escape(n.casefold()) + r"(?!\w)", scope_text) for n in (f.title, *f.aliases))]
         facility = matches[0] if len(matches) == 1 else ""
     source = replace(source, classification=classification)
@@ -235,7 +246,7 @@ def suggest_facts(source: ReportSource, profile: ReportProfile) -> ReportSource:
     oversized_pages = sorted(limit_pages | {n for field in oversized for n in field_pages[field]})
     notices = tuple(dict.fromkeys((*source.notices,
         *(passage_notice(n, reason="limit") for n in oversized_pages),
-        *(passage_notice(n) for n in pending if n not in oversized_pages))))
+        *(passage_notice(n) for n in pending if n not in oversized_pages and n not in uncertain_pdf_pages))))
     def lines(term, field=""):
         if labeled_pages and field:
             return field_values[field] if field not in oversized else ""
@@ -649,7 +660,7 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
                 and (not unicode_csv or data.get("csv_unicode_policy") == 1)
                 and (suffix != ".xlsx" or (type(data.get("xlsx_currency_policy")) is int
                                           and data["xlsx_currency_policy"] == 1))
-                and (suffix != ".pdf" or data.get("vendor_passage_policy", 0) >= 7)):
+                and (suffix != ".pdf" or data.get("vendor_passage_policy", 0) >= 8)):
             source = content.source
             if data.get("client_page_policy", 0) < 1 and suffix not in (".csv", ".xlsx"):
                 source = replace(source, selected_pages=suggested_pages(source))
@@ -681,9 +692,12 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
                 page_texts.append(text)
                 if sum(map(len, page_texts)) > ocr._MAX_EXTRACTED_CHARS:
                     raise ValueError(f"PDF text exceeds {ocr._MAX_EXTRACTED_CHARS:,} characters; select a smaller document range.")
-                from app.monthly_report_vendor_passages import block_spans, MAX_VENDOR_BLOCK_SPANS
+                from app.monthly_report_vendor_passages import block_spans, MAX_VENDOR_BLOCK_SPANS, passage_notice
                 if not span_budget_exceeded:
-                    spans = block_spans(page, text, number)
+                    geometry_uncertain = set()
+                    spans = block_spans(page, text, number, ambiguous_pages=geometry_uncertain)
+                    if geometry_uncertain:
+                        notices.append(passage_notice(number, reason="geometry"))
                     if len(pdf_text_blocks) + len(spans) > MAX_VENDOR_BLOCK_SPANS:
                         # No partial-page certainty after exhausting metadata capacity.
                         # Raw original/page text and ordinary review remain available.
@@ -751,7 +765,7 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
         source = suggest_facts(source, profile)
     content = SourceContent(source, tables, tuple(image_items))
     library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1,
-        "native_action_policy": 1, "vendor_passage_policy": 7,
+        "native_action_policy": 1, "vendor_passage_policy": 8,
         **({"xlsx_currency_policy": 1} if suffix == ".xlsx" else {}),
         **({"csv_unicode_policy": 1} if unicode_csv else {}),
         **({"csv_dialect_policy": 1} if suffix == ".csv" else {}), **asdict(content)}))
