@@ -11,8 +11,8 @@ import time
 import anthropic
 
 from app import monthly_report_library as library
-from app.analysis_schema import AnalysisResponseError, _extract_json_object
-from app.monthly_report_ai_protocol import output_schema, validate_shape
+from app.analysis_schema import AnalysisResponseError
+from app.monthly_report_ai_protocol import extract_single_json, output_schema, validate_shape
 from app.api_retry import (
     IncompleteResponseError,
     ModelUnavailableError,
@@ -393,7 +393,7 @@ def request_json(content, *, response_kind=None, validator=None):
                 ).strip()
                 if len(raw) > MAX_READER_OUTPUT_CHARS:
                     raise ReaderSchemaError("The response exceeded its length budget.")
-                parsed = _extract_json_object(raw)
+                parsed = extract_single_json(raw)
                 validate_shape(parsed, response_kind)
                 if validator is not None:
                     validator(parsed)
