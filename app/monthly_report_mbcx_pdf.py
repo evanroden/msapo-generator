@@ -53,13 +53,23 @@ def whole_pdf_pages(content, blocks, *, destination="mbcx_report"):
         raise ValueError("This PDF has saved page decisions. Use Review individual pages to keep or change that selection.")
     for number, caption in _captions(source):
         kind, reason = page_status(source.page_texts[number - 1], unreadable=number in source.needs_vision)
-        if kind in {"pricing", "legal", "blank", "signature"} or contains_price(caption):
+        # A vision-required page has no verified readable technical content.
+        # A whole-file click must not silently approve a scanned-only page
+        # whose image could contain pricing, signatures, or an unrelated site.
+        if kind != "technical" or contains_price(caption):
             detail = "The page caption contains pricing." if contains_price(caption) else reason
             raise ValueError(f"The complete PDF cannot be added: page {number}. {detail}. Review individual pages to choose a smaller selection.")
     current = sum(len(block.asset_hashes) for key, block in blocks.items()
                   if key in sources.PAGE_DESTINATIONS)
     if current + len(pages) > sources.MAX_EMBED_PAGES:
-        raise ValueError(f"This PDF has {len(pages)} pages; this report has room for {max(0, sources.MAX_EMBED_PAGES - current)} more. No pages were added.")
+        available = max(0, sources.MAX_EMBED_PAGES - current)
+        first = available + 1
+        over_limit = str(first) if first == len(pages) else f"{first}-{len(pages)}"
+        raise ValueError(
+            f"This PDF has {len(pages)} pages; this report has room for {available} more. "
+            f"Over-limit pages {over_limit} would not fit within the {sources.MAX_EMBED_PAGES}-page "
+            "report budget. No pages were added."
+        )
     return pages
 
 
