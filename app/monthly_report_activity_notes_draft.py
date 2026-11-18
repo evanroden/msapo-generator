@@ -114,9 +114,12 @@ def safe_notes(raw: str) -> tuple[str, tuple[str, ...]]:
         line = line.strip()
         if not line:
             continue
-        if contains_price(line) or contains_private_contact(line):
-            # Salvage independently bounded technical work; the sensitive
-            # fragment and original notes remain available only in review.
+        if contains_price(line) or re.search(
+                r"(?i)\b(?:contact|phone|telephone|mobile|fax|e-?mail|email)\s*[:=]", line):
+            # A separately labelled contact/price span can be held without
+            # losing its technical sibling. Inline personal names still go
+            # through the existing targeted [person omitted] substitution:
+            # discarding their entire action would lose the verified work.
             safe = technical_source_text(line)
             notices.append("Pricing or contact spans were excluded from the draft input.")
             if not safe:
