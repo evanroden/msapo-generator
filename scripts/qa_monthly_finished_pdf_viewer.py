@@ -132,14 +132,14 @@ def check_engine(engine, name, width):
             other.close()
 
         page.get_by_role("button", name="Edit draft").click()
-        expect(page.get_by_text("QA package stale: True", exact=True)).to_be_visible()
+        expect(page.get_by_text("QA earlier output retired: True", exact=True)).to_be_visible()
         expect(page.get_by_text("Final PDF · current draft", exact=True)).to_have_count(0)
-        expect(page.get_by_role("button", name="Download PDF (previous draft)")).to_be_visible()
-        assert download_current(page, "Download PDF (previous draft)") == pdf_a
-        assert download_current(page, "Download DOCX (previous draft)") == word_a
+        expect(page.get_by_role("button", name="Download PDF")).to_have_count(0)
+        expect(page.get_by_role("button", name="Download DOCX")).to_have_count(0)
+        expect(page.get_by_text("Earlier files were retired", exact=False)).to_be_visible()
         expect(page.get_by_text("QA owner entries: 0", exact=True)).to_be_visible()
         expect(page.locator(".report-preview img")).to_have_count(0)
-        details["events"].append("edit preserves exact older downloads but retires current-only viewer")
+        details["events"].append("draft edit retires both old downloads and viewer; stale notice persists")
 
         page.get_by_role("button", name="Replace with no PDF").click()
         expect(page.get_by_text("QA current PDF: none", exact=True)).to_be_visible()
