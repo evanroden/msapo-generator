@@ -51,7 +51,8 @@ def _label(text):
     return re.sub(r"[^a-z0-9]+", " ", str(text).casefold()).strip()
 
 
-def mapped_issue_register(columns, rows, reference="", *, row_offset=0) -> tuple[RegisterIssue, ...] | None:
+def mapped_issue_register(columns, rows, reference="", *, row_offset=0,
+                          source_key=None) -> tuple[RegisterIssue, ...] | None:
     """Read only unambiguous register schemas; keep all technical source cells.
 
     The workflow's status is **not** taken as resolved from a source's "Closed"
@@ -113,7 +114,8 @@ def mapped_issue_register(columns, rows, reference="", *, row_offset=0) -> tuple
         # original. Mapping titles, status values and operator edits do not.
         # Keep the old identity when no reliable source reference exists.
         digest = (hashlib.sha256(json.dumps(
-            ["issue-register-v2", reference, row_offset + index],
+            ["issue-register-v2", source_key if source_key is not None else reference,
+             row_offset + index],
             sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:20]
             if reference else old_digest)
         # Previously unrecognized tables used a separate source-row scheme.
