@@ -150,6 +150,8 @@ def source_coverage(draft, source, content=None, *, byte_count=None):
     from app.monthly_report_source_scope import source_uses, _covered_use
     from app.monthly_report_source_readiness import _INFORMATIONAL_NOTICES
     from app.monthly_report_content_policy import page_fingerprint
+    # Hash the large extracted source once, never once per ledger element.
+    source_revision = source.fingerprint
     uses = tuple(source_uses(draft, source.id))
     accepted = tuple(use for use in uses
                      if use[0] in {"text", "rows", "follow_up", "organization"}
@@ -163,7 +165,7 @@ def source_coverage(draft, source, content=None, *, byte_count=None):
     items = []
 
     def add(item_id, kind, page, value, *, state="review", reason="", destination=""):
-        item = CoverageItem(source.id, source.sha256, source.fingerprint, item_id, kind,
+        item = CoverageItem(source.id, source.sha256, source_revision, item_id, kind,
                             page, _digest(value), state, reason, destination)
         # Native page omission remains a current source-bound human decision.
         excluded_page = (page > 0
@@ -212,7 +214,8 @@ def source_coverage(draft, source, content=None, *, byte_count=None):
                     for index in range(len(block.asset_hashes)):
                         if index in pending:
                             continue
-                        matches = {page_identity(ref) for ref in asset_context(block, index)}
+                        matches = {identity for ref in asset_context(block, index)
+                                   if (identity := page_identity(ref)) is not None}
                         if matches == {(source.id, number)}:
                             proof, destination = True, block.key
                             break
@@ -272,7 +275,7 @@ def source_coverage(draft, source, content=None, *, byte_count=None):
 
     # The current reader has no persisted, per-page paid-AI attempt receipt;
     # null is deliberate, rather than interpreting accepted facts as 100% AI coverage.
-    return CoverageLedger(source.id, source.fingerprint, source.filename, page_count,
+    return CoverageLedger(source.id, source_revision, source.filename, page_count,
                           byte_count, None,
                           len(rows) if content is not None else None, len(candidate_images), sum(len(t.rows) for t in rows),
                           len(source.facts), None, None, tuple(items))
