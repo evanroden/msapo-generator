@@ -399,19 +399,20 @@ test('late hidden response retains only the current decoded page during a visibl
     const render=vm.runInNewContext('('+source.replace('export default function','function')+')',context);
     const invoke=(pages,generation='current')=>render({parentElement:root,data:{generation,viewScope:'one|activity',
         pages,sizes:[[612,792],[612,792],[612,792]],ready:true},setStateValue:()=>{}});
-    invoke([{index:0,image:'first'},{index:1,image:'second'}]);
+  const media=n=>'/media/'+n.repeat(32)+'.jpg';
+    invoke([{index:0,url:media('a')},{index:1,url:media('b')}]);
     panel._previewState.page=1;panel._previewState.visible=true;
     const selected=panel.querySelector('figure[data-index="1"]').querySelector('img');
     invoke([]); // Server applied the outgoing compact/hidden request.
     assert.equal(panel.querySelectorAll('img').length,1);
     assert.equal(panel.querySelector('img'),selected,'same decoded page survives the late empty response');
-    invoke([{index:2,image:'next'}]);
+    invoke([{index:2,url:media('c')}]);
     assert.equal(panel.querySelectorAll('img').length,2,'one retained selected page fits the two-image bound');
-    invoke([{index:0,image:'new-first'},{index:2,image:'new-next'}]);
+    invoke([{index:0,url:media('d')},{index:2,url:media('e')}]);
     assert.equal(panel.querySelectorAll('img').length,2,'two supplied pages evict any third retained page');
-    invoke([{index:1,image:'second'}]);panel._previewState.visible=false;invoke([]);
+    invoke([{index:1,url:media('b')}]);panel._previewState.visible=false;invoke([]);
     assert.equal(panel.querySelectorAll('img').length,0,'an actually hidden surface still releases its images');
-    panel._previewState.visible=true;invoke([{index:1,image:'second'}]);invoke([],'new-content');
+    panel._previewState.visible=true;invoke([{index:1,url:media('b')}]);invoke([],'new-content');
     assert.equal(panel.querySelectorAll('img').length,0,'new report content cannot inherit old imagery');
     panel._previewCleanup();
 });
