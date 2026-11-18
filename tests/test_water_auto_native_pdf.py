@@ -142,3 +142,35 @@ def test_water_bad_pdf_never_changes_saved_good_pages(monkeypatch, tmp_path):
         sources.ingest(profile, "bad.pdf", b"%PDF-1.0\nnot a valid PDF")
     assert len(block.asset_hashes) == 2
     assert sources.source_bytes(profile, content.source) == raw
+
+def test_water_auto_pages_and_monthly_update_survive_snapshot_roundtrip(monkeypatch, tmp_path):
+    """Report-only attachments and one optional update round-trip independently."""
+    from dataclasses import asdict
+    from app import monthly_report_library as library
+    from app.monthly_report_model import BlockSpec, synthetic_draft
+
+    profile, raw, content = _ingested(monkeypatch, tmp_path)
+    period = ReportPeriod(2026, 9)
+    plan = automatic_water_upload(profile, period, content, {})
+    pages = prepare_section_pages(profile, (plan.content,), "water_reports", {},
+                                  only_pages=frozenset((content.source.id, n) for n in plan.pages))["water_reports"]
+    update = ResolvedBlock("water_monthly_update", "This month",
+                           text="Inspected September water readings.")
+    procedure = ResolvedBlock("business_hours_workflow", "Library",
+                              text="Saved, recurring demonstration workflow.")
+    fresh = synthetic_draft(profile, period)
+    section = next(s for s in fresh.sections if s.key == "water")
+    rebuilt = replace(fresh, blocks=(update, pages, procedure),
+                      sources=(plan.content.source,),
+                      sections=tuple(replace(s, included=True, blocks=(
+                          BlockSpec("water_monthly_update", "rich_text", False),
+                          BlockSpec("water_reports", "pdf_pages", False),
+                      )) if s.key == "water" else s for s in fresh.sections))
+    restored = library.draft_from_dict(asdict(rebuilt))
+    assert restored == rebuilt
+    values = {block.key: block for block in restored.blocks}
+    assert values["water_monthly_update"].text == update.text
+    assert values["water_reports"].references == pages.references
+    assert values["water_reports"].asset_captions == pages.asset_captions
+    assert values["business_hours_workflow"] == procedure
+    assert sources.source_bytes(profile, restored.sources[0]) == raw
