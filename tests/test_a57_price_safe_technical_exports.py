@@ -301,3 +301,26 @@ def test_raster_only_reader_requires_local_review_before_model_transmission(
     with pytest.raises(ValueError, match="No policy-permitted"):
         structured.reader_request(synthetic_profiles()[0],
                                   (content,), "activity_summary")
+
+
+
+def test_preflight_does_not_delete_human_work_but_blocks_private_technical_contact():
+    from app.monthly_report_checks import preflight
+    from app.monthly_report_model import (
+        ReportDraft, ReportPeriod, ResolvedBlock, default_sections,
+        synthetic_profiles,
+    )
+    from dataclasses import replace
+
+    original = ResolvedBlock("activity_summary", "This month",
+                             text=TECH + "\nContact: Sample Person (202) 555-0176")
+    sections = tuple(replace(s, included=s.key == "activity") for s in default_sections())
+    draft = ReportDraft(synthetic_profiles()[0], ReportPeriod(2026, 11),
+                        "Synthetic preparer", sections, (original,))
+    problems = preflight(draft)
+    assert any(item.code == "private_contact" and item.blocking
+               for item in problems)
+    assert original.text.endswith("(202) 555-0176"), "Human edit retained for correction."
+    corrected = replace(original, text=TECH)
+    clean = replace(draft, blocks=(corrected,))
+    assert not any(item.code == "private_contact" for item in preflight(clean))
