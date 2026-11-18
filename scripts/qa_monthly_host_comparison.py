@@ -199,7 +199,7 @@ def main(argv=None):
         left = json.loads(args.render.read_text(encoding="utf-8"))
         right = json.loads(args.azure.read_text(encoding="utf-8"))
         result = compare(left, right)
-    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
+    except (OSError, ValueError, TypeError, AttributeError, KeyError, json.JSONDecodeError) as error:
         parser.exit(2, f"Receipt validation failed: {type(error).__name__}\n")
     payload = json.dumps(result, indent=2, sort_keys=True) + "\n"
     if args.output:
