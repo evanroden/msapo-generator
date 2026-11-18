@@ -527,14 +527,16 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 for item in section.items:
                     if item.kind != "unsupported" or not item.drawing_labels:
                         continue
-                    with st.expander(f"Word drawing source labels · {item.id}"):
-                        st.caption(
-                            "Exact text from this original Word object; region is approximate "
-                            "(Word section is not a physical page). A rasterized preview "
-                            "does not establish native editability. The original is retained."
-                        )
-                        for line in source_review_lines(item):
-                            st.text(line)
+                    # This section already lives inside an expander; nested
+                    # expanders would break Streamlit's review UI.
+                    st.caption(f"Word drawing source labels · {item.id}")
+                    st.caption(
+                        "Exact text from this original Word object; region is approximate "
+                        "(Word section is not a physical page). A rasterized preview "
+                        "does not establish native editability. The original is retained."
+                    )
+                    for line in source_review_lines(item):
+                        st.text(line)
                 # Do not silently exclude a difficult SmartArt/VML/OLE frame
                 # after removing the old generic "continue without" radio.
                 # It must be rendered into the original section or have an
