@@ -408,6 +408,13 @@ def _activity_reader_notice(content):
     if is_work_order_source(content):
         return (content.source.filename + ": work-order records use Review counted work-order rows "
                 "and Add totals to summary; this file is not sent to the Activity reader.")
+    if content.source.suffix == ".pdf":
+        from app.monthly_report_vendor_passages import passage_notice
+        if any(passage_notice(n, reason="geometry") in content.source.notices
+               for n in range(1, len(content.source.page_texts) + 1)):
+            return (content.source.filename + ": parallel PDF columns need a physical reading-order review. "
+                    "This file is not sent to the Activity reader; inspect the original page and "
+                    "add only verified work directly in Activity. The source is retained.")
     if _txt_site_activity_table(content):
         return (content.source.filename + ": site-specific rows in this tab-separated text file need "
                 "an explicit target-site mapping. Review the original and add verified work directly "
