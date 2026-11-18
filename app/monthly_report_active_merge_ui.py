@@ -6,7 +6,7 @@ import streamlit as st
 
 from app import monthly_report_active_work as active_work
 from app import monthly_report_library as library
-from app.monthly_report_conflict_merge import merge_drafts
+from app.monthly_report_conflict_merge import merge_base, merge_drafts
 
 
 def _display(value):
@@ -19,7 +19,7 @@ def render_merge_choice(draft, newer, token, prefix, assets, profile, identity):
     from app.monthly_report_active_conflict_ui import (
         _active_identity, _guard_report_identity, _use_newer,
     )
-    base = st.session_state.get(prefix + "_active_base_draft")
+    base = merge_base(st.session_state.get(prefix + "_active_base"))
     base_sequence = st.session_state.get(prefix + "_active_base_revision")
     base_generation = st.session_state.get(prefix + "_active_base_generation")
     if (base is None or not isinstance(base_sequence, int)

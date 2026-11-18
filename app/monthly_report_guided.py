@@ -1485,7 +1485,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         st.session_state[draft_key] = draft
         # Shared report copies are independent of each browser's recovery
         # journal. Keep the exact ancestor for field-level shared-save CAS.
-        st.session_state[prefix + "_shared_base_draft"] = snapshot.draft if snapshot else draft
+        from app.monthly_report_conflict_merge import MergeBase
+        st.session_state[prefix + "_shared_base"] = MergeBase(snapshot.draft if snapshot else draft)
         st.session_state[prefix + "_shared_base_revision"] = snapshot.revision if snapshot else 0
         # A saved empty standing block is an intentional report choice, not a
         # first-use gap. Preserve it on reopen and next-month rollover alike.
@@ -1775,7 +1776,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     if not conflict and st.session_state.get(prefix + "_shared_base_revision") != current_revision:
         # The same browser just published a shared version. On the next run,
         # advance its ancestor to that exact saved report, not to an edited UI.
-        st.session_state[prefix + "_shared_base_draft"] = snapshot.draft if snapshot else draft
+        from app.monthly_report_conflict_merge import MergeBase
+        st.session_state[prefix + "_shared_base"] = MergeBase(snapshot.draft if snapshot else draft)
         st.session_state[prefix + "_shared_base_revision"] = current_revision
     if conflict:
         st.warning("Another version was saved. Your working draft is preserved. "

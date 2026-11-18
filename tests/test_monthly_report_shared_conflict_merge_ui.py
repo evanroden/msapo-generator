@@ -2,6 +2,7 @@
 
 These are synthetic Streamlit AppTest requests, not served browser acceptance.
 """
+import re
 from dataclasses import replace
 
 from app import monthly_report_library as library
@@ -13,9 +14,10 @@ from test_monthly_report_ui import monthly
 
 
 def _state(app, suffix):
+    # Exactly the guided report prefix plus suffix: other guided keys also
+    # end in "_draft" (for example the AI draft flag).
     return next(value for key, value in app.session_state.filtered_state.items()
-                if key.startswith("report_guided_") and key.endswith(suffix)
-                and (suffix != "_draft" or not key.endswith("_base_draft")))
+                if re.fullmatch(r"report_guided_[0-9a-f]+" + re.escape(suffix), key))
 
 
 def _block(draft, key):
@@ -40,7 +42,7 @@ def _remote_start(app, base):
 def _prepare(monkeypatch, tmp_path):
     _visit(monkeypatch)
     app = monthly(monkeypatch, tmp_path)
-    base = _state(app, "_shared_base_draft")
+    base = _state(app, "_shared_base").draft
     _value(app, "Prepared by", "text_input").set_value("Synthetic local editor").run()
     _value(app, "Activity summary").set_value("Locally corrected Activity").run()
     assert not app.exception

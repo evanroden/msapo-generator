@@ -13,6 +13,22 @@ from app.monthly_report_model import (
 
 
 @dataclass(frozen=True)
+class MergeBase:
+    """The saved draft that a three-way merge compares against.
+
+    Kept in session state beside the working draft. It is wrapped so that
+    anything looking for the working ReportDraft (by type, or by a key that
+    ends in "_draft") cannot pick the merge base instead.
+    """
+    draft: ReportDraft
+
+
+def merge_base(value):
+    """The wrapped merge-base draft, or None for anything else."""
+    return value.draft if isinstance(value, MergeBase) else None
+
+
+@dataclass(frozen=True)
 class FieldConflict:
     path: str
     before: object

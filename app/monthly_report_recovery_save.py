@@ -42,7 +42,8 @@ def acknowledge(state, prefix, scope, token):
     state[prefix + "_active_generation"] = saved.generation
     # The exact acknowledged copy is the three-way ancestor for this tab.
     # Never advance this anchor when a stale save is rejected.
-    state[prefix + "_active_base_draft"] = request.draft
+    from app.monthly_report_conflict_merge import MergeBase
+    state[prefix + "_active_base"] = MergeBase(request.draft)
     state[prefix + "_active_base_revision"] = saved.revision
     state[prefix + "_active_base_generation"] = saved.generation
     state.pop(key, None)

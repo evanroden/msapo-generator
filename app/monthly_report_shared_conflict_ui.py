@@ -15,13 +15,13 @@ from app import monthly_report_library as library
 from app.monthly_report_active_conflict_ui import (
     _guard_report_identity, _report_identity, _reviewable_sites, _use_newer,
 )
-from app.monthly_report_conflict_merge import merge_drafts
+from app.monthly_report_conflict_merge import MergeBase, merge_base, merge_drafts
 
 
 def _ancestor(draft, prefix):
     revision = st.session_state.get(prefix + "_revision")
     saved_rev = st.session_state.get(prefix + "_shared_base_revision")
-    saved_draft = st.session_state.get(prefix + "_shared_base_draft")
+    saved_draft = merge_base(st.session_state.get(prefix + "_shared_base"))
     if (saved_rev == revision and saved_draft is not None
             and saved_draft.profile.key == draft.profile.key
             and saved_draft.period == draft.period):
@@ -116,7 +116,7 @@ def render_shared_merge_choice(draft, snapshot, prefix, assets, profile):
     _use_newer(prefix, active_work.ActiveWork(
         merged, previous_sequence, snapshot.revision, tuple(assets.items()),
         previous_generation, previous_updated))
-    st.session_state[prefix + "_shared_base_draft"] = snapshot.draft
+    st.session_state[prefix + "_shared_base"] = MergeBase(snapshot.draft)
     st.session_state[prefix + "_shared_base_revision"] = snapshot.revision
     st.session_state[prefix + "_shared_merge_notice"] = (
         "Reconciled this draft with shared version "

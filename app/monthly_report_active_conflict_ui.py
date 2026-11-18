@@ -93,7 +93,8 @@ def _use_newer(prefix, newer):
     st.session_state[prefix + "_active_sequence"] = newer.revision
     st.session_state[prefix + "_active_generation"] = newer.generation
     st.session_state[prefix + "_active_updated_at"] = newer.updated_at
-    st.session_state[prefix + "_active_base_draft"] = newer.draft
+    from app.monthly_report_conflict_merge import MergeBase
+    st.session_state[prefix + "_active_base"] = MergeBase(newer.draft)
     st.session_state[prefix + "_active_base_revision"] = newer.revision
     st.session_state[prefix + "_active_base_generation"] = newer.generation
     st.session_state[prefix + "_directory_defaults_attempted"] = True

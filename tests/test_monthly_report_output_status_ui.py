@@ -268,7 +268,11 @@ def test_retry_before_concurrency_decision_cannot_save_after_base_is_accepted(mo
     # A package generated before the merge must be retired; it cannot be
     # saved as the post-merge version using an old Retry button identity.
     assert not any(item.label == 'Retry saving this version' for item in app.button)
-    earlier_retry.click().run()
+    # The retired button no longer exists, so a stale browser click has no
+    # widget to reach (AppTest cannot even address it). A further rerun must
+    # not save the pre-merge package either.
+    assert earlier_retry.id not in {item.id for item in app.button}
+    app.run()
     assert not app.exception
     assert library.load_snapshot(draft.profile.contract, draft.profile.key, draft.period) == newer
     assert len(calls) == 1
