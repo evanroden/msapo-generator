@@ -14,6 +14,24 @@ from app.monthly_report_receivable_intake import (
     editable_rows, inspect_content, prepare_review,
 )
 from app.monthly_report_receivable_schema import MAPPABLE_ROLES
+from app.monthly_report_model import included_sections
+
+
+
+def receivable_section_heading(draft):
+    """The editor's identity is the same included section as TOC and Word.
+
+    Do not assume optional Accounts Receivable is always Section 10: saved
+    designs can omit preceding sections. Missing/duplicate AR keys must not
+    assert any specific section number.
+    """
+    selected = tuple(section for section in included_sections(draft.sections)
+                     if section.key == "accounts_receivable")
+    if len(selected) != 1:
+        return "Accounts Receivable (not uniquely included)"
+    section = selected[0]
+    kind = "Appendix" if section.appendix else "Section"
+    return f"{kind} {section.number} — {section.title}"
 
 
 def saved_review_for_editor(draft, current, content, number, review):
@@ -61,15 +79,16 @@ def reviewed_editor_defaults(review, receipt):
 
 def render_receivable_intake(draft, blocks, prefix):
     key = prefix + "_receivables"
+    section_label = receivable_section_heading(draft)
     st.caption(
-        "Open invoices and AR Aging · internal review. Amounts, payments, credits "
+        section_label + " · Open invoices and AR Aging · internal review. Amounts, payments, credits "
         "and balances are visible here only. The client report contains an "
         "invoice-status view without monetary figures; it is not a complete "
         "AR Aging statement."
     )
     current = blocks.get("accounts_receivable")
     if current is not None and current.rows:
-        st.caption("Current Section 10 invoice status rows: " + str(len(current.rows)))
+        st.caption(f"Current {section_label} invoice status rows: {len(current.rows)}")
     contents = tuple(content for content in st.session_state.get(prefix + "_evidence", ())
                      if content.source.suffix in (".csv", ".xlsx") and
                      len([source for source in draft.sources
@@ -211,7 +230,7 @@ def render_receivable_intake(draft, blocks, prefix):
                                     num_rows="fixed", key=key + "_rows_" + stamp,
                                     hide_index=True, width="stretch")
             if current is not None and current.rows:
-                overwrite = st.checkbox("Replace the existing Section 10 status rows with this reviewed source")
+                overwrite = st.checkbox(f"Replace the existing {section_label} status rows with this reviewed source")
             else:
                 overwrite = True
             confirmed = st.checkbox(
@@ -246,10 +265,10 @@ def render_receivable_intake(draft, blocks, prefix):
                 role_overrides=overrides)
         except (ValueError, OSError) as exc:
             st.error(str(exc))
-            st.caption("No source, financial amount, or prior Section 10 row was changed.")
+            st.caption(f"No source, financial amount, or prior {section_label} row was changed.")
             return draft, blocks
         blocks["accounts_receivable"] = new_block
         st.session_state[prefix + "_period_editor_refresh"] = True
-        st.success("Reviewed invoice statuses applied to Section 10. "
+        st.success(f"Reviewed invoice statuses applied to {section_label}. "
                    "Monetary amounts remain internal and are not authorized for client export.")
         return revised, blocks
