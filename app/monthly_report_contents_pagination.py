@@ -207,6 +207,14 @@ def ensure_pdf_page_links(pdf, sections):
                     title = _text(page, link["from"])
                     if title in title_links:
                         title_links[title].append((page_index, link))
+            if any(len(title_links[title]) != 1 for title in expected):
+                return pdf
+            visible_order = sorted(
+                (page_index, (link["from"].y0 + link["from"].y1) / 2, title)
+                for title in expected for page_index, link in title_links[title]
+            )
+            if [title for _, _, title in visible_order] != expected:
+                return pdf
             additions = []
             for title, (_, _, number) in zip(expected, outlines):
                 if not 1 <= number <= len(rendered):
