@@ -15,6 +15,12 @@ from time import perf_counter, process_time
 import pymupdf as fitz
 from PIL import Image
 
+# Direct script invocation starts sys.path at scripts/, not the repository root.
+# Match the existing monthly benchmark's standalone import contract.
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from app.monthly_report_preview import ReportPreview
 from app.monthly_report_preview_store import PreviewStore
 from app.monthly_report_preview_ticket import private_ticket_pdf
