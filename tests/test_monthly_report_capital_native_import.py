@@ -89,7 +89,7 @@ def test_real_native_import_maps_rows_once_and_preserves_original_schema(native)
     ]
     assert items[0].asset == "PUMP-1" and items[1].asset == "PUMP-2"
     assert items[0].status == items[0].status_period == ""
-    assert ("Status", "Pending") in items[0].extra_fields
+    assert ("Source status (historical, not current completion)", "Pending") in items[0].extra_fields
     assert ("Source note", "Second unit") in items[1].extra_fields
     assert all(item.source_reference.startswith(block.references[0] + ":") for item in items)
     master = approve(both, items)
@@ -170,4 +170,51 @@ def test_approved_items_survive_save_reload_and_local_monthly_edit(native):
     assert load_capital_master(both.contract) == master
     assert capital_report_block(south, select_capital(south, master, NEXT)).rows == (
         ("Synthetic South", "Medium", "Plan roof renewal"),)
+    assert path.read_bytes() == original
+
+
+def test_native_approval_controls_require_review_clicks(native):
+    from streamlit.testing.v1 import AppTest
+
+    both, north, south, _, draft, block, path, original = native
+    app = AppTest.from_string("""
+import streamlit as st
+from app.monthly_report_capital_ui import render_capital_master
+st.session_state["block"] = render_capital_master(
+    st.session_state["draft"], st.session_state["block"], "native_a74")
+""", default_timeout=25)
+    app.session_state["draft"] = draft
+    app.session_state["block"] = block
+    app.run()
+    assert not app.exception
+    save = next(button for button in app.button
+                if button.label == "Save approved Capital Renewal version")
+    assert save.disabled
+    assert load_capital_master(both.contract).revision == 0
+    next(box for box in app.checkbox if box.label.startswith(
+        "I reviewed these capital recommendations")).check().run()
+    next(button for button in app.button
+         if button.label == "Save approved Capital Renewal version").click().run()
+    assert not app.exception
+    first = load_capital_master(both.contract)
+    assert len(first.items) == 3
+    assert app.session_state["block"] == block
+
+    edited = replace(block, rows=((block.rows[0][0], "Urgent", *block.rows[0][2:]),
+                                  *block.rows[1:]))
+    app.session_state["block"] = edited
+    app.run()
+    next(box for box in app.checkbox if box.label.startswith(
+        "I reviewed these capital recommendations")).check().run()
+    next(button for button in app.button
+         if button.label == "Save approved Capital Renewal version").click().run()
+    assert any("priority changes" in warning.value for warning in app.warning)
+    assert load_capital_master(both.contract) == first
+    next(box for box in app.checkbox if box.label.startswith(
+        "I also confirm changes to previously approved")).check().run()
+    next(button for button in app.button
+         if button.label == "Save approved Capital Renewal version").click().run()
+    assert not app.exception
+    assert load_capital_master(both.contract).items[0].priority == "Urgent"
+    assert app.session_state["block"] == edited
     assert path.read_bytes() == original
