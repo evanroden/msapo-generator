@@ -160,6 +160,12 @@ def test_malformed_or_orphan_picture_manifest_rejected_without_touching_shared_r
     corrupted = path.read_bytes()
     with pytest.raises(library.LibraryError):
         active.load(TOKEN, draft.profile.contract, draft.profile.key, draft.period)
+    # An apparently valid next edit may not silently replace the bad journal
+    # either: keep its previous bytes for an explicit, reviewed recovery.
+    with pytest.raises(library.LibraryError):
+        active.save(TOKEN, replace(working, prepared_by="Synthetic later editor"),
+                    expected_revision=1, base_snapshot_revision=report.revision,
+                    assets={ref: raw})
     assert path.read_bytes() == corrupted
     assert library.load_snapshot(draft.profile.contract, draft.profile.key,
                                  draft.period) == report
