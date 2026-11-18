@@ -669,7 +669,7 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
                 and (suffix != ".xlsx" or (type(data.get("xlsx_currency_policy")) is int
                                           and data["xlsx_currency_policy"] == 1))
                 and (suffix != ".pdf" or (data.get("vendor_passage_policy", 0) >= 7
-                                          and data.get("pdf_reader_policy") == 1)))::
+                                          and data.get("pdf_reader_policy") == 1))):
             source = content.source
             if data.get("client_page_policy", 0) < 1 and suffix not in (".csv", ".xlsx"):
                 source = replace(source, selected_pages=suggested_pages(source))
