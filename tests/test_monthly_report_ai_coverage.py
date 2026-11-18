@@ -279,7 +279,7 @@ def test_missing_invalid_or_duplicate_page_identifiers_are_rejected():
 
 def test_dense_table_rows_are_kept_whole_and_types_are_advisory():
     lines = [f"2026-09-03 inspected pump on row {n}" for n in range(135)]
-    original = source(1, text="\\n".join(lines))
+    original = source(1, text="\n".join(lines))
     planned = cover.plan(original)
     regions = [r for batch in planned.batches for r in batch.regions]
     assert len(regions) >= 4
@@ -300,7 +300,7 @@ def test_sensitive_quote_rejection_keeps_technical_sibling():
     planned = cover.plan(original)
 
     def reply(payload):
-        data = json.loads(payload[0]["text"].split("\\n")[-1])
+        data = json.loads(payload[0]["text"].split("\n")[-1])
         return {
             "reviewed_regions": [r["id"] for r in data["regions"]],
             "unsupported_regions": [],
@@ -339,7 +339,7 @@ def test_unverified_identity_date_and_status_on_another_page_never_promoted():
     planned = cover.plan(original)
 
     def loose_reply(payload):
-        data = json.loads(payload[0]["text"].split("\\n")[-1])
+        data = json.loads(payload[0]["text"].split("\n")[-1])
         return {
             "reviewed_regions": [r["id"] for r in data["regions"]],
             "unsupported_regions": [],
