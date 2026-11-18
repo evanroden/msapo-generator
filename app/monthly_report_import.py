@@ -247,6 +247,38 @@ def _relations(archive: ZipFile, part: str) -> dict[str, tuple[str, str]]:
     return result
 
 
+def _controlled_children(parent, target):
+    """Direct Word table/row/cell children, including simple SDT containers.
+
+    Do not descend arbitrarily: nested tables are different source objects.
+    A content control contributes its own direct children in document order.
+    """
+    result = []
+    for child in parent:
+        if child.tag == target:
+            result.append(child)
+        elif child.tag == W + "sdt":
+            content = child.find(W + "sdtContent")
+            if content is not None:
+                result.extend(_controlled_children(content, target))
+    return result
+
+
+def _controlled_table(element):
+    """Recognize only one complete table inside a top-level content control."""
+    if element.tag == W + "tbl":
+        return element
+    if element.tag != W + "sdt":
+        return None
+    content = element.find(W + "sdtContent")
+    if content is None:
+        return None
+    children = [child for child in content if child.tag in (W + "p", W + "tbl", W + "sdt")]
+    if len(children) != 1:
+        return None
+    return _controlled_table(children[0])
+
+
 def _visible(element):
     from app.monthly_report_revision_view import current_view
     try:
@@ -794,7 +826,8 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 for kind in ("footnote", "endnote"):
                                     for reference in element.iter(W + kind + "Reference"):
                                         note_owners[(kind, reference.get(W + "id", ""))] = (section, content_slot)
-                            picture_table = element.tag == W + "tbl" and section == "activity" and content_slot == "improvements" and any(
+                            table_element = _controlled_table(element)
+                            picture_table = table_element is not None and section == "activity" and content_slot == "improvements" and any(
                                 node.tag in (A + "blip", V + "imagedata") for node in element.iter())
                             parents = {child: parent for parent in element.iter() for child in parent}
                             from app.monthly_report_native_design import mint_divider_background
@@ -803,14 +836,14 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 background_positions.append((position, word_section))
                                 if mint_divider_background(element, text):
                                     mint_background_positions.add((position, word_section))
-                            if element.tag == W + "tbl":
+                            if table_element is not None:
                                 rows = []
                                 full_width_bands = []
-                                for row in element.findall(W + "tr"):
+                                for row in _controlled_children(table_element, W + "tr"):
                                     cells = []
                                     before = row.find(f"{W}trPr/{W}gridBefore")
                                     cells.extend([""] * min(100, int(before.get(W + "val", "0"))) if before is not None else [])
-                                    row_cells = row.findall(W + "tc")
+                                    row_cells = _controlled_children(row, W + "tc")
                                     if len(row_cells) == 1 and before is None:
                                         merged = row_cells[0].find(f"{W}tcPr/{W}gridSpan")
                                         if merged is not None:
@@ -838,7 +871,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 elif rows and not picture_table:
                                     width = max(map(len, rows))
                                     rows = tuple(row + ("",) * (width - len(row)) for row in rows)
-                                    title_band = _service_call_title_band(element, rows, section)
+                                    title_band = _service_call_title_band(table_element, rows, section)
                                     table_id = add("table", part, position, rows=rows,
                                         table_header_row=1 if title_band else 0,
                                         suggested_slot=content_slot or _suggest("table", text, section),
@@ -852,6 +885,10 @@ def inspect_docx(path: Path) -> DocxInspection:
                                         add("text", part, position, item_id=table_id + "-title",
                                             text=rows[0][0], suggested_slot="service_calls",
                                             note="Native table title")
+                            elif element.tag == W + "sdt" and any(node.tag == W + "tbl" for node in element.iter()):
+                                add("unsupported", part, position, text=text,
+                                    note="Word content control contains mixed or multiple table blocks. "
+                                         "Keep the native source for review; do not flatten its cells into prose.")
                             elif standalone_frame:
                                 note = ("Word text frame needs manual layout review. Preserve and review its complete page "
                                         "or add a reviewed replacement; extracted labels do not preserve the layout.")
