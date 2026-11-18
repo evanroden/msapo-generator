@@ -823,7 +823,8 @@ def _ingest_locked(profile: ReportProfile, filename: str, raw: bytes,
     return content, attachments
 
 
-def _discard_rejected(path, cache, digest, already_present, existing_cache):
+def _discard_rejected(path, cache, digest, already_present, existing_cache, *,
+                      stage=None, existing_stage=False):
     """Delete only what a just-rejected upload wrote (#284 owner decision).
 
     Rejected uploads are removed right away. Older files and accepted originals
@@ -841,6 +842,14 @@ def _discard_rejected(path, cache, digest, already_present, existing_cache):
         try:
             if not cache.is_symlink():
                 cache.unlink(missing_ok=True)
+        except OSError:
+            pass
+    # A rejected source must not leave its newly generated intermediate text
+    # behind, while a checkpoint from an earlier attempt is never removed.
+    if stage is not None and not existing_stage:
+        try:
+            if not stage.is_symlink():
+                stage.unlink(missing_ok=True)
         except OSError:
             pass
 
@@ -903,6 +912,8 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
         already_present = path.exists()
         cache = _path(profile, digest, ".json")
         existing_cache = cache.exists()
+        stage = cache.with_name(digest + ".parse-stage.json")
+        existing_stage = stage.exists()
         try:
             content, attachments = ingest(profile, filename, raw, _digests=digests)
             added = sum(map(len, content.source.page_texts))
@@ -910,7 +921,8 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
                 raise ValueError(f"Total extracted text exceeds {MAX_REPORT_TEXT:,} characters. Remove unused sources or split the report.")
         except (ValueError, OSError, LookupError, csv.Error, RuntimeError, BadZipFile,
                 zlib.error, fitz.mupdf.FzErrorBase) as exc:
-            _discard_rejected(path, cache, digest, already_present, existing_cache)
+            _discard_rejected(path, cache, digest, already_present, existing_cache,
+                              stage=stage, existing_stage=existing_stage)
             if isinstance(exc, OSError):
                 reason = "Storage or file reader was unavailable; retry this file."
             elif isinstance(exc, zlib.error):
@@ -934,7 +946,8 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
         except BaseException:
             # An unexpected fault is still raised (never hidden as a file
             # failure), but the upload it rejected must not stay on disk.
-            _discard_rejected(path, cache, digest, already_present, existing_cache)
+            _discard_rejected(path, cache, digest, already_present, existing_cache,
+                              stage=stage, existing_stage=existing_stage)
             raise
         sources[digest] = content
         sizes += len(raw)
