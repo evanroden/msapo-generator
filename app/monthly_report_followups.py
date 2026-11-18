@@ -709,7 +709,8 @@ def problem_details(item, draft):
         messages.append(FollowupProblem("sources",
             "A follow-up source changed or is missing. Review its current page again."
         ))
-    if item.category == "proposal" and item.reviewed_fingerprint != confirmation(item, draft.period):
+    if (item.category == "proposal" and item.included
+            and item.reviewed_fingerprint != confirmation(item, draft.period)):
         messages.append(FollowupProblem("decision",
             "Confirm this proposal's decision and whether it belongs in this report."
         ))
