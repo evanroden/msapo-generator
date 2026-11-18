@@ -658,7 +658,8 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
                 and (not unicode_csv or data.get("csv_unicode_policy") == 1)
                 and (suffix != ".xlsx" or (type(data.get("xlsx_currency_policy")) is int
                                           and data["xlsx_currency_policy"] == 1))
-                and (suffix != ".pdf" or data.get("vendor_passage_policy", 0) >= 8)):
+                and (suffix != ".pdf" or (data.get("vendor_passage_policy", 0) >= 8
+                                           and data.get("pdf_scan_policy", 0) >= 1))):
             source = content.source
             if data.get("client_page_policy", 0) < 1 and suffix not in (".csv", ".xlsx"):
                 source = replace(source, selected_pages=suggested_pages(source))
@@ -684,8 +685,14 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
                 raise ValueError(f"PDF exceeds {MAX_PAGES:,} pages; select a smaller document range.")
             for number, page in enumerate(pdf, 1):
                 text = page.get_text().strip()
-                if ocr._page_needs_ocr(page, native_text=text):
+                needs_ocr, review_notice = ocr._page_visual_decision(
+                    page, native_text=text,
+                )
+                if review_notice:
+                    # Keep an image-backed source unreviewed even if it appears
+                    # blank or has a searchable overlay; neither is human proof.
                     needs_vision.append(number)
+                    notices.append(f"Page {number}: {review_notice}.")
                 page_texts.append(text)
                 if sum(map(len, page_texts)) > ocr._MAX_EXTRACTED_CHARS:
                     raise ValueError(f"PDF text exceeds {ocr._MAX_EXTRACTED_CHARS:,} characters; select a smaller document range.")
@@ -761,6 +768,7 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
     content = SourceContent(source, tables, tuple(image_items))
     library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1,
         "native_action_policy": 1, "vendor_passage_policy": 8,
+        **({"pdf_scan_policy": 1} if suffix == ".pdf" else {}),
         **({"xlsx_currency_policy": 1} if suffix == ".xlsx" else {}),
         **({"csv_unicode_policy": 1} if unicode_csv else {}),
         **({"csv_dialect_policy": 1} if suffix == ".csv" else {}), **asdict(content)}))
