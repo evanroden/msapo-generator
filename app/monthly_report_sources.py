@@ -505,7 +505,7 @@ def _spreadsheet(raw: bytes, suffix: str) -> tuple[SourceTable, ...]:
     # separate lazy formula view; ordinary formula-free files retain one read.
     with ZipFile(BytesIO(raw)) as z:
         has_formulas = any(
-            re.search(rb"<(?:[A-Za-z_][A-Za-z0-9_.-]*:)?f(?:\\s|>)", z.read(part.filename))
+            re.search(rb"<(?:[A-Za-z_][A-Za-z0-9_.-]*:)?f(?:\s|>)", z.read(part.filename))
             for part in z.infolist()
             if part.filename.startswith("xl/worksheets/") and part.filename.endswith(".xml")
         )
