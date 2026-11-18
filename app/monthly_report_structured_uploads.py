@@ -9,6 +9,7 @@ from app.monthly_report_content_policy import (
     page_status, price_column, table_price_columns,
 )
 from app.monthly_report_model import ResolvedBlock
+from app.monthly_report_reconciliation import preserve_noop_block
 
 COLUMNS = {
     "capital_renewal": ("Facility", "Priority", "Recommendation"),
@@ -783,14 +784,14 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
                             paragraphs.append(grounded)
                             references.append(reference)
         text = "\n\n".join(dict.fromkeys(filter(None, (*existing.text.split("\n\n"), *paragraphs))))
-        return replace(existing, text=text, references=tuple(dict.fromkeys(references)), reviewed_fingerprint="")
+        return preserve_noop_block(existing, text=text, references=tuple(dict.fromkeys(references)))
     rows = list(existing.rows)
     for content in contents:
         extracted = mapped_rows(content, destination, table_columns)
         rows.extend(extracted)
         if extracted:
             references.extend(sources.source_reference(content.source, n) for n in range(1, len(content.source.page_texts) + 1))
-    return replace(existing, rows=tuple(dict.fromkeys(rows)), references=tuple(dict.fromkeys(references)), reviewed_fingerprint="")
+    return preserve_noop_block(existing, rows=tuple(dict.fromkeys(rows)), references=tuple(dict.fromkeys(references)))
 
 
 def reader_request(profile, contents, destination, page_refs=None, table_columns=None):
@@ -920,9 +921,9 @@ def reader_update(contents, destination, value, existing=None, *, table_columns=
         # Keep the precise sole-source scope block for callers of this validator.
         # The UI never offers paid reading when every selected file is unrouted.
         raise ValueError(blocked_notices[0])
-    result = replace(block, text="\n\n".join(dict.fromkeys(filter(None, (*block.text.split("\n\n"), *texts)))),
-                     rows=tuple(dict.fromkeys((*block.rows, *rows))),
-                     references=tuple(dict.fromkeys((*block.references, *refs))), reviewed_fingerprint="")
+    result = preserve_noop_block(block, text="\n\n".join(dict.fromkeys(filter(None, (*block.text.split("\n\n"), *texts)))),
+                                 rows=tuple(dict.fromkeys((*block.rows, *rows))),
+                                 references=tuple(dict.fromkeys((*block.references, *refs))))
     return result, pages
 
 
