@@ -752,10 +752,15 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
             from app.monthly_report_vendor_passages import read_vendor_document
             passage_pages = read_vendor_document(content.source)
             for number, text in _activity_source_pages(content):
-                # A mixed water/MBCx/quote page never becomes vendor Activity
+                # A mixed water/MBCx/quote page never becomes vendor Activity                
                 # merely because another page made the whole file look native.
+                # Only the page's own heading or table can exclude it: the
+                # file-level fallback may reflect a different part of a mixed
+                # file (one training line labels a vendor-activity file
+                # "Training"), and excluding on that would drop real Activity.
                 role = classify_page(content, number)
-                if role.ambiguous or (role.destinations and "activity_summary" not in role.destinations):
+                if role.ambiguous or (role.rule in ("page heading", "native table columns")
+                    and role.destinations and "activity_summary" not in role.destinations):
                     continue
                 reference = sources.source_reference(content.source, number)
                 # Source-referenced manual corrections and deliberate deletions
@@ -923,10 +928,15 @@ def reader_update(contents, destination, value, existing=None, *, table_columns=
             raise ValueError("The document reader returned an unknown page.")
         # Old cached or in-flight results may include a different explicit
         # section of the same mixed original. Keep only this source/page role.
+        # Only the page's own heading or table can exclude it: the file-level
+        # fallback may reflect a different part of a mixed file (one CMMS
+        # identifier labels a vendor-activity page "CMMS export"), and
+        # excluding on that would drop real Activity.
         page_role = classify_page(by_id[source.id], number)
         chosen = (corrections or {}).get((source.id, number, source.sha256))
         if (page_role.ambiguous and chosen != destination
-                or page_role.destinations and destination not in page_role.destinations
+                or page_role.rule in ("page heading", "native table columns")
+                and page_role.destinations and destination not in page_role.destinations
                 or (source.id, number) in accepted_pages
                 or (source.id, number) in native_mapped
                 or admitted is not None and (source.id, number) not in admitted):
