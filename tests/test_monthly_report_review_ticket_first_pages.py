@@ -53,7 +53,7 @@ def test_private_ticket_keeps_every_page_and_exact_geometry(count):
         ticket = store.put("owner-one", ReportPreview(result, count, original_hash, "Synthetic"))
         first = store.pages("owner-one", ticket, tuple(range(min(2, count))), dpi=96)
         assert [i for i, raw in first] == list(range(min(2, count)))
-        assert all(raw[:2] == b"\\xff\\xd8" for _, raw in first)
+        assert all(raw[:2] == bytes((255, 216)) for _, raw in first)
         assert store.pages("owner-two", ticket, (0,)) is None
         assert store.pages("owner-one", ticket, (count - 1,), dpi=96)
         assert store.stats()["raster_entries"] <= 3
