@@ -160,11 +160,14 @@ def prune_orphaned_profiles(output_dir, *, old_seconds=600):
     from app.office_process import _boot_id, _group_running
 
     folder = Path(output_dir)
-    with (folder / '.office-janitor.lock').open('a+b') as lock:
+    # The janitor's lease lives with the other conversion leases, not among
+    # the published outputs it sweeps.
+    active_dir = _root() / 'render-jobs'
+    active_dir.mkdir(parents=True, exist_ok=True)
+    with (active_dir / '.office-janitor.lock').open('a+b') as lock:
         if not _try_lock(lock):
             return 0
         try:
-            active_dir = _root() / 'render-jobs'
             for name in ('.active-office.json', '.active-office-1.json'):
                 marker = active_dir / name
                 try:

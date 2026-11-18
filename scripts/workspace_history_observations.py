@@ -18,6 +18,9 @@ CONVERSION_RUNTIME_PATHS = frozenset({
     "render-jobs/.active-office.json", "render-jobs/.active-office.tmp",
     "render-jobs/.active-office-1.json", "render-jobs/.active-office-1.tmp",
     "render-jobs/.conversion-lock",
+    # A23's lane admission: the mode lease, lane 1's lock and the janitor lock.
+    "render-jobs/.conversion-mode.lock", "render-jobs/.conversion-lock-1",
+    "render-jobs/.office-janitor.lock",
 })
 
 

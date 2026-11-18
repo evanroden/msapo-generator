@@ -311,7 +311,9 @@ def test_missing_and_malformed_inputs_never_publish_an_old_pdf(monkeypatch, tmp_
     with pytest.raises(converter.PDFConversionError):
         converter.convert_to_pdf(missing)
     malformed = tmp_path / 'malformed.docx'
-    malformed.write_bytes(b'not an OOXML package')
+    # A truncated OOXML (ZIP) package. Plain text renamed to .docx is not a
+    # malformed package: Writer's text-import fallback renders it.
+    malformed.write_bytes(b'PK\x03\x04 truncated OOXML package')
     with pytest.raises(converter.PDFConversionError):
         converter.convert_to_pdf(malformed)
     assert old.read_bytes() == b'%PDF-1.7 old output'
