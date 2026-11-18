@@ -26,7 +26,7 @@ def source(count, *, length=80):
 def refs(payload):
     return [(sid, int(n)) for block in payload
             for sid, n in re.findall(
-                r"SOURCE ([a-f0-9]{64}) PAGE (\\d+)\\n", block.get("text", "")
+                r"SOURCE ([a-f0-9]{64}) PAGE (\d+)\n", block.get("text", "")
             )]
 
 
