@@ -92,6 +92,23 @@ def _validate_tables(tables):
     return tuple(tables)
 
 
+def _check_duplicate_contacts(tables):
+    """Require review of repeated contact rows, without merging category bands.
+
+    A heading with one populated cell is not a person/contact. Keep those
+    headings and all source tables intact instead of silently deduplicating.
+    """
+    seen = set()
+    for table in tables:
+        for row in table.rows:
+            if sum(bool(cell.strip()) for cell in row) <= 1:
+                continue
+            identity = (table.columns, row)
+            if identity in seen:
+                raise ValueError("Duplicate subcontractor contact rows need review before sharing.")
+            seen.add(identity)
+
+
 def _facility_labels(profile):
     return tuple((facility.key, tuple(dict.fromkeys(
         _key(value) for value in (facility.key, facility.title, *facility.aliases) if value.strip())))
@@ -110,7 +127,10 @@ def _site_validation(tables, labels, scope_sites):
             continue
         for row in table.rows:
             value = _key(row[col])
-            if value in _SHARED_SITES or sum(bool(cell.strip()) for cell in row) == 1:
+            # A lone value in the *site* column is a site heading, not an
+            # unrestricted vendor category. An unknown site must fail closed.
+            if value in _SHARED_SITES or (
+                    not value and sum(bool(cell.strip()) for cell in row) == 1):
                 continue
             if not scope_sites:
                 raise ValueError("This vendor table names a site. Share it for the reviewed sites, not as a contract-wide row.")
@@ -170,6 +190,7 @@ def save_roster(profile: ReportProfile, block: ResolvedBlock, spec, *,
     if len(set(site_keys)) != len(site_keys) or any(key not in selected for key in site_keys):
         raise ValueError("Shared vendor roster sites must be explicitly selected in this report.")
     original_tables = _validate_tables(_tables(block, spec))
+    _check_duplicate_contacts(original_tables)
     labels = _facility_labels(profile)
     _site_validation(original_tables, labels, site_keys)
     # Source-page attachments remain private to the owning report/profile.
@@ -187,6 +208,13 @@ def save_roster(profile: ReportProfile, block: ResolvedBlock, spec, *,
         if current.revision != expected_revision:
             raise library.RevisionConflict(
                 "Shared subcontractors changed. Reload the saved roster; your report-only edits are unchanged.")
+        # A byte-for-byte reviewed reimport is not a new master correction.
+        # Include scope, source receipts and site aliases in the comparison:
+        # changed evidence must still create a new immutable version.
+        if any(entry.sites == site_keys and entry.tables == snapshot
+               and entry.origin_references == reference and entry.site_labels == labels
+               for entry in current.entries):
+            return current
         previous = tuple(entry for entry in current.entries if entry.sites != site_keys)
         if len(previous) >= MAX_ROSTERS:
             raise ValueError("Too many separately approved vendor scopes. Review old scopes before saving.")
@@ -219,7 +247,7 @@ def _for_sites(table, entry, profile):
     for row in table.rows:
         value = _key(row[col])
         if (value in _SHARED_SITES or
-                sum(bool(cell.strip()) for cell in row) == 1 or
+                (not value and sum(bool(cell.strip()) for cell in row) == 1) or
                 labels.get(value) in selected):
             rows.append(row)
     return replace(table, rows=tuple(rows))
