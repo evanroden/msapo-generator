@@ -86,7 +86,7 @@ def test_constrained_control_retains_original_mutex(monkeypatch):
     monkeypatch.setattr(jobs, '_WORK_SLOT', jobs.threading.Lock())
     monkeypatch.setattr(jobs, 'memory_headroom', lambda: 200 * MIB)
     with jobs.work_slot(preview=True):
-        with pytest.raises(jobs.RenderBusy, match='queued'):
+        with pytest.raises(jobs.RenderBusy, match='Another report'):
             with ThreadPoolExecutor(max_workers=1) as pool:
                 pool.submit(lambda: next(_contended_preview())).result(timeout=5)
     assert not jobs._WORK_SLOT.locked()
