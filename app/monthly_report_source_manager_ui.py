@@ -98,6 +98,9 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
               key=prefix + "_source_manager_" + str(opened),
               on_click=_open_manager if not opened else _close_manager,
               args=(manager_key, selection_key, "") if not opened else (manager_key,))
+    from app.monthly_report_coverage_ui import render_coverage
+    draft = render_coverage(draft, st.session_state.get(prefix + "_evidence", ()),
+                            prefix, blocks)
     panel_key = prefix + "_source_manager_panel"
     # Keep child keys and delta paths stable. Native form buffers are not sent
     # by an unrelated file-selection click and cannot be reconstructed in Python.
