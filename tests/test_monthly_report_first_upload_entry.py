@@ -7,7 +7,6 @@ from io import BytesIO
 from types import SimpleNamespace
 import hashlib
 
-import pytest
 from streamlit.testing.v1 import AppTest
 
 from app import monthly_report_entry_upload as entry
@@ -75,7 +74,7 @@ st.session_state["synthetic_result"] = (stage[2].sha256 if stage else "", contra
     app.run()
     assert calls == [b"synthetic-good-a", b"synthetic-bad"]
     assert app.session_state["synthetic_result"] == ("", ())
-    assert any("Unsupported" in w.value or "DOCX" in w.message or "report" in w.message.lower()
+    assert any("Unsupported" in w.value or "DOCX" in w.value or "report" in w.value.lower()
                for w in app.warning)
     app.run()
     assert calls == [b"synthetic-good-a", b"synthetic-bad"]  # failed hash is not retried
