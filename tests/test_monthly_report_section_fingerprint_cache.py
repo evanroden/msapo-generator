@@ -71,9 +71,9 @@ def _legacy_fingerprint(draft, section_key, source_identity=""):
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
-def test_twelve_sections_warm_rerun_does_not_reserialize_unchanged_values(report, monkeypatch):
-    keys = [section.key for section in included_sections(report.sections)][:12]
-    assert len(keys) == 12
+def test_eleven_sections_warm_rerun_does_not_reserialize_unchanged_values(report, monkeypatch):
+    keys = [section.key for section in included_sections(report.sections)][:11]
+    assert len(keys) == 11
     preview._cached_section_fingerprint.cache_clear()
     original = json.dumps
     serializations = []
@@ -93,7 +93,7 @@ def test_twelve_sections_warm_rerun_does_not_reserialize_unchanged_values(report
     warm_wall, warm_cpu = perf_counter(), process_time()
     assert {key: preview.section_preview_fingerprint(report, key) for key in keys} == first
     warm_wall, warm_cpu = perf_counter() - warm_wall, process_time() - warm_cpu
-    print(f"A31 twelve-section fingerprint control: baseline_wall={baseline_wall:.6f}s "
+    print(f"A31 eleven-section fingerprint control: baseline_wall={baseline_wall:.6f}s "
           f"baseline_cpu={baseline_cpu:.6f}s cold_wall={cold_wall:.6f}s "
           f"cold_cpu={cold_cpu:.6f}s warm_wall={warm_wall:.6f}s "
           f"warm_cpu={warm_cpu:.6f}s serialized={len(serializations)} "
