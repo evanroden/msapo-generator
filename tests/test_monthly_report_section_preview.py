@@ -425,7 +425,7 @@ def test_busy_preview_retries_snapshot_after_poll_without_caching_failure(monkey
     assert len(jobs) == 1
     clock[0] += 2
     ui._advance_preview_queue(state)
-    assert len(jobs) == 2 and jobs[0][1] == jobs[1][1]
+    assert len(jobs) == 2 and jobs[0][1][:-1] == jobs[1][1][:-1]  # is_current is a fresh lambda per submit
     current_entry = completed_entry(state, 'Current page')
     jobs[1][0].set_result(current_entry)
     slot.release()
