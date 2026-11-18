@@ -230,42 +230,68 @@ def _section_scope(draft, section_key):
 
 
 def section_preview_fingerprint(draft, section_key):
-    """Track visible geometry; unrelated review toggles do not rerender it."""
-    from app.monthly_report_asset_layout import document_page_indexes
+    """Fingerprint visible geometry without reserializing unchanged sections.
+
+    _section_scope retains the real section, including shared logos and its
+    included-section numbering. The immutable key excludes unrelated blocks.
+    Source-view evidence is rechecked *before* each cache lookup: a manifest,
+    original or receipt replacement must never hit a stale preview fingerprint.
+    """
+    from app.monthly_report_source_view_runtime import cache_identity
     scope, section = _section_scope(draft, section_key)
-    blocks = []
-    for block in scope.blocks:
+    source_identity = cache_identity(draft)
+    # Only improvements' document/photo classification reads ReportSources.
+    # Other sections must not hash or retain unrelated source-page contents.
+    page_sources = scope.sources if any(block.key == "improvements" for block in scope.blocks) else ()
+    return _cached_section_fingerprint(
+        draft.profile, draft.period.key, section_key, section, scope.blocks,
+        page_sources, scope.follow_ups, draft.address_line if section else "",
+        draft.prepared_by if section is None else "",
+        draft.synthetic if section is None else False, source_identity,
+    )
+
+
+@lru_cache(maxsize=32)
+def _cached_section_fingerprint(profile, period_key, section_key, section, blocks,
+                                page_sources, follow_ups, address, prepared_by,
+                                synthetic, source_identity):
+    """Keep at most 32 immutable section revisions; never cache rendered output.
+
+    All inputs are frozen model values or strings. The cache only avoids a
+    repeat JSON walk/hash: it grants no approval and cannot affect final DOCX.
+    """
+    from app.monthly_report_asset_layout import document_page_indexes
+    serialized_blocks = []
+    for block in blocks:
         if block.source == "Omit":
             # Keep explicit omission of a divider, which overrides its design.
-            blocks.append({"key": block.key, "source": "Omit"})
+            serialized_blocks.append({"key": block.key, "source": "Omit"})
             continue
-        blocks.append({name: getattr(block, name) for name in (
+        serialized_blocks.append({name: getattr(block, name) for name in (
             "key", "text", "rows", "asset_hashes", "asset_captions", "photos_per_page", "references",
         )} | {"org_nodes": [asdict(node) for node in block.org_nodes],
              "extra_tables": [asdict(table) for table in block.extra_tables],
-             "document_pages": sorted(document_page_indexes(block, scope.sources))})
+             "document_pages": sorted(document_page_indexes(block, page_sources))})
     from app.monthly_report_followups import report_text
     value = {
         "version": 6,
-        "period": draft.period.key,
-        "title": draft.profile.title,
-        "contract": draft.profile.contract,
-        "profile": draft.profile.key,
+        "period": period_key,
+        "title": profile.title,
+        "contract": profile.contract,
+        "profile": profile.key,
         "section": asdict(section) if section else "cover",
-        "blocks": blocks,
-        "address": draft.address_line if section else "",
-        "follow_ups": [report_text(item) for item in scope.follow_ups if item.included],
+        "blocks": serialized_blocks,
+        "address": address,
+        "follow_ups": [report_text(item) for item in follow_ups if item.included],
     }
     from app.monthly_report_designs import fingerprint
-    value["native_layout"] = fingerprint(draft.profile)
-    from app.monthly_report_source_view_runtime import cache_identity
-    source_identity = cache_identity(draft)
+    value["native_layout"] = fingerprint(profile)
     if source_identity:
-        value['source_view'] = source_identity
+        value["source_view"] = source_identity
     if section is None:
-        value["cover"] = {"title": draft.profile.title, "period": draft.period.key,
-                          "prepared_by": draft.prepared_by, "synthetic": draft.synthetic,
-                          "facilities": [facility.title for facility in draft.profile.facilities]}
+        value["cover"] = {"title": profile.title, "period": period_key,
+                          "prepared_by": prepared_by, "synthetic": synthetic,
+                          "facilities": [facility.title for facility in profile.facilities]}
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
