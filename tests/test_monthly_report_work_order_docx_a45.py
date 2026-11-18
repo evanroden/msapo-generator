@@ -162,6 +162,8 @@ def test_non_word_or_malformed_input_does_not_produce_records(tmp_path, monkeypa
 
 def test_native_review_correction_survives_saved_report_and_real_word_pdf(tmp_path, monkeypatch):
     from app import monthly_report_work_order_review_flow as flow
+    from app.monthly_report_model import synthetic_profiles
+    profile = synthetic_profiles()[1]
     from test_monthly_report_work_order_review_flow import draft_source, stored, publish
     from test_monthly_report_work_order_lane_integration import saved, generated
     # Export requires the native document renderer; this remains a synthetic test.
@@ -178,17 +180,17 @@ def test_native_review_correction_survives_saved_report_and_real_word_pdf(tmp_pa
     for cell, value in zip(table.rows[1].cells, headers):
         cell.text = value
     for index, record in enumerate((
-        ("0101", "North", "2026-09-04", "Open", "PM", "HVAC", "left unchanged"),
-        ("0102", "South", "2026-09-05", "Closed", "Repair", "Electrical", "unmapped stays"),), 2):
+        ("0101", "Demo North", "2026-09-04", "Open", "PM", "HVAC", "left unchanged"),
+        ("0102", "Demo South", "2026-09-05", "Closed", "Repair", "Electrical", "unmapped stays"),), 2):
         for cell, value in zip(table.rows[index].cells, record):
             cell.text = value
     stream = BytesIO()
     doc.save(stream)
     original = stream.getvalue()
     original_digest = sha256(original).hexdigest()
-    draft, content = draft_source(original, "a45-export.docx", PROFILE)
+    draft, content = draft_source(original, "a45-export.docx", profile)
     from app.monthly_report_source_scope import correct_scope
-    content = replace(content, source=correct_scope(content.source, PROFILE, ("north", "south")))
+    content = replace(content, source=correct_scope(content.source, profile, ("north", "south")))
     draft = replace(draft, sources=(content.source,))
     draft, bundle = stored(draft, content)
     row_review = flow.restored_group(bundle, bundle["groups"][0])
@@ -207,7 +209,7 @@ def test_native_review_correction_survives_saved_report_and_real_word_pdf(tmp_pa
     assert "0101" in word_text and "0102" in word_text
     assert "0101" in pdf_text and "0102" in pdf_text
     assert "Keep my authored wording." in "\n".join(b.text for b in reopened.blocks)
-    assert sha256(sources.source_bytes(PROFILE, content.source)).hexdigest() == original_digest
+    assert sha256(sources.source_bytes(profile, content.source)).hexdigest() == original_digest
     assert len(sha256(result.docx).hexdigest()) == 64
     assert len(sha256(result.pdf).hexdigest()) == 64
 
