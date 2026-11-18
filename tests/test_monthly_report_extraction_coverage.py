@@ -148,3 +148,29 @@ def test_exclusion_never_changes_preflight_or_generation_gate():
     updated = exclude_from_coverage(draft, item, "Only a reference for unrelated work.")
     assert [(c.code, c.blocking) for c in preflight(updated)] == [
         (c.code, c.blocking) for c in baseline]
+
+
+def test_native_explicit_page_exclusion_is_preserved_in_coverage():
+    from app.monthly_report_content_policy import page_fingerprint
+    draft, content = fixture(pages=("Technical source page.",))
+    source = content.source
+    source = replace(source, client_page_exclusions=((1, page_fingerprint(source, 1)),))
+    updated = replace(draft, sources=(source,))
+    ledger = source_coverage(updated, source, replace(content, source=source))
+    assert ledger.items[0].state == "excluded"
+    assert "Explicitly omitted" in ledger.items[0].reason
+
+
+def test_reviewable_table_row_exclusion_persists_and_rejects_stale_content():
+    row = SourceTable("Sheet 1", ("Kind", "Detail"), (("Other", "Irrelevant note"),))
+    draft, content = fixture(pages=("Kind\\tDetail\\nOther\\tIrrelevant note",), suffix=".csv",
+                             tables=(row,))
+    row_item = next(item for item in source_coverage(draft, content.source, content).items
+                    if item.kind == "row")
+    result = exclude_from_coverage(draft, row_item, "Irrelevant synthetic test row.", content=content)
+    assert next(item for item in source_coverage(result, result.sources[0], content).items
+                if item.kind == "row").state == "excluded"
+    changed = replace(content, tables=(SourceTable("Sheet 1", row.columns,
+                                                   (("Other", "Different note"),)),))
+    with pytest.raises(ValueError, match="changed"):
+        exclude_from_coverage(draft, row_item, "Irrelevant synthetic test row.", content=changed)
