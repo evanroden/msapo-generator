@@ -752,7 +752,7 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
             from app.monthly_report_vendor_passages import read_vendor_document
             passage_pages = read_vendor_document(content.source)
             for number, text in _activity_source_pages(content):
-                # A mixed water/MBCx/quote page never becomes vendor Activity                
+                # A mixed water/MBCx/quote page never becomes vendor Activity
                 # merely because another page made the whole file look native.
                 # Only the page's own heading or table can exclude it: the
                 # file-level fallback may reflect a different part of a mixed
