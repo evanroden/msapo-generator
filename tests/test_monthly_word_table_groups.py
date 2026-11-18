@@ -120,6 +120,69 @@ def test_unclassified_bands_and_nested_grid_are_not_invented_work(tmp_path):
                    and "Code" not in str(i.rows) for i in inspection.items)
 
 
+
+def test_grid_before_after_vertical_merge_and_unlisted_columns(tmp_path):
+    from docx.oxml.ns import qn
+    doc = Document()
+    doc.add_heading("7 Water Treatment Reports", 1)
+    table = doc.add_table(rows=2, cols=2)
+    _fill(table.rows[0], ("Left", "Right"))
+    _fill(table.rows[1], ("", "0"))
+    for row in table.rows:
+        before = OxmlElement("w:gridBefore")
+        before.set(qn("w:val"), "1")
+        row._tr.get_or_add_trPr().append(before)
+    after = OxmlElement("w:gridAfter")
+    after.set(qn("w:val"), "2")
+    table.rows[1]._tr.get_or_add_trPr().append(after)
+    for index, state in ((0, "restart"), (1, "continue")):
+        merge = OxmlElement("w:vMerge")
+        merge.set(qn("w:val"), state)
+        table.cell(index, 0)._tc.get_or_add_tcPr().append(merge)
+    path = tmp_path / "native-indents.docx"
+    doc.save(path)
+    source_bytes = path.read_bytes()
+    found = next(i for i in inspect_docx(path).items if i.kind == "table")
+    assert all(len(row) == 5 for row in found.rows)
+    assert found.rows[0] == ("", "Left", "Right", "", "")
+    assert found.rows[1] == ("", "", "0", "", "")
+    assert found.table_cell_refs == ((0, 0, 1, 1, "restart"), (0, 1, 2, 1, ""),
+                                     (1, 0, 1, 1, "continue"), (1, 1, 2, 1, ""))
+    assert path.read_bytes() == source_bytes
+
+
+def test_saved_native_docx_contains_only_real_call_and_reloads(tmp_path, monkeypatch):
+    import hashlib
+    from app import monthly_report_library as library
+    from app.monthly_report_model import synthetic_profiles
+    from app.monthly_report_native_layout import _table as write_native_table
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "runtime"))
+    path = _fixture(tmp_path)
+    original = path.read_bytes()
+    inspection = inspect_docx(path)
+    calls = _table(inspection, "Client Service Calls")
+    mapped = map_items(path, inspection, (ImportMapping(calls.id, "service_calls"),))
+    profile = synthetic_profiles()[0]
+    library.save_profile(profile, expected_revision=0, actor="Synthetic A40", confirmed=True)
+    saved = library.save_import(profile.contract, profile.key, mapped.blocks, overrides=mapped.overrides,
+                                expected_revision=1, actor="Synthetic A40", confirmed=True)
+    reloaded = library.load_profile(profile.contract, profile.key)
+    assert saved.revision == reloaded.revision == 2
+    assert reloaded.block("service_calls").rows == mapped.blocks[0].rows
+    assert reloaded.block("service_calls").references == mapped.blocks[0].references
+    native = table_without_prices(calls)[0]
+    output = Document()
+    table = output.add_table(rows=2, cols=len(native.columns))
+    write_native_table(table._tbl, native.columns, native.rows)
+    data = BytesIO()
+    output.save(data)
+    assert len(hashlib.sha256(data.getvalue()).hexdigest()) == 64
+    rows = [tuple(cell.text for cell in row.cells) for row in Document(BytesIO(data.getvalue())).tables[0].rows]
+    assert rows == [native.columns, *native.rows]
+    assert path.read_bytes() == original
+
+
+
 @pytest.mark.parametrize("contents", [b"", b"not a docx", b"PK\\x03\\x04broken"])
 def test_invalid_word_input_is_rejected_without_partial_state(tmp_path, contents):
     from app.monthly_report_import import ImportError
