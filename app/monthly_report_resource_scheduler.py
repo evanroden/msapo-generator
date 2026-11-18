@@ -110,6 +110,55 @@ def _try_slot(kind):
     return None
 
 
+
+def _locked_count(kind):
+    """Count in-flight leases across all processes sharing the data directory.
+
+    Every probe opens its own file description: flock collisions are visible
+    even for another thread in this same process.
+    """
+    import fcntl
+    total = 0
+    for index in range(CAPACITIES[kind]):
+        with _slot_path(kind, index).open("a+b") as handle:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except (BlockingIOError, OSError):
+                total += 1
+            else:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    return total
+
+
+def _try_admit_budgeted(kind, headroom):
+    """Atomically check cross-process reservations and claim a lane.
+
+    Checking only process-local counters permits two workers to spend the same
+    remaining cgroup bytes. The shared budget flock serializes the check with
+    slot acquisition; the lane locks retain reservations until release.
+    """
+    import fcntl
+    from app.monthly_report_library import _root
+    folder = _root() / "render-jobs"
+    folder.mkdir(parents=True, exist_ok=True)
+    with (folder / ".resource-budget.lock").open("a+b") as budget:
+        try:
+            fcntl.flock(budget.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (BlockingIOError, OSError):
+            return None
+        try:
+            # Account for *every* class, including conversions nested in a
+            # heavy worker and native allocations not yet reflected by RSS.
+            reserved = sum(_locked_count(k) * ESTIMATED_PEAK[k]
+                           for k in CAPACITIES)
+            free = headroom() if headroom is not None else None
+            if free is None or free < reserved + ESTIMATED_PEAK[kind] + RESERVE_BYTES:
+                return None
+            return _try_slot(kind)
+        finally:
+            fcntl.flock(budget.fileno(), fcntl.LOCK_UN)
+
+
 @contextmanager
 def lease(kind, *, priority="visible", wait_seconds=0, headroom=None,
           is_current=None):
@@ -134,12 +183,7 @@ def lease(kind, *, priority="visible", wait_seconds=0, headroom=None,
                     raise AdmissionUnavailable("The queued preview was superseded; edits are unchanged.")
                 if (ticket == min((t for t in _WAITING if t[2] == kind),
                                   default=ticket)):
-                    free = headroom() if headroom is not None else None
-                    # Missing/broken counters fail closed for parallel jobs.
-                    already = _RUNNING["heavy"] if kind == "heavy" else 0
-                    needed = ESTIMATED_PEAK[kind] + RESERVE_BYTES + already * ESTIMATED_PEAK["heavy"]
-                    if free is not None and free >= needed:
-                        acquired = _try_slot(kind)
+                    acquired = _try_admit_budgeted(kind, headroom)
                 if acquired is not None:
                     _RUNNING[kind] += 1
                     break
