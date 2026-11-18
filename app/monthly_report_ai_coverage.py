@@ -18,6 +18,8 @@ from app.monthly_report_prompts import EXTRACT_PROMPT, PROMPT_VERSION
 MAX_REGION_CHARS = 20_000
 MAX_BATCH_CHARS = 48_000
 MAX_BATCH_REGIONS = 20
+MAX_REGION_LINES = 40
+MAX_BATCH_CANDIDATE_LINES = 80
 MAX_VISUALS_PER_BATCH = 1
 MAX_PARALLEL_READS = 2
 VERSION = "monthly-full-coverage-v1"
@@ -30,7 +32,7 @@ For this batch return one strict JSON object with:
 {"reviewed_regions":["1.1"],"unsupported_regions":[],
  "facts":[{"source":"source id","region":"1.1","page":1,
  "kind":"finding","text":"...","quote":"exact original text", "uncertain":false}]}
-Every region ID supplied must occur exactly once in reviewed_regions or
+Candidate kind hints are search aids only, not source facts. If 100 facts cannot\ncover a region, mark it unsupported with a reason rather than omitting it.\nEvery region ID supplied must occur exactly once in reviewed_regions or
 unsupported_regions (objects with region and a nonempty reason). A region with
 no relevant facts still belongs in reviewed_regions if fully inspected.
 Cite the exact source ID, region ID and original page for EACH fact. The quote
@@ -89,16 +91,16 @@ def plan(source, pages=None, *, model=None):
                             for n in requested):
         raise ValueError("Choose real source pages to read.")
     selected = tuple(dict.fromkeys(requested))
-    batches, current, size, empty = [], [], 0, []
+    batches, current, size, lines, empty = [], [], 0, 0, []
 
     def flush():
-        nonlocal current, size
+        nonlocal current, size, lines
         if current:
             signature = [(r.identity, r.page, r.text, r.visual) for r in current]
             key = _digest((VERSION, PROMPT_VERSION, model, "facts",
                            source.id, source.sha256, signature))
             batches.append(Batch(key, tuple(current)))
-        current, size = [], 0
+        current, size, lines = [], 0, 0
 
     needs_vision = set(source.needs_vision)
     for number in selected:
@@ -112,7 +114,11 @@ def plan(source, pages=None, *, model=None):
         pieces = []
         if native:
             current_piece = ""
+            piece_lines = 0
             for line in native.splitlines(keepends=True):
+                if piece_lines >= MAX_REGION_LINES and current_piece:
+                    pieces.append(current_piece)
+                    current_piece, piece_lines = "", 0
                 while line:
                     room = MAX_REGION_CHARS - len(current_piece)
                     if not room:
@@ -121,6 +127,7 @@ def plan(source, pages=None, *, model=None):
                         room = MAX_REGION_CHARS
                     if len(line) <= room:
                         current_piece += line
+                        piece_lines += bool(line.strip())
                         line = ""
                     else:
                         if current_piece:
@@ -137,18 +144,41 @@ def plan(source, pages=None, *, model=None):
             region = Region(f"{number}.{part}", number, text, visual)
             if (current and (visual or current[0].visual
                     or len(current) >= MAX_BATCH_REGIONS
-                    or size + len(text) > MAX_BATCH_CHARS)):
+                    or size + len(text) > MAX_BATCH_CHARS
+                    or lines + _candidate_line_count(text) > MAX_BATCH_CANDIDATE_LINES)):
                 flush()
             current.append(region)
             size += len(text)
+            lines += _candidate_line_count(text)
             if visual:
                 flush()
     flush()
     return Plan(source.id, source.fingerprint, selected, tuple(batches), tuple(empty))
 
 
+def _candidate_line_count(text):
+    return max(1, sum(bool(line.strip()) for line in text.splitlines()))
+
+
+def _candidate_kinds(text):
+    """Cheap, advisory native discovery. No extracted field comes from a hint."""
+    candidates = {
+        "action": ("replaced", "repaired", "performed", "completed",
+                   "inspected", "serviced"),
+        "reading": ("psi", "gpm", "temperature", "conductivity", "measured"),
+        "training": ("training", "attendees", "instructor"),
+        "follow_up": ("scheduled", "pending", "awaiting", "follow-up"),
+        "recommendation": ("recommended", "recommendation", "proposed"),
+        "issue": ("issue", "fault", "failure", "leak", "outage"),
+    }
+    lower = text.casefold()
+    return [kind for kind, words in candidates.items()
+            if any(word in lower for word in words)]
+
+
 def _payload(batch, source):
-    regions = [{"id": r.identity, "page": r.page, "text": r.text}
+    regions = [{"id": r.identity, "page": r.page, "text": r.text,
+                "candidate_kinds": _candidate_kinds(r.text)}
                for r in batch.regions]
     return [{"type": "text", "text": COVERAGE_PROMPT + "\n" +
              json.dumps({"source_id": source.id, "regions": regions},
