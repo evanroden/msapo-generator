@@ -118,6 +118,10 @@ def test_overlong_pdf_is_rejected_before_ocr_api_fallback(monkeypatch):
         page = document.new_page(width=100, height=100)
         pixmap = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 80, 80))
         pixmap.clear_with(255)
+        # Real scan ink, not a uniformly white image that warrants no model call.
+        for y in (20, 22, 50, 52):
+            for x in range(8, 73):
+                pixmap.set_pixel(x, y, (0, 0, 0))
         page.insert_image(page.rect, pixmap=pixmap)
     payload = document.tobytes()
     document.close()

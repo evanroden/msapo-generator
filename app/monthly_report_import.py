@@ -22,8 +22,8 @@ from PIL import Image, UnidentifiedImageError
 from lxml import etree
 
 from app.image_open import open_image, image_formats_for_suffix
-from app.monthly_report_xml_parser import parse_xml_stream
 from app.monthly_report_shape_labels import DrawingLabel, collect_drawing_labels
+from app.monthly_report_xml_parser import parse_xml_stream
 from app.monthly_report_docx import normalize_report_image
 from app.monthly_report_model import (
     BlockSpec,
@@ -123,7 +123,10 @@ class ImportItem:
     # Original rows stay intact for source identity and native geometry checks.
     # Only a proved full-width service-call title may precede the real header.
     table_header_row: int = 0
-    # Source-bound review evidence only; never grants drawing editability or export.
+    # Relationship identity is stable within the original source part and
+    # must not be replaced with a guessed image/shape role.
+    relationship_id: str = ""
+    # Review evidence only, never editable geometry.
     drawing_labels: tuple[DrawingLabel, ...] = ()
 
     @property
@@ -140,6 +143,9 @@ class DocxInspection:
     notices: tuple[str, ...]
     word_sections: int
     revision_view_version: int = 0
+    # Physical first-page text, distinct from the broad extraction/title shelf.
+    # None is reserved for legacy constructed inspections without page evidence.
+    cover_title_candidates: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -198,8 +204,9 @@ def report_period_from_title_candidates(titles: tuple[str, ...]) -> tuple[Report
 
 
 def _package(path: Path) -> ZipFile:
+    from app.monthly_report_upload_limits import byte_limit_label, docx_size_error
     if path.stat().st_size > MAX_DOCX_BYTES:
-        raise ImportError("DOCX exceeds the 128 MB import limit. Split the source document and retry.")
+        raise ImportError(docx_size_error(MAX_DOCX_BYTES))
     try:
         archive = ZipFile(path)
         members = archive.infolist()
@@ -209,12 +216,20 @@ def _package(path: Path) -> ZipFile:
         if any(n.startswith("/") or "\\" in n or ".." in n.split("/") for n in names):
             raise ImportError("The DOCX contains an unsafe package path.")
         if sum(m.file_size for m in members) > MAX_EXPANDED_BYTES:
-            raise ImportError("Expanded DOCX exceeds 256 MB. Split it before importing.")
-        if any(m.file_size > MAX_MEMBER_BYTES or m.flag_bits & 1 for m in members):
-            raise ImportError("The DOCX contains an oversized or encrypted part.")
+            raise ImportError(f"Expanded DOCX exceeds the {byte_limit_label(MAX_EXPANDED_BYTES)} limit. "
+                              "Use a smaller import copy; the original is unchanged.")
+        if any(m.file_size > MAX_MEMBER_BYTES for m in members):
+            raise ImportError(f"The DOCX contains an oversized part (per-member limit "
+                              f"{byte_limit_label(MAX_MEMBER_BYTES)}). Use a smaller import copy.")
+        if any(m.flag_bits & 1 for m in members):
+            raise ImportError("The DOCX contains an encrypted part and cannot be inspected safely.")
         xml = [m for m in members if m.filename.endswith((".xml", ".rels"))]
-        if any(m.file_size > MAX_XML_BYTES for m in xml) or sum(m.file_size for m in xml) > MAX_XML_TOTAL:
-            raise ImportError("DOCX XML exceeds the safe parsing budget.")
+        if any(m.file_size > MAX_XML_BYTES for m in xml):
+            raise ImportError(f"DOCX XML exceeds the {byte_limit_label(MAX_XML_BYTES)} per-part "
+                              "safe parsing budget. Split the document; the original is unchanged.")
+        if sum(m.file_size for m in xml) > MAX_XML_TOTAL:
+            raise ImportError(f"DOCX XML exceeds the {byte_limit_label(MAX_XML_TOTAL)} total "
+                              "safe parsing budget. Split the document; the original is unchanged.")
         if "word/document.xml" not in names or "[Content_Types].xml" not in names:
             raise ImportError("Choose a valid Word DOCX document.")
         return archive
@@ -589,6 +604,7 @@ def inspect_docx(path: Path) -> DocxInspection:
         for chunk in iter(lambda: raw.read(1024 * 1024), b""):
             digest.update(chunk)
     items, titles, notices = [], [], []
+    cover_titles, cover_open = [], True
     background_positions = []
     mint_background_positions = set()
     alternate_positions = set()
@@ -673,6 +689,15 @@ def inspect_docx(path: Path) -> DocxInspection:
                         is_unit = parent is not None and parent.tag in (W + "body", W + "hdr", W + "ftr", W + "footnote", W + "endnote")
                         if is_unit:
                             position += 1
+                            first_item = len(items)
+                            # A manual or rendered Word page break is a physical
+                            # boundary, even if the next page has no section heading.
+                            # Text in the break's own unit is not authoritative:
+                            # it may combine content from both sides of the break.
+                            page_break = (part == "word/document.xml" and any(
+                                (node.tag == W + "br" and node.get(W + "type") == "page")
+                                or node.tag == W + "lastRenderedPageBreak"
+                                for node in element.iter()))
                             from app.monthly_report_native_design import equivalent_native_alternatives
                             def image_identity(identity):
                                 target, kind = relations.get(identity, ("", ""))
@@ -810,10 +835,9 @@ def inspect_docx(path: Path) -> DocxInspection:
                                     for node in element.iter())) else ()
                             except ValueError as exc:
                                 raise ImportError(str(exc)) from exc
-                            # Shape text is evidence, not permission to flatten its geometry.
+                            # Source labels do not establish native drawing editability.
                             drawing_text = "\n".join(label.text for label in drawing_labels
                                                      if label.source == "drawing_text")
-                            complete_drawing_text = "\n".join(value for value in (text, drawing_text) if value)
                             from app.monthly_report_native_design import mint_divider_background
                             if (part == "word/document.xml" and _is_native_divider_background(element, text)
                                     and (alternatives_equivalent or not mint_divider_background(element, text))):
@@ -821,55 +845,65 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 if mint_divider_background(element, text):
                                     mint_background_positions.add((position, word_section))
                             if element.tag == W + "tbl":
-                                rows = []
-                                full_width_bands = []
-                                for row in element.findall(W + "tr"):
-                                    cells = []
-                                    before = row.find(f"{W}trPr/{W}gridBefore")
-                                    cells.extend([""] * min(100, int(before.get(W + "val", "0"))) if before is not None else [])
-                                    row_cells = row.findall(W + "tc")
-                                    if len(row_cells) == 1 and before is None:
-                                        merged = row_cells[0].find(f"{W}tcPr/{W}gridSpan")
-                                        if merged is not None:
-                                            full_width_bands.append((len(rows), int(merged.get(W + "val", "1"))))
-                                    for cell in row_cells:
-                                        cells.append(_text(cell))
-                                        span = cell.find(f"{W}tcPr/{W}gridSpan")
-                                        count = int(span.get(W + "val", "1")) if span is not None else 1
-                                        if count < 1 or count > 100 or len(cells) > 100:
-                                            raise ImportError("Table is too wide to review safely.")
-                                        cells.extend([""] * (count - 1))
-                                    rows.append(tuple(cells))
-                                # Cell text extraction cannot represent floating frames or
-                                # non-picture drawings. Keep this source occurrence in review
-                                # instead of offering a flattened, editable replacement.
-                                complex_table = any(
-                                    node.tag in (W + "txbxContent", V + "group")
-                                    or (node.tag == A + "graphicData"
-                                        and not node.get("uri", "").endswith("/picture"))
-                                    for node in element.iter())
-                                if complex_table:
-                                    add("unsupported", part, position, text=complete_drawing_text,
-                                        drawing_labels=drawing_labels,
-                                        note="Word table contains text boxes or unsupported drawings and needs manual layout review. "
-                                             "Retain its source page or add a reviewed replacement; extracted text does not preserve the layout.")
-                                elif rows and not picture_table:
-                                    width = max(map(len, rows))
-                                    rows = tuple(row + ("",) * (width - len(row)) for row in rows)
-                                    title_band = _service_call_title_band(element, rows, section)
-                                    table_id = add("table", part, position, rows=rows,
-                                        table_header_row=1 if title_band else 0,
-                                        suggested_slot=content_slot or _suggest("table", text, section),
-                                        merged_title_rows=tuple(index for index, count in full_width_bands
-                                                                if width >= 2 and count == width),
-                                        note="Merged cells retain text in the first column of their span. Confirm headers and columns.")
-                                    if title_band:
-                                        # A derived ID avoids renumbering any later source item.
-                                        # Separate context survives edited/plain output as well as
-                                        # an unchanged native table, without becoming a data row.
-                                        add("text", part, position, item_id=table_id + "-title",
-                                            text=rows[0][0], suggested_slot="service_calls",
-                                            note="Native table title")
+                                from app.monthly_report_docx_tables import native_grid
+                                # Word allows full data tables nested inside cells. The
+                                # parent is a layout container, not a flattened child
+                                # grid: keep it in review and expose every descendant
+                                # as its own stable, independently editable occurrence.
+                                table_ids = {}
+                                child_counts = defaultdict(int)
+                                for native_table in element.iter(W + "tbl"):
+                                    ancestor = parents.get(native_table)
+                                    while ancestor is not None and ancestor.tag != W + "tbl":
+                                        ancestor = parents.get(ancestor)
+                                    parent_id = table_ids.get(ancestor, "")
+                                    if parent_id:
+                                        child_counts[parent_id] += 1
+                                    nested_id = (f"{parent_id}-nested-{child_counts[parent_id]:03d}"
+                                                 if parent_id else None)
+                                    grid = native_grid(native_table, text_of=_text, error_type=ImportError)
+                                    direct_text = _text(native_table, exclude=set(grid.descendants))
+                                    # Graphics inside a child do not silently make
+                                    # the parent editable, or vice versa.
+                                    complex_table = any(
+                                        node.tag in (W + "txbxContent", V + "group")
+                                        or (node.tag == A + "graphicData"
+                                            and not node.get("uri", "").endswith("/picture"))
+                                        for node in native_table.iter())
+                                    if grid.descendants:
+                                        recorded = add("unsupported", part, position,
+                                            item_id=nested_id, text=direct_text,
+                                            note="Native Word table contains nested table grids. "
+                                                 "Keep the parent layout in source-page review; "
+                                                 "its child grids are inventoried separately for explicit "
+                                                 "editable mapping. Do not flatten child cells into this table.")
+                                    elif complex_table:
+                                        recorded = add("unsupported", part, position,
+                                            item_id=nested_id, text=direct_text,
+                                            drawing_labels=drawing_labels if native_table is element else (),
+                                            note="Word table contains text boxes or unsupported drawings and needs manual layout review. "
+                                                 "Retain its source page or add a reviewed replacement; extracted text does not preserve the layout.")
+                                    elif grid.rows and (native_table is not element or not picture_table):
+                                        title_band = _service_call_title_band(native_table, grid.rows, section)
+                                        width = len(grid.rows[0])
+                                        recorded = add("table", part, position, item_id=nested_id,
+                                            rows=grid.rows, table_header_row=1 if title_band else 0,
+                                            suggested_slot=content_slot or _suggest("table", direct_text, section),
+                                            merged_title_rows=tuple(index for index, count in grid.full_width_bands
+                                                                    if width >= 2 and count == width),
+                                            note=("Nested Word table; confirm its own headers, columns and parent layout."
+                                                  if parent_id else
+                                                  "Merged cells retain text in the first column of their span. Confirm headers and columns."))
+                                        if title_band:
+                                            add("text", part, position, item_id=recorded + "-title",
+                                                text=grid.rows[0][0], suggested_slot="service_calls",
+                                                note="Native table title")
+                                    else:
+                                        # A picture-only Word table was already exposed
+                                        # through independently inventoried image nodes.
+                                        # It has no nested grid that can disappear here.
+                                        continue
+                                    table_ids[native_table] = recorded
                             elif standalone_frame:
                                 note = ("Word text frame needs manual layout review. Preserve and review its complete page "
                                         "or add a reviewed replacement; extracted labels do not preserve the layout.")
@@ -952,7 +986,8 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 item_id = f"{prior_id}-occurrence-{occurrence + 1}" if target and prior_id else None
                                 added_id = add("image" if supported else "unsupported", part, position, text=caption,
                                     item_id=item_id,
-                                    image_part=target if safe else "", suggested_slot=_suggest("image", text, section, heading=bool(detected), part=part) if supported else "",
+                                    image_part=target if safe else "", relationship_id=rid,
+                                    suggested_slot=_suggest("image", text, section, heading=bool(detected), part=part) if supported else "",
                                     note="" if supported else "External, missing or unsupported image. Export this drawing as PNG/JPEG and replace it after review.",
                                     image_role=role if supported else "",
                                     **(metadata(target) if supported else {}))
@@ -963,14 +998,18 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 if target:
                                     image_occurrences[target] = (prior_id or added_id, occurrence + 1)
                             graphics = [e for e in element.iter() if e.tag == A + "graphicData" and not e.get("uri", "").endswith("/picture")]
+                            chart_ids, chart_labels, chart_notices = (), (), ()
+                            if graphics:
+                                from app.monthly_report_docx_chart_coverage import chart_relationship_evidence
+                                chart_ids, chart_labels, chart_notices = chart_relationship_evidence(
+                                    archive, graphics, relations, names)
                             legacy_groups = element.findall(".//" + V + "group")
                             legacy_shapes = [node for node in element.iter()
                                 if node.tag in (V + "shape", V + "rect", V + "roundrect", V + "oval", V + "line")
                                 and node.find(".//" + V + "imagedata") is None]
                             legacy_text = any(node.find(".//" + W + "txbxContent") is not None
                                               for node in legacy_shapes)
-                            # Unlabelled standalone VML artwork is still artwork; do not
-                            # silently equate an unread decoration with an empty paragraph.
+                            # Standalone unlabeled VML artwork also needs review.
                             if graphics or legacy_groups or legacy_shapes:
                                 from app.monthly_report_smartart import closed_smartart_text
                                 smartart = closed_smartart_text(archive, graphics, relations) if section == "organization" and not legacy_groups and not legacy_text else None
@@ -1001,16 +1040,34 @@ def inspect_docx(path: Path) -> DocxInspection:
                                             element, word_section=word_section, position=position)
                                         if divergent_native:
                                             note += " The modern and fallback Word representations disagree."
+                                    if chart_notices:
+                                        note += " " + " ".join(chart_notices)
                                     add("native_layout" if native_role else "unsupported", part, position,
-                                        text=complete_drawing_text, note=note, drawing_labels=drawing_labels)
-                            if (element.find(".//" + W + "altChunk") is not None or element.tag == W + "altChunk"
-                                    or element.find(".//" + W + "object") is not None or element.tag == W + "object"):
+                                        text="\n".join(t for t in (text, drawing_text, *chart_labels) if t),
+                                        relationship_id=";".join(chart_ids), note=note,
+                                        drawing_labels=drawing_labels)
+                            if element.find(".//" + W + "altChunk") is not None or element.tag == W + "altChunk":
+                                add("unsupported", part, position, note="Embedded document content was not executed. Review it in the original.")
+                            if element.find(".//" + W + "object") is not None or element.tag == W + "object":
                                 add("unsupported", part, position, text=drawing_text,
                                     note="Embedded or unsupported Word object was not interpreted or executed. "
                                          "Review the exact source region in the original; supply an explicit safe replacement.",
                                     drawing_labels=drawing_labels)
-                            if part == "word/document.xml" and element.find(".//" + W + "sectPr") is not None:
-                                word_section += 1
+                            if part == "word/document.xml":
+                                if cover_open and not page_break:
+                                    for item in items[first_item:]:
+                                        if item.kind != "text" or item.section not in ("", "cover"):
+                                            continue
+                                        for line in item.text.splitlines():
+                                            if 3 < len(line) < 180 and line not in cover_titles:
+                                                cover_titles.append(line)
+                                                if len(cover_titles) >= 12:
+                                                    break
+                                if (page_break or section not in ("", "cover")
+                                        or element.find(".//" + W + "sectPr") is not None):
+                                    cover_open = False
+                                if element.find(".//" + W + "sectPr") is not None:
+                                    word_section += 1
                             element.clear()
                             parent.remove(element)
                         stack.pop()
@@ -1073,12 +1130,13 @@ def inspect_docx(path: Path) -> DocxInspection:
         notices.append("Tracked changes use their final accepted view. Deleted and moved-from text is excluded; the uploaded original is unchanged.")
     if comment_changes:
         notices.append("Word comments are excluded from report previews and downloads; the uploaded original is unchanged.")
-    identified_period, period_notices = report_period_from_title_candidates(tuple(titles[:12]))
+    identified_period, period_notices = report_period_from_title_candidates(tuple(cover_titles[:12]))
     if identified_period is not None:
         notices.append("Source report title indicates " + identified_period.label +
                        ". Confirm the reporting month when saving; unrelated cover or print dates do not decide it.")
     notices.extend(period_notices)
-    return DocxInspection(digest.hexdigest(), tuple(items), tuple(titles[:12]), tuple(notices), word_section, version)
+    return DocxInspection(digest.hexdigest(), tuple(items), tuple(titles[:12]), tuple(notices),
+                          word_section, version, tuple(cover_titles[:12]))
 
 
 def read_import_image(path: Path, item: ImportItem, *, line_art: bool = True, preview: bool = False,
