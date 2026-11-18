@@ -23,8 +23,9 @@ def conversion_slot(*, wait_seconds=10):
         yield
         return
     deadline = time.monotonic() + max(0, min(float(wait_seconds), 130))
-    if not _SLOT.acquire(timeout=max(0, deadline - time.monotonic())):
-        raise RenderBusy("Another report is rendering. Please try again shortly.")
+    with span("job_queue"):
+        if not _SLOT.acquire(timeout=max(0, deadline - time.monotonic())):
+            raise RenderBusy("Another report is rendering. Please try again shortly.")
     try:
         folder = _root() / "render-jobs"
         folder.mkdir(parents=True, exist_ok=True)
@@ -34,17 +35,18 @@ def conversion_slot(*, wait_seconds=10):
                 lock.write(b"0"); lock.flush()
             else:
                 import fcntl
-            while True:
-                try:
-                    if os.name == "nt":
-                        lock.seek(0); msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
-                    else:
-                        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break
-                except (BlockingIOError, OSError):
-                    if time.monotonic() >= deadline:
-                        raise RenderBusy("Another report is rendering. Please try again shortly.") from None
-                    time.sleep(min(.05, max(0, deadline - time.monotonic())))
+            with span("job_queue"):
+                while True:
+                    try:
+                        if os.name == "nt":
+                            lock.seek(0); msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+                        else:
+                            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except (BlockingIOError, OSError):
+                        if time.monotonic() >= deadline:
+                            raise RenderBusy("Another report is rendering. Please try again shortly.") from None
+                        time.sleep(min(.05, max(0, deadline - time.monotonic())))
             try:
                 from app.office_process import OfficeCleanupPending, require_idle
                 try:
@@ -93,8 +95,8 @@ def _reclaim_preview_heap():
 
 
 def convert_to_pdf(path, *, wait_seconds=10, lossless_images=False):
-    with span("conversion"):
-        with conversion_slot(wait_seconds=wait_seconds):
+    with conversion_slot(wait_seconds=wait_seconds):
+        with span("conversion"):
             if lossless_images is not False:
                 return pdf_converter.convert_to_pdf(path, lossless_images=lossless_images)
             return pdf_converter.convert_to_pdf(path)
