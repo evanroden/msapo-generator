@@ -35,6 +35,7 @@ class PdfPageReview:
     review: WorkOrderReview | None = None
     unmatched_rows: tuple[tuple[str, ...], ...] = ()
     notices: tuple[str, ...] = ()
+    unmatched_origins: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -111,61 +112,62 @@ def _extract_table(table):
 
 
 def _page_table(page):
-    """Extract native table cells with stable row slots; never infer a work order."""
-    # Only the in-memory page changes orientation. Source bytes remain immutable.
+    """Extract native table cells with exact table/row review coordinates."""
     if page.rotation:
-        page.set_rotation(0)
+        page.set_rotation(0)  # Disposable view only, never saved original.
     tables = page.find_tables(strategy="text").tables
     if not tables:
-        # Strict ruled-line fallback when text-grid discovery found none.
         tables = page.find_tables(strategy="lines").tables
     if len(tables) > MAX_TABLES_PER_PAGE:
         raise ValueError("PDF page has too many table candidates to review safely.")
 
-    matched, unheaded = [], []
-    # Use native table geometry, not unrelated page-text extraction order.
-    for table in sorted(tables, key=lambda item: (item.bbox[1], item.bbox[0])):
+    matched, unheaded, native = [], [], []
+    for table_index, table in enumerate(
+            sorted(tables, key=lambda item: (item.bbox[1], item.bbox[0])), 1):
         rows = _extract_table(table)
+        labeled = tuple((values, f"native table {table_index}, row {ordinal}")
+                        for ordinal, values in enumerate(rows, 1) if any(values))
+        native.extend(labeled)
         result = _maybe_header(rows)
         if result is None:
-            unheaded.extend(values for values in rows if any(values))
+            unheaded.extend(labeled)
             continue
         heading_index, columns = result
         identity = suggest_mapping(columns).work_order
         data, skipped, unmatched = [], [], []
-        # Retain cells before a header as unresolved evidence.
-        for values in rows[:heading_index]:
+        for row_index, values in enumerate(rows[:heading_index], 1):
             if any(values):
                 data.append(values)
                 skipped.append(len(data))
-                unmatched.append(values)
-        for values in rows[heading_index + 1:]:
+                unmatched.append((
+                    values, f"native table {table_index}, row {row_index}"))
+        for row_index, values in enumerate(rows[heading_index + 1:],
+                                           heading_index + 2):
             if not any(values):
-                continue  # PyMuPDF grid spacer, not a native text row.
+                continue  # PyMuPDF text-grid spacer, not a native text row.
             data.append(values)
-            slot = len(data)  # 1-based physical source-table data-row slot.
+            slot = len(data)  # Stable normalized physical-data-row slot.
             if tuple(v.casefold() for v in values) == tuple(
                     col.casefold() for col in columns):
-                skipped.append(slot)  # Repeated heading, never another WO.
+                skipped.append(slot)
             elif identity is None or not values[identity].strip():
                 skipped.append(slot)
-                unmatched.append(values)
+                unmatched.append((
+                    values, f"native table {table_index}, row {row_index}"))
         matched.append((columns, data, skipped, unmatched))
 
     if not matched:
         notices = ("Native table cells had no supported work-order header; "
                    "review the page; no records were inferred.",) if unheaded else ()
-        return None, tuple(unheaded), notices, ()
+        return (None, tuple(v for v, _ in unheaded), notices, (),
+                tuple(origin for _, origin in unheaded))
     columns = matched[0][0]
     if any(candidate[0] != columns for candidate in matched[1:]):
-        # Different simultaneous headers cannot be safely joined.
-        unknown = list(unheaded)
-        for source_columns, rows, _, _ in matched:
-            unknown.append(source_columns)
-            unknown.extend(rows)
-        return None, tuple(unknown), (
+        # Different positively identified layouts are never joined or counted.
+        return (None, tuple(v for v, _ in native), (
             "Multiple work-order tables with different headers were found on "
-            "one page; inspect each native table before mapping.",), ()
+            "one page; inspect each native table before mapping.",), (),
+            tuple(origin for _, origin in native))
 
     original_rows, skipped, unmatched = [], [], list(unheaded)
     for _, values, ignored, uncertain in matched:
@@ -174,14 +176,16 @@ def _page_table(page):
         skipped.extend(offset + index for index in ignored)
         unmatched.extend(uncertain)
     if not original_rows and not unmatched:
-        return None, (), ("The table has no readable work-order rows.",), ()
+        return None, (), ("The table has no readable work-order rows.",), (), ()
     notices = (("Additional unheaded table cells require review; "
                 "none were counted as work orders.",) if unheaded else (),)
-    # Keep skipped headings and missing-ID cells in immutable original_rows;
-    # normalize_table binds row identities before we filter the editable subset.
+    # Full original_rows retains skipped/missing-ID data positions. Accepted
+    # SourceRow numbers refer to these slots; unmatched gets native coordinates.
     return (SourceTable("PDF page " + str(page.number + 1), columns,
-                        tuple(original_rows)), tuple(unmatched),
-            tuple(note for note in notices if note), tuple(skipped))
+                        tuple(original_rows)),
+            tuple(row for row, _ in unmatched),
+            tuple(note for note in notices if note), tuple(skipped),
+            tuple(origin for _, origin in unmatched))
 
 
 def _cross_page_duplicates(pages):
@@ -218,7 +222,8 @@ def review_pdf_workorders(profile: ReportProfile, content: SourceContent,
                 raise ValueError("This PDF exceeds the 150-page work-order review limit.")
             if len(content.source.page_texts) != len(pdf):
                 raise ValueError("The PDF page inventory changed; re-read the original.")
-            page_tables, unresolved, rotations, notices, skipped_rows = [], [], [], [], []
+            page_tables, unresolved, rotations, notices = [], [], [], []
+            skipped_rows, unmatched_origins = [], []
             cell_count = 0
             for number, page in enumerate(pdf, 1):
                 rotation = page.rotation
@@ -234,12 +239,14 @@ def review_pdf_workorders(profile: ReportProfile, content: SourceContent,
                     page_tables.append(None)
                     unresolved.append(())
                     skipped_rows.append(())
+                    unmatched_origins.append(())
                     notices.append((reason,))
                     continue
-                table, unknown, problems, skipped = _page_table(page)
+                table, unknown, problems, skipped, origins = _page_table(page)
                 page_tables.append(table)
                 unresolved.append(unknown)
                 skipped_rows.append(skipped)
+                unmatched_origins.append(origins)
                 # Count every native source cell once, including ambiguous pages.
                 cell_count += (len(table.columns) * len(table.rows) if table
                                else sum(len(values) for values in unknown))
@@ -265,8 +272,9 @@ def review_pdf_workorders(profile: ReportProfile, content: SourceContent,
                    for index, table in enumerate(page_tables, 1))
     scoped_content = SourceContent(source, tables)
     pages = []
-    for number, (table, unknown, rotation, problems, skipped) in enumerate(
-            zip(page_tables, unresolved, rotations, notices, skipped_rows), 1):
+    for number, (table, unknown, rotation, problems, skipped, origins) in enumerate(
+            zip(page_tables, unresolved, rotations, notices, skipped_rows,
+                unmatched_origins), 1):
         review = (normalize_table(scoped_content, number, profile, period)
                   if table is not None else None)
         if review is not None and skipped:
@@ -279,7 +287,8 @@ def review_pdf_workorders(profile: ReportProfile, content: SourceContent,
                   "ambiguous" if problems and "Multiple" in problems[0] else
                   "no_table")
         pages.append(PdfPageReview(number, source_reference(source, number),
-                                   rotation, status, review, unknown, problems))
+                                   rotation, status, review, unknown, problems,
+                                   origins))
     duplicates = _cross_page_duplicates(pages)
     if duplicates:
         collisions = set(duplicates)
