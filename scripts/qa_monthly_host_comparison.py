@@ -153,7 +153,13 @@ def compare(render, azure):
         right["source_env"]["cpu"], right["source_env"]["memory"])
     same_software = (left["source_env"]["python"], left["source_env"]["dependencies"]) == (
         right["source_env"]["python"], right["source_env"]["dependencies"])
+    region_known = (left["service_resource_verified"] and right["service_resource_verified"]
+                    and isinstance(left["region"], str) and bool(left["region"].strip())
+                    and isinstance(right["region"], str) and bool(right["region"].strip()))
+    region_relation = ("same" if left["region"] == right["region"] else "different") if region_known else "unverified"
     reasons = []
+    if region_relation == "different":
+        reasons.append("different declared regions")
     for condition, reason in ((same_fixtures, "different synthetic bytes/source identities"),
                               (same_outputs, "different PDF page geometry/raster hashes"),
                               (same_build, "different measured build SHAs"),
@@ -168,8 +174,9 @@ def compare(render, azure):
             "same_workload": same_fixtures, "same_outputs": same_outputs,
             "same_build": same_build, "same_limits": same_limits, "same_software": same_software,
             "controlled_comparison": not reasons, "confounders": reasons,
+            "region_relation": region_relation,
             "hosts": {name: {"build": data["build"], "execution": data["execution"],
-                              "region": data["region"] if data["service_resource_verified"] else "unverified",
+                              "region": "declared" if data["service_resource_verified"] else "unverified",
                               "limit_cpu": data["source_env"]["cpu"],
                               "limit_memory_bytes": data["source_env"]["memory"],
                               "resource_verification": data["service_resource_verified"],
