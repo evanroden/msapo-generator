@@ -22,23 +22,35 @@ class RegisterIssue:
     status: str = "ongoing"
     update: str = ""
     legacy_text: str = ""
+    legacy_key: str = ""  # Previous source-row ID; used only to retain saved edits.
 
 
-_DESCRIPTION = {"issue", "issue description", "description", "finding",
-                "problem", "equipment issue", "equipment issue description"}
-_STATUS = {"status", "issue status", "state"}
-_OWNER = {"owner", "assigned to", "assignee", "responsible", "responsible party", "person responsible"}
-_ACTION = {"action", "action required", "next action", "corrective action", "resolution action"}
-_DATE = {"date", "date opened", "open date", "reported date", "date reported",
-         "identified", "date identified", "closed date", "date closed",
-         "updated date", "last updated", "target date", "due date"}
+_DESCRIPTION = {
+    "issue", "issue description", "issue summary", "issue details",
+    "description", "finding", "problem", "problem description", "observation",
+    "deficiency", "equipment issue", "equipment issue description",
+}
+_STATUS = {"status", "issue status", "current status", "work status",
+           "state", "issue state", "progress status"}
+_OWNER = {"owner", "owner name", "action owner", "assigned to", "assignee",
+          "responsible", "responsible party", "responsible person", "person responsible"}
+_ACTION = {"action", "action required", "next action", "corrective action",
+           "resolution action", "planned action"}
+_DATE = {"date", "date opened", "opened date", "open date", "reported date",
+         "date reported", "identified", "date identified", "identified date",
+         "closed date", "date closed", "updated date", "last updated",
+         "target date", "due date", "date due", "update due", "date raised"}
+_FACILITY = {"facility", "facility name", "site", "site name", "building",
+             "building name", "location"}
+_PRIORITY = {"priority", "priority level", "severity", "urgency", "risk level"}
+_CONTEXT = _OWNER | _ACTION | _DATE | _FACILITY | _PRIORITY
 
 
 def _label(text):
     return re.sub(r"[^a-z0-9]+", " ", str(text).casefold()).strip()
 
 
-def mapped_issue_register(columns, rows, reference="") -> tuple[RegisterIssue, ...] | None:
+def mapped_issue_register(columns, rows, reference="", *, row_offset=0) -> tuple[RegisterIssue, ...] | None:
     """Read only unambiguous register schemas; keep all technical source cells.
 
     The workflow's status is **not** taken as resolved from a source's "Closed"
@@ -52,31 +64,34 @@ def mapped_issue_register(columns, rows, reference="") -> tuple[RegisterIssue, .
     headings = tuple(str(value) for value in columns) + tuple(
         f"Detail {i + 1}" for i in range(len(columns), width))
     normalized = tuple(_label(h) for h in headings)
-    if len(set(normalized)) != len(normalized):
-        return None
-    desc = [i for i, label in enumerate(normalized) if label in _DESCRIPTION]
-    status = [i for i, label in enumerate(normalized) if label in _STATUS]
-    contextual = [i for i, label in enumerate(normalized)
-                  if label in _OWNER or label in _ACTION or label in _DATE]
+    # Importers may emit physical duplicate headings (including "Owner (2)").
+    # Only ambiguous issue/status roles prevent mapping. Other duplicates
+    # remain separate, visibly numbered original fields for human review.
+    roles = tuple(re.sub(r" [2-9][0-9]*$", "", label) for label in normalized)
+    desc = [i for i, label in enumerate(roles) if label in _DESCRIPTION]
+    status = [i for i, label in enumerate(roles) if label in _STATUS]
+    contextual = [i for i, label in enumerate(roles) if label in _CONTEXT]
     if len(desc) != 1 or len(status) != 1 or not contextual:
         return None
-    if any(len([i for i, label in enumerate(normalized) if label in group]) > 1
-           for group in (_DESCRIPTION, _STATUS, _OWNER, _ACTION)):
-        return None
+    occurrences, display_headings = {}, []
+    for heading, label in zip(headings, normalized):
+        occurrences[label] = occurrences.get(label, 0) + 1
+        display_headings.append(
+            f"{heading} ({occurrences[label]})" if occurrences[label] > 1 else heading)
     prices = set(table_price_columns(headings, rows))
     if desc[0] in prices or status[0] in prices:
         return None
 
     result = []
     for index, row in enumerate(rows):
-        original = tuple(str(value or "") for value in row)
+        original = tuple("" if value is None else str(value) for value in row)
         values = original + ("",) * (width - len(original))
         if not any(value.strip() for i, value in enumerate(values) if i not in prices):
             continue
         if tuple(_label(value) for value in values) == normalized:
             continue  # Repeated register header is not a source issue.
         issue = values[desc[0]].strip()
-        fields = [(headings[i], value.strip()) for i, value in enumerate(values)
+        fields = [(display_headings[i], value.strip()) for i, value in enumerate(values)
                   if i not in prices and i != desc[0] and value.strip()]
         # A blank/missing description becomes an explicitly unresolved row,
         # not a fabricated equipment finding or a silently dropped record.
@@ -87,8 +102,17 @@ def mapped_issue_register(columns, rows, reference="") -> tuple[RegisterIssue, .
         # Guidance is not operator-entered resolution evidence.
         legacy_text = "; ".join(f"{headings[i]}: {value}" for i, value in enumerate(original)
                                 if i not in prices and value.strip())
-        digest = hashlib.sha256(json.dumps(
+        old_digest = hashlib.sha256(json.dumps(
             ["issue-register-v1", reference, index, headings, original],
             sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:20]
-        result.append(RegisterIssue("follow-" + digest, text, legacy_text=legacy_text))
+        # A source/page and physical row position belong to the immutable
+        # original. Mapping titles, status values and operator edits do not.
+        # Keep the old identity when no reliable source reference exists.
+        digest = (hashlib.sha256(json.dumps(
+            ["issue-register-v2", reference, row_offset + index],
+            sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:20]
+            if reference else old_digest)
+        result.append(RegisterIssue("follow-" + digest, text,
+                                    legacy_text=legacy_text,
+                                    legacy_key="follow-" + old_digest))
     return tuple(result)
