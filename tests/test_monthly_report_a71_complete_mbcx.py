@@ -122,6 +122,31 @@ def test_unreadable_mbcx_page_is_not_implicitly_approved(
     assert content.source.client_page_reviews == ()
 
 
+def test_rejected_image_byte_budget_names_first_unfittable_source_page(
+    monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+    from app import monthly_report_mbcx_pdf as mbcx
+
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    profile = synthetic_profiles()[0]
+    content, _ = sources.ingest(profile, "synthetic-image-limit.pdf", pdf_bytes(40))
+    before = asdict(content)
+    # Isolate the exact already-failed generic renderer response. The 2 MiB
+    # image-size fixture models 30 fitting pages and page 31 crossing 60 MiB;
+    # it does not pretend to measure actual raster compression or speed.
+    raster = SimpleNamespace(data=b"x" * (2 * 1024 * 1024))
+    monkeypatch.setattr(sources, "page_image", lambda *a, **kw: raster)
+
+    def over_limit(*args, **kwargs):
+        raise ValueError("Prepared images exceed 60 MB for this report.")
+
+    monkeypatch.setattr(mbcx, "prepare_section_pages", over_limit)
+    with pytest.raises(ValueError, match=r"Over-limit pages 31-40\b"):
+        mbcx.prepare_whole_pdf(profile, content, {})
+    assert asdict(content) == before
+
+
 def test_actual_image_only_pdf_page_requires_individual_review(
     monkeypatch, tmp_path
 ):
