@@ -5,6 +5,7 @@ permission. An unrepresented item remains reviewable; it is never called importe
 because a file was accepted. Per-element receipts are report-local and inert
 outside this display.
 """
+from collections import Counter
 from dataclasses import dataclass, replace
 from hashlib import sha256
 import json
@@ -250,18 +251,25 @@ def source_coverage(draft, source, content=None, *, byte_count=None):
 
     # Index accepted rows once. Rebuilding a complete accepted table per raw
     # row makes ordinary 10k-row exports quadratic on every Streamlit rerun.
-    accepted_rows = {}
+    accepted_row_counts = Counter()
+    accepted_row_destinations = {}
     for use in accepted:
         if use[0] != "rows" or not isinstance(use[2], tuple):
             continue
-        for reference in use[3]:
-            for table_number in range(1, len(rows) + 1):
-                if reference.startswith(f"{source.id}:{table_number}:"):
-                    for row in use[2][1]:
-                        accepted_rows.setdefault((table_number, tuple(row)), use[1])
+        referenced_tables = {table_number for reference in use[3]
+                             for table_number in range(1, len(rows) + 1)
+                             if reference.startswith(f"{source.id}:{table_number}:")}
+        for table_number in referenced_tables:
+            for row in use[2][1]:
+                key = (table_number, tuple(row))
+                accepted_row_counts[key] += 1
+                accepted_row_destinations.setdefault(key, use[1])
     for table_number, table in enumerate(rows, 1):
         for row_number, row in enumerate(table.rows, 1):
-            result = accepted_rows.get((table_number, tuple(row)), "")
+            key = (table_number, tuple(row))
+            result = accepted_row_destinations.get(key, "") if accepted_row_counts[key] else ""
+            if result:
+                accepted_row_counts[key] -= 1
             add(f"table:{table_number}:row:{row_number}", "row", table_number,
                 (table.columns, row), state="applied" if result else "review",
                 reason=("Exact accepted row in destination." if result else
@@ -283,10 +291,18 @@ def source_coverage(draft, source, content=None, *, byte_count=None):
                     "Classified fact is not confirmed in an accepted destination."),
             destination=matching)
 
+    from app.monthly_report_content_policy import page_allowed
+    from app.monthly_report_vendor_passages import passage_notice_page
     for number, notice in enumerate(source.notices, 1):
-        add(f"notice:{number}", "notice", 0, notice,
-            state="excluded" if notice in _INFORMATIONAL_NOTICES else "blocked",
-            reason=("Known reader description, not a missing element." if notice in _INFORMATIONAL_NOTICES
+        page = passage_notice_page(notice, page_count)
+        acknowledged = (page is not None and
+                        ((page in source.selected_pages and page_allowed(source, page))
+                         or dict(source.client_page_exclusions).get(page) == page_fingerprint(source, page)))
+        informational = notice in _INFORMATIONAL_NOTICES
+        add(f"notice:{number}", "notice", page if page is not None else 0, notice,
+            state="excluded" if informational or acknowledged else "blocked",
+            reason=("Known reader description, not a missing element." if informational
+                    else "Current source-page decision accounts for this passage." if acknowledged
                     else "Reader limitation: " + notice[:220]))
 
     if not items:
