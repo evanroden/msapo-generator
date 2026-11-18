@@ -2,6 +2,7 @@
 from dataclasses import asdict, replace
 from io import BytesIO
 from docx import Document
+import pytest
 import hashlib
 import json
 
@@ -210,3 +211,12 @@ def test_preexisting_generic_card_is_not_recreated_when_schema_becomes_recognize
     assert imported.follow_ups[0] == prior
     assert len(imported.follow_ups) == 2
     assert imported.follow_ups[1].text.startswith("Valve leak")
+
+def test_other_month_and_profile_cannot_merge_issue_register_cards():
+    saved = canonical_issues(fixture())
+    new_source = fixture(source_id="register-other", fill="c")
+    with pytest.raises(ValueError, match="same confirmed profile and month"):
+        merge_drafts(saved, replace(new_source, period=ReportPeriod(2026, 10)))
+    other_profile = replace(new_source.profile, key=new_source.profile.key + "-other")
+    with pytest.raises(ValueError, match="same confirmed profile and month"):
+        merge_drafts(saved, replace(new_source, profile=other_profile))
