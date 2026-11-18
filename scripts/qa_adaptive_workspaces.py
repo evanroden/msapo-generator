@@ -95,7 +95,7 @@ def scroll_preview_to_page(preview, index):
 def loaded_page(preview,index,name):
     image=preview.locator(f'figure[data-index="{index}"] img')
     expect(image).to_be_visible(timeout=30000)
-    expect(image).to_have_attribute('src',re.compile(r'^/(?:[A-Za-z0-9_-]+/)*media/[a-f0-9]{32}\\.jpe?g
+    expect(image).to_have_attribute('src',re.compile(r'^/(?:[A-Za-z0-9_-]+/)*media/[a-f0-9]{32}\.jpe?g$'))
     expect(image).to_have_js_property('complete',True)
     check(name+' selected page image loaded',image.evaluate('(node)=>node.naturalWidth>0 && node.naturalHeight>0'),{'page':index+1})
 
