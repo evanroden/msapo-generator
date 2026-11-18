@@ -365,8 +365,12 @@ def request_json(content, *, response_kind=None, validator=None):
                     backoff=1.0,
                     model_name=ANTHROPIC_MODEL,
                 )
-            except ModelUnavailableError:
-                raise
+            except ModelUnavailableError as exc:
+                raise ReaderNetworkError(
+                    "The configured document-reader model is unavailable. "
+                    "Check the ANTHROPIC_MODEL deployment setting; existing "
+                    "source text and edits were preserved."
+                ) from exc
             except (anthropic.APIError, TimeoutError) as exc:
                 raise ReaderNetworkError(
                     "The document reader service is unavailable or timed out. "
