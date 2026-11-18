@@ -107,7 +107,7 @@ def main() -> None:
             "comparisons": observed,
         }
         (output / "A17-SYNTHETIC-12-section-manifest.json").write_text(
-            json.dumps(first_manifest, indent=2) + "\\n")
+            json.dumps(first_manifest, indent=2) + "\n")
 
 
 if __name__ == "__main__":
