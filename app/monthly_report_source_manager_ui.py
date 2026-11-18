@@ -173,8 +173,8 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
                 assets=assets, table_columns=table_columns, managed=True)
         else:
             sources, additions = draft.sources, {}
+        draft = replace(draft, sources=keep_missing(prefix, sources))
         draft = _render_saved_source_reuse(draft, prefix, field)
-        draft = replace(draft, sources=keep_missing(prefix, draft.sources))
         if additions:
             from app.monthly_report_guided import merge_blocks, _advance_rich_text_receipt
             for key, block in additions.items():
