@@ -340,6 +340,13 @@ def render_capital_master(draft, block, prefix):
             return block
         st.markdown("**Approve this report's reviewed Section 9 table for future reuse**")
         st.caption("Only selected sites are updated; no vendor prices, private notes or attachments are shared.")
+        native_source = any(ref.startswith("docx:") for ref in block.references)
+        if native_source:
+            st.caption("Native source columns stay in this report. Capital approval copies only reviewed site, priority, recommendation and nonfinancial source details; undated status is historical source context, not current completion.")
+        confirm_priority_changes = (st.checkbox(
+            "I also confirm changes to previously approved capital priorities from this imported source",
+            key=key + "_priority_changes_" + block.fingerprint + "_" + str(baseline))
+            if native_source and master.revision else False)
         confirmed = st.checkbox(
             "I reviewed these capital recommendations and approve a new contract version",
             key=key + "_confirm_" + block.fingerprint + "_" + str(baseline))
@@ -347,7 +354,8 @@ def render_capital_master(draft, block, prefix):
                      key=key + "_save_" + block.fingerprint + "_" + str(baseline),
                      disabled=not confirmed):
             try:
-                items, removed = reviewed_capital_items(draft, block, master)
+                items, removed = reviewed_capital_items(
+                    draft, block, master, confirm_priority_changes=confirm_priority_changes)
                 saved = save_capital_master(
                     draft.profile, items, expected_revision=baseline,
                     actor=draft.prepared_by, confirmed=True, removed_ids=removed)
