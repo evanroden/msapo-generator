@@ -177,3 +177,21 @@ def test_stale_original_and_missing_form_contact_fail_closed():
     assert result.missing_required == ("contact_name", "contact_email")
     assert "VENDOR CONTACT NAME" not in result.url
     assert "VENDOR CONTACT EMAIL" not in result.url
+
+
+def test_checked_in_runtime_has_no_automatic_po_row_writer():
+    """An enabled form-prefill URL must not turn on Smartsheet API creation."""
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).parents[1]
+    deployment = (root / "render.yaml").read_text(encoding="utf-8")
+    inline = (root / "app" / "smartsheet_inline.py").read_text(encoding="utf-8")
+    legacy = (root / "pages" / "2_Smartsheet_PO.py").read_text(encoding="utf-8")
+    assert re.search(
+        r"- key: SMARTSHEET_API_MODE\s*\n\s*value: disabled(?:\s|$)",
+        deployment,
+    )
+    assert 'SMARTSHEET_URL_PREFILL_ENABLED\n        value: "true"' in deployment
+    assert "submit_po(" not in inline
+    assert "submit_po(" not in legacy
