@@ -20,6 +20,7 @@ import csv
 import hashlib
 from pathlib import Path
 import re
+from time import perf_counter
 from xml.etree.ElementTree import ParseError as XMLParseError
 from zipfile import BadZipFile
 import zlib
@@ -636,12 +637,15 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes, *,
     if _digests is not None and not isinstance(_digests, ContentDigests):
         raise TypeError("Only an operation-owned immutable digest cache can be supplied.")
     digest = _digests.digest(raw).hex() if _digests is not None else hashlib.sha256(raw).hexdigest()
+    started = perf_counter()
     # The lock is keyed by both the profile directory and exact source digest.
     # Separate sites never share extraction or mutable report state. The lock
     # also deduplicates in-flight parses in other worker processes on this disk.
     lock = _path(profile, digest, ".json").parent / ".parse-locks" / digest
     with library._locked(lock):
-        return _ingest_locked(profile, filename, raw, digest, suffix)
+        result = _ingest_locked(profile, filename, raw, digest, suffix)
+    parse_manifest.qa_stage("ingest", started, "complete")
+    return result
 
 
 def _ingest_locked(profile: ReportProfile, filename: str, raw: bytes,
@@ -649,6 +653,7 @@ def _ingest_locked(profile: ReportProfile, filename: str, raw: bytes,
     from app.monthly_report_content_policy import suggested_pages
     path, cache = _path(profile, digest, suffix), _path(profile, digest, ".json")
     stage = cache.with_name(digest + ".parse-stage.json")
+    cache_started = perf_counter()
     attachments = ()
     unicode_csv = suffix == ".csv" and _csv_unicode_encoding(raw) is not None
     rebuild_cache = False
@@ -686,10 +691,12 @@ def _ingest_locked(profile: ReportProfile, filename: str, raw: bytes,
                 # Correct only the disposable extraction view. Saved/manual
                 # sources are overlaid by restore_sources and remain unchanged.
                 source = replace(source, facility="")
+            parse_manifest.qa_stage("extraction", cache_started, "hit", byte_count=cache.stat().st_size)
             return replace(content, source=replace(source, filename=filename)), ()
         rebuild_cache = True
     if not rebuild_cache or not _same_source_bytes(path, raw):
         library._atomic_write(path, raw)
+    parse_manifest.qa_stage("extraction", cache_started, "miss")
     # A completed expensive parse survives a later suggestion/publish failure.
     # Never trust or replay an incomplete or wrong-policy checkpoint. Previously
     # damaged full caches deliberately get reparsed for existing recovery rules.
@@ -705,6 +712,7 @@ def _ingest_locked(profile: ReportProfile, filename: str, raw: bytes,
             library._qa_path_guard(stage)
             staged = None
     if staged is None:
+        parse_started = perf_counter()
         page_texts, needs_vision, tables, image_items, notices = [], [], (), [], []
         pdf_text_blocks = []
         span_budget_exceeded = False
@@ -789,7 +797,9 @@ def _ingest_locked(profile: ReportProfile, filename: str, raw: bytes,
             # An interrupted publication leaves only a disposable checkpoint.
             parsed = SourceContent(source, tables, tuple(image_items))
             library._atomic_write(stage, library._json(parse_manifest.stage_record(parsed)))
+        parse_manifest.qa_stage("parse", parse_started, "complete")
     else:
+        parse_manifest.qa_stage("parse", cache_started, "stage_hit")
         source, tables, image_items = staged.source, staged.tables, staged.image_items
     if suffix not in (".csv", ".xlsx"):
         source = replace(source, selected_pages=suggested_pages(source))
@@ -801,6 +811,7 @@ def _ingest_locked(profile: ReportProfile, filename: str, raw: bytes,
         **({"xlsx_currency_policy": 1} if suffix == ".xlsx" else {}),
         **({"csv_unicode_policy": 1} if unicode_csv else {}),
         **({"csv_dialect_policy": 1} if suffix == ".csv" else {}), **asdict(content)}))
+    parse_manifest.qa_stage("publish", cache_started, "complete", byte_count=cache.stat().st_size)
     # Stages are transient and do not double persistent cache disk occupancy.
     try:
         stage.unlink(missing_ok=True)
