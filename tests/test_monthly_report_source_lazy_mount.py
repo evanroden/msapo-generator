@@ -83,6 +83,14 @@ def route_widgets(app):
             if widget.label.startswith("Report section for ")]
 
 
+def native_widgets(app):
+    """Actual native widget count by kind (read-only AppTest inventory)."""
+    kinds = ("date_input", "text_input", "text_area", "selectbox",
+             "multiselect", "button", "checkbox", "file_uploader")
+    return {kind: len(app.get(kind) if kind == "file_uploader" else getattr(app, kind))
+            for kind in kinds}
+
+
 def timed(action):
     wall, cpu = perf_counter(), process_time()
     action()
@@ -108,9 +116,11 @@ def test_fifty_cold_warm_eager_comparator_and_lazy_widget_budget(monkeypatch, tm
             cold = timed(app.run)
             assert not app.exception
             closed_widgets = mounted(app)
+            closed_inventory = native_widgets(app)
             open_time = timed(lambda: button(app, "Manage source files").click().run())
             assert not app.exception
             open_widgets = mounted(app)
+            open_inventory = native_widgets(app)
             warm = timed(app.run)
             assert not app.exception
             assert mounted(app) == open_widgets
@@ -118,6 +128,9 @@ def test_fifty_cold_warm_eager_comparator_and_lazy_widget_budget(monkeypatch, tm
                 "cold": cold, "open": open_time, "warm": warm,
                 "closed_metadata_inputs": closed_widgets,
                 "open_metadata_inputs": open_widgets,
+                "closed_native_widgets": closed_inventory,
+                "open_native_widgets": open_inventory,
+                "warm_native_widgets": native_widgets(app),
                 "open_route_selectboxes": len(route_widgets(app)),
             }
     assert modes["eager"]["closed_metadata_inputs"] == 50
