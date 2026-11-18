@@ -250,3 +250,55 @@ def test_operation_digest_ttl_and_size_footprint(monkeypatch):
     assert calls.count(a) == 2
     cache.retain(())
     assert cache._size == 0 and not cache._entries
+
+
+def test_pdf_page_operation_uses_one_original_read_plus_final_integrity(profile, monkeypatch):
+    from test_monthly_report_sources import pdf_bytes
+    raw = pdf_bytes(3)
+    content, _ = sources.ingest(profile, "three-pages.pdf", raw)
+    original = sources.source_bytes
+    read_calls = []
+
+    def measured(*args, **kwargs):
+        read_calls.append(args[1].sha256)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(sources, "source_bytes", measured)
+    with sources._page_read_scope():
+        first = [sources.page_image(profile, content, i, preview=True) for i in (1, 2, 3)]
+    assert len(read_calls) == 2  # Not one full original read per PDF page.
+    read_calls.clear()
+    with sources._page_read_scope():
+        warm = [sources.page_image(profile, content, i, preview=True) for i in (1, 2, 3)]
+    assert warm == first
+    assert len(read_calls) == 1  # Warm images still reauthenticate original.
+
+
+def test_warm_prepared_page_refuses_original_replacement_before_publication(profile):
+    from test_monthly_report_sources import pdf_bytes
+    raw = pdf_bytes(1)
+    content, _ = sources.ingest(profile, "verified.pdf", raw)
+    expected = sources.page_image(profile, content, 1, preview=True)
+    path = sources._path(profile, content.source.sha256, ".pdf")
+    path.unlink()
+    path.write_bytes(b"same saved path, different bytes")
+    # Prepared JPEG/PNG remains valid. It is *not* proof of the original.
+    with pytest.raises(ValueError, match="integrity check"):
+        with sources._page_read_scope():
+            assert sources.page_image(profile, content, 1, preview=True) == expected
+    assert path.read_bytes() == b"same saved path, different bytes"
+
+
+def test_interrupted_stage_is_invalidated_on_parser_policy_upgrade(profile, monkeypatch):
+    from app import monthly_source_parse_manifest as parse
+    with monkeypatch.context() as patch:
+        patch.setattr(sources, "suggest_facts", lambda *_: (_ for _ in ()).throw(RuntimeError("interrupted")))
+        with pytest.raises(RuntimeError, match="interrupted"):
+            sources.ingest(profile, "stage.csv", CSV)
+    count = []
+    original = sources._spreadsheet
+    with monkeypatch.context() as patch:
+        patch.setattr(parse, "PARSER_POLICY_VERSION", parse.PARSER_POLICY_VERSION + 1)
+        patch.setattr(sources, "_spreadsheet", lambda *args: (count.append(True), original(*args))[1])
+        sources.ingest(profile, "stage.csv", CSV)
+    assert count == [True]
