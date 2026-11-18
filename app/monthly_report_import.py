@@ -140,6 +140,9 @@ class DocxInspection:
     notices: tuple[str, ...]
     word_sections: int
     revision_view_version: int = 0
+    # Physical first-page text, distinct from the broad extraction/title shelf.
+    # None is reserved for legacy constructed inspections without page evidence.
+    cover_title_candidates: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -598,6 +601,7 @@ def inspect_docx(path: Path) -> DocxInspection:
         for chunk in iter(lambda: raw.read(1024 * 1024), b""):
             digest.update(chunk)
     items, titles, notices = [], [], []
+    cover_titles, cover_open = [], True
     background_positions = []
     mint_background_positions = set()
     alternate_positions = set()
@@ -682,6 +686,15 @@ def inspect_docx(path: Path) -> DocxInspection:
                         is_unit = parent is not None and parent.tag in (W + "body", W + "hdr", W + "ftr", W + "footnote", W + "endnote")
                         if is_unit:
                             position += 1
+                            first_item = len(items)
+                            # A manual or rendered Word page break is a physical
+                            # boundary, even if the next page has no section heading.
+                            # Text in the break's own unit is not authoritative:
+                            # it may combine content from both sides of the break.
+                            page_break = (part == "word/document.xml" and any(
+                                (node.tag == W + "br" and node.get(W + "type") == "page")
+                                or node.tag == W + "lastRenderedPageBreak"
+                                for node in element.iter()))
                             from app.monthly_report_native_design import equivalent_native_alternatives
                             def image_identity(identity):
                                 target, kind = relations.get(identity, ("", ""))
@@ -1010,8 +1023,21 @@ def inspect_docx(path: Path) -> DocxInspection:
                                         relationship_id=";".join(chart_ids), note=note)
                             if element.find(".//" + W + "altChunk") is not None or element.tag == W + "altChunk":
                                 add("unsupported", part, position, note="Embedded document content was not executed. Review it in the original.")
-                            if part == "word/document.xml" and element.find(".//" + W + "sectPr") is not None:
-                                word_section += 1
+                            if part == "word/document.xml":
+                                if cover_open and not page_break:
+                                    for item in items[first_item:]:
+                                        if item.kind != "text" or item.section not in ("", "cover"):
+                                            continue
+                                        for line in item.text.splitlines():
+                                            if 3 < len(line) < 180 and line not in cover_titles:
+                                                cover_titles.append(line)
+                                                if len(cover_titles) >= 12:
+                                                    break
+                                if (page_break or section not in ("", "cover")
+                                        or element.find(".//" + W + "sectPr") is not None):
+                                    cover_open = False
+                                if element.find(".//" + W + "sectPr") is not None:
+                                    word_section += 1
                             element.clear()
                             parent.remove(element)
                         stack.pop()
@@ -1074,12 +1100,13 @@ def inspect_docx(path: Path) -> DocxInspection:
         notices.append("Tracked changes use their final accepted view. Deleted and moved-from text is excluded; the uploaded original is unchanged.")
     if comment_changes:
         notices.append("Word comments are excluded from report previews and downloads; the uploaded original is unchanged.")
-    identified_period, period_notices = report_period_from_title_candidates(tuple(titles[:12]))
+    identified_period, period_notices = report_period_from_title_candidates(tuple(cover_titles[:12]))
     if identified_period is not None:
         notices.append("Source report title indicates " + identified_period.label +
                        ". Confirm the reporting month when saving; unrelated cover or print dates do not decide it.")
     notices.extend(period_notices)
-    return DocxInspection(digest.hexdigest(), tuple(items), tuple(titles[:12]), tuple(notices), word_section, version)
+    return DocxInspection(digest.hexdigest(), tuple(items), tuple(titles[:12]), tuple(notices),
+                          word_section, version, tuple(cover_titles[:12]))
 
 
 def read_import_image(path: Path, item: ImportItem, *, line_art: bool = True, preview: bool = False,

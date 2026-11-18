@@ -7,7 +7,7 @@ from app.monthly_report_model import Facility, ReportPeriod, synthetic_profiles
 from app.monthly_report_start_import import analyze_starting_report
 
 
-def test_unheaded_second_page_reference_can_falsely_detect_other_site(tmp_path):
+def test_unheaded_second_page_reference_does_not_claim_cover_site_authority(tmp_path):
     path = tmp_path / "synthetic.docx"
     doc = Document()
     doc.add_heading("Synthetic North Facility", 0)
@@ -22,8 +22,11 @@ def test_unheaded_second_page_reference_can_falsely_detect_other_site(tmp_path):
     profile = replace(synthetic_profiles()[0], title=north.title, facilities=(north,))
     inspection = inspect_docx(path)
     before = analyze_starting_report(inspection, profile, ReportPeriod(2026, 9), (north, south))
-    assert before.site_relation == "other"
-    assert {s.key for s in before.source_sites} == {"north", "south"}
+    assert inspection.cover_title_candidates is not None
+    assert not any("South" in title for title in inspection.cover_title_candidates)
+    assert "South" in " ".join(inspection.title_candidates)  # Extracted, never erased.
+    assert before.site_relation == "same"
+    assert {s.key for s in before.source_sites} == {"north"}
     corrected = analyze_starting_report(inspection, profile, ReportPeriod(2026, 9), (north, south), confirmed_sites=(north,))
     assert corrected.site_relation == "same"
     assert profile.facilities == (north,)
@@ -89,7 +92,7 @@ def test_cancel_and_empty_membership_do_not_grant_import_scope():
     assert app.session_state["result"] is None
 
 
-def test_real_upload_corrects_false_other_without_changing_target_and_reseeds_plans(monkeypatch, tmp_path):
+def test_real_upload_ignores_later_page_foreign_site_without_extra_confirmation(monkeypatch, tmp_path):
     from test_monthly_report_start_import import start_app, save_start
     north, south = synthetic_profiles()[1].facilities
     path = tmp_path / "synthetic-misdetected.docx"
@@ -102,12 +105,10 @@ def test_real_upload_corrects_false_other_without_changing_target_and_reseeds_pl
     doc.add_paragraph("September 2026 North inspection completed.")
     doc.save(path)
     app = start_app(monkeypatch, tmp_path, path, known_sites=(north, south))
-    assert any("different sites" in e.value for e in app.info)
-    selection = next(m for m in app.multiselect if m.label == "Actual sites covered by the uploaded report")
-    selection.set_value([north.key]).run()
-    assert any("different sites" in e.value for e in app.info)
-    next(b for b in app.button if b.label == "Confirm source sites").click().run()
     assert not any("different sites" in e.value for e in app.info)
+    selection = next(m for m in app.multiselect
+                     if m.label == "Actual sites covered by the uploaded report")
+    assert selection.value == [north.key]
     assert not app.exception
     draft = save_start(app)
     assert draft.profile.facilities == (north,)
