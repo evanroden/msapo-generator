@@ -12,6 +12,7 @@ from email.message import EmailMessage
 from hashlib import sha256
 from io import BytesIO
 import json
+import os
 from pathlib import Path
 import re
 from zipfile import ZipFile
@@ -319,4 +320,27 @@ def test_six_source_review_to_persisted_real_word_and_pdf(tmp_path, monkeypatch)
         assert line.split(": ", 1)[1] in reviewed_text
     for content in contents.values():
         assert sources.source_bytes(PROFILE, content.source)
-    assert sha256(report.docx).hexdigest() != sha256(report.pdf).hexdigest()
+    docx_sha = sha256(report.docx).hexdigest()
+    pdf_sha = sha256(report.pdf).hexdigest()
+    assert docx_sha != pdf_sha
+    if os.environ.get("INDEPENDENT_OUTPUT"):
+        # CI retains these exact synthetic bytes and proof manifest, rather
+        # than claiming that the generic QA export is this A87 workload.
+        destination = Path(os.environ["INDEPENDENT_OUTPUT"]) / "a87-six-formats"
+        destination.mkdir(parents=True, exist_ok=True)
+        (destination / "reviewed.docx").write_bytes(report.docx)
+        (destination / "reviewed.pdf").write_bytes(report.pdf)
+        (destination / "manifest.json").write_text(json.dumps({
+            "fixture": "a87-synthetic-truth-v1",
+            "report_identity": truth["report_scope"],
+            "docx_sha256": docx_sha,
+            "pdf_sha256": pdf_sha,
+            "pdf_pages": len(pymupdf.open(stream=report.pdf, filetype="pdf")),
+            "accepted_ids": sorted(expected_ids),
+            "withheld_ids": sorted(item["id"] for item in truth["withhold"]),
+            "source_identities": {
+                c.source.filename: c.source.sha256 for c in contents.values()
+            },
+            "method": "synthetic original -> local parser -> reviewed extracted lines "
+                      "-> saved/reloaded draft -> actual LibreOffice DOCX/PDF",
+        }, sort_keys=True, indent=2) + "\n", encoding="utf-8")
