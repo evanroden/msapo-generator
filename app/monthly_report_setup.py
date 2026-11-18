@@ -465,7 +465,25 @@ def _carry_period_content(block: ResolvedBlock, period: ReportPeriod) -> Resolve
 
 
 def new_month_draft(draft: ReportDraft, period: ReportPeriod, *, profile=None) -> ReportDraft:
-    """Only an explicitly new month drops period-specific attachments, never a mixed import."""
+    """Carry a month forward only for the *same* saved contract and site set.
+
+    A changed title, confirmed alias or pinned design may be carried forward;
+    a reused key with changed membership may not. Validate before the same-month
+    fast path too: otherwise a stale tab can relabel its saved contacts, charts,
+    thermal data and current work as belonging to a different site without
+    ever exercising the work-order grid identity checks below.
+    """
+    if not isinstance(period, ReportPeriod):
+        raise ValueError("Choose a valid reporting month before reusing saved content.")
+    if profile is not None and (
+        (profile.contract, profile.key) != (draft.profile.contract, draft.profile.key)
+        or {site.key for site in profile.facilities} != {site.key for site in draft.profile.facilities}
+    ):
+        raise ValueError(
+            "A different contract, report profile or site membership cannot inherit standing data. "
+            "Start a separate report for those sites.")
+    if period.start < draft.period.start:
+        raise ValueError("An earlier reporting month must be reopened, not rolled backward.")
     draft = normalize_mbcx(draft)
     if period == draft.period:
         return replace(draft, profile=profile) if profile is not None else draft
