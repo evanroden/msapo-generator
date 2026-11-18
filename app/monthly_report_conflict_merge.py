@@ -4,7 +4,8 @@ This module never writes. Callers must recheck the remote journal's exact
 revision/generation under active_work.save's CAS after explicit user choice.
 Ambiguous structural changes are a conflict, never a positional rebase.
 """
-from dataclasses import dataclass, fields, is_dataclass, replace
+from dataclasses import dataclass, fields, replace
+import json
 
 from app.monthly_report_model import (
     ReportDraft, ReportSource, ResolvedBlock, ReportTable, TrainingSessionTable,
@@ -24,6 +25,39 @@ def _same_scope(left, right):
             tuple(site.key for site in left.profile.facilities)) == (
             right.profile.contract, right.profile.key, right.period.key,
             tuple(site.key for site in right.profile.facilities))
+
+
+def _receipt_index(values):
+    """Use only validated *identity shape*, not the saved review's free text.
+
+    A receipt can contain financial or sensitive source data. We keep its raw
+    bytes opaque and never normalize, interpret, or export its content here.
+    Unknown/duplicate/malformed identities reject granular reconciliation.
+    """
+    if len(values) > 100 or sum(len(value) for value in values if isinstance(value, str)) > 16_000_000:
+        raise ValueError("Source-review collection exceeds its budget.")
+    result = {}
+    for raw in values:
+        if not isinstance(raw, str) or len(raw) > 4_000_000:
+            raise ValueError("Unsupported source-review record.")
+        try:
+            item = json.loads(raw)
+        except (ValueError, TypeError) as exc:
+            raise ValueError("Malformed source-review record.") from exc
+        if (not isinstance(item, dict) or type(item.get("schema")) is not int or item["schema"] != 1
+                or item.get("kind") not in ("training", "workorders", "maintenance")
+                or not all(isinstance(item.get(k), str) and item[k] for k in
+                           ("scope", "source_id", "source_fingerprint"))):
+            raise ValueError("Unknown source-review identity.")
+        table = item.get("table") if item["kind"] == "training" else None
+        if item["kind"] == "training" and (type(table) is not int or table < 1):
+            raise ValueError("Unknown Training source table.")
+        identity = (item["kind"], item["scope"], item["source_id"],
+                    item["source_fingerprint"], table)
+        if identity in result:
+            raise ValueError("Duplicate source-review identity.")
+        result[identity] = raw
+    return result
 
 
 def merge_drafts(base: ReportDraft, this_page: ReportDraft, newer: ReportDraft, choices=None):
@@ -62,6 +96,13 @@ def merge_drafts(base: ReportDraft, this_page: ReportDraft, newer: ReportDraft, 
         # Dataclass shape is stable; contract/site/period and complex design
         # values are never recursively made into synthetic hybrid identities.
         if isinstance(old, (ReportDraft, ResolvedBlock, ReportSource, ReportTable)):
+            if (isinstance(old, ReportTable)
+                    and (old.columns != ours.columns or old.columns != theirs.columns)):
+                return conflict(path, old, ours, theirs)
+            if (isinstance(old, ReportDraft)
+                    and ((old.sources != ours.sources and old.source_row_reviews != theirs.source_row_reviews)
+                         or (old.sources != theirs.sources and old.source_row_reviews != ours.source_row_reviews))):
+                return conflict("source identity and reviewed corrections", old, ours, theirs)
             changes = {}
             for field in fields(old):
                 name = field.name
@@ -78,7 +119,23 @@ def merge_drafts(base: ReportDraft, this_page: ReportDraft, newer: ReportDraft, 
                 return conflict(path, old, ours, theirs)
             return result
 
-        if isinstance(old, tuple) and len(old) == len(ours) == len(theirs):
+        if isinstance(old, tuple) and isinstance(ours, tuple) and isinstance(theirs, tuple):
+            if path == "source_row_reviews":
+                try:
+                    before, page, current = (_receipt_index(values) for values in (old, ours, theirs))
+                except ValueError:
+                    return conflict(path, old, ours, theirs)
+                order = tuple(dict.fromkeys((*before, *current, *page)))
+                kept = []
+                for key in order:
+                    label = f"{key[0]} · source {key[2]}" + (
+                        f" · table {key[4]}" if key[4] is not None else "")
+                    entry = merge(f"{path}[{label}]", before.get(key), page.get(key), current.get(key))
+                    if entry is not None:
+                        kept.append(entry)
+                return tuple(kept)
+            if len(old) != len(ours) or len(old) != len(theirs):
+                return conflict(path, old, ours, theirs)
             leaf = path.rsplit(".", 1)[-1]
             if leaf in ("blocks", "sources", "extra_tables"):
                 attr = {"blocks": "key", "sources": "id", "extra_tables": "reference"}[leaf]
@@ -94,8 +151,17 @@ def merge_drafts(base: ReportDraft, this_page: ReportDraft, newer: ReportDraft, 
                 # A stable first-cell identity is required. If the row order,
                 # row membership or label changed, treat the whole grid as
                 # conflicting; a deletion/recreation is not the old row.
-                identities = [tuple(row[0] if isinstance(row, tuple) and row else None
-                                    for row in seq) for seq in (old, ours, theirs)]
+                if headers[:2] == ("Team member", "Site"):
+                    identity_size = 2
+                elif "blocks[contact_matrix].rows" in path:
+                    identity_size = 3  # site + role + name; phone/email are editable
+                elif "training:events:v1" in path:
+                    identity_size = 2  # topic + session date
+                else:
+                    identity_size = 1
+                identities = [tuple(row[:identity_size] if isinstance(row, tuple)
+                                    and len(row) >= identity_size else None for row in seq)
+                              for seq in (old, ours, theirs)]
                 valid_rows = all(
                     isinstance(a, tuple) and isinstance(b, tuple) and isinstance(c, tuple)
                     and len(a) == len(b) == len(c) for a, b, c in zip(old, ours, theirs))
