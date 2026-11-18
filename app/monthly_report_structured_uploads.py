@@ -132,6 +132,8 @@ def mapped_rows(content, destination, table_columns=None):
         return ()
     rows = []
     for table in native_tables(content):
+        if table.hidden:
+            continue  # Hidden workbook data remains reviewable, never automatic.
         excluded = (set(ambiguous_price_columns(table.columns, table.rows)) |
                     set(table_price_columns(table.columns, table.rows)))
         decision_sources = proposal_decision_titles(table.columns) if decision_targets else ()
@@ -403,6 +405,10 @@ def _spreadsheet_has_site_scope_column(content):
 
 
 def _activity_reader_notice(content):
+    if content.source.suffix == ".xlsx" and any(
+            table.hidden or table.missing_formula_cache_count for table in content.tables):
+        return (content.source.filename + ": hidden worksheets or missing formula cached results "
+                "require explicit workbook review. This source is not auto-read into Activity.")
     from app.monthly_report_work_order_csv import is_work_order_source
     if is_work_order_source(content):
         return (content.source.filename + ": work-order records use Review counted work-order rows "
@@ -731,6 +737,9 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
         paragraphs = []
         from app.monthly_report_work_order_csv import is_work_order_source
         for content in contents:
+            if content.source.suffix == ".xlsx" and any(
+                    table.hidden or table.missing_formula_cache_count for table in content.tables):
+                continue  # Untrusted or hidden workbook facts need explicit review.
             if is_work_order_source(content):
                 # CMMS/counting sources use their own reviewed metrics path.
                 continue
