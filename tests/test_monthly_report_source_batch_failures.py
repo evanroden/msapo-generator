@@ -68,10 +68,10 @@ def test_unknown_email_charset_cannot_fail_other_valid_file(scoped, monkeypatch)
 
 def test_parser_oserror_is_sanitized_and_does_not_discard_success(scoped, monkeypatch):
     original = sources.ingest
-    def wrapped(profile, name, raw):
+    def wrapped(profile, name, raw, **kwargs):
         if name == "failed.txt":
             raise OSError("/private/server/raw/sensitive")
-        return original(profile, name, raw)
+        return original(profile, name, raw, **kwargs)
     monkeypatch.setattr(sources, "ingest", wrapped)
     accepted, messages = sources.ingest_batch(scoped,
         (("failed.txt", b"fail"), ("good.txt", b"Completed test maintenance.")))
