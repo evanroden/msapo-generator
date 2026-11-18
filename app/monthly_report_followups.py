@@ -553,16 +553,20 @@ def seed_followups(draft):
         return tuple(dict.fromkeys(ref for ref in references if page_identity(ref) is not None))
 
     draft = canonical_issues(draft)
+    # An explicitly left-out proposal is a durable source-identity tombstone:
+    # never recreate it on repeat import or a later month. Keep the authored
+    # status and evidence available for deliberate re-inclusion in the editor.
     result = [
         replace(
             normalize_proposal(item),
             carried_from=(item.carried_from or draft.period.key) if item.category == "issue" else draft.period.key,
-            included=True, reviewed_fingerprint="", update_period=_carried_update_period(item, draft.period)
+            included=item.included if item.category == "proposal" else True,
+            reviewed_fingerprint="", update_period=_carried_update_period(item, draft.period)
         )
         for item in draft.follow_ups
         if (item.category == "issue" and item.text.strip()
             and (item.status != "resolved" or problems(item, draft)))
-        or (item.category != "issue" and item.included)
+        or (item.category != "issue" and (item.included or item.category == "proposal"))
     ]
     keys = {item.key for item in result}
     represented = Counter((item.category, item.text.strip(), item.status) for item in result)
