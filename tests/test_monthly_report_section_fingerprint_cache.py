@@ -82,6 +82,9 @@ def test_twelve_sections_warm_rerun_does_not_reserialize_unchanged_values(report
             serializations.append(value["section"])
         return original(value, *args, **kwargs)
 
+    baseline_wall, baseline_cpu = perf_counter(), process_time()
+    baseline = {key: _legacy_fingerprint(report, key) for key in keys}
+    baseline_wall, baseline_cpu = perf_counter() - baseline_wall, process_time() - baseline_cpu
     monkeypatch.setattr(json, "dumps", counting)
     cold_wall, cold_cpu = perf_counter(), process_time()
     first = {key: preview.section_preview_fingerprint(report, key) for key in keys}
@@ -89,7 +92,8 @@ def test_twelve_sections_warm_rerun_does_not_reserialize_unchanged_values(report
     warm_wall, warm_cpu = perf_counter(), process_time()
     assert {key: preview.section_preview_fingerprint(report, key) for key in keys} == first
     warm_wall, warm_cpu = perf_counter() - warm_wall, process_time() - warm_cpu
-    print(f"A31 twelve-section fingerprint control: cold_wall={cold_wall:.6f}s "
+    print(f"A31 twelve-section fingerprint control: baseline_wall={baseline_wall:.6f}s "
+          f"baseline_cpu={baseline_cpu:.6f}s cold_wall={cold_wall:.6f}s "
           f"cold_cpu={cold_cpu:.6f}s warm_wall={warm_wall:.6f}s "
           f"warm_cpu={warm_cpu:.6f}s serialized={len(serializations)} "
           f"maxrss_kib={resource.getrusage(resource.RUSAGE_SELF).ru_maxrss}")
