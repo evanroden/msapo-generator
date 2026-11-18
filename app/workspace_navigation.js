@@ -492,20 +492,16 @@ globalThis.ENFRAWorkspaceNavigation = {
                 // a separate, read-only receipt, not part of the section title.
                 const text = `${index + 1} of ${entries.length} · ${entries[index].title}`;
                 if (progress.textContent !== text) progress.textContent = text;
-                const parent = progress.parentNode;
-                if (parent && typeof parent.insertBefore === 'function' &&
-                    typeof document.createElement === 'function') {
-                    let receipt = parent.querySelector?.('.epc-navigation-attention');
-                    if (!receipt) {
-                        receipt = document.createElement('span');
-                        receipt.className = 'epc-navigation-attention';
-                        receipt.setAttribute('role', 'status');
-                        parent.insertBefore(receipt, progress);
-                    }
+                // Never insert DOM nodes during a layout measurement. Native
+                // Streamlit rerenders own this status element from first paint.
+                // Inserting one here can invalidate a pending Back/Next intent
+                // and strand navigation on the preceding report section.
+                const receipt = nav.querySelector('.epc-navigation-attention');
+                if (receipt) {
                     const label = count === 1 ? '1 item needs attention' :
                         count > 1 ? `${count} items need attention` : '';
                     if (receipt.textContent !== label) receipt.textContent = label;
-                    receipt.hidden = !label;
+                    if (receipt.hidden !== !label) receipt.hidden = !label;
                 }
                 if (progress.dataset.section !== active) progress.dataset.section = active;
             }
