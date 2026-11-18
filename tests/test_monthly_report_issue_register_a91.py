@@ -87,9 +87,13 @@ def test_source_status_and_header_remapping_do_not_recreate_operator_edited_card
         ("Synthetic Site", "Valve leak", "Closed", "Operator B", "Low",
          "2026-09-07", "Unit B"),
     )
+    updated_source = replace(initial.sources[0], findings="Reclassified source metadata")
+    changed_revision = source_reference(updated_source, 1)
+    assert changed_revision != initial.blocks[0].extra_tables[0].reference
     same_source_block = replace(initial.blocks[0], extra_tables=(
-        ReportTable(revised_columns, revised_rows, initial.blocks[0].extra_tables[0].reference),))
-    remapped = canonical_issues(replace(retained, blocks=(same_source_block,)))
+        ReportTable(revised_columns, revised_rows, changed_revision),))
+    remapped = canonical_issues(replace(retained, blocks=(same_source_block,),
+                                        sources=(updated_source,)))
     assert len(remapped.follow_ups) == 2
     assert remapped.follow_ups[0] == changed
     assert remapped.follow_ups[1] == accepted.follow_ups[1]
