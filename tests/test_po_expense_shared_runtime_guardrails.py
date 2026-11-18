@@ -97,8 +97,12 @@ def test_po_original_pdf_prefill_and_expense_first_edit_survive_switch(isolated_
         "Synthetic Expense Reviewer"
     )
     assert app.session_state[expense_key] == "Synthetic Expense Reviewer"
-    assert not any(key.startswith("expense_receipt_files") for key in
-                   app.session_state.get("expense_draft_snapshot", {}))
+    snapshot = (
+        app.session_state["expense_draft_snapshot"]
+        if "expense_draft_snapshot" in app.session_state
+        else {}
+    )
+    assert not any(key.startswith("expense_receipt_files") for key in snapshot)
     assert isolated.is_dir()
 
 
