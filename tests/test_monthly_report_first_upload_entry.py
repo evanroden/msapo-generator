@@ -75,7 +75,7 @@ st.session_state["synthetic_result"] = (stage[2].sha256 if stage else "", contra
     app.run()
     assert calls == [b"synthetic-good-a", b"synthetic-bad"]
     assert app.session_state["synthetic_result"] == ("", ())
-    assert any("Unsupported" in w.message or "DOCX" in w.message or "report" in w.message.lower()
+    assert any("Unsupported" in w.value or "DOCX" in w.message or "report" in w.message.lower()
                for w in app.warning)
     app.run()
     assert calls == [b"synthetic-good-a", b"synthetic-bad"]  # failed hash is not retried
