@@ -11,10 +11,13 @@ from hashlib import sha256
 import json
 import logging
 import os
-from time import perf_counter
+import stat
+from time import perf_counter, time
 
 PARSER_POLICY_VERSION = 1
 STAGE_POLICY_VERSION = 1
+DISK_PARSE_TTL_SECONDS = 30 * 24 * 3600
+DISK_STAGE_TTL_SECONDS = 24 * 3600
 
 
 def _digest(value) -> str:
@@ -113,3 +116,17 @@ def qa_stage(stage: str, started: float, outcome: str, *, artifact=None) -> None
         "source_cache stage=%s outcome=%s wall_ms=%.3f derived_bytes=%d",
         stage, outcome, (perf_counter() - started) * 1000, byte_count,
     )
+
+
+def fresh(path, *, ttl_seconds: int = DISK_PARSE_TTL_SECONDS) -> bool:
+    """Lazy disk TTL. Stale derived metadata is reparsed, never an original.
+
+    On-disk JSON is bounded to 16 MiB by library._read/_json; no global cache,
+    external identity token or cross-profile reuse is introduced.
+    """
+    try:
+        info = path.lstat()
+        age = time() - info.st_mtime
+        return stat.S_ISREG(info.st_mode) and 0 <= age < ttl_seconds
+    except OSError:
+        return False
