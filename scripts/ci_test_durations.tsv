@@ -1,4 +1,8 @@
 # Per-file pytest duration (seconds) from main 5526fd2b, Tests run 43742773280.
+# Frontend compatibility duration refreshed using main f0af9956, Tests run
+# 44203272158 (17 Nov 2026): 66 passed in 1041.26 seconds on shard 0.
+# Per-function entries below aggregate JUnit testcases (all parametric cases)
+# from the same pytest-results-0 artifact; no other file is function-sharded.
 # Slowest 120 of 954 files cover 84.5% of 14,436 tests' execution time.
 # Unknown/new files use the measured remaining-file average in the selector.
 tests/test_about_logo_refresh_journey.py	39.1
@@ -112,7 +116,27 @@ tests/test_streamlit_dataframe_action_owners.py	119.8
 tests/test_streamlit_date_input_compat.py	72.1
 tests/test_streamlit_expander_motion.py	36.9
 tests/test_streamlit_forward_cache.py	27.8
-tests/test_streamlit_frontend_compat.py	1486.6
+tests/test_streamlit_frontend_compat.py	1041.3
+tests/test_streamlit_frontend_compat.py::test_previous_overlay_generations_upgrade_without_losing_date_or_history	243.09
+tests/test_streamlit_frontend_compat.py::test_published_83_member_generation_upgrades_without_losing_originals_or_date	214.95
+tests/test_streamlit_frontend_compat.py::test_read_only_expected_receipt_rejects_corrupt_selected_generation	151.25
+tests/test_streamlit_frontend_compat.py::test_prior_selected_closure_corruption_cannot_be_hidden_by_upgrade	99.38
+tests/test_streamlit_frontend_compat.py::test_interrupted_previous_overlay_upgrade_keeps_old_complete_selection	48.81
+tests/test_streamlit_frontend_compat.py::test_scalar_date_composes_with_scheduler_and_cannot_be_downgraded	41.95
+tests/test_streamlit_frontend_compat.py::test_actual_two_publishers_lock_before_validation_and_never_downgrade_date	37.56
+tests/test_streamlit_frontend_compat.py::test_frontend_observer_does_not_read_unbounded_or_ineligible_response	36.27
+tests/test_streamlit_frontend_compat.py::test_interrupted_html_publication_leaves_previous_client_and_retry_is_safe	36.19
+tests/test_streamlit_frontend_compat.py::test_unknown_or_tampered_assets_fail_before_any_write	30.45
+tests/test_streamlit_frontend_compat.py::test_actual_date_installer_entrypoint_composes_with_scheduler_installer	18.66
+tests/test_streamlit_frontend_compat.py::test_content_named_scheduler_entry_preserves_originals_and_is_idempotent	18.40
+tests/test_streamlit_frontend_compat.py::test_interrupted_generated_asset_never_replaces_html_or_originals	18.16
+tests/test_streamlit_frontend_compat.py::test_exact_previous_scheduler_entry_upgrades_without_discarding_date	12.26
+tests/test_streamlit_frontend_compat.py::test_browser_frontend_receipt_hashes_the_delivered_bytes_without_writes	12.14
+tests/test_streamlit_frontend_compat.py::test_full_editor_request_dominates_fragments_in_actual_locked_scheduler	8.42
+tests/test_streamlit_frontend_compat.py::test_decoded_full_widget_scope_dominates_fragments_in_actual_caller_chain	6.47
+tests/test_streamlit_frontend_compat.py::test_real_cyclic_graph_has_one_generation_and_no_original_context_imports	6.38
+tests/test_streamlit_frontend_compat.py::test_unknown_incoming_native_importer_fails_before_any_write	0.07
+tests/test_streamlit_frontend_compat.py::test_pinned_import_edges_are_validated_before_any_write	0.03
 tests/test_streamlit_text_input_default.py	72.0
 tests/test_training_rollover_outputs.py	6.3
 tests/test_warning_routes_fixture.py	35.6
