@@ -173,3 +173,43 @@ def test_actual_local_tesseract_captures_scanned_and_rotated_synthetic_text():
             assert "PUMP PX-72 NOT STARTED" in result.text
             assert result.ocr_spans and result.attempted_ocr
             assert "local OCR extracted" in result.notice
+
+
+def test_small_chart_image_and_pdf_annotation_are_in_review_inventory(tmp_path, monkeypatch):
+    profile = fixture_profile(tmp_path, monkeypatch)
+    monkeypatch.setattr(reader.shutil, "which", lambda _: None)
+    with fitz.open() as pdf:
+        chart = pdf.new_page(width=612, height=792)
+        chart.insert_text((40, 55), "A complete native-text report header for chart evidence.")
+        # 4.3% of page area: below the previous full-page-scan threshold.
+        chart.insert_image(fitz.Rect(190, 285, 320, 445), stream=synthetic_image())
+        annotated = pdf.new_page()
+        annotated.insert_text((40, 55), "A native-text page has separate annotation content.")
+        note = annotated.add_freetext_annot(
+            fitz.Rect(70, 180, 370, 240), "Synthetic annotation requires visual review.")
+        note.update()
+        original = pdf.tobytes()
+    content, _ = sources.ingest(profile, "chart-and-note.pdf", original)
+    assert content.source.needs_vision == (1, 2)
+    assert any("Page 1: unread/needs visual review" in n for n in content.source.notices)
+    assert any("Page 2:" in n and "annotation" in n for n in content.source.notices)
+    assert "native-text report header" in content.source.page_texts[0]
+    assert sources.source_bytes(profile, content.source) == original
+
+
+def test_local_ocr_page_cap_keeps_extra_original_pages_visible(tmp_path, monkeypatch):
+    profile = fixture_profile(tmp_path, monkeypatch)
+    with fitz.open() as pdf:
+        image = synthetic_image()
+        for _ in range(23):
+            page = pdf.new_page()
+            page.insert_image(page.rect, stream=image)
+        raw = pdf.tobytes()
+    monkeypatch.setattr(reader.shutil, "which", lambda _: "/usr/bin/tesseract")
+    monkeypatch.setattr(reader, "_ocr_image", lambda data, *, timeout: mock_tsv())
+    content, _ = sources.ingest(profile, "23-scans.pdf", raw)
+    assert len(content.source.page_texts) == 23
+    assert len(content.ocr_spans) == reader.MAX_LOCAL_OCR_PAGES
+    assert content.source.needs_vision == tuple(range(1, 24))
+    assert sum("page/time budget reached" in s for s in content.source.notices) == 3
+    assert sources.source_bytes(profile, content.source) == raw
