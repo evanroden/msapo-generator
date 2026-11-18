@@ -403,7 +403,7 @@ def render_training(draft, blocks, prefix, field):
             if st.session_state.get(key + "_stale_standing"):
                 st.warning("This report has an older training matrix. Review the latest shared training before changing the matrix. "
                            "Monthly notes and the saved report version are unchanged.")
-            with st.expander("Add requirement", expanded=False):
+            with st.container():
                 new_training = st.text_input("Requirement name", key=key + "_new_requirement")
                 add_requirement = st.button("Add requirement", key=key + "_add_requirement", disabled=not new_training.strip())
             matrix_slot = st.empty()
