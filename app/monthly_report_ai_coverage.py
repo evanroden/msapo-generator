@@ -248,6 +248,18 @@ def prepare_run(plan_value, content, profile, period, *, ai_module=None):
             "unavailable": tuple(unavailable)}
 
 
+def join_prepared(prepared_runs):
+    """Combine independent source plans into one bounded model worker.
+
+    Keys include source IDs, so a different file cannot inherit evidence
+    or a cached reply from an unrelated source.
+    """
+    return {
+        field: tuple(item for part in prepared_runs for item in part[field])
+        for field in ("cached", "requests", "unavailable")
+    }
+
+
 def run(prepared, *, read=None):
     """Network-only work, bounded to two in-flight provider calls.
 
@@ -389,7 +401,7 @@ def collect(plan_value, result, source, profile, period, *, ai_module=None):
     """
     from app import monthly_report_ai as ai
     ai = ai_module or ai
-    by_key = {batch.key: batch for batch in plan_value.batches}
+    own_keys = {batch.key for batch in plan_value.batches}
     returned = {key: (value, error) for key, value, error, _ in result["responses"]}
     returned.update((key, (value, "")) for key, value in result["cached"])
     missing = dict(result["unavailable"])
@@ -435,7 +447,8 @@ def collect(plan_value, result, source, profile, period, *, ai_module=None):
             inventory[number] = "needs_review"
     return {"facts": tuple(facts.values()), "inventory": inventory,
             "valid_batches": good, "review_batches": bad,
-            "admitted_calls": len(result["responses"]), "cache_hits": len(result["cached"]),
+            "admitted_calls": sum(key in own_keys for key, *_ in result["responses"]),
+            "cache_hits": sum(key in own_keys for key, _ in result["cached"]),
             "rejected_claims": invalid, "cacheable": tuple(cacheable),
             "unavailable": result["unavailable"],
             "first_response_seconds": result["first_response_seconds"],
