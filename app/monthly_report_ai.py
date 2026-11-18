@@ -6,6 +6,7 @@ from decimal import Decimal
 import hashlib
 import json
 import re
+import threading
 import time
 
 import anthropic
@@ -18,7 +19,7 @@ from app.api_retry import (
     complete_response_text,
     request_with_retry,
 )
-from app.ai_client import ai_available, make_client
+from app.ai_client import ai_available, foundry_settings, make_client
 from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
 from app.monthly_report_content_policy import contains_price
 from app.monthly_report_model import EvidenceFact, DraftParagraph, ResolvedBlock
@@ -292,23 +293,88 @@ def configured() -> bool:
     return ai_available(ANTHROPIC_API_KEY)
 
 
-def request_json(content):
-    """Network worker: no Streamlit, filesystem, image, PDF or cache operations."""
+# Only substantial, identical Claude prefixes benefit from the provider's
+# ephemeral 5-minute cache. Short texts incur no cache-write uplift. These
+# markers apply equally to native Claude Messages and Claude on Foundry; never
+# send them to an unknown-model adapter or an image/structured block.
+PROMPT_CACHE_MIN_CHARS = 8_192
+_UNSUPPORTED_PROMPT_CACHES: set[tuple[str, str]] = set()
+_PROMPT_CACHE_LOCK = threading.Lock()
+
+
+def _prompt_cache_provider() -> tuple[str, str]:
+    settings = foundry_settings()
+    return (settings.address if settings else "claude-api", ANTHROPIC_MODEL)
+
+
+def _provider_cached_content(content):
+    """Copy only eligible long text requests; leave callers' evidence immutable."""
+    if not isinstance(ANTHROPIC_MODEL, str) or not ANTHROPIC_MODEL.startswith("claude-"):
+        return None
+    if (
+        not isinstance(content, list)
+        or len(content) not in (1, 2)
+        or any(not isinstance(part, dict) or part.get("type") != "text"
+               or not isinstance(part.get("text"), str) for part in content)
+        or len(content[0]["text"]) < PROMPT_CACHE_MIN_CHARS
+        or any("cache_control" in part for part in content)
+    ):
+        return None
+    with _PROMPT_CACHE_LOCK:
+        if _prompt_cache_provider() in _UNSUPPORTED_PROMPT_CACHES:
+            return None
+    return [{**content[0], "cache_control": {"type": "ephemeral"}}, *content[1:]]
+
+
+def _unsupported_cache_error(exc):
+    """Do not hide other HTTP 400 errors by retrying with altered parameters."""
+    detail = str(exc).lower()
+    return (
+        isinstance(exc, anthropic.BadRequestError)
+        and exc.status_code == 400
+        and ("cache_control" in detail or "prompt caching" in detail)
+    )
+
+
+def request_json(content, *, usage_stats=None):
+    """Network worker: no Streamlit, filesystem, image, PDF or cache operations.
+
+    ``usage_stats`` is opt-in numeric instrumentation (no prompt/response data).
+    An unsupported provider cache marker is disabled per endpoint/model and
+    retried unmarked within the same overall request budget.
+    """
     if not configured():
         raise ValueError(
             "The document reader is not configured. Continue with entered text."
         )
     until = time.monotonic() + OPERATION_BUDGET_SECONDS
+    marked = _provider_cached_content(content)
+    identity = _prompt_cache_provider()
     with make_client(ANTHROPIC_API_KEY, max_retries=0) as client:
-        message = request_with_retry(
-            lambda timeout: client.messages.create(
-                model=ANTHROPIC_MODEL,
-                max_tokens=8000,
-                timeout=timeout,
-                messages=[{"role": "user", "content": content}],
-            ),
-            until=until,
-        )
+        def send(payload):
+            return request_with_retry(
+                lambda timeout: client.messages.create(
+                    model=ANTHROPIC_MODEL,
+                    max_tokens=8000,
+                    timeout=timeout,
+                    messages=[{"role": "user", "content": payload}],
+                ),
+                until=until,
+            )
+        try:
+            message = send(marked if marked is not None else content)
+        except anthropic.BadRequestError as exc:
+            if marked is None or not _unsupported_cache_error(exc):
+                raise
+            with _PROMPT_CACHE_LOCK:
+                _UNSUPPORTED_PROMPT_CACHES.add(identity)
+            message = send(content)
+    if usage_stats is not None:
+        usage = getattr(message, "usage", None)
+        for name in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"):
+            value = getattr(usage, name, None)
+            if type(value) is int and value >= 0:
+                usage_stats[name] = value
     try:
         raw = complete_response_text(message)
     except IncompleteResponseError as exc:
@@ -364,12 +430,19 @@ def reserve_call(profile, period):
         library._atomic_write(path, library._json(value))
 
 
-def extraction_request(source, pages):
-    pages = tuple(dict.fromkeys(pages))
+def extraction_request(source, pages, *, profile=None, period=None):
+    """Content-addressed source read; report identity also binds saved judgments.
+
+    Historical direct callers may omit both scope arguments, but the UI always
+    provides both. Source fingerprint invalidates manual corrections/reviews.
+    No key created by older prompt/model versions is reused.
+    """
+    pages = tuple(pages)
     if not pages or any(
         type(n) is not int or not 1 <= n <= len(source.page_texts) for n in pages
     ):
         raise ValueError("Choose real source pages to read.")
+    pages = tuple(sorted(set(pages)))
     evidence = [{"page": n, "text": source.page_texts[n - 1]} for n in pages]
     if sum(len(p["text"]) for p in evidence) > MAX_EVIDENCE_CHARS:
         raise ValueError(
@@ -379,13 +452,21 @@ def extraction_request(source, pages):
         raise ValueError(
             "No readable text yet. Read an image page or enter its facts first."
         )
-    key = digest((PROMPT_VERSION, source.sha256, evidence))
+    if (profile is None) != (period is None):
+        raise ValueError("Source cache identity requires both profile and period.")
+    scope = (
+        (profile.contract, profile.key, tuple(f.key for f in profile.facilities), period.key)
+        if profile is not None else ("unscoped-direct-call",)
+    )
+    key = digest(("extraction-v2", PROMPT_VERSION, EXTRACT_PROMPT, ANTHROPIC_MODEL,
+                  scope, source.id, source.sha256, source.fingerprint, evidence))
     return key, [
         {
             "type": "text",
             "text": EXTRACT_PROMPT
             + "\n"
-            + json.dumps({"source_id": source.id, "pages": evidence}),
+            + json.dumps({"source_id": source.id, "pages": evidence},
+                         ensure_ascii=False),
         }
     ]
 
@@ -648,7 +729,7 @@ def evidence_fingerprint(sources, references):
     return "" if wanted else digest(records)
 
 
-def drafting_request(block_key, sources, period, vendors=(), tags=(), instruction=""):
+def drafting_request(block_key, sources, period, vendors=(), tags=(), instruction="", *, profile=None, report_revision=""):
     if block_key not in BLOCK_KINDS or len(instruction) > 2000:
         raise ValueError(
             "Choose a supported narrative and keep redrafting notes under 2,000 characters."
@@ -685,7 +766,25 @@ def drafting_request(block_key, sources, period, vendors=(), tags=(), instructio
         raise ValueError(
             "This draft exceeds 60,000 characters of compact evidence. Select fewer sources; nothing was removed."
         )
-    key = digest((PROMPT_VERSION, payload))
+    scope = (
+        (profile.contract, profile.key, tuple(f.key for f in profile.facilities))
+        if profile is not None else ("unscoped-direct-call",)
+    )
+    key = digest(("draft-v2", PROMPT_VERSION, DRAFT_PROMPT, ANTHROPIC_MODEL,
+                  scope, report_revision, tuple((s.id, s.sha256, s.fingerprint) for s in sources), payload))
+    # For a large fact set, keep the verified evidence and rules ahead of
+    # changing user redraft notes. The explicit provider breakpoint can reuse
+    # that identical prefix, while distinct notes always get distinct result
+    # keys. Preserve the one-block legacy payload for ordinary/small requests.
+    if instruction:
+        stable = {k: v for k, v in payload.items() if k != "redrafting_notes"}
+        stable_text = DRAFT_PROMPT + "\n" + json.dumps(stable)
+        if len(stable_text) >= PROMPT_CACHE_MIN_CHARS:
+            return key, [
+                {"type": "text", "text": stable_text},
+                {"type": "text", "text": "Redrafting notes (untrusted):\n"
+                 + json.dumps({"redrafting_notes": instruction})},
+            ], facts
     return key, [{"type": "text", "text": DRAFT_PROMPT + "\n" + encoded}], facts
 
 

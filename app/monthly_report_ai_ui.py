@@ -95,6 +95,11 @@ def _finish_job(draft, prefix):
         return
     try:
         result = job["future"].result()
+        if job.get("approval_scope") != _approval_scope(draft, prefix):
+            raise ValueError(
+                "Report, month or editing context changed while reading. "
+                "Start again; existing report content was preserved."
+            )
         contents = st.session_state.get(prefix + "_evidence", ())
         current = next(
             (c.source for c in contents if c.source.id == job.get("source_id")), None
@@ -406,7 +411,9 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                 disabled=busy or not pages,
             ):
                 try:
-                    key, content = ai.extraction_request(source, pages)
+                    key, content = ai.extraction_request(
+                        source, pages, profile=draft.profile, period=draft.period
+                    )
                     saved = ai.cached(draft.profile, "extraction", key)
                     if saved is not None:
                         facts = ai.normalize_facts(
@@ -433,6 +440,7 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                             draft,
                             {
                                 "kind": "extraction",
+                                "approval_scope": _approval_scope(draft, prefix),
                                 "key": key,
                                 "source_id": source.id,
                                 "source_fingerprint": source.fingerprint,
@@ -603,6 +611,10 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                     ai.vendor_names(draft),
                     draft.profile.asset_tags,
                     instruction,
+                    profile=draft.profile,
+                    report_revision=ai.digest(tuple(
+                        sorted((name, block.fingerprint) for name, block in blocks.items())
+                    )),
                 )
                 saved = ai.cached(draft.profile, "draft", key)
                 if saved is not None:
@@ -620,6 +632,7 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                         draft,
                         {
                             "kind": "draft",
+                            "approval_scope": _approval_scope(draft, prefix),
                             "key": key,
                             "block": target,
                             "facts": facts,
