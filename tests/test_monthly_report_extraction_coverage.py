@@ -174,3 +174,49 @@ def test_reviewable_table_row_exclusion_persists_and_rejects_stale_content():
                                                    (("Other", "Different note"),)),))
     with pytest.raises(ValueError, match="changed"):
         exclude_from_coverage(draft, row_item, "Irrelevant synthetic test row.", content=changed)
+
+
+def test_maximum_legal_reason_roundtrips_without_corrupting_snapshot():
+    draft, content = fixture(pages=("Synthetic content awaiting review.",))
+    item = source_coverage(draft, content.source, content).items[0]
+    reason = "x" * 300
+    updated = exclude_from_coverage(draft, item, reason)
+    restored = draft_from_dict(asdict(updated))
+    assert len(updated.source_coverage_receipts[0]) > 500
+    assert source_coverage(restored, restored.sources[0], content).items[0].reason == reason
+
+
+def test_large_spreadsheet_hashes_source_once(monkeypatch):
+    from app.monthly_report_model import ReportSource
+    rows = tuple((str(n), "synthetic") for n in range(3000))
+    table = SourceTable("Synthetic", ("ID", "Detail"), rows)
+    page = "ID\\tDetail\\n" + "\\n".join("\\t".join(row) for row in rows)
+    draft, content = fixture(pages=(page,), suffix=".csv", tables=(table,))
+    original = ReportSource.fingerprint.fget
+    calls = []
+    def counted(source):
+        calls.append(1)
+        return original(source)
+    monkeypatch.setattr(ReportSource, "fingerprint", property(counted))
+    ledger = source_coverage(draft, draft.sources[0], content)
+    assert ledger.rows == 3000
+    assert len(calls) == 1
+
+
+def test_reviewed_image_with_context_marker_is_not_falsely_unread(monkeypatch):
+    from app.monthly_report_content_policy import page_fingerprint
+    from app.monthly_report_sources import source_reference
+    from app import monthly_report_asset_review
+    draft, content = fixture(pages=("",), suffix=".pdf", vision=(1,))
+    source = replace(content.source, selected_pages=(1,))
+    source = replace(source, client_page_reviews=((1, page_fingerprint(source, 1)),))
+    block = replace(draft.blocks[0], asset_hashes=("synthetic.png",))
+    monkeypatch.setattr(monthly_report_asset_review, "pending_asset_indexes",
+                        lambda *args, **kwargs: ())
+    monkeypatch.setattr(monthly_report_asset_review, "asset_context",
+                        lambda *args, **kwargs: (
+                            source_reference(source, 1), "asset-source-context:v1:demo"))
+    ready = replace(draft, sources=(source,), blocks=(block,))
+    ledger = source_coverage(ready, source, replace(content, source=source))
+    assert ledger.unread_pages == 0
+    assert ledger.items[0].state == "applied"
