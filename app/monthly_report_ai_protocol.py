@@ -6,6 +6,9 @@ normalize_facts/normalize_draft validators remain mandatory before acceptance.
 from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, version
+import json
+
+from app.analysis_schema import _extract_json_object
 
 from app.ai_client import foundry_settings
 
@@ -44,6 +47,37 @@ _LIMITS = {"facts": 100, "paragraphs": 60}
 
 class InvalidReaderShape(ValueError):
     """The response contains extra, incomplete or ill-typed fields."""
+
+
+def extract_single_json(raw: str) -> dict:
+    """Recover fenced JSON and harmless commentary, but reject sibling payloads.
+
+    The shared PO analyzer deliberately tolerates a short trailing remark. For
+    page/fact chunks a second valid object could contain useful facts, so
+    accepting only the first object would silently lose evidence.
+    """
+    value = _extract_json_object(raw)
+    text = raw.strip()
+    if text.startswith("```"):
+        text = text[text.index("\n") + 1:]
+    start = text.find("{")
+    _, end = json.JSONDecoder().raw_decode(text[start:])
+    tail = text[start + end:]
+    # Markdown fences and a human-readable remark are harmless. A second
+    # complete JSON value is not: re-ask for a single consolidated object.
+    decoder = json.JSONDecoder()
+    for index, character in enumerate(tail):
+        if character not in "{[":
+            continue
+        try:
+            sibling, _ = decoder.raw_decode(tail[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(sibling, (dict, list)):
+            raise InvalidReaderShape(
+                "Reader returned multiple JSON payloads; useful facts may be omitted."
+            )
+    return value
 
 
 def output_schema(kind: str | None, model: str) -> dict | None:
