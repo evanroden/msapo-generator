@@ -265,3 +265,54 @@ def test_restart_does_not_sweep_while_other_owned_office_is_running(monkeypatch,
         process.wait(timeout=3)
     assert admission.prune_orphaned_profiles(output) == 1
     assert not old.exists()
+
+
+@requires_libreoffice
+def test_identical_input_parallel_matches_serial_rendered_page_bytes(monkeypatch, tmp_path):
+    """Raw PDF metadata can vary; rendered pixels and document bytes cannot."""
+    import pymupdf
+    output = _runtime(monkeypatch, tmp_path)
+    original = _source(tmp_path, owner='same-owner')
+    original_hash = sha256(original.read_bytes()).hexdigest()
+    monkeypatch.setattr(admission, 'parallel_enabled', lambda: False)
+    baseline = converter.convert_to_pdf(original)
+    monkeypatch.setattr(admission, 'parallel_enabled', lambda: True)
+    monkeypatch.setattr(jobs, 'memory_headroom', lambda: 3 * admission.GIB)
+    saved_pids = []
+    previous_record = office_process._record
+    def capture(pid):
+        saved_pids.append(pid)
+        previous_record(pid)
+    monkeypatch.setattr(office_process, '_record', capture)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first, second = list(pool.map(converter.convert_to_pdf, (original, original)))
+    def page_bytes(path):
+        with pymupdf.open(path) as pdf:
+            return [(round(page.rect.width), round(page.rect.height),
+                     sha256(page.get_pixmap(alpha=False).samples).hexdigest(),
+                     page.get_text()) for page in pdf]
+    try:
+        assert len({baseline, first, second}) == 3
+        assert page_bytes(baseline) == page_bytes(first) == page_bytes(second)
+        assert sha256(original.read_bytes()).hexdigest() == original_hash
+        assert saved_pids and all(not office_process._group_running(pid) for pid in saved_pids)
+        assert not list(output.glob('.office-*'))
+        assert not list((tmp_path / 'runtime').rglob('.active-office*.json'))
+    finally:
+        for path in (baseline, first, second):
+            path.unlink(missing_ok=True)
+
+
+def test_missing_and_malformed_inputs_never_publish_an_old_pdf(monkeypatch, tmp_path):
+    output = _runtime(monkeypatch, tmp_path)
+    old = output / 'missing.pdf'
+    old.write_bytes(b'%PDF-1.7 old output')
+    missing = tmp_path / 'missing.docx'
+    with pytest.raises(converter.PDFConversionError):
+        converter.convert_to_pdf(missing)
+    malformed = tmp_path / 'malformed.docx'
+    malformed.write_bytes(b'not an OOXML package')
+    with pytest.raises(converter.PDFConversionError):
+        converter.convert_to_pdf(malformed)
+    assert old.read_bytes() == b'%PDF-1.7 old output'
+    assert not list(output.glob('.office-*'))
