@@ -96,10 +96,16 @@ def stage_valid(record, digest: str, suffix: str) -> bool:
         return False
 
 
-def qa_stage(stage: str, started: float, outcome: str, *, byte_count: int = 0) -> None:
+def qa_stage(stage: str, started: float, outcome: str, *, artifact=None) -> None:
     """Local-only, sanitized timings. Never include site, filename or digest."""
     if os.environ.get("MSAPO_LOCAL_QA_SOURCE_CACHE") != "1":
         return
+    byte_count = 0
+    if artifact is not None:
+        try:
+            byte_count = artifact.stat().st_size
+        except OSError:
+            byte_count = -1
     logging.getLogger("msapo.local.source_cache").info(
         "source_cache stage=%s outcome=%s wall_ms=%.3f derived_bytes=%d",
         stage, outcome, (perf_counter() - started) * 1000, byte_count,
