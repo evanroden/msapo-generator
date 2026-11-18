@@ -91,6 +91,7 @@ from app.memory import (
     remembered_vendor_contact,
 )
 from app.ocr import extract_text
+from app.upload_validation import QUOTE_NEXT_STEP, quote_upload_problem
 from app.po_context import (
     _document_signature,
     account_manager_memory_context_id,
@@ -1895,12 +1896,10 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
     uploaded = None
 
     if input_mode == UPLOAD_MODE:
+        st.caption("Accepted: PDF, Word (.docx), photos and .txt files; or choose Paste text.")
         uploaded = st.file_uploader(
             "Upload quote",
-            type=[
-                "pdf", "png", "jpg", "jpeg", "webp", "tif", "tiff", "bmp",
-                "heic", "heif", "hif", "txt",
-            ],
+            type=None,
             # Derived from the Smartsheet attachment ceiling, not chosen. The
             # quote the operator uploads IS one of the two attachments, so a file
             # the uploader accepts but Smartsheet later refuses is a failure the
@@ -1920,8 +1919,20 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
             st.caption(f"Retained quote: {uploaded.name}")
             st.button("Remove retained quote", on_click=_clear_quote_upload)
         if uploaded is not None:
-            st.session_state["po_upload_available"] = True
             file_bytes = uploaded.getvalue()
+            rejection = quote_upload_problem(uploaded.name, file_bytes)
+            if rejection:
+                clear_active_analysis(st.session_state)
+                for key in (
+                    "uploaded_file_bytes", "uploaded_file_name", "extracted_text",
+                    "extract_hash", "extraction_error_hash", "extraction_error_message",
+                ):
+                    st.session_state.pop(key, None)
+                st.session_state["po_upload_available"] = False
+                st.error(rejection)
+                _render_footer()
+                return
+            st.session_state["po_upload_available"] = True
             st.session_state["uploaded_file_bytes"] = file_bytes
             st.session_state["uploaded_file_name"] = uploaded.name
             # Every decision below keys off the file's CONTENT hash, never its
@@ -1951,23 +1962,18 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
                         # error path as a genuine exception.
                         if not extracted:
                             raise ValueError("No readable text was found in the file.")
-                    except Exception as exc:
+                    except Exception:
                         st.session_state["extracted_text"] = ""
                         st.session_state["extraction_error_hash"] = file_hash
-                        st.session_state["extraction_error_message"] = str(exc)[:300]
+                        # Parser errors can include MIME types or internals.
+                        st.session_state["extraction_error_message"] = ""
                     else:
                         st.session_state["extracted_text"] = extracted
                         st.session_state["extract_hash"] = file_hash
                         st.session_state.pop("extraction_error_hash", None)
                         st.session_state.pop("extraction_error_message", None)
             if st.session_state.get("extraction_error_hash") == file_hash:
-                st.error(
-                    "The file could not be read. Try reading it again, upload a "
-                    "clearer copy, or switch to Paste text."
-                )
-                details = st.session_state.get("extraction_error_message", "")
-                if details:
-                    st.caption(f"File-reading detail: {details}")
+                st.error("The quote could not be read. " + QUOTE_NEXT_STEP)
                 st.button(
                     "Try reading this file again",
                     key=f"retry_extract_{file_hash[:12]}",
