@@ -137,7 +137,8 @@ def _table_cases():
                 started = perf_counter()
                 cached, cached_extras = sources.ingest(profile, "invented-orders" + suffix, raw)
                 warm.append(perf_counter() - started)
-            cold.append(spans[0]["elapsed_ms"] / 1000)
+            cold.append(next(event["elapsed_ms"] for event in spans
+                             if event["phase"] == "source_ingest") / 1000)
             assert extras == cached_extras == ()
             assert len(content.tables) == len(cached.tables) == 1
             assert len(content.tables[0].rows) == len(cached.tables[0].rows) == 256
@@ -193,6 +194,7 @@ def _source_cases():
         timings = {key: [] for key in ("cold_ingest", "cold_thumbnail", "cold_total",
                                       "warm_ingest", "warm_thumbnail", "warm_total")}
         preserved = None
+        cold_spans = []
         for number in range(5):
             profile = _profile(f"qa491-{case}-{number}")
             start = perf_counter()
@@ -203,6 +205,7 @@ def _source_cases():
                 with measure_span("source_thumbnail"):
                     thumb = _image(profile, content)
             finished = perf_counter()
+            cold_spans.append(list(spans))
             assert extras == ()
             timings["cold_ingest"].append(ingest_at - start)
             timings["cold_thumbnail"].append(finished - ingest_at)
@@ -230,6 +233,7 @@ def _source_cases():
         results.append({"workload": case, "source_bytes": len(raw),
                         "fixture_sha256": sha256(raw).hexdigest(),
                         "samples": {key: _summary(values) for key, values in timings.items()},
+                        "cold_critical_path_spans": cold_spans,
                         "preservation": preserved})
     return results
 
