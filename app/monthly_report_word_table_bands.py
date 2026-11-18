@@ -87,8 +87,8 @@ def word_table_geometry(table, rows) -> WordTableGeometry:
                 group += 1
         elif marked and header_values is not None and source == header_values:
             role = "repeated_header"
-        elif marked or (index == 0 and len(cells) >= 2
-                        and all(values[:len(cells)])
+        elif marked or ((index == 0 or (index == 1 and roles and roles[0] == "title_band"))
+                        and len(cells) >= 2 and all(values[:len(cells)])
                         and len(set(values[:len(cells)])) == len(cells)):
             role = "header"
             if header_values is None:
