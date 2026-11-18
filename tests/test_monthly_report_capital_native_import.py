@@ -218,3 +218,28 @@ st.session_state["block"] = render_capital_master(
     assert load_capital_master(both.contract).items[0].priority == "Urgent"
     assert app.session_state["block"] == edited
     assert path.read_bytes() == original
+
+
+def test_new_month_source_file_reuses_unique_items_and_does_not_duplicate(native, tmp_path):
+    both, north, south, _, initial, block, path, original = native
+    items, _ = reviewed_capital_items(initial, block, load_capital_master(both.contract))
+    first = approve(both, items)
+    new_source = tmp_path / "second-month.docx"
+    document = Document(path)
+    document.add_paragraph("Synthetic second report source for next month")
+    document.save(new_source)
+    inspected = inspect_docx(new_source)
+    table = next(item for item in inspected.items if item.kind == "table")
+    mapped = map_items(new_source, inspected, (ImportMapping(table.id, "capital_renewal"),))
+    later = imported_draft(both, NEXT, "A74 synthetic reviewer", mapped)
+    later_block = next(item for item in later.blocks if item.key == "capital_renewal")
+    assert later_block.references != block.references
+    assert later_block.rows == block.rows
+    reused, removed = reviewed_capital_items(later, later_block, first)
+    assert reused == first.items and not removed
+    assert approve(both, reused, revision=1) == first
+    assert [item.item.key for item in select_capital(north, first, NEXT).occurrences] == [
+        items[0].key, items[1].key,
+    ]
+    assert len(select_capital(south, first, NEXT).occurrences) == 1
+    assert path.read_bytes() == original
