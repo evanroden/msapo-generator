@@ -9,9 +9,7 @@ from app.monthly_report_model import (
     Facility, ReportDraft, ReportPeriod, ReportProfile, ReportTable,
     ResolvedBlock, TrainingSessionTable, default_sections,
 )
-from app.monthly_report_training import EVENT_COLUMNS, EVENT_REF, MATRIX_REF, (
-    load_training, save_training,
-)
+from app.monthly_report_training import EVENT_COLUMNS, EVENT_REF, MATRIX_REF, load_training, save_training
 
 
 def draft():
