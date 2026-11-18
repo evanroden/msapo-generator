@@ -138,3 +138,25 @@ def test_converted_pdf_image_pixels_are_gray(tmp_path, monkeypatch):
             pixels = pixmap.samples
             assert all(pixels[i] == pixels[i+1] == pixels[i+2]
                        for i in range(0, len(pixels), 3))
+
+
+
+def test_generated_divider_transparent_source_flattens_neutrally_without_touching_logo_colors():
+    from app.monthly_report_docx import _divider_background
+    image = Image.new("RGBA", (700, 920), (220, 35, 11, 0))
+    stream = BytesIO()
+    image.save(stream, "PNG")
+    original = stream.getvalue()
+    original_sha = sha256(original).hexdigest()
+    document = Document()
+    _divider_background(document, original)
+    photos = list(document.part.package.image_parts)
+    assert len(photos) == 1
+    with Image.open(BytesIO(photos[0].blob)) as rendered:
+        # Outside the edited green divider band is an opaque, neutral background.
+        assert rendered.mode == "RGB"
+        neutral = rendered.getpixel((400, 80))
+        assert max(neutral) - min(neutral) <= 2 and min(neutral) >= 247
+        brand = rendered.getpixel((400, 500))
+        assert max(brand) - min(brand) >= 10
+    assert sha256(original).hexdigest() == original_sha
