@@ -52,7 +52,7 @@ def render_first_upload(field, contracts):
     st.subheader("Start with a report")
     st.caption("Upload last month's Word report or a partly finished report for this month. The source stays unchanged.")
     upload = st.file_uploader("Starting report", type=["docx"],
-        key=field("report_entry_upload", None), **starting_upload_options())
+        key="report_entry_upload", **starting_upload_options())
     prior = st.session_state.get(ENTRY_STAGE)
     if upload is None:
         _retire_stage(prior)
