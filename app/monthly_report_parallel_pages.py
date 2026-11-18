@@ -115,6 +115,7 @@ def parallel_pages(path, digest, numbers, *, dpi, max_pixels, max_source_bytes):
     def submit(number):
         return pool.apply_async(_raster_page, ((str(path), digest, number, dpi,
                                                max_pixels, max_source_bytes),))
+    completed = False
     try:
         for _ in range(MAX_WORKERS):
             try:
@@ -128,6 +129,12 @@ def parallel_pages(path, digest, numbers, *, dpi, max_pixels, max_source_bytes):
                 pending.append(submit(next(pages)))
             except StopIteration:
                 pass
+        completed = True
     finally:
-        pool.terminate()
+        # Graceful close on success avoids killing live worker shutdown;
+        # cancelled/failed/stale requests must stop remaining work now.
+        if completed:
+            pool.close()
+        else:
+            pool.terminate()
         pool.join()
