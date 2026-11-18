@@ -95,7 +95,7 @@ def test_two_complete_json_payloads_trigger_repair_instead_of_losing_second(monk
     partial = {"facts": [VALUE["facts"][0]]}
     seen = _reader(
         monkeypatch,
-        _response(json.dumps({"facts": []}) + "\\n" + json.dumps(partial)),
+        _response(json.dumps({"facts": []}) + "\n" + json.dumps(partial)),
         _response(json.dumps(VALUE)),
     )
     result = ai.request_json(
@@ -110,7 +110,7 @@ def test_two_complete_json_payloads_trigger_repair_instead_of_losing_second(monk
 def test_single_json_with_trailing_commentary_is_still_accepted(monkeypatch):
     seen = _reader(
         monkeypatch,
-        _response("```json\\n" + json.dumps(VALUE) + "\\n```\\nReview the cited page."),
+        _response("```json\n" + json.dumps(VALUE) + "\n```\nReview the cited page."),
     )
     assert ai.request_json(
         [{"type": "text", "text": "Synthetic"}],
