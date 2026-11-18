@@ -1,0 +1,79 @@
+name: A25 bounded image memory evidence
+
+on:
+  pull_request:
+    paths:
+      - 'app/monthly_report_docx.py'
+      - 'app/monthly_report_preview_images.py'
+      - 'tests/test_monthly_image_memory_a25.py'
+      - 'scripts/qa_monthly_image_memory_a25.py'
+      - '.github/workflows/monthly-image-memory-a25.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: a25-image-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  capped-image-control:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: candidate
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: baseline
+      - name: Build a single identical runtime for before/after
+        run: docker build --build-arg APP_GIT_COMMIT="${{ github.event.pull_request.head.sha }}" -t msapo-a25-image candidate
+      - name: Compare real base and PR code under 512 MiB / 0.5 CPU
+        timeout-minutes: 25
+        run: |
+          mkdir -p results
+          for stage in baseline candidate; do
+            docker run --name "msapo-a25-$stage" --memory=512m --memory-swap=512m --cpus=0.5 \
+              -v "$PWD/baseline:/baseline:ro" -v "$PWD/results:/results" \
+              --entrypoint python msapo-a25-image scripts/qa_monthly_image_memory_a25.py \
+              --code-root "/$stage" --output "/results/$stage.json"
+            test "$(docker inspect --format='{{.State.OOMKilled}}' "msapo-a25-$stage")" = false
+          done
+      - name: Verify source, output geometry and candidate privacy
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          base, head = (json.loads(Path(f'results/{name}.json').read_text()) for name in ('baseline', 'candidate'))
+          assert len(base['scenarios']) == len(head['scenarios']) == 5
+          for a, b in zip(base['scenarios'], head['scenarios']):
+              assert a['scenario'] == b['scenario']
+              assert a['original_sha256'] == b['original_sha256'], a['scenario']
+              for before, after in zip(a['passes'], b['passes']):
+                  assert before['geometry'] == after['geometry'], a['scenario']
+                  assert not after['hidden_rgb_leak'] and not after['author_metadata_leak']
+              assert b['cgroup']['memory.max'] == '536870912'
+              quota, period = map(int, b['cgroup']['cpu.max'].split())
+              assert quota / period == 0.5
+              print(a['scenario'], 'base/head cold wall(ms):',
+                    a['passes'][0]['wall_ms'], b['passes'][0]['wall_ms'],
+                    'base/head peak RSS(MiB):',
+                    a['passes'][0]['process_peak_rss_mib'], b['passes'][0]['process_peak_rss_mib'])
+          PY
+      - name: Copy logs and cgroup/container outcomes
+        if: always()
+        run: |
+          for stage in baseline candidate; do
+            docker logs "msapo-a25-$stage" > "results/$stage.log" 2>&1 || true
+            docker inspect "msapo-a25-$stage" > "results/$stage-inspect.json" || true
+          done
+      - name: Upload proof (including first failure)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a25-image-memory-base-head
+          path: results/
+          if-no-files-found: warn
+          retention-days: 14
