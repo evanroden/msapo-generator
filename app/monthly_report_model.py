@@ -384,6 +384,8 @@ class ReportDraft:
     # Report-owned, source-bound normalized row review receipts. JSON strings
     # keep the frozen draft immutable and travel with snapshots/recovery.
     source_row_reviews: tuple[str, ...] = ()
+    # Explicit report-local exclusions; never a source/site/export approval.
+    source_coverage_receipts: tuple[str, ...] = ()
     # Report-only section choices preserve content and never edit the design.
     omitted_sections: tuple[str, ...] = ()
 
@@ -422,6 +424,8 @@ def _digest(value: object) -> str:
             record.pop("omitted_sections", None)
         if not record.get("source_row_reviews"):
             record.pop("source_row_reviews", None)
+        if not record.get("source_coverage_receipts"):
+            record.pop("source_coverage_receipts", None)
         for block in record["blocks"]:
             if block.get("cover_original") is None:
                 block.pop("cover_original", None)
