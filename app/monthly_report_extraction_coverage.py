@@ -162,6 +162,26 @@ def source_coverage(draft, source, content=None, *, byte_count=None):
     candidate_images.update(n for n, _ in pictures if type(n) is int)
     candidate_images.update(source.selected_pages if source.suffix in (".png", ".jpg", ".jpeg",
                            ".webp", ".tif", ".tiff", ".heic", ".heif", ".hif", ".bmp", ".mpo") else ())
+    # Parse a report's persisted exclusions once, not once for every table
+    # row. An otherwise valid 2,500-receipt workbook must remain bounded.
+    exclusions = {}
+    for raw in getattr(draft, "source_coverage_receipts", ()):
+        try:
+            receipt = json.loads(raw)
+            if (isinstance(receipt, dict)
+                    and receipt.get("version") == RECEIPT_VERSION
+                    and receipt.get("contract") == draft.profile.contract
+                    and receipt.get("period") == draft.period.key
+                    and receipt.get("source") == source.id
+                    and receipt.get("sha256") == source.sha256
+                    and receipt.get("revision") == source_revision
+                    and isinstance(receipt.get("item"), str)
+                    and isinstance(receipt.get("digest"), str)
+                    and isinstance(receipt.get("reason"), str)
+                    and 8 <= len(receipt["reason"].strip()) <= 300):
+                exclusions[(receipt["item"], receipt["digest"])] = receipt["reason"]
+        except (TypeError, ValueError):
+            continue
     items = []
 
     def add(item_id, kind, page, value, *, state="review", reason="", destination=""):
@@ -174,7 +194,7 @@ def source_coverage(draft, source, content=None, *, byte_count=None):
             item = replace(item, state="excluded",
                            reason="Explicitly omitted original page (current page receipt).")
         if item.state == "review":
-            exclusion = _exclusion_reason(draft, item)
+            exclusion = exclusions.get((item.item_id, item.digest))
             if exclusion:
                 item = replace(item, state="excluded", reason=exclusion)
         items.append(item)
