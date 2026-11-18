@@ -71,6 +71,26 @@ def test_outdated_shared_copy_refreshes_without_changing_manual_override_or_othe
     assert capacity.load_capacity(profile.contract) == latest
 
 
+
+def test_stale_reuse_action_does_not_adopt_changed_standing_revision(profile, monkeypatch):
+    original = saved(profile)
+    current = draft(profile, ResolvedBlock("thermal_capacity", "This month"))
+    app = _app(monkeypatch, current)
+    stale, = [button for button in app.button if button.label == "Use approved capacity in this report"]
+    # Another reviewer publishes a newer contract revision after the button
+    # is displayed, before this native action is delivered.
+    newer = saved(profile, CSV.replace(b"1200", b"1350"), revision=1)
+    stale.click().run()
+    assert not app.exception
+    assert app.session_state["test_block"] == current.blocks[0]
+    assert capacity.load_capacity(profile.contract) == newer
+    fresh, = [button for button in app.button if button.label == "Use approved capacity in this report"]
+    assert fresh.id != stale.id
+    fresh.click().run()
+    assert not app.exception
+    assert app.session_state["test_block"].extra_tables[0].rows[0][2] == "1350"
+    assert capacity.load_capacity(profile.contract) == newer
+
 def test_excluded_capacity_and_unknown_values_roll_forward_without_standing_mutation(profile):
     from app import monthly_report_library as library
     state = saved(profile, CSV.replace(b"1200", b"NR"))
