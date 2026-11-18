@@ -93,6 +93,9 @@ def render_whole_pdf(profile, content, blocks, assets, prefix, editor_prefix, fi
         return None
     source = render_source_details(source, profile, prefix + "_" + source.id, field)
     content = replace(content, source=source)
+    if destination == "utility_analysis":
+        from app.monthly_report_scorecard_pdf_preview import render_scorecard_pdf_preview
+        render_scorecard_pdf_preview(profile, content, period=period, key=key)
     problem, pages = "", ()
     try:
         pages = whole_pdf_pages(content, blocks, destination=destination)
