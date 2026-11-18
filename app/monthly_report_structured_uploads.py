@@ -880,7 +880,16 @@ def reader_update(contents, destination, value, existing=None, *, table_columns=
     if not isinstance(items, list) or len(items) > 500:
         raise ValueError("The document reader returned invalid section details.")
     by_id = {c.source.id: c for c in contents}
-    native_mapped = _native_reader_page_pairs(contents, destination, table_columns)
+    # A native-mappable table is not automatically accepted. Direct validators
+    # must still check a reader result when no native contribution was added.
+    # Only the exact source page cited by an already accepted native block is
+    # skipped on an old cached/in-flight response.
+    native_candidates = _native_reader_page_pairs(contents, destination, table_columns)
+    native_mapped = frozenset(
+        pair for pair in native_candidates
+        if existing is not None and any(
+            reference.startswith(f"{pair[0]}:{pair[1]}:")
+            for reference in existing.references))
     admitted = (set(choose_reader_pages(
         profile, contents, destination, period=period, corrections=corrections,
         accepted_pages=accepted_pages, native_mapped=native_mapped))
