@@ -146,3 +146,55 @@ def conversion_lane(*, wait_seconds, serial_lock, folder, memory_headroom):
     finally:
         if not parallel:
             serial_lock.release()
+
+
+def prune_orphaned_profiles(output_dir, *, old_seconds=600):
+    """Remove only expired private Writer scratch directories after a hard exit.
+
+    Do not sweep if any tracked Office child may still run. No source DOCX,
+    finished published PDF, report workspace or unrelated temp path is touched.
+    A failed/malformed process marker means fail-closed: keep the scratch.
+    """
+    import json
+    import shutil
+    from app.monthly_report_library import _root
+    from app.office_process import _boot_id, _group_running
+
+    folder = Path(output_dir)
+    with (folder / '.office-janitor.lock').open('a+b') as lock:
+        if not _try_lock(lock):
+            return 0
+        try:
+            active_dir = _root() / 'render-jobs'
+            for name in ('.active-office.json', '.active-office-1.json'):
+                marker = active_dir / name
+                try:
+                    raw = marker.read_text()
+                    if len(raw) > 1024:
+                        return 0
+                    value = json.loads(raw)
+                    pid = value['pid']
+                    if type(pid) is not int or pid <= 1:
+                        return 0
+                    if (not value.get('boot') or value['boot'] == _boot_id()) and _group_running(pid):
+                        return 0
+                except FileNotFoundError:
+                    continue
+                except (OSError, ValueError, KeyError, TypeError):
+                    return 0
+            now = time.time()
+            removed = 0
+            for item in folder.iterdir():
+                if (not item.name.startswith('.office-') or len(item.name) < 14
+                        or item.is_symlink() or not item.is_dir()):
+                    continue
+                try:
+                    if now - item.stat().st_mtime < old_seconds:
+                        continue
+                    shutil.rmtree(item)
+                    removed += 1
+                except (OSError, ValueError):
+                    continue  # Scratch reaping must never interrupt new export.
+            return removed
+        finally:
+            _unlock(lock)

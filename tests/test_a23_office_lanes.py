@@ -222,3 +222,46 @@ def test_real_parallel_writer_keeps_owner_bytes_and_page_geometry(monkeypatch, t
     finally:
         l.unlink(missing_ok=True)
         r.unlink(missing_ok=True)
+
+
+def test_restart_reaps_only_old_private_profiles(monkeypatch, tmp_path):
+    output = _runtime(monkeypatch, tmp_path)
+    ancient = output / '.office-old-orphan'
+    recent = output / '.office-live-current'
+    unrelated = output / 'user-source.docx'
+    finished = output / 'completed.pdf'
+    for directory in (ancient, recent):
+        directory.mkdir()
+        (directory / 'profile').mkdir()
+        (directory / 'profile' / 'settings').write_text('synthetic')
+    unrelated.write_bytes(b'untouched input')
+    finished.write_bytes(b'%PDF-1.7 existing')
+    old_time = time.time() - 900
+    os.utime(ancient, (old_time, old_time))
+    assert admission.prune_orphaned_profiles(output, old_seconds=600) == 1
+    assert not ancient.exists()
+    assert recent.exists()
+    assert unrelated.read_bytes() == b'untouched input'
+    assert finished.read_bytes() == b'%PDF-1.7 existing'
+
+
+def test_restart_does_not_sweep_while_other_owned_office_is_running(monkeypatch, tmp_path):
+    output = _runtime(monkeypatch, tmp_path)
+    old = output / '.office-old-orphan'
+    old.mkdir()
+    old_time = time.time() - 900
+    os.utime(old, (old_time, old_time))
+    process = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(10)'],
+                               start_new_session=(os.name == 'posix'))
+    marker = office_process._marker()
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    import json
+    marker.write_text(json.dumps({'pid': process.pid, 'boot': office_process._boot_id()}))
+    try:
+        assert admission.prune_orphaned_profiles(output) == 0
+        assert old.exists()
+    finally:
+        process.kill()
+        process.wait(timeout=3)
+    assert admission.prune_orphaned_profiles(output) == 1
+    assert not old.exists()
