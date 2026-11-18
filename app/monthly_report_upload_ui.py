@@ -353,15 +353,55 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
     retired_key = key + "_retired_contributions"
     accepted = st.session_state.get(accepted_key) if retain_accepted else None
     if show_intake:
+        # The native chooser has a single maximum; the real per-type limits
+        # are enforced before parsing and stated directly beside the chooser.
+        st.caption(evidence_limits_summary())
+        generation_key = prefix + "_source_upload_generation"
+        generation = st.session_state.get(generation_key, 0)
+        upload_key = prefix + "_source_upload" + (f"_{generation}" if generation else "")
         upload = st.file_uploader("Monthly source files", type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
-                                 accept_multiple_files=True, key=prefix + "_source_upload", **evidence_upload_options())
+                                 accept_multiple_files=True, key=upload_key, **evidence_upload_options())
         if st.button("Read monthly files", disabled=not upload, key=prefix + "_read_sources"):
-            with st.spinner("Reading local files and checking duplicates…"):
-                contents, messages = sources.ingest_batch(profile, tuple((u.name, u.getvalue()) for u in upload), contents)
-            st.session_state[key] = contents
-            st.session_state[key + "_messages"] = messages
+            from app.monthly_report_streamed_upload import ingest_uploaded_selection
+            with st.status("Processing selected source files…", expanded=True) as status:
+                progress_text = st.empty()
+                progress_bar = st.progress(0.0)
+
+                def on_progress(name, copied, declared):
+                    progress_text.caption(f"Staging {name}: {copied:,} bytes read and hashed")
+                    progress_bar.progress(min(1.0, copied / max(1, declared or copied)))
+
+                def checkpoint(updated):
+                    # A later rejected/cancelled sibling must not erase a
+                    # successfully accepted source from this same request.
+                    st.session_state[key] = updated
+
+                contents, messages, receipts = ingest_uploaded_selection(
+                    profile, upload, contents, on_progress=on_progress,
+                    on_checkpoint=checkpoint)
+                st.session_state[key] = contents
+                st.session_state[key + "_messages"] = messages
+                st.session_state[key + "_upload_receipts"] = receipts
+                status.update(label=f"Finished processing {len(receipts)} file(s).", state="complete")
+            # Remount the native uploader; it owns the original browser bytes
+            # until its widget is retired. Only small receipts survive reruns.
+            st.session_state[generation_key] = generation + 1
+            st.rerun()
+    for filename, result, message in st.session_state.get(key + "_upload_receipts", ()):
+        if result == "accepted":
+            st.success(message)
+        elif result == "restored":
+            st.success(message)
+        elif result == "duplicate":
+            st.info(message)
+        else:
+            st.error(message)
+    # Messages unrelated to the already displayed file receipt (for example,
+    # a previously saved original that is now unavailable) still need review.
+    receipt_messages = {receipt[2] for receipt in st.session_state.get(key + "_upload_receipts", ())}
     for message in st.session_state.get(key + "_messages", ()):
-        st.warning(message)
+        if message not in receipt_messages and not message.startswith(("Duplicate skipped:", "Saved source restored:")):
+            st.warning(message)
     if not contents:
         if accepted:
             st.session_state[pending_key] = True
