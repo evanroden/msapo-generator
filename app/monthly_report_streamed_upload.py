@@ -140,3 +140,51 @@ def ingest_uploaded_selection(profile, uploads, existing=(), *, on_progress=None
             messages.append(message)
             receipts.append((filename, "rejected", message))
     return contents, tuple(messages), tuple(receipts)
+
+
+def publish_staged_original(path: Path, staged: StagedUpload) -> None:
+    """Atomically publish the verified original using existing shared objects.
+
+    TXT and less common image types do not belong to the shared object pool;
+    their profile-local originals get the same streamed atomic publication.
+    """
+    from app import monthly_report_library as library
+    from app.monthly_report_objects import object_path, store_file
+
+    library._qa_path_guard(path)
+    if path.is_symlink():
+        raise ValueError("Saved source path is not a regular file.")
+    with staged.path.open("rb") as stream:
+        if hashlib.file_digest(stream, "sha256").hexdigest() != staged.sha256:
+            raise ValueError("Staged source failed integrity verification.")
+    if object_path(path) is not None:
+        store_file(path, staged.path)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        with path.open("rb") as stream:
+            if hashlib.file_digest(stream, "sha256").hexdigest() == staged.sha256:
+                return
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".pending-", delete=False) as output:
+            temporary = Path(output.name)
+            digest = hashlib.sha256()
+            with staged.path.open("rb") as stream:
+                while chunk := stream.read(CHUNK_BYTES):
+                    digest.update(chunk)
+                    output.write(chunk)
+            if digest.hexdigest() != staged.sha256:
+                raise ValueError("Staged source changed while publishing.")
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+        if os.name == "posix":
+            descriptor = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
