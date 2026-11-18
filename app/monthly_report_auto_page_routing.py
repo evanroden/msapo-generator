@@ -20,30 +20,30 @@ from app.monthly_report_source_scope import reviewed_scope
 # different section in body prose cannot move the page between report sections.
 _HEADINGS = (
     ("water", "water_reports", re.compile(
-        r"^(?:water[ -]treatment(?:\\s+(?:report|log|analysis|results?))?|"
-        r"chemical[ -]treatment(?:\\s+(?:report|log))?|water[ -]analysis)\\b", re.I)),
+        r"^(?:water[ -]treatment(?:\s+(?:report|log|analysis|results?))?|"
+        r"chemical[ -]treatment(?:\s+(?:report|log))?|water[ -]analysis)\b", re.I)),
     ("mbcx", "mbcx_report", re.compile(
-        r"^(?:mbcx(?:\\s+(?:report|results?|summary))?|"
-        r"monitoring[ -]based commissioning(?:\\s+report)?|system performance report)\\b", re.I)),
+        r"^(?:mbcx(?:\s+(?:report|results?|summary))?|"
+        r"monitoring[ -]based commissioning(?:\s+report)?|system performance report)\b", re.I)),
     ("utility", "utility_analysis", re.compile(
-        r"^(?:utility(?:\\s+(?:analysis|results?|scorecard|report|usage|consumption))|"
-        r"monthly (?:utility|energy) (?:report|scorecard|analysis))\\b", re.I)),
+        r"^(?:utility(?:\s+(?:analysis|results?|scorecard|report|usage|consumption))|"
+        r"monthly (?:utility|energy) (?:report|scorecard|analysis))\b", re.I)),
     ("activity", "improvements", re.compile(
-        r"^(?:(?:vendor|service|maintenance|technical)\\s+(?:service |visit |activity |activities )?report|"
-        r"service visit|monthly activity(?: summary)?)\\b", re.I)),
+        r"^(?:(?:vendor|service|maintenance|technical)\s+(?:service |visit |activity |activities )?report|"
+        r"service visit|monthly activity(?: summary)?)\b", re.I)),
     ("photos", "improvements", re.compile(
-        r"^(?:progress (?:photos?|images?)|site work photos?)\\b", re.I)),
+        r"^(?:progress (?:photos?|images?)|site work photos?)\b", re.I)),
     ("proposals", None, re.compile(
-        r"^(?:proposals?(?:\\s+summary)?|quotation|quote(?:\\s+summary)?|scope of work)\\b", re.I)),
+        r"^(?:proposals?(?:\s+summary)?|quotation|quote(?:\s+summary)?|scope of work)\b", re.I)),
     ("capital", None, re.compile(
-        r"^(?:capital (?:renewal|replacement|plan|projects?)|equipment replacement plan)\\b", re.I)),
+        r"^(?:capital (?:renewal|replacement|plan|projects?)|equipment replacement plan)\b", re.I)),
     ("training", None, re.compile(
-        r"^(?:training (?:record|summary|log|attendance)|completed training)\\b", re.I)),
+        r"^(?:training (?:record|summary|log|attendance)|completed training)\b", re.I)),
     ("work_orders", None, re.compile(
-        r"^(?:work[ -]orders?(?:\\s+(?:summary|status|report|log))?|cmms export)\\b", re.I)),
+        r"^(?:work[ -]orders?(?:\s+(?:summary|status|report|log))?|cmms export)\b", re.I)),
     ("standing", None, re.compile(
         r"^(?:organizational? chart|contact (?:directory|matrix)|workflow diagram|"
-        r"thermal capacity|standing (?:data|information))\\b", re.I)),
+        r"thermal capacity|standing (?:data|information))\b", re.I)),
 )
 _CLASSIFICATION = {
     "Vendor service": ("activity", "improvements"),
