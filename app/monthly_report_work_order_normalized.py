@@ -156,11 +156,32 @@ class WorkOrderReview:
         return ReportTable(REVIEW_COLUMNS, rows, self.source_reference)
 
 
-def suggest_mapping(columns):
+def source_header_positions(columns, aliases):
+    """Recognize parser-disambiguated copies of the same physical header.
+
+    The shared CSV/XLSX table parser renames a repeated `Status` to
+    `Status (2)` so downstream editable tables keep unique display names.
+    That display suffix is *not* evidence that the first status is authoritative.
+    Explicitly map one physical position instead of counting either candidate.
+    """
     values = tuple(_name(v) for v in columns)
+    positions = []
+    for index, (raw, title) in enumerate(zip(columns, values)):
+        if title in aliases:
+            positions.append(index)
+            continue
+        suffix = re.fullmatch(r"(.+?) \\((\\d+)\\)", str(raw))
+        if suffix and int(suffix.group(2)) >= 2:
+            original = _name(suffix.group(1))
+            if original in aliases and original in values[:index]:
+                positions.append(index)
+    return positions
+
+
+def suggest_mapping(columns):
     picks, ambiguous = {}, []
     for name in FIELDS:
-        positions = [n for n, title in enumerate(values) if title in ALIASES[name]]
+        positions = source_header_positions(columns, ALIASES[name])
         picks[name] = positions[0] if len(positions) == 1 else None
         if len(positions) > 1:
             ambiguous.append(name)
