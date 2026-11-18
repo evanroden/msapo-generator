@@ -474,6 +474,7 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                     )
                     meta = {
                         "kind": "ocr",
+                        "approval_scope": _approval_scope(draft, prefix),
                         "source_id": source.id,
                         "source_fingerprint": source.fingerprint,
                         "page": page,
