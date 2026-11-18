@@ -140,7 +140,6 @@ def _preview_verified_report(draft, asset_loader=None, *, source_view=None, fing
             del compatible
             small_asset.cache_clear()
             with phase("report_pdf_conversion"):
-                with phase("section_pdf_conversion"):
                 actual = monthly_render_jobs.convert_to_pdf(path, wait_seconds=0)
             if actual.stat().st_size > 80 * 1024 * 1024:
                 raise ValueError(
@@ -426,7 +425,8 @@ def _preview_verified_section(draft, section_key, asset_loader=None, *, source_v
             from app.monthly_report_preview_images import write_preview_docx
             write_preview_docx(compatible, path)
             del compatible
-            actual = monthly_render_jobs.convert_to_pdf(path, wait_seconds=0)
+            with phase("section_pdf_conversion"):
+                actual = monthly_render_jobs.convert_to_pdf(path, wait_seconds=0)
             if actual.stat().st_size > MAX_PREVIEW_BYTES:
                 raise ValueError("This section preview exceeds 25 MB. Reduce the size of its pictures.")
             with fitz.open(actual) as pdf:
