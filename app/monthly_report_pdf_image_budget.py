@@ -29,9 +29,20 @@ def _photograph(name: str) -> bool:
     return name.startswith("word/media/") and name.lower().endswith((".jpg", ".jpeg"))
 
 
+def _source_revision(source_path: Path) -> tuple[int, int, int, int, int]:
+    """Filesystem identity for a pinned, possibly replaced native design.
+
+    A path alone is not an immutable cache key. Track both atomic replacement
+    (device/inode) and in-place writes (size/timestamps); ctime distinguishes
+    rewrites even when a caller restores the original mtime.
+    """
+    stat = source_path.stat()
+    return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+
+
 @lru_cache(maxsize=8)
-def _original_jpeg_hashes(source_path: str) -> frozenset[str]:
-    """Cache hashes of pinned JPEGs and their exact sanitized export copies."""
+def _original_jpeg_hashes(source_path: str, revision: tuple[int, int, int, int, int]) -> frozenset[str]:
+    """Cache only approved media digests for one pinned file revision, not its path."""
     from app.monthly_report_media_privacy import strip_image_metadata
 
     with ZipFile(source_path) as archive:
@@ -65,15 +76,31 @@ def compact_native_photos_for_pdf(raw: bytes, *, pinned_source: Path,
 
     if not 600 <= max_edge <= 2500:
         raise ValueError("Invalid bounded PDF photograph dimension.")
-    allowed = _original_jpeg_hashes(str(pinned_source))
+    # A design may be replaced without moving its installed path. Invalidate
+    # the hash allowlist for every new revision rather than authorizing old
+    # images or silently missing new ones. Fail/retry if it changes mid-read.
+    revision = _source_revision(pinned_source)
+    allowed = _original_jpeg_hashes(str(pinned_source), revision)
+    if _source_revision(pinned_source) != revision:
+        raise ValueError("The pinned Word design changed during PDF preparation. Retry generation.")
     if not allowed:
         return raw
     changed = False
+    # Repeated occurrences of the same immutable photo within one DOCX need
+    # only one decode/resize. Keep derivatives local to this conversion; a
+    # cross-session media cache would retain other clients' image data.
+    reduced_cache: dict[str, bytes] = {}
     output = BytesIO()
     with ZipFile(BytesIO(raw)) as original, ZipFile(output, "w") as converted:
         for info in original.infolist():
             data = original.read(info.filename)
-            if (_photograph(info.filename) and sha256(data).hexdigest() in allowed):
+            media_digest = sha256(data).hexdigest() if _photograph(info.filename) else ""
+            if media_digest and media_digest in allowed:
+                if media_digest in reduced_cache:
+                    data = reduced_cache[media_digest]
+                    changed = True
+                    converted.writestr(info, data)
+                    continue
                 try:
                     with open_image(BytesIO(data), formats=("JPEG",)) as source:
                         width, height = source.size
@@ -105,6 +132,10 @@ def compact_native_photos_for_pdf(raw: bytes, *, pinned_source: Path,
                                 if len(reduced) < len(data):
                                     data = reduced
                                     changed = True
+                                    # At most four <= 2 MiB derivatives per
+                                    # conversion (8 MiB total), never global.
+                                    if len(reduced_cache) < 4 and len(reduced) <= 2 * 1024 * 1024:
+                                        reduced_cache[media_digest] = reduced
                 except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
                     # Unreadable images remain byte-identical; the original
                     # editable DOCX was never modified, and no source is lost.
