@@ -76,7 +76,7 @@ def render_coverage(draft, contents, prefix, blocks):
                 st.warning("The item changed. Select its current version.")
             else:
                 try:
-                    draft = exclude_from_coverage(draft, current_item, reason, content=known.get(item.source_id))
+                    draft = exclude_from_coverage(current, current_item, reason, content=known.get(item.source_id))
                 except ValueError as exc:
                     st.warning(str(exc))
                 else:
