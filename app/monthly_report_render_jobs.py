@@ -280,20 +280,20 @@ def work_slot(*, preview=False, review=False, wait_seconds=130):
     global _ACTIVE_WORK
     reserved = False
     try:
-      if _WORK_CAPACITY > 1:
-        with _ADMISSION_LOCK:
-          available = memory_headroom()
-          if preview:
-            if available is None or available < required_free_bytes(_ACTIVE_WORK):
-              raise RenderBusy(
-                    'Additional preview work is queued while memory is busy. '
-                'Your edits are still here. Retry shortly.')
-              elif _ACTIVE_WORK:
-                required = (512 + 768 * (_ACTIVE_WORK + 1)) * 1024 * 1024
-                if available is None or available < required:
-                  raise RenderBusy('Additional report work is queued while memory is busy. Your saved work is unchanged.')
-                  _ACTIVE_WORK += 1
-                  reserved = True
+        if _WORK_CAPACITY > 1:
+            with _ADMISSION_LOCK:
+                available = memory_headroom()
+                if preview:
+                    if available is None or available < required_free_bytes(_ACTIVE_WORK):
+                        raise RenderBusy(
+                            'Additional preview work is queued while memory is busy. '
+                            'Your edits are still here. Retry shortly.')
+                elif _ACTIVE_WORK:
+                    required = (512 + 768 * (_ACTIVE_WORK + 1)) * 1024 * 1024
+                    if available is None or available < required:
+                        raise RenderBusy('Additional report work is queued while memory is busy. Your saved work is unchanged.')
+                _ACTIVE_WORK += 1
+                reserved = True
         _WORK_LOCAL.active = True
         _WORK_LOCAL.preview_guard = _PreviewMemoryGuard(headroom) if preview else None
         try:
