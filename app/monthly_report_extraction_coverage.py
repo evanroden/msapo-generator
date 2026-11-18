@@ -189,7 +189,7 @@ def source_coverage(draft, source, content=None, *, byte_count=None):
         item = CoverageItem(source.id, source.sha256, source_revision, item_id, kind,
                             page, _digest(value), state, reason, destination)
         # Native page omission remains a current source-bound human decision.
-        excluded_page = (page > 0
+        excluded_page = (0 < page <= len(source.page_texts)
             and dict(source.client_page_exclusions).get(page) == page_fingerprint(source, page))
         if excluded_page and item.state != "applied":
             item = replace(item, state="excluded",
@@ -275,6 +275,10 @@ def source_coverage(draft, source, content=None, *, byte_count=None):
                 reason=("Exact accepted row in destination." if result else
                         "Source row has no exact accepted destination."),
                 destination=result)
+    if len(rows) > page_count:
+        add("tables:page-mismatch", "parser", 0, (len(rows), page_count),
+            state="blocked",
+            reason="Parsed table indexes exceed the retained source items; re-read the original.")
     if content is None and source.suffix in (".csv", ".xlsx"):
         add("tables:unavailable", "parser", 0, source.sha256, state="blocked",
             reason="Table-row inventory unavailable after reload; inspect saved extraction.")
