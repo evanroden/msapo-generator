@@ -17,6 +17,7 @@ import csv
 import hashlib
 from pathlib import Path
 import re
+import time
 from xml.etree.ElementTree import ParseError as XMLParseError
 from zipfile import BadZipFile
 import zlib
@@ -26,6 +27,7 @@ from lxml.etree import XMLSyntaxError
 from openpyxl import load_workbook
 
 from app import monthly_report_library as library, monthly_report_import as docx_import, ocr
+from app import monthly_report_pdf_reader as pdf_reader
 from app.monthly_report_docx import ReportImage, normalize_report_image
 from app.monthly_report_import import inspect_docx, read_import_image
 from app.monthly_report_model import ReportProfile, ReportSource, ResolvedBlock
@@ -67,6 +69,9 @@ class SourceContent:
     tables: tuple[SourceTable, ...] = ()
     # DOCX raster images correspond to item indices, not invented page numbers.
     image_items: tuple[tuple[int, str], ...] = ()
+    # Disposable OCR evidence: (page, start, end, confidence, displayed bbox).
+    # This is retained in the source extraction cache, not human report edits.
+    ocr_spans: tuple[tuple[int, int, int, float, tuple[float, float, float, float]], ...] = ()
 
 
 def _path(profile: ReportProfile, digest: str, suffix: str) -> Path:
@@ -588,7 +593,23 @@ def _cached_extraction(data, digest, suffix):
     if any(not isinstance(pair, list) or len(pair) != 2 or type(pair[0]) is not int
            or not 1 <= pair[0] <= len(source.page_texts) or not isinstance(pair[1], str) for pair in images):
         raise ValueError("Invalid source extraction cache image.")
-    return SourceContent(source, tuple(tables), tuple(tuple(pair) for pair in images))
+    spans = sequence(data.get("ocr_spans", []))
+    validated_spans = []
+    for entry in spans:
+        if (not isinstance(entry, list) or len(entry) != 5
+                or type(entry[0]) is not int or not 1 <= entry[0] <= len(source.page_texts)
+                or type(entry[1]) is not int or type(entry[2]) is not int
+                or not 0 <= entry[1] < entry[2] <= len(source.page_texts[entry[0] - 1])
+                or not isinstance(entry[3], (float, int)) or isinstance(entry[3], bool)
+                or not 0 <= entry[3] <= 100 or not isinstance(entry[4], list)
+                or len(entry[4]) != 4 or any(not isinstance(v, (float, int))
+                                             or isinstance(v, bool) for v in entry[4])
+                or not 0 <= entry[4][0] < entry[4][2]
+                or not 0 <= entry[4][1] < entry[4][3]):
+            raise ValueError("Invalid PDF OCR extraction cache span.")
+        validated_spans.append((entry[0], entry[1], entry[2], float(entry[3]), tuple(entry[4])))
+    return SourceContent(source, tuple(tables), tuple(tuple(pair) for pair in images),
+                         tuple(validated_spans))
 
 
 def _same_source_bytes(path, raw):
@@ -647,7 +668,8 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
                 and (not unicode_csv or data.get("csv_unicode_policy") == 1)
                 and (suffix != ".xlsx" or (type(data.get("xlsx_currency_policy")) is int
                                           and data["xlsx_currency_policy"] == 1))
-                and (suffix != ".pdf" or data.get("vendor_passage_policy", 0) >= 7)):
+                and (suffix != ".pdf" or (data.get("vendor_passage_policy", 0) >= 7
+                                          and data.get("pdf_reader_policy") == 1)))::
             source = content.source
             if data.get("client_page_policy", 0) < 1 and suffix not in (".csv", ".xlsx"):
                 source = replace(source, selected_pages=suggested_pages(source))
@@ -664,6 +686,7 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
         library._atomic_write(path, raw)
     page_texts, needs_vision, tables, image_items, notices = [], [], (), [], []
     pdf_text_blocks = []
+    pdf_ocr_spans = []
     span_budget_exceeded = False
     if suffix == ".pdf":
         with fitz.open(stream=raw, filetype="pdf") as pdf:
@@ -671,15 +694,35 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
                 raise ValueError("PDF needs a password. Upload an unlocked copy.")
             if len(pdf) > MAX_PAGES:
                 raise ValueError(f"PDF exceeds {MAX_PAGES:,} pages; select a smaller document range.")
+            ocr_attempts = 0
+            ocr_deadline = time.monotonic() + pdf_reader.MAX_LOCAL_OCR_SECONDS
+            extracted_chars = 0
+            from app.monthly_report_vendor_passages import block_spans, MAX_VENDOR_BLOCK_SPANS
             for number, page in enumerate(pdf, 1):
-                text = page.get_text().strip()
-                if ocr._page_needs_ocr(page, native_text=text):
+                native = page.get_text().strip()
+                reading = pdf_reader.read_page(
+                    page, number, native_text=native,
+                    needs_ocr=ocr._page_needs_ocr(page, native_text=native),
+                    may_ocr=ocr_attempts < pdf_reader.MAX_LOCAL_OCR_PAGES,
+                    deadline=ocr_deadline,
+                )
+                ocr_attempts += int(reading.attempted_ocr)
+                if reading.needs_vision:
                     needs_vision.append(number)
+                if reading.notice:
+                    notices.append(reading.notice)
+                text = reading.text
                 page_texts.append(text)
-                if sum(map(len, page_texts)) > ocr._MAX_EXTRACTED_CHARS:
-                    raise ValueError(f"PDF text exceeds {ocr._MAX_EXTRACTED_CHARS:,} characters; select a smaller document range.")
-                from app.monthly_report_vendor_passages import block_spans, MAX_VENDOR_BLOCK_SPANS
+                pdf_ocr_spans.extend(reading.ocr_spans)
+                extracted_chars += len(text)
+                if extracted_chars > ocr._MAX_EXTRACTED_CHARS:
+                    raise ValueError(
+                        f"PDF text exceeds {ocr._MAX_EXTRACTED_CHARS:,} characters; "
+                        "keep within the text limit while retaining up to 500 pages."
+                    )
                 if not span_budget_exceeded:
+                    # Native paragraph proofs are invalid for OCR-augmented or
+                    # reordered text unless geometry still tiles exactly.
                     spans = block_spans(page, text, number)
                     if len(pdf_text_blocks) + len(spans) > MAX_VENDOR_BLOCK_SPANS:
                         # No partial-page certainty after exhausting metadata capacity.
@@ -744,9 +787,10 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
     if suffix not in (".csv", ".xlsx"):
         source = replace(source, selected_pages=suggested_pages(source))
     source = suggest_facts(source, profile)
-    content = SourceContent(source, tables, tuple(image_items))
+    content = SourceContent(source, tables, tuple(image_items), tuple(pdf_ocr_spans))
     library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1,
         "native_action_policy": 1, "vendor_passage_policy": 7,
+        **({"pdf_reader_policy": 1} if suffix == ".pdf" else {}),
         **({"xlsx_currency_policy": 1} if suffix == ".xlsx" else {}),
         **({"csv_unicode_policy": 1} if unicode_csv else {}),
         **({"csv_dialect_policy": 1} if suffix == ".csv" else {}), **asdict(content)}))
