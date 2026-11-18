@@ -1,0 +1,181 @@
+"""A03: deterministic, entirely synthetic source-parse/cache acceptance probes.
+
+No real customer material, paid model calls, or served-release claims.
+"""
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
+from hashlib import sha256
+from threading import Barrier, Lock
+from time import sleep
+from types import SimpleNamespace
+
+import pytest
+
+from app import monthly_report_library as library
+from app import monthly_report_sources as sources
+from app.monthly_report_model import Facility, ReportPeriod, synthetic_draft, synthetic_profiles
+from app.monthly_report_source_recovery import restore_sources
+
+
+CSV = b"Item,Completion\nDEMO-001,Inspected pump\nDEMO-002,Pending replacement\n"
+
+
+@pytest.fixture
+def profile(monkeypatch, tmp_path):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    profile = synthetic_profiles()[0]
+    library.save_profile(profile, expected_revision=0, actor="Synthetic Tester", confirmed=True)
+    return profile
+
+
+def cache_for(profile, item):
+    return sources._path(profile, item.source.sha256, ".json")
+
+
+def test_manifest_contains_authenticated_derived_inventory_and_policy(profile):
+    from app import monthly_source_parse_manifest as parse
+
+    content, _ = sources.ingest(profile, "source.csv", CSV)
+    record = library._read(cache_for(profile, content))
+    manifest = record["parse_manifest"]
+    assert manifest["source_sha256"] == sha256(CSV).hexdigest()
+    assert manifest["source_revision"] == sha256(CSV).hexdigest()
+    assert manifest["parser_policy"] == parse.PARSER_POLICY_VERSION
+    assert manifest["source_size"] == len(CSV)
+    assert len(manifest["page_items"]) == len(content.source.page_texts)
+    assert len(manifest["tables"]) == len(content.tables)
+    assert manifest["tables"][0]["rows"] == len(content.tables[0].rows)
+    assert parse.valid(manifest, content, len(CSV))
+    assert sources.ingest(profile, "renamed.csv", CSV)[0].tables == content.tables
+
+
+def test_parser_policy_change_rebuilds_once_without_replacing_original(profile, monkeypatch):
+    from app import monthly_source_parse_manifest as parse
+
+    original, _ = sources.ingest(profile, "source.csv", CSV)
+    path = sources._path(profile, original.source.sha256, ".csv")
+    stat = path.stat()
+    old = library._read(cache_for(profile, original))["parse_manifest"]["parser_policy"]
+    parsed = []
+    parser = sources._spreadsheet
+
+    with monkeypatch.context() as patch:
+        patch.setattr(parse, "PARSER_POLICY_VERSION", old + 1)
+        patch.setattr(sources, "_spreadsheet", lambda raw, suffix: (parsed.append(suffix), parser(raw, suffix))[1])
+        current, _ = sources.ingest(profile, "source.csv", CSV)
+        assert current == original
+        assert parsed == [".csv"]
+        assert sources.ingest(profile, "source.csv", CSV)[0] == original
+        assert parsed == [".csv"]
+        assert library._read(cache_for(profile, original))["parse_manifest"]["parser_policy"] == old + 1
+    assert path.read_bytes() == CSV
+    assert (path.stat().st_ino, path.stat().st_mtime_ns) == (stat.st_ino, stat.st_mtime_ns)
+
+
+def test_same_name_changed_bytes_and_two_sites_cannot_share_review_state(profile):
+    from app import monthly_source_parse_manifest as parse
+
+    alternative = replace(profile, key="synthetic-other", facilities=(Facility("other", "Other synthetic site"),))
+    library.save_profile(alternative, expected_revision=0, actor="Synthetic Tester", confirmed=True)
+    first, _ = sources.ingest(profile, "shared.csv", CSV)
+    revised = CSV.replace(b"Pending replacement", b"Replacement completed")
+    second, _ = sources.ingest(profile, "shared.csv", revised)
+    foreign, _ = sources.ingest(alternative, "shared.csv", CSV)
+    assert first.source.sha256 != second.source.sha256
+    assert foreign.tables == first.tables
+    assert sources._path(profile, first.source.sha256, ".json") != sources._path(alternative, foreign.source.sha256, ".json")
+    assert parse.valid(library._read(cache_for(alternative, foreign))["parse_manifest"], foreign, len(CSV))
+    reviewed = replace(first.source, findings="Human correction", selected_pages=(), captions=((1, "Reviewed page"),))
+    draft = replace(synthetic_draft(profile, ReportPeriod(2026, 9)), sources=(reviewed,))
+    library.save_snapshot(draft, expected_revision=0, entered_editor="Synthetic Tester")
+    cache_for(profile, first).write_bytes(b'{"schema":')
+    reopened, missing = restore_sources(profile, (reviewed,))
+    assert missing == () and reopened[0].source == reviewed
+    assert library.load_snapshot(profile.contract, profile.key, draft.period).draft == draft
+    assert library._read(cache_for(profile, first))["parse_manifest"]["source_sha256"] == first.source.sha256
+
+
+def test_interrupted_after_parse_stage_resumes_without_second_archive_read(profile, monkeypatch):
+    parser = sources._spreadsheet
+    original_facts = sources.suggest_facts
+    calls = []
+
+    def counted(raw, suffix):
+        calls.append(suffix)
+        return parser(raw, suffix)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(sources, "_spreadsheet", counted)
+        patch.setattr(sources, "suggest_facts", lambda *_: (_ for _ in ()).throw(RuntimeError("synthetic interruption")))
+        with pytest.raises(RuntimeError, match="synthetic interruption"):
+            sources.ingest(profile, "interrupted.csv", CSV)
+    assert calls == [".csv"]
+    path = sources._path(profile, sha256(CSV).hexdigest(), ".csv")
+    assert path.read_bytes() == CSV
+    with monkeypatch.context() as patch:
+        patch.setattr(sources, "_spreadsheet", lambda *_: pytest.fail("completed stage parsed again"))
+        patch.setattr(sources, "suggest_facts", original_facts)
+        content, _ = sources.ingest(profile, "interrupted.csv", CSV)
+    assert content.tables[0].rows[-1][1] == "Pending replacement"
+    assert sources.ingest(profile, "interrupted.csv", CSV)[0] == content
+
+
+def test_same_scope_inflight_identical_content_is_parsed_once(profile, monkeypatch):
+    parse = sources._spreadsheet
+    calls, lock = [], Lock()
+    ready = Barrier(2)
+
+    def slow(raw, suffix):
+        with lock:
+            calls.append(suffix)
+        sleep(0.1)
+        return parse(raw, suffix)
+
+    monkeypatch.setattr(sources, "_spreadsheet", slow)
+
+    def work(index):
+        ready.wait(timeout=5)
+        return sources.ingest(profile, f"independent-{index}.csv", CSV)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        a, b = tuple(executor.map(work, (1, 2)))
+    assert a[0].tables == b[0].tables
+    assert {a[0].source.filename, b[0].source.filename} == {"independent-1.csv", "independent-2.csv"}
+    assert calls == [".csv"]
+
+
+def test_one_upload_batch_hashes_each_immutable_payload_once(profile, monkeypatch):
+    native = sources.hashlib.sha256
+    calls = []
+
+    def tracked(data=b""):
+        if data is CSV:
+            calls.append(True)
+        return native(data)
+
+    # Track only *sources* direct hashing, not object-store integrity hashing.
+    monkeypatch.setattr(sources, "hashlib", SimpleNamespace(sha256=tracked))
+    records, messages = sources.ingest_batch(profile, (("a.csv", CSV),))
+    assert not messages and len(records) == 1
+    assert len(calls) <= 1
+
+
+def test_completed_stage_write_failure_does_not_publish_partial_cache(profile, monkeypatch):
+    digest = sha256(CSV).hexdigest()
+    original = library._atomic_write
+    writes = []
+
+    def interrupted(path, raw):
+        if path.name == digest + ".parse-stage.json":
+            writes.append(path)
+            raise OSError("synthetic interrupted stage write")
+        return original(path, raw)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(library, "_atomic_write", interrupted)
+        with pytest.raises(OSError, match="interrupted stage write"):
+            sources.ingest(profile, "interrupted.csv", CSV)
+    assert writes
+    assert not sources._path(profile, digest, ".json").exists()
+    content, _ = sources.ingest(profile, "interrupted.csv", CSV)
+    assert content.tables[0].rows[0] == ("DEMO-001", "Inspected pump")
