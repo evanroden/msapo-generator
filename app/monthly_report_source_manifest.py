@@ -102,6 +102,16 @@ def _accepted_uses(draft, source):
         if use[0] != "text" or block is None or not block.ai_written or not block.reviewed:
             continue
         from app.monthly_report_ai import ai_references, evidence_fingerprint
+        # AI's evidence fingerprint binds source revisions but not the report
+        # period. Without a period-bound contribution receipt above, a
+        # previously reviewed block cannot approve a different report month.
+        from datetime import date
+        try:
+            service_day = date.fromisoformat(source.service_date)
+        except (TypeError, ValueError):
+            continue
+        if not draft.period.start <= service_day <= draft.period.end:
+            continue
         refs = ai_references(block)
         if (any(_source_id(ref) == source.id for ref in refs)
                 and block.ai_evidence_fingerprint
