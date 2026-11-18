@@ -114,14 +114,19 @@ def _queue_page_reads(draft, prefix, source, pages, *, failed_only=False):
         return
     waiting = []
     for page in dict.fromkeys(pages):
-        key, _ = ai.extraction_request(source, (page,))
-        saved = ai.cached(draft.profile, "extraction", key)
-        if saved is not None:
-            facts = ai.normalize_facts(saved, source, (page,), draft.profile,
-                                       draft.period, ai.vendor_names(draft))
-            _merge_page_facts(prefix, source, facts)
-        elif not failed_only or items.status(draft.profile, draft.period, key) == "failed":
-            waiting.append(page)
+        try:
+            key, _ = ai.extraction_request(source, (page,))
+            saved = ai.cached(draft.profile, "extraction", key)
+            if saved is not None:
+                facts = ai.normalize_facts(saved, source, (page,), draft.profile,
+                                           draft.period, ai.vendor_names(draft))
+                _merge_page_facts(prefix, source, facts)
+            elif not failed_only or items.status(draft.profile, draft.period, key) == "failed":
+                waiting.append(page)
+        except ValueError as exc:
+            # One empty/invalid source page cannot prevent independent pages
+            # from being read. Report the exact skipped page to the operator.
+            st.warning(f"Page {page}: {exc}")
     st.session_state[prefix + "_ai_page_batch"] = {
         "scope": _page_scope(draft), "source_id": source.id,
         "source_fingerprint": source.fingerprint, "waiting": waiting,
