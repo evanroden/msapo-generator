@@ -186,8 +186,11 @@ def test_actual_saved_word_and_pdf_contain_technical_siblings_only(monkeypatch, 
     with fitz.open(stream=package.pdf, filetype="pdf") as exported:
         pdf_text = "\n".join(page.get_text() for page in exported)
         pages = len(exported)
-    for text in (package_xml, word_text, pdf_text):
+    # OOXML can split one visible sentence across <w:t> nodes; validate its
+    # rendered text separately, but search every XML part for priced canaries.
+    for text in (word_text, pdf_text):
         assert TECH in text and SECOND in text
+    for text in (package_xml, word_text, pdf_text):
         assert not any(value in text for value in (
             "18,675.50", "4,000", "6,000", "29,450", "sample@example.invalid", "Sample Person"))
     output = Path(os.environ.get("INDEPENDENT_OUTPUT", str(tmp_path)))
@@ -236,3 +239,24 @@ def test_raster_only_proposal_canary_has_no_automatic_technical_or_image_route(
     assert not block.text
     assert sources.source_bytes(profile, content.source) == raw
     assert sha256(raw).hexdigest() == content.source.sha256
+
+
+
+def test_opaque_total_and_sensitive_fact_status_never_reach_public_reader():
+    from dataclasses import replace
+    from app.monthly_report_content_policy import technical_source_text
+    from app.monthly_report_model import EvidenceFact, ReportPeriod
+
+    safe = technical_source_text("Total 4600\n" + TECH + "\nTotal 2 pumps")
+    assert TECH in safe and "4600" not in safe and "Total 2 pumps" in safe
+    src = source(TECH)
+    clean = EvidenceFact("clean", src.id, 1, "action", TECH, TECH)
+    private = replace(clean, id="private", status="Invoice total $7,600")
+    flags = replace(clean, id="flags", flags=("Contact: Synthetic Person",))
+    retained = replace(src, facts=(clean, private, flags))
+    _, output, facts = ai.drafting_request(
+        "activity_summary", (retained,), ReportPeriod(2026, 11))
+    assert facts == (clean,)
+    assert '"private"' not in output[0]["text"]
+    assert '"flags"' not in output[0]["text"]
+    assert "$7,600" not in output[0]["text"]
