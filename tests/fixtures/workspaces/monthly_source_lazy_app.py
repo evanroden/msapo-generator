@@ -40,6 +40,9 @@ if "a30_fixture_report" not in st.session_state:
         sources=tuple(c.source for c in contents))
     st.session_state["a30_evidence"] = tuple(contents)
 
+# Neutral fixture-only rerun exposes the old-source delivery/active-source
+# handoff without reading, submitting or changing any report data.
+st.button("Refresh synthetic source view", key="a30_fixture_refresh")
 st.session_state["_monthly_source_detail_forms"] = {}
 st.session_state["_monthly_source_details_managed"] = True
 draft = st.session_state["a30_fixture_report"]
