@@ -218,6 +218,13 @@ def _apply_pending_fact_approval(draft, prefix):
     facts = {fact.id: fact for fact in current.facts}
     facts.update((fact.id, fact) for fact in proposed[2])
     updated = replace(current, facts=tuple(facts.values()))
+    # Only a delivered native acceptance, never a cached model response,
+    # can create a source-bound future-month replay receipt.
+    from app.monthly_report_ai_replay import record_acceptance
+    try:
+        record_acceptance(draft.profile, current, proposed[2])
+    except (OSError, ValueError) as exc:
+        st.warning("Fact replay was not saved; current reviewed facts are retained. " + str(exc))
     st.session_state[prefix + "_evidence"] = tuple(
         replace(content, source=updated) if content.source.id == current.id else content
         for content in contents)
@@ -363,6 +370,36 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
     busy = prefix + "_ai_job" in st.session_state
     evidence_key = prefix + "_evidence"
     contents = st.session_state.get(evidence_key, ())
+    from app.monthly_report_ai_replay import ReviewedReplay, replay_reviewed_facts
+    replay_seen_key = prefix + "_accepted_replay_seen"
+    seen = set(st.session_state.get(replay_seen_key, ()))
+    replayed = {}
+    enriched = []
+    for content in contents:
+        source = content.source
+        token = ai.digest((draft.profile.contract, draft.profile.key, draft.period.key,
+                           tuple(f.key for f in draft.profile.facilities),
+                           source.id, source.sha256, source.scope_review, source.page_texts))
+        receipt_key = prefix + "_accepted_replay_" + token
+        if token not in seen:
+            try:
+                past = replay_reviewed_facts(draft, source)
+            except (OSError, ValueError) as exc:
+                st.warning("Prior extraction could not be verified and was not reused: " + str(exc))
+                past = ReviewedReplay()
+            st.session_state[receipt_key] = past
+            seen.add(token)
+            if past.reusable:
+                facts = {f.id: f for f in source.facts}
+                facts.update((fact.id, fact) for fact in past.reusable)
+                source = replace(source, facts=tuple(facts.values()))
+                content = replace(content, source=source)
+        replayed[source.id] = st.session_state.get(receipt_key, ReviewedReplay())
+        enriched.append(content)
+    st.session_state[replay_seen_key] = tuple(seen)
+    if tuple(enriched) != tuple(contents):
+        contents = tuple(enriched)
+        st.session_state[evidence_key] = contents
     draft = replace(draft, sources=tuple(content.source for content in contents))
     targets = [key for key in LABELS if allowed_keys is None or key in allowed_keys]
     if not targets:
@@ -390,6 +427,15 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                 key=prefix + "_ai_source",
             )
             source = by_id[chosen].source
+            past = replayed.get(source.id, ReviewedReplay())
+            if past.reusable:
+                st.caption(f"{len(past.reusable)} verified recommendations reused from "
+                           f"{past.from_period}; corrected text remains editable.")
+            if past.historical:
+                st.caption(f"{len(past.historical)} accepted facts from {past.from_period} "
+                           "remain historical, not work completed in this report month.")
+                for fact in past.historical:
+                    st.write(f"Earlier month · Page {fact.page} · {fact.text}")
             pages = st.multiselect(
                 "Pages to read for facts",
                 list(range(1, len(source.page_texts) + 1)),
@@ -400,46 +446,51 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
             )
             from app.monthly_report_ai_correction_ui import render_fact_page_context
             render_fact_page_context(prefix,replace(draft,blocks=tuple(blocks.values())),source,by_id[chosen])
+            reviewed_pages = {fact.page for fact in (*past.reusable, *past.historical)}
+            already_reviewed = bool(pages and set(pages) <= reviewed_pages)
+            if already_reviewed:
+                st.caption("These pages have accepted source-linked facts. Use the earlier "
+                           "review without a model request, or explicitly read again.")
+            read_again = (st.button("Re-read pages for additional facts (uses document reader)",
+                                    key=prefix + "_ai_reread", disabled=busy)
+                          if already_reviewed else False)
             if st.button(
                 "Find work, findings and follow-ups",
                 key=prefix + "_ai_extract",
                 disabled=busy or not pages,
-            ):
+            ) or read_again:
                 try:
-                    key, content = ai.extraction_request(source, pages)
-                    saved = ai.cached(draft.profile, "extraction", key)
-                    if saved is not None:
-                        facts = ai.normalize_facts(
-                            saved,
-                            source,
-                            pages,
-                            draft.profile,
-                            draft.period,
-                            ai.vendor_names(draft),
-                        )
-                        st.session_state[prefix + "_ai_facts"] = (
-                            source.id,
-                            source.fingerprint,
-                            facts,
-                        )
+                    if already_reviewed and not read_again:
+                        st.info("Prior reviewed facts are displayed above. No paid extraction "
+                                "request was made; earlier work remains historical.")
                     else:
+                        key, content = ai.extraction_request(source, pages)
+                        saved = ai.cached(draft.profile, "extraction", key)
+                        if saved is not None:
+                            facts = ai.normalize_facts(
+                                saved, source, pages, draft.profile, draft.period,
+                                ai.vendor_names(draft),
+                            )
+                            st.session_state[prefix + "_ai_facts"] = (
+                                source.id, source.fingerprint, facts,
+                            )
+                        else:
+                            def prepare():
+                                ai.reserve_call(draft.profile, draft.period)
+                                return content
 
-                        def prepare():
-                            ai.reserve_call(draft.profile, draft.period)
-                            return content
-
-                        _start(
-                            prefix,
-                            draft,
-                            {
-                                "kind": "extraction",
-                                "key": key,
-                                "source_id": source.id,
-                                "source_fingerprint": source.fingerprint,
-                                "pages": pages,
-                            },
-                            prepare,
-                        )
+                            _start(
+                                prefix,
+                                draft,
+                                {
+                                    "kind": "extraction",
+                                    "key": key,
+                                    "source_id": source.id,
+                                    "source_fingerprint": source.fingerprint,
+                                    "pages": pages,
+                                },
+                                prepare,
+                            )
                 except ValueError as exc:
                     st.warning(str(exc))
             image_pages = [n for n in source.needs_vision if n in pages]
