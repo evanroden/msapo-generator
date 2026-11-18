@@ -148,3 +148,30 @@ def test_every_real_test_file_is_covered_exactly_once():
     assert sum(any(item.startswith(shards.SPLIT_FILE + "::") for item in group)
                for group in groups) >= 2
     assert all(groups)
+
+def test_measured_function_weights_are_used_and_stale_nodes_rejected(tmp_path):
+    repo = synthetic_repo(tmp_path)
+    durations = {
+        shards.SPLIT_FILE: 100.0,
+        shards.SPLIT_FILE + "::test_cases": 90.0,
+        shards.SPLIT_FILE + "::test_other": 10.0,
+    }
+    items, weights = shards.expanded_test_items(repo, shards.test_files(repo), durations)
+    assert len([name for name in items if name.startswith(shards.SPLIT_FILE + "::")]) == 2
+    assert weights[shards.SPLIT_FILE + "::test_cases"] == 90.0
+    assert weights[shards.SPLIT_FILE + "::test_other"] == 10.0
+    with pytest.raises(ValueError, match="Invalid"):
+        invalid = tmp_path / "bad-durations.tsv"
+        invalid.write_text(shards.SPLIT_FILE + "::helper_wrong\t15.0\n")
+        shards.read_durations(invalid)
+
+
+def test_actual_measured_function_times_match_latest_baseline():
+    durations = shards.read_durations()
+    hot = shards.SPLIT_FILE + "::"
+    assert durations[hot + "test_previous_overlay_generations_upgrade_without_losing_date_or_history"] > 240.0
+    assert durations[hot + "test_published_83_member_generation_upgrades_without_losing_originals_or_date"] > 210.0
+    repo = Path(__file__).resolve().parents[1]
+    items, weights = shards.expanded_test_items(repo, shards.test_files(repo), durations)
+    assert weights[hot + "test_previous_overlay_generations_upgrade_without_losing_date_or_history"] == pytest.approx(243.09)
+    assert len([name for name in items if name.startswith(hot)]) == 20
