@@ -94,6 +94,9 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
         status_line = _source_status_caption(states, pending)
         if status_line:
             st.caption(status_line)
+    from app.monthly_report_coverage_ui import render_coverage
+    draft = render_coverage(draft, st.session_state.get(prefix + "_evidence", ()),
+                            prefix, blocks)
     st.button("Done with source files" if opened else "Manage source files",
               key=prefix + "_source_manager_" + str(opened),
               on_click=_open_manager if not opened else _close_manager,
