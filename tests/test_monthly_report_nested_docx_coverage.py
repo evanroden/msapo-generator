@@ -176,3 +176,126 @@ def test_unsupported_chart_is_review_not_extracted(tmp_path):
     assert review and any(e.review_location == "scorecards" for e in review)
     assert all(e.status == "review-needed" for e in review)
     assert any(e.relationship_id == "rIdMissingChart" for e in review)
+
+
+def test_named_chart_part_labels_are_review_only_and_numeric_values_not_extracted(tmp_path):
+    from zipfile import ZipFile, ZIP_DEFLATED
+    from docx.oxml import parse_xml
+    from app.monthly_report_docx_coverage import coverage_inventory
+
+    doc = Document()
+    doc.add_heading("Monthly Scorecards", 1)
+    doc.add_paragraph()._p.append(parse_xml(
+        '<w:r xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<w:drawing><a:graphic><a:graphicData '
+        'uri="http://schemas.openxmlformats.org/drawingml/2006/chart">'
+        '<c:chart r:id="rIdChartUnit"/></a:graphicData></a:graphic></w:drawing>'
+        '</w:r>'))
+    path = tmp_path / "chart-with-local-labels.docx"
+    doc.save(path)
+    with ZipFile(path) as archive:
+        parts = {part.filename: archive.read(part.filename) for part in archive.infolist()}
+    rels = parts["word/_rels/document.xml.rels"].decode()
+    rels = rels.replace("</Relationships>",
+        '<Relationship Id="rIdChartUnit" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" '
+        'Target="charts/chart1.xml"/></Relationships>')
+    parts["word/_rels/document.xml.rels"] = rels.encode()
+    parts["word/charts/chart1.xml"] = (
+        '<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart">'
+        '<c:chart><c:plotArea><c:barChart><c:ser>'
+        '<c:tx><c:v>Boiler performance</c:v></c:tx>'
+        '<c:cat><c:strRef><c:strCache><c:pt idx="0"><c:v>North site</c:v>'
+        '</c:pt></c:strCache></c:strRef></c:cat>'
+        '<c:val><c:numRef><c:numCache><c:pt idx="0"><c:v>987654321</c:v>'
+        '</c:pt></c:numCache></c:numRef></c:val>'
+        '</c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>'
+    ).encode()
+    with ZipFile(path, "w", ZIP_DEFLATED) as archive:
+        for name, contents in parts.items():
+            archive.writestr(name, contents)
+    original = path.read_bytes()
+    entries = coverage_inventory(importer.inspect_docx(path))
+    charts = [e for e in entries if e.relationship_id == "rIdChartUnit"]
+    assert len(charts) == 1 and charts[0].status == "review-needed"
+    assert "Boiler performance" in charts[0].text and "North site" in charts[0].text
+    assert "987654321" not in charts[0].text
+    assert "numeric data and layout are not imported" in charts[0].reason
+    assert path.read_bytes() == original
+
+
+def test_cover_identity_does_not_include_unrelated_body_site_or_scheduled_work(tmp_path):
+    from app.monthly_report_start_import import analyze_starting_report
+    from app.monthly_report_model import ReportPeriod, synthetic_profiles
+
+    doc = Document()
+    doc.add_paragraph("Demonstration North Facility")
+    doc.add_paragraph("Monthly Report September 2026")
+    doc.add_heading("Monthly Activity Summary", 1)
+    doc.add_paragraph("Demonstration South Facility was mentioned in a body reference.")
+    doc.add_paragraph("Pump A service scheduled for October 2026, not completed.")
+    path = tmp_path / "cover-identity.docx"
+    doc.save(path)
+    inspected = importer.inspect_docx(path)
+    north, group = synthetic_profiles()[:2]
+    analysis = analyze_starting_report(inspected, north, ReportPeriod(2026, 10),
+                                      known_sites=group.facilities)
+    assert analysis.site_relation == "same"
+    assert tuple(site.key for site in analysis.source_sites) == ("north",)
+    assert analysis.source_period == (2026, 9)
+    assert not analysis.current_items
+
+    other = Document()
+    other.add_paragraph("Demonstration South Facility")
+    other.add_paragraph("Monthly Report September 2026")
+    other.add_heading("Monthly Activity Summary", 1)
+    other.add_paragraph("No current work is confirmed.")
+    other_path = tmp_path / "foreign.docx"
+    other.save(other_path)
+    foreign = analyze_starting_report(importer.inspect_docx(other_path), north,
+                                      ReportPeriod(2026, 10), known_sites=group.facilities)
+    assert foreign.site_relation == "other"
+
+
+def test_real_parser_budgets_have_stage_specific_exact_unit_errors(tmp_path, monkeypatch):
+    import pytest
+
+    path = _nested_source(tmp_path)
+    for knob, message in (
+        ("MAX_DOCX_BYTES", "1 byte import limit"),
+        ("MAX_EXPANDED_BYTES", "Expanded DOCX exceeds the 1 byte limit"),
+        ("MAX_MEMBER_BYTES", "per-member limit 1 byte"),
+        ("MAX_XML_BYTES", "1 byte per-part safe parsing budget"),
+        ("MAX_XML_TOTAL", "1 byte total safe parsing budget"),
+    ):
+        with monkeypatch.context() as patch:
+            patch.setattr(importer, knob, 1)
+            with pytest.raises(importer.ImportError, match=message):
+                importer.inspect_docx(path)
+
+
+def test_empty_proposal_frame_does_not_consume_following_native_table(tmp_path):
+    from docx.oxml import parse_xml
+
+    doc = Document()
+    doc.add_heading("Pending & Declined Proposals", 1)
+    doc.add_paragraph()._p.append(parse_xml(
+        '<w:r xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+        'xmlns:v="urn:schemas-microsoft-com:vml">'
+        '<w:pict><v:shape id="empty-proposal-frame"><v:textbox>'
+        '<w:txbxContent><w:p/></w:txbxContent></v:textbox></v:shape></w:pict></w:r>'))
+    table = doc.add_table(rows=2, cols=2)
+    for cell, value in zip(table.rows[0].cells, ("Scope", "Status")):
+        cell.text = value
+    for cell, value in zip(table.rows[1].cells, ("Synthetic no-price quote", "Pending")):
+        cell.text = value
+    path = tmp_path / "proposal-frame.docx"
+    doc.save(path)
+    inspected = importer.inspect_docx(path)
+    assert any(i.kind == "unsupported" and i.section == "proposals" for i in inspected.items)
+    proposals = [i for i in inspected.items if i.kind == "table" and i.section == "proposals"]
+    assert len(proposals) == 1
+    assert proposals[0].rows[1] == ("Synthetic no-price quote", "Pending")
