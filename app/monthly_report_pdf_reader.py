@@ -54,11 +54,14 @@ def _image_regions(page) -> tuple[fitz.Rect, ...]:
     unrotated = page.rect * page.derotation_matrix
     if unrotated.is_empty:
         return ()
+    images = page.get_image_info()
+    if not images:
+        return ()
     area = unrotated.get_area()
     text_boxes = [fitz.Rect(block[:4]) for block in page.get_text("blocks")
                   if len(block) > 6 and block[6] == 0 and str(block[4]).strip()]
     regions = []
-    for item in page.get_image_info():
+    for item in images:
         box = fitz.Rect(item["bbox"]) & unrotated
         if box.is_empty or box.get_area() < area * MIN_IMAGE_PAGE_FRACTION:
             continue
