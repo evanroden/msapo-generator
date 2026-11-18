@@ -37,7 +37,12 @@ def read_durations(path: Path = DURATIONS) -> dict[str, float]:
             continue
         rel, seconds = line.split("\t")
         duration = float(seconds)
-        if not rel.startswith("tests/test_") or not rel.endswith(".py") or not math.isfinite(duration) or duration <= 0 or rel in durations:
+        file_path, separator, node_id = rel.partition("::")
+        valid_path = file_path.startswith("tests/test_") and file_path.endswith(".py")
+        valid_node = not separator or (
+            file_path == SPLIT_FILE and node_id.startswith("test_") and "::" not in node_id
+        )
+        if not valid_path or not valid_node or not math.isfinite(duration) or duration <= 0 or rel in durations:
             raise ValueError(f"Invalid or duplicated test duration: {rel!r}")
         durations[rel] = duration
     if not durations:
@@ -49,7 +54,7 @@ def read_durations(path: Path = DURATIONS) -> dict[str, float]:
 def expanded_test_items(
     repo: Path, files: list[str], durations: dict[str, float]
 ) -> tuple[list[str], dict[str, float]]:
-    """Spread the pinned hot file's functions; preserve parametrize and fallback.
+    """Spread the pinned hot file using measured function times; preserve cases.
 
     Pytest function node selectors collect *all* parameters. When the module
     cannot be parsed or gains class/custom collection hooks, run the whole
@@ -80,7 +85,7 @@ def expanded_test_items(
     items = [f"{SPLIT_FILE}::{name}" for name in functions]
     estimates = dict(durations)
     estimates.update({
-        item: durations.get(SPLIT_FILE, UNKNOWN_SECONDS) / len(items)
+        item: durations.get(item, durations.get(SPLIT_FILE, UNKNOWN_SECONDS) / len(items))
         for item in items
     })
     return sorted([rel for rel in files if rel != SPLIT_FILE] + items), estimates
