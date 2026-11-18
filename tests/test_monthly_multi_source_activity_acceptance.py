@@ -83,7 +83,12 @@ def test_three_formats_with_conflicting_orders_scan_and_manual_corrections(
     draft = flow.store_bundle(draft, pdf_review,
                               expected_revision=flow.revision(
                                   flow.saved_bundle(draft, pdf.source.id, "workorders")))
-    with pytest.raises(ValueError, match="Another included source"):
+    # Both the legacy identity gate and A56's source-bound date/status gate
+    # must reject an unreviewed overlap; wording is not the safety contract.
+    with pytest.raises(
+        ValueError,
+        match=r"Another included source|Two sources disagree on a work-order date/status",
+    ):
         _publish(draft, pdf_review)
 
     # Only the two truly duplicated PDF rows are omitted; the safe remainder
