@@ -8,7 +8,9 @@ from test_monthly_report_activity_intake_commit import setup_app, activity, draf
 def test_mixed_vendor_proposal_page_needs_one_destination_before_reader(monkeypatch, tmp_path):
     import streamlit as st
     from app import monthly_report_sources as sources
+    from app import monthly_report_ai as ai
     app, profile = setup_app(monkeypatch, tmp_path)
+    monkeypatch.setattr(ai, "ANTHROPIC_API_KEY", "test-key-not-used")
     raw = (b"Vendor service report\nProposal quotation\n"
            b"Inspected synthetic pump. A replacement was recommended, not completed.\n")
     original_upload = st.file_uploader
