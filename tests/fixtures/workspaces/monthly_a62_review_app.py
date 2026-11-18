@@ -4,6 +4,9 @@ The real visibility component, preview UI and private ticket store run unchanged
 Only paid/native document conversion is substituted by a deterministic PDF
 containing an unvisited last-section fact and the accepted editor text.
 """
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from dataclasses import replace
 
 import pymupdf as fitz
