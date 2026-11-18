@@ -96,7 +96,7 @@ def _valid_site(source, profile):
         return False
     # A stale explicit scope receipt must never be rescued by a plausible
     # extracted facility label. Unknown sites require a current sites receipt.
-    if source.scope_review or not label:
+    if source.scope_review:
         return (reviewed_scope(source, profile) or {}).get("kind") == "sites"
     return True
 
