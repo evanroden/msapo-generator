@@ -43,17 +43,6 @@ def fake_reply(payload, *, with_fact=True):
             "unsupported_regions": [], "facts": facts}
 
 
-def prepared(plan, *, answer=fake_reply):
-    return {"cached": (), "requests": tuple(
-        (batch.key, cover._payload(batch, SOURCE_FOR_TEST(plan)))
-        for batch in plan.batches), "unavailable": ()}
-
-
-def SOURCE_FOR_TEST(plan):
-    # The planner already uses this identity in every batch key.
-    return replace(source(len(plan.pages)), id=plan.source_id)
-
-
 def result_for(plan, original, *, read=fake_reply):
     prepared_value = {
         "cached": (),
@@ -287,3 +276,84 @@ def test_missing_invalid_or_duplicate_page_identifiers_are_rejected():
         with pytest.raises(ValueError):
             cover.plan(original, selection)
     assert cover.plan(original, (1, 1, 2)).pages == (1, 2)
+
+def test_dense_table_rows_are_kept_whole_and_types_are_advisory():
+    lines = [f"2026-09-03 inspected pump on row {n}" for n in range(135)]
+    original = source(1, text="\\n".join(lines))
+    planned = cover.plan(original)
+    regions = [r for batch in planned.batches for r in batch.regions]
+    assert len(regions) >= 4
+    assert "".join(r.text for r in regions) == original.page_texts[0]
+    assert all(len([line for line in r.text.splitlines() if line.strip()]) <= 40
+               for r in regions)
+    assert all("action" in cover._candidate_kinds(r.text) for r in regions)
+    assert all(sum(cover._candidate_line_count(r.text) for r in batch.regions) <= 80
+               for batch in planned.batches)
+
+
+def test_sensitive_quote_rejection_keeps_technical_sibling():
+    original = source(2, text=(
+        "Synthetic vendor inspected pump. technician@example.net "
+        "Phone 800-222-3333. Quote total $900."))
+    # Both pages contain the same original, but one response quotes only safe
+    # technical wording while another quotes source contact/pricing.
+    planned = cover.plan(original)
+
+    def reply(payload):
+        data = json.loads(payload[0]["text"].split("\\n")[-1])
+        return {
+            "reviewed_regions": [r["id"] for r in data["regions"]],
+            "unsupported_regions": [],
+            "facts": [
+                {"source": original.id, "region": region["id"],
+                 "page": region["page"], "kind": "finding",
+                 "text": "inspected pump", "quote": (
+                     "inspected pump" if region["page"] == 1
+                     else "technician@example.net")}
+                for region in data["regions"]
+            ],
+        }
+
+    finished = cover.collect(
+        planned, result_for(planned, original, read=reply),
+        original, PROFILE, PERIOD)
+    assert len(finished["facts"]) == 1 and finished["facts"][0].page == 1
+    assert finished["inventory"] == {1: "ready", 2: "needs_review"}
+    assert finished["rejected_claims"] == 1
+
+
+def test_reviewed_human_facts_do_not_invalidate_native_page_cache():
+    original = source(21)
+    first = cover.plan(original)
+    valid = cover.collect(
+        first, result_for(first, original), original, PROFILE, PERIOD)
+    reviewed_source = replace(original, facts=(valid["facts"][0],))
+    assert reviewed_source.fingerprint != original.fingerprint
+    assert [b.key for b in cover.plan(reviewed_source).batches] == [
+        b.key for b in first.batches]
+    assert reviewed_source.facts[0].quote == "inspected pump"
+
+
+def test_unverified_identity_date_and_status_on_another_page_never_promoted():
+    original = source(21)
+    planned = cover.plan(original)
+
+    def loose_reply(payload):
+        data = json.loads(payload[0]["text"].split("\\n")[-1])
+        return {
+            "reviewed_regions": [r["id"] for r in data["regions"]],
+            "unsupported_regions": [],
+            "facts": [{
+                "source": original.id, "region": r["id"], "page": r["page"],
+                "kind": "action", "text": "Completed scheduled work",
+                "quote": "inspected pump", "date": "2026-09-08",
+                "facility": "Other Hospital", "vendor": "New Contractor",
+            } for r in data["regions"]],
+        }
+
+    checked = cover.collect(
+        planned, result_for(planned, original, read=loose_reply),
+        original, PROFILE, PERIOD)
+    assert checked["facts"] == ()
+    assert checked["rejected_claims"] == 21
+    assert len(checked["inventory"]) == 21
