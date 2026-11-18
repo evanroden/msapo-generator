@@ -64,5 +64,7 @@ def test_attention_receipt_comes_from_current_preflight(monkeypatch, tmp_path):
     assert len(markers) == 1
     assert int(markers[0]) >= 0
     assert markup.count('class="epc-section-progress"') == 1
+    assert markup.count('class="epc-navigation-attention"') == 1
+    assert markup.index('class="epc-navigation-attention"') < markup.index('class="epc-section-progress"')
     assert markup.count('class="epc-section-back"') == 1
     assert markup.count('class="epc-section-next"') == 1
