@@ -82,3 +82,74 @@ def test_edited_and_excluded_source_row_survives_reimport_and_two_rollovers(tmp_
         reopened = library.load_snapshot(following.profile.contract, following.profile.key, month).draft
         assert reopened.follow_ups == following.follow_ups
         assert library.draft_from_dict(json.loads(json.dumps(asdict(reopened)))) == reopened
+
+
+def test_excluded_proposal_requires_explicit_reinclude_and_fresh_review():
+    from app.monthly_report_followups import confirmation, problems
+    current = new_month_draft(initial_draft(), OCTOBER)
+    excluded = replace(current.follow_ups[3], included=False)
+    current = replace(current, follow_ups=(*current.follow_ups[:3], excluded, *current.follow_ups[4:]))
+    following = new_month_draft(replace(current, blocks=initial_draft().blocks), NOVEMBER)
+    assert following.follow_ups[3].included is False
+    restored = replace(following.follow_ups[3], included=True)
+    assert any("Confirm this proposal" in issue for issue in problems(restored, following))
+    confirmed = replace(restored, reviewed_fingerprint=confirmation(restored, NOVEMBER))
+    assert not problems(confirmed, following)
+
+
+def test_proposal_source_replay_word_and_pdf_hide_excluded_row_and_prices(tmp_path, monkeypatch):
+    from collections import Counter
+    from hashlib import sha256
+    from io import BytesIO
+    import os
+    from pathlib import Path
+
+    import pymupdf as fitz
+    from docx import Document
+    from app import pdf_converter
+    from app.monthly_report_docx import assemble_docx
+    from app.monthly_report_followups import confirmation, report_text
+    prior = initial_draft()
+    october = new_month_draft(prior, OCTOBER)
+    changed = tuple(
+        replace(item, status="on_hold", evidence_note="Revised by reviewer")
+        if i == 2 else replace(item, included=False) if i == 3 else item
+        for i, item in enumerate(october.follow_ups)
+    )
+    november = new_month_draft(replace(october, blocks=prior.blocks, follow_ups=changed), NOVEMBER)
+    assert len(november.follow_ups) == len(ROWS)
+    assert not november.follow_ups[3].included
+    included = tuple(item for item in november.follow_ups if item.included)
+    reviewed = replace(november, follow_ups=tuple(
+        replace(item, reviewed_fingerprint=confirmation(item, NOVEMBER))
+        if item.included else item for item in november.follow_ups
+    ))
+    raw = assemble_docx(reviewed, acknowledged_fingerprint=reviewed.fingerprint)
+    expected = Counter(report_text(item) for item in included)
+    actual_word = "\n".join(p.text for p in Document(BytesIO(raw)).paragraphs)
+    for text, count in expected.items():
+        assert actual_word.count(text) == count
+    assert "P-4" not in actual_word and "$" not in actual_word
+    monkeypatch.setattr(pdf_converter, "OUTPUT_DIR", tmp_path)
+    word_path = tmp_path / "a73-proposals.docx"
+    word_path.write_bytes(raw)
+    pdf_bytes = pdf_converter.convert_to_pdf(word_path).read_bytes()
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as pdf:
+        actual_pdf = " ".join(" ".join(p.get_text().split()) for p in pdf)
+        pages = len(pdf)
+    for text, count in expected.items():
+        assert actual_pdf.count(" ".join(text.split())) == count
+    assert "P-4" not in actual_pdf
+    assert not any(canary in actual_pdf for canary in ("12,321.98", "2,222", "3,333", "4,444", "5,555"))
+    target = Path(os.environ.get("INDEPENDENT_OUTPUT", str(tmp_path))) / "a73-proposals"
+    target.mkdir(parents=True, exist_ok=True)
+    (target / "proposals.docx").write_bytes(raw)
+    (target / "proposals.pdf").write_bytes(pdf_bytes)
+    (target / "manifest.json").write_text(json.dumps({
+        "docx_sha256": sha256(raw).hexdigest(),
+        "pdf_sha256": sha256(pdf_bytes).hexdigest(),
+        "pdf_pages": pages,
+        "included_proposals": len(included),
+        "excluded_proposals": 1,
+        "price_canaries_found": False,
+    }, indent=2))
