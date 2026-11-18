@@ -15,6 +15,7 @@ from docx import Document
 from docx.oxml.ns import qn
 from PIL import Image
 
+from app.monthly_report_preview_metrics import measured, phase
 from app.monthly_report_render_compat import rendering_docx
 from app import monthly_report_library as library, pdf_converter
 from app import monthly_report_render_jobs as monthly_render_jobs
@@ -72,6 +73,7 @@ _REVIEW_CODES = {
 }
 
 
+@measured("report_preview_total_including_queue")
 def preview_report(draft, asset_loader=None, *, source_view=None, ticket_only=False):
     """Full review preview; ticket_only is exclusively for private raster-on-read stores."""
     with monthly_render_jobs.work_slot(preview=True, review=True, wait_seconds=10):
@@ -90,6 +92,7 @@ def _preview_report(draft, asset_loader=None, *, source_view=None, ticket_only=F
         return result
 
 
+@measured("report_preview_verified_total")
 def _preview_verified_report(draft, asset_loader=None, *, source_view=None, fingerprint,
                              ticket_only=False):
     blockers = [
@@ -117,7 +120,8 @@ def _preview_verified_report(draft, asset_loader=None, *, source_view=None, fing
         )
         return image.data
 
-    raw = _build_docx(draft, asset_loader=small_asset if asset_loader else None, source_view=source_view)
+    with phase("report_docx_assembly"):
+        raw = _build_docx(draft, asset_loader=small_asset if asset_loader else None, source_view=source_view)
     scratch = library._root() / "previews"
     scratch.mkdir(parents=True, exist_ok=True)
     stem = "preview-" + uuid4().hex
@@ -127,13 +131,17 @@ def _preview_verified_report(draft, asset_loader=None, *, source_view=None, fing
         with tempfile.TemporaryDirectory(prefix="report-", dir=scratch) as directory:
             path = Path(directory) / (stem + ".docx")
             from app.monthly_report_designs import render_profile_for
-            compatible = rendering_docx(raw, profile=render_profile_for(draft.profile))
+            with phase("report_render_compat"):
+                compatible = rendering_docx(raw, profile=render_profile_for(draft.profile))
             del raw
             from app.monthly_report_preview_images import write_preview_docx
-            write_preview_docx(compatible, path)
+            with phase("report_preview_image_copy"):
+                write_preview_docx(compatible, path)
             del compatible
             small_asset.cache_clear()
-            actual = monthly_render_jobs.convert_to_pdf(path, wait_seconds=0)
+            with phase("report_pdf_conversion"):
+                with phase("section_pdf_conversion"):
+                actual = monthly_render_jobs.convert_to_pdf(path, wait_seconds=0)
             if actual.stat().st_size > 80 * 1024 * 1024:
                 raise ValueError(
                     "Preview exceeds the 80 MB conversion bound. Preview fewer sections or reduce image sizes."
@@ -317,6 +325,7 @@ def _slice_document_sections(raw, first, count):
     return _save(document)
 
 
+@measured("section_docx_assembly")
 def section_preview_docx(draft, section_key, asset_loader=None, *, source_view=None):
     """Private unfinished preview input, never an approved client download."""
     from app.monthly_report_source_view_runtime import render_operation
@@ -377,6 +386,7 @@ def _section_preview_docx(draft, section_key, asset_loader=None, *, source_view=
     return _slice_document_sections(raw, 2 + 2 * index if section else 0, 2 if section else 1)
 
 
+@measured("section_preview_total_including_queue")
 def preview_section(draft, section_key, asset_loader=None, *, source_view=None):
     """High-quality, section-only preview with bounded, cleaned-up conversion."""
     with monthly_render_jobs.work_slot(preview=True):
