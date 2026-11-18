@@ -75,7 +75,7 @@ def test_failure_receipt_retry_and_expired_token_do_not_replace_success(sample, 
     assert items.status(other_site, period, key) == "unread"
 
 
-@pytest.mark.parametrize("failure", ["socket", "malformed"])
+@pytest.mark.parametrize("failure", ["socket", "malformed", "malformed_json"])
 def test_page_batch_keeps_two_successes_and_only_retries_the_failure(
     sample, monkeypatch, failure
 ):
@@ -98,6 +98,8 @@ def test_page_batch_keeps_two_successes_and_only_retries_the_failure(
             fail_once[0] = False
             if failure == "socket":
                 future.set_exception(httpx.ConnectError("synthetic disconnect"))
+            elif failure == "malformed_json":
+                future.set_exception(ValueError("The document reader returned malformed JSON."))
             else:
                 future.set_result({"facts": [{"page": 2, "kind": "action",
                                               "text": "Invented work.",
@@ -295,3 +297,29 @@ def test_other_session_pending_page_does_not_stall_its_successful_siblings(
     assert items.accept(profile, period, first_key, first_token, answer)
     ui._queue_page_reads(draft, "unit", source, (1, 2, 3))
     assert calls == [2, 3] and {f.page for f in state["unit_ai_facts"][2]} == {1, 2, 3}
+
+
+def test_exhausted_budget_blocks_only_new_pages_not_cached_siblings(
+    sample, monkeypatch
+):
+    profile, period, source, _ = sample
+    old_key = _page_key(source, 1)
+    _, owner = items.claim(profile, period, old_key)
+    assert items.accept(profile, period, old_key, owner, {"facts": []})
+    monkeypatch.setattr(ai, "MAX_CALLS", 1)
+    assert items.claim(profile, period, old_key) == ("accepted", None)
+    with pytest.raises(ValueError, match="allowance"):
+        items.claim(profile, period, _page_key(source, 2))
+    assert items.status(profile, period, old_key) == "accepted"
+    assert items.status(profile, period, _page_key(source, 2)) == "unread"
+
+
+def test_blank_page_has_explicit_error_and_preserves_accepted_cache(sample):
+    profile, period, source, _ = sample
+    valid = _page_key(source, 1)
+    _, owner = items.claim(profile, period, valid)
+    assert items.accept(profile, period, valid, owner, {"facts": []})
+    blank = replace(source, page_texts=(source.page_texts[0], "  "))
+    with pytest.raises(ValueError, match="No readable text"):
+        ai.extraction_request(blank, (2,))
+    assert items.status(profile, period, valid) == "accepted"
