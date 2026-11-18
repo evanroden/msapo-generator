@@ -138,6 +138,26 @@ def _finish_job(draft, prefix):
                 current.id, current.fingerprint, tuple(retained.values()))
             st.session_state[prefix + "_ai_coverage"] = (
                 current.id, current.fingerprint, outcome, job["plan"].pages)
+        elif job["kind"] == "all_coverage":
+            if job["owner_scope"] != _approval_scope(draft, prefix):
+                raise ValueError("The report context changed while reading. Earlier suggestions were not applied.")
+            by_id = {content.source.id: content.source for content in contents}
+            if len(by_id) != len(contents):
+                raise ValueError("Duplicate source identities require review before automatic reading.")
+            if any(source_id not in by_id or by_id[source_id].fingerprint != fingerprint
+                   for source_id, fingerprint, _ in job["plans"]):
+                raise ValueError("The source collection changed while reading. Earlier suggestions were not applied.")
+            pending = {}
+            for source_id, fingerprint, planned in job["plans"]:
+                source = by_id[source_id]
+                outcome = coverage.collect(planned, result, source, draft.profile, draft.period)
+                for cache_key, response in outcome["cacheable"]:
+                    try:
+                        ai.save_cache(draft.profile, "full_coverage", cache_key, response)
+                    except (ValueError, OSError):
+                        st.warning("A verified source reading could not be cached; its facts remain available.")
+                pending[source_id] = (fingerprint, outcome["facts"], outcome, planned.pages)
+            st.session_state[prefix + "_ai_all_proposals"] = pending
         elif job["kind"] == "draft":
             if (
                 tuple(s.fingerprint for s in draft.sources)
@@ -242,6 +262,9 @@ def _apply_pending_fact_approval(draft, prefix):
         replace(content, source=updated) if content.source.id == current.id else content
         for content in contents)
     st.session_state.pop(prefix + "_ai_facts", None)
+    pending = st.session_state.get(prefix + "_ai_all_proposals")
+    if pending and current.id in pending:
+        pending.pop(current.id, None)
 
 
 def _linked_manual_text(block):
@@ -402,6 +425,53 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
         with st.expander("Limits"):
             st.caption("Maximum 80 paid reading/drafting requests shared by this profile and report month, including retries; cached calls are reused. Each model call is limited to 60,000 characters. Full-source reading partitions long uploads automatically; automatic image reading has a separate bounded allowance.")
         if contents:
+            # Bulk reading is an explicit paid action, never an upload side effect.
+            # Only previously classified, in-scope files are admitted; the
+            # source manager continues to own unknown/other-site decisions.
+            from app import monthly_report_structured_uploads as structured
+            names = {
+                name.casefold() for facility in draft.profile.facilities
+                for name in (facility.title, *facility.aliases)
+            }
+            eligible_all = tuple(
+                c for c in structured.reader_sources(contents, "activity_summary")
+                if c.source.classification != "Reference only"
+                and (not c.source.facility
+                     or c.source.facility.casefold() in names)
+            )
+            if len(contents) > 1:
+                st.caption(
+                    f"{len(eligible_all)} of {len(contents)} uploaded sources are "
+                    "eligible for a single full-document fact read. Unknown "
+                    "classification, other-site and unmapped activity sources "
+                    "remain intact and require individual review.")
+                if st.button(
+                    "Find facts across eligible uploaded files",
+                    key=prefix + "_ai_extract_all",
+                    disabled=busy or not eligible_all,
+                ):
+                    try:
+                        plans = tuple(
+                            (c.source.id, c.source.fingerprint, coverage.plan(c.source))
+                            for c in eligible_all if c.source.page_texts)
+                        if not plans:
+                            raise ValueError("No classified source has readable or visual pages.")
+                        selected_contents = {c.source.id: c for c in eligible_all}
+
+                        def prepare_all():
+                            return coverage.join_prepared(tuple(
+                                coverage.prepare_run(
+                                    planned, selected_contents[source_id],
+                                    draft.profile, draft.period)
+                                for source_id, _, planned in plans))
+
+                        _start(
+                            prefix, draft,
+                            {"kind": "all_coverage", "plans": plans,
+                             "owner_scope": _approval_scope(draft, prefix)},
+                            prepare_all, coverage.run)
+                    except ValueError as exc:
+                        st.warning(str(exc))
             by_id = {c.source.id: c for c in contents}
             chosen = st.selectbox(
                 "File to read for work performed",
@@ -410,6 +480,14 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                 key=prefix + "_ai_source",
             )
             source = by_id[chosen].source
+            all_pending = st.session_state.get(prefix + "_ai_all_proposals", {})
+            if (chosen in all_pending
+                    and all_pending[chosen][0] == source.fingerprint):
+                fingerprint, facts, outcome, selected_pages = all_pending[chosen]
+                st.session_state[prefix + "_ai_facts"] = (
+                    chosen, fingerprint, facts)
+                st.session_state[prefix + "_ai_coverage"] = (
+                    chosen, fingerprint, outcome, selected_pages)
             pages = st.multiselect(
                 "Pages to read for facts",
                 list(range(1, len(source.page_texts) + 1)),
