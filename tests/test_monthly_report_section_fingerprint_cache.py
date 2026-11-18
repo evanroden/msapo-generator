@@ -7,6 +7,7 @@ every rerun. The oracle pins the prior hash format, not a new output format.
 from dataclasses import asdict, replace
 import hashlib
 import json
+import resource
 from time import perf_counter, process_time
 
 import pytest
@@ -90,7 +91,8 @@ def test_twelve_sections_warm_rerun_does_not_reserialize_unchanged_values(report
     warm_wall, warm_cpu = perf_counter() - warm_wall, process_time() - warm_cpu
     print(f"A31 twelve-section fingerprint control: cold_wall={cold_wall:.6f}s "
           f"cold_cpu={cold_cpu:.6f}s warm_wall={warm_wall:.6f}s "
-          f"warm_cpu={warm_cpu:.6f}s serialized={len(serializations)}")
+          f"warm_cpu={warm_cpu:.6f}s serialized={len(serializations)} "
+          f"maxrss_kib={resource.getrusage(resource.RUSAGE_SELF).ru_maxrss}")
     assert len(serializations) == len(keys), "Warm unchanged sections must reuse their immutable hash"
 
 
@@ -140,3 +142,36 @@ def test_hash_identity_invalid_section_and_disposable_cache_boundary(report):
     before = report.fingerprint
     preview.section_preview_fingerprint(report, "training")
     assert report.fingerprint == before
+
+def test_native_assembly_reuses_training_after_activity_edit(report, monkeypatch):
+    """Real cache path, synthetic renderer bytes; no final-export cache."""
+    from pathlib import Path
+    from app import monthly_report_section_assembly_cache as assembly
+    from app import monthly_report_native_layout as native
+    from app import monthly_report_designs as designs
+    from app import monthly_report_render_jobs as jobs
+
+    assembly.clear()
+    monkeypatch.setattr(jobs, "memory_headroom", lambda: 512 * 1024 * 1024)
+    monkeypatch.setattr(preview, "preflight", lambda draft: [])
+    monkeypatch.setattr(designs, "source_for", lambda profile: Path("synthetic-source.docx"))
+    monkeypatch.setattr(designs, "is_master", lambda profile: False)
+    calls = []
+
+    def render(*args, **kwargs):
+        calls.append(kwargs["section_key"])
+        return b"synthetic-identical-assembly"
+
+    monkeypatch.setattr(native, "build_native_docx", render)
+    changed = replace(report, blocks=tuple(
+        replace(block, text="Synthetic activity changed")
+        if block.key == "activity_summary" else block for block in report.blocks
+    ))
+    try:
+        with assembly.owner_scope("synthetic-session"):
+            first = preview._section_preview_docx(report, "training")
+            second = preview._section_preview_docx(changed, "training")
+        assert first == second == b"synthetic-identical-assembly"
+        assert calls == ["training"], "Unrelated Activity must not rebuild native Training"
+    finally:
+        assembly.clear()
