@@ -198,8 +198,9 @@ def report_period_from_title_candidates(titles: tuple[str, ...]) -> tuple[Report
 
 
 def _package(path: Path) -> ZipFile:
+    from app.monthly_report_upload_limits import byte_limit_label, docx_size_error
     if path.stat().st_size > MAX_DOCX_BYTES:
-        raise ImportError("DOCX exceeds the 128 MB import limit. Split the source document and retry.")
+        raise ImportError(docx_size_error(MAX_DOCX_BYTES))
     try:
         archive = ZipFile(path)
         members = archive.infolist()
@@ -209,12 +210,20 @@ def _package(path: Path) -> ZipFile:
         if any(n.startswith("/") or "\\" in n or ".." in n.split("/") for n in names):
             raise ImportError("The DOCX contains an unsafe package path.")
         if sum(m.file_size for m in members) > MAX_EXPANDED_BYTES:
-            raise ImportError("Expanded DOCX exceeds 256 MB. Split it before importing.")
-        if any(m.file_size > MAX_MEMBER_BYTES or m.flag_bits & 1 for m in members):
-            raise ImportError("The DOCX contains an oversized or encrypted part.")
+            raise ImportError(f"Expanded DOCX exceeds the {byte_limit_label(MAX_EXPANDED_BYTES)} limit. "
+                              "Use a smaller import copy; the original is unchanged.")
+        if any(m.file_size > MAX_MEMBER_BYTES for m in members):
+            raise ImportError(f"The DOCX contains an oversized part (per-member limit "
+                              f"{byte_limit_label(MAX_MEMBER_BYTES)}). Use a smaller import copy.")
+        if any(m.flag_bits & 1 for m in members):
+            raise ImportError("The DOCX contains an encrypted part and cannot be inspected safely.")
         xml = [m for m in members if m.filename.endswith((".xml", ".rels"))]
-        if any(m.file_size > MAX_XML_BYTES for m in xml) or sum(m.file_size for m in xml) > MAX_XML_TOTAL:
-            raise ImportError("DOCX XML exceeds the safe parsing budget.")
+        if any(m.file_size > MAX_XML_BYTES for m in xml):
+            raise ImportError(f"DOCX XML exceeds the {byte_limit_label(MAX_XML_BYTES)} per-part "
+                              "safe parsing budget. Split the document; the original is unchanged.")
+        if sum(m.file_size for m in xml) > MAX_XML_TOTAL:
+            raise ImportError(f"DOCX XML exceeds the {byte_limit_label(MAX_XML_TOTAL)} total "
+                              "safe parsing budget. Split the document; the original is unchanged.")
         if "word/document.xml" not in names or "[Content_Types].xml" not in names:
             raise ImportError("Choose a valid Word DOCX document.")
         return archive
