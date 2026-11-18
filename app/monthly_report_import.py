@@ -1009,8 +1009,15 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 and node.find(".//" + V + "imagedata") is None]
                             legacy_text = any(node.find(".//" + W + "txbxContent") is not None
                                               for node in legacy_shapes)
-                            # Standalone unlabeled VML artwork also needs review.
-                            if graphics or legacy_groups or legacy_shapes:
+                            # A standalone Word text-frame blocker already owns its
+                            # text-bearing VML wrapper. Inventory any sibling unlabeled
+                            # shape separately, without double-counting that textbox.
+                            remaining_legacy_shapes = [
+                                node for node in legacy_shapes
+                                if not (standalone_frame
+                                        and node.find(".//" + W + "txbxContent") is not None)
+                            ]
+                            if graphics or legacy_groups or remaining_legacy_shapes:
                                 from app.monthly_report_smartart import closed_smartart_text
                                 smartart = closed_smartart_text(archive, graphics, relations) if section == "organization" and not legacy_groups and not legacy_text else None
                                 if smartart is not None:
