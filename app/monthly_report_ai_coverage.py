@@ -11,6 +11,7 @@ from threading import BoundedSemaphore
 from dataclasses import dataclass
 import hashlib
 import json
+import re
 import time
 
 from app.monthly_report_prompts import EXTRACT_PROMPT, PROMPT_VERSION
@@ -360,6 +361,21 @@ def validate_batch(batch, value, source, profile, period, *, ai_module=None):
                                "limitation of liability", "governing law",
                                "payment terms", "net 30", "net 60")
         ):
+            rejected += 1
+            continue
+        quoted, claimed = _token(raw.get("quote", "")), _token(raw.get("text", ""))
+        # A negative/pending source must not become a positive maintenance or
+        # training completion. Failing closed also avoids attribution of a
+        # vendor visit to an ENFRA technician on a different employer's report.
+        conditional = re.search(
+            r"\\b(?:did not|was not|were not|not yet|has not|had not|"
+            r"could not|would not|scheduled|pending|planned|proposed|"
+            r"awaiting|to be performed|not started)\\b", quoted)
+        if (conditional and not re.search(
+                r"\\b(?:did not|was not|were not|not yet|has not|had not|"
+                r"could not|would not|scheduled|pending|planned|proposed|"
+                r"awaiting|to be performed|not started)\\b", claimed)
+                or "enfra" in claimed and "enfra" not in quoted):
             rejected += 1
             continue
         if raw.get("kind") == "action" and any(
