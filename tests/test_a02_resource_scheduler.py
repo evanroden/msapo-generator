@@ -5,6 +5,7 @@ runner does not have the binary or enough physical/cgroup memory.
 """
 from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
+import json
 from pathlib import Path
 from threading import Event
 import os
@@ -199,11 +200,17 @@ def test_real_parallel_office_outputs_are_distinct_and_originals_unchanged(paral
     import pymupdf
     from docx import Document
     from app import pdf_converter
-    from conftest import requires_libreoffice
     if not (which("libreoffice") or which("soffice")):
         pytest.skip("LibreOffice unavailable")
-    if (scheduler._read_int("/sys/fs/cgroup/memory.max") or 0) < 2048 * scheduler.MIB:
-        pytest.skip("Real cgroup too small to run two LibreOffice processes")
+    actual_cap = scheduler._read_int("/sys/fs/cgroup/memory.max")
+    if actual_cap is None:
+        try:
+            import psutil
+            actual_cap = psutil.virtual_memory().available
+        except ImportError:
+            pytest.skip("Real available memory not measurable")
+    if actual_cap < 2048 * scheduler.MIB:
+        pytest.skip("Real memory too small to run two LibreOffice processes")
     monkeypatch.setattr(pdf_converter, "OUTPUT_DIR", tmp_path)
     one, two = tmp_path / "a.docx", tmp_path / "b.docx"
     for path, message in ((one, "SYNTHETIC A-ONLY"), (two, "SYNTHETIC B-ONLY")):
@@ -226,3 +233,79 @@ def test_real_parallel_office_outputs_are_distinct_and_originals_unchanged(paral
     assert [sha256(p.read_bytes()).hexdigest() for p in (one, two)] == input_hashes
     assert not list(tmp_path.glob(".office-*"))
     assert not list(office_process._marker().parent.glob(".active-office*.json"))
+    _evidence("real-office", {
+        "level": "synthetic-real-LibreOffice",
+        "pdf_sha256": [sha256(p.read_bytes()).hexdigest() for p in pdfs],
+        "docx_sha256": input_hashes,
+        "page_count": [1, 1],
+        "cross_profile_text_isolated": True,
+    })
+
+
+def _evidence(name, result):
+    """CI retains synthetic evidence; never serialize client bytes or paths."""
+    destination = os.environ.get("INDEPENDENT_OUTPUT")
+    if not destination:
+        return
+    folder = Path(destination)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / ("a02-" + name + ".json")).write_text(
+        json.dumps(result, sort_keys=True, indent=2), encoding="utf-8")
+
+
+def test_admission_cold_warm_and_512_control_samples(parallel, monkeypatch):
+    """Measured *synthetic* queue admission, not a served/browser first paint."""
+    import resource
+    samples = []
+    for label in ("cold", "warm"):
+        wall = time.perf_counter()
+        cpu = time.process_time()
+        with scheduler.lease("heavy", priority="visible", wait_seconds=1,
+                             headroom=jobs.memory_headroom):
+            pass
+        samples.append({"case": label, "wall_ms": round(1000 * (time.perf_counter() - wall), 3),
+                        "cpu_ms": round(1000 * (time.process_time() - cpu), 3),
+                        "maxrss_kib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss})
+    monkeypatch.setattr(scheduler, "_memory_limit", lambda: 512 * scheduler.MIB)
+    monkeypatch.setattr(scheduler, "_cpu_capacity", lambda: .5)
+    assert not scheduler.parallel_enabled()
+    wall = time.perf_counter()
+    with jobs.work_slot(wait_seconds=0):
+        pass
+    samples.append({"case": "512MiB-0.5CPU-serial-control",
+                    "wall_ms": round(1000 * (time.perf_counter() - wall), 3),
+                    "cpu_ms": None,
+                    "maxrss_kib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss})
+    _evidence("admission", {"level": "synthetic-admission-only",
+                             "samples": samples, "first_paint_ms": None,
+                             "live_cgroup_512MiB": False})
+    assert scheduler.snapshot()["running"]["heavy"] == 0
+
+
+def test_same_owner_revision_never_submits_duplicate_preview(monkeypatch):
+    from concurrent.futures import Future
+    from threading import BoundedSemaphore
+    from app import monthly_report_section_preview_ui as ui
+
+    pending = Future()
+    calls = []
+    class Worker:
+        def submit(self, fn, *args):
+            calls.append(args)
+            return pending
+    slot = BoundedSemaphore(1)
+    monkeypatch.setattr(ui, "_PREVIEW_WORKER", Worker())
+    monkeypatch.setattr(ui, "_PREVIEW_SLOT", slot)
+    state = {"owner": "synthetic-owner", "wanted": {"activity": "rev-1"},
+             "queue": {"activity": ("rev-1", "synthetic-draft", {}, "Activity")},
+             "cache": {}, "running": None, "visible": {"activity": True}}
+    ui._advance_preview_queue(state)
+    ui._advance_preview_queue(state)
+    assert len(calls) == 1 and not slot.acquire(False)
+    assert state["running"][:2] == ("activity", "rev-1")
+    # On a later revision the old work is not reused as current.
+    state["wanted"]["activity"] = "rev-2"
+    state["queue"]["activity"] = ("rev-2", "new-synthetic-draft", {}, "Activity")
+    ui._advance_preview_queue(state)
+    assert len(calls) == 1
+    slot.release()
