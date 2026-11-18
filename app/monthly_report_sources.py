@@ -691,7 +691,7 @@ def _ingest_locked(profile: ReportProfile, filename: str, raw: bytes,
                 # Correct only the disposable extraction view. Saved/manual
                 # sources are overlaid by restore_sources and remain unchanged.
                 source = replace(source, facility="")
-            parse_manifest.qa_stage("extraction", cache_started, "hit", byte_count=cache.stat().st_size)
+            parse_manifest.qa_stage("extraction", cache_started, "hit", artifact=cache)
             return replace(content, source=replace(source, filename=filename)), ()
         rebuild_cache = True
     if not rebuild_cache or not _same_source_bytes(path, raw):
@@ -811,7 +811,7 @@ def _ingest_locked(profile: ReportProfile, filename: str, raw: bytes,
         **({"xlsx_currency_policy": 1} if suffix == ".xlsx" else {}),
         **({"csv_unicode_policy": 1} if unicode_csv else {}),
         **({"csv_dialect_policy": 1} if suffix == ".csv" else {}), **asdict(content)}))
-    parse_manifest.qa_stage("publish", cache_started, "complete", byte_count=cache.stat().st_size)
+    parse_manifest.qa_stage("publish", cache_started, "complete", artifact=cache)
     # Stages are transient and do not double persistent cache disk occupancy.
     try:
         stage.unlink(missing_ok=True)
