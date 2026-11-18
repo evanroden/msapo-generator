@@ -213,11 +213,14 @@ def work_slot(*, preview=False, review=False, wait_seconds=130,
     global _FOREGROUND_WAITING, _REVIEW_WAITING
     from app.monthly_report_visible_queue import QUEUE, QueueBusy
     if preview:
-        timeout = max(0, min(float(wait_seconds), 10 if review else AUTO_PREVIEW_WAIT_SECONDS))
-        if not review:
+        # The old API was intentionally nonblocking for unowned one-off
+        # previews. Only an identified, visible section gets a short queue.
+        timeout = max(0, min(float(wait_seconds),
+                             10 if review else AUTO_PREVIEW_WAIT_SECONDS if owner is not None else 0))
+        if not review and owner is None:
             with _PRIORITY_LOCK:
-                if _REVIEW_WAITING:
-                    raise RenderBusy('Preview is queued behind a requested Review. Your edits are still here.')
+                if _REVIEW_WAITING or _FOREGROUND_WAITING:
+                    raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
     else:
         timeout = max(0, min(float(wait_seconds), 130))
     with _PRIORITY_LOCK:
