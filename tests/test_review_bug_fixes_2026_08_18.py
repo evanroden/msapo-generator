@@ -23,6 +23,7 @@ import anthropic
 import pytest
 
 import app.receipt_analyzer as receipt_analyzer
+from app import api_retry
 from app import memory
 from app.eml_builder import build_eml
 from app.receipt_analyzer import _MAX_LINE_ITEMS, _line_items
@@ -60,6 +61,7 @@ def test_a_persistently_rate_limited_receipt_does_not_sleep_after_the_last_try(
     answer already available at 9 -- the last 9 spent inside a Streamlit spinner
     with an employee watching it."""
     slept: list[int] = []
+    monkeypatch.setattr(api_retry.random, "uniform", lambda *_: 1.0)
     monkeypatch.setattr(receipt_analyzer.time, "sleep", slept.append)
 
     with pytest.raises(anthropic.APIStatusError):
@@ -78,6 +80,7 @@ def test_a_dropped_connection_is_retried_like_any_other_transient_failure(
     except clause and escaped on the FIRST attempt -- the retry contract held
     for a rate limit but not for the flaky network it was written for."""
     slept: list[int] = []
+    monkeypatch.setattr(api_retry.random, "uniform", lambda *_: 1.0)
     monkeypatch.setattr(receipt_analyzer.time, "sleep", slept.append)
 
     with pytest.raises(anthropic.APIConnectionError):
@@ -92,6 +95,7 @@ def test_a_non_transient_status_is_still_not_retried(monkeypatch):
     """A 400 is a property of the request. Retrying it burns the employee's
     time three times over to reach the same answer."""
     slept: list[int] = []
+    monkeypatch.setattr(api_retry.random, "uniform", lambda *_: 1.0)
     monkeypatch.setattr(receipt_analyzer.time, "sleep", slept.append)
 
     class _BadRequest(anthropic.APIStatusError):
