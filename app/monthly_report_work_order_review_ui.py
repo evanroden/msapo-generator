@@ -148,7 +148,19 @@ def render_reviewed_rows(draft, blocks, prefix, content):
         for note in (record.questions if kind == "workorders" else record.notes):
             st.warning(note)
         if content.source.suffix in (".csv", ".xlsx"):
-            with st.expander("Change source columns or date interpretation"):
+            unresolved = tuple(LABELS[name] for name in fields
+                if name in record.mapping.ambiguous
+                or (name in ("work_order", "site", "work_date", "status")
+                    and getattr(record.mapping, name) is None)) if kind == "workorders" else ()
+            with st.expander(
+                "Resolve CSV source columns: " + ", ".join(unresolved)
+                if content.source.suffix == ".csv" and unresolved
+                else "Change source columns or date interpretation",
+                expanded=content.source.suffix == ".csv" and bool(unresolved),
+            ):
+                if content.source.suffix == ".csv":
+                    st.caption("Detected column positions are preselected. Change only "
+                               "unresolved or incorrect positions; no original source cell is discarded.")
                 with st.form(local + "_mapping"):
                     pairs = []
                     for name in fields:

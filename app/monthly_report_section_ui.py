@@ -1038,9 +1038,19 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             return True
         analysis = analyze_starting_report(inspection, candidate, period, known_sites.values(),
                                           confirmed_sites=tuple({f.key: f for f in confirmed_sites}.values()))
-    from app.monthly_report_source_sites_ui import source_review_epoch
+    from app.monthly_report_source_sites_ui import source_review_epoch, choose_source_report_month
+    selected_source_period, period_undecided = choose_source_report_month(
+        inspection, candidate, period, p, field, source_view=source_view)
+    if period_undecided:
+        return True  # One explicit decision, before any site/period data is mapped.
+    if selected_source_period is not None:
+        analysis = analyze_starting_report(
+            inspection, candidate, period, known_sites.values(),
+            confirmed_sites=analysis.source_sites, known_profiles=profiles,
+            confirmed_period=selected_source_period)
     p += "_source_scope_" + source_review_epoch(
-        inspection, candidate, period, analysis.source_sites, analysis.site_relation, source_view)
+        inspection, candidate, period, analysis.source_sites,
+        (analysis.site_relation, analysis.source_period), source_view)
     source_names = "; ".join(site.title for site in analysis.source_sites)
     st.caption("Starting report: " + source_names + (f" · {analysis.source_period[0]}-{analysis.source_period[1]:02d}" if analysis.source_period else " · source month not stated"))
     if analysis.site_relation == "other":

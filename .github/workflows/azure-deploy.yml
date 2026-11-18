@@ -1,0 +1,110 @@
+name: Deploy to Azure
+
+# Moves the Azure copy of the app to main's newest commit once Tests has passed
+# on that exact commit, so Azure follows main the way Render does. The steps
+# live in scripts/azure_release.py; docs/AZURE_CUTOVER_PLAN.md (M9) describes
+# the same release by hand, and how to go back.
+#
+# Automatic runs are off until the owner sets the repository variable
+# AZURE_DEPLOY_ENABLED to true, after IT has created the deploy identity and
+# the "azure" environment holds its secrets: AZURE_CLIENT_ID, AZURE_TENANT_ID,
+# AZURE_SUBSCRIPTION_ID, AZURE_RESOURCE_GROUP, AZURE_APP, AZURE_BACKUP_JOB and,
+# only for a company address, AZURE_PUBLIC_ORIGIN. A manual run deploys even
+# while automatic runs are off. The repository is public: Azure names exist
+# only in those secrets, which GitHub masks, and the script masks everything
+# it derives from them.
+
+on:
+  workflow_run:
+    workflows: [Tests]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: "A commit on main to deploy (7 to 40 hex characters). Empty means main's head."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+# One deploy at a time, never cancelled halfway. A newer queued run replaces an
+# older queued one, which loses nothing: every run deploys main's head.
+concurrency:
+  group: azure-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Only Tests runs for pushes to this repository's main; fork pull requests
+    # can name a branch "main" too.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (vars.AZURE_DEPLOY_ENABLED == 'true' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: azure
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+      AZURE_APP: ${{ secrets.AZURE_APP }}
+      AZURE_BACKUP_JOB: ${{ secrets.AZURE_BACKUP_JOB }}
+      AZURE_PUBLIC_ORIGIN: ${{ secrets.AZURE_PUBLIC_ORIGIN }}
+      AZURE_EXTENSION_USE_DYNAMIC_INSTALL: yes_without_prompt
+    steps:
+      - name: Check the deploy settings
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          missing=""
+          for name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID AZURE_RESOURCE_GROUP AZURE_APP AZURE_BACKUP_JOB; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::The azure environment is missing these secrets:$missing (see docs/AZURE_CUTOVER_PLAN.md, M9)."
+            exit 1
+          fi
+
+      - name: Check out main's release script
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: tool
+          persist-credentials: false
+
+      - name: Sign in to Azure as the deploy identity
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Choose the release
+        id: choose
+        env:
+          REQUESTED_COMMIT: ${{ inputs.commit }}
+        run: python3 tool/scripts/azure_release.py choose --commit "$REQUESTED_COMMIT"
+
+      - name: Check out the release
+        if: steps.choose.outputs.commit != ''
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.choose.outputs.commit }}
+          path: build
+          persist-credentials: false
+
+      - name: Build, deploy and check it
+        if: steps.choose.outputs.commit != ''
+        env:
+          RELEASE_COMMIT: ${{ steps.choose.outputs.commit }}
+        run: python3 tool/scripts/azure_release.py deploy --commit "$RELEASE_COMMIT" --context build
