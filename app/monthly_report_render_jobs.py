@@ -6,6 +6,7 @@ from contextlib import contextmanager
 
 from app import pdf_converter
 from app.monthly_report_library import _root
+from app.monthly_report_latency_trace import span
 
 _SLOT = threading.Lock()
 _CONVERSION_LOCAL = threading.local()
@@ -92,10 +93,11 @@ def _reclaim_preview_heap():
 
 
 def convert_to_pdf(path, *, wait_seconds=10, lossless_images=False):
-    with conversion_slot(wait_seconds=wait_seconds):
-        if lossless_images is not False:
-            return pdf_converter.convert_to_pdf(path, lossless_images=lossless_images)
-        return pdf_converter.convert_to_pdf(path)
+    with span("conversion"):
+        with conversion_slot(wait_seconds=wait_seconds):
+            if lossless_images is not False:
+                return pdf_converter.convert_to_pdf(path, lossless_images=lossless_images)
+            return pdf_converter.convert_to_pdf(path)
 
 
 # Assembly can hold decoded pictures and an entire OOXML package. Serialize that
@@ -207,27 +209,28 @@ def work_slot(*, preview=False, review=False, wait_seconds=130):
     if getattr(_WORK_LOCAL, 'active', False):
         yield
         return
-    if preview:
-        headroom = memory_headroom()
-        if headroom is not None and headroom < PREVIEW_HEADROOM_BYTES:
-            raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
-        if review:
-            acquired = _wait_for_review_slot(wait_seconds)
+    with span("job_queue"):
+        if preview:
+            headroom = memory_headroom()
+            if headroom is not None and headroom < PREVIEW_HEADROOM_BYTES:
+                raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
+            if review:
+                acquired = _wait_for_review_slot(wait_seconds)
+            else:
+                with _PRIORITY_LOCK:
+                    if _FOREGROUND_WAITING or _REVIEW_WAITING:
+                        raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
+                    acquired = _WORK_SLOT.acquire(blocking=False)
         else:
             with _PRIORITY_LOCK:
-                if _FOREGROUND_WAITING or _REVIEW_WAITING:
-                    raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
-                acquired = _WORK_SLOT.acquire(blocking=False)
-    else:
-        with _PRIORITY_LOCK:
-            _FOREGROUND_WAITING += 1
-        try:
-            acquired = _WORK_SLOT.acquire(timeout=max(0, min(float(wait_seconds), 130)))
-        finally:
-            with _PRIORITY_LOCK:
-                _FOREGROUND_WAITING -= 1
-    if not acquired:
-        raise RenderBusy('Another report is being prepared. Your saved work is unchanged; retry generation shortly.')
+                _FOREGROUND_WAITING += 1
+            try:
+                acquired = _WORK_SLOT.acquire(timeout=max(0, min(float(wait_seconds), 130)))
+            finally:
+                with _PRIORITY_LOCK:
+                    _FOREGROUND_WAITING -= 1
+        if not acquired:
+            raise RenderBusy('Another report is being prepared. Your saved work is unchanged; retry generation shortly.')
     _WORK_LOCAL.active = True
     _WORK_LOCAL.preview_guard = _PreviewMemoryGuard(headroom) if preview else None
     try:
