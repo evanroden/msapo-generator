@@ -291,8 +291,10 @@ def test_proposal_card_states_remain_independent_of_an_omitted_art_block(source_
     draft = replace(draft, follow_ups=tuple(replace(item,
         reviewed_fingerprint=confirmation(item, SEPTEMBER)) for item in items))
     current = new_month_draft(draft, OCTOBER)
+    # The explicitly left-out proposal remains a hidden source-identity tombstone.
+    # It must not be resurrected by a later import or month rollover.
     assert [(item.key, item.text, item.status, item.included) for item in current.follow_ups] == [
-        (item.key, item.text, item.status, True) for item in items[:2]]
+        (item.key, item.text, item.status, item.included) for item in items]
     assert all(item.carried_from == SEPTEMBER.key and not item.reviewed_fingerprint for item in current.follow_ups)
     assert any(value.blocking and value.code == "follow_up" for value in preflight(current))
     current = replace(current, follow_ups=tuple(replace(item,
