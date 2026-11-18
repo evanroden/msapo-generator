@@ -89,3 +89,34 @@ def test_bad_source_and_cross_profile_have_no_data_leak(tmp_path, monkeypatch):
     second, _ = sources.ingest(other, "same.pdf", original)
     assert first.source.sha256 == second.source.sha256 == sha256(original).hexdigest()
     assert _image(profile, first) == _image(other, second)
+
+def test_cooperative_capacity_retry_records_wait_and_cancels_stale_job(monkeypatch):
+    from app.monthly_report_read_wait import read_with_capacity_wait
+    from app.monthly_report_render_jobs import RenderBusy
+
+    attempts = []
+    checkpoints = []
+    waiting = []
+    monkeypatch.setattr("app.monthly_report_read_wait.sleep", lambda _: None)
+
+    def read():
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise RenderBusy("Synthetic queue contention")
+        return "immutable result"
+
+    trace = TimingTrace()
+    with synthetic_timing(trace):
+        value = read_with_capacity_wait(read, lambda: checkpoints.append(1),
+                                        lambda: waiting.append(1), wait_seconds=1)
+    assert value == "immutable result"
+    assert len(attempts) == len(checkpoints) == 2
+    assert len(waiting) == 1
+    assert "job_queue" in [entry["stage"] for entry in _ordered(trace.receipt())]
+
+    def canceled():
+        raise RuntimeError("Stale request canceled")
+
+    with pytest.raises(RuntimeError, match="Stale"):
+        read_with_capacity_wait(lambda: pytest.fail("Canceled read must not run"),
+                                canceled, lambda: None)
