@@ -811,6 +811,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                             # Shape text is evidence, not permission to flatten its geometry.
                             drawing_text = "\n".join(label.text for label in drawing_labels
                                                      if label.source == "drawing_text")
+                            complete_drawing_text = "\n".join(value for value in (text, drawing_text) if value)
                             from app.monthly_report_native_design import mint_divider_background
                             if (part == "word/document.xml" and _is_native_divider_background(element, text)
                                     and (alternatives_equivalent or not mint_divider_background(element, text))):
@@ -846,7 +847,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                                         and not node.get("uri", "").endswith("/picture"))
                                     for node in element.iter())
                                 if complex_table:
-                                    add("unsupported", part, position, text=text or drawing_text,
+                                    add("unsupported", part, position, text=complete_drawing_text,
                                         drawing_labels=drawing_labels,
                                         note="Word table contains text boxes or unsupported drawings and needs manual layout review. "
                                              "Retain its source page or add a reviewed replacement; extracted text does not preserve the layout.")
@@ -999,7 +1000,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                                         if divergent_native:
                                             note += " The modern and fallback Word representations disagree."
                                     add("native_layout" if native_role else "unsupported", part, position,
-                                        text=text or drawing_text, note=note, drawing_labels=drawing_labels)
+                                        text=complete_drawing_text, note=note, drawing_labels=drawing_labels)
                             if (element.find(".//" + W + "altChunk") is not None or element.tag == W + "altChunk"
                                     or element.find(".//" + W + "object") is not None or element.tag == W + "object"):
                                 add("unsupported", part, position, text=drawing_text,
