@@ -11,6 +11,7 @@ import pytest
 from app.monthly_report_import import ImportMapping, inspect_docx, map_items
 from app.monthly_report_sections import table_without_prices
 from app.monthly_report_vendor_groups import grouped_vendor_contacts
+from app.monthly_report_source_table_roles import native_table_class
 
 
 def _set_header(row):
@@ -70,18 +71,21 @@ def test_native_cell_coordinates_and_groups_are_lossless(tmp_path):
     summary = _table(inspected, "Synthetic Water Summary")
     assert calls.rows[2] == ("SC-07", "2026-09-14", "Mechanical", "Inspected filter", "AHU-7")
     assert calls.table_header_row == 1
+    assert native_table_class(calls) == "service_calls"
     assert len(calls.table_cell_refs) == 16
     assert calls.table_cell_refs[0] == (0, 0, 0, 5, "")
     assert calls.table_row_roles == ("title_band", "header", "data", "repeated_header")
     assert calls.table_row_groups == (0, 0, 0, 0)
     assert vendors.merged_title_rows == (1, 3)
+    assert native_table_class(vendors) == "vendor_contacts"
     assert vendors.table_cell_refs[4] == (2, 0, 0, 1, "")
     assert vendors.table_row_roles == ("header", "group_band", "data", "group_band", "data")
     assert vendors.table_row_groups == (0, 1, 1, 2, 2)
-    assert len(vendors.table_cell_refs) == 9
+    assert len(vendors.table_cell_refs) == 11
     assert len(summary.table_cell_refs) == 7
     assert summary.table_row_roles == ("title_band", "header", "data")
     assert summary.rows[-1] == ("Tower A", "0", "Checked")
+    assert native_table_class(summary) == ""
     assert path.read_bytes() == initial
     assert inspect_docx(path).items == inspected.items
 
