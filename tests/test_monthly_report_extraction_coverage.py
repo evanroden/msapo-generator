@@ -278,3 +278,20 @@ def test_independent_expected_data_manifest_including_price_irrelevance():
             assert "Proposal fee" not in draft.blocks[0].text
         if name == "interrupted_reader":
             assert ledger.limited and ledger.needs_review == 2
+
+
+def test_bulk_receipts_are_parsed_once_for_large_sheet(monkeypatch):
+    from app import monthly_report_extraction_coverage as coverage
+    table = SourceTable("Synthetic", ("ID",), tuple((str(i),) for i in range(200)))
+    draft, content = fixture(pages=("One worksheet text",), suffix=".csv", tables=(table,))
+    item = source_coverage(draft, content.source, content).items[0]
+    updated = exclude_from_coverage(draft, item, "Standalone synthetic worksheet.")
+    original_loads = coverage.json.loads
+    count = []
+    def counted(value, *args, **kwargs):
+        count.append(1)
+        return original_loads(value, *args, **kwargs)
+    monkeypatch.setattr(coverage.json, "loads", counted)
+    ledger = coverage.source_coverage(updated, content.source, content)
+    assert ledger.rows == 200
+    assert len(count) <= len(updated.source_coverage_receipts) + 1
