@@ -96,3 +96,64 @@ def test_excluded_capacity_and_unknown_values_roll_forward_without_standing_muta
     assert ("NH", "Chilled water", "NR", "1600", "tons") in rows
     assert ("NH", "Steam", "40000", "50000", "lb/hr") in rows
     assert all(row[0] != "SH" for row in rows if row)
+
+
+from conftest import requires_libreoffice
+
+
+@requires_libreoffice
+def test_two_sites_native_columns_units_and_unknown_survive_real_docx_pdf(profile):
+    """Converts synthetic output with the actual report writer; no mocked renderer."""
+    import hashlib
+    import json
+    import os
+    from pathlib import Path
+
+    import pymupdf as fitz
+    from app.monthly_report_docx import assemble_docx, _convert_report_pdf
+
+    raw = CSV.replace(b"1200", b"NR")
+    state = saved(profile, raw)
+    both = replace(profile, key="both", title="North and South Hospitals",
+                   facilities=(Facility("north", "North Hospital"),
+                               Facility("south", "South Hospital")),
+                   scope_type="multi_site")
+    block = capacity.capacity_block(both, state)
+    assert block.extra_tables[0].columns == (
+        "Facility", "Service", "Required capacity", "Available capacity", "Units")
+    current = draft(both, block)
+    word = assemble_docx(current, acknowledged_fingerprint=current.fingerprint)
+    document = Document(BytesIO(word))
+    tables = [[tuple(cell.text for cell in row.cells) for row in table.rows]
+              for table in document.tables]
+    expected_header = ("Facility", "Service", "Required capacity", "Available capacity", "Units")
+    matched = [table for table in tables if table and table[0] == expected_header]
+    assert len(matched) == 1
+    assert matched[0][1:] == [
+        ("NH", "Chilled water", "NR", "1600", "tons"),
+        ("NH", "Steam", "40000", "50000", "lb/hr"),
+        ("SH", "Chilled water", "800", "1000", "tons"),
+        ("SH", "Steam", "20000", "24000", "lb/hr"),
+    ]
+    pdf, error = _convert_report_pdf(current, word)
+    assert pdf, error
+    with fitz.open(stream=pdf, filetype="pdf") as rendered:
+        page_count = len(rendered)
+        pdf_text = " ".join(" ".join(page.get_text().split()) for page in rendered)
+    for part in ("Facility", "Required", "Available", "NR", "1600",
+                 "Chilled water", "Steam", "tons", "lb/hr", "NH", "SH"):
+        assert part in pdf_text
+    assert capacity.load_capacity(profile.contract) == state
+    if output_dir := os.environ.get("INDEPENDENT_OUTPUT"):
+        folder = Path(output_dir) / "a76-capacity"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "two-sites.docx").write_bytes(word)
+        (folder / "two-sites.pdf").write_bytes(pdf)
+        (folder / "manifest.json").write_text(json.dumps({
+            "word_sha256": hashlib.sha256(word).hexdigest(),
+            "pdf_sha256": hashlib.sha256(pdf).hexdigest(),
+            "pdf_pages": page_count,
+            "native_columns": expected_header,
+            "site_keys": ["north", "south"],
+            "unknown_cell": "NR",
+        }, indent=2) + "\n")
