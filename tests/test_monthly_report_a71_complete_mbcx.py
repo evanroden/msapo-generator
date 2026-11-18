@@ -122,6 +122,35 @@ def test_unreadable_mbcx_page_is_not_implicitly_approved(
     assert content.source.client_page_reviews == ()
 
 
+def test_actual_image_only_pdf_page_requires_individual_review(
+    monkeypatch, tmp_path
+):
+    from PIL import Image, ImageDraw
+
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    profile = synthetic_profiles()[0]
+    raster = Image.new("RGB", (200, 200), "white")
+    ImageDraw.Draw(raster).text((12, 16), "Synthetic scanned MBCx notes", fill="black")
+    out = BytesIO()
+    raster.save(out, format="PNG")
+    with pymupdf.open() as pdf:
+        pdf.new_page().insert_text(
+            (40, 50), "Synthetic commissioning observation. Pump inspected."
+        )
+        scanned = pdf.new_page()
+        scanned.insert_image(scanned.rect, stream=out.getvalue())
+        pdf.new_page().insert_text(
+            (40, 50), "Synthetic commissioning observation. Chiller tested."
+        )
+        raw = pdf.tobytes()
+    content, _ = sources.ingest(profile, "synthetic-scanned-mbcx.pdf", raw)
+    assert content.source.needs_vision == (2,)
+    assert not content.source.client_page_reviews
+    with pytest.raises(ValueError, match=r"page 2"):
+        prepare_whole_pdf(profile, content, {})
+    assert sources.source_bytes(profile, content.source) == raw
+
+
 @pytest.mark.parametrize("count", [12, 40])
 def test_app_has_one_complete_document_action_without_page_checkboxes(
     monkeypatch, tmp_path, count
