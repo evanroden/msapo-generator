@@ -226,6 +226,19 @@ def test_named_chart_part_labels_are_review_only_and_numeric_values_not_extracte
     assert "numeric data and layout are not imported" in charts[0].reason
     assert path.read_bytes() == original
 
+    # A corrupt chart part must remain an actionable single-object notice,
+    # never abort the entire supported sibling table/paragraph inspection.
+    parts["word/charts/chart1.xml"] = b"<invalid"
+    with ZipFile(path, "w", ZIP_DEFLATED) as archive:
+        for name, contents in parts.items():
+            archive.writestr(name, contents)
+    damaged = path.read_bytes()
+    revised = coverage_inventory(importer.inspect_docx(path))
+    chart = next(e for e in revised if e.relationship_id == "rIdChartUnit")
+    assert chart.status == "review-needed"
+    assert "could not be read safely" in chart.reason
+    assert path.read_bytes() == damaged
+
 
 def test_cover_identity_does_not_include_unrelated_body_site_or_scheduled_work(tmp_path):
     from app.monthly_report_start_import import analyze_starting_report
