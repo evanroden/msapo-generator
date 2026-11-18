@@ -32,7 +32,7 @@ def starting_docx_failure_notice(exc: Exception) -> str:
     # The ordinary upload's stream limit is enforced by staging even when a
     # native picker or declared size is inaccurate. Preserve its own limit,
     # not the (larger) shared-template shelf limit.
-    if reason == docx_size_error(stage.MAX_DOCX_BYTES):
+    if not isinstance(exc, importer.ImportError) and reason == docx_size_error(stage.MAX_DOCX_BYTES):
         return (
             f"This DOCX exceeds the {byte_limit_label(stage.MAX_DOCX_BYTES)} "
             f"Starting Report upload limit. Choose a smaller import copy. {_PRESERVED}"
@@ -40,6 +40,41 @@ def starting_docx_failure_notice(exc: Exception) -> str:
 
     if not isinstance(exc, importer.ImportError):
         return _GENERIC
+
+    # Current ZIP parser reports exact runtime-sized limits. Keep legacy
+    # exact strings below for stable saved error receipts and older tests.
+    # Never format arbitrary parser exception strings into the UI.
+    if reason == docx_size_error(importer.MAX_DOCX_BYTES):
+        return (
+            f"This DOCX exceeds the {byte_limit_label(importer.MAX_DOCX_BYTES)} "
+            f"DOCX import limit. Split it into smaller Word copies. {_PRESERVED}"
+        )
+    if reason == (f"Expanded DOCX exceeds the {byte_limit_label(importer.MAX_EXPANDED_BYTES)} limit. "
+                  "Use a smaller import copy; the original is unchanged."):
+        return (
+            f"This DOCX expands beyond the {byte_limit_label(importer.MAX_EXPANDED_BYTES)} "
+            f"parsing limit. Split the Word document before retrying. {_PRESERVED}"
+        )
+    if reason == (f"The DOCX contains an oversized part (per-member limit "
+                  f"{byte_limit_label(importer.MAX_MEMBER_BYTES)}). Use a smaller import copy."):
+        return (
+            f"This DOCX contains a part larger than {byte_limit_label(importer.MAX_MEMBER_BYTES)}. "
+            f"Remove the oversized attachment from an import copy. {_PRESERVED}"
+        )
+    if reason == "The DOCX contains an encrypted part and cannot be inspected safely.":
+        return f"This DOCX contains an encrypted part. Remove its encryption in an import copy. {_PRESERVED}"
+    if reason == (f"DOCX XML exceeds the {byte_limit_label(importer.MAX_XML_BYTES)} per-part "
+                  "safe parsing budget. Split the document; the original is unchanged."):
+        return (
+            f"This DOCX exceeds its {byte_limit_label(importer.MAX_XML_BYTES)} per XML part "
+            f"parsing limit. Split or simplify the Word import copy. {_PRESERVED}"
+        )
+    if reason == (f"DOCX XML exceeds the {byte_limit_label(importer.MAX_XML_TOTAL)} total "
+                  "safe parsing budget. Split the document; the original is unchanged."):
+        return (
+            f"This DOCX exceeds its {byte_limit_label(importer.MAX_XML_TOTAL)} total XML "
+            f"parsing limit. Split or simplify the Word import copy. {_PRESERVED}"
+        )
 
     if reason == "DOCX exceeds the 128 MB import limit. Split the source document and retry.":
         return (
