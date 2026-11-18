@@ -47,6 +47,32 @@ def _edited(draft, value):
     ) + (replace(block, text=value),))
 
 
+def _reviewed_export_ready(draft):
+    """An operator must complete the required sections; never bypass preflight."""
+    from app.monthly_report_checks import preflight
+
+    required = {
+        "org_chart": "Synthetic QA reviewed organization context for this invented facility.",
+        "equipment_issues": "Synthetic QA reviewed equipment issue context for this invented facility.",
+        "training_summary": "Synthetic QA reviewed training evidence for this invented facility.",
+    }
+    # This is the observed failure-before (required-block gate), deliberately
+    # retained. Importing a source alone never authorizes a finished export.
+    outstanding = {check.block_key for check in preflight(draft) if check.code == "required"}
+    assert set(required).issubset(outstanding)
+    updated = list(draft.blocks)
+    for key, text in required.items():
+        existing = next((i for i, item in enumerate(updated) if item.key == key), None)
+        if existing is None:
+            updated.append(ResolvedBlock(key, "This month", text=text))
+        else:
+            updated[existing] = replace(updated[existing], text=text)
+    ready = replace(draft, blocks=tuple(updated))
+    assert not [c for c in preflight(ready) if c.blocking], (
+        "Synthetic reviewer fixture must resolve the actual preflight, not waive it.")
+    return ready
+
+
 def _native_words(raw):
     document = Document(BytesIO(raw))
     values = [paragraph.text for paragraph in document.paragraphs]
@@ -132,7 +158,7 @@ def test_synthetic_auth_real_word_pdf_from_persisted_reviewed_start(
     # The reviewer supplies a current-period fact, never retitles old or
     # foreign-site source work as completed.
     reviewer_fact = f"A18{scenario}REVIEWED synthetic September report fact."
-    revised = _edited(imported, reviewer_fact)
+    revised = _reviewed_export_ready(_edited(imported, reviewer_fact))
     library.save_snapshot(revised, expected_revision=0,
                           entered_editor="Synthetic QA reviewer")
     reopened = library.load_snapshot(profile.contract, profile.key, PERIOD)
