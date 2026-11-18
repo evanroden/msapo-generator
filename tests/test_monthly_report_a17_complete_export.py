@@ -21,7 +21,7 @@ from app.monthly_report_model import (
     ReportDraft, ReportPeriod, ReportTable, ResolvedBlock,
     default_sections, included_sections, synthetic_profiles,
 )
-from conftest import requires_libreoffice
+from tests.conftest import requires_libreoffice
 
 
 PRIVATE_PRICE = "A17-PRIVATE-QUOTE-$91,234.56"
