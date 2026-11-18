@@ -1,0 +1,163 @@
+"""Opt-in, bounded cross-process render leases for hosts with measured resources.
+
+The default 512 MiB Render path deliberately keeps its original single locks.
+This is an admission controller, not a thread pool: callers own their native
+objects and LibreOffice is still launched as an isolated subprocess.
+"""
+from __future__ import annotations
+
+from contextlib import contextmanager
+import itertools
+import os
+from pathlib import Path
+import sys
+import threading
+import time
+
+MIB = 1024 * 1024
+# Two large office/native jobs plus 512 MiB for app, parser and UI work.
+PARALLEL_MIN_MEMORY = 2048 * MIB
+RESERVE_BYTES = 160 * MIB
+ESTIMATED_PEAK = {
+    "heavy": 512 * MIB,       # native assembly / standalone conversion
+    "conversion": 320 * MIB,  # inside an already admitted heavy lease
+    "parse": 128 * MIB,
+    "raster": 128 * MIB,
+    "io": 32 * MIB,
+}
+CAPACITIES = {"heavy": 2, "conversion": 2, "parse": 2, "raster": 2, "io": 4}
+PRIORITIES = {"export": 0, "review": 1, "visible": 2, "parse": 3, "optional": 4}
+_CV = threading.Condition()
+_WAITING = []
+_RUNNING = {kind: 0 for kind in CAPACITIES}
+_SERIAL = itertools.count()
+
+
+class AdmissionUnavailable(RuntimeError):
+    pass
+
+
+def _read_int(path):
+    try:
+        return int(Path(path).read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _memory_limit():
+    for path in ("/sys/fs/cgroup/memory.max",
+                 "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        result = _read_int(path)
+        if result is not None and 0 < result < 1 << 60:
+            return result
+    return None
+
+
+def _cpu_capacity():
+    """Use cgroup quota rather than host os.cpu_count on limited containers."""
+    try:
+        quota, period = Path("/sys/fs/cgroup/cpu.max").read_text().split()
+        if quota != "max":
+            return int(quota) / int(period)
+    except (OSError, ValueError, ZeroDivisionError):
+        pass
+    quota = _read_int("/sys/fs/cgroup/cpu/cpu.cfs_quota_us")
+    period = _read_int("/sys/fs/cgroup/cpu/cpu.cfs_period_us")
+    if quota is not None and quota > 0 and period and period > 0:
+        return quota / period
+    try:
+        return len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        return os.cpu_count() or 1
+
+
+def parallel_enabled():
+    """A flag alone cannot turn a 512 MiB/0.5 CPU instance into a two-job host."""
+    return (os.getenv("MSAPO_RENDER_PARALLEL") == "1" and
+            os.name == "posix" and sys.platform == "linux" and
+            (_memory_limit() or 0) >= PARALLEL_MIN_MEMORY and
+            _cpu_capacity() >= 2)
+
+
+def snapshot():
+    """Aggregate of this process's admissions, not a global cross-host count."""
+    with _CV:
+        return {"queued": {k: sum(t[2] == k for t in _WAITING) for k in CAPACITIES},
+                "running": dict(_RUNNING), "parallel": parallel_enabled()}
+
+
+def _slot_path(kind, index):
+    from app.monthly_report_library import _root
+    folder = _root() / "render-jobs"
+    folder.mkdir(parents=True, exist_ok=True)
+    # Slot zero preserves the existing cross-process lock identity.
+    if kind == "conversion":
+        name = ".conversion-lock" if index == 0 else f".conversion-lock-{index}"
+    else:
+        name = f".resource-{kind}-{index}.lock"
+    return folder / name
+
+
+def _try_slot(kind):
+    import fcntl
+    for index in range(CAPACITIES[kind]):
+        handle = _slot_path(kind, index).open("a+b")
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return index, handle
+        except (BlockingIOError, OSError):
+            handle.close()
+    return None
+
+
+@contextmanager
+def lease(kind, *, priority="visible", wait_seconds=0, headroom=None,
+          is_current=None):
+    """FIFO within priority; timeout/cancel safely removes only its own ticket.
+
+    File locks bound each class across app processes. The cgroup limit, live
+    free memory and already reserved heavy slots must all permit admission.
+    A cancelled queued request cannot run; started work is never cancelled.
+    """
+    if kind not in CAPACITIES or priority not in PRIORITIES:
+        raise ValueError("Unknown resource class or priority")
+    if not parallel_enabled():
+        raise AdmissionUnavailable("Parallel admission requires a measured high-resource host.")
+    deadline = time.monotonic() + max(0, min(float(wait_seconds), 130))
+    ticket = (PRIORITIES[priority], next(_SERIAL), kind)
+    acquired = None
+    with _CV:
+        _WAITING.append(ticket)
+        try:
+            while acquired is None:
+                if is_current is not None and not is_current():
+                    raise AdmissionUnavailable("The queued preview was superseded; edits are unchanged.")
+                if (ticket == min((t for t in _WAITING if t[2] == kind),
+                                  default=ticket)):
+                    free = headroom() if headroom is not None else None
+                    # Missing/broken counters fail closed for parallel jobs.
+                    already = _RUNNING["heavy"] if kind == "heavy" else 0
+                    needed = ESTIMATED_PEAK[kind] + RESERVE_BYTES + already * ESTIMATED_PEAK["heavy"]
+                    if free is not None and free >= needed:
+                        acquired = _try_slot(kind)
+                if acquired is not None:
+                    _RUNNING[kind] += 1
+                    break
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise AdmissionUnavailable("The render queue is full or memory is constrained; retry shortly.")
+                _CV.wait(timeout=min(.05, remaining))
+        finally:
+            _WAITING.remove(ticket)
+    try:
+        yield acquired[0]
+    finally:
+        import fcntl
+        index, handle = acquired
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
+            with _CV:
+                _RUNNING[kind] -= 1
+                _CV.notify_all()
