@@ -90,3 +90,30 @@ def test_missing_thumbnail_is_explicit_and_never_erases_caption_or_changes_sourc
     updated = app.session_state.photos_draft.blocks[0]
     assert updated.asset_hashes == before.asset_hashes
     assert updated.asset_captions == ("Caption 1", "Corrected without changing missing sibling", "Caption 3")
+
+
+def test_thumbnail_contains_uncropped_photo_on_white_and_keeps_original_bytes():
+    from hashlib import sha256
+    from io import BytesIO
+    from PIL import Image
+
+    from app.monthly_report_picture_cards import caption_thumbnail
+
+    source = BytesIO()
+    Image.new("RGB", (80, 40), "blue").save(source, "PNG")
+    raw = source.getvalue()
+    digest = sha256(raw).hexdigest()
+    preview = caption_thumbnail(raw)
+    with Image.open(BytesIO(preview)) as rendered:
+        assert rendered.size == (288, 192)
+        assert rendered.getpixel((144, 0)) == (255, 255, 255), "Contain, not center-crop"
+        assert rendered.getpixel((144, 96)) == (0, 0, 255)
+    assert sha256(raw).hexdigest() == digest, "Original bytes must stay immutable"
+
+
+@pytest.mark.parametrize("bad", (b"", b"not-a-photo", b"GIF89a"))
+def test_thumbnail_rejects_missing_malformed_or_unsupported_input(bad):
+    from app.monthly_report_picture_cards import caption_thumbnail
+
+    with pytest.raises((ValueError, OSError, SyntaxError)):
+        caption_thumbnail(bad)
