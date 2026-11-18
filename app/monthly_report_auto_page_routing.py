@@ -105,7 +105,7 @@ def _page_site_ok(text, profile):
     known = {" ".join(name.casefold().split()) for facility in profile.facilities
              for name in (facility.key, facility.title, *facility.aliases)}
     labels = re.findall(
-        r"(?im)^[ \\t]*(?:facility|site|building)[ \\t]*[:=][ \\t]*([^\\r\\n]{1,160})", text)
+        r"(?im)^[ \t]*(?:facility|site|building)[ \t]*[:=][ \t]*([^\r\n]{1,160})", text)
     return all(" ".join(label.casefold().split()) in known for label in labels)
 
 
