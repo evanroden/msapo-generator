@@ -102,7 +102,7 @@ def test_duplicate_workorders_are_counted_zero_until_review_not_silently_dedupli
     data = content("duplicates.csv",
         ("Work Order", "Site", "Date", "Status"),
         (("WO-7", "North", "2026-09-08", "Open"),
-         ("WO-7", "North", "2026-09-09", "Closed"),
+         ("WO-7", "North", "2026-09-08", "Closed"),
          ("WO-7", "South", "2026-09-11", "Closed")))
     before = normalize_table(data, 1, PROFILE, PERIOD)
     assert len(before.rows) == 3 and len({row.key for row in before.rows}) == 3
