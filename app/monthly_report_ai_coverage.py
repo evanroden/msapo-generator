@@ -339,7 +339,7 @@ def validate_batch(batch, value, source, profile, period, *, ai_module=None):
         rejected += 1
         if bad_region is not None:
             rejected_regions.add(bad_region.identity)
-    for raw in value["facts"=]:
+    for raw in value["facts"]:
         if not isinstance(raw, dict):
             reject(None)
             continue
