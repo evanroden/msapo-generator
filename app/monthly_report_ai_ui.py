@@ -170,9 +170,25 @@ def _advance_page_reads(draft, prefix):
                 job["token"] = token
                 return content
 
+            if items.status(draft.profile, draft.period, key) == "pending":
+                # Another session owns this page. Do not hold its siblings
+                # hostage or submit the same paid work twice.
+                batch["waiting"].pop(0)
+                continue
             batch["waiting"].pop(0)  # Never auto-retry a failed page.
             started = _start(prefix, draft, job, prepare)
             if not started:
+                latest = items.status(draft.profile, draft.period, key)
+                if latest == "pending":
+                    continue  # The other session won the claim race.
+                if latest == "accepted":
+                    saved = ai.cached(draft.profile, "extraction", key)
+                    if saved is not None:
+                        facts = ai.normalize_facts(saved, current, (page,),
+                                                   draft.profile, draft.period,
+                                                   ai.vendor_names(draft))
+                        _merge_page_facts(prefix, current, facts)
+                    continue
                 batch["waiting"].insert(0, page)  # Capacity was full.
                 return
             return
