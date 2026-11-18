@@ -92,19 +92,32 @@ def synchronize(docx, pdf, sections):
                 links = [node for node in root.iter(qn("w:hyperlink")) if node.get(qn("w:anchor")) == anchor]
                 if len(matches) != 1 or len(targets) != 1 or len(links) != 1:
                     return docx, UNAVAILABLE
-                fields[f"{section.number}. {section.title}"] = matches[0]
+                title = f"{section.number}. {section.title}"
+                linked_title = " ".join("".join(text.text or "" for text in links[0].iter(qn("w:t"))).split())
+                target_title = " ".join("".join(text.text or "" for text in targets[0].getparent().iter(qn("w:t"))).split())
+                if linked_title != title or target_title != title:
+                    return docx, UNAVAILABLE
+                fields[title] = matches[0]
             if len(fields) != len(generated):
                 return docx, UNAVAILABLE
             with fitz.open(stream=pdf, filetype="pdf") as rendered:
                 outlines = rendered.get_toc()
+                # An outline/link pair can agree on an obsolete page even when
+                # the actual section heading moved after an attachment change.
+                if [entry[1] for entry in outlines if entry[0] == 1] != list(fields):
+                    return docx, UNAVAILABLE
                 pages = {}
                 for title in fields:
                     destinations = [entry[2] for entry in outlines if entry[1] == title]
                     if len(destinations) != 1 or not 1 <= destinations[0] <= len(rendered):
                         return docx, UNAVAILABLE
+                    physical_text = " ".join(rendered[destinations[0] - 1].get_text(sort=True).split())
+                    if title not in physical_text:
+                        return docx, UNAVAILABLE
                     pages[title] = destinations[0]
                 found = set()
-                for page in rendered:
+                visual_order = []
+                for page_index, page in enumerate(rendered):
                     links = [link for link in page.get_links() if link.get("kind") == fitz.LINK_GOTO]
                     for link in links:
                         label = _text(page, link["from"])
@@ -123,7 +136,8 @@ def synchronize(docx, pdf, sections):
                         if len(page_fields) != 1:
                             return docx, UNAVAILABLE
                         found.add(title)
-                if found != set(fields):
+                        visual_order.append((page_index, center, title))
+                if found != set(fields) or [item[2] for item in sorted(visual_order)] != list(fields):
                     return docx, UNAVAILABLE
             for title, field in fields.items():
                 texts = list(field.iter(qn("w:t")))
