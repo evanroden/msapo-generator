@@ -5,6 +5,7 @@ import time
 from contextlib import contextmanager
 
 from app import pdf_converter
+from app.monthly_latency_spans import measure_span, record_span
 from app.monthly_report_library import _root
 
 _SLOT = threading.Lock()
@@ -21,9 +22,12 @@ def conversion_slot(*, wait_seconds=10):
     if getattr(_CONVERSION_LOCAL, 'active', False):
         yield
         return
-    deadline = time.monotonic() + max(0, min(float(wait_seconds), 130))
+    started = time.monotonic()
+    deadline = started + max(0, min(float(wait_seconds), 130))
     if not _SLOT.acquire(timeout=max(0, deadline - time.monotonic())):
+        record_span("office_thread_queue", time.monotonic() - started, outcome="busy")
         raise RenderBusy("Another report is rendering. Please try again shortly.")
+    record_span("office_thread_queue", time.monotonic() - started)
     try:
         folder = _root() / "render-jobs"
         folder.mkdir(parents=True, exist_ok=True)
@@ -33,6 +37,7 @@ def conversion_slot(*, wait_seconds=10):
                 lock.write(b"0"); lock.flush()
             else:
                 import fcntl
+            process_started = time.monotonic()
             while True:
                 try:
                     if os.name == "nt":
@@ -42,8 +47,10 @@ def conversion_slot(*, wait_seconds=10):
                     break
                 except (BlockingIOError, OSError):
                     if time.monotonic() >= deadline:
+                        record_span("office_process_queue", time.monotonic() - process_started, outcome="busy")
                         raise RenderBusy("Another report is rendering. Please try again shortly.") from None
                     time.sleep(min(.05, max(0, deadline - time.monotonic())))
+            record_span("office_process_queue", time.monotonic() - process_started)
             try:
                 from app.office_process import OfficeCleanupPending, require_idle
                 try:
@@ -93,9 +100,12 @@ def _reclaim_preview_heap():
 
 def convert_to_pdf(path, *, wait_seconds=10, lossless_images=False):
     with conversion_slot(wait_seconds=wait_seconds):
-        if lossless_images is not False:
-            return pdf_converter.convert_to_pdf(path, lossless_images=lossless_images)
-        return pdf_converter.convert_to_pdf(path)
+        # The nested converter shares this lease. Subprocess + validation
+        # + publication are measured separately from lock admission.
+        with measure_span("office_execution"):
+            if lossless_images is not False:
+                return pdf_converter.convert_to_pdf(path, lossless_images=lossless_images)
+            return pdf_converter.convert_to_pdf(path)
 
 
 # Assembly can hold decoded pictures and an entire OOXML package. Serialize that
@@ -207,15 +217,18 @@ def work_slot(*, preview=False, review=False, wait_seconds=130):
     if getattr(_WORK_LOCAL, 'active', False):
         yield
         return
+    queue_started = time.monotonic()
     if preview:
         headroom = memory_headroom()
         if headroom is not None and headroom < PREVIEW_HEADROOM_BYTES:
+            record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
             raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
         if review:
             acquired = _wait_for_review_slot(wait_seconds)
         else:
             with _PRIORITY_LOCK:
                 if _FOREGROUND_WAITING or _REVIEW_WAITING:
+                    record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
                     raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
                 acquired = _WORK_SLOT.acquire(blocking=False)
     else:
@@ -226,6 +239,8 @@ def work_slot(*, preview=False, review=False, wait_seconds=130):
         finally:
             with _PRIORITY_LOCK:
                 _FOREGROUND_WAITING -= 1
+    record_span("work_queue", time.monotonic() - queue_started,
+                outcome="ok" if acquired else "busy")
     if not acquired:
         raise RenderBusy('Another report is being prepared. Your saved work is unchanged; retry generation shortly.')
     _WORK_LOCAL.active = True
