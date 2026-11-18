@@ -332,16 +332,16 @@ def validate_batch(batch, value, source, profile, period, *, ai_module=None):
             or set(reviewed) | set(unsupported_ids) != set(expected)):
         raise ValueError("Reader did not account for every original region.")
     facts, rejected = [], 0
-     rejected_regions, accepted_regions = set(), set()
+    rejected_regions, accepted_regions = set(), set()
 
     def reject(bad_region):
-             nonlocal rejected
-             rejected += 1
-             if bad_region is not None:
-                          rejected_regions.add(bad_region.identity)
+        nonlocal rejected
+        rejected + 1
+        if bad_region is not None:
+            rejected_regions.add(bad_region.identity)
     for raw in value["facts"]:
-        if not isinstance(raw, dict):                
-                        reject(None)
+        if not isinstance(raw, dict):
+            reject(None)
             continue
         region = expected.get(raw.get("region"))
         if (region is None or region.identity not in reviewed
@@ -414,8 +414,8 @@ def validate_batch(batch, value, source, profile, period, *, ai_module=None):
             continue
         facts.extend(validated)
         accepted_regions.add(region.identity)
-        return (tuple(dict((fact.id, fact) for fact in facts).values()),
-                            rejected, rejected_regions, accepted_regions)
+    return (tuple(dict((fact.id, fact) for fact in facts).values())),
+            rejected, rejected_regions, accepted_regions)
 
 
 def collect(plan_value, result, source, profile, period, *, ai_module=None):
@@ -433,7 +433,7 @@ def collect(plan_value, result, source, profile, period, *, ai_module=None):
     region_status = {}
     facts, good, bad, invalid, cacheable = {}, 0, 0, 0, []
     for batch in plan_value.batches:
-             rejected_regions, accepted_regions = set(), set()
+        rejected_regions, accepted_regions = set(), set()
         if batch.key in missing:
             status = "needs_review"
         elif batch.key not in returned or returned[batch.key][1]:
@@ -454,16 +454,16 @@ def collect(plan_value, result, source, profile, period, *, ai_module=None):
             except (ValueError, TypeError, KeyError):
                 status = "retry"
         for region in batch.regions:
-                                 # A rejected claim taints only its own region. A sibling region
-                     # that produced a verified fact stays ready even when its batch
+            # A rejected claim taints only its own region. A sibling region
+            # that produced a verified fact stays ready even when its batch
             # also carried a rejected claim; a region with no verified fact
-                     # in a tainted batch stays needs_review with the batch.
+            # in a tainted batch stays needs_review with the batch.
             if region.identity in rejected_regions:
-                             own = "needs_review"
+                own = "needs_review"
             elif region.identity in accepted_regions:
-                             own = "ready"
+                own = "ready"
             else:
-                             own = status
+                own = status
             own = "visual_review" if region.visual and own == "ready" else own
             region_status.setdefault(region.page, []).append(own)
     inventory = {}
