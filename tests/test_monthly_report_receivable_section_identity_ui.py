@@ -119,9 +119,9 @@ def test_native_word_contents_divider_and_body_share_actual_ar_identity(excluded
     assert headings.count(f"{number}. Accounts Receivable") == 1
     assert paragraphs.count("Accounts Receivable") == 1
     assert [a for a, _ in links].count(anchor_for("accounts_receivable")) == 1
-    assert paragraphs.index(f"Section {number}") < headings.index(
-        f"{number}. Accounts Receivable") + next(
-            i for i, p in enumerate(document.paragraphs) if p.style.name == "Heading 1")
+    ar_body = next(i for i, p in enumerate(document.paragraphs)
+                   if p.style.name == "Heading 1" and p.text == f"{number}. Accounts Receivable")
+    assert paragraphs.index(f"Section {number}") < ar_body
     assert sum("SYN-INV-1" in cell.text for table in document.tables
                for row in table.rows for cell in row.cells) == int(filled)
     assert draft == original
