@@ -175,6 +175,7 @@ def _render_monthly_sessions(events, matrix, period, key, scope):
         kind = request.get("kind")
         if kind == "cancel" and request.get("token") == state["token"]:
             state = _new_session_editor(scope)
+            state["closed_after_cancel"] = True
         elif kind == "edit":
             index = request.get("index", -1)
             if request.get("revision") == revision and 0 <= index < len(rows):
@@ -236,7 +237,8 @@ def _render_monthly_sessions(events, matrix, period, key, scope):
     label = "Edit training session" if editing else "Add completed training"
     # The main form is open on the first paint and after every successful Add.
     # Invalid input keeps the same native fields and delivered values.
-    with st.expander(label, expanded=True, key=editor_key + "_disclosure"):
+    with st.expander(label, expanded=bool(editing or errors or state.get("continue_adding")
+                                          or not state.get("closed_after_cancel")), key=editor_key + "_disclosure"):
         with st.form(editor_key + "_form", clear_on_submit=False):
             st.text_input("Training topic", value=seed[0], key=fields["title"])
             if errors.get("title"):
