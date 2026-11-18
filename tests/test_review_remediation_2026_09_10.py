@@ -261,6 +261,7 @@ def test_one_retry_owner_makes_three_http_attempts(monkeypatch, read):
             request=request,
         )
 
+    monkeypatch.setattr(api_retry.random, "uniform", lambda *_: 1.0)
     monkeypatch.setattr(api_retry.time, "sleep", sleeps.append)
     with anthropic.Anthropic(
         api_key="synthetic",
@@ -552,6 +553,7 @@ def test_quote_api_transient_statuses_have_bounded_retries(
             request=request,
         )
 
+    monkeypatch.setattr(api_retry.random, "uniform", lambda *_: 1.0)
     monkeypatch.setattr(api_retry.time, "sleep", sleeps.append)
     with anthropic.Anthropic(
         api_key="synthetic",
