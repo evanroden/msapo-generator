@@ -10,6 +10,8 @@
 .epc-workspace-reference {position:sticky; top:var(--epc-preview-top); align-self:start; flex:0 0 auto !important; height:fit-content !important; z-index:3;}
 .epc-workspace [data-testid="stDataFrame"] {max-width:100%;}
 .epc-workspace button:focus-visible {outline:3px solid #557f7f; outline-offset:3px;}
+/* Keyboard entry into a compact preview must have a visible focus target. */
+.epc-workspace[data-epc-mode="compact"] .epc-workspace-reference:focus-visible {outline:3px solid #557f7f;outline-offset:-3px;}
 /* Keep the small controls reachable while allowing clicks through the empty
    wrapper, rather than painting a full-width bar over the report. */
 .epc-workspace > [data-testid="stLayoutWrapper"]:has(> .st-key-monthly_report_navigation) {position:sticky;top:var(--epc-nav-top,3rem);z-index:15;pointer-events:none;}
