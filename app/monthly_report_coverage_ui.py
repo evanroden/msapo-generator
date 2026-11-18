@@ -52,7 +52,7 @@ def render_coverage(draft, contents, prefix, blocks):
         key=prefix + "_coverage_selected")
     ledger, item = choices[selected]
     st.caption(item.reason + (" · Destination: " + item.destination if item.destination else ""))
-    st.caption(f"{ledger.pages} pages/items · {ledger.tables} parsed tables · "
+    st.caption(f"{ledger.pages} pages/items · {ledger.tables if ledger.tables is not None else 'unknown'} parsed tables · "
                f"{ledger.rows} rows · {ledger.images} visual candidates · "
                f"{ledger.facts} classified facts · {ledger.bytes if ledger.bytes is not None else 'unknown'} bytes")
     st.button("Open original item for review", key=prefix + "_coverage_go",
@@ -73,7 +73,7 @@ def render_coverage(draft, contents, prefix, blocks):
                 st.warning("The item changed. Select its current version.")
             else:
                 try:
-                    draft = exclude_from_coverage(draft, current_item, reason)
+                    draft = exclude_from_coverage(draft, current_item, reason, content=known.get(item.source_id))
                 except ValueError as exc:
                     st.warning(str(exc))
                 else:
