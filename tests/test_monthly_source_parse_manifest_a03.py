@@ -179,3 +179,74 @@ def test_completed_stage_write_failure_does_not_publish_partial_cache(profile, m
     assert not sources._path(profile, digest, ".json").exists()
     content, _ = sources.ingest(profile, "interrupted.csv", CSV)
     assert content.tables[0].rows[0] == ("DEMO-001", "Inspected pump")
+
+
+def test_synthetic_pdf_cold_warm_thumbnail_cost_and_content(profile):
+    """Per-action QA numbers in test logs; machine-dependent, not a speed SLA.
+
+    This is a single-process runner measurement, *not* a real served UI test,
+    not a 0.5-vCPU/512-MiB emulator, and not a production/real-source pass.
+    """
+    import gc
+    import resource
+    import time
+    import tracemalloc
+    import warnings
+    from test_monthly_report_sources import pdf_bytes
+
+    payload = pdf_bytes(20)
+
+    def timed():
+        gc.collect()
+        tracemalloc.start()
+        start_wall, start_cpu = time.perf_counter(), time.process_time()
+        item, _ = sources.ingest(profile, "synthetic-evidence.pdf", payload)
+        thumb = sources.page_image(profile, item, 1, preview=True)
+        ms = (time.perf_counter() - start_wall) * 1000
+        cpu_ms = (time.process_time() - start_cpu) * 1000
+        _, heap_peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        return item, thumb, (round(ms, 2), round(cpu_ms, 2),
+                             round(heap_peak / 1024 / 1024, 2),
+                             resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+
+    cold, thumb, cold_cost = timed()
+    warm, again, warm_cost = timed()
+    assert warm == cold and thumb.data == again.data
+    assert thumb.width == again.width and thumb.height == again.height
+    assert sources.source_bytes(profile, warm.source) == payload
+    warnings.warn(
+        "A03_SYNTHETIC_PDF20_P1: cold(wall_ms,cpu_ms,heap_peak_MiB,rss_peak_KiB)="
+        + str(cold_cost) + " warm=" + str(warm_cost)
+        + "; identical digest/page geometry; GitHub-hosted runner, not constrained",
+        UserWarning, stacklevel=1,
+    )
+
+
+def test_operation_digest_ttl_and_size_footprint(monkeypatch):
+    from app import content_cache
+    clock = [1000.0]
+    monkeypatch.setattr(content_cache.time, "monotonic", lambda: clock[0])
+    original_hash = content_cache.hashlib.sha256
+    calls = []
+
+    def measured(payload):
+        calls.append(payload)
+        return original_hash(payload)
+
+    monkeypatch.setattr(content_cache, "hashlib",
+                        SimpleNamespace(sha256=measured))
+    cache = content_cache.ContentDigests(max_bytes=24, max_entries=2, ttl_seconds=10)
+    a, b, c = b"ABCDEFG", b"1234567", b"1234567890123456789"
+    assert cache.digest(a) == sha256(a).digest()
+    assert cache.digest(a) == sha256(a).digest()
+    assert calls == [a]
+    assert cache._size <= 24 and cache.resident_bytes > cache._size
+    cache.digest(b)
+    cache.digest(c)
+    assert cache._size <= 24 and len(cache._entries) <= 2
+    clock[0] += 11
+    cache.digest(a)
+    assert calls.count(a) == 2
+    cache.retain(())
+    assert cache._size == 0 and not cache._entries
