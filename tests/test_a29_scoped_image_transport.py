@@ -4,6 +4,7 @@ The comparison is deterministic serialized application payload, not a claim of
 network timing, Chromium paint or 512-MiB performance. Native media/owner
 registration is exercised with Streamlit's real in-memory media manager.
 """
+import re
 from base64 import b64encode
 from contextlib import nullcontext
 from dataclasses import replace
@@ -121,7 +122,16 @@ def test_unavailable_or_stale_ticket_does_not_publish_image_bytes(native, mode):
     view.render_view(key="key", generation="stale", title="Synthetic",
                      ticket=None if mode == "missing" else ticket, stale=mode == "stale",
                      images=((0, jpeg(1)),), on_change=lambda: None)
-    assert delivered[-1]["data"]["pages"] == []
+    pages = delivered[-1]["data"]["pages"]
+    if mode == "missing":
+        assert pages == []
+    else:
+        # A stale ticket keeps its last-good page inspectable (labelled not
+        # ready), as main's preview contract requires, but still only as a
+        # scoped media URL: no image bytes or base64 in the payload.
+        assert delivered[-1]["data"]["ready"] is False
+        assert [sorted(page) for page in pages] == [["index", "url"]]
+        assert re.fullmatch(r"/(?:[A-Za-z0-9_-]+/)*media/[a-f0-9]{32}\.jpe?g", pages[0]["url"])
 
 
 @pytest.mark.parametrize("kind", ("png", "jpg"))

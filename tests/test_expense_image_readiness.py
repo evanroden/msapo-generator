@@ -23,7 +23,7 @@ const pair={isConnected:true,querySelectorAll:s=>s==='*'&&shadow?[host]:s==='.re
 const marker={dataset:{epcPair:expected.owner},closest:()=>pair};
 const panel={_previewState:{scope:expected.scope},querySelectorAll:s=>s==='figure[data-index="1"]'?figures:[]};
 const figure={querySelectorAll:s=>s==='img'?images:[]};
-const jpeg='data:image/jpeg;base64,NEW';
+const jpeg='/media/'+'a'.repeat(32)+'.jpg';
 function image(){return {isConnected:true,src:jpeg,currentSrc:jpeg,complete:true,naturalWidth:1275,naturalHeight:1650,
  getAttribute(n){return this.src},getClientRects:()=>[{}],getBoundingClientRect:()=>({width:500,height:650}),
  style:{visibility:'visible',display:'block'}}}
@@ -36,9 +36,10 @@ host.shadowRoot=nested;assert.equal(ready(expected),true);host.shadowRoot=shadow
 // Pending decode never authorizes, then the SAME current image can become ready.
 images[0].complete=false;images[0].naturalWidth=0;assert.equal(ready(expected),false);
 images[0].complete=true;assert.equal(ready(expected),false);images[0].naturalWidth=1275;assert.equal(ready(expected),true);
-reset();images[0].currentSrc='data:image/jpeg;base64,OLD';assert.equal(ready(expected),false);
+reset();images[0].currentSrc='/media/'+'b'.repeat(32)+'.jpg';assert.equal(ready(expected),false);
 reset();images[0].src='';assert.equal(ready(expected),false);
-reset();images[0].src=images[0].currentSrc='data:image/png;base64,OTHER';assert.equal(ready(expected),false);
+reset();images[0].src=images[0].currentSrc='/media/'+'c'.repeat(32)+'.png';assert.equal(ready(expected),false);
+reset();images[0].src=images[0].currentSrc='data:image/jpeg;base64,INLINE';assert.equal(ready(expected),false);
 reset();images[0].naturalHeight=0;assert.equal(ready(expected),false);
 reset();images[0].naturalWidth=0;assert.equal(ready(expected),false); // complete broken image
 reset();const old=images[0];old.isConnected=false;assert.equal(ready(expected),false);

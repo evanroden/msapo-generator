@@ -569,14 +569,16 @@ def render_view(*, key, generation, title, ticket=None, images=(), status='', st
     applied = acknowledged_viewport or {'visible': False, 'pages': (0,), 'dpi': 96}
     scope = str(view_scope or key)
     # STORE has already validated the owner's opaque ticket and bounded the
-    # requested raster pages. Re-register every visible page on each rerender
+    # requested raster pages. A stale ticket's last-good pages stay delivered
+    # (labelled not ready) so they remain inspectable after a failed rerender,
+    # as before scoped URLs. Re-register every visible page on each rerender
     # so Streamlit's native session media refs survive normal fragment/full
     # renders. A ticket UUID and view scope bind the media coordinate to the
     # current report/source identity; URL payloads contain no raw JPEG/base64.
     delivered = [{'index': index,
                   'url': _media_url(raw, 'image/jpeg',
                                     f'report-preview:{scope}:{ticket.key}:{index}')}
-                 for index, raw in images] if ticket is not None and not stale else []
+                 for index, raw in images] if ticket is not None else []
     # The native container arrives before the asynchronous browser component.
     # Reserve the same viewport-sized space during that gap, including reloads,
     # so a short section cannot grow underneath a pointer aimed at the next one.
