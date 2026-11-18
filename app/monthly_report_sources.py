@@ -656,8 +656,9 @@ def _ingest_locked(profile: ReportProfile, filename: str, raw: bytes,
     cache_started = perf_counter()
     attachments = ()
     unicode_csv = suffix == ".csv" and _csv_unicode_encoding(raw) is not None
-    rebuild_cache = False
-    if cache.exists() and path.exists() and suffix not in (".eml", ".msg"):
+    cache_expired = cache.exists() and not parse_manifest.fresh(cache)
+    rebuild_cache = cache_expired
+    if cache.exists() and not cache_expired and path.exists() and suffix not in (".eml", ".msg"):
         library._qa_path_guard(cache)
         try:
             data = library._read(cache)
@@ -701,7 +702,9 @@ def _ingest_locked(profile: ReportProfile, filename: str, raw: bytes,
     # Never trust or replay an incomplete or wrong-policy checkpoint. Previously
     # damaged full caches deliberately get reparsed for existing recovery rules.
     staged = None
-    if not rebuild_cache and not cache.exists() and stage.exists() and suffix not in (".eml", ".msg"):
+    if (not rebuild_cache and not cache.exists() and stage.exists()
+            and parse_manifest.fresh(stage, ttl_seconds=parse_manifest.DISK_STAGE_TTL_SECONDS)
+            and suffix not in (".eml", ".msg")):
         library._qa_path_guard(stage)
         try:
             record = library._read(stage)
