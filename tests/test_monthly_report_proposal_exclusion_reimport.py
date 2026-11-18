@@ -9,6 +9,7 @@ from app.monthly_report_model import (
     default_sections, synthetic_profiles,
 )
 from app.monthly_report_setup import new_month_draft
+from tests.conftest import requires_libreoffice
 
 
 SEPTEMBER = ReportPeriod(2026, 9)
@@ -97,6 +98,7 @@ def test_excluded_proposal_requires_explicit_reinclude_and_fresh_review():
     assert not problems(confirmed, following)
 
 
+@requires_libreoffice
 def test_proposal_source_replay_word_and_pdf_hide_excluded_row_and_prices(tmp_path, monkeypatch):
     from collections import Counter
     from hashlib import sha256
