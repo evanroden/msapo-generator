@@ -86,22 +86,33 @@ def _docx_with_repeated_photos(photo):
     return output.getvalue()
 
 
-def worker(root, scenario):
+def prepare_fixtures(directory):
+    """Create source bytes once, then share EXACT inputs between base and head."""
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    for index in range(8):
+        (directory / f"photo{index}.jpg").write_bytes(_jpeg(index))
+    (directory / "preview.docx").write_bytes(_docx_with_repeated_photos(
+        (directory / "photo0.jpg").read_bytes()))
+    (directory / "line_art.png").write_bytes(_png(transparent=False))
+    (directory / "transparency.png").write_bytes(_png(transparent=True))
+    (directory / "control.heic").write_bytes(_heif())
+    return {p.name: _hash(p.read_bytes()) for p in sorted(directory.iterdir()) if p.is_file()}
+
+
+def worker(root, scenario, fixtures):
     sys.path.insert(0, str(Path(root).resolve()))
     from PIL import Image
     from app.monthly_report_docx import normalize_report_image
     from app.monthly_report_preview_images import write_preview_docx
 
+    fixture = Path(fixtures)
     if scenario == "photos":
-        inputs = [_jpeg(index) for index in range(8)]
-    elif scenario == "preview":
-        inputs = [_docx_with_repeated_photos(_jpeg(0))]
-    elif scenario == "line_art":
-        inputs = [_png(transparent=False)]
-    elif scenario == "transparency":
-        inputs = [_png(transparent=True)]
-    elif scenario == "heif":
-        inputs = [_heif()]
+        inputs = [(fixture / f"photo{index}.jpg").read_bytes() for index in range(8)]
+    elif scenario in ("preview", "line_art", "transparency", "heif"):
+        filename = {"preview": "preview.docx", "line_art": "line_art.png",
+                    "transparency": "transparency.png", "heif": "control.heic"}[scenario]
+        inputs = [(fixture / filename).read_bytes()]
     else:
         raise ValueError(scenario)
     input_hashes = [_hash(data) for data in inputs]
@@ -167,14 +178,24 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--code-root", default=".")
     parser.add_argument("--output")
+    parser.add_argument("--fixtures")
+    parser.add_argument("--prepare-fixtures", action="store_true")
     parser.add_argument("--worker", choices=["photos", "preview", "line_art", "transparency", "heif"])
     args = parser.parse_args()
-    if args.worker:
-        print(json.dumps(worker(args.code_root, args.worker), sort_keys=True))
+    if args.prepare_fixtures:
+        if not args.fixtures:
+            parser.error("--prepare-fixtures needs --fixtures")
+        print(json.dumps(prepare_fixtures(args.fixtures), sort_keys=True))
         return
+    if args.worker:
+        print(json.dumps(worker(args.code_root, args.worker, args.fixtures), sort_keys=True))
+        return
+    if not args.fixtures:
+        parser.error("--fixtures is required to compare identical source bytes")
     results = []
     for scenario in ("photos", "preview", "line_art", "transparency", "heif"):
-        command = [sys.executable, __file__, "--worker", scenario, "--code-root", args.code_root]
+        command = [sys.executable, __file__, "--worker", scenario, "--code-root", args.code_root,
+                   "--fixtures", args.fixtures]
         run = subprocess.run(command, check=True, capture_output=True, text=True, timeout=600)
         results.append(json.loads(run.stdout))
     result = {"code_root": args.code_root, "scenarios": results}
