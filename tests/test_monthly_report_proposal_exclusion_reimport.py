@@ -155,3 +155,54 @@ def test_proposal_source_replay_word_and_pdf_hide_excluded_row_and_prices(tmp_pa
         "excluded_proposals": 1,
         "price_canaries_found": False,
     }, indent=2))
+
+
+def test_same_month_docx_table_excludes_plain_rate_total_but_keeps_source():
+    from types import SimpleNamespace
+    from app.monthly_report_sections import table_without_prices
+
+    columns = ("Proposal ID", "Vendor", "Scope", "Status", "Unit Rate", "Total", "Technical note")
+    row = ("P-SYN", "Synthetic Controls", "Replace valve", "Pending", "1250", "9999", "Keep bracket")
+    source = SimpleNamespace(section="proposals", table_header_row=0, rows=(columns, row))
+    before = source.rows
+    table, omitted = table_without_prices(source)
+    assert omitted == (4, 5)
+    assert table.columns == ("Proposal ID", "Vendor", "Scope", "Status", "Technical note")
+    assert table.rows == (("P-SYN", "Synthetic Controls", "Replace valve", "Pending", "Keep bracket"),)
+    assert source.rows == before
+
+
+def test_same_month_native_csv_import_excludes_plain_rate_total(tmp_path, monkeypatch):
+    from app.monthly_report_sources import ingest
+    from app.monthly_report_structured_uploads import native_update
+
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "data"))
+    profile = synthetic_profiles()[0]
+    columns = ("Facility", "Vendor", "Scope", "Status", "Unit Rate", "Total", "Technical note")
+    original = ("Demo North,Synthetic Controls,Replace valve,Pending,1250,9999,Keep bracket\n").encode()
+    raw = (",".join(columns) + "\n").encode() + original
+    content, _ = ingest(profile, "a73-proposal-prices.csv", raw)
+    mapped = native_update((content,), "proposals", table_columns=columns)
+    assert len(mapped.rows) == 1
+    row, = mapped.rows
+    assert row[:4] == ("Demo North", "Synthetic Controls", "Replace valve", "Pending")
+    assert row[4:6] == ("", "")
+    assert row[-1] == "Keep bracket"
+    assert content.tables[0].rows[0][4:6] == ("1250", "9999")
+
+
+def test_report_projection_excludes_proposal_only_totals_and_preserves_technical():
+    from app.monthly_report_content_policy import price_free_table
+    section = next(s for s in default_sections() if s.key == "proposals")
+    spec = next(b for b in section.blocks if b.key == "proposals")
+    columns = ("Scope", "Status", "Unit Rate", "Total", "Total runtime")
+    raw = ResolvedBlock("proposals", "This month", extra_tables=(
+        ReportTable(columns, (("Replace valve", "Pending", "1250", "9999", "120 hours"),)),
+    ))
+    revised_spec, revised_block, removed = price_free_table(spec, raw)
+    assert revised_spec == spec
+    assert removed == ("Unit Rate", "Total")
+    clean, = revised_block.extra_tables
+    assert clean.columns == ("Scope", "Status", "Total runtime")
+    assert clean.rows == (("Replace valve", "Pending", "120 hours"),)
+    assert raw.extra_tables[0].rows[0][2:4] == ("1250", "9999")
