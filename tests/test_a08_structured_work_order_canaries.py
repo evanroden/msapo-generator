@@ -1,7 +1,7 @@
 """A08 synthetic CSV/XLSX source-conservation and ambiguity canaries."""
 from dataclasses import replace
 from io import BytesIO
-from zipfile import BadZipFile
+from zipfile import BadZipFile, ZipFile
 import json
 
 import pytest
@@ -15,6 +15,7 @@ from app.monthly_report_work_order_csv_review import (
     review_csv, review_spreadsheet,
 )
 from app.monthly_report_work_order_normalized import suggest_mapping, unmapped_cells
+from app.monthly_report_structured_uploads import mapped_rows, reader_sources, native_update
 
 
 @pytest.fixture
@@ -114,3 +115,48 @@ def test_xlsx_30_sheet_control_31_sheet_rejected_and_malformed_input(context):
                 _workbook(hidden=False, formula=False, sheet_count=31))
     with pytest.raises((ValueError, BadZipFile)):
         _ingest(profile, "broken.xlsx", b"not-a-valid-workbook")
+
+
+def test_cached_formula_result_is_read_not_executed(context):
+    profile, period = context
+    wb = Workbook()
+    sheet = wb.active
+    sheet.append(("WO Number", "Site", "Date", "Status", "Hours"))
+    sheet.append(("0007", "North", "2026-09-08", "Closed", "=1+1"))
+    stream = BytesIO()
+    wb.save(stream)
+    amended = BytesIO()
+    with ZipFile(BytesIO(stream.getvalue())) as original, ZipFile(amended, "w") as target:
+        for part in original.infolist():
+            data = original.read(part.filename)
+            if part.filename == "xl/worksheets/sheet1.xml":
+                old = b"<f>1+1</f><v></v>"
+                assert old in data
+                data = data.replace(old, b"<f>1+1</f><v>2</v>", 1)
+            target.writestr(part, data)
+    raw = amended.getvalue()
+    content = _ingest(profile, "cached-formula.xlsx", raw)
+    assert content.tables[0].rows[0][-1] == "2"
+    assert content.tables[0].missing_formula_cache_count == 0
+    assert review_spreadsheet(content, profile, period).ready_for_inclusion
+    assert not any("without cached results" in notice for notice in content.source.notices)
+    assert sources.source_bytes(profile, content.source) == raw
+
+
+def test_hidden_worksheet_cannot_auto_fill_capital_table(context):
+    profile, period = context
+    wb = Workbook()
+    wb.active.append(("Note",))
+    wb.active.append(("Visible workbook tab",))
+    hidden = wb.create_sheet("Private archive")
+    hidden.sheet_state = "hidden"
+    hidden.append(("Facility", "Priority", "Recommendation"))
+    hidden.append(("South", "High", "Synthetic hidden proposal"))
+    memory = BytesIO()
+    wb.save(memory)
+    content = _ingest(profile, "hidden-capital.xlsx", memory.getvalue())
+    assert content.tables[1].hidden
+    assert content.tables[1].rows[0][2] == "Synthetic hidden proposal"
+    assert mapped_rows(content, "capital_renewal") == ()
+    assert reader_sources((content,), "activity_summary") == ()
+    assert native_update((content,), "activity_summary").text == ""
