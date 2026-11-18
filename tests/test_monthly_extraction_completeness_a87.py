@@ -178,7 +178,11 @@ def _audit(contents, truth):
                     f"{content.source.filename} / source page {page}: {line.strip()}"
                 )
     assert len(included_lines) == len(truth["include"])
-    assert len({entry[0:2] for entry in locations.values()}) <= len(locations)
+    observed = Counter(CANARY.findall("\n".join(
+        page for content in contents.values() for page in content.source.page_texts)))
+    declared = Counter({item["id"]: 1 for part in ("include", "withhold")
+                        for item in truth[part] if not item.get("asset")})
+    assert observed == declared, ("Missing, duplicated or fabricated source canaries", observed, declared)
     return included_lines, locations
 
 
