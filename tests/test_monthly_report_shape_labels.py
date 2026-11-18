@@ -84,6 +84,8 @@ def _object():
 def _smartart_unknown():
     return parse_xml(
         '<w:r ' + NAMESPACES + '><w:drawing><wp:anchor>'
+        '<wp:docPr id="11" name="Synthetic diagram" '
+        'descr="Synthetic process flow (image description)"/>'
         '<a:graphic><a:graphicData '
         'uri="http://schemas.openxmlformats.org/drawingml/2006/diagram">'
         '</a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>'
@@ -179,6 +181,10 @@ def test_unknown_object_and_unproved_smartart_remain_unapproved(tmp_path):
                for item in _unsupported(result))
     assert any("Unmapped native SmartArt" in item.note
                for item in _unsupported(result))
+    metadata = [label for item in _unsupported(result) for label in item.drawing_labels
+                if label.text == "Synthetic process flow (image description)"]
+    assert len(metadata) == 1 and metadata[0].source == "alternative_text"
+    assert metadata[0].confidence == "metadata"  # Descriptive, not OCR or visible text.
     assert source.read_bytes() == before
 
 
