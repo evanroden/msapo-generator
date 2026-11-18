@@ -29,7 +29,7 @@ def _bound_original(tmp_path, *, count=1, size=(1200, 600)):
     picture = BytesIO()
     Image.new("RGB", size, "#346a9a").save(picture, "PNG")
     original.add_picture(
-        BytesIO(picture.getvalue()), width=Inches(6 if size[0] >= size[1] else 2.5)
+        BytesIO(picture.getvalue()), width=Inches(6 if size[0] >= size[1] else 2)
     )
     table = original.add_table(rows=1 + count, cols=5)
     headings = ("Site", "Role", "Name", "Telephone", "Email")
@@ -104,12 +104,13 @@ def test_source_bound_chart_contain_and_repeating_contacts(tmp_path, size, count
 
 
 @requires_libreoffice
-def test_actual_pdf_source_bound_contacts_repeat_and_chart_has_own_page(tmp_path, monkeypatch):
+@pytest.mark.parametrize("size", [(1800, 450), (450, 1800)])
+def test_actual_pdf_source_bound_contacts_repeat_and_chart_has_own_page(tmp_path, monkeypatch, size):
     import pymupdf
     from app import pdf_converter
 
-    raw = _bound_original(tmp_path, count=46, size=(1800, 450))
-    saved = tmp_path / "a82-generated.docx"
+    raw = _bound_original(tmp_path, count=46, size=size)
+    saved = tmp_path / f"a82-generated-{size[0]}x{size[1]}.docx"
     saved.write_bytes(raw)
     monkeypatch.setattr(pdf_converter, "OUTPUT_DIR", tmp_path)
     pdf_path = pdf_converter.convert_to_pdf(saved)
@@ -141,7 +142,8 @@ def test_actual_pdf_source_bound_contacts_repeat_and_chart_has_own_page(tmp_path
         import json
         import os
         from pathlib import Path
-        directory = Path(os.environ.get("INDEPENDENT_OUTPUT", str(tmp_path))) / "a82"
+        directory = (Path(os.environ.get("INDEPENDENT_OUTPUT", str(tmp_path)))
+                     / "a82" / ("wide" if size[0] >= size[1] else "tall"))
         directory.mkdir(parents=True, exist_ok=True)
         pdf_bytes = pdf_path.read_bytes()
         (directory / "source-bound-organization.docx").write_bytes(raw)
@@ -150,6 +152,7 @@ def test_actual_pdf_source_bound_contacts_repeat_and_chart_has_own_page(tmp_path
             "scope": "Synthetic bound original, 46 contacts, not a served or authentic report",
             "docx_sha256": sha256(raw).hexdigest(),
             "pdf_sha256": sha256(pdf_bytes).hexdigest(),
+            "diagram_pixels": list(size),
             "pdf_pages": len(pdf),
             "chart_pages_0based": chart_pages,
             "contact_pages_0based": contact_pages,
