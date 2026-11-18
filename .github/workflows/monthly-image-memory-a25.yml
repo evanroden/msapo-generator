@@ -34,11 +34,17 @@ jobs:
         timeout-minutes: 25
         run: |
           mkdir -p results
+          # Build each source image once. Both workers consume byte-identical,
+          # read-only fixtures instead of timing synthetic source generation.
+          docker run --name msapo-a25-fixture --memory=512m --memory-swap=512m --cpus=0.5 \
+            -v "$PWD/results:/results" --entrypoint python msapo-a25-image \
+            scripts/qa_monthly_image_memory_a25.py --prepare-fixtures --fixtures /results/fixtures
           for stage in baseline candidate; do
             docker run --name "msapo-a25-$stage" --memory=512m --memory-swap=512m --cpus=0.5 \
               -v "$PWD/baseline:/baseline:ro" -v "$PWD/results:/results" \
               --entrypoint python msapo-a25-image scripts/qa_monthly_image_memory_a25.py \
-              --code-root "$(test "$stage" = candidate && echo /app || echo /baseline)" --output "/results/$stage.json"
+              --code-root "$(test "$stage" = candidate && echo /app || echo /baseline)" \
+              --fixtures /results/fixtures --output "/results/$stage.json"
             test "$(docker inspect --format='{{.State.OOMKilled}}' "msapo-a25-$stage")" = false
           done
       - name: Verify source, output geometry and candidate privacy
