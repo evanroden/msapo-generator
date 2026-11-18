@@ -312,58 +312,30 @@ def test_same_owner_revision_never_submits_duplicate_preview(monkeypatch):
 
 
 def test_two_processes_cannot_spend_the_same_800mib_headroom(parallel):
-    """Review regression: 2x512 MiB heavy + reserve exceeds 800 MiB.
+    """Review regression: independent exec process cannot double-spend 800 MiB.
 
-    A second *app process* sees the first process's unallocated reservation,
-    not just the first process's current resident memory.
+    A fresh Python interpreter must respect another worker's reserved memory
+    even before its allocated RSS rises. No fork of Streamlit/test threads.
     """
-    import multiprocessing
-    context = multiprocessing.get_context("fork")
-    first_started, release = context.Event(), context.Event()
-    results = context.Queue()
-    available = lambda: 800 * scheduler.MIB
-
-    def first_worker():
-        try:
-            with scheduler.lease("heavy", priority="export", wait_seconds=1,
-                                 headroom=available):
-                first_started.set()
-                if not release.wait(4):
-                    results.put("first-hang")
-                    return
-            results.put("first-released")
-        except Exception as exc:
-            results.put("first-error:" + type(exc).__name__)
-
-    def second_worker():
-        try:
-            with scheduler.lease("heavy", priority="visible", wait_seconds=.15,
-                                 headroom=available):
-                results.put("overcommitted")
-        except scheduler.AdmissionUnavailable:
-            results.put("denied-overcommit")
-
-    first = context.Process(target=first_worker)
-    second = context.Process(target=second_worker)
-    first.start()
-    try:
-        assert first_started.wait(2)
-        second.start()
-        second.join(timeout=3)
-        assert second.exitcode == 0
-        assert results.get(timeout=2) == "denied-overcommit"
-    finally:
-        release.set()
-        first.join(timeout=4)
-        if first.is_alive():
-            first.terminate()
-            first.join(timeout=2)
-        if second.is_alive():
-            second.terminate()
-            second.join(timeout=2)
-    assert first.exitcode == 0
-    assert results.get(timeout=2) == "first-released"
-    # The same constrained resource is reusable once the first owner exits.
-    with scheduler.lease("heavy", priority="visible", wait_seconds=.2,
-                         headroom=available):
-        pass
+    import subprocess
+    import sys
+    code = """from app import monthly_report_resource_scheduler as s
+s._memory_limit = lambda: 4 * 1024**3
+s._cpu_capacity = lambda: 4
+try:
+    with s.lease('heavy', priority='visible', wait_seconds=.12,
+                 headroom=lambda: 800 * s.MIB):
+        print('acquired')
+except s.AdmissionUnavailable:
+    print('denied-overcommit')
+"""
+    def attempt():
+        run = subprocess.run([sys.executable, "-c", code],
+                             capture_output=True, text=True, timeout=8,
+                             env=os.environ.copy())
+        assert run.returncode == 0, run.stderr[:1000]
+        return run.stdout.strip()
+    with scheduler.lease("heavy", priority="export", wait_seconds=.2,
+                         headroom=lambda: 800 * scheduler.MIB):
+        assert attempt() == "denied-overcommit"
+    assert attempt() == "acquired", "budget must be reusable after release"
