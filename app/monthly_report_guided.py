@@ -1483,6 +1483,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             from app.monthly_report_org_chart_defaults import apply_defaults as apply_chart_defaults
             draft = apply_chart_defaults(draft, assets)
         st.session_state[draft_key] = draft
+        # Shared report copies are independent of each browser's recovery
+        # journal. Keep the exact ancestor for field-level shared-save CAS.
+        st.session_state[prefix + "_shared_base_draft"] = snapshot.draft if snapshot else draft
+        st.session_state[prefix + "_shared_base_revision"] = snapshot.revision if snapshot else 0
         # A saved empty standing block is an intentional report choice, not a
         # first-use gap. Preserve it on reopen and next-month rollover alike.
         st.session_state[prefix + "_directory_defaults_attempted"] = preserve_saved_defaults
@@ -1768,18 +1772,24 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     acknowledge_issue_controls(draft, prefix)
     current_revision = snapshot.revision if snapshot else 0
     conflict = current_revision != st.session_state[prefix + "_revision"]
+    if not conflict and st.session_state.get(prefix + "_shared_base_revision") != current_revision:
+        # The same browser just published a shared version. On the next run,
+        # advance its ancestor to that exact saved report, not to an edited UI.
+        st.session_state[prefix + "_shared_base_draft"] = snapshot.draft if snapshot else draft
+        st.session_state[prefix + "_shared_base_revision"] = current_revision
     if conflict:
-        st.warning("Another version was saved. Your working draft is preserved. Compare it with the saved report before creating another version.")
+        st.warning("Another version was saved. Your working draft is preserved. "
+                   "Compare the newer report and resolve competing fields before continuing.")
         with st.expander("Compare saved content"):
             from app.monthly_report_compare_ui import render_conflict_comparison
             render_conflict_comparison(draft, snapshot,
                 working_asset_loader=lambda ref: assets.get(ref) or library.read_asset(contract, selected, ref),
                 saved_asset_loader=lambda ref: library.read_asset(contract, selected, ref))
-        accept = st.checkbox("I compared the saved version and want to save my draft as the next version", key=prefix + f"_accept_{current_revision}")
-        st.caption("Continuing keeps your draft and uses the newer shared version as its starting revision. It does not save; your next save creates another shared version.")
-        if st.button("Continue with my draft", key=prefix + "_accept_revision", disabled=not accept):
-            st.session_state[prefix + "_revision"] = current_revision
-            st.rerun()
+        from app.monthly_report_shared_conflict_ui import render_shared_merge_choice
+        render_shared_merge_choice(draft, snapshot, prefix, assets, profile)
+    merge_notice = st.session_state.pop(prefix + "_shared_merge_notice", None)
+    if merge_notice:
+        st.info(merge_notice)
     st.markdown('<span id="shared-report-history"></span>', unsafe_allow_html=True)
     history = st.expander("Shared report history", expanded=False,
                           key=prefix + "_history_open", on_change="rerun")
