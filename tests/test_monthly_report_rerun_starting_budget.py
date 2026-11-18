@@ -99,7 +99,7 @@ def test_shared_save_rechecks_starting_sources_and_persists_latest_native_edits(
     assert len(checked) == 1, "Publish verifies its original once, rather than on each edit"
     saved = library.load_snapshot(RRH_CONTRACT, "synthetic-guided", ReportPeriod(2026, 9))
     assert saved.draft.prepared_by == "Synthetic saved editor"
-    assert saved.draft.block("activity_summary").text == "Synthetic ten-character stable report input."
+    assert next(b for b in saved.draft.blocks if b.key == "activity_summary").text == "Synthetic ten-character stable report input."
     assert next(w for w in app.text_input if w.label == "Prepared by").value == "Synthetic saved editor"
     # Same native mounted session, now with a durable published revision.
     app.run()
