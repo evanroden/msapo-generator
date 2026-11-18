@@ -63,6 +63,36 @@ def test_private_ticket_keeps_every_page_and_exact_geometry(count):
         store.close()
 
 
+def test_scanned_only_rotated_page_remains_renderable():
+    from PIL import Image
+    from app.monthly_report_preview import ReportPreview
+
+    with fitz.open() as source:
+        page = source.new_page(width=792, height=612)
+        picture = Image.new("RGB", (400, 300), (32, 137, 184))
+        data = BytesIO()
+        picture.save(data, "PNG")
+        page.insert_image(page.rect, stream=data.getvalue())
+        page.set_rotation(90)
+        original = source.tobytes(garbage=3, deflate=True)
+
+    with fitz.open(stream=original, filetype="pdf") as doc:
+        result = private_ticket_pdf(doc, source_bytes=len(original),
+                                    max_pages=150, max_bytes=25 * 1024 * 1024)
+    with fitz.open(stream=result, filetype="pdf") as doc:
+        assert len(doc) == 1
+        assert tuple(doc[0].rect) == (0.0, 0.0, 612.0, 792.0)
+        assert doc[0].get_images(), "A scanned-only page is never treated as blank"
+        assert "DRAFT PREVIEW" in doc[0].get_text()
+
+    store = PreviewStore()
+    try:
+        ticket = store.put("owner", ReportPreview(result, 1, "synthetic-scan", "Synthetic"))
+        assert store.pages("owner", ticket, (0,))[0][1].startswith(bytes((255, 216)))
+    finally:
+        store.close()
+
+
 def test_empty_oversized_and_malformed_inputs_do_not_claim_success():
     with fitz.open() as empty:
         with pytest.raises(ValueError, match="150 pages"):
