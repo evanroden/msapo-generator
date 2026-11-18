@@ -318,6 +318,8 @@ def group_decisions(bundle, index, *, omitted, omit_unmatched=False, financial=F
 def reviewed_tables(draft, bundle, *, include_trades=False):
     """No partial insertion: every selected source group must be resolved."""
     _validate(draft, bundle)
+    if bundle["kind"] == "workorders" and bundle.get("grid_receipt"):
+        raise ValueError("This source already supplies the annual work-order grid. Remove its grid binding before adding a second row-derived total.")
     tables, identities = [], set()
     for group in bundle["groups"]:
         if group["omitted"]:
@@ -329,7 +331,8 @@ def reviewed_tables(draft, bundle, *, include_trades=False):
         for row in review.rows:
             if row.excluded:
                 continue
-            identity = (row.site, (row.work_order if bundle["kind"] == "workorders" else row.wo).casefold())
+            identity = ((row.site, row.work_date, row.work_order.casefold())
+                        if bundle["kind"] == "workorders" else (row.site, row.wo.casefold()))
             if identity in identities:
                 raise ValueError("Duplicate work-order identities across source groups need correction or explicit omission.")
             identities.add(identity)
@@ -379,7 +382,8 @@ def publish_bundle(draft, bundle, *, expected_revision, expected_block, include_
     # Different files/exports can overlap. Refuse known accepted identities
     # from other still-included review receipts rather than double-counting
     # the same source work in a combined report.
-    incoming = {(row.site, (row.work_order if bundle["kind"] == "workorders" else row.wo).casefold())
+    incoming = {((row.site, row.work_date, row.work_order.casefold())
+                 if bundle["kind"] == "workorders" else (row.site, row.wo.casefold()))
                 for group in bundle["groups"] if group["record"] and not group["omitted"]
                 for row in restored_group(bundle, group).rows if not row.excluded}
     for text in draft.source_row_reviews:
@@ -390,7 +394,8 @@ def publish_bundle(draft, bundle, *, expected_revision, expected_block, include_
         still_included = any(ReportTable(tuple(t["columns"]), tuple(tuple(r) for r in t["rows"]), t["reference"])
                              in remaining for t in other["published"])
         if still_included:
-            old_ids = {(row.site, (row.work_order if bundle["kind"] == "workorders" else row.wo).casefold())
+            old_ids = {((row.site, row.work_date, row.work_order.casefold())
+                        if bundle["kind"] == "workorders" else (row.site, row.wo.casefold()))
                 for group in other["groups"] if group["record"] and not group["omitted"]
                 for row in restored_group(other, group).rows if not row.excluded}
             if incoming & old_ids:

@@ -165,16 +165,16 @@ def tally_reviewed_months(
                     or (row.completed_date and _month(row.completed_date) is None)):
                 notices.append(f"{ref}#{row.key}: unresolved row excluded")
                 continue
-            identities[(row.site, _key(row.work_order))].append((review, row))
+            identities[(row.site, row.work_date, _key(row.work_order))].append((review, row))
     totals: dict[tuple[str, str, str], int] = defaultdict(int)
     members: dict[tuple[str, str, str], set[str]] = defaultdict(set)
-    for (site, identity), records in sorted(identities.items()):
+    for (site, work_date, identity), records in sorted(identities.items()):
         facts = {(row.work_date, row.completed_date,
                   _key(_recorded_status(review, row) if _recorded_status(review, row) is not None else row.status),
                   _key(row.work_type), review.mapping.completed_date is not None)
                  for review, row in records}
         if len(facts) != 1:
-            notices.append(f"{site}/{identity}: conflicting updates require review")
+            notices.append(f"{site}/{work_date}/{identity}: conflicting updates require review")
             continue
         review, row = records[0]
         kind = _key(row.work_type)

@@ -149,6 +149,8 @@ def publish(draft, bundle, *, expected_revision, expected_block, group_index,
     from app.monthly_report_row_review_receipts import decoded
 
     flow._validate(draft, bundle)
+    if bundle.get("published"):
+        raise ValueError("This source already supplies a published work-order list and totals. Remove those source-linked tables before publishing its annual grid.")
     as_of = config.operator_today() if as_of is None else as_of
     if type(as_of) is not date:
         raise ValueError("Choose a valid review date for source coverage.")
