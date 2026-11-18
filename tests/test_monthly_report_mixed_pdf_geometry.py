@@ -276,7 +276,7 @@ def test_mixed_mbcx_pages_keep_all_corners_and_order_in_final_word_pdf(tmp_path,
                 "all_corner_quadrants_and_aspect_checks": "passed",
             }
             (destination / "geometry-receipt.json").write_text(
-                json.dumps(receipt, indent=2, sort_keys=True) + "\\n", encoding="utf-8"
+                json.dumps(receipt, indent=2, sort_keys=True) + chr(10), encoding="utf-8"
             )
 
 
