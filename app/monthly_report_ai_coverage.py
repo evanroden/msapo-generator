@@ -265,6 +265,7 @@ def validate_batch(batch, value, source, profile, period, *, ai_module=None):
     claiming every page was classified successfully.
     """
     from app import monthly_report_ai as ai
+    from app.monthly_report_structured_uploads import _activity_text
     ai = ai_module or ai
     if not isinstance(value, dict) or not isinstance(value.get("facts"), list):
         raise ValueError("Reader returned no structured facts receipt.")
@@ -303,6 +304,26 @@ def validate_batch(batch, value, source, profile, period, *, ai_module=None):
                 or any(not isinstance(t, str) or _token(t) not in _token(raw["quote"])
                        for t in raw.get("tags", ()) if isinstance(raw.get("tags", ()), list))
                 or raw.get("date") and not ai._date_supported(raw["quote"], raw["date"])):
+            rejected += 1
+            continue
+        if any(
+                _activity_text(raw.get(field, "")) != raw.get(field, "").strip()
+                for field in ("text", "quote")
+                if isinstance(raw.get(field), str)
+        ) or any(
+                phrase in _token(raw.get("quote", ""))
+                for phrase in ("terms and conditions", "indemnification",
+                               "limitation of liability", "governing law",
+                               "payment terms", "net 30", "net 60")
+        ):
+            rejected += 1
+            continue
+        if raw.get("kind") == "action" and any(
+                stem in _token(raw.get("text", ""))
+                and stem not in _token(raw.get("quote", ""))
+                for stem in ("replac", "repair", "complet", "perform",
+                             "resolv", "instal", "finish", "restor")
+        ):
             rejected += 1
             continue
         if raw.get("kind") == "action" and any(
