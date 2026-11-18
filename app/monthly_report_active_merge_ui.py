@@ -1,5 +1,5 @@
 """Explicit conflict-by-field browser choice; the active journal owns the CAS."""
-from dataclasses import replace
+from dataclasses import asdict, replace
 from hashlib import sha256
 
 import streamlit as st
@@ -59,6 +59,10 @@ def render_merge_choice(draft, newer, token, prefix, assets, profile, identity):
             result, unresolved = merge_drafts(base, draft, newer.draft, decisions)
             if unresolved or result is None:
                 raise active_work.ActiveWorkConflict()
+            # A legal three-way choice must still satisfy the complete saved
+            # draft schema, including source-receipt integrity and size budgets.
+            # Reject it before publishing any images or recovery metadata.
+            library.draft_from_dict(asdict(result))
             combined_assets = dict(newer.assets)
             for name, raw in assets.items():
                 if name in combined_assets and combined_assets[name] != raw:
