@@ -56,6 +56,9 @@ def render_first_upload(field, contracts):
     prior = st.session_state.get(ENTRY_STAGE)
     if upload is None:
         _retire_stage(prior)
+        # Removing the picker is a new deliberate selection boundary. Do not
+        # permanently reject an identical file when it is chosen again.
+        st.session_state.pop(ENTRY_COMMITTED, None)
         st.session_state.pop(ENTRY_STAGE, None)
         st.session_state.pop("report_entry_failed_digest", None)
         st.session_state.pop("report_entry_failed_notice", None)
