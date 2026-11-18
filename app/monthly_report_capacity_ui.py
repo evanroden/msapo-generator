@@ -193,7 +193,14 @@ def render_capacity(draft, block, prefix, field, *, show_scope=True):
     # report's working block; the contract standing revision is never written.
     # can_refresh_capacity rejects omitted blocks and manual overrides.
     approved = capacity.capacity_block(profile, state) if state is not None else None
-    if approved is not None and capacity.can_refresh_capacity(profile, block) and approved != block:
+    if approved is None:
+        st.caption("No approved reusable thermal capacity for these sites. "
+                   "Enter report-only values or upload a capacity source below.")
+    elif approved == block:
+        # Do not reload historical revisions on every no-op editor rerun.
+        st.caption("Approved thermal capacity is already in this report. "
+                   "Its source and units are kept; report-only edits do not change shared data.")
+    elif capacity.can_refresh_capacity(profile, block):
         action = ("Use latest approved capacity in this report" if _has_values(block)
                   else "Use approved capacity in this report")
         st.caption("Approved thermal capacity is available for these sites. "
@@ -204,12 +211,6 @@ def render_capacity(draft, block, prefix, field, *, show_scope=True):
             if not any(b.key == "thermal_capacity" for b in draft.blocks):
                 blocks += (approved,)
             draft, block = replace(draft, blocks=blocks), approved
-    elif approved is None:
-        st.caption("No approved reusable thermal capacity for these sites. "
-                   "Enter report-only values or upload a capacity source below.")
-    elif capacity.can_refresh_capacity(profile, block):
-        st.caption("Approved thermal capacity is already in this report. "
-                   "Its source and units are kept; report-only edits do not change shared data.")
     else:
         st.caption("This report has its own capacity values. Approved shared "
                    "capacity remains unchanged unless you explicitly correct its source.")
