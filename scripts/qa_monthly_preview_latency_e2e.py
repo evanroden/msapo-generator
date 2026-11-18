@@ -130,7 +130,7 @@ def _table_cases():
         raw = _work_order_bytes(suffix)
         cold, warm = [], []
         for attempt in range(5):
-            profile = _profile(f"qa491-table-{suffix}-{attempt}")
+            profile = _profile(f"qa491-table-{suffix.lstrip('.')}-{attempt}")
             with capture_spans() as spans:
                 with measure_span("source_ingest"):
                     content, extras = sources.ingest(profile, "invented-orders" + suffix, raw)
@@ -363,13 +363,13 @@ def _section_preview():
 
 def _cpu_stat():
     try:
-            stats = {}
+        stats = {}
         for line in Path("/sys/fs/cgroup/cpu.stat").read_text().splitlines():
-                        parts = line.split()
+            parts = line.split()
             if len(parts) == 2:
-                                stats[parts[0]] = int(parts[1])
+                stats[parts[0]] = int(parts[1])
         return stats
-except (OSError, ValueError):
+    except (OSError, ValueError):
         return {}
 
 
