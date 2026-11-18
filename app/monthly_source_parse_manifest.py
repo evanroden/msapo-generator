@@ -70,6 +70,7 @@ def stage_record(content) -> dict:
     """Completed expensive parse, before suggested facts, in a bounded JSON file."""
     from dataclasses import asdict
     record = {"schema": 1, "stage_policy": STAGE_POLICY_VERSION,
+              "parser_policy": PARSER_POLICY_VERSION,
               "source_sha256": content.source.sha256,
               "source_suffix": content.source.suffix,
               "source": asdict(content.source),
@@ -84,6 +85,8 @@ def stage_valid(record, digest: str, suffix: str) -> bool:
         return False
     if (type(record.get("stage_policy")) is not int
             or record["stage_policy"] != STAGE_POLICY_VERSION
+            or type(record.get("parser_policy")) is not int
+            or record["parser_policy"] != PARSER_POLICY_VERSION
             or record.get("source_sha256") != digest
             or record.get("source_suffix") != suffix):
         return False
