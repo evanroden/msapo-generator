@@ -95,7 +95,7 @@ def _finish_job(draft, prefix):
         return
     try:
         result = job["future"].result()
-        if job.get("approval_scope") != _approval_scope(draft, prefix):
+        if "approval_scope" in job and job["approval_scope"] != _approval_scope(draft, prefix):
             raise ValueError(
                 "Report, month or editing context changed while reading. "
                 "Start again; existing report content was preserved."
