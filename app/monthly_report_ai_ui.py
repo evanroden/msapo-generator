@@ -7,6 +7,7 @@ import json
 import streamlit as st
 
 from app import monthly_report_ai as ai, monthly_report_library as library
+from app import monthly_report_ai_coverage as coverage
 from app.monthly_report_model import BlockSpec, EvidenceFact, ReportSource, ResolvedBlock
 from app.monthly_report_prompts import copilot_prompt, parse_copilot
 from app.monthly_report_sources import SourceContent
@@ -118,6 +119,25 @@ def _finish_job(draft, prefix):
                 current.fingerprint,
                 facts,
             )
+        elif job["kind"] == "coverage":
+            if not current or current.fingerprint != job["source_fingerprint"]:
+                raise ValueError("The source changed while reading. Earlier suggestions were not applied.")
+            outcome = coverage.collect(job["plan"], result, current, draft.profile, draft.period)
+            for cache_key, response in outcome["cacheable"]:
+                try:
+                    ai.save_cache(draft.profile, "full_coverage", cache_key, response)
+                except (ValueError, OSError):
+                    st.warning("A verified reading could not be cached; its suggestions remain available.")
+            previous = st.session_state.get(prefix + "_ai_facts")
+            retained = {
+                fact.id: fact for fact in previous[2]
+            } if (previous and previous[0] == current.id
+                  and previous[1] == current.fingerprint) else {}
+            retained.update((fact.id, fact) for fact in outcome["facts"])
+            st.session_state[prefix + "_ai_facts"] = (
+                current.id, current.fingerprint, tuple(retained.values()))
+            st.session_state[prefix + "_ai_coverage"] = (
+                current.id, current.fingerprint, outcome)
         elif job["kind"] == "draft":
             if (
                 tuple(s.fingerprint for s in draft.sources)
@@ -380,7 +400,7 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
         )
         st.caption("Reading and drafting send selected text or page images to the external document reader and may use paid requests. Choose a reading or drafting action to start.")
         with st.expander("Limits"):
-            st.caption("No prices in suggestions. Maximum 80 reading/drafting requests per report/month; cached results are reused. Each source read is limited to 60,000 characters. Image reading shares the report's 20-image allowance.")
+            st.caption("Maximum 80 paid reading/drafting requests shared by this profile and report month, including retries; cached calls are reused. Each model call is limited to 60,000 characters. Full-source reading partitions long uploads automatically; automatic image reading has a separate bounded allowance.")
         if contents:
             by_id = {c.source.id: c for c in contents}
             chosen = st.selectbox(
@@ -406,40 +426,64 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                 disabled=busy or not pages,
             ):
                 try:
-                    key, content = ai.extraction_request(source, pages)
-                    saved = ai.cached(draft.profile, "extraction", key)
-                    if saved is not None:
-                        facts = ai.normalize_facts(
-                            saved,
-                            source,
-                            pages,
-                            draft.profile,
-                            draft.period,
-                            ai.vendor_names(draft),
-                        )
-                        st.session_state[prefix + "_ai_facts"] = (
-                            source.id,
-                            source.fingerprint,
-                            facts,
-                        )
-                    else:
+                    needs_coverage = (
+                        len(pages) > 20
+                        or sum(len(source.page_texts[n - 1]) for n in pages) > ai.MAX_EVIDENCE_CHARS
+                        or any(n in source.needs_vision for n in pages)
+                    )
+                    if needs_coverage:
+                        planned = coverage.plan(source, pages)
 
                         def prepare():
-                            ai.reserve_call(draft.profile, draft.period)
-                            return content
+                            return coverage.prepare_run(
+                                planned, by_id[chosen], draft.profile, draft.period)
 
                         _start(
-                            prefix,
-                            draft,
+                            prefix, draft,
                             {
-                                "kind": "extraction",
-                                "key": key,
+                                "kind": "coverage",
                                 "source_id": source.id,
                                 "source_fingerprint": source.fingerprint,
-                                "pages": pages,
+                                "plan": planned,
                             },
                             prepare,
+                            coverage.run,
                         )
+                    else:
+                        key, content = ai.extraction_request(source, pages)
+                        saved = ai.cached(draft.profile, "extraction", key)
+                        if saved is not None:
+                            facts = ai.normalize_facts(
+                                saved,
+                                source,
+                                pages,
+                                draft.profile,
+                                draft.period,
+                                ai.vendor_names(draft),
+                            )
+                            st.session_state[prefix + "_ai_facts"] = (
+                                source.id,
+                                source.fingerprint,
+                                facts,
+                            )
+                        else:
+
+                            def prepare():
+                                ai.reserve_call(draft.profile, draft.period)
+                                return content
+
+                            _start(
+                                prefix,
+                                draft,
+                                {
+                                    "kind": "extraction",
+                                    "key": key,
+                                    "source_id": source.id,
+                                    "source_fingerprint": source.fingerprint,
+                                    "pages": pages,
+                                },
+                                prepare,
+                            )
                 except ValueError as exc:
                     st.warning(str(exc))
             image_pages = [n for n in source.needs_vision if n in pages]
@@ -485,6 +529,25 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                     _start(
                         prefix, draft, meta, prepare, lambda v: v[0] or read_image(v[1])
                     )
+            coverage_state = st.session_state.get(prefix + "_ai_coverage")
+            if coverage_state and (coverage_state[0], coverage_state[1]) == (
+                    source.id, source.fingerprint):
+                outcome = coverage_state[2]
+                inventory = outcome["inventory"]
+                ready_pages = sum(status == "ready" for status in inventory.values())
+                st.caption(
+                    f"Reader inventory: {len(inventory)}/{len(pages)} selected pages accounted; "
+                    f"{ready_pages} classified from native evidence, "
+                    f"{len(inventory) - ready_pages} need visual/manual review or a retry. "
+                    f"{outcome['rejected_claims']} ungrounded claims withheld.")
+                if ready_pages != len(inventory):
+                    pending_pages = [str(n) for n, status in inventory.items()
+                                     if status != "ready"]
+                    st.warning(
+                        "No pages were silently discarded. Pages needing review or retry: "
+                        + ", ".join(pending_pages[:30])
+                        + ("…" if len(pending_pages) > 30 else "")
+                        + ". Choose Find work, findings and follow-ups to retry uncached pages.")
             proposed = st.session_state.get(prefix + "_ai_facts")
             if proposed and proposed[0] == source.id:
                 if proposed[1] != source.fingerprint:
