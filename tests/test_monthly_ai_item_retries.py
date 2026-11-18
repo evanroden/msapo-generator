@@ -254,3 +254,44 @@ def test_completed_page_from_stale_generation_cannot_apply(sample, monkeypatch):
     assert items.status(profile, period, key) == "failed"
     assert ai.cached(profile, "extraction", key) is None
     assert any("Source details changed" in message for message in warnings)
+
+
+def test_other_session_pending_page_does_not_stall_its_successful_siblings(
+    sample, monkeypatch
+):
+    profile, period, source, draft = sample
+    first_key = _page_key(source, 1)
+    _, first_token = items.claim(profile, period, first_key)
+    state = {"unit_evidence": (SourceContent(source),)}
+    calls = []
+    monkeypatch.setattr(ui, "st", SimpleNamespace(
+        session_state=state, info=lambda _: None,
+        warning=lambda _: None, rerun=lambda: None,
+    ))
+
+    def start(prepare, read):
+        content = prepare()
+        page = json.loads(content[0]["text"].split("\n")[-1])["pages"][0]["page"]
+        calls.append(page)
+        future = Future()
+        future.set_result({"facts": [{
+            "page": page, "kind": "action",
+            "text": f"Serviced unit {page}.",
+            "quote": f"Serviced unit {page}.",
+        }]})
+        return future
+
+    monkeypatch.setattr(ui, "start_receipt", start)
+    ui._queue_page_reads(draft, "unit", source, (1, 2, 3))
+    for _ in range(5):
+        ui._finish_job(draft, "unit")
+        ui._advance_page_reads(draft, "unit")
+    assert calls == [2, 3]  # no duplicate call for page 1
+    assert items.status(profile, period, first_key) == "pending"
+    assert {fact.page for fact in state["unit_ai_facts"][2]} == {2, 3}
+    answer = {"facts": [{"page": 1, "kind": "action",
+                         "text": "Serviced unit 1.",
+                         "quote": "Serviced unit 1."}]}
+    assert items.accept(profile, period, first_key, first_token, answer)
+    ui._queue_page_reads(draft, "unit", source, (1, 2, 3))
+    assert calls == [2, 3] and {f.page for f in state["unit_ai_facts"][2]} == {1, 2, 3}
