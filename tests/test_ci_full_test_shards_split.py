@@ -110,6 +110,32 @@ def test_missing_hot_file_and_duplicate_nodes_fail_closed(tmp_path):
         shards.partition(["tests/test_a.py", "tests/test_a.py"], {}, 2)
 
 
+def test_real_frontend_parametrized_collection_is_exact():
+    """Compare actual pytest node IDs, not merely AST function names."""
+    repo = Path(__file__).resolve().parents[1]
+    files = shards.test_files(repo)
+    items, _ = shards.expanded_test_items(repo, files, shards.read_durations())
+    hot = [item for item in items if item.startswith(shards.SPLIT_FILE + "::")]
+    assert hot, "The hot file must be split on this pinned checkout"
+
+    def collect(selectors):
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest", "--collect-only", "-q", *selectors],
+            cwd=repo, capture_output=True, text=True, timeout=90,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        return [
+            line.strip() for line in result.stdout.splitlines()
+            if line.startswith(shards.SPLIT_FILE + "::")
+        ]
+
+    original = collect([shards.SPLIT_FILE])
+    distributed = collect(hot)
+    assert original, "Full-file collection unexpectedly returned no tests"
+    assert len(distributed) == len(set(distributed))
+    assert sorted(distributed) == sorted(original)
+
+
 def test_every_real_test_file_is_covered_exactly_once():
     repo = Path(__file__).resolve().parents[1]
     files = shards.test_files(repo)
