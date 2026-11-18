@@ -243,12 +243,19 @@ def section_preview_fingerprint(draft, section_key):
     # Only improvements' document/photo classification reads ReportSources.
     # Other sections must not hash or retain unrelated source-page contents.
     page_sources = scope.sources if any(block.key == "improvements" for block in scope.blocks) else ()
-    return _cached_section_fingerprint(
+    key = (
         draft.profile, draft.period.key, section_key, section, scope.blocks,
         page_sources, scope.follow_ups, draft.address_line if section else "",
         draft.prepared_by if section is None else "",
         draft.synthetic if section is None else False, source_identity,
     )
+    try:
+        return _cached_section_fingerprint(*key)
+    except TypeError:
+        # Some migrated reports may carry legacy unhashable metadata in fields
+        # that the v6 visible digest never serialized. Preserve their prior
+        # preview behavior, but never retain that unsuitable cache key.
+        return _cached_section_fingerprint.__wrapped__(*key)
 
 
 @lru_cache(maxsize=32)
