@@ -254,3 +254,18 @@ def test_other_exports_published_list_cannot_be_recounted_in_annual_grid(monkeyp
         grid.publish(draft, other, expected_revision=flow.revision(other),
             expected_block=block.fingerprint, group_index=0,
             metrics=("pm_received",), confirmed=True, as_of=date(2026, 11, 17))
+
+
+def test_trade_case_variants_reconcile_without_changing_source_values():
+    _, reviewed = source((
+        ("T-1", "North", "2026-09-01", "Open", "PM", "HVAC", ""),
+        ("T-2", "North", "2026-09-02", "Closed", "PM", "hvac", ""),
+        ("T-3", "South", "2026-09-03", "Open", "Repair", "HVAC  ", ""),
+    ))
+    original = review_record(reviewed)
+    result = tally(reviewed)
+    assert len(result.trades) == 1
+    trade, = result.trades
+    assert (trade.key, trade.label, trade.total, trade.completed, trade.open) == (
+        "named:HVAC", "HVAC", 3, 1, 2)
+    assert review_record(reviewed) == original
