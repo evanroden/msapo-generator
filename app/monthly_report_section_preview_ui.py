@@ -11,6 +11,7 @@ from app import monthly_report_library as library
 from app import monthly_report_section_assembly_cache as assembly_cache
 from app.monthly_report_render_jobs import RenderBusy
 from app import monthly_report_resource_scheduler as render_resources
+from app.monthly_report_render_jobs import preview_revision_guard
 from app.monthly_report_preview import (
     _section_scope, preview_page, preview_section, section_preview_fingerprint,  # noqa: F401 (tests patch preview_page here)
 )
@@ -30,7 +31,7 @@ _PREVIEW_WORKER = ThreadPoolExecutor(max_workers=_PREVIEW_CAPACITY, thread_name_
 _PREVIEW_SLOT = BoundedSemaphore(_PREVIEW_CAPACITY)
 
 
-def _build_preview_entry(draft, section_key, assets, title, owner=None):
+def _build_preview_entry(draft, section_key, assets, title, owner=None, is_current=None):
     def loader(ref):
         return assets.get(ref) or library.read_asset(draft.profile.contract, draft.profile.key, ref)
     try:
@@ -38,8 +39,13 @@ def _build_preview_entry(draft, section_key, assets, title, owner=None):
         # session-scoped reuse key. Library-backed assets are SHA-verified.
         asset_versions = tuple(sorted((ref, hashlib.sha256(raw).digest())
                                       for ref, raw in assets.items())) if owner else ()
-        with assembly_cache.owner_scope(owner, asset_versions):
-            preview = preview_section(draft, section_key, loader)
+        # The stale check is read-only. A replacement never revokes an
+        # already-running conversion or deletes an accepted last-good ticket.
+        with preview_revision_guard(is_current):
+            if is_current is not None and not is_current():
+                return {'busy': True}
+            with assembly_cache.owner_scope(owner, asset_versions):
+                preview = preview_section(draft, section_key, loader)
         ticket = STORE.put(owner or uuid4().hex, preview)
         return {'ticket': ticket, 'pages': ticket.pages}
     except RenderBusy:
@@ -141,6 +147,8 @@ def _advance_preview_queue(state):
     if ready is None or not _PREVIEW_SLOT.acquire(blocking=False):
         return
     fingerprint, draft, assets, title = state['queue'].pop(ready)
+    is_current = lambda: (state.get('wanted', {}).get(ready) == fingerprint
+                          and _is_visible(state, ready))
     try:
         # When the hidden QA workflow is active, the worker must inherit its
         # physical storage namespace. Ordinary live scheduling is unchanged.
@@ -149,10 +157,10 @@ def _advance_preview_queue(state):
             from contextvars import copy_context
             future = _PREVIEW_WORKER.submit(copy_context().run, _build_preview_entry,
                                             draft, ready, assets, title,
-                                            state.setdefault('owner', uuid4().hex))
+                                            state.setdefault('owner', uuid4().hex), is_current)
         else:
             future = _PREVIEW_WORKER.submit(_build_preview_entry, draft, ready, assets, title,
-                                            state.setdefault('owner', uuid4().hex))
+                                            state.setdefault('owner', uuid4().hex), is_current)
     except Exception:
         _PREVIEW_SLOT.release()
         state['cache'][ready] = {'fingerprint': fingerprint, 'error': 'The preview could not start. Your edits are still here.'}
