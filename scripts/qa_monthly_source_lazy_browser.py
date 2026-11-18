@@ -47,8 +47,7 @@ def visible_dates(page):
 
 
 def date_for(page, filename):
-    source = page.locator('[class*="st-key-a30_managed_source_"]').filter(
-        has=page.get_by_text("Date and facility · " + filename, exact=True))
+    source = page.locator('[class*="st-key-a30_managed_source_"]').filter(has_text=filename)
     expect(source).to_have_count(1)
     disclosure = source.locator('[data-testid="stExpander"]').first
     if disclosure.count() and not disclosure.locator("details").first.get_attribute("open") == "":
@@ -163,8 +162,7 @@ def exercise(browser, label):
             expect(first).to_have_value("2026/09/21")
             second = date_for(page, SOURCE_B)
             type_date(page, second, "2026/09/22", "a30-second-submission")
-            second_panel = page.locator('[class*="st-key-a30_managed_source_"]').filter(
-                has=page.get_by_text("Date and facility · " + SOURCE_B, exact=True))
+            second_panel = page.locator('[class*="st-key-a30_managed_source_"]').filter(has_text=SOURCE_B)
             second_panel.get_by_role("button", name="Use these source details").click()
             settled(page)
             assert receipt(page)["dates"][SOURCE_B] == "2026-09-22"
@@ -180,8 +178,7 @@ def exercise(browser, label):
             settled(page)
             first = date_for(page, SOURCE_A)
             expect(first).to_have_value("2026/09/21")
-            source = page.locator('[class*="st-key-a30_managed_source_"]').filter(
-                has=page.get_by_text("Date and facility · " + SOURCE_A, exact=True))
+            source = page.locator('[class*="st-key-a30_managed_source_"]').filter(has_text=SOURCE_A)
             source.get_by_role("button", name="Use these source details").click()
             settled(page)
             assert receipt(page)["dates"][SOURCE_A] == "2026-09-21"
