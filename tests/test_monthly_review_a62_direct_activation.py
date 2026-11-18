@@ -34,6 +34,17 @@ def test_matching_receipt_is_revision_specific_and_carries_no_form_content():
     assert not valid_activation({"activation": {"identity": identity, "visible": True}}, "b" * 64)
 
 
+def test_receipt_in_streamlits_own_component_state_type_activates():
+    # Streamlit hands a v2 component's state over as an AttributeDictionary
+    # (a dict subclass); a plain-dict-only check never activated in a browser.
+    from streamlit.util import AttributeDictionary
+    identity = "a" * 64
+    state = AttributeDictionary({"activation": {"identity": identity, "visible": True}})
+    assert type(state) is not dict
+    assert valid_activation(state, identity)
+    assert not valid_activation(AttributeDictionary({"activation": None}), identity)
+
+
 def test_direct_review_visibility_auto_builds_unvisited_last_section_once(monkeypatch, tmp_path):
     app, store = setup(monkeypatch, tmp_path)
     try:

@@ -33,6 +33,22 @@ def go_review(page):
     page.locator("#report-review").scroll_into_view_if_needed(timeout=20000)
 
 
+def set_checkbox(page, name, selected):
+    """Click the visible label, as a person does.
+
+    The locked Streamlit runtime clips the semantic input inside React Aria's
+    VisuallyHidden wrapper, so check()/uncheck() on the input is intercepted.
+    """
+    from playwright.sync_api import expect
+    control = page.get_by_role("checkbox", name=name, exact=True)
+    expect(control).to_have_count(1)
+    if control.is_checked() != selected:
+        label = control.locator("xpath=ancestor::label[1]")
+        label.scroll_into_view_if_needed()
+        label.click()
+    expect(control).to_be_checked(checked=selected)
+
+
 def check():
     from playwright.sync_api import sync_playwright, expect
     ARTIFACT.mkdir(parents=True, exist_ok=True)
@@ -83,7 +99,7 @@ def check():
                         # it must be delivered through the native editor first.
                         note = page.get_by_role("textbox", name="QA Activity note")
                         note.scroll_into_view_if_needed()
-                        page.get_by_role("checkbox", name="QA fail next preview").check()
+                        set_checkbox(page, "QA fail next preview", True)
                         settled(page)
                         note = page.get_by_role("textbox", name="QA Activity note")
                         note.fill("Synthetic accepted A62 edited last-section fact.")
@@ -92,6 +108,9 @@ def check():
                         note.scroll_into_view_if_needed()
                         expect(note).to_have_value("Synthetic accepted A62 edited last-section fact.")
                         note.press("Tab")  # commits native on_change, not a bypass
+                        # The blur rerun may not have started yet: wait for the
+                        # accepted edit to replace the revision, then settle.
+                        expect(page.get_by_text("QA canonical revision: " + initial)).to_have_count(0, timeout=30000)
                         settled(page)
                         edited = value_after(page, "QA canonical revision:")
                         assert edited != initial
@@ -108,7 +127,7 @@ def check():
 
                         # One explicit retry, after removing the deterministic
                         # fixture failure, replaces old pages without stale claim.
-                        page.get_by_role("checkbox", name="QA fail next preview").uncheck()
+                        set_checkbox(page, "QA fail next preview", False)
                         settled(page)
                         go_review(page)
                         retry_start = time.perf_counter()

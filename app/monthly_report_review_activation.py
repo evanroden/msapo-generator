@@ -69,11 +69,15 @@ export default function(component) {
 
 
 def valid_activation(value, identity):
-    """Reject missing, malformed or obsolete client visibility receipts."""
-    if type(value) is not dict or type(identity) is not str or len(identity) != 64:
+    """Reject missing, malformed or obsolete client visibility receipts.
+
+    Streamlit hands a v2 component's state over as its AttributeDictionary (a
+    dict subclass), so accept any mapping of dict type, not only a plain dict.
+    """
+    if not isinstance(value, dict) or type(identity) is not str or len(identity) != 64:
         return False
     signal = value.get("activation")
-    return (type(signal) is dict and signal.get("visible") is True
+    return (isinstance(signal, dict) and signal.get("visible") is True
             and type(signal.get("identity")) is str and signal["identity"] == identity)
 
 
