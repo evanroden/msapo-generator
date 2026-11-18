@@ -9,6 +9,7 @@ import re
 
 from app.monthly_report_sources import SourceContent, source_reference
 from app.monthly_report_model import ReportPeriod, ReportProfile
+from app.monthly_report_work_order_normalized import source_header_positions
 
 
 @dataclass(frozen=True)
@@ -41,24 +42,7 @@ def _name(value):
 
 
 def _column_positions(columns, kind):
-    """Retain physical copies renamed by the table parser: Status (2) != absent.
-
-    An explicitly labeled Status (2) beside Status is also uncertain; never
-    infer that the first column is authoritative without a reviewed mapping.
-    """
-    normalized = tuple(_name(title) for title in columns)
-    positions = []
-    for index, title in enumerate(columns):
-        if normalized[index] in _HEADERS[kind]:
-            positions.append(index)
-            continue
-        match = re.fullmatch(r"(.+?) \((\d+)\)", str(title))
-        if (match and int(match.group(2)) >= 2
-                and _name(match.group(1)) in _HEADERS[kind]
-                and _name(match.group(1)) in normalized[:index]):
-            positions.append(index)
-    return tuple(positions)
-
+    return source_header_positions(columns, _HEADERS[kind])
 
 def _column(columns, kind):
     positions = _column_positions(columns, kind)
