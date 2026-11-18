@@ -5,7 +5,7 @@ from collections import defaultdict
 import hashlib
 import re
 
-from app.monthly_report_content_policy import contains_price, page_status, table_price_columns, table_has_pricing, logical_table_columns
+from app.monthly_report_content_policy import contains_price, page_status, table_price_columns, proposal_price_columns, table_has_pricing, logical_table_columns
 from app.monthly_report_checks import placeholder_matches
 from app.monthly_report_import import MappedImport, ImportMapping, _heading, read_import_image, _read_import_image, MAX_NORMALIZED_BYTES, is_logo_artwork, is_header_artwork
 from app.monthly_report_model import AnchoredTable, ReportTable, ResolvedBlock, known_sections, layout_blocks
@@ -96,7 +96,9 @@ def table_without_prices(item):
             # multi-site year grid acquires an explicit Category column.
             return annual, ()
     headings = logical_table_columns(rows[0])
-    removed = table_price_columns(headings, rows[1:])
+    removed = (proposal_price_columns(headings, rows[1:])
+               if getattr(item, "section", "") == "proposals"
+               else table_price_columns(headings, rows[1:]))
     keep = [i for i in range(len(rows[0])) if i not in removed]
     if not keep:
         return None, removed
