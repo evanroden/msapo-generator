@@ -31,7 +31,7 @@ def test_two_preview_leases_overlap_but_third_fails_fast(high_tier):
         try:
             gate.wait(timeout=5)
             assert jobs._ACTIVE_WORK == 2
-            with pytest.raises(jobs.RenderBusy, match='queued'):
+            with pytest.raises(jobs.RenderBusy, match='Another report'):
                 with jobs.work_slot(preview=True):
                     pass
         finally:
