@@ -6,7 +6,11 @@ PDF rasterization separately from the actual Word-derived PDF renderer.
 from dataclasses import replace
 from hashlib import sha256
 from io import BytesIO
+import json
+import os
+from pathlib import Path
 
+import numpy as np
 import pymupdf as fitz
 import pytest
 from docx import Document
@@ -27,11 +31,14 @@ from app.monthly_report_source_scope import correct_scope
 
 # Page 3 and 4 have rotated page dictionaries, not just landscape artwork.
 GEOMETRIES = (
-    (612, 792, 0),
-    (792, 612, 0),
-    (612, 792, 90),
-    (612, 792, 270),
-    (760, 330, 0),
+    (612, 792, 0),       # US Letter portrait
+    (792, 612, 0),       # US Letter landscape
+    (595.28, 841.89, 0),  # A4 portrait
+    (595.28, 841.89, 90), # A4 landscape via PDF rotation
+    (612, 792, 180),     # upside-down US Letter
+    (612, 792, 270),     # rotated US Letter landscape
+    (760, 330, 0),       # short, nonstandard-size inspection record
+    (1800, 540, 0),      # wide engineering chart (25 by 7.5 inches)
 )
 CORNER_COLORS = (
     (0.94, 0.06, 0.06),  # red
@@ -58,7 +65,7 @@ def synthetic_mixed_pdf():
                 (70, 80),
                 f"Synthetic equipment inspection page {number}. "
                 "Demonstration unit checked and recorded.",
-                fontsize=11,
+                fontsize=32 if width > 1200 else 11,
             )
             if rotation:
                 page.set_rotation(rotation)
@@ -85,6 +92,32 @@ def visible_markers(image):
             if found == MARKERS:
                 return found
     return found
+
+
+
+
+def marker_geometry(image):
+    """Physical colored corner positions and aspect, independent of OCR.
+
+    Compare the original rotated raster with the Word-derived PDF image.
+    Checking four colors alone would not detect reversed orientation or skew.
+    """
+    pixels = np.asarray(image.convert("RGB"), dtype=np.int16)
+    positions = {}
+    for label, channels in zip(("red", "green", "blue", "yellow"), CORNER_COLORS):
+        color = np.asarray([round(channel * 255) for channel in channels])
+        ys, xs = np.nonzero(np.all(np.abs(pixels - color) <= 34, axis=2))
+        assert len(xs) > 12, f"{label} marker is missing in rendered pixels"
+        positions[label] = ((float(xs.min()) + float(xs.max())) / 2,
+                            (float(ys.min()) + float(ys.max())) / 2)
+    xs, ys = zip(*positions.values())
+    mid_x = (min(xs) + max(xs)) / 2
+    mid_y = (min(ys) + max(ys)) / 2
+    quadrants = {key: (x < mid_x, y < mid_y)
+                 for key, (x, y) in positions.items()}
+    assert len(set(quadrants.values())) == 4
+    ratio = (max(xs) - min(xs)) / (max(ys) - min(ys))
+    return quadrants, ratio
 
 
 def fixture_source(tmp_path, monkeypatch):
@@ -148,6 +181,9 @@ def test_mixed_mbcx_pages_keep_all_corners_and_order_in_final_word_pdf(tmp_path,
     assert len(page_block.asset_hashes) == len(GEOMETRIES)
     assert tuple(page_block.asset_captions) == tuple(
         f"Geometry attachment {n}" for n in range(1, len(GEOMETRIES) + 1))
+    assert page_block.references == tuple(
+        sources.source_reference(content.source, n)
+        for n in range(1, len(GEOMETRIES) + 1))
     report_sections = tuple(
         s for s in default_sections() if s.key in ("mbcx", "issues")
     )
@@ -187,12 +223,27 @@ def test_mixed_mbcx_pages_keep_all_corners_and_order_in_final_word_pdf(tmp_path,
             assert len(matches) == 1, f"{label} must appear on one page: {matches}"
             index = matches[0]
             captions.append(index)
+            # The report shell is US Letter, but each included raster must
+            # retain its own source orientation, without secretly rotating
+            # the surrounding report, changing page dimensions or skewing.
+            assert abs(output[index].rect.width - 612) < 1
+            assert abs(output[index].rect.height - 792) < 1
             pixmap = output[index].get_pixmap(matrix=fitz.Matrix(1, 1), alpha=False)
             printed = Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
             assert visible_markers(printed) == MARKERS, (
                 f"Missing edge/corner markers on {label}; page {index + 1}"
             )
-        # Five complete attachment pages; no orphaned caption or inserted blank
+            source_raster = sources.page_image(profile, content, number)
+            with Image.open(BytesIO(source_raster.data)) as original_raster:
+                expected_quadrants, expected_aspect = marker_geometry(original_raster)
+            actual_quadrants, actual_aspect = marker_geometry(printed)
+            assert actual_quadrants == expected_quadrants, (
+                f"Rotation or corner order changed on {label}"
+            )
+            assert abs(actual_aspect / expected_aspect - 1) < 0.08, (
+                f"The printed page image was stretched on {label}"
+            )
+        # Every complete attachment page; no orphaned caption or inserted blank
         # page between one approved page and the next.
         assert captions == list(range(captions[0], captions[0] + len(GEOMETRIES)))
         following_pages = [
@@ -200,3 +251,54 @@ def test_mixed_mbcx_pages_keep_all_corners_and_order_in_final_word_pdf(tmp_path,
             if following in page.get_text()
         ]
         assert following_pages and following_pages[0] > captions[-1]
+        # CI retains the exact validated artifacts and a reproducible layout
+        # receipt, rather than relying on DOCX text extraction or screenshots.
+        if root := os.environ.get("INDEPENDENT_OUTPUT"):
+            destination = Path(root) / "a79-mixed-page-geometry"
+            destination.mkdir(parents=True, exist_ok=True)
+            (destination / "synthetic-source.pdf").write_bytes(original)
+            (destination / "rendered-report.docx").write_bytes(package.docx)
+            (destination / "rendered-report.pdf").write_bytes(package.pdf)
+            receipt = {
+                "test_level": "synthetic generated DOCX and LibreOffice PDF",
+                "source_sha256": source_sha,
+                "docx_sha256": sha256(package.docx).hexdigest(),
+                "pdf_sha256": sha256(package.pdf).hexdigest(),
+                "source_pages": list(GEOMETRIES),
+                "source_page_count": len(GEOMETRIES),
+                "report_pdf_page_count": len(output),
+                "attachment_pdf_pages": [index + 1 for index in captions],
+                "attachment_pdf_sizes_points": [
+                    [round(output[index].rect.width, 2), round(output[index].rect.height, 2)]
+                    for index in captions
+                ],
+                "following_section_first_page": following_pages[0] + 1,
+                "all_corner_quadrants_and_aspect_checks": "passed",
+            }
+            (destination / "geometry-receipt.json").write_text(
+                json.dumps(receipt, indent=2, sort_keys=True) + chr(10), encoding="utf-8"
+            )
+
+
+@pytest.mark.parametrize("restricted_text", [
+    "Invoice amount $500.",
+    "Terms and conditions. Limitation of liability applies.",
+])
+def test_rotated_price_or_legal_sheet_blocks_whole_pdf(tmp_path, monkeypatch, restricted_text):
+    """A financial or legal sheet blocks full-PDF inclusion when rotated."""
+    from app.monthly_report_mbcx_pdf import whole_pdf_pages
+
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "report-store"))
+    profile = synthetic_profiles()[0]
+    with fitz.open() as document:
+        page = document.new_page(width=612, height=792)
+        page.insert_text((50, 70), "Synthetic equipment inspection completed.", fontsize=11)
+        priced = document.new_page(width=595.28, height=841.89)
+        priced.insert_text((50, 70), restricted_text, fontsize=11)
+        priced.set_rotation(90)
+        original = document.tobytes()
+    content, _ = sources.ingest(profile, "synthetic-mixed-with-price.pdf", original)
+    before = sha256(original).hexdigest()
+    with pytest.raises(ValueError, match=r"page 2"):
+        whole_pdf_pages(content, {}, destination="mbcx_report")
+    assert sha256(sources.source_bytes(profile, content.source)).hexdigest() == before

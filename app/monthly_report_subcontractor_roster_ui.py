@@ -56,6 +56,7 @@ def render_subcontractor_roster(draft, spec, block, prefix, field):
             "No approved shared subcontractor roster covers these sites. Report-only contacts remain editable above."
         )
         st.caption("Your report-only edits do not change saved contract contacts. Sharing requires an explicit approval.")
+        st.caption("Saved status dates and contact roles are copied as recorded, not reconfirmed for this report month. Blank dates remain unverified.")
         if not fresh:
             st.warning("A shared subcontractor version changed after this form opened. Reload it before saving or using a roster; your report edits remain intact.")
             if st.button("Reload shared subcontractors", key=key + "_reload"):
@@ -133,6 +134,9 @@ def render_subcontractor_roster(draft, spec, block, prefix, field):
                 st.warning("Shared roster was not changed: " + str(exc))
             else:
                 st.session_state[baseline_key] = saved.revision
-                st.success("Saved a reviewed subcontractor roster for the selected contract scope. This report's contents are unchanged.")
+                if saved.revision == baseline:
+                    st.info("This reviewed roster already matches the saved contract version; no new version was created.")
+                else:
+                    st.success("Saved a reviewed subcontractor roster for the selected contract scope. This report's contents are unchanged.")
                 st.session_state[prefix + "_period_editor_refresh"] = True
     return block
