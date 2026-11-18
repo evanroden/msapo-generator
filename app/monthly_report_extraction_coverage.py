@@ -40,8 +40,8 @@ class CoverageLedger:
     filename: str
     pages: int
     bytes: int | None
-    sections: int
-    tables: int
+    sections: int | None
+    tables: int | None
     images: int
     rows: int
     facts: int
@@ -105,7 +105,7 @@ def _exclusion_reason(draft, item):
     return ""
 
 
-def exclude_from_coverage(draft, item, reason):
+def exclude_from_coverage(draft, item, reason, *, content=None):
     """Record an explicit exclusion; never edit the original or bypass preflight."""
     if item.state != "review":
         raise ValueError("Only reviewable items may receive a reasoned exclusion.")
@@ -119,7 +119,7 @@ def exclude_from_coverage(draft, item, reason):
         raise ValueError("The source changed. Inspect the current item.")
     # Re-evaluate membership and current state against the saved source before
     # issuing a receipt: stale requests must not approve a replaced element.
-    current = source_coverage(draft, source)
+    current = source_coverage(draft, source, content)
     matching = [row for row in current.items
                 if row.item_id == item.item_id and row.digest == item.digest]
     if len(matching) != 1 or matching[0].state != "review":
@@ -160,19 +160,17 @@ def source_coverage(draft, source, content=None, *, byte_count=None):
     candidate_images.update(n for n, _ in pictures if type(n) is int)
     candidate_images.update(source.selected_pages if source.suffix in (".png", ".jpg", ".jpeg",
                            ".webp", ".tif", ".tiff", ".heic", ".heif", ".hif", ".bmp", ".mpo") else ())
-    applied_pages = set()
-    for block in draft.blocks:
-        for reference in block.references:
-            parts = reference.split(":")
-            if len(parts) == 3 and parts[0] == source.id and parts[1].isdigit():
-                if block.source != "Omit" and block.text.strip():
-                    applied_pages.add(int(parts[1]))
-
     items = []
 
     def add(item_id, kind, page, value, *, state="review", reason="", destination=""):
         item = CoverageItem(source.id, source.sha256, source.fingerprint, item_id, kind,
                             page, _digest(value), state, reason, destination)
+        # Native page omission remains a current source-bound human decision.
+        excluded_page = (page > 0
+            and dict(source.client_page_exclusions).get(page) == page_fingerprint(source, page))
+        if excluded_page and item.state != "applied":
+            item = replace(item, state="excluded",
+                           reason="Explicitly omitted original page (current page receipt).")
         if item.state == "review":
             exclusion = _exclusion_reason(draft, item)
             if exclusion:
@@ -268,8 +266,8 @@ def source_coverage(draft, source, content=None, *, byte_count=None):
     # The current reader has no persisted, per-page paid-AI attempt receipt;
     # null is deliberate, rather than interpreting accepted facts as 100% AI coverage.
     return CoverageLedger(source.id, source.fingerprint, source.filename, page_count,
-                          byte_count, len(source.page_texts) if source.suffix == ".docx" else 0,
-                          len(rows), len(candidate_images), sum(len(t.rows) for t in rows),
+                          byte_count, None,
+                          len(rows) if content is not None else None, len(candidate_images), sum(len(t.rows) for t in rows),
                           len(source.facts), None, None, tuple(items))
 
 
