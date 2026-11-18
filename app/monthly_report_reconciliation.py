@@ -119,7 +119,7 @@ class Reconciliation:
         """Only safe current-period entries, with all original source receipts."""
         return tuple((entry.fact.value,
                       tuple(f.provenance for f in (entry.fact, *entry.supporting)))
-                     for entry in self.accepted if entry.fact.section == section)
+                     for entry in self.accepted if entry.fact.section == section and entry.fact.scope == "report")
 
 
 def _event_key(fact: CandidateFact):
@@ -225,5 +225,32 @@ def reconcile_candidates(
             # The supporting claims remain traceable, but nothing publishes.
             continue
         accepted.append(AcceptedFact(first, tuple(supports)))
+    # An exact-looking narrative in two unrelated files has no defensible
+    # shared event identity. Do not publish it twice or silently collapse two
+    # genuine visits. Surface both source choices for explicit identification.
+    by_quote = {}
+    for entry in accepted:
+        if not entry.fact.event_id and not entry.fact.subject_key:
+            key = (entry.fact.contract, entry.fact.facility, entry.fact.section,
+                   entry.fact.source_period, entry.fact.claim,
+                   " ".join(entry.fact.value.casefold().split()))
+            by_quote.setdefault(key, []).append(entry)
+    uncertain = {id(entry) for entries in by_quote.values() if len(entries) > 1
+                 for entry in entries}
+    for entry in accepted:
+        if id(entry) in uncertain:
+            exceptions.append(DeferredFact(entry.fact, "possible_duplicate_needs_identity"))
+    accepted = [entry for entry in accepted if id(entry) not in uncertain]
     return Reconciliation(tuple(accepted), tuple(conflicts), tuple(exceptions),
                           tuple(duplicates), tuple(protected))
+
+
+def preserve_noop_block(block, **changes):
+    """Never revoke human approval merely because an unchanged source was read.
+
+    No text, row, reference or review value changes without new evidence. The
+    previous approved block object remains byte-for-byte identical on replay.
+    """
+    if all(getattr(block, field) == value for field, value in changes.items()):
+        return block
+    return replace(block, **changes, reviewed_fingerprint="")
