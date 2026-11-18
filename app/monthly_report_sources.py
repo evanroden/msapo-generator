@@ -657,8 +657,10 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes, *,
             lock.parent.rmdir()
         except OSError:
             pass
-        parse_manifest.qa_stage("ingest", started, "complete")
+    parse_manifest.qa_stage("ingest", started, "complete")
     return result
+
+
 def _ingest_locked(profile: ReportProfile, filename: str, raw: bytes,
                    digest: str, suffix: str) -> tuple[SourceContent, tuple[tuple[str, bytes], ...]]:
     from app.monthly_report_content_policy import suggested_pages
