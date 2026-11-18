@@ -822,15 +822,19 @@ def reader_request(profile, contents, destination, page_refs=None, table_columns
             if (source.id, number) not in selected:
                 continue
             payload.append({"type": "text", "text": f"SOURCE {source.id} PAGE {number}\n{text}"})
+            if number in source.needs_vision and number not in image_numbers:
+                payload.append({"type": "text", "text": "Visual reading unavailable for this scanned page. Keep it for manual review."})
+                continue
             if number in image_numbers and (destination == "activity_summary" or number in source.needs_vision):
-                image = sources.page_image(profile, content, number)
                 try:
+                    image = sources.page_image(profile, content, number)
                     reserve_bulk_image(profile, source.sha256, image.data)
-                except ValueError:
+                    blocks = image_blocks_for_vision(image.data, "." + image.extension)
+                except (ValueError, OSError):
                     payload.append({"type": "text", "text": "Visual reading unavailable within the image allowance. Use native text only; never include this original page."})
                     continue
                 payload.append({"type": "text", "text": f"VISUALLY CHECKED SOURCE {source.id} PAGE {number}"})
-                payload.extend(image_blocks_for_vision(image.data, "." + image.extension))
+                payload.extend(blocks)
     return payload
 
 
@@ -926,45 +930,203 @@ def reader_update(contents, destination, value, existing=None, *, table_columns=
     return result, pages
 
 
-def reader_batches(profile, contents, destination, *, table_columns=None):
-    """Split internally, preserving the original source identities and page numbers."""
-    chunks, current, size = [], [], 0
+def reader_page_plan(contents, destination, page_refs=None):
+    """Deterministic page inventory: every eligible page is sent or explicitly skipped.
+
+    A single too-large page cannot suppress its readable siblings. A retry
+    supplies only the source/page identities that failed earlier.
+    """
     contents = reader_sources(contents, destination)
+    eligible = tuple((c.source.id, n) for c in contents
+                     for n in range(1, len(c.source.page_texts) + 1))
+    if page_refs is not None:
+        requested = tuple(page_refs)
+        if any(not isinstance(ref, (tuple, list)) or len(ref) != 2
+               or (ref[0], ref[1]) not in eligible for ref in requested):
+            raise ValueError("A requested source page is not eligible for this reading.")
+        selected = {(sid, page) for sid, page in requested}
+    else:
+        selected = set(eligible)
+    chunks, current, skipped, size = [], [], [], 0
     for content in contents:
         for number, text in enumerate(content.source.page_texts, 1):
-            if len(text) > 60000:
-                raise ValueError("One extracted page exceeds the reading budget; its native text remains available below.")
-            if current and (len(current) >= 20 or size + len(text) > 60000):
+            ref = (content.source.id, number)
+            if ref not in selected:
+                continue
+            if len(text) > 60_000:
+                skipped.append(ref)
+                continue
+            if current and (len(current) >= 20 or size + len(text) > 60_000):
                 chunks.append(tuple(current))
                 current, size = [], 0
-            current.append((content.source.id, number))
+            current.append(ref)
             size += len(text)
     if current:
         chunks.append(tuple(current))
+    return tuple(chunks), tuple(skipped), eligible
+
+
+def reader_batches(profile, contents, destination, *, table_columns=None, page_refs=None):
+    """Bounded payloads, preserving source SHA, physical page and request ceilings."""
+    chunks, _, _ = reader_page_plan(contents, destination, page_refs)
     return tuple(
         reader_request(profile, contents, destination, chunk, table_columns)
         if table_columns else reader_request(profile, contents, destination, chunk)
         for chunk in chunks)
 
 
-def read_batches(payloads):
-    """Network worker only: all decoding and budget reservation happened on UI thread."""
-    from app.monthly_report_ai import request_json
-    items, visual_pages, notices = [], [], []
-    for payload in payloads:
-        for block in payload:
-            if block.get("text", "").startswith("Visual reading unavailable"):
-                notices.append("Some original pages need visual reading beyond the current image allowance. Their readable text was used; unchecked images were left out.")
-            marker = re.fullmatch(r"VISUALLY CHECKED SOURCE ([a-f0-9]{64}) PAGE (\d+)", block.get("text", ""))
+_SOURCE_MARKER = re.compile(r"\\ASOURCE ([a-f0-9]{64}) PAGE ([1-9]\\d*)\\n")
+_VISUAL_MARKER = re.compile(r"\\AVISUALLY CHECKED SOURCE ([a-f0-9]{64}) PAGE ([1-9]\\d*)\\Z")
+
+
+def _payload_pages(payload):
+    """Do not treat SOURCE-looking text *inside* native evidence as a request."""
+    pages, checked, unavailable = [], [], []
+    last = None
+    for block in payload:
+        if not isinstance(block, dict) or not isinstance(block.get("text", ""), str):
+            continue
+        text = block["text"]
+        match = _SOURCE_MARKER.match(text)
+        if match:
+            last = (match[1], int(match[2]))
+            pages.append(last)
+        else:
+            marker = _VISUAL_MARKER.fullmatch(text)
             if marker:
-                visual_pages.append([marker[1], int(marker[2])])
-        result = request_json(payload)
-        if not isinstance(result.get("items"), list):
-            raise ValueError("A document reading returned invalid section details.")
-        items.extend(result["items"])
-        if len(items) > 500:
-            raise ValueError("The source contains more than 500 extracted items; native tables remain available.")
-    return {"items": items, "visual_pages": visual_pages, "notices": list(dict.fromkeys(notices))}
+                checked.append((marker[1], int(marker[2])))
+            elif text.startswith("Visual reading unavailable") and last is not None:
+                unavailable.append(last)
+    return tuple(dict.fromkeys(pages)), tuple(dict.fromkeys(checked)), tuple(dict.fromkeys(unavailable))
+
+
+def read_batches(payloads):
+    """Network-only worker: continue after a failed batch, never silently drop pages.
+
+    Each result carries a coverage receipt for its exact physical pages.
+    Grounding to native source text happens independently for each receipt on
+    the UI thread in reader_coverage_update. No filesystem or UI work here.
+    """
+    from app.monthly_report_ai import request_json
+
+    items, visual_pages, notices, coverage = [], [], [], []
+    seen_items = set()
+    for payload in payloads:
+        refs, checked, unavailable = _payload_pages(payload)
+        blocked = set(unavailable)
+        if unavailable:
+            notices.append("Some original pages could not receive visual reading. They remain available for manual review.")
+        receipt = {"pages": [list(ref) for ref in refs],
+                   "skipped": [list(ref) for ref in unavailable],
+                   "status": "failed", "items": [], "visual_pages": [],
+                   "reason": "The reader did not complete or validate this chunk."}
+        if refs and set(refs).issubset(blocked):
+            # All pages need unavailable vision: preserve a skip receipt, do not
+            # spend a paid model request on evidence that cannot be read.
+            receipt["status"], receipt["reason"] = "processed", ""
+            coverage.append(receipt)
+            continue
+        try:
+            if not refs or len(refs) > 20:
+                raise ValueError("Invalid chunk inventory.")
+            value = request_json(payload)
+            if not isinstance(value, dict) or not isinstance(value.get("items"), list) or len(value["items"]) > 500:
+                raise ValueError("Invalid reader response.")
+            unique = []
+            local_seen = set()
+            for item in value["items"]:
+                if (not isinstance(item, dict)
+                        or not isinstance(item.get("source"), str)
+                        or type(item.get("page")) is not int
+                        or (item["source"], item["page"]) not in refs
+                        or not isinstance(item.get("text", ""), str)
+                        or not isinstance(item.get("row", []), list)
+                        or any(not isinstance(cell, str) for cell in item.get("row", []))):
+                    raise ValueError("Reader cited a page outside this chunk.")
+                identity = (item["source"], item["page"], item.get("text", ""),
+                            tuple(item.get("row", [])), item.get("include_page") is True)
+                if identity not in local_seen and (item["source"], item["page"]) not in blocked:
+                    unique.append(item)
+                    local_seen.add(identity)
+            novel = [item for item in unique if (
+                item["source"], item["page"], item.get("text", ""),
+                tuple(item.get("row", [])), item.get("include_page") is True
+            ) not in seen_items]
+            if len(items) + len(novel) > 500:
+                raise ValueError("Combined reader response exceeded 500 items.")
+            receipt["status"] = "processed"
+            receipt["reason"] = ""
+            receipt["items"] = novel
+            receipt["visual_pages"] = [list(ref) for ref in checked if ref in refs and ref not in blocked]
+            for item in novel:
+                seen_items.add((item["source"], item["page"], item.get("text", ""),
+                                tuple(item.get("row", [])), item.get("include_page") is True))
+            items.extend(novel)
+            visual_pages.extend(receipt["visual_pages"])
+        except Exception:
+            # Per-chunk failure is a receipt, not permission to discard siblings.
+            # Do not leak provider response text or private evidence in the UI.
+            pass
+        coverage.append(receipt)
+    return {"items": items, "visual_pages": visual_pages,
+            "notices": list(dict.fromkeys(notices)), "coverage": coverage}
+
+
+def reader_coverage_update(contents, destination, value, existing=None, *, table_columns=None):
+    """Ground each completed chunk independently, retaining safe sibling chunks.
+
+    A failed model response or fabricated claim cannot erase previously accepted
+    wording or cause another source/page to be marked processed.
+    """
+    if not isinstance(value, dict) or not isinstance(value.get("coverage"), list):
+        raise ValueError("The document reader returned invalid coverage receipts.")
+    current = existing or ResolvedBlock(destination, "This month")
+    by_id = {c.source.id: c.source for c in contents}
+    processed, failed, skipped, page_sets = [], [], [], {}
+    for receipt in value["coverage"]:
+        if not isinstance(receipt, dict) or not isinstance(receipt.get("pages"), list):
+            raise ValueError("The document reader returned invalid coverage receipts.")
+        refs = tuple((p[0], p[1]) for p in receipt["pages"]
+                     if isinstance(p, (tuple, list)) and len(p) == 2
+                     and isinstance(p[0], str) and type(p[1]) is int)
+        if (len(refs) != len(receipt["pages"]) or not refs
+                or any(sid not in by_id or not 1 <= page <= len(by_id[sid].page_texts)
+                       for sid, page in refs)):
+            raise ValueError("The reader returned an unknown source/page receipt.")
+        excluded = tuple((p[0], p[1]) for p in receipt.get("skipped", ())
+                         if isinstance(p, (tuple, list)) and len(p) == 2
+                         and (p[0], p[1]) in refs)
+        if receipt.get("status") != "processed":
+            failed.extend(ref for ref in refs if ref not in excluded)
+            skipped.extend(excluded)
+            continue
+        data = {"items": receipt.get("items"), "visual_pages": receipt.get("visual_pages", [])}
+        if (not isinstance(data["items"], list)
+                or any(not isinstance(item, dict)
+                       or (item.get("source"), item.get("page")) not in refs
+                       for item in data["items"])
+                or any((not isinstance(p, (tuple, list)) or len(p) != 2
+                        or (p[0], p[1]) not in refs) for p in data["visual_pages"])):
+            failed.extend(ref for ref in refs if ref not in excluded)
+            skipped.extend(excluded)
+            continue
+        try:
+            if data["items"]:
+                updated, pages = reader_update(
+                    contents, destination, data, current, table_columns=table_columns)
+            else:
+                updated, pages = current, {}
+        except ValueError:
+            failed.extend(ref for ref in refs if ref not in excluded)
+            skipped.extend(excluded)
+            continue
+        current = updated
+        for sid, numbers in pages.items():
+            page_sets.setdefault(sid, set()).update(numbers)
+        processed.extend(ref for ref in refs if ref not in excluded)
+        skipped.extend(excluded)
+    return (current, page_sets, tuple(dict.fromkeys(processed)),
+            tuple(dict.fromkeys(failed)), tuple(dict.fromkeys(skipped)))
 
 
 MAX_BULK_SOURCE_IMAGES = 200
