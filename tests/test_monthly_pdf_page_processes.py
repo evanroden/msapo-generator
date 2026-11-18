@@ -63,6 +63,7 @@ def test_realistic_resource_gates_and_visible_preview_are_serial(monkeypatch):
                         lambda: (3 * 1024 ** 3, 4 * 1024 ** 3, 4))
     assert parallel.eligible(96)
     assert not parallel.eligible(24)
+    assert not parallel.eligible(48)
     assert not parallel.eligible(2)  # PreviewStore remains exactly two visible pages.
     monkeypatch.setattr(parallel, "resource_limits",
                         lambda: (320 * 1024 ** 2, 512 * 1024 ** 2, 0.5))
@@ -110,9 +111,9 @@ def profile(monkeypatch, tmp_path):
 
 def test_large_approved_pdf_batch_keeps_captions_order_and_assets(profile, monkeypatch):
     # The exact same reviewed original is used by both serial and process runs.
-    raw = synthetic_pdf(48, marks=2)
+    raw = synthetic_pdf(96, marks=80)
     content, _ = sources.ingest(profile, "synthetic.pdf", raw)
-    pages = tuple(range(1, 49))
+    pages = tuple(range(1, 97))
     source = replace(content.source, selected_pages=pages,
                      captions=((2, "Reviewed rotated page"),),
                      client_page_reviews=tuple(
@@ -122,7 +123,7 @@ def test_large_approved_pdf_batch_keeps_captions_order_and_assets(profile, monke
     serial = sources.prepare_pages(profile, (content,), ((source.id, "vendor_reports"),))
     prepared = sources._path(profile, source.sha256, ".pdf").parent / "prepared" / source.sha256
     shutil.rmtree(prepared)  # Only disposable derivatives, not the immutable original.
-    monkeypatch.setattr(parallel, "eligible", lambda count: count >= 48)
+    monkeypatch.setattr(parallel, "eligible", lambda count: count >= 64)
     used = []
     original = parallel.parallel_pages
     def observed(*args, **kwargs):
@@ -136,7 +137,7 @@ def test_large_approved_pdf_batch_keeps_captions_order_and_assets(profile, monke
                      (block.slot, block.asset_hashes, block.asset_captions, block.references)
                      for block in concurrent)
     assert serial[0].asset_captions[1] == "Reviewed rotated page"
-    assert len(serial[0].asset_hashes) == 48
+    assert len(serial[0].asset_hashes) == 96
     assert all(library.read_asset(profile.contract, profile.key, ref)
                for ref in concurrent[0].asset_hashes)
     # No process changed original bytes or source identity.
