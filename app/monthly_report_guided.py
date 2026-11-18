@@ -1920,6 +1920,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             discard_current_session_pdf_preview(prefix, _rich_text_scope(prefix))
             st.session_state.pop(prefix + "_package", None)
             package = None
+        from app.monthly_report_output_ui import outdated_output_status
+        outdated_output_status(prefix, _rich_text_scope(prefix), draft)
         from app.monthly_report_model import included_sections
         monthly_entry_sections = monthly_entries_by_section(draft)
         # Lack of a new update is not an error or a completion score. Only
@@ -2160,12 +2162,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             st.caption(sizes)
             if max(len(package.docx), len(package.pdf or b"")) > 15 * 1024 * 1024:
                 st.warning("The finished report exceeds the 15 MB target. You can reduce selected attachment pages or use denser photo layouts, then generate it again.")
-            from app.monthly_report_output_ui import output_download_labels
-            word_label, pdf_label = output_download_labels(package, draft)
-            st.download_button(word_label, package.docx, file_name=package.docx_name,
+            st.download_button("Download DOCX", package.docx, file_name=package.docx_name,
                                key=prefix + "_docx", on_click="ignore")
             if package.pdf:
-                st.download_button(pdf_label, package.pdf, file_name=package.pdf_name,
+                st.download_button("Download PDF", package.pdf, file_name=package.pdf_name,
                                    mime="application/pdf", key=prefix + "_pdf", on_click="ignore")
                 from app.monthly_report_output_ui import render_current_session_pdf_preview
                 render_current_session_pdf_preview(package, draft, prefix,
