@@ -305,9 +305,19 @@ def test_six_source_review_to_persisted_real_word_and_pdf(tmp_path, monkeypatch)
                           [cell.text for table in doc.tables
                            for row in table.rows for cell in row.cells])
     with pymupdf.open(stream=report.pdf, filetype="pdf") as pdf_result:
-        pdf_text = "\n".join(page.get_text() for page in pdf_result)
-        assert len(pdf_result) >= 1
+        pdf_page_count = len(pdf_result)
+        pdf_page_locations = {}
+        text_pages = []
+        for number, page in enumerate(pdf_result, 1):
+            extracted_page = page.get_text()
+            text_pages.append(extracted_page)
+            for canary in CANARY.findall(extracted_page):
+                pdf_page_locations.setdefault(canary, []).append(number)
+        pdf_text = "\n".join(text_pages)
+        assert pdf_page_count >= 1
     expected_ids = {x["id"] for x in truth["include"]}
+    assert set(pdf_page_locations) == expected_ids
+    assert all(len(pages) == 1 for pages in pdf_page_locations.values())
     for name, text in (("DOCX", word_text), ("PDF", pdf_text)):
         actual = Counter(CANARY.findall(text))
         assert set(actual) == expected_ids, (name, actual)
@@ -340,7 +350,8 @@ def test_six_source_review_to_persisted_real_word_and_pdf(tmp_path, monkeypatch)
             "report_identity": truth["report_scope"],
             "docx_sha256": docx_sha,
             "pdf_sha256": pdf_sha,
-            "pdf_pages": len(pymupdf.open(stream=report.pdf, filetype="pdf")),
+            "pdf_pages": pdf_page_count,
+            "accepted_output_page_numbers": pdf_page_locations,
             "accepted_ids": sorted(expected_ids),
             "withheld_ids": sorted(item["id"] for item in truth["withhold"]),
             "source_identities": {
