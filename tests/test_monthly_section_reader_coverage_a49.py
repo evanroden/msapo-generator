@@ -168,3 +168,32 @@ def test_unavailable_scanned_only_page_is_skipped_without_model_request(monkeypa
         (content,), "activity_summary", value)
     assert not processed and not failed and skipped == ((SOURCE_ID, 1),)
     assert not block.references and not block.text
+
+
+def test_cached_partial_coverage_survives_retry_and_reload(monkeypatch):
+    content = source(24)
+    fail = {21}
+    def model(payload):
+        if refs(payload)[0][1] in fail:
+            raise ValueError("synthetic interrupted chunk")
+        return model_payload(payload)
+    monkeypatch.setattr(ai, "request_json", model)
+    first = reader.read_batches(reader.reader_batches(None, (content,), "activity_summary"))
+    _, _, processed, failed, _ = reader.reader_coverage_update(
+        (content,), "activity_summary", first)
+    assert len(processed) == 20 and len(failed) == 4
+    fail.clear()
+    second = reader.read_batches(reader.reader_batches(None, (content,),
+                                                        "activity_summary", page_refs=failed))
+    cache = reader.merge_reader_coverage(first, second)
+    assert len(cache["coverage"]) == 24
+    assert len(cache["items"]) == 24
+    block, _, done, failed_again, skipped = reader.reader_coverage_update(
+        (content,), "activity_summary", cache)
+    assert len(done) == 24 and not failed_again and not skipped
+    # Retrying stale failures must never erase already completed cache receipts.
+    again = reader.merge_reader_coverage(cache, first)
+    assert len(again["items"]) == 24
+    assert len(reader.reader_coverage_update(
+        (content,), "activity_summary", again)[2]) == 24
+    assert len(block.references) == 24
