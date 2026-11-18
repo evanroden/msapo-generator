@@ -7,7 +7,7 @@ _ACTIVE = ContextVar("monthly_latency_capture", default=None)
 _NAMES = frozenset({
     "work_queue", "office_thread_queue", "office_process_queue",
     "office_execution", "native_assembly", "source_ingest",
-    "source_thumbnail", "source_mapping", "first_raster",
+    "source_thumbnail", "source_mapping", "source_extraction", "first_raster",
     "template_import", "ocr_ai_prep", "docx_export", "pdf_export",
     "save_reload", "browser_first_paint", "browser_rerun",
 })
