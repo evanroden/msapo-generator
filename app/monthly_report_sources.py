@@ -950,15 +950,15 @@ MAX_PAGE_READ_CACHE_BYTES = 64 * 1024 * 1024
 
 @contextmanager
 def _page_read_scope():
-    scope = {"raw": OrderedDict(), "bytes": 0, "reused": set(),
+    scope = {"raw": OrderedDict(), "bytes": 0,
              "verified": {}, "docx": None}
     token = _PAGE_READS.set(scope)
     try:
         yield
-        # A replacement of an original while pages were being prepared must
-        # never return a seemingly complete set of source references.
-        for key in scope["reused"]:
-            profile, source = scope["verified"][key]
+        # Even an intact derived raster is never authority for a missing or
+        # replaced original. Reverify each *used* source once on publication.
+        # One exit read per source replaces N independent page-read hashes.
+        for profile, source in scope["verified"].values():
             source_bytes(profile, source)
     finally:
         _PAGE_READS.reset(token)
@@ -970,7 +970,6 @@ def _page_verified_bytes(profile, source):
         return source_bytes(profile, source)
     key = (profile.contract, profile.key, source.sha256, source.suffix)
     if key in scope["raw"]:
-        scope["reused"].add(key)
         scope["raw"].move_to_end(key)
         return scope["raw"][key]
     raw = source_bytes(profile, source)
@@ -986,6 +985,12 @@ def _page_verified_bytes(profile, source):
 
 def page_image(profile: ReportProfile, content: SourceContent, number: int, *, preview: bool = False):
     source = content.source
+    active = _PAGE_READS.get()
+    if active is not None:
+        # Cached assets also require an authenticated original at the end of
+        # the current prepare_pages operation, even when no decode is needed.
+        key = (profile.contract, profile.key, source.sha256, source.suffix)
+        active["verified"][key] = (profile, source)
     if number < 1 or number > len(source.page_texts):
         raise ValueError("Source page does not exist.")
     directory = _path(profile, source.sha256, source.suffix).parent / "prepared" / source.sha256
@@ -1043,7 +1048,7 @@ def page_image(profile: ReportProfile, content: SourceContent, number: int, *, p
         prior = active["docx"] if active is not None else None
         if prior is not None and prior[0] == key:
             inspected = prior[1]
-            active["reused"].add(key)
+            pass  # Explicit final verification handles cached DOCX inventory.
         else:
             inspected = inspect_docx(path)
             if active is not None:
