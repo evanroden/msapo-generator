@@ -181,13 +181,17 @@ In particular, do not infer that Azure is slower or faster from these facts.
    separately. If any of these disagree, mark identity unverified; don't
    silently substitute main or a registry's newest tag.
 2. In an **isolated** container built from a pinned SHA, run the existing
-   '--part sources' and '--part native' commands in separate fresh processes
+   '--part sources' and '--part native' commands via
+   'scripts/qa_monthly_host_deterministic.py' in separate fresh processes
    at identical '--memory=512m --memory-swap=512m --cpus=0.5' limits with
    'RESOURCE_REQUIRE_512_MB=1' and 'RESOURCE_REQUIRE_HALF_CPU=1'.
    Capture both JSON files, the exact image/SHA and nonsecret platform
    resource metadata. Repeat using the same pinned image and limits on the
    other host *only if permitted*. The application/renderer image, dependency
-   versions and generated input hashes must match. For naturally different
+   versions and generated input hashes must match. The A89 runner preserves
+   the existing benchmark work path but replaces synthetic noise randomness,
+   DOCX ZIP timestamps and PDF trailer IDs with deterministic equivalents
+   inside its disposable process only. For naturally different
    1-vCPU/2-GiB or other host limits, run a second separate equal-limit
    control before interpreting the observed host configuration.
 3. Bundle each host's **synthetic-only** receipts as JSON. The two names below
