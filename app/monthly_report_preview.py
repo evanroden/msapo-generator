@@ -72,23 +72,26 @@ _REVIEW_CODES = {
 }
 
 
-def preview_report(draft, asset_loader=None, *, source_view=None):
+def preview_report(draft, asset_loader=None, *, source_view=None, ticket_only=False):
+    """Full review preview; ticket_only is exclusively for private raster-on-read stores."""
     with monthly_render_jobs.work_slot(preview=True, review=True, wait_seconds=10):
-        return _preview_report(draft, asset_loader, source_view=source_view)
+        return _preview_report(draft, asset_loader, source_view=source_view,
+                               ticket_only=ticket_only)
 
 
-def _preview_report(draft, asset_loader=None, *, source_view=None):
+def _preview_report(draft, asset_loader=None, *, source_view=None, ticket_only=False):
     from app.monthly_report_source_view_runtime import render_operation, preview_fingerprint
     with render_operation(draft, source_view) as operation:
         fingerprint = preview_fingerprint(draft)
         result = _preview_verified_report(draft, asset_loader, source_view=operation.view,
-                                          fingerprint=fingerprint)
+                                          fingerprint=fingerprint, ticket_only=ticket_only)
         if preview_fingerprint(draft) != fingerprint:
             raise ValueError('The source-view preview evidence changed during conversion; no output was published.')
         return result
 
 
-def _preview_verified_report(draft, asset_loader=None, *, source_view=None, fingerprint):
+def _preview_verified_report(draft, asset_loader=None, *, source_view=None, fingerprint,
+                             ticket_only=False):
     blockers = [
         c.message
         for c in preflight(draft)
@@ -135,6 +138,20 @@ def _preview_verified_report(draft, asset_loader=None, *, source_view=None, fing
                 raise ValueError(
                     "Preview exceeds the 80 MB conversion bound. Preview fewer sections or reduce image sizes."
                 )
+            # Review uses a private PreviewStore ticket, which sends only
+            # JPEG page rasters to the browser. Unlike the legacy downloadable
+            # PDF, that server-only ticket need not flatten *every* page first.
+            # Preserve the original all-page raster path for large inputs and
+            # every caller that can download a draft PDF.
+            if ticket_only:
+                from app.monthly_report_preview_ticket import private_ticket_pdf
+                with fitz.open(actual) as native:
+                    fast = private_ticket_pdf(
+                        native, source_bytes=actual.stat().st_size,
+                        max_pages=MAX_PREVIEW_PAGES, max_bytes=MAX_PREVIEW_BYTES,
+                    )
+                    if fast is not None:
+                        return ReportPreview(fast, len(native), fingerprint, draft.period.label)
             output = fitz.open()
             try:
                 image_bytes = 0
