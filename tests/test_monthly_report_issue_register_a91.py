@@ -220,3 +220,16 @@ def test_other_month_and_profile_cannot_merge_issue_register_cards():
     other_profile = replace(new_source.profile, key=new_source.profile.key + "-other")
     with pytest.raises(ValueError, match="same confirmed profile and month"):
         merge_drafts(saved, replace(new_source, profile=other_profile))
+
+def test_distinct_same_page_tables_are_not_dropped_merely_for_equal_cell_values():
+    draft = fixture(rows=(ROWS[0],))
+    original = draft.blocks[0].extra_tables[0]
+    alternative = ReportTable(
+        ("Facility", "Finding", "Status", "Owner", "Priority", "Date Reported",
+         "Due Date", "External", "External", "Quoted Price"),
+        (ROWS[0],), original.reference)
+    reviewed = canonical_issues(replace(draft, blocks=(
+        replace(draft.blocks[0], extra_tables=(original, alternative)),)))
+    assert len(reviewed.follow_ups) == 2
+    assert reviewed.follow_ups[0].key != reviewed.follow_ups[1].key
+    assert reviewed.follow_ups[0].references == reviewed.follow_ups[1].references
