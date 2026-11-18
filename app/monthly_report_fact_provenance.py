@@ -60,8 +60,12 @@ def verify_claim_qualifiers(text: str, quote: str) -> None:
         raise ValueError("A suggested fact changed a source date qualifier; no facts were accepted.")
     quote_units = {(n.replace(",", ""), u.casefold()) for n, u in _UNIT_RE.findall(quote)}
     text_units = {(n.replace(",", ""), u.casefold()) for n, u in _UNIT_RE.findall(text)}
-    if text_units - quote_units:
-        raise ValueError("A suggested fact changed a source engineering unit; no facts were accepted.")
+    for _, unit in text_units - quote_units:
+        # Preserve an already cited unit when the source expressed its number
+        # in words ("five point two psi" -> "5.2psi"). Quantity equivalence
+        # itself is separately enforced by normalize_facts.numbers().
+        if not re.search(r"(?<![a-z])" + re.escape(unit) + r"(?![a-z])", quote, re.I):
+            raise ValueError("A suggested fact changed a source engineering unit; no facts were accepted.")
     for amount, _unit in quote_units:
         if re.search(r"(?<![\d.])" + re.escape(amount) + r"(?![\d.])", text) and not any(
             n == amount for n, _ in text_units
