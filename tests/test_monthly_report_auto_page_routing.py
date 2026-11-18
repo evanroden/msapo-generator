@@ -15,7 +15,7 @@ from app.monthly_report_sources import SourceContent, prepare_pages, source_refe
 def content(*texts, classification="Reference only", facility=None, selected=None, reviewed=True):
     profile = synthetic_profiles()[0]
     site = profile.facilities[0].title if facility is None else facility
-    digest = sha256("\\n".join(texts).encode()).hexdigest()
+    digest = sha256("\n".join(texts).encode()).hexdigest()
     source = ReportSource(digest, "synthetic-mixed.pdf", digest, ".pdf",
         classification=classification, facility=site, page_texts=tuple(texts),
         selected_pages=tuple(range(1, len(texts) + 1)) if selected is None else tuple(selected))
@@ -26,16 +26,16 @@ def content(*texts, classification="Reference only", facility=None, selected=Non
 
 
 @pytest.mark.parametrize("heading,section,destination", [
-    ("SERVICE REPORT\\nPump inspected.", "activity", "improvements"),
-    ("WATER TREATMENT REPORT\\nConductivity 250 uS/cm.", "water", "water_reports"),
-    ("MBCx REPORT\\nAHU performance verified.", "mbcx", "mbcx_report"),
-    ("UTILITY ANALYSIS\\nEnergy use 120 kWh.", "utility", "utility_analysis"),
-    ("PROPOSAL\\nReplacement pending review.", "proposals", None),
-    ("CAPITAL RENEWAL\\nEquipment condition documented.", "capital", None),
-    ("TRAINING RECORD\\nSession completed.", "training", None),
-    ("WORK ORDER SUMMARY\\nPM closed.", "work_orders", None),
-    ("PROGRESS PHOTO\\nReplacement documented.", "photos", "improvements"),
-    ("ORGANIZATIONAL CHART\\nReporting lines.", "standing", None),
+    ("SERVICE REPORT\nPump inspected.", "activity", "improvements"),
+    ("WATER TREATMENT REPORT\nConductivity 250 uS/cm.", "water", "water_reports"),
+    ("MBCx REPORT\nAHU performance verified.", "mbcx", "mbcx_report"),
+    ("UTILITY ANALYSIS\nEnergy use 120 kWh.", "utility", "utility_analysis"),
+    ("PROPOSAL\nReplacement pending review.", "proposals", None),
+    ("CAPITAL RENEWAL\nEquipment condition documented.", "capital", None),
+    ("TRAINING RECORD\nSession completed.", "training", None),
+    ("WORK ORDER SUMMARY\nPM closed.", "work_orders", None),
+    ("PROGRESS PHOTO\nReplacement documented.", "photos", "improvements"),
+    ("ORGANIZATIONAL CHART\nReporting lines.", "standing", None),
 ])
 def test_ten_section_matrix(heading, section, destination):
     decision, = route_pages((content(heading),), synthetic_profiles()[0])
@@ -46,7 +46,7 @@ def test_ten_section_matrix(heading, section, destination):
 
 def test_priced_adjacent_page_and_review_or_scope_fail_closed():
     profile = synthetic_profiles()[0]
-    src = content("QUOTE TOTAL: $7,500", "SERVICE REPORT\\nVerified chiller test.")
+    src = content("QUOTE TOTAL: $7,500", "SERVICE REPORT\nVerified chiller test.")
     first, second = route_pages((src,), profile)
     assert (first.page, first.action, first.destination) == (1, "blocked", None)
     assert (second.page, second.action, second.destination) == (2, "ready", "improvements")
@@ -60,7 +60,7 @@ def test_priced_adjacent_page_and_review_or_scope_fail_closed():
 
 def test_duplicate_import_existing_owner_manual_omission_and_override():
     profile = synthetic_profiles()[0]
-    src = content("SERVICE REPORT\\nVisited.", "WATER TREATMENT REPORT\\nReadings.")
+    src = content("SERVICE REPORT\nVisited.", "WATER TREATMENT REPORT\nReadings.")
     duplicate = route_pages((src, src), profile)
     assert len(duplicate) == 2
     owned = {(src.source.id, 1): {"improvements"}}
@@ -110,6 +110,6 @@ def test_missing_and_malformed_inputs_do_not_invent_routes():
     profile = synthetic_profiles()[0]
     assert route_pages((), profile) == ()
     assert route_pages((content(),), profile) == ()
-    src = content("SERVICE REPORT\\nInspected.", selected=(2,))
+    src = content("SERVICE REPORT\nInspected.", selected=(2,))
     with pytest.raises(ValueError, match="Selected source page"):
         route_pages((src,), profile)
