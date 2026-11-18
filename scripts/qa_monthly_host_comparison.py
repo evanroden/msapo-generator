@@ -21,8 +21,8 @@ WORKLOADS = (
 def _number(value, field, *, positive=False):
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         raise ValueError(f"{field}: finite number required")
-    if value <= 0 if positive else value < 0:
-        raise ValueError(f"{field}: nonnegative number required")
+    if (positive and value <= 0) or (not positive and value < 0):
+        raise ValueError(f"{field}: positive/nonnegative number required")
     return value
 
 
@@ -59,13 +59,20 @@ def _phase(receipt, name, commit):
         raise ValueError(f"{name}: measured and declared build differ")
     cpu = _number(env.get("cpu_quota"), f"{name} CPU quota", positive=True)
     memory = _number(env.get("memory_limit_bytes"), f"{name} memory limit", positive=True)
-    if receipt.get("memory_events_delta", {}).get("oom", 0) != 0 or receipt.get("memory_events_delta", {}).get("oom_kill", 0) != 0:
+    events = receipt.get("memory_events_delta")
+    if not isinstance(events, dict) or not all(key in events for key in ("oom", "oom_kill")):
+        raise ValueError(f"{name}: OOM evidence missing")
+    if any(_number(events[key], f"{name} {key}") != 0 for key in ("oom", "oom_kill")):
         raise ValueError(f"{name}: OOM-tainted measurements")
+    metrics = {}
+    for output, input_key in (("peak_rss_bytes", "peak_process_rss_bytes"),
+                              ("cgroup_peak_bytes", "cgroup_peak_bytes"),
+                              ("process_cpu_seconds", "python_process_cpu_seconds"),
+                              ("child_office_cpu_seconds", "child_office_cpu_seconds")):
+        raw = receipt.get(input_key)
+        metrics[output] = None if raw is None else _number(raw, f"{name} {output}")
     return {"cpu": cpu, "memory": memory, "python": env.get("python"),
-            "dependencies": env.get("dependencies"), "peak_rss_bytes": receipt.get("peak_process_rss_bytes"),
-            "cgroup_peak_bytes": receipt.get("cgroup_peak_bytes"),
-            "process_cpu_seconds": receipt.get("python_process_cpu_seconds"),
-            "child_office_cpu_seconds": receipt.get("child_office_cpu_seconds")}
+            "dependencies": env.get("dependencies"), **metrics}
 
 
 def _bundle(bundle, label):
@@ -166,7 +173,14 @@ def compare(render, azure):
                               "limit_cpu": data["source_env"]["cpu"],
                               "limit_memory_bytes": data["source_env"]["memory"],
                               "resource_verification": data["service_resource_verified"],
-                              "peak_process_rss_bytes": data["source_env"]["peak_rss_bytes"],
+                              "source_peak_rss_bytes": data["source_env"]["peak_rss_bytes"],
+                              "native_peak_rss_bytes": data["native_env"]["peak_rss_bytes"],
+                              "source_cgroup_peak_bytes": data["source_env"]["cgroup_peak_bytes"],
+                              "native_cgroup_peak_bytes": data["native_env"]["cgroup_peak_bytes"],
+                              "source_cpu_seconds": data["source_env"]["process_cpu_seconds"],
+                              "native_cpu_seconds": data["native_env"]["process_cpu_seconds"],
+                              "native_office_cpu_seconds": data["native_env"]["child_office_cpu_seconds"],
+                              "queue_seconds": None,
                               "source": data["sources"], "native": data["native"]}
                       for name, data in (("render", left), ("azure", right))},
             "attribution": "Measurements alone do not establish a host-caused application regression; "
