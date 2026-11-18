@@ -195,3 +195,90 @@ def test_app_has_one_complete_document_action_without_page_checkboxes(
     assert len(app.session_state["blocks"]["mbcx_report"].asset_hashes) == count
     app.run()
     assert len(app.session_state["blocks"]["mbcx_report"].asset_hashes) == count
+
+
+from tests.conftest import requires_libreoffice
+
+
+@requires_libreoffice
+@pytest.mark.parametrize("count", [12, 40])
+def test_actual_pdf_export_preserves_first_middle_last_and_page_aspect(
+    monkeypatch, tmp_path, count
+):
+    """LibreOffice output check, separate from source and AppTest controls."""
+    import hashlib
+    import json
+    import os
+    from pathlib import Path
+
+    from app import pdf_converter
+    from app.monthly_report_render_compat import rendering_docx
+
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "library"))
+    profile = synthetic_profiles()[0]
+    raw = pdf_bytes(count)
+    content, _ = sources.ingest(profile, f"synthetic-mbcx-{count}.pdf", raw)
+    revised, additions = prepare_whole_pdf(profile, content, {})
+    source = replace(revised.source, service_date="2026-09-12",
+                     facility=profile.facilities[0].key)
+    block = approve_all_assets(refresh_asset_source_context(
+        additions["mbcx_report"], (source,)))
+    draft = ReportDraft(
+        profile, ReportPeriod(2026, 9), "Synthetic Editor",
+        (SectionSpec("mbcx", "4", "MBCx Reports",
+                     (BlockSpec("mbcx_report", "pdf_pages"),)),),
+        (block,), sources=(source,),
+    )
+    library.save_snapshot(draft, expected_revision=0)
+    reopened = library.load_snapshot(profile.contract, profile.key, draft.period).draft
+    assert reopened == draft
+    docx = assemble_docx(
+        reopened, acknowledged_fingerprint=reopened.fingerprint,
+        asset_loader=lambda ref: library.read_asset(profile.contract, profile.key, ref),
+    )
+    word = tmp_path / f"mbcx-{count}.docx"
+    word.write_bytes(rendering_docx(docx))
+    monkeypatch.setattr(pdf_converter, "OUTPUT_DIR", tmp_path)
+    converted = pdf_converter.convert_to_pdf(word)
+    pdf_bytes_out = Path(converted).read_bytes()
+
+    positions = []
+    with pymupdf.open(stream=raw, filetype="pdf") as original, pymupdf.open(
+        stream=pdf_bytes_out, filetype="pdf"
+    ) as result:
+        texts = [page.get_text() for page in result]
+        for number in (1, count // 2, count):
+            caption = f"synthetic-mbcx-{count}.pdf · page/item {number}"
+            occurrences = [i for i, text in enumerate(texts) if caption in text]
+            assert len(occurrences) == 1, (caption, occurrences)
+            position = occurrences[0]
+            positions.append(position)
+            image_rects = [
+                rect
+                for record in result[position].get_images(full=True)
+                for rect in result[position].get_image_rects(record[0])
+            ]
+            assert image_rects, f"PDF export lost the image on source page {number}"
+            largest = max(image_rects, key=lambda rect: rect.width * rect.height)
+            expected = original[number - 1].rect
+            assert largest.width / largest.height == pytest.approx(
+                expected.width / expected.height, rel=.025
+            ), f"PDF export changed source page {number}'s orientation"
+        assert positions == sorted(set(positions))
+    assert sources.source_bytes(profile, source) == raw
+
+    # The existing independent-synthetic CI artifact collects actual outputs,
+    # including hashes rather than a guessed DOCX/PDF fidelity result.
+    if target := os.environ.get("INDEPENDENT_OUTPUT"):
+        dest = Path(target) / "a71-mbcx" / str(count)
+        dest.mkdir(parents=True, exist_ok=True)
+        (dest / "source.pdf").write_bytes(raw)
+        (dest / "report.docx").write_bytes(docx)
+        (dest / "report.pdf").write_bytes(pdf_bytes_out)
+        (dest / "manifest.json").write_text(json.dumps({
+            "synthetic_only": True, "pages": count, "reopened": reopened == draft,
+            "source_sha256": hashlib.sha256(raw).hexdigest(),
+            "docx_sha256": hashlib.sha256(docx).hexdigest(),
+            "pdf_sha256": hashlib.sha256(pdf_bytes_out).hexdigest(),
+            "sample_page_positions": positions,
+        }, indent=2))
