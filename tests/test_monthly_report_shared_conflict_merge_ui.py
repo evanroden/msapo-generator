@@ -14,7 +14,8 @@ from test_monthly_report_ui import monthly
 
 def _state(app, suffix):
     return next(value for key, value in app.session_state.filtered_state.items()
-                if key.startswith("report_guided_") and key.endswith(suffix))
+                if key.startswith("report_guided_") and key.endswith(suffix)
+                and (suffix != "_draft" or not key.endswith("_base_draft")))
 
 
 def _block(draft, key):
@@ -24,6 +25,16 @@ def _block(draft, key):
 def _with_text(draft, key, text):
     return replace(draft, blocks=tuple(replace(item, text=text, source="This month")
                               if item.key == key else item for item in draft.blocks))
+
+
+def _remote_start(app, base):
+    # The second editor starts with the same stable default/standing seeding
+    # but not with the first editor's manual Activity or preparer changes.
+    local = _state(app, "_draft")
+    original = _block(base, "activity_summary")
+    return replace(local, prepared_by=base.prepared_by,
+                   blocks=tuple(original if item.key == "activity_summary" else item
+                                for item in local.blocks))
 
 
 def _prepare(monkeypatch, tmp_path):
@@ -38,7 +49,7 @@ def _prepare(monkeypatch, tmp_path):
 
 def test_two_editors_preserve_disjoint_activity_and_training_after_reload(monkeypatch, tmp_path):
     app, base = _prepare(monkeypatch, tmp_path)
-    remote = _with_text(base, "training_summary", "Newer independently approved training note")
+    remote = _with_text(_remote_start(app, base), "training_summary", "Newer independently approved training note")
     saved = library.save_snapshot(remote, expected_revision=0, entered_editor="Synthetic remote")
     assert saved.revision == 1
     app.run()
@@ -60,7 +71,7 @@ def test_two_editors_preserve_disjoint_activity_and_training_after_reload(monkey
 
 def test_same_activity_field_must_select_exact_value_before_continuing(monkeypatch, tmp_path):
     app, base = _prepare(monkeypatch, tmp_path)
-    remote = _with_text(base, "activity_summary", "Newer accepted wording")
+    remote = _with_text(_remote_start(app, base), "activity_summary", "Newer accepted wording")
     saved = library.save_snapshot(remote, expected_revision=0, entered_editor="Synthetic remote")
     app.run()
     choices = [item for item in app.radio if item.label == "Resolve blocks[activity_summary].text"]
@@ -78,7 +89,7 @@ def test_same_activity_field_must_select_exact_value_before_continuing(monkeypat
 
 def test_shared_head_advances_during_explicit_choice_without_adopting_stale_edit(monkeypatch, tmp_path):
     app, base = _prepare(monkeypatch, tmp_path)
-    remote = _with_text(base, "training_summary", "First shared training update")
+    remote = _with_text(_remote_start(app, base), "training_summary", "First shared training update")
     first = library.save_snapshot(remote, expected_revision=0, entered_editor="Synthetic remote")
     app.run()
     widget(app, "checkbox", "I compared the saved version and want to save my draft as the next version").check().run()
