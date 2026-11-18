@@ -73,6 +73,7 @@ def test_pdf_page_and_row_identity_conserves_skipped_rows_and_duplicate_ids(stor
     assert first.status == "records"
     assert len(first.unmatched_rows) == 1
     assert first.unmatched_rows[0][:3] == ("", "South", "2026-09-02")
+    assert first.unmatched_origins[0].startswith("native table 1, row ")
     assert [row.work_order for row in first.review.rows] == ["0100", "0101", "0102"]
     # A missing WO and a repeated heading keep their source-row slots.
     assert [row.origin.row_number for row in first.review.rows] == [1, 4, 5]
@@ -176,20 +177,23 @@ def test_table_heavy_native_geometry_preserves_unheaded_and_conflicting_cells():
     one = Table(90, [list(HEADER), ["0300", "North", "2026-09-01", "Open", "PM"]])
     two = Table(300, [list(HEADER), ["0301", "South", "2026-09-02", "Closed", "Repair"]])
     notes = Table(500, [["Code", "Total"], ["PM", "200"]])
-    table, unmatched, problems, skipped = _page_table(Page([notes, two, one]))
+    table, unmatched, problems, skipped, origins = _page_table(Page([notes, two, one]))
     assert [row[0] for row in table.rows] == ["0300", "0301"]
     assert table.columns == HEADER
     assert unmatched == (("Code", "Total"), ("PM", "200"))
+    assert origins == ("native table 3, row 1", "native table 3, row 2")
     assert skipped == ()
     assert problems
 
     conflicting = Table(300, [
         ["Ticket Number", "Location", "Service Date", "Current Status", "Type"],
         ["0400", "North", "2026-09-03", "Open", "PM"]])
-    table, unmatched, problems, skipped = _page_table(Page([one, conflicting]))
+    table, unmatched, problems, skipped, origins = _page_table(Page([one, conflicting]))
     assert table is None and not skipped
     assert ("0300", "North", "2026-09-01", "Open", "PM") in unmatched
     assert ("0400", "North", "2026-09-03", "Open", "PM") in unmatched
+    assert ("native table 1, row 1", "native table 1, row 2",
+            "native table 2, row 1", "native table 2, row 2") == origins
     assert any("Multiple work-order tables" in problem for problem in problems)
 
 
