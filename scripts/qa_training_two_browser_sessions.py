@@ -54,7 +54,7 @@ def edit_session(page, old, new):
     expect(topic).to_have_value(new)
     page.get_by_role("button", name="Save session", exact=True).click()
     base.settled(page)
-    expect(page.get_by_text(new, exact=True)).to_be_visible(timeout=30000)
+    expect(page.locator('[data-testid="stTable"]).get_by_text(new, exact=True)).to_be_visible(timeout=30000)
 
 
 def save_shared(page, token, revision):
