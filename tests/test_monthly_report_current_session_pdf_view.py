@@ -280,9 +280,22 @@ def test_edited_draft_retires_old_pages_before_late_callback(monkeypatch, render
     assert len(rendered.previews) == 2
 
 
-def test_download_labels_never_represent_old_artifacts_as_current():
-    files = package()
-    assert output_ui.output_download_labels(files, SimpleNamespace(fingerprint="draft-1")) == (
-        "Download DOCX", "Download PDF")
-    assert output_ui.output_download_labels(files, SimpleNamespace(fingerprint="edited")) == (
-        "Download DOCX (previous draft)", "Download PDF (previous draft)")
+def test_last_created_output_receipt_is_scope_bound_without_old_file_bytes(monkeypatch, rendered):
+    warnings = []
+    monkeypatch.setattr(output_ui.st, "warning", warnings.append)
+    previous = package(pdf=b"%PDF-old")
+
+    output_ui.replace_current_session_pdf_package("monthly", "session-A", previous)
+    assert rendered.state["monthly_last_created_output"] == ("session-A", "draft-1")
+    assert output_ui.outdated_output_status(
+        "monthly", "session-A", SimpleNamespace(fingerprint="draft-1")) is False
+    assert output_ui.outdated_output_status(
+        "monthly", "session-B", SimpleNamespace(fingerprint="edited")) is False
+
+    # The real guided editor drops finished bytes before showing the warning.
+    rendered.state.pop("monthly_package")
+    assert output_ui.outdated_output_status(
+        "monthly", "session-A", SimpleNamespace(fingerprint="edited")) is True
+    assert len(warnings) == 1 and "Earlier files were retired" in warnings[0]
+    assert "monthly_package" not in rendered.state
+    assert all(type(value) is not bytes for value in rendered.state.values())
