@@ -73,7 +73,9 @@ def _native_capital_items(draft, block, master, *, confirm_priority_changes=Fals
 
     def position(role, *, required=True):
         matched = [i for i, heading in enumerate(headings)
-                   if re.sub(r"[^a-z0-9]", "", heading.casefold()) in _NATIVE_ROLES[role]]
+                   if re.sub(r"[^a-z0-9]", "",
+                             re.sub(r"\s+\(\d+\)$", "", heading).casefold())
+                   in _NATIVE_ROLES[role]]
         if len(matched) > 1 or required and not matched:
             raise ValueError("Imported capital column mapping is missing or ambiguous: " + role)
         return matched[0] if matched else None
@@ -89,8 +91,10 @@ def _native_capital_items(draft, block, master, *, confirm_priority_changes=Fals
            for heading in headings):
         raise ValueError("Private contact source columns cannot enter approved capital defaults.")
 
-    by_source = {item.source_reference: item for item in master.items
-                 if item.source_reference}
+    source_items = [item for item in master.items if item.source_reference]
+    by_source = {item.source_reference: item for item in source_items}
+    if len(by_source) != len(source_items):
+        raise ValueError("Duplicate approved capital source identities require explicit review.")
     selected = {site.key for site in draft.profile.facilities}
     proposed = {}
     occurrences = {}
