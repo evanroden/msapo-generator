@@ -357,6 +357,39 @@ def _section_preview():
     return result
 
 
+def _cpu_stat():
+    try:
+        return dict((label, int(value)) for label, value in
+                    (line.split() for line in Path("/sys/fs/cgroup/cpu.stat").read_text().splitlines())
+                    if len(line.split()) == 2)
+    except (OSError, ValueError):
+        return {}
+
+
+def _human_summary(result):
+    env = result["environment"]
+    lines = [
+        "A01 SYNTHETIC ONLY — not production latency or live-report acceptance",
+        "Exact commit: " + str(env["commit"]),
+        f"Part: {result['part']}; CPU quota: {env['cpu_quota']}; memory cap bytes: {env['memory_limit_bytes']}",
+        f"Total wall: {result['elapsed_seconds']}s; Python CPU: {result['python_process_cpu_seconds']}s; Office CPU: {result['child_office_cpu_seconds']}s",
+        f"Peak Python RSS: {result['peak_process_rss_bytes']}; cgroup memory peak: {result['cgroup_peak_bytes']}",
+        f"Cgroup CPU stat delta: {result['cpu_stat_delta']}; OOM delta: {result['memory_events_delta']}",
+    ]
+    if result["part"] == "sources":
+        for case in result["sources"]:
+            cold, warm = case["samples"]["cold_total"], case["samples"]["warm_total"]
+            lines.append(f"{case['workload']}: cold median {cold['median_ms']}ms, warm median {warm['median_ms']}ms; n={cold['n']}")
+        for case in result["work_order_tables"]:
+            lines.append(f"{case['workload']}: cold median {case['cold_ingest']['median_ms']}ms; warm median {case['warm_ingest']['median_ms']}ms; rows={case['rows']}")
+    else:
+        for name, data in result["native_section"]["runs"].items():
+            elapsed = [row["total_seconds"] for row in data["samples"]]
+            lines.append(f"{name}: median total {statistics.median(elapsed):.4f}s; native assemblies={data['native_assemblies']}; raw={elapsed}")
+    lines.append("Five samples per source and three native runs are not enough for credible p95.")
+    return "\n".join(lines) + "\n"
+
+
 def main():
     parser = argparse.ArgumentParser(description="Independent capped synthetic source/native phases")
     parser.add_argument("--part", required=True, choices=("sources", "native"))
@@ -374,13 +407,15 @@ def main():
     if os.environ.get("RESOURCE_REQUIRE_HALF_CPU") == "1" and (cpu is None or cpu > .5):
         raise RuntimeError("Requires 0.5 CPU quota.")
     before_events = _memory_events()
+    before_cpu_stats = _cpu_stat()
     with tempfile.TemporaryDirectory(prefix="qa491-synthetic-") as temporary:
         os.environ["EPC_DATA_DIR"] = str(Path(temporary) / "runtime")
         # All source/draft paths are synthetic; no durable or shared client data.
         started = perf_counter()
         cpu_started = process_time()
         child_started = resource.getrusage(resource.RUSAGE_CHILDREN)
-        result = {"boundary": "server_received_bytes_to_first_raster_delivery",
+        result = {"schema": 2,
+                  "boundary": "server_received_bytes_to_first_raster_delivery",
                   "part": part,
                   "environment": {"python": sys.version.split()[0],
                                   "platform": platform.platform(), "memory_limit_bytes": memory_limit,
@@ -415,11 +450,16 @@ def main():
         result["peak_process_rss_bytes"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
         result["memory_events_delta"] = {key: value - before_events.get(key, 0)
                                           for key, value in _memory_events().items()}
+        result["cpu_stat_delta"] = {key: value - before_cpu_stats.get(key, 0)
+                                    for key, value in _cpu_stat().items()}
         assert result["memory_events_delta"].get("oom", 0) == 0
         assert result["memory_events_delta"].get("oom_kill", 0) == 0
         output = Path("/tmp/monthly-preview-latency")
         output.mkdir(parents=True, exist_ok=True)
         (output / ("backend-" + part + ".json")).write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
+        summary = _human_summary(result)
+        (output / ("backend-" + part + ".txt")).write_text(summary)
+        print(summary, flush=True)
         print(json.dumps(result, indent=2, sort_keys=True), flush=True)
 
 
