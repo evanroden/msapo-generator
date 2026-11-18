@@ -42,6 +42,7 @@ import hashlib
 import html
 import re
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
@@ -1213,6 +1214,7 @@ def _load_test_into_state() -> None:
     st.session_state["extract_hash"] = hashlib.sha256(quote_bytes).hexdigest()
     st.session_state.pop("scope_pdf_bytes", None)
     st.session_state.pop("scope_pdf_signature", None)
+    st.session_state.pop("scope_pdf_generated_on", None)
     st.session_state.pop("analysis_error_signature", None)
     st.session_state.pop("analysis_error_message", None)
     st.session_state.pop("extraction_error_hash", None)
@@ -2071,6 +2073,7 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
                 st.session_state["quote_source"] = quote_source
                 st.session_state.pop("scope_pdf_bytes", None)
                 st.session_state.pop("scope_pdf_signature", None)
+                st.session_state.pop("scope_pdf_generated_on", None)
                 st.session_state.pop("analysis_error_signature", None)
                 st.session_state.pop("analysis_error_message", None)
 
@@ -2948,10 +2951,19 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
     ):
         st.session_state.pop("scope_pdf_bytes", None)
         st.session_state.pop("scope_pdf_signature", None)
+        st.session_state.pop("scope_pdf_generated_on", None)
         st.warning(
             "A PDF-bearing detail changed. Generate the package again before "
             "opening Smartsheet."
         )
+
+    # Give legacy in-session PDFs a date once, rather than changing their
+    # download names on every later rerun.
+    if (
+        st.session_state.get("scope_pdf_bytes")
+        and st.session_state.get("scope_pdf_signature") == current_pdf_signature
+    ):
+        st.session_state.setdefault("scope_pdf_generated_on", date.today().isoformat())
 
     presentation.close()
     presentation.enter_context(workspace_section("purchase_package", "Generated package review"))
@@ -2998,7 +3010,10 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
             # and invites repeat taps.
             with st.spinner("Preparing the MSAPO form PDF…"):
                 scope_pdf = st.session_state.get("scope_pdf_bytes")
-                if not scope_pdf or st.session_state.get("scope_pdf_signature") != current_pdf_signature:
+                reused_pdf = bool(scope_pdf) and (
+                    st.session_state.get("scope_pdf_signature") == current_pdf_signature
+                )
+                if not reused_pdf:
                     scope_pdf = build_msapo_pdf(
                         analysis=analysis,
                         scope=scope_value,
@@ -3019,6 +3034,10 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
         else:
             st.session_state["scope_pdf_bytes"] = scope_pdf
             st.session_state["scope_pdf_signature"] = current_pdf_signature
+            if not reused_pdf:
+                st.session_state["scope_pdf_generated_on"] = date.today().isoformat()
+            else:
+                st.session_state.setdefault("scope_pdf_generated_on", date.today().isoformat())
             context = build_po_context(st.session_state)
             if context is not None:
                 st.session_state[generated_key] = context.context_id

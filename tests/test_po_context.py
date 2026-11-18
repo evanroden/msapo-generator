@@ -1,9 +1,12 @@
 import hashlib
+from datetime import date
 from types import SimpleNamespace
 
 import pytest
 
+from app import po_context, smartsheet
 from app.po_context import (
+    _safe_basename,
     _document_signature,
     account_manager_memory_context_id,
     build_po_context,
@@ -88,6 +91,7 @@ def _state(
         f"scope_{token}": "Repair the chilled water pump and test operation.",
         f"total_{token}": total,
         f"instructions_{token}": "Escort required",
+        "scope_pdf_generated_on": "2026-11-18",
         "scope_pdf_bytes": b"%PDF-1.7\nsynthetic scope pdf",
         "scope_pdf_signature": _document_signature(
             token,
@@ -155,7 +159,7 @@ def test_context_applies_approved_classification_matrix(
     assert context.fields["instructions"] == "Escort required"
     assert [name for name, _ in context.attachments] == [
         "vendor original.pdf",
-        "Tulane Tulane Repair chilled water pump MSAPO.pdf",
+        "MSAPO_TULANE_Final-Pump-Repair_2026-11-18.pdf",
     ]
 
 
@@ -309,7 +313,7 @@ def test_pasted_quote_becomes_the_original_text_attachment():
     context = build_po_context(state, {})
     assert context is not None and context.ready
     assert context.attachments[0] == ("Vendor Quote.txt", b"quote text")
-    assert context.attachments[1][0].endswith("MSAPO.pdf")
+    assert context.attachments[1][0] == "MSAPO_TULANE_Final-Pump-Repair_2026-11-18.pdf"
 
 
 def test_explicit_paste_source_never_reuses_a_stale_upload_with_identical_text():
@@ -411,3 +415,85 @@ def test_explicit_source_switch_to_paste_recovers_from_stale_upload():
     assert pasted is not None and pasted.ready
     assert pasted.attachments[0] == ("Vendor Quote.txt", b"quote text")
     assert not any("re-upload" in issue.lower() for issue in pasted.warnings)
+
+
+def test_download_names_use_the_same_stem_from_context_or_direct_construction():
+    state = _state(route=ONSITE_LABOR)
+    context = build_po_context(state, {})
+    assert context is not None and context.ready
+    stem = "TULANE_Final-Pump-Repair_2026-11-18"
+    assert context.attachment_base == stem
+    assert _safe_basename(
+        "Other", "Tulane", "Ignored long project description", False,
+        short_description="Final Pump Repair", generated_on="2026-11-18",
+    ) == stem
+
+    from_context = smartsheet.download_names(context.attachments, context.attachment_base)
+    from_direct = smartsheet.download_names(
+        [("quote.txt", b"quote"), ("generated.pdf", b"%PDF-test")], stem
+    )
+    assert [name for _, name, _ in from_context] == [
+        f"Quote_{stem}.pdf", f"MSAPO_{stem}.pdf"
+    ]
+    assert [name for _, name, _ in from_direct] == [
+        f"Quote_{stem}.txt", f"MSAPO_{stem}.pdf"
+    ]
+    assert [data for _, _, data in from_context] == [
+        state["uploaded_file_bytes"], state["scope_pdf_bytes"]
+    ]
+
+
+def test_short_description_ascii_punctuation_windows_safety_and_fallback_words():
+    name = _safe_basename(
+        "Other", 'HQ:<East>/West?*', "Very long ignored project description",
+        False, short_description="Répair: Valve / Pump!", generated_on="2026-11-18",
+    )
+    assert name == "HQ-EAST-WEST_Repair-Valve-Pump_2026-11-18"
+    assert name.isascii()
+    assert not any(character in name for character in '<>:"/\\|?*')
+    assert smartsheet._safe_filename(f"Quote_{name}.pdf") == f"Quote_{name}.pdf"
+    assert smartsheet._safe_filename(smartsheet._safe_filename(f"MSAPO_{name}.pdf")) == f"MSAPO_{name}.pdf"
+
+    fallback = _safe_basename(
+        "Other", "CON", "Replace the enormous cooling pump assembly!", False,
+        generated_on="2026-11-18",
+    )
+    assert fallback == "CON_Replace-the-enormous_2026-11-18"
+    assert smartsheet._safe_filename(f"Quote_{fallback}.pdf") == f"Quote_{fallback}.pdf"
+
+
+def test_package_generation_date_survives_a_next_day_resume_with_stable_fingerprints(monkeypatch):
+    state = _state(route=ONSITE_LABOR)
+    first = build_po_context(state, {})
+    assert first is not None and first.ready
+    first_names = smartsheet.download_names(first.attachments, first.attachment_base)
+    first_key = smartsheet.submission_fingerprint(first.fields, first.attachments)
+    first_attachment_ids = [
+        smartsheet._attachment_fingerprint(name, data)
+        for name, data in first.attachments
+    ]
+    first_remote_names = [
+        smartsheet._api_attachment_name(name, data)
+        for name, data in first.attachments
+    ]
+
+    class NextDay(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 11, 19)
+
+    monkeypatch.setattr(po_context, "date", NextDay)
+    resumed = build_po_context(dict(state), {})
+    assert resumed is not None and resumed.ready
+    assert resumed.attachment_base == first.attachment_base
+    assert resumed.attachments == first.attachments
+    assert smartsheet.download_names(resumed.attachments, resumed.attachment_base) == first_names
+    assert smartsheet.submission_fingerprint(resumed.fields, resumed.attachments) == first_key
+    assert [
+        smartsheet._attachment_fingerprint(name, data)
+        for name, data in resumed.attachments
+    ] == first_attachment_ids
+    assert [
+        smartsheet._api_attachment_name(name, data)
+        for name, data in resumed.attachments
+    ] == first_remote_names
