@@ -85,8 +85,8 @@ def test_a_replaced_blob_is_not_deleted_on_rejection(profile, monkeypatch):
     raw_path, _ = files_for(profile, OTHER, ".txt")
     real_ingest = sources.ingest
 
-    def write_then_swap(profile_, filename, raw):
-        real_ingest(profile_, filename, raw)
+    def write_then_swap(profile_, filename, raw, **kwargs):
+        real_ingest(profile_, filename, raw, **kwargs)
         library._atomic_write(raw_path, b"different bytes written by another worker")
         raise ValueError("synthetic rejection")
     monkeypatch.setattr(sources, "ingest", write_then_swap)
