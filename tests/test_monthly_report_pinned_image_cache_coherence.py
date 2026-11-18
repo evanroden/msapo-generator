@@ -66,14 +66,6 @@ def test_same_path_replaced_master_uses_only_current_approved_photos(tmp_path: P
     assert _edge(second_pdf_copy) == 1400  # A path-only hash cache misses this replacement.
     assert compact_native_photos_for_pdf(former, pinned_source=pinned) == former
     assert pinned.read_bytes() == current
-    assert current == _word_with_same_payload(current)
-
-
-def _word_with_same_payload(value: bytes) -> bytes:
-    """A control that also proves the input DOCX was never altered."""
-    return bytes(value)
-
-
 def test_atomic_pinned_replacement_invalidates_allowlist(tmp_path: Path):
     pinned = tmp_path / "approved.docx"
     pending = tmp_path / "approved-next.docx"
@@ -97,3 +89,54 @@ def test_unchanged_pinned_design_repeats_identical_pdf_only_pixels(tmp_path: Pat
     assert _edge(first) == 1400
     assert pinned.read_bytes() == original
     assert _edge(original) == 2400
+
+
+def test_repeated_pinned_media_decodes_once_per_pdf_conversion(tmp_path: Path, monkeypatch):
+    pinned = tmp_path / "repeat.docx"
+    image = _photo(99)
+    source = _word(image)
+    pinned.write_bytes(source)
+    repeated = BytesIO()
+    with ZipFile(repeated, "w") as archive:
+        archive.writestr("word/document.xml", b"<synthetic-report/>")
+        archive.writestr("word/media/pinned.jpg", image)
+        archive.writestr("word/media/another-instance.jpg", image)
+    original = repeated.getvalue()
+    count = 0
+    original_thumbnail = Image.Image.thumbnail
+
+    def counting_thumbnail(self, *args, **kwargs):
+        nonlocal count
+        count += 1
+        return original_thumbnail(self, *args, **kwargs)
+
+    monkeypatch.setattr(Image.Image, "thumbnail", counting_thumbnail)
+    optimized = compact_native_photos_for_pdf(original, pinned_source=pinned)
+    assert count == 1
+    assert sha256(original).hexdigest() == sha256(repeated.getvalue()).hexdigest()
+    with ZipFile(BytesIO(optimized)) as archive:
+        a = archive.read("word/media/pinned.jpg")
+        b = archive.read("word/media/another-instance.jpg")
+        assert a == b and a != image
+        with Image.open(BytesIO(a)) as photo:
+            assert max(photo.size) == 1400
+    assert pinned.read_bytes() == source
+
+
+def test_missing_pinned_design_fails_without_authorizing_media(tmp_path: Path):
+    word = _word(_photo(70))
+    with pytest.raises(FileNotFoundError):
+        compact_native_photos_for_pdf(word, pinned_source=tmp_path / "missing.docx")
+    assert _edge(word) == 2400
+
+
+def test_malformed_pinned_design_never_reuses_prior_approval(tmp_path: Path):
+    pinned = tmp_path / "approved.docx"
+    original = _word(_photo(100))
+    pinned.write_bytes(original)
+    assert _edge(compact_native_photos_for_pdf(original, pinned_source=pinned)) == 1400
+    pinned.write_bytes(b"not a native Word document")
+    from zipfile import BadZipFile
+    with pytest.raises(BadZipFile):
+        compact_native_photos_for_pdf(original, pinned_source=pinned)
+    assert pinned.read_bytes() == b"not a native Word document"
