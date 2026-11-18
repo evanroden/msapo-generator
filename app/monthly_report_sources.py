@@ -59,6 +59,10 @@ class SourceTable:
     name: str
     columns: tuple[str, ...]
     rows: tuple[tuple[str, ...], ...]
+    hidden: bool = False
+    # Missing cached results, not formula expressions: never calculate formulas.
+    missing_formula_cache_count: int = 0
+    missing_formula_cache_cells: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -496,32 +500,69 @@ def _spreadsheet(raw: bytes, suffix: str) -> tuple[SourceTable, ...]:
             raise ValueError(f"Expanded workbook exceeds the {byte_limit_label(MAX_WORKBOOK_BYTES)} safe parsing budget. Upload the required sheets separately.")
         if any(i.file_size > MAX_WORKBOOK_PART_BYTES for i in infos):
             raise ValueError(f"A workbook part exceeds the {byte_limit_label(MAX_WORKBOOK_PART_BYTES)} safe parsing budget. Export the required cells as CSV or a smaller workbook.")
+    # Data-only loading cannot tell a genuinely blank cell from a formula that
+    # lacks a saved result. Probe bounded XML for formulas before opening a
+    # separate lazy formula view; ordinary formula-free files retain one read.
+    with ZipFile(BytesIO(raw)) as z:
+        has_formulas = any(
+            re.search(rb"<(?:[A-Za-z_][A-Za-z0-9_.-]*:)?f(?:\\s|>)", z.read(part.filename))
+            for part in z.infolist()
+            if part.filename.startswith("xl/worksheets/") and part.filename.endswith(".xml")
+        )
     try:
         workbook = load_workbook(BytesIO(raw), read_only=True, data_only=True, keep_links=False)
     except (XMLParseError, XMLSyntaxError) as exc:
         raise ValueError("Workbook XML could not be read. Export a fresh XLSX or CSV copy.") from exc
     except TypeError as exc:
         raise ValueError("Workbook structure could not be read. Export a fresh XLSX or CSV copy.") from exc
+    formula_workbook = None
     try:
         if len(workbook.worksheets) > MAX_WORKSHEETS:
             raise ValueError(f"Workbook exceeds {MAX_WORKSHEETS:,} worksheets; upload the required sheets separately.")
         preserve_currency_number_types(workbook)
+        if has_formulas:
+            formula_workbook = load_workbook(
+                BytesIO(raw), read_only=True, data_only=False, keep_links=False)
         tables, total = [], 0
-        for sheet in workbook.worksheets:
+        for sheet_index, sheet in enumerate(workbook.worksheets):
             if sheet.max_row and sheet.max_row > MAX_TABLE_ROWS or sheet.max_column and sheet.max_column > 200:
                 raise ValueError("Worksheet dimensions exceed the review budget.")
+            missing, missing_count = [], 0
+
+            def stored_rows():
+                nonlocal missing_count
+                cached_rows = sheet.iter_rows()
+                if formula_workbook is None:
+                    for row in cached_rows:
+                        yield tuple(currency_evidence_value(cell.value, cell.number_format) for cell in row)
+                    return
+                formula_rows = formula_workbook.worksheets[sheet_index].iter_rows()
+                for row, expressions in zip(cached_rows, formula_rows):
+                    if len(row) != len(expressions):
+                        raise ValueError("Workbook formula inventory disagrees with stored cell positions.")
+                    for cell, expression in zip(row, expressions):
+                        if expression.data_type == "f" and cell.value is None:
+                            missing_count += 1
+                            if len(missing) < 16:
+                                missing.append(cell.coordinate)
+                    yield tuple(currency_evidence_value(cell.value, cell.number_format) for cell in row)
+
             try:
-                table = _table(sheet.title, (
-                    tuple(currency_evidence_value(cell.value, cell.number_format) for cell in row)
-                    for row in sheet.iter_rows()))
+                table = _table(sheet.title, stored_rows())
             except ValueError as exc:
                 if str(exc) == "Spreadsheet has no nonempty rows.":
+                    if missing_count:
+                        raise ValueError(
+                            f"Worksheet {sheet.title} contains uncached formulas but no readable rows. "
+                            "Recalculate and save it before importing.")
                     continue
                 raise
             total += len(table.rows) * len(table.columns)
             if total > MAX_TABLE_CELLS:
                 raise ValueError("Workbook cells exceed the total review budget.")
-            tables.append(table)
+            tables.append(replace(table, hidden=sheet.sheet_state != "visible",
+                                  missing_formula_cache_count=missing_count,
+                                  missing_formula_cache_cells=tuple(missing)))
         if not tables:
             raise ValueError("Workbook has no nonempty worksheets.")
         return tuple(tables)
@@ -535,6 +576,8 @@ def _spreadsheet(raw: bytes, suffix: str) -> tuple[SourceTable, ...]:
         # from TypeError in product source mapping or persistence code.
         raise ValueError("Workbook structure could not be read. Export a fresh XLSX or CSV copy.") from exc
     finally:
+        if formula_workbook is not None:
+            formula_workbook.close()
         workbook.close()
 
 
@@ -581,7 +624,16 @@ def _cached_extraction(data, digest, suffix):
                 or any(len(sequence(row)) != len(columns) or any(not isinstance(cell, str) for cell in row)
                        for row in rows)):
             raise ValueError("Invalid source extraction cache table.")
-        tables.append(SourceTable(table["name"], tuple(columns), tuple(tuple(row) for row in rows)))
+        hidden = table.get("hidden", False)
+        missing_count = table.get("missing_formula_cache_count", 0)
+        missing_cells = table.get("missing_formula_cache_cells", [])
+        if (type(hidden) is not bool or type(missing_count) is not int
+                or not 0 <= missing_count <= MAX_TABLE_CELLS
+                or not isinstance(missing_cells, list) or len(missing_cells) > 16
+                or any(not isinstance(cell, str) or len(cell) > 16 for cell in missing_cells)):
+            raise ValueError("Invalid source extraction cache workbook provenance.")
+        tables.append(SourceTable(table["name"], tuple(columns), tuple(tuple(row) for row in rows),
+                                  hidden, missing_count, tuple(missing_cells)))
     if suffix in (".csv", ".xlsx") and (not tables or any(not table.columns for table in tables)):
         raise ValueError("Invalid source extraction cache table.")
     images = sequence(data.get("image_items", []))
@@ -646,7 +698,8 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
         if (content is not None and not old_csv_one_column
                 and (not unicode_csv or data.get("csv_unicode_policy") == 1)
                 and (suffix != ".xlsx" or (type(data.get("xlsx_currency_policy")) is int
-                                          and data["xlsx_currency_policy"] == 1))
+                                          and data["xlsx_currency_policy"] == 1
+                                          and data.get("xlsx_provenance_policy") == 1))
                 and (suffix != ".pdf" or data.get("vendor_passage_policy", 0) >= 7)):
             source = content.source
             if data.get("client_page_policy", 0) < 1 and suffix not in (".csv", ".xlsx"):
@@ -717,6 +770,16 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
         page_texts = ["\n".join(["\t".join(t.columns), *("\t".join(r) for r in t.rows)]) for t in tables]
         if suffix == ".xlsx":
             notices.append("Workbook values use stored formula results; formulas are never executed. Missing cached results remain blank.")
+            hidden = [t.name for t in tables if t.hidden]
+            if hidden:
+                notices.append("Hidden worksheets retained for explicit review (not automatic work-order totals): "
+                               + ", ".join(hidden) + ".")
+            missing_count = sum(t.missing_formula_cache_count for t in tables)
+            if missing_count:
+                examples = ", ".join(f"{t.name}!{cell}" for t in tables
+                                     for cell in t.missing_formula_cache_cells[:3])
+                notices.append(f"{missing_count} formula cells without cached results "
+                               f"({examples}); check the original workbook before accepting these rows.")
     elif suffix == ".docx":
         inspected = inspect_docx(path)
         for number, item in enumerate(inspected.items, 1):
@@ -747,7 +810,7 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
     content = SourceContent(source, tables, tuple(image_items))
     library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1,
         "native_action_policy": 1, "vendor_passage_policy": 7,
-        **({"xlsx_currency_policy": 1} if suffix == ".xlsx" else {}),
+        **({"xlsx_currency_policy": 1, "xlsx_provenance_policy": 1} if suffix == ".xlsx" else {}),
         **({"csv_unicode_policy": 1} if unicode_csv else {}),
         **({"csv_dialect_policy": 1} if suffix == ".csv" else {}), **asdict(content)}))
     return content, attachments
