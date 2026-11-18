@@ -1072,6 +1072,55 @@ def read_batches(payloads):
             "notices": list(dict.fromkeys(notices)), "coverage": coverage}
 
 
+def merge_reader_coverage(previous, latest):
+    """Cache successful physical-page receipts across explicit failed-only retries.
+
+    Re-split a prior chunk into its constituent source/page receipts before
+    merging: a retry may legitimately contain fewer pages than its original
+    chunk after some image pages were skipped. Latest completed evidence wins,
+    but a failed retry cannot replace an earlier successful receipt.
+    """
+    if not isinstance(previous, dict) or not isinstance(previous.get("coverage"), list):
+        return latest
+    if not isinstance(latest, dict) or not isinstance(latest.get("coverage"), list):
+        return latest
+    records = {}
+    for response in (previous, latest):
+        for chunk in response["coverage"]:
+            if not isinstance(chunk, dict) or not isinstance(chunk.get("pages"), list):
+                continue
+            for raw in chunk["pages"]:
+                if (not isinstance(raw, (tuple, list)) or len(raw) != 2
+                        or not isinstance(raw[0], str) or type(raw[1]) is not int):
+                    continue
+                ref = (raw[0], raw[1])
+                completed = chunk.get("status") == "processed"
+                if ref in records and records[ref]["status"] == "processed" and not completed:
+                    continue
+                item_list = [item for item in chunk.get("items", [])
+                             if isinstance(item, dict)
+                             and (item.get("source"), item.get("page")) == ref]
+                image_list = [list(page) for page in chunk.get("visual_pages", [])
+                              if isinstance(page, (tuple, list)) and tuple(page) == ref]
+                skipped = [list(ref)] if any(
+                    isinstance(page, (tuple, list)) and tuple(page) == ref
+                    for page in chunk.get("skipped", [])) else []
+                records[ref] = {
+                    "pages": [list(ref)], "skipped": skipped,
+                    "status": chunk.get("status"),
+                    "items": item_list, "visual_pages": image_list,
+                    "reason": chunk.get("reason", ""),
+                }
+    receipts = list(records.values())
+    return {"coverage": receipts,
+            "items": [item for receipt in receipts for item in receipt["items"]],
+            "visual_pages": [page for receipt in receipts
+                             for page in receipt["visual_pages"]],
+            "notices": list(dict.fromkeys((
+                *(previous.get("notices") or ()), *(latest.get("notices") or ())
+            )))}
+
+
 def reader_coverage_update(contents, destination, value, existing=None, *, table_columns=None):
     """Ground each completed chunk independently, retaining safe sibling chunks.
 
