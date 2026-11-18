@@ -122,6 +122,11 @@ class ImportItem:
     # Original rows stay intact for source identity and native geometry checks.
     # Only a proved full-width service-call title may precede the real header.
     table_header_row: int = 0
+    # Native (row, physical cell, grid column, span, vertical merge) pointers.
+    # Metadata is inspection-only; no source row is deleted or rewritten.
+    table_cell_refs: tuple[tuple[int, int, int, int, str], ...] = ()
+    table_row_roles: tuple[str, ...] = ()
+    table_row_groups: tuple[int, ...] = ()
 
     @property
     def label(self) -> str:
@@ -826,21 +831,31 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 # Cell text extraction cannot represent floating frames or
                                 # non-picture drawings. Keep this source occurrence in review
                                 # instead of offering a flattened, editable replacement.
-                                complex_table = any(
+                                nested_table = any(node is not element for node in element.iter(W + "tbl"))
+                                complex_table = nested_table or any(
                                     node.tag in (W + "txbxContent", V + "group")
                                     or (node.tag == A + "graphicData"
                                         and not node.get("uri", "").endswith("/picture"))
                                     for node in element.iter())
                                 if complex_table:
                                     add("unsupported", part, position, text=text,
-                                        note="Word table contains text boxes or unsupported drawings and needs manual layout review. "
-                                             "Retain its source page or add a reviewed replacement; extracted text does not preserve the layout.")
+                                        note=("Word table contains nested tables and needs manual layout review. "
+                                              if nested_table else "Word table contains text boxes or unsupported drawings and needs manual layout review. ")
+                                             + "Retain its source page or add a reviewed replacement; extracted text does not preserve the layout.")
                                 elif rows and not picture_table:
-                                    width = max(map(len, rows))
+                                    from app.monthly_report_word_table_bands import word_table_geometry
+                                    try:
+                                        geometry = word_table_geometry(element, rows)
+                                    except ValueError as exc:
+                                        raise ImportError("Table is too wide or malformed to review safely.") from exc
+                                    width = max(max(map(len, rows)), geometry.width)
                                     rows = tuple(row + ("",) * (width - len(row)) for row in rows)
                                     title_band = _service_call_title_band(element, rows, section)
                                     table_id = add("table", part, position, rows=rows,
                                         table_header_row=1 if title_band else 0,
+                                        table_cell_refs=geometry.cell_refs,
+                                        table_row_roles=geometry.row_roles,
+                                        table_row_groups=geometry.row_groups,
                                         suggested_slot=content_slot or _suggest("table", text, section),
                                         merged_title_rows=tuple(index for index, count in full_width_bands
                                                                 if width >= 2 and count == width),
@@ -1151,7 +1166,8 @@ def _map_items(path, inspection, mappings, *, source_view=None, _operation=None)
                 raise ImportError("Invalid imported table column mapping.")
             header_row = item.table_header_row if mapping.first_row_header else 0
             labels = item.rows[header_row] if mapping.first_row_header else tuple(f"Column {i+1}" for i in range(width))
-            rows = item.rows[header_row + 1:] if mapping.first_row_header else item.rows
+            from app.monthly_report_word_table_bands import typed_data_rows
+            rows = typed_data_rows(item, header_row + 1 if mapping.first_row_header else 0)
             # Reconstruct only a fully recognized, geometry-proved vendor list.
             # Explicit user column selections remain authoritative.
             if mapping.slot == "subcontractor_matrix" and mapping.first_row_header and not mapping.columns:
