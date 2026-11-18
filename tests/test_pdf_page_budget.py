@@ -51,6 +51,10 @@ def _scanned_pdf(pages: int) -> bytes:
         page = document.new_page()
         pixmap = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 80, 80))
         pixmap.clear_with(255)
+        # Representative dark marks distinguish a scan from a blank white page.
+        for y in (20, 22, 50, 52):
+            for x in range(8, 73):
+                pixmap.set_pixel(x, y, (0, 0, 0))
         page.insert_image(page.rect, pixmap=pixmap)
     payload = document.tobytes()
     document.close()
