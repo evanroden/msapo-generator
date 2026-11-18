@@ -1,0 +1,115 @@
+"""Conservative three-way merge for stale *browser* Monthly drafts.
+
+This module never writes. Callers must recheck the remote journal's exact
+revision/generation under active_work.save's CAS after explicit user choice.
+Ambiguous structural changes are a conflict, never a positional rebase.
+"""
+from dataclasses import dataclass, fields, is_dataclass, replace
+
+from app.monthly_report_model import (
+    ReportDraft, ReportSource, ResolvedBlock, ReportTable, TrainingSessionTable,
+)
+
+
+@dataclass(frozen=True)
+class FieldConflict:
+    path: str
+    before: object
+    this_page: object
+    newer: object
+
+
+def _same_scope(left, right):
+    return (left.profile.contract, left.profile.key, left.period.key,
+            tuple(site.key for site in left.profile.facilities)) == (
+            right.profile.contract, right.profile.key, right.period.key,
+            tuple(site.key for site in right.profile.facilities))
+
+
+def merge_drafts(base: ReportDraft, this_page: ReportDraft, newer: ReportDraft, choices=None):
+    """Return (draft, unresolved conflicts) without mutating any of the copies.
+
+    Each decision is an exact conflict path mapped to 'this_page' or 'newer'.
+    The UI binds those decisions to the currently compared pair and lets the
+    journal CAS reject an intervening writer. Rows without stable identities
+    remain atomic rather than being merged by a possibly shifted index.
+    """
+    if not all(isinstance(item, ReportDraft) for item in (base, this_page, newer)):
+        raise ValueError("Recovery comparison needs three complete report drafts.")
+    if not (_same_scope(base, this_page) and _same_scope(base, newer)):
+        raise ValueError("Recovery copies refer to different report sites or months.")
+    choices = choices or {}
+    conflicts = []
+
+    def conflict(path, old, ours, theirs):
+        if choices.get(path) == "this_page":
+            return ours
+        if choices.get(path) == "newer":
+            return theirs
+        conflicts.append(FieldConflict(path, old, ours, theirs))
+        return theirs  # only a preview value; caller MUST NOT save unresolved.
+
+    def merge(path, old, ours, theirs, *, headers=()):
+        if ours == theirs:
+            return ours
+        if ours == old:
+            return theirs
+        if theirs == old:
+            return ours
+        if type(old) is not type(ours) or type(old) is not type(theirs):
+            return conflict(path, old, ours, theirs)
+
+        # Dataclass shape is stable; contract/site/period and complex design
+        # values are never recursively made into synthetic hybrid identities.
+        if isinstance(old, (ReportDraft, ResolvedBlock, ReportSource, ReportTable)):
+            changes = {}
+            for field in fields(old):
+                name = field.name
+                values = (getattr(item, name) for item in (old, ours, theirs))
+                a, b, c = values
+                next_path = f"{path}.{name}" if path else name
+                if isinstance(old, ReportTable) and name == "rows":
+                    changes[name] = merge(next_path, a, b, c, headers=old.columns)
+                else:
+                    changes[name] = merge(next_path, a, b, c)
+            result = replace(old, **changes)
+            if isinstance(result, ReportTable) and any(len(row) != len(result.columns) for row in result.rows):
+                # A simultaneous schema change cannot silently misalign cells.
+                return conflict(path, old, ours, theirs)
+            return result
+
+        if isinstance(old, tuple) and len(old) == len(ours) == len(theirs):
+            leaf = path.rsplit(".", 1)[-1]
+            if leaf in ("blocks", "sources", "extra_tables"):
+                attr = {"blocks": "key", "sources": "id", "extra_tables": "reference"}[leaf]
+                identities = [tuple(getattr(item, attr, None) for item in seq) for seq in (old, ours, theirs)]
+                if (identities[0] == identities[1] == identities[2]
+                        and len(set(identities[0])) == len(identities[0])):
+                    return tuple(merge(f"{path}[{identity}]", a, b, c)
+                                 for identity, a, b, c in zip(identities[0], old, ours, theirs))
+            if leaf == "row_tokens" and old and len(set(old)) == len(old):
+                return tuple(merge(f"{path}[row {i + 1}]", a, b, c)
+                             for i, (a, b, c) in enumerate(zip(old, ours, theirs)))
+            if leaf == "rows":
+                # A stable first-cell identity is required. If the row order,
+                # row membership or label changed, treat the whole grid as
+                # conflicting; a deletion/recreation is not the old row.
+                identities = [tuple(row[0] if isinstance(row, tuple) and row else None
+                                    for row in seq) for seq in (old, ours, theirs)]
+                valid_rows = all(
+                    isinstance(a, tuple) and isinstance(b, tuple) and isinstance(c, tuple)
+                    and len(a) == len(b) == len(c) for a, b, c in zip(old, ours, theirs))
+                if (valid_rows and identities[0] == identities[1] == identities[2]
+                        and None not in identities[0]
+                        and len(set(identities[0])) == len(identities[0])):
+                    values = []
+                    for i, (a, b, c) in enumerate(zip(old, ours, theirs)):
+                        label = str(a[0])
+                        values.append(tuple(merge(
+                            f"{path}[row {i + 1}: {label}].{headers[j] if j < len(headers) else 'column ' + str(j + 1)}",
+                            x, y, z) for j, (x, y, z) in enumerate(zip(a, b, c))))
+                    return tuple(values)
+        return conflict(path or "report", old, ours, theirs)
+
+    merged = merge("", base, this_page, newer)
+    return (merged if not conflicts else None), tuple(conflicts)
