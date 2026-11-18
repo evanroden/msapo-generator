@@ -183,7 +183,9 @@ def test_omitted_issue_and_proposal_do_not_reappear_in_native_word_export():
         blocks=(ResolvedBlock("equipment_issues", "This month"),
                 ResolvedBlock("proposals", "This month")),
         sources=(),
-        follow_ups=tuple(replace(item, references=()) for item in previous.follow_ups))
+        follow_ups=tuple(replace(item, references=(),
+            evidence_note="Synthetic prior inspection memo" if item.key == "issue-hidden"
+            else item.evidence_note) for item in previous.follow_ups))
     current = new_month_draft(minimal, JANUARY)
     assert not _followup_map(current)["issue-hidden"].included
     assert not _followup_map(current)["proposal-hidden"].included
