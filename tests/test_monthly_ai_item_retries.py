@@ -37,6 +37,8 @@ def test_two_session_claim_is_atomic_and_fencing_prevents_stale_overwrite(sample
     profile, period, source, _ = sample
     key = _page_key(source, 1)
     assert items.status(profile, period, key) == "unread"
+    root = library._profile_path(profile.contract, profile.key) / "ai" / "budgets"
+    assert not root.exists()  # Viewing progress does not create receipt/lock files.
     state, first = items.claim(profile, period, key)
     assert state == "claimed" and first
     assert items.claim(profile, period, key) == ("pending", None)
