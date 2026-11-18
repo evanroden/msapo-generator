@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import re
 
 
-PROMPT_VERSION = "monthly-facts-v1"
+PROMPT_VERSION = "monthly-facts-v2-source-anchored"
 COPILOT_TEMPLATE = """I'm preparing the {MONTH} {YEAR} Operations & Maintenance monthly report for
 {PROFILE_TITLE} ({FACILITY_LIST}) on the {CONTRACT} account. The reporting period is
 {START_DATE} to {END_DATE}.
@@ -48,11 +48,15 @@ Return one strict JSON object, without markdown or commentary."""
 EXTRACT_PROMPT = UNTRUSTED + """
 Extract up to 100 compact facts from the numbered source pages. Return:
 {"facts":[{"page":1,"kind":"action","text":"concise fact","quote":"exact supporting text",
+"source_id":"the supplied source_id","source_sha256":"the supplied source_sha256",
 "date":"YYYY-MM-DD or empty","facility":"as stated or empty","vendor":"as stated or empty",
 "tags":["as stated"],"status":"ongoing","uncertain":false}]}
 Kinds: action, finding, recommendation, follow_up, reading, proposal, training,
 improvement, issue. Status: ongoing, updated, resolved, or empty. Copy quote
-exactly from the cited page. Do not use legal boilerplate, prices or signatures
+exactly (same case, punctuation and continuous characters) from the cited page.
+Echo the supplied source_id and source_sha256 for each fact, never invent these.
+Keep negation, approximate quantities, engineering units, scheduled/pending status
+and date qualifiers unchanged in the concise text. Do not use legal boilerplate, prices or signatures
 as work evidence. Preserve uncertainty and mixed dates; do not infer a date from
 a cover title. Each fact must cite exactly one real numbered page."""
 

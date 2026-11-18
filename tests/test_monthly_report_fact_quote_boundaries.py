@@ -62,7 +62,7 @@ def test_partial_source_identifier_or_numeric_prefix_is_not_a_valid_fact_quote(p
     ("Energy use was 1,200 kWh.", "Energy use was 1,200"),
     ("The feed pump was stopped by an operator.", "feed pump was"),
     ("Inspected pump P-2; checked valve V-3.", "Inspected pump P-2"),
-    ("THE TEAM INSPECTED \n FILTER F-2.", "team inspected filter F-2"),
+    ("THE TEAM INSPECTED \n FILTER F-2.", "THE TEAM INSPECTED \n FILTER F-2."),
     ("Technician checked valve V-2, then signed.", "valve V-2"),
 ))
 def test_whole_valid_excerpt_is_accepted_with_same_source_page(page, quote):
