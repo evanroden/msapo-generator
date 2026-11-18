@@ -194,14 +194,14 @@ def read_page(page, number: int, *, native_text: str, needs_ocr: bool,
     if native and len(native) >= 20 and not regions:
         return PageRead(ordered, True,
                         f"Page {number}: native text with image/graphic/annotation content; verify completeness visually.")
-        if (regions and not needs_ocr and not has_annotations and not columns
+    if (regions and not needs_ocr and not has_annotations and not columns
             and len(native.split()) >= 35):
-                # Substantive native text is the page evidence; a chart/image region
-                # still needs a visual check, but the page is readable, not unread.
-                # Keep the review notice without marking the page unreadable, so a
-                # technical annex is not dropped from the suggested pages.
-                return PageRead(ordered, False,
-                                f"Page {number}: native text with image/graphic/annotation content; verify completeness visually.")
+        # Substantive native text is the page evidence; a chart/image region
+        # still needs a visual check, but the page is readable, not unread.
+        # Keep the review notice without marking the page unreadable, so a
+        # technical annex is not dropped from the suggested pages.
+        return PageRead(ordered, False,
+                        f"Page {number}: native text with image/graphic/annotation content; verify completeness visually.")
     if not may_ocr:
         return PageRead(ordered, True, label + " (local OCR page/time budget reached).")
     if not shutil.which("tesseract"):
@@ -231,9 +231,9 @@ def read_page(page, number: int, *, native_text: str, needs_ocr: bool,
         tsv = _ocr_image(png, timeout=min(18, max(1, (deadline - time.monotonic()) if deadline else 18)))
         # The upright raster is the unrotated page, so hand _ocr_lines the
         # derotated clip; its bboxes land in unrotated page coordinates.
-                  lines = _ocr_lines(tsv, clip=clip * page.derotation_matrix,
-                                     image_width=rotated_width,
-                                     image_height=rotated_height)
+        lines = _ocr_lines(tsv, clip=clip * page.derotation_matrix,
+                           image_width=rotated_width,
+                           image_height=rotated_height)
     except (OSError, subprocess.TimeoutExpired, RuntimeError, ValueError, fitz.mupdf.FzErrorBase):
         return PageRead(ordered, True, label + " (local OCR failed; original page remains available).", attempted_ocr=True)
     if not lines:
