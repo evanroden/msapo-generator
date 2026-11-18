@@ -119,7 +119,7 @@ def test_invalid_media_rejected_without_partial_success(tmp_path):
 
 def test_preview_cache_byte_cap_and_distinct_sources(tmp_path, monkeypatch):
     first = _jpeg((2400, 1600), author="first")
-    second = _jpeg((2400, 1600), author="second")
+    second = _jpeg((2400, 1600), orientation=6, author="second")
     package = _docx_media([("a.jpg", first), ("b.jpg", first), ("c.jpg", second)])
     calls = []
     original = preview._smaller_image
