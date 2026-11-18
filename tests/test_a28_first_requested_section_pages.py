@@ -68,8 +68,8 @@ def test_first_selected_page_not_page_zero_or_full_inventory(monkeypatch, count)
 
         # The browser now asks for an adjacent page. No other thumbnail is made.
         state["page_requests"]["activity"] = {
-            "generation": "revision-new", "visible": True,
-            "pages": (count - 2, count - 1), "dpi": 120,
+            "generation": "revision-new", "ticket_key": ticket.key,
+            "visible": True, "pages": (count - 2, count - 1), "dpi": 120,
         }
         second = _render(monkeypatch, store, state)
         assert tuple(index for index, _ in second["images"]) == (count - 2, count - 1)
@@ -95,7 +95,8 @@ def test_old_revision_viewport_never_drives_new_ticket(monkeypatch, count):
             "queue": {}, "running": None, "last_good": {},
             "visible": {"activity": True},
             "page_requests": {"activity": {
-                "generation": "old", "visible": True, "pages": (0,), "dpi": 96,
+                "generation": "old", "ticket_key": old_ticket.key,
+                "visible": True, "pages": (0,), "dpi": 96,
             }},
         }
         fresh = _render(monkeypatch, store, state)
@@ -103,6 +104,15 @@ def test_old_revision_viewport_never_drives_new_ticket(monkeypatch, count):
         assert fresh["images"][0][0] == count - 1
         assert fresh["acknowledged_viewport"] is None, "Do not ACK an old revision"
         assert fresh["status"].startswith("Current")
+
+        # The placeholder's page-zero request is not a request for the new PDF.
+        state["page_requests"]["activity"] = {
+            "generation": "new", "ticket_key": None,
+            "visible": True, "pages": (0,), "dpi": 96,
+        }
+        provisional = _render(monkeypatch, store, state)
+        assert provisional["images"][0][0] == count - 1
+        assert provisional["acknowledged_viewport"] is None
 
         # An old ticket remains accessible only for an explicitly stale view.
         state["cache"].clear()
@@ -144,7 +154,7 @@ def test_viewport_callback_tags_revision_and_rejects_late_old_page(monkeypatch):
     browser = {
         "viewport": {
             "generation": "rev-current", "visible": True,
-            "pages": (17, 18), "dpi": 120,
+            "pages": (17, 18), "dpi": 120, "ticketKey": "a"*32,
         }
     }
     monkeypatch.setattr(ui, "_ordered_preview_state", lambda prefix: state)
@@ -152,12 +162,19 @@ def test_viewport_callback_tags_revision_and_rejects_late_old_page(monkeypatch):
     ui._viewport_changed("a28", "activity", "widget")
     assert state["page_requests"]["activity"] == {
         "generation": "rev-current", "visible": True,
-        "pages": (17, 18), "dpi": 120,
+        "pages": (17, 18), "dpi": 120, "ticket_key": "a"*32,
     }
-    assert ui._current_page_request(state, "activity")["pages"] == (17, 18)
+    assert ui._current_page_request(state, "activity") is None
+    assert ui._current_page_request(state, "activity", SimpleNamespace(key="a"*32))["pages"] == (17, 18)
     state["wanted"]["activity"] = "rev-later"
     assert ui._current_page_request(state, "activity") is None
     # The late browser event belongs to the previous revision; no new ACK.
     ui._viewport_changed("a28", "activity", "widget")
     assert state["page_requests"]["activity"]["generation"] == "rev-current"
     assert state["wanted"]["activity"] == "rev-later"
+    browser["viewport"] = {
+        "generation": "rev-later", "visible": True, "pages": (1,),
+        "dpi": 120, "ticketKey": "../../not-a-hex-ticket",
+    }
+    ui._viewport_changed("a28", "activity", "widget")
+    assert state["page_requests"]["activity"]["generation"] == "rev-current"
