@@ -642,12 +642,23 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes, *,
     # Separate sites never share extraction or mutable report state. The lock
     # also deduplicates in-flight parses in other worker processes on this disk.
     lock = _path(profile, digest, ".json").parent / ".parse-locks" / digest
-    with library._locked(lock):
-        result = _ingest_locked(profile, filename, raw, digest, suffix)
-    parse_manifest.qa_stage("ingest", started, "complete")
+    try:
+        with library._locked(lock):
+            result = _ingest_locked(profile, filename, raw, digest, suffix)
+    finally:
+        # A finished parse leaves no lock residue: rejected uploads must leave
+        # nothing behind, and the lock only guards in-flight parses.
+        try:
+            (lock / ".write-lock").unlink()
+        except FileNotFoundError:
+            pass
+        try:
+            lock.rmdir()
+            lock.parent.rmdir()
+        except OSError:
+            pass
+        parse_manifest.qa_stage("ingest", started, "complete")
     return result
-
-
 def _ingest_locked(profile: ReportProfile, filename: str, raw: bytes,
                    digest: str, suffix: str) -> tuple[SourceContent, tuple[tuple[str, bytes], ...]]:
     from app.monthly_report_content_policy import suggested_pages
