@@ -54,7 +54,7 @@ def test_preview_is_optional_and_one_click_still_includes_all_pages(
     assert any("Target report: September 2026" in element.value
                and "Source date: not established" in element.value
                and "synthetic-scorecard.pdf" in element.value
-               for element in app.markdown)
+               for element in (*app.markdown, *app.caption))
     assert len([b for b in app.button if b.label == "Preview a Scorecard PDF page"]) == 1
     assert not any(box.label == "Scorecard PDF page" for box in app.selectbox)
     next(b for b in app.button if b.label == "Preview a Scorecard PDF page").click().run()
@@ -64,7 +64,9 @@ def test_preview_is_optional_and_one_click_still_includes_all_pages(
     preview = next(box for box in app.selectbox if box.label == "Scorecard PDF page")
     assert len(preview.options) == count and preview.value == 1
     if count > 1:
-        preview.select_index(count - 1).run()
+        # AppTest's select_index re-formats an already formatted option
+        # ("Page Page 3 of 3 of 3"); choose the page by its own value.
+        preview.set_value(count).run()
         assert not app.exception and calls[-1] == (count, True)
         assert not app.session_state["blocks"]
     next(b for b in app.button if b.label == f"Include all {count} PDF pages").click().run()
@@ -85,7 +87,7 @@ def test_preview_is_scoped_to_report_month_and_is_not_a_page_review(monkeypatch,
     assert not any(box.label == "Scorecard PDF page" for box in app.selectbox)
     assert not app.session_state["blocks"]
     assert not app.session_state["sources"][0].client_page_reviews
-    assert any("Target report: October 2026" in item.value for item in app.markdown)
+    assert any("Target report: October 2026" in item.value for item in (*app.markdown, *app.caption))
 
 
 def test_priced_scorecard_can_be_previewed_but_never_batch_included(monkeypatch, tmp_path):
@@ -95,7 +97,7 @@ def test_priced_scorecard_can_be_previewed_but_never_batch_included(monkeypatch,
     assert include.disabled
     next(b for b in app.button if b.label == "Preview a Scorecard PDF page").click().run()
     page = next(box for box in app.selectbox if box.label == "Scorecard PDF page")
-    page.select_index(1).run()
+    page.set_value(2).run()
     assert not app.exception
     assert not app.session_state["blocks"]
     assert not app.session_state["sources"][0].client_page_reviews
@@ -154,7 +156,8 @@ def test_multisite_scorecard_scope_survives_save_reopen_and_native_section(
     word = Document(BytesIO(output))
     assert len(word.inline_shapes) == 3
     contents = [paragraph.text for paragraph in word.paragraphs]
-    assert any("3. Monthly Scorecards" in line for line in contents)
+    # Numbering follows the report's own sections; Scorecards is this draft's only one.
+    assert any("1. Monthly Scorecards" in line for line in contents)
     assert "two-site-scorecard.pdf · page/item 1" in contents
     assert "two-site-scorecard.pdf · page/item 3" in contents
     assert any("September 2026" in line for line in contents)
