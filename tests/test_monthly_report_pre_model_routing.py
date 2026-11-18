@@ -121,3 +121,26 @@ def test_missing_malformed_and_duplicate_inputs_are_conservative():
         choose_reader_pages(PROFILE, (content, damaged), "activity_summary", period=PERIOD)
     with pytest.raises(ValueError, match="Unknown reader destination"):
         choose_reader_pages(PROFILE, (content,), "vendor_reports", period=PERIOD)
+
+
+def test_cached_mixed_reader_result_cannot_append_wrong_section_sibling():
+    content = file("mixed.txt", (
+        "Vendor service report\\nInspected pump P-7.",
+        "Water treatment report\\nConductivity measured at tower.",
+        "MBCx report\\nControl sequence monitored.",
+        "Proposal quotation\\nReplacement recommended."
+    ))
+    before = asdict(content)
+    answer = {"items": [
+        {"source": content.source.id, "page": 1, "text": "Inspected pump P-7.", "row": []},
+        {"source": content.source.id, "page": 2, "text": "Conductivity measured at tower.", "row": []},
+        {"source": content.source.id, "page": 3, "text": "Control sequence monitored.", "row": []},
+        {"source": content.source.id, "page": 4, "text": "Replacement recommended.", "row": []},
+    ]}
+    result, pages = structured.reader_update((content,), "activity_summary", answer)
+    assert "Inspected pump P-7." in result.text
+    for text in ("Conductivity measured", "Control sequence", "Replacement recommended"):
+        assert text not in result.text
+    assert result.references == (structured.sources.source_reference(content.source, 1),)
+    assert not pages
+    assert asdict(content) == before
