@@ -6,8 +6,8 @@ from typing import NamedTuple
 from app import monthly_report_sources as sources
 from app.monthly_report_content_policy import (
     _CURRENCIES, _CURRENCY_SYMBOLS, ambiguous_price_columns, contains_price,
-    contains_private_contact, page_status, price_column, table_price_columns,
-    technical_source_text,
+    contains_private_contact, page_allowed, page_status, price_column,
+    table_price_columns, technical_source_text,
 )
 from app.monthly_report_model import ResolvedBlock
 
@@ -832,8 +832,17 @@ def reader_request(profile, contents, destination, page_refs=None, table_columns
         for number, text in enumerate(source.page_texts, 1):
             if (source.id, number) not in selected:
                 continue
-            payload.append({"type": "text", "text": f"SOURCE {source.id} PAGE {number}\n{text}"})
-            if number in image_numbers and (destination == "activity_summary" or number in source.needs_vision):
+            safe_text = technical_source_text(text)
+            if safe_text:
+                payload.append({"type": "text", "text": f"SOURCE {source.id} PAGE {number}\n{safe_text}"})
+            # Unchanged raster pages may contain prices or personal details
+            # that native extraction never saw. Text-only sanitation does
+            # not permit sending those image bytes to an external model.
+            # An existing fingerprint-bound human page review is required.
+            if (number in image_numbers
+                    and (destination == "activity_summary" or number in source.needs_vision)
+                    and page_allowed(source, number)
+                    and not contains_private_contact(text)):
                 image = sources.page_image(profile, content, number)
                 try:
                     reserve_bulk_image(profile, source.sha256, image.data)
@@ -842,6 +851,9 @@ def reader_request(profile, contents, destination, page_refs=None, table_columns
                     continue
                 payload.append({"type": "text", "text": f"VISUALLY CHECKED SOURCE {source.id} PAGE {number}"})
                 payload.extend(image_blocks_for_vision(image.data, "." + image.extension))
+    if not any(part.get("type") == "image" or part.get("text", "").startswith("SOURCE ")
+               for part in payload[1:]):
+        raise ValueError("No policy-permitted readable source content. Review the original locally; no private page was sent.")
     return payload
 
 
