@@ -181,7 +181,7 @@ def test_small_chart_image_and_pdf_annotation_are_in_review_inventory(tmp_path, 
     with fitz.open() as pdf:
         chart = pdf.new_page(width=612, height=792)
         chart.insert_text((40, 55), "A complete native-text report header for chart evidence.")
-        # 4.3% of page area: below the previous full-page-scan threshold.
+        # The PDF embeds the image at native aspect ratio; visible area is about 1.7%.
         chart.insert_image(fitz.Rect(190, 285, 320, 445), stream=synthetic_image())
         annotated = pdf.new_page()
         annotated.insert_text((40, 55), "A native-text page has separate annotation content.")
