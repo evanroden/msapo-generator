@@ -63,7 +63,7 @@ def test_native_water_plan_admits_only_text_only_unpriced_pages_in_source_order(
         "water-september.pdf · page/item 1",
         "water-september.pdf · page/item 3",
     )
-    assert block.references == tuple(sources.source_reference(content.source, n) for n in (1, 3))
+    assert block.references == tuple(sources.source_reference(plan.content.source, n) for n in (1, 3))
     dimensions = []
     from app import monthly_report_library as library
     for ref in block.asset_hashes:
