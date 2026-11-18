@@ -2634,10 +2634,10 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     for table in contact_nodes:
         repeat_current_contact_headers(table)
     separate_current_diagrams(body, chart_nodes, [node for node, _ in workflow_nodes])
-    if chart_nodes and contact_nodes:
+    if (chart_nodes or workflow_nodes) and contact_nodes:
         # Move only an exact adjacent current contact table and chart, never
         # crossing unrelated material or an explicit section boundary.
-        if len(chart_nodes) == len(contact_nodes) == 1:
+        if chart_nodes and len(chart_nodes) == len(contact_nodes) == 1:
             chart, table = chart_nodes[0], contact_nodes[0]
             if (table.getnext() is chart and
                     not any(node.find(".//" + qn("w:sectPr")) is not None for node in (chart, table))):
@@ -2646,9 +2646,14 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             _remove_duplicate_divider_chart_break(chart, body)
         nodes = list(body)
         first_table = min(contact_nodes, key=nodes.index)
-        earlier_charts = [node for node in chart_nodes if nodes.index(node) < nodes.index(first_table)]
-        if earlier_charts:
-            chart_index = max(nodes.index(node) for node in earlier_charts)
+        earlier_diagrams = [
+            node for node in (*chart_nodes, *(node for node, _ in workflow_nodes))
+            if nodes.index(node) < nodes.index(first_table)
+        ]
+        if earlier_diagrams:
+            # A workflow page break after the chart is NOT proof that contacts
+            # start after the workflow. Anchor to the last approved diagram.
+            chart_index = max(nodes.index(node) for node in earlier_diagrams)
             # Keep an immediately preceding, unambiguous contacts heading on
             # the same page as the table. Do not move unrelated text.
             target = first_table
