@@ -1658,6 +1658,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         with st.container(key="monthly_report_navigation"):
             st.markdown('<span class="epc-section-navigation">'
                         '<button type="button" class="epc-section-back" disabled>Back</button>'
+                        '<span class="epc-navigation-attention" role="status" aria-live="polite" hidden></span>'
                         '<span class="epc-section-progress" role="status" aria-live="polite">Cover</span>'
                         '<button type="button" class="epc-section-next" disabled>Next</button></span>', unsafe_allow_html=True)
         from app.monthly_report_section_inclusion import render_section_preferences
