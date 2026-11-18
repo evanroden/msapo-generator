@@ -124,6 +124,7 @@ def main():
     record = {
         "mode": "synthetic post-conversion comparison, not a full build/browser acceptance",
         "python": sys.version.split()[0],
+        "commit": os.environ.get("MSAPO_SHA", "local-standalone"),
         "limits": {"cpu_fraction": os.environ.get("QA_CPU_FRACTION", "not enforced"),
                    "memory_mib": os.environ.get("QA_MEMORY_MIB", "not enforced")},
         "rows": rows,
