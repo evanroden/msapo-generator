@@ -280,7 +280,7 @@ def test_version_one_cache_rechecks_ambiguous_classification(monkeypatch,tmp_pat
     assert not upgraded.source.actions
     assert upgraded.source.classification=='Reference only'
     assert any('not auto-imported' in n for n in upgraded.source.notices)
-    assert json.loads(path.read_text())['vendor_passage_policy']==7
+    assert json.loads(path.read_text())['vendor_passage_policy']==8
 
 
 @pytest.mark.parametrize('heading', ["Technician's note", 'Technician’s note', 'Phase 2 result', 'Note (internal)', 'Note #2'])
@@ -342,7 +342,7 @@ def test_version_two_cache_rechecks_unknown_heading_boundary(monkeypatch,tmp_pat
     path.write_text(json.dumps(data))
     upgraded,_=sources.ingest(synthetic_profiles()[0],c.source.filename,raw)
     assert not upgraded.source.actions
-    assert json.loads(path.read_text())['vendor_passage_policy']==7
+    assert json.loads(path.read_text())['vendor_passage_policy']==8
 
 
 @pytest.mark.parametrize('heading', ['Supervisor ID:42.', 'Finding #2:12.'])
