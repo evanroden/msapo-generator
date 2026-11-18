@@ -5,6 +5,10 @@ browser. The downloadable legacy draft PDF MUST continue using the flattened,
 low-resolution path in monthly_report_preview.preview_report.
 """
 
+from app.monthly_report_preview_metrics import measured
+
+
+@measured("private_ticket_stamp_all_pages")
 def private_ticket_pdf(pdf, *, source_bytes, max_pages, max_bytes):
     """Stamp every converted page without an eager full-document raster.
 
