@@ -115,3 +115,24 @@ def test_invalid_media_rejected_without_partial_success(tmp_path):
     source = _docx_media([("bad.jpg", b"not a supported image")])
     with pytest.raises(ValueError, match="cannot be read safely"):
         preview.write_preview_docx(source, tmp_path / "bad.docx")
+
+
+def test_preview_cache_byte_cap_and_distinct_sources(tmp_path, monkeypatch):
+    first = _jpeg((2400, 1600), author="first")
+    second = _jpeg((2400, 1600), author="second")
+    package = _docx_media([("a.jpg", first), ("b.jpg", first), ("c.jpg", second)])
+    calls = []
+    original = preview._smaller_image
+
+    def measured(raw):
+        calls.append(sha256(raw).hexdigest())
+        return original(raw)
+
+    monkeypatch.setattr(preview, "_smaller_image", measured)
+    monkeypatch.setattr(preview, "MAX_RENDITION_CACHE_BYTES", 0)
+    preview.write_preview_docx(package, tmp_path / "uncached.docx")
+    assert calls == [sha256(first).hexdigest(), sha256(first).hexdigest(),
+                     sha256(second).hexdigest()]
+    result = _media((tmp_path / "uncached.docx").read_bytes())
+    assert result["word/media/a.jpg"] == result["word/media/b.jpg"]
+    assert result["word/media/c.jpg"] != result["word/media/a.jpg"]
