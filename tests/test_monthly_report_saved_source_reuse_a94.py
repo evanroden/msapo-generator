@@ -131,6 +131,18 @@ def test_missing_original_or_changed_snapshot_cannot_reuse_stale_selection(profi
     assert reuse_saved_source(profile, saved_source_choices(profile)[0]).source == revised
 
 
+def test_malformed_saved_catalog_fails_closed_without_changing_original(profile):
+    period = ReportPeriod(2026, 9)
+    source = make_source(profile, "preserved.txt", b"Synthetic preserved original.")
+    save(profile, period, (source,))
+    original = sources.source_bytes(profile, source)
+    path = library._profile_path(profile.contract, profile.key, snapshots=True) / "2026-09.json"
+    path.write_text("{not JSON")
+    with pytest.raises(library.LibraryError, match="could not be read"):
+        saved_source_choices(profile)
+    assert sources.source_bytes(profile, source) == original
+
+
 def test_catalog_does_not_read_original_or_ai_and_reuse_reads_only_on_click(profile, monkeypatch):
     period = ReportPeriod(2026, 9)
     source = make_source(profile, "inspect.txt", b"Synthetic inspected rooftop unit.")
