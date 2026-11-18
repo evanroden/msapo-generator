@@ -273,8 +273,12 @@ def test_real_parser_budgets_have_stage_specific_exact_unit_errors(tmp_path, mon
     ):
         with monkeypatch.context() as patch:
             patch.setattr(importer, knob, 1)
-            with pytest.raises(importer.ImportError, match=message):
+            with pytest.raises(importer.ImportError, match=message) as caught:
                 importer.inspect_docx(path)
+            from app.monthly_report_starting_errors import starting_docx_failure_notice
+            visible = starting_docx_failure_notice(caught.value)
+            assert "This report could not be analyzed" not in visible
+            assert "original file and existing report were not changed" in visible
 
 
 def test_empty_proposal_frame_does_not_consume_following_native_table(tmp_path):
