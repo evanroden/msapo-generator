@@ -46,7 +46,7 @@ def test_valid_two_source_duplicate_is_not_a_second_completed_work_order(storage
     assert all(c.existing.source_sha256 != c.incoming.source_sha256 for c in candidates)
     result = publish(combined, newer)
     assert work_block(result) is work_block(combined)  # no approval/content reset
-    assert row_statuses(result) == [("0001", "north", "Open"), ("0002", "south", "Closed")]
+    assert row_statuses(result) == [("0001", "north", "Open"), ("0002", "south", "Completed")]
     assert len(row_statuses(result)) == 2
     saved = flow.saved_bundle(result, second.source.id, "workorders")
     assert not saved["published"]
@@ -69,7 +69,7 @@ def test_conflicting_open_and_closed_status_needs_one_recorded_choice(storage):
     assert len(candidates) == 2
     conflict = next(c for c in candidates if c.kind == "conflict")
     duplicate = next(c for c in candidates if c.kind == "duplicate")
-    assert (conflict.existing.status, conflict.incoming.status) == ("Open", "Closed")
+    assert (conflict.existing.status, conflict.incoming.status) == ("Open", "Completed")
     assert conflict.existing.source_id == first_source.source.id
     assert conflict.incoming.source_id == second.source.id
     assert conflict.existing.original_cells[3] == "Open"
@@ -103,7 +103,7 @@ def test_one_incoming_choice_rebuilds_old_counts_and_keeps_unrelated_site(storag
     current = flow.saved_bundle(chosen, second.source.id, "workorders")
     result = publish(chosen, current)
     assert sorted(row_statuses(result)) == [
-        ("0001", "north", "Closed"), ("0002", "south", "Closed")]
+        ("0001", "north", "Completed"), ("0002", "south", "Completed")]
     assert len(row_statuses(result)) == 2
     old_bundle = flow.saved_bundle(result, first_source.source.id, "workorders")
     assert len(old_bundle["published"]) == 2
@@ -161,7 +161,7 @@ def test_changed_status_source_date_site_and_period_never_reuse_old_choice(stora
         expected_revision=flow.revision(review))
     saved = flow.saved_bundle(chosen, second.source.id, "workorders")
     changed = flow.change_row(saved, 0, flow.restored_group(saved, saved["groups"][0]).rows[0].key,
-                              {"status": "Scheduled"})
+                              {"work_date": "2026-09-06"})
     changed_draft = flow.store_bundle(chosen, changed, expected_revision=flow.revision(saved))
     current = flow.saved_bundle(changed_draft, second.source.id, "workorders")
     with pytest.raises(ValueError, match="Two sources disagree"):
