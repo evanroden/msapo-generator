@@ -75,7 +75,16 @@ def authoritative_cover_lines(inspection):
     inspected DOCX never upgrades later-page unheaded narrative into a cover.
     """
     lines = getattr(inspection, "cover_title_candidates", None)
-    return tuple(inspection.title_candidates if lines is None else lines)
+    if lines is not None:
+        return tuple(lines)
+    # Older hand-built/imported inspections have no physical cover receipt.
+    # Preserve their existing cover-item inference so saved/imported identity
+    # contracts are not silently reinterpreted; new DOCX inspections always
+    # set the field and never admit text from an unheaded later page.
+    return tuple((*inspection.title_candidates, *(
+        item.text for item in inspection.items
+        if item.kind == "text" and item.part == "word/document.xml"
+        and item.section in ("", "cover") and 0 <= item.position <= 80)))
 
 
 def cover_report_periods(inspection):
