@@ -4,7 +4,11 @@ Synthetic empty/filled 12, 10 and 8 section variants. No financial export
 authorization and no source or persisted draft mutation.
 """
 from dataclasses import replace
+from hashlib import sha256
 from io import BytesIO
+import json
+import os
+from pathlib import Path
 
 import pytest
 import pymupdf
@@ -139,6 +143,24 @@ def test_real_pdf_ar_heading_links_and_divider_ink(excluded, number, total, fill
     assert package.pdf and package.contents_notice == "", package.pdf_error
     assert package.docx
     with pymupdf.open(stream=package.pdf, filetype="pdf") as pdf:
+        # GitHub's existing independent-synthetic artifact collection retains
+        # the exact native derivatives and their hashes for manual comparison.
+        if os.environ.get("INDEPENDENT_OUTPUT"):
+            target = (Path(os.environ["INDEPENDENT_OUTPUT"]) /
+                      f"a78-sections-{total}-number-{number}")
+            target.mkdir(parents=True, exist_ok=True)
+            (target / "report.docx").write_bytes(package.docx)
+            (target / "report.pdf").write_bytes(package.pdf)
+            (target / "manifest.json").write_text(json.dumps({
+                "synthetic_only": True,
+                "ordinary_sections": total,
+                "receivable_number": number,
+                "receivable_rows": int(filled),
+                "docx_sha256": sha256(package.docx).hexdigest(),
+                "pdf_sha256": sha256(package.pdf).hexdigest(),
+                "pdf_pages": len(pdf),
+                "source_documents": 0,
+            }, indent=2))
         toc = pdf.get_toc()
         assert len(toc) == total
         expected = [(s.number, s.title) for s in included_sections(draft.sections)]
@@ -172,3 +194,19 @@ def test_real_pdf_ar_heading_links_and_divider_ink(excluded, number, total, fill
         body_text = pdf[ar_body_page].get_text()
         assert ("SYN-INV-1" in body_text) == filled
         assert not any("$700" in pg.get_text() for pg in pdf)
+
+
+def test_stale_receivable_receipt_notice_does_not_claim_a_fixed_number():
+    from app.monthly_report_receivable_intake import _NOTICE
+    assert "Accounts Receivable rows changed" in _NOTICE
+    assert "Section 10" not in _NOTICE
+
+
+def test_approved_custom_receivable_title_and_appendix_identity():
+    from app.monthly_report_receivable_ui import receivable_section_heading
+    draft = _draft()
+    sections = tuple(replace(s, appendix=True, number="G", title="Invoice status")
+                     if s.key == "accounts_receivable" else s for s in draft.sections)
+    revised = replace(draft, sections=sections)
+    assert receivable_section_heading(revised) == "Appendix G — Invoice status"
+    assert draft.sections != revised.sections
