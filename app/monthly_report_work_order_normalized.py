@@ -170,7 +170,7 @@ def source_header_positions(columns, aliases):
         if title in aliases:
             positions.append(index)
             continue
-        suffix = re.fullmatch(r"(.+?) \\((\\d+)\\)", str(raw))
+        suffix = re.fullmatch(r"(.+?) \((\d+)\)", str(raw))
         if suffix and int(suffix.group(2)) >= 2:
             original = _name(suffix.group(1))
             if original in aliases and original in values[:index]:
