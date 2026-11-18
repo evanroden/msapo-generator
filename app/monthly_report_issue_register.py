@@ -22,7 +22,8 @@ class RegisterIssue:
     status: str = "ongoing"
     update: str = ""
     legacy_text: str = ""
-    legacy_key: str = ""  # Previous source-row ID; used only to retain saved edits.
+    legacy_key: str = ""  # Previous mapped source-row ID.
+    generic_key: str = ""  # Previous unrecognized-table source-row ID.
 
 
 _DESCRIPTION = {
@@ -115,7 +116,16 @@ def mapped_issue_register(columns, rows, reference="", *, row_offset=0) -> tuple
             ["issue-register-v2", reference, row_offset + index],
             sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:20]
             if reference else old_digest)
+        # Previously unrecognized tables used a separate source-row scheme.
+        # Preserve their existing editable cards when a new header alias
+        # makes the *same* physical source row confidently mappable.
+        generic_identity = hashlib.sha256(json.dumps(
+            ("issue-table-row-v1", reference, index, headings, original),
+            sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        generic_digest = hashlib.sha256(json.dumps(
+            (generic_identity, 0), sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:20]
         result.append(RegisterIssue("follow-" + digest, text,
                                     legacy_text=legacy_text,
-                                    legacy_key="follow-" + old_digest))
+                                    legacy_key="follow-" + old_digest,
+                                    generic_key="follow-" + generic_digest))
     return tuple(result)
