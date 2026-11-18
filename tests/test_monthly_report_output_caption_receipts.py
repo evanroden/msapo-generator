@@ -168,4 +168,4 @@ def test_edit_after_generation_cannot_claim_old_download_as_ready_or_retry_save(
     assert messages.warning == [
         "Files are from an earlier draft. Create Word and PDF again to include the latest edits."
     ]
-    assert "Previous downloads" in messages.caption[-1]
+    assert "Earlier files must not" in messages.caption[-1]
