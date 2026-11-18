@@ -18,6 +18,8 @@ from urllib.parse import urlparse
 from urllib.request import urlopen
 
 from playwright.sync_api import expect, sync_playwright
+from google.protobuf.message import DecodeError
+from streamlit.proto.ForwardMsg_pb2 import ForwardMsg
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -124,6 +126,20 @@ def exercise(browser, label):
         page.set_default_timeout(45000)
         errors, external = [], []
         page.on("pageerror", lambda error: errors.append(str(error)))
+        # Aggregate real Streamlit WebSocket deltas, never upload/source values.
+        wire = {"frames": 0, "deltas": 0, "bytes": 0}
+        def received(raw):
+            if not isinstance(raw, bytes):
+                return
+            wire["frames"] += 1
+            wire["bytes"] += len(raw)
+            packet = ForwardMsg()
+            try:
+                packet.ParseFromString(raw)
+            except DecodeError:
+                return
+            wire["deltas"] += packet.WhichOneof("type") == "delta"
+        page.on("websocket", lambda socket: socket.on("framereceived", received))
 
         def routing(route):
             uri = urlparse(route.request.url)
@@ -138,6 +154,8 @@ def exercise(browser, label):
             page.goto(URL, wait_until="domcontentloaded", timeout=60000)
             settled(page)
             record["steps"]["cold_s"] = round(time.monotonic() - start, 3)
+            record["steps"]["cold_wire"] = dict(wire)
+            record["steps"]["cold_panel_elements"] = page.locator(PANEL).locator("[data-testid]").count()
             expect(page.locator(PANEL)).not_to_be_visible()
             assert receipt(page)["sources"] == 50
             assert receipt(page)["residents"] == 0
@@ -146,6 +164,9 @@ def exercise(browser, label):
             page.get_by_role("button", name="Manage source files", exact=True).click()
             settled(page)
             record["steps"]["open_s"] = round(time.monotonic() - begin, 3)
+            record["steps"]["open_wire_delta"] = {key: wire[key] - record["steps"]["cold_wire"][key]
+                                                    for key in wire}
+            record["steps"]["open_panel_elements"] = page.locator(PANEL).locator("[data-testid]").count()
             expect(page.locator(PANEL)).to_be_visible()
             assert receipt(page)["residents"] == 1
             assert len(page.locator('[data-testid="stDateInput"]').all()) == 1
@@ -192,6 +213,7 @@ def exercise(browser, label):
             expect(date_for(page, SOURCE_A)).to_be_visible()
             record["steps"]["narrow_width_px"] = 390
             record["steps"]["visited_metadata_forms"] = receipt(page)["residents"]
+            record["steps"]["full_wire"] = dict(wire)
             record["steps"]["saved_dates"] = [receipt(page)["dates"][SOURCE_A], receipt(page)["dates"][SOURCE_B]]
             assert not errors and not external, {"javascript_errors": errors, "external_attempts": external}
             record["result"] = "passed"
