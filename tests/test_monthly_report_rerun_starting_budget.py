@@ -75,3 +75,60 @@ def test_second_streamlit_session_still_rechecks_starting_evidence(monkeypatch, 
     assert calls, "A new session must still independently validate saved starting evidence"
     assert all(call[:2] == (RRH_CONTRACT, "synthetic-guided") for call in calls)
     assert next(w for w in second.text_input if w.label == "Prepared by").value == ""
+
+
+def test_shared_save_rechecks_starting_sources_and_persists_latest_native_edits(monkeypatch, tmp_path):
+    from app import monthly_report_library as library
+    from app.monthly_report_model import ReportPeriod
+
+    app = monthly(monkeypatch, tmp_path)
+    next(w for w in app.text_input if w.label == "Prepared by").set_value(
+        "Synthetic saved editor").run()
+    next(w for w in app.text_area if w.label == "Activity summary").set_value(
+        "Synthetic ten-character stable report input.").run()
+    original = start.read_starting_state
+    checked = []
+
+    def fresh(*args):
+        checked.append(args)
+        return original(*args)
+
+    monkeypatch.setattr(start, "read_starting_state", fresh)
+    next(b for b in app.button if b.label == "Save shared version").click().run()
+    assert not app.exception and not app.error
+    assert len(checked) == 1, "Publish verifies its original once, rather than on each edit"
+    saved = library.load_snapshot(RRH_CONTRACT, "synthetic-guided", ReportPeriod(2026, 9))
+    assert saved.draft.prepared_by == "Synthetic saved editor"
+    assert saved.draft.block("activity_summary").text == "Synthetic ten-character stable report input."
+    assert next(w for w in app.text_input if w.label == "Prepared by").value == "Synthetic saved editor"
+    # Same native mounted session, now with a durable published revision.
+    app.run()
+    assert not app.exception
+    assert library.load_snapshot(RRH_CONTRACT, "synthetic-guided", ReportPeriod(2026, 9)) == saved
+
+
+def test_publication_refuses_newly_invalid_source_proof_without_losing_work(monkeypatch, tmp_path):
+    from app import monthly_report_library as library
+    from app.monthly_report_model import ReportPeriod
+
+    app = monthly(monkeypatch, tmp_path)
+    next(w for w in app.text_input if w.label == "Prepared by").set_value(
+        "Synthetic editor uncommitted").run()
+    next(w for w in app.text_area if w.label == "Activity summary").set_value(
+        "Synthetic work must not be dropped.").run()
+    calls = []
+
+    def damaged(*args):
+        calls.append(args)
+        raise ValueError("Synthetic source fingerprint changed during selection")
+
+    monkeypatch.setattr(start, "read_starting_state", damaged)
+    next(b for b in app.button if b.label == "Save shared version").click().run()
+    assert not app.exception
+    assert len(calls) == 1
+    assert any("Shared version could not be saved" in x.value for x in app.error)
+    assert library.load_snapshot(RRH_CONTRACT, "synthetic-guided", ReportPeriod(2026, 9)) is None
+    assert next(w for w in app.text_area if w.label == "Activity summary").value == (
+        "Synthetic work must not be dropped.")
+    assert next(w for w in app.text_input if w.label == "Prepared by").value == (
+        "Synthetic editor uncommitted")
