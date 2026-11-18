@@ -56,7 +56,7 @@ def button(label):
 def check(starts,value=True):
  next(c for c in a.checkbox if c.label.startswith(starts)).set_value(value).run();assert not a.exception
 next(t for t in a.toggle if t.label=='Review individual pages').set_value(True).run();assert not a.exception
-button('Include page');button('Add reviewed pages')
+button('Include page')
 ordinary=a.session_state['financial_draft'];assert len(ordinary.blocks[-1].asset_hashes)==1
 check('Review client');a.multiselect[0].set_value([2]).run()
 assert next(b for b in a.button if b.label=='Include reviewed financial pages').disabled
