@@ -881,6 +881,8 @@ def exercise(browser_type, name):
             if action == "pointer":
                 back.click()
             else:
+                expect(reference).to_have_css("outline-style", "solid")
+                expect(reference).to_have_css("outline-width", "3px")
                 # Native Tab from the focused preview group reaches Back; a
                 # direct locator.press() alone would not prove the focus order.
                 page.keyboard.press("Tab")
