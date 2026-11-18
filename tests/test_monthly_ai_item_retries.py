@@ -137,6 +137,14 @@ def test_page_batch_keeps_two_successes_and_only_retries_the_failure(
     ui._queue_page_reads(draft, "unit", source, (1, 2, 3))
     run_jobs()
     assert calls == [1, 2, 3, 2]  # repeat click is free
+    # A second Streamlit session reloads the accepted page receipts from disk.
+    # There is no new paid call and no automatic approval into saved report data.
+    fresh = {"unit_evidence": (SourceContent(source),)}
+    ui.st.session_state = fresh
+    ui._queue_page_reads(draft, "unit", source, (1, 2, 3))
+    assert calls == [1, 2, 3, 2]
+    assert {fact.page for fact in fresh["unit_ai_facts"][2]} == {1, 2, 3}
+    assert source.facts == ()
 
 
 def test_human_accepted_fact_is_not_overwritten_by_same_id(sample, monkeypatch):
