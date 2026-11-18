@@ -26,6 +26,8 @@ from lxml.etree import XMLSyntaxError
 from openpyxl import load_workbook
 
 from app import monthly_report_library as library, monthly_report_import as docx_import, ocr
+from app import monthly_source_parse_manifest as parse_manifest
+from app.content_cache import ContentDigests
 from app.monthly_report_docx import ReportImage, normalize_report_image
 from app.monthly_report_import import inspect_docx, read_import_image
 from app.monthly_report_model import ReportProfile, ReportSource, ResolvedBlock
@@ -80,7 +82,7 @@ def file_size_limit(suffix: str) -> int:
     return docx_import.MAX_DOCX_BYTES if suffix.casefold() == ".docx" else MAX_FILE_BYTES
 
 
-def source_bytes(profile: ReportProfile, source: ReportSource) -> bytes:
+def source_bytes(profile: ReportProfile, source: ReportSource, *, _digests: ContentDigests | None = None) -> bytes:
     path = _path(profile, source.sha256, source.suffix)
     limit = file_size_limit(source.suffix)
     if path.stat().st_size > limit:
@@ -91,7 +93,8 @@ def source_bytes(profile: ReportProfile, source: ReportSource) -> bytes:
         raw = stream.read(limit + 1)
     if len(raw) > limit:
         raise ValueError("Saved source exceeds the file limit. " + source_size_error(source.suffix, limit))
-    if hashlib.sha256(raw).hexdigest() != source.sha256:
+    checked_digest = _digests.digest(raw).hex() if _digests is not None else hashlib.sha256(raw).hexdigest()
+    if checked_digest != source.sha256:
         raise ValueError("A source file failed its integrity check.")
     return raw
 
@@ -610,9 +613,14 @@ def _same_source_bytes(path, raw):
     return matches
 
 
-def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceContent, tuple[tuple[str, bytes], ...]]:
-    """Cache local extraction. Caller enforces aggregate count/byte/text budgets."""
-    from app.monthly_report_content_policy import suggested_pages
+def ingest(profile: ReportProfile, filename: str, raw: bytes, *,
+           _digests: ContentDigests | None = None) -> tuple[SourceContent, tuple[tuple[str, bytes], ...]]:
+    """Verified input, one profile-scoped in-flight parse, atomic derived results.
+
+    _digests is operation-owned: the exact immutable bytes object is retained
+    until the caller's batch/recovery action ends; callers cannot supply a
+    filename or unverified digest as authentication.
+    """
     filename = Path(filename.replace("\\", "/")).name
     suffix = Path(filename).suffix.casefold()
     if suffix not in SUPPORTED:
@@ -622,8 +630,22 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
     limit = file_size_limit(suffix)
     if len(raw) > limit:
         raise ValueError(source_size_error(suffix, limit))
-    digest = hashlib.sha256(raw).hexdigest()
+    if _digests is not None and not isinstance(_digests, ContentDigests):
+        raise TypeError("Only an operation-owned immutable digest cache can be supplied.")
+    digest = _digests.digest(raw).hex() if _digests is not None else hashlib.sha256(raw).hexdigest()
+    # The lock is keyed by both the profile directory and exact source digest.
+    # Separate sites never share extraction or mutable report state. The lock
+    # also deduplicates in-flight parses in other worker processes on this disk.
+    lock = _path(profile, digest, ".json").parent / ".parse-locks" / digest
+    with library._locked(lock):
+        return _ingest_locked(profile, filename, raw, digest, suffix)
+
+
+def _ingest_locked(profile: ReportProfile, filename: str, raw: bytes,
+                   digest: str, suffix: str) -> tuple[SourceContent, tuple[tuple[str, bytes], ...]]:
+    from app.monthly_report_content_policy import suggested_pages
     path, cache = _path(profile, digest, suffix), _path(profile, digest, ".json")
+    stage = cache.with_name(digest + ".parse-stage.json")
     attachments = ()
     unicode_csv = suffix == ".csv" and _csv_unicode_encoding(raw) is not None
     rebuild_cache = False
@@ -632,6 +654,9 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
         try:
             data = library._read(cache)
             content = _cached_extraction(data, digest, suffix)
+            if "parse_manifest" in data and not parse_manifest.valid(
+                    data["parse_manifest"], content, len(raw)):
+                raise ValueError("Source parse manifest or parser policy changed.")
         except (ValueError, TypeError, LookupError, AttributeError):
             # Cache damage is recoverable; a stale/foreign QA namespace is not.
             library._qa_path_guard(cache)
@@ -662,94 +687,122 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
         rebuild_cache = True
     if not rebuild_cache or not _same_source_bytes(path, raw):
         library._atomic_write(path, raw)
-    page_texts, needs_vision, tables, image_items, notices = [], [], (), [], []
-    pdf_text_blocks = []
-    span_budget_exceeded = False
-    if suffix == ".pdf":
-        with fitz.open(stream=raw, filetype="pdf") as pdf:
-            if pdf.is_encrypted and not pdf.authenticate(""):
-                raise ValueError("PDF needs a password. Upload an unlocked copy.")
-            if len(pdf) > MAX_PAGES:
-                raise ValueError(f"PDF exceeds {MAX_PAGES:,} pages; select a smaller document range.")
-            for number, page in enumerate(pdf, 1):
-                text = page.get_text().strip()
-                if ocr._page_needs_ocr(page, native_text=text):
-                    needs_vision.append(number)
-                page_texts.append(text)
-                if sum(map(len, page_texts)) > ocr._MAX_EXTRACTED_CHARS:
-                    raise ValueError(f"PDF text exceeds {ocr._MAX_EXTRACTED_CHARS:,} characters; select a smaller document range.")
-                from app.monthly_report_vendor_passages import block_spans, MAX_VENDOR_BLOCK_SPANS
-                if not span_budget_exceeded:
-                    spans = block_spans(page, text, number)
-                    if len(pdf_text_blocks) + len(spans) > MAX_VENDOR_BLOCK_SPANS:
-                        # No partial-page certainty after exhausting metadata capacity.
-                        # Raw original/page text and ordinary review remain available.
-                        pdf_text_blocks.clear()
-                        span_budget_exceeded = True
-                    else:
-                        pdf_text_blocks.extend(spans)
-    elif suffix in ocr.SUPPORTED_IMAGE_SUFFIXES:
-        if suffix == ".mpo":
-            from app.mpo_images import frame_count
-            count = frame_count(raw)
-            for index in range(count):
+    # A completed expensive parse survives a later suggestion/publish failure.
+    # Never trust or replay an incomplete or wrong-policy checkpoint. Previously
+    # damaged full caches deliberately get reparsed for existing recovery rules.
+    staged = None
+    if not rebuild_cache and not cache.exists() and stage.exists() and suffix not in (".eml", ".msg"):
+        library._qa_path_guard(stage)
+        try:
+            record = library._read(stage)
+            if not parse_manifest.stage_valid(record, digest, suffix):
+                raise ValueError("Stale or corrupt source parse stage.")
+            staged = _cached_extraction(record, digest, suffix)
+        except (ValueError, TypeError, LookupError, AttributeError):
+            library._qa_path_guard(stage)
+            staged = None
+    if staged is None:
+        page_texts, needs_vision, tables, image_items, notices = [], [], (), [], []
+        pdf_text_blocks = []
+        span_budget_exceeded = False
+        if suffix == ".pdf":
+            with fitz.open(stream=raw, filetype="pdf") as pdf:
+                if pdf.is_encrypted and not pdf.authenticate(""):
+                    raise ValueError("PDF needs a password. Upload an unlocked copy.")
+                if len(pdf) > MAX_PAGES:
+                    raise ValueError(f"PDF exceeds {MAX_PAGES:,} pages; select a smaller document range.")
+                for number, page in enumerate(pdf, 1):
+                    text = page.get_text().strip()
+                    if ocr._page_needs_ocr(page, native_text=text):
+                        needs_vision.append(number)
+                    page_texts.append(text)
+                    if sum(map(len, page_texts)) > ocr._MAX_EXTRACTED_CHARS:
+                        raise ValueError(f"PDF text exceeds {ocr._MAX_EXTRACTED_CHARS:,} characters; select a smaller document range.")
+                    from app.monthly_report_vendor_passages import block_spans, MAX_VENDOR_BLOCK_SPANS
+                    if not span_budget_exceeded:
+                        spans = block_spans(page, text, number)
+                        if len(pdf_text_blocks) + len(spans) > MAX_VENDOR_BLOCK_SPANS:
+                            # No partial-page certainty after exhausting metadata capacity.
+                            # Raw original/page text and ordinary review remain available.
+                            pdf_text_blocks.clear()
+                            span_budget_exceeded = True
+                        else:
+                            pdf_text_blocks.extend(spans)
+        elif suffix in ocr.SUPPORTED_IMAGE_SUFFIXES:
+            if suffix == ".mpo":
+                from app.mpo_images import frame_count
+                count = frame_count(raw)
+                for index in range(count):
+                    try:
+                        normalize_report_image(raw, suffix, frame_index=index)
+                    except (OSError, EOFError, SyntaxError) as exc:
+                        # Pillow can report truncated MPO raster data only when a
+                        # selected frame is decoded, after its header inventory.
+                        raise ValueError("MPO image data is damaged or truncated. Export a fresh copy.") from exc
+                page_texts, needs_vision = [""] * count, list(range(1, count + 1))
+                notices.append("MPO pictures are separate source pages in their original order; review each picture before inclusion.")
+            else:
                 try:
-                    normalize_report_image(raw, suffix, frame_index=index)
+                    normalize_report_image(raw, suffix)  # Validate before caching or paid work.
                 except (OSError, EOFError, SyntaxError) as exc:
-                    # Pillow can report truncated MPO raster data only when a
-                    # selected frame is decoded, after its header inventory.
-                    raise ValueError("MPO image data is damaged or truncated. Export a fresh copy.") from exc
-            page_texts, needs_vision = [""] * count, list(range(1, count + 1))
-            notices.append("MPO pictures are separate source pages in their original order; review each picture before inclusion.")
+                    # These exceptions originate inside the bounded image decoder,
+                    # not the surrounding original/cache storage operations. Do not
+                    # mislabel invalid image bytes as a transient storage outage.
+                    raise ValueError("Image data is damaged or unreadable. Export a fresh copy.") from exc
+                page_texts, needs_vision = [""], [1]
+        elif suffix == ".txt":
+            page_texts = [raw.decode("utf-8-sig")]
+        elif suffix in (".csv", ".xlsx"):
+            tables = _spreadsheet(raw, suffix)
+            page_texts = ["\n".join(["\t".join(t.columns), *("\t".join(r) for r in t.rows)]) for t in tables]
+            if suffix == ".xlsx":
+                notices.append("Workbook values use stored formula results; formulas are never executed. Missing cached results remain blank.")
+        elif suffix == ".docx":
+            inspected = inspect_docx(path)
+            for number, item in enumerate(inspected.items, 1):
+                page_texts.append(item.text or "\n".join("\t".join(r) for r in item.rows))
+                if item.kind == "unsupported":
+                    notices.append(f"Item {number}: {item.note or 'This original item could not be read.'}")
+                elif item.note == "Unplaced package asset; confirm whether it belongs in this report.":
+                    notices.append(f"Item {number}: {item.note}")
+                if item.kind == "image":
+                    image_items.append((number, item.id))
+                    needs_vision.append(number)
+            notices.extend(inspected.notices)
+            # Only this new inspection route has retained every unsupported-item
+            # notice. Old cached records keep their broader artwork-review notice.
+            notices.append("DOCX selections are extracted items, not Word page numbers.")
         else:
-            try:
-                normalize_report_image(raw, suffix)  # Validate before caching or paid work.
-            except (OSError, EOFError, SyntaxError) as exc:
-                # These exceptions originate inside the bounded image decoder,
-                # not the surrounding original/cache storage operations. Do not
-                # mislabel invalid image bytes as a transient storage outage.
-                raise ValueError("Image data is damaged or unreadable. Export a fresh copy.") from exc
-            page_texts, needs_vision = [""], [1]
-    elif suffix == ".txt":
-        page_texts = [raw.decode("utf-8-sig")]
-    elif suffix in (".csv", ".xlsx"):
-        tables = _spreadsheet(raw, suffix)
-        page_texts = ["\n".join(["\t".join(t.columns), *("\t".join(r) for r in t.rows)]) for t in tables]
-        if suffix == ".xlsx":
-            notices.append("Workbook values use stored formula results; formulas are never executed. Missing cached results remain blank.")
-    elif suffix == ".docx":
-        inspected = inspect_docx(path)
-        for number, item in enumerate(inspected.items, 1):
-            page_texts.append(item.text or "\n".join("\t".join(r) for r in item.rows))
-            if item.kind == "unsupported":
-                notices.append(f"Item {number}: {item.note or 'This original item could not be read.'}")
-            elif item.note == "Unplaced package asset; confirm whether it belongs in this report.":
-                notices.append(f"Item {number}: {item.note}")
-            if item.kind == "image":
-                image_items.append((number, item.id))
-                needs_vision.append(number)
-        notices.extend(inspected.notices)
-        # Only this new inspection route has retained every unsupported-item
-        # notice. Old cached records keep their broader artwork-review notice.
-        notices.append("DOCX selections are extracted items, not Word page numbers.")
+            text, attachments, extra = _email(raw) if suffix == ".eml" else _msg(raw)
+            page_texts = [text]
+            notices.extend(extra)
+        if sum(map(len, page_texts)) > ocr._MAX_EXTRACTED_CHARS:
+            raise ValueError(f"Source text exceeds {ocr._MAX_EXTRACTED_CHARS:,} characters; split the input before reading.")
+        source = ReportSource(digest, filename, digest, suffix, page_texts=tuple(page_texts),
+                              pdf_text_blocks=tuple(pdf_text_blocks),
+                              selected_pages=tuple(range(1, len(page_texts)+1)), needs_vision=tuple(needs_vision), notices=tuple(notices))
+        if suffix not in (".eml", ".msg"):
+            # The source is already stored and the expensive decode completed.
+            # An interrupted publication leaves only a disposable checkpoint.
+            parsed = SourceContent(source, tables, tuple(image_items))
+            library._atomic_write(stage, library._json(parse_manifest.stage_record(parsed)))
     else:
-        text, attachments, extra = _email(raw) if suffix == ".eml" else _msg(raw)
-        page_texts = [text]
-        notices.extend(extra)
-    if sum(map(len, page_texts)) > ocr._MAX_EXTRACTED_CHARS:
-        raise ValueError(f"Source text exceeds {ocr._MAX_EXTRACTED_CHARS:,} characters; split the input before reading.")
-    source = ReportSource(digest, filename, digest, suffix, page_texts=tuple(page_texts),
-                          pdf_text_blocks=tuple(pdf_text_blocks),
-                          selected_pages=tuple(range(1, len(page_texts)+1)), needs_vision=tuple(needs_vision), notices=tuple(notices))
+        source, tables, image_items = staged.source, staged.tables, staged.image_items
     if suffix not in (".csv", ".xlsx"):
         source = replace(source, selected_pages=suggested_pages(source))
     source = suggest_facts(source, profile)
     content = SourceContent(source, tables, tuple(image_items))
     library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1,
         "native_action_policy": 1, "vendor_passage_policy": 7,
+        "parse_manifest": parse_manifest.make(content, len(raw)),
         **({"xlsx_currency_policy": 1} if suffix == ".xlsx" else {}),
         **({"csv_unicode_policy": 1} if unicode_csv else {}),
         **({"csv_dialect_policy": 1} if suffix == ".csv" else {}), **asdict(content)}))
+    # Stages are transient and do not double persistent cache disk occupancy.
+    try:
+        stage.unlink(missing_ok=True)
+    except OSError:
+        pass
     return content, attachments
 
 
@@ -776,6 +829,9 @@ def _discard_rejected(path, cache, digest, already_present, existing_cache):
 
 
 def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], existing: tuple[SourceContent, ...] = ()) -> tuple[tuple[SourceContent, ...], tuple[str, ...]]:
+    # One action-private digest tier, retaining immutable bytes under a fixed
+    # 64-MiB budget; not a shared Streamlit/global mutable extraction object.
+    digests = ContentDigests()
     sources = {c.source.sha256: c for c in existing}
     sizes, messages = 0, []
     counted_sizes = {}
@@ -793,7 +849,7 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
     while queue:
         filename, raw, depth = queue.pop(0)
         filename = Path(filename.replace("\\", "/")).name
-        digest = hashlib.sha256(raw).hexdigest()
+        digest = digests.digest(raw).hex()
         if digest in sources:
             # Re-uploading the identical accepted original can repair a missing
             # or corrupted stored copy without changing the report's reviewed
@@ -831,7 +887,7 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
         cache = _path(profile, digest, ".json")
         existing_cache = cache.exists()
         try:
-            content, attachments = ingest(profile, filename, raw)
+            content, attachments = ingest(profile, filename, raw, _digests=digests)
             added = sum(map(len, content.source.page_texts))
             if text_size + added > MAX_REPORT_TEXT:
                 raise ValueError(f"Total extracted text exceeds {MAX_REPORT_TEXT:,} characters. Remove unused sources or split the report.")
