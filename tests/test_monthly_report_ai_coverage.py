@@ -396,3 +396,29 @@ def test_reviewed_source_survives_synthetic_disk_serialization(tmp_path):
     assert reloaded.sources[0] == reviewed_source
     assert [b.key for b in cover.plan(reloaded.sources[0]).batches] == [
         b.key for b in planned.batches]
+
+@pytest.mark.parametrize(
+    "original_text,claimed,kind",
+    [
+        ("Vendor did not inspect pump.", "Inspected pump.", "action"),
+        ("Vendor scheduled training for the team.", "Team attended training.", "training"),
+        ("Vendor repaired pump.", "ENFRA technician repaired pump.", "action"),
+        ("Contractor was not able to start the repair.", "Started repair.", "action"),
+    ],
+)
+def test_negative_vendor_and_future_work_is_never_recast_as_completed(
+        original_text, claimed, kind):
+    original = source(1, text=original_text)
+    planned = cover.plan(original)
+    def simulated(payload):
+        data = json.loads(payload[0]["text"].split("\n")[-1])
+        return {"reviewed_regions": ["1.1"], "unsupported_regions": [],
+                "facts": [{"source": original.id, "region": "1.1",
+                           "page": 1, "kind": kind, "text": claimed,
+                           "quote": original_text}]}
+    done = cover.collect(
+        planned, result_for(planned, original, read=simulated),
+        original, PROFILE, PERIOD)
+    assert done["facts"] == ()
+    assert done["rejected_claims"] == 1
+    assert done["inventory"] == {1: "needs_review"}
