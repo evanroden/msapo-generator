@@ -483,13 +483,30 @@ globalThis.ENFRAWorkspaceNavigation = {
                 // Only the settled preflight from the mounted report owns this status.
                 // This is display-only; it cannot change content or validations.
                 const marker = app.querySelector('.epc-review-attention-source');
-                const raw = marker && !marker.closest('[data-stale="true"]')
-                    ? Number(marker.dataset.count) : 0;
+                const stale = marker && typeof marker.closest === 'function' &&
+                    marker.closest('[data-stale="true"]');
+                const raw = marker && !stale ? Number(marker.dataset?.count) : 0;
                 const count = Number.isSafeInteger(raw) && raw > 0 ? raw : 0;
-                const attention = count === 1 ? '1 item needs attention · '
-                    : count > 1 ? `${count} items need attention · ` : '';
-                const text = `${attention}${index + 1} of ${entries.length} · ${entries[index].title}`;
+                // Keep the established section progress text unchanged for
+                // navigation consumers and assistive technology. Attention is
+                // a separate, read-only receipt, not part of the section title.
+                const text = `${index + 1} of ${entries.length} · ${entries[index].title}`;
                 if (progress.textContent !== text) progress.textContent = text;
+                const parent = progress.parentNode;
+                if (parent && typeof parent.insertBefore === 'function' &&
+                    typeof document.createElement === 'function') {
+                    let receipt = parent.querySelector?.('.epc-navigation-attention');
+                    if (!receipt) {
+                        receipt = document.createElement('span');
+                        receipt.className = 'epc-navigation-attention';
+                        receipt.setAttribute('role', 'status');
+                        parent.insertBefore(receipt, progress);
+                    }
+                    const label = count === 1 ? '1 item needs attention' :
+                        count > 1 ? `${count} items need attention` : '';
+                    if (receipt.textContent !== label) receipt.textContent = label;
+                    receipt.hidden = !label;
+                }
                 if (progress.dataset.section !== active) progress.dataset.section = active;
             }
         };
