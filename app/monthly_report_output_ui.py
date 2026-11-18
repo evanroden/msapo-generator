@@ -23,10 +23,15 @@ def final_pdf_artifact_identity(package):
             sha256(package.pdf).hexdigest())
 
 
-def output_download_labels(package, draft):
-    """Keep usable older downloads, but never label them as current files."""
-    suffix = " (previous draft)" if package.fingerprint != draft.fingerprint else ""
-    return "Download DOCX" + suffix, "Download PDF" + suffix
+def outdated_output_status(prefix: str, session_scope: str, draft) -> bool:
+    """Show an old-versus-current warning without retaining old output bytes."""
+    receipt = st.session_state.get(prefix + "_last_created_output")
+    if (not isinstance(receipt, tuple) or len(receipt) != 2
+            or receipt[0] != session_scope or receipt[1] == draft.fingerprint):
+        return False
+    st.warning("This report changed after Word/PDF creation. Earlier files were retired; "
+               "create Word and PDF again to view or download the latest draft.")
+    return True
 
 
 def record_shared_save(prefix, package, *, saved=None, error=""):
@@ -41,7 +46,7 @@ def render_output_status(package, draft, snapshot, prefix):
     """Return whether this exact package still needs a shared-version save."""
     if package.fingerprint != draft.fingerprint:
         st.warning("Files are from an earlier draft. Create Word and PDF again to include the latest edits.")
-        st.caption("Previous downloads remain available; the in-app PDF shows current files only.")
+        st.caption("Earlier files must not be mistaken for current output; regenerate from the edited draft.")
         # Never retry a save of earlier bytes against today's edited draft.
         return False
     status = st.session_state.get(prefix + "_package_save")
@@ -128,6 +133,7 @@ def replace_current_session_pdf_package(prefix: str, session_scope: str, package
             }
     if previous is not package:
         discard_current_session_pdf_preview(prefix, session_scope)
+    st.session_state[prefix + "_last_created_output"] = (session_scope, package.fingerprint)
     st.session_state[prefix + "_package"] = package
 
 
