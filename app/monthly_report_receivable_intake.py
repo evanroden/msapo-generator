@@ -27,7 +27,7 @@ OUTPUT_COLUMNS = ("Facility", "Item", "Status")
 AMOUNT_ROLES = ("invoice_amount", "payment_amount", "credit_amount", "balance")
 EDITABLE = ("invoice_id", "customer_id", "site", "invoice_date", "due_date",
             "status", "currency", "description", "notes", *AMOUNT_ROLES)
-_NOTICE = ("The reviewed invoice source, report scope, or Section 10 rows changed. "
+_NOTICE = ("The reviewed invoice source, report scope, or Accounts Receivable rows changed. "
            "Reopen and review that exact source; saved originals and edits are unchanged.")
 _STATES = {
     "open": "Open",
