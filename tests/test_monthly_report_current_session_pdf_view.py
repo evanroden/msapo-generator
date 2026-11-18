@@ -1,5 +1,6 @@
 """The finished-PDF viewer uses only exact current-session bytes; never history."""
 from contextlib import contextmanager
+from hashlib import sha256
 from types import SimpleNamespace
 
 import pytest
@@ -10,20 +11,21 @@ from app import reference_preview
 
 @pytest.fixture
 def rendered(monkeypatch):
-    state, previews, expansions, captions, info = {}, [], [], [], []
+    state, previews, containers, captions, info, headings = {}, [], [], [], [], []
 
     @contextmanager
-    def expander(label, *, expanded, key):
-        expansions.append((label, expanded, key))
+    def container(*, key):
+        containers.append(key)
         yield
 
     monkeypatch.setattr(output_ui.st, "session_state", state)
-    monkeypatch.setattr(output_ui.st, "expander", expander)
+    monkeypatch.setattr(output_ui.st, "container", container)
+    monkeypatch.setattr(output_ui.st, "markdown", headings.append)
     monkeypatch.setattr(output_ui.st, "caption", captions.append)
     monkeypatch.setattr(output_ui.st, "info", info.append)
     monkeypatch.setattr(reference_preview, "render_reference", lambda **kwargs: previews.append(kwargs))
-    return SimpleNamespace(state=state, previews=previews, expansions=expansions,
-                           captions=captions, info=info)
+    return SimpleNamespace(state=state, previews=previews, containers=containers,
+                           captions=captions, info=info, headings=headings)
 
 
 def package(*, pdf=b"%PDF-synthetic", fingerprint="draft-1"):
@@ -38,14 +40,16 @@ def test_exact_current_package_renders_existing_pdf_bytes_only(rendered):
 
     output_ui.render_current_session_pdf_preview(current, draft, "monthly", session_scope="session-A")
 
-    assert rendered.expansions == [
-        ("View PDF here (this session)", False, "monthly_finished_pdf_view")]
+    assert rendered.containers == ["monthly_finished_pdf_view"]
+    assert rendered.headings == ["**Final PDF · current draft**"]
     assert len(rendered.previews) == 1
     shown = rendered.previews[0]
     assert shown["key"] == "finished_report_pdf"
     assert shown["raw"] is current.pdf and shown["filename"] == "final.pdf"
     assert shown["owner_scope"] == output_ui._final_pdf_scope("monthly", "session-A")
-    assert "Shared version history stores" in rendered.captions[0]
+    assert sha256(current.pdf).hexdigest() in rendered.captions[0]
+    assert sha256(current.docx).hexdigest() in rendered.captions[0]
+    assert shown["focus_on_open"] is True
 
 
 @pytest.mark.parametrize("change", ("retired", "different_package", "different_draft", "no_pdf"))
@@ -65,7 +69,7 @@ def test_no_preview_for_retired_or_wrong_package(rendered, change):
         rendered.state["monthly_package"] = candidate
 
     output_ui.render_current_session_pdf_preview(candidate, draft, "monthly", session_scope="session-A")
-    assert rendered.previews == [] and rendered.expansions == []
+    assert rendered.previews == [] and rendered.containers == []
 
 
 @pytest.mark.parametrize("pdf", (b"not-a-pdf", b"%PDF-" + b"x" * (25 * 1024 * 1024)))
@@ -74,7 +78,7 @@ def test_unviewable_bytes_do_not_bypass_disposable_store_limit(rendered, pdf):
     rendered.state["monthly_package"] = current
     output_ui.render_current_session_pdf_preview(
         current, SimpleNamespace(fingerprint="draft-1"), "monthly", session_scope="session-A")
-    assert rendered.expansions and not rendered.previews
+    assert rendered.containers and not rendered.previews
     assert "unavailable" in rendered.info[-1].lower()
 
 
@@ -90,7 +94,7 @@ def test_changed_pdf_bytes_reuse_scope_but_never_invent_old_bytes(rendered):
     assert rendered.previews[0]["owner_scope"] == rendered.previews[1]["owner_scope"]
     # The reference renderer binds that owner/key to the content's SHA-256 and
     # invalidates its old raster/ticket on a different payload.
-    assert len(rendered.expansions) == 2
+    assert len(rendered.containers) == 2
 
 
 def test_scopes_are_isolated_and_cleanup_targets_only_the_active_view(monkeypatch, rendered):
@@ -236,3 +240,49 @@ def test_newer_copy_first_session_needs_no_old_pdf_retirement(monkeypatch, rende
     conflict._use_newer("monthly", newer)
     assert not disposed
     assert rendered.state["monthly_draft"] is newer.draft
+
+
+def test_pdf_artifact_identity_tracks_exact_bytes_independently_of_word_save_receipt():
+    first = package(pdf=b"%PDF-first")
+    changed_pdf = package(pdf=b"%PDF-second")
+    changed_word = package(pdf=b"%PDF-first")
+    changed_word.docx = b"new Word layout"
+    absent = package(pdf=None)
+
+    assert output_ui.package_identity(first) == output_ui.package_identity(changed_pdf)
+    assert output_ui.final_pdf_artifact_identity(first) == (
+        first.fingerprint, sha256(first.docx).hexdigest(), sha256(first.pdf).hexdigest())
+    assert output_ui.final_pdf_artifact_identity(first) != output_ui.final_pdf_artifact_identity(changed_pdf)
+    assert output_ui.final_pdf_artifact_identity(first) != output_ui.final_pdf_artifact_identity(changed_word)
+    assert output_ui.final_pdf_artifact_identity(absent) is None
+    assert output_ui.final_pdf_artifact_identity(package(pdf="not bytes")) is None
+
+
+def test_edited_draft_retires_old_pages_before_late_callback(monkeypatch, rendered):
+    current = package(pdf=b"%PDF-old")
+    rendered.state["monthly_package"] = current
+    retired = []
+    monkeypatch.setattr(reference_preview, "discard_reference_scope", retired.append)
+
+    output_ui.render_current_session_pdf_preview(
+        current, SimpleNamespace(fingerprint="draft-1"), "monthly", session_scope="session-A")
+    assert len(rendered.previews) == 1
+    output_ui.render_current_session_pdf_preview(
+        current, SimpleNamespace(fingerprint="edited-draft"), "monthly", session_scope="session-A")
+    assert len(rendered.previews) == 1  # never show the previous PDF as the current draft
+    assert retired == [output_ui._final_pdf_scope("monthly", "session-A")]
+    assert len(rendered.containers) == 1
+
+    # A revert to the exact prior fingerprint can re-admit the actual bytes,
+    # but only through a fresh authorized owner/ticket, not the old callback.
+    output_ui.render_current_session_pdf_preview(
+        current, SimpleNamespace(fingerprint="draft-1"), "monthly", session_scope="session-A")
+    assert len(rendered.previews) == 2
+
+
+def test_download_labels_never_represent_old_artifacts_as_current():
+    files = package()
+    assert output_ui.output_download_labels(files, SimpleNamespace(fingerprint="draft-1")) == (
+        "Download DOCX", "Download PDF")
+    assert output_ui.output_download_labels(files, SimpleNamespace(fingerprint="edited")) == (
+        "Download DOCX (previous draft)", "Download PDF (previous draft)")
