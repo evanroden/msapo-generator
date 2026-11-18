@@ -198,3 +198,59 @@ def test_a_list_and_annual_grid_cannot_both_publish_totals_for_same_source():
     grid_bound = flow.decoded(flow.encoded({**bundle, "grid_receipt": receipt}))
     with pytest.raises(ValueError, match="annual work-order grid"):
         flow.reviewed_tables(draft, grid_bound)
+
+
+def test_another_exports_grid_cannot_be_recounted_in_list_and_distinct_dates_remain_valid():
+    original_content, _ = source((("REF-1", "North", "2026-09-01", "Open", "PM", "", ""),))
+    same_content, _ = source((
+        ("ref-1", "North", "2026-09-01", "Open", "PM", "", ""),
+        ("OTHER", "South", "2026-09-02", "Open", "Repair", "", ""),
+    ))
+    different_content, _ = source((("ref-1", "North", "2026-09-02", "Open", "PM", "", ""),))
+    labels = rolling_labels(SEPT)
+    frames = tuple(ReportTable(("PM Received", *labels), (), "master-table:" + str(i)) for i in range(4))
+    draft = ReportDraft(PROFILE, SEPT, "Synthetic preparer", default_sections(),
+        (ResolvedBlock("work_orders", "This month", extra_tables=frames),),
+        synthetic=True, sources=(original_content.source, same_content.source,
+                                 different_content.source))
+    original = flow.prepare_bundle(draft, original_content)
+    receipt = {"schema": 1, "group_index": 0, "review_revision": "approved",
+        "coverage_revision": "approved", "metrics": ["pm_received"],
+        "closed_statuses": ["Closed"], "base_tables": [asdict(t) for t in frames],
+        "published_tables": [asdict(t) for t in frames]}
+    grid_bound = flow.decoded(flow.encoded({**original, "grid_receipt": receipt}))
+    draft = flow.store_bundle(draft, grid_bound)
+    other = flow.prepare_bundle(draft, same_content)
+    with pytest.raises(ValueError, match="annual grids"):
+        flow.publish_bundle(draft, other, expected_revision=flow.revision(other),
+            expected_block=draft.blocks[0].fingerprint)
+    clean = flow.prepare_bundle(draft, different_content)
+    published = flow.publish_bundle(draft, clean, expected_revision=flow.revision(clean),
+        expected_block=draft.blocks[0].fingerprint)
+    assert published.blocks[0].extra_tables[:4] == frames
+    assert published.blocks[0].extra_tables[-1].rows[0][1] == "1"
+
+
+def test_other_exports_published_list_cannot_be_recounted_in_annual_grid(monkeypatch):
+    first_content, _ = source((("REF-9", "North", "2026-09-01", "Open", "PM", "", ""),))
+    second_content, _ = source((
+        ("ref-9", "North", "2026-09-01", "Open", "PM", "", ""),
+        ("SECOND", "South", "2026-09-02", "Open", "Repair", "", ""),
+    ))
+    draft = ReportDraft(PROFILE, SEPT, "Synthetic preparer", default_sections(),
+        (ResolvedBlock("work_orders", "This month"),), synthetic=True,
+        sources=(first_content.source, second_content.source))
+    first = flow.prepare_bundle(draft, first_content)
+    draft = flow.publish_bundle(draft, first, expected_revision=flow.revision(first),
+        expected_block=draft.blocks[0].fingerprint)
+    frames = tuple(ReportTable(("PM Received", *rolling_labels(SEPT)), (),
+        "master-table:" + str(i)) for i in range(4))
+    block = replace(draft.blocks[0],
+        extra_tables=(*draft.blocks[0].extra_tables, *frames))
+    draft = replace(draft, blocks=(block,))
+    other = flow.prepare_bundle(draft, second_content)
+    monkeypatch.setattr(grid, "_frames", lambda _: (frames, {}))
+    with pytest.raises(ValueError, match="detailed list"):
+        grid.publish(draft, other, expected_revision=flow.revision(other),
+            expected_block=block.fingerprint, group_index=0,
+            metrics=("pm_received",), confirmed=True, as_of=date(2026, 11, 17))
