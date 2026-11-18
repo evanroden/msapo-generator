@@ -40,9 +40,50 @@ def _name(value):
     return re.sub(r"[^a-z0-9]", "", str(value).casefold())
 
 
+def _column_positions(columns, kind):
+    """Retain physical copies renamed by the table parser: Status (2) != absent.
+
+    An explicitly labeled Status (2) beside Status is also uncertain; never
+    infer that the first column is authoritative without a reviewed mapping.
+    """
+    normalized = tuple(_name(title) for title in columns)
+    positions = []
+    for index, title in enumerate(columns):
+        if normalized[index] in _HEADERS[kind]:
+            positions.append(index)
+            continue
+        match = re.fullmatch(r"(.+?) \((\d+)\)", str(title))
+        if (match and int(match.group(2)) >= 2
+                and _name(match.group(1)) in _HEADERS[kind]
+                and _name(match.group(1)) in normalized[:index]):
+            positions.append(index)
+    return tuple(positions)
+
+
 def _column(columns, kind):
-    positions = [i for i, title in enumerate(columns) if _name(title) in _HEADERS[kind]]
+    positions = _column_positions(columns, kind)
     return positions[0] if len(positions) == 1 else None
+
+
+def requires_work_order_column_mapping(content: SourceContent) -> bool:
+    """Hold ambiguous CMMS records out of generic Activity, not just totals."""
+    if content.source.suffix not in (".csv", ".xlsx"):
+        return False
+    from app.monthly_report_sources import _csv_first_row_is_data
+    return any(
+        (
+            content.source.suffix == ".csv" and table.rows
+            and all(title == f"Column {index + 1}"
+                    for index, title in enumerate(table.columns))
+            and _csv_first_row_is_data(table.rows[0])
+        ) or (
+            all(_column_positions(table.columns, kind) for kind in
+                ("identity", "status", "date"))
+            and any(len(_column_positions(table.columns, kind)) > 1
+                    for kind in ("identity", "status", "date", "facility"))
+        )
+        for table in content.tables
+    )
 
 
 def _date(value):
