@@ -225,13 +225,20 @@ def source_coverage(draft, source, content=None, *, byte_count=None):
                         "Image-only or embedded visual needs native page/image review."),
                 destination=destination)
 
+    # Index accepted rows once. Rebuilding a complete accepted table per raw
+    # row makes ordinary 10k-row exports quadratic on every Streamlit rerun.
+    accepted_rows = {}
+    for use in accepted:
+        if use[0] != "rows" or not isinstance(use[2], tuple):
+            continue
+        for reference in use[3]:
+            for table_number in range(1, len(rows) + 1):
+                if reference.startswith(f"{source.id}:{table_number}:"):
+                    for row in use[2][1]:
+                        accepted_rows.setdefault((table_number, tuple(row)), use[1])
     for table_number, table in enumerate(rows, 1):
         for row_number, row in enumerate(table.rows, 1):
-            result = next((use[1] for use in accepted
-                           if use[0] == "rows" and isinstance(use[2], tuple)
-                           and tuple(row) in tuple(tuple(r) for r in use[2][1])
-                           and any(ref.startswith(f"{source.id}:{table_number}:")
-                                   for ref in use[3])), "")
+            result = accepted_rows.get((table_number, tuple(row)), "")
             add(f"table:{table_number}:row:{row_number}", "row", table_number,
                 (table.columns, row), state="applied" if result else "review",
                 reason=("Exact accepted row in destination." if result else
