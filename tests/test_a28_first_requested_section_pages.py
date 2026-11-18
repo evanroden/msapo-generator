@@ -133,3 +133,31 @@ def test_malformed_and_foreign_tickets_never_produce_current_pages(monkeypatch):
         assert store.stats()["raster_entries"] == 0
     finally:
         store.close()
+
+
+def test_viewport_callback_tags_revision_and_rejects_late_old_page(monkeypatch):
+    state = {
+        "wanted": {"activity": "rev-current"},
+        "visible": {}, "page_requests": {}, "requests": {},
+        "queue": {}, "cache": {}, "last_good": {},
+    }
+    browser = {
+        "viewport": {
+            "generation": "rev-current", "visible": True,
+            "pages": (17, 18), "dpi": 120,
+        }
+    }
+    monkeypatch.setattr(ui, "_ordered_preview_state", lambda prefix: state)
+    monkeypatch.setattr(ui.st, "session_state", {"widget": browser})
+    ui._viewport_changed("a28", "activity", "widget")
+    assert state["page_requests"]["activity"] == {
+        "generation": "rev-current", "visible": True,
+        "pages": (17, 18), "dpi": 120,
+    }
+    assert ui._current_page_request(state, "activity")["pages"] == (17, 18)
+    state["wanted"]["activity"] = "rev-later"
+    assert ui._current_page_request(state, "activity") is None
+    # The late browser event belongs to the previous revision; no new ACK.
+    ui._viewport_changed("a28", "activity", "widget")
+    assert state["page_requests"]["activity"]["generation"] == "rev-current"
+    assert state["wanted"]["activity"] == "rev-later"
