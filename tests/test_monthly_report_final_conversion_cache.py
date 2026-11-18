@@ -5,17 +5,20 @@ tests do not claim authentic-source or served-browser acceptance.
 """
 from dataclasses import replace
 from hashlib import sha256
+from io import BytesIO
 from pathlib import Path
 from time import perf_counter, process_time
 from types import SimpleNamespace
 
 import pymupdf as fitz
 import pytest
+from PIL import Image
 
 from app import monthly_report_docx as output
 from app import monthly_report_final_conversion_cache as cache
 from app import monthly_report_render_jobs as jobs
-from app.monthly_report_model import ReportPeriod, synthetic_draft, synthetic_profiles
+from app.monthly_report_model import ReportPeriod, ResolvedBlock, synthetic_draft, synthetic_profiles
+from app.monthly_report_asset_review import approve_all_assets
 from tests.conftest import requires_libreoffice
 
 
@@ -92,6 +95,61 @@ def test_different_owner_site_month_activity_or_logo_reconverts(draft, backend, 
     assert second.pdf
     assert len(backend) == 2
 
+
+
+def _logo(color):
+    stream = BytesIO()
+    Image.new("RGB", (80, 30), color).save(stream, "PNG")
+    return stream.getvalue()
+
+
+def test_changed_actual_client_logo_recomputes_and_preserves_source_bytes(draft, backend):
+    first, second = _logo((60, 130, 160)), _logo((160, 80, 30))
+    a, b = (sha256(raw).hexdigest() + ".png" for raw in (first, second))
+    assets = {a: first, b: second}
+    def with_logo(ref):
+        logo = approve_all_assets(ResolvedBlock("client_logo", "Library", asset_hashes=(ref,)))
+        return replace(draft, blocks=tuple(block for block in draft.blocks if block.key != "client_logo") + (logo,))
+    one = with_logo(a)
+    two = with_logo(b)
+    report_a = output.generate_report(one, acknowledged_fingerprint=one.fingerprint,
+                                      asset_loader=assets.__getitem__, reuse_owner="visitor-A")
+    report_b = output.generate_report(two, acknowledged_fingerprint=two.fingerprint,
+                                      asset_loader=assets.__getitem__, reuse_owner="visitor-A")
+    assert report_a.pdf and report_b.pdf
+    assert len(backend) == 2 and report_a.docx != report_b.docx
+    assert assets == {a: first, b: second}
+
+
+def test_missing_logo_fails_instead_of_reusing_previous_artifact(draft, backend):
+    valid = _logo((60, 130, 160))
+    ref = sha256(valid).hexdigest() + ".png"
+    logo = approve_all_assets(ResolvedBlock("client_logo", "Library", asset_hashes=(ref,)))
+    with_logo = replace(draft, blocks=(*draft.blocks, logo))
+    assert output.generate_report(with_logo, asset_loader={ref: valid}.__getitem__,
+                                  reuse_owner="visitor-A").pdf
+    with pytest.raises(KeyError):
+        output.generate_report(with_logo, asset_loader={}.__getitem__, reuse_owner="visitor-A")
+    assert len(backend) == 1
+
+
+def test_privacy_sanitizers_execute_again_on_identical_hit(draft, backend, monkeypatch):
+    from app import monthly_report_media_privacy as privacy
+    original_media = privacy.sanitize_package_media
+    original_alpha = privacy.sanitize_package_transparency
+    called = {"media": 0, "alpha": 0}
+    def media(raw):
+        called["media"] += 1
+        return original_media(raw)
+    def alpha(raw):
+        called["alpha"] += 1
+        return original_alpha(raw)
+    monkeypatch.setattr(privacy, "sanitize_package_media", media)
+    monkeypatch.setattr(privacy, "sanitize_package_transparency", alpha)
+    assert generate(draft).pdf
+    assert generate(draft).pdf
+    assert called["media"] >= 2 and called["alpha"] >= 2
+    assert len(backend) == 1
 
 def test_without_owner_or_revision_never_reuses(draft, backend):
     for _ in range(2):
