@@ -212,7 +212,7 @@ def test_two_column_pdf_requires_explicit_field_by_field_correction(stored):
     bundle = flow.prepare_bundle(draft, content)
     review = flow.restored_group(bundle, bundle["groups"][0])
     assert review.mapping.site is None and review.mapping.work_date is None
-    assert not review.ready_for_inclusion
+    assert review.needs_review
     with pytest.raises(ValueError):
         publish(draft, bundle)
 
