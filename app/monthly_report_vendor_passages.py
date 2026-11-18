@@ -146,7 +146,7 @@ def _parallel_reading_order_ambiguous(blocks):
     return False
 
 
-def block_spans(page, text, number):
+def block_spans(page, text, number, *, ambiguous_pages=None):
     """Only accept native blocks that tile the unchanged text in native order."""
     spans, cursor = [], 0
     geometry = {b['number']: b for b in page.get_text(
@@ -155,6 +155,8 @@ def block_spans(page, text, number):
     native_blocks = [block for block in page.get_text('blocks')
                      if len(block) >= 7 and block[6] == 0 and block[4].strip()]
     if _parallel_reading_order_ambiguous(native_blocks):
+        if ambiguous_pages is not None:
+            ambiguous_pages.add(number)
         return ()
     for block in native_blocks:
         if len(block) < 7 or block[6] != 0:
@@ -343,6 +345,8 @@ _NOTICE_TEXT = {
                  'before including it, or leave it out. Add verified wording manually.'),
     'limit': ('Page {page}: passage text exceeds the suggestion limit and was not auto-imported. '
               'Review the full source page before including it, or leave it out. Add verified wording manually.'),
+    'geometry': ('Page {page}: adjacent PDF columns have uncertain reading order. '
+                 'No dates, sites, or service events were inferred from this page. Review the original page.'),
 }
 
 
