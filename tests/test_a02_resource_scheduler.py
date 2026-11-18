@@ -309,3 +309,61 @@ def test_same_owner_revision_never_submits_duplicate_preview(monkeypatch):
     ui._advance_preview_queue(state)
     assert len(calls) == 1
     slot.release()
+
+
+def test_two_processes_cannot_spend_the_same_800mib_headroom(parallel):
+    """Review regression: 2x512 MiB heavy + reserve exceeds 800 MiB.
+
+    A second *app process* sees the first process's unallocated reservation,
+    not just the first process's current resident memory.
+    """
+    import multiprocessing
+    context = multiprocessing.get_context("fork")
+    first_started, release = context.Event(), context.Event()
+    results = context.Queue()
+    available = lambda: 800 * scheduler.MIB
+
+    def first_worker():
+        try:
+            with scheduler.lease("heavy", priority="export", wait_seconds=1,
+                                 headroom=available):
+                first_started.set()
+                if not release.wait(4):
+                    results.put("first-hang")
+                    return
+            results.put("first-released")
+        except Exception as exc:
+            results.put("first-error:" + type(exc).__name__)
+
+    def second_worker():
+        try:
+            with scheduler.lease("heavy", priority="visible", wait_seconds=.15,
+                                 headroom=available):
+                results.put("overcommitted")
+        except scheduler.AdmissionUnavailable:
+            results.put("denied-overcommit")
+
+    first = context.Process(target=first_worker)
+    second = context.Process(target=second_worker)
+    first.start()
+    try:
+        assert first_started.wait(2)
+        second.start()
+        second.join(timeout=3)
+        assert second.exitcode == 0
+        assert results.get(timeout=2) == "denied-overcommit"
+    finally:
+        release.set()
+        first.join(timeout=4)
+        if first.is_alive():
+            first.terminate()
+            first.join(timeout=2)
+        if second.is_alive():
+            second.terminate()
+            second.join(timeout=2)
+    assert first.exitcode == 0
+    assert results.get(timeout=2) == "first-released"
+    # The same constrained resource is reusable once the first owner exits.
+    with scheduler.lease("heavy", priority="visible", wait_seconds=.2,
+                         headroom=available):
+        pass
