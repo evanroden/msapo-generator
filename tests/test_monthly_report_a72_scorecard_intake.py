@@ -64,7 +64,7 @@ def test_preview_is_optional_and_one_click_still_includes_all_pages(
     preview = next(box for box in app.selectbox if box.label == "Scorecard PDF page")
     assert len(preview.options) == count and preview.value == 1
     if count > 1:
-        preview.set_value(count).run()
+        preview.select_index(count - 1).run()
         assert not app.exception and calls[-1] == (count, True)
         assert not app.session_state["blocks"]
     next(b for b in app.button if b.label == f"Include all {count} PDF pages").click().run()
@@ -95,7 +95,7 @@ def test_priced_scorecard_can_be_previewed_but_never_batch_included(monkeypatch,
     assert include.disabled
     next(b for b in app.button if b.label == "Preview a Scorecard PDF page").click().run()
     page = next(box for box in app.selectbox if box.label == "Scorecard PDF page")
-    page.set_value(2).run()
+    page.select_index(1).run()
     assert not app.exception
     assert not app.session_state["blocks"]
     assert not app.session_state["sources"][0].client_page_reviews
