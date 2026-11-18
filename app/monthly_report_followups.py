@@ -557,12 +557,15 @@ def seed_followups(draft):
         replace(
             normalize_proposal(item),
             carried_from=(item.carried_from or draft.period.key) if item.category == "issue" else draft.period.key,
-            included=True, reviewed_fingerprint="", update_period=_carried_update_period(item, draft.period)
+            # Rollover is not an explicit Include action. Persist each
+            # report-only omission so later source replay cannot resurrect it.
+            included=item.included, reviewed_fingerprint="",
+            update_period=_carried_update_period(item, draft.period)
         )
         for item in draft.follow_ups
         if (item.category == "issue" and item.text.strip()
             and (item.status != "resolved" or problems(item, draft)))
-        or (item.category != "issue" and item.included)
+        or item.category != "issue"
     ]
     keys = {item.key for item in result}
     represented = Counter((item.category, item.text.strip(), item.status) for item in result)
