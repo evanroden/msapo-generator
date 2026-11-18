@@ -57,8 +57,10 @@ completed-report visual comparison as well as the regression tests.
 
 ## Edit the report
 
-Every standard section is included, including sections that are blank or waiting
-for data. There is no section-inclusion checklist.
+Every standard section starts included, including sections that are blank or
+waiting for data. To leave a section out of this report, clear **Include
+<section> in this report** at that section. Its content is kept, and section and
+contents numbering update automatically; check the box again to put it back.
 
 Choose the contract, reporting month and sites first, then enter your name.
 The cover and every report section appear on one page in report order, separated
@@ -82,8 +84,8 @@ an empty report contact table after you enter your name.
 Exact site names and confirmed aliases select the relevant site contacts;
 contract-wide contacts remain labelled separately. Existing report contacts are
 retained until you explicitly choose **Save contacts to directory and report**.
-That action updates the current report table and preview; **Save progress**
-persists the edited report. Other saved reports keep their contact snapshots.
+That action updates the current report table and preview; **Save shared
+version** saves the edited report. Other saved reports keep their contact snapshots.
 
 Upload thermal capacity once for the contract. PDFs, Word files, spreadsheets,
 CSV/text and supported images are accepted. Check the extracted values, units and
@@ -151,9 +153,12 @@ remain tied to their reporting period.
 
 ## Save and download
 
-**Save progress** stores unfinished work and editor attribution. Return to the
-same sites and month to continue. If another editor saved meanwhile, compare the
-versions before saving; neither person's draft is silently discarded.
+Draft recovery keeps your edits once they reach the app; text still being typed
+may not be recoverable, so check the save status before leaving. **Save shared
+version** adds a version to the report's shared history with your editor
+attribution, and **Create Word and PDF** also attempts to save one. Return to
+the same sites and month to continue. If another editor saved meanwhile, compare
+the versions before saving; neither person's draft is silently discarded.
 
 At **Review and download**, correct specific problems with content that is present:
 pricing, template instructions, unreviewed new pictures or AI wording, and
