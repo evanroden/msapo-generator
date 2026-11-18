@@ -179,9 +179,7 @@ def test_native_guided_add_area_exposes_direct_reuse_without_second_review_path(
     assert sum(item.label == "Add source files" for item in app.get("file_uploader")) == 1
     saved_picker = next(item for item in app.selectbox if item.label == "Saved source")
     assert source.sha256 in saved_picker.value
-    assert source.filename in next(item.value for item in app.markdown
-                                    if "Already uploaded" in item.value) or any(
-        source.filename in item.value for item in app.markdown + app.caption)
+    assert any("Already uploaded" in item.value for item in app.markdown)
     actions = [item for item in app.button if item.label == "Reuse saved source"]
     assert len(actions) == 1
     actions[0].click().run()
