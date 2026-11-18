@@ -76,7 +76,12 @@ def test_proposal_can_be_explicitly_archived_without_claiming_work_completed():
     item = replace(item, reviewed_fingerprint=confirmation(item, current.period))
     assert not problems(item, current)
     current = replace(current, follow_ups=(item,))
-    assert not new_month_draft(current, ReportPeriod(2026, 11)).follow_ups
+    following = new_month_draft(current, ReportPeriod(2026, 11))
+    # Keep the excluded source identity for future reimport matching. It is
+    # not printed and can only return to output after deliberate re-inclusion.
+    assert len(following.follow_ups) == 1
+    assert following.follow_ups[0].included is False
+    assert following.follow_ups[0].status == "declined"
     assert item.status == "declined"
 
 
