@@ -10,7 +10,8 @@ import streamlit as st
 from app.monthly_report_ui_text import literal
 
 
-def render_loaded_file_card(staged, filename, analysis, target, period, *, remove_key, on_remove):
+def render_loaded_file_card(staged, filename, analysis, target, period, *, remove_key, on_remove,
+                            source_month_unconfirmed=False):
     """Display exactly the staged source and the distinct requested destination."""
     _, _, inspection = staged
     if analysis is None:
@@ -20,6 +21,8 @@ def render_loaded_file_card(staged, filename, analysis, target, period, *, remov
                        if analysis.source_sites else "Unknown — confirmation required")
         source_month = (f"{analysis.source_period[0]:04d}-{analysis.source_period[1]:02d}"
                         if analysis.source_period else "Unconfirmed — review the source period")
+        if source_month_unconfirmed:
+            source_month = "Unconfirmed — choose the source reporting month"
     target_sites = ("; ".join(site.title for site in target.facilities)
                     if target and target.facilities else "Select the destination sites")
     st.markdown("**Loaded file:** " + literal(filename))

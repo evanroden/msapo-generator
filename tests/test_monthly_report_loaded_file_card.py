@@ -14,7 +14,7 @@ from test_monthly_report_starting_import_failure_ui import _start
 
 def _card_text(app):
     return "\n".join([*(item.value for item in app.markdown),
-                      *(item.value for item in app.get("caption"))]).replace("\\", "")
+                      *(item.value for item in app.caption)]).replace("\\", "")
 
 
 def test_first_upload_loads_single_source_card_without_analyze_click(monkeypatch, tmp_path):
@@ -27,7 +27,20 @@ def test_first_upload_loads_single_source_card_without_analyze_click(monkeypatch
     assert "Loaded file:" in display and "synthetic-starting.docx" in display
     assert "Recognized source sites:" in display and "Source month: 2026-09" in display
     assert "Target sites:" in display and "Target month:" in display
-    assert len([w for w in app.get("file_uploader") if w.label == "Starting report"]) == 1
+    # AppTest does not expose file_uploader elements. Observe the intercepted
+    # native upload function on a settled rerun instead of counting DOM nodes.
+    import test_monthly_report_starting_import_failure_ui as fixture
+    original_uploaded = fixture._uploaded
+    upload_calls = []
+
+    def observed_upload(data):
+        upload_calls.append(data)
+        return original_uploaded(data)
+
+    monkeypatch.setattr(fixture, "_uploaded", observed_upload)
+    app.run()
+    assert upload_calls == [raw], "Exactly one Starting report picker was invoked."
+    assert not app.exception
     assert any(w.label == "Preview recognized content" for w in app.expander)
     assert any(w.label == "Remove loaded file" for w in app.button)
     assert not any(w.label == "Analyze report" for w in app.button)
@@ -138,3 +151,16 @@ def test_foreign_source_identity_stays_distinct_from_target(monkeypatch, tmp_pat
     assert "Target sites:" in display and target.title in display
     assert "Source month: 2026-08" in display
     assert not app.exception
+
+def test_conflicting_cover_months_keep_loaded_card_unconfirmed_until_chosen(monkeypatch, tmp_path):
+    source = report_file(tmp_path, month="August 2026 / September 2026")
+    selected = {"raw": source.read_bytes()}
+    app = _start(monkeypatch, tmp_path, selected)
+    assert "Loaded file:" in _card_text(app)
+    assert "Source month: Unconfirmed — choose the source reporting month" in _card_text(app)
+    assert not any(b.label == "Continue to this month’s updates" for b in app.button)
+    choice = next(w for w in app.selectbox
+                  if w.label == "Reporting month shown by the uploaded source cover")
+    choice.set_value((2026, 9)).run()
+    assert not app.exception
+    assert "Source month: 2026-09" in _card_text(app)

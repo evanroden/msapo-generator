@@ -941,13 +941,14 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     _, path, inspection = staged
     from app.monthly_report_start_file_card import render_loaded_file_card
 
-    def _show_loaded_card(analysis=None, target=None):
+    def _show_loaded_card(analysis=None, target=None, *, source_month_unconfirmed=False):
         filename = (st.session_state.get(prefix + "_uploaded_filename", "Uploaded Word report")
                     if staged[0] is not None else "Saved original report")
         with loaded_card_slot.container():
             render_loaded_file_card(
                 staged, filename, analysis, target, period,
-                remove_key=prefix + "_remove_loaded", on_remove=_remove_loaded_file)
+                remove_key=prefix + "_remove_loaded", on_remove=_remove_loaded_file,
+                source_month_unconfirmed=source_month_unconfirmed)
 
     if st.session_state.pop(prefix + "_removed_cleanup_warning", False):
         st.warning("The selected file was removed from review; its old temporary copy could not be cleaned up.")
@@ -1077,7 +1078,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     selected_source_period, period_undecided = choose_source_report_month(
         inspection, candidate, period, p, field, source_view=source_view)
     if period_undecided:
-        _show_loaded_card(analysis, candidate)
+        _show_loaded_card(analysis, candidate, source_month_unconfirmed=True)
         return True  # One explicit decision, before any site/period data is mapped.
     if selected_source_period is not None:
         analysis = analyze_starting_report(
