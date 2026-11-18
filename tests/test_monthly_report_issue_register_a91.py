@@ -1,10 +1,13 @@
 """A91 synthetic regressions: issue registers must append, not replace, reviewed cards."""
 from dataclasses import asdict, replace
+from io import BytesIO
+from docx import Document
 import hashlib
 import json
 
 from app import monthly_report_library as library
 from app.monthly_report_issue_register import mapped_issue_register
+from app.monthly_report_docx import assemble_docx
 from app.monthly_report_issues import canonical_issues
 from app.monthly_report_model import (
     ReportFollowUp, ReportPeriod, ReportSource, ReportTable, ResolvedBlock,
@@ -42,7 +45,8 @@ def fixture(columns=COLUMNS, rows=ROWS, *, source_id="register-a", fill="a"):
 
 def test_confident_renamed_columns_and_duplicate_unknown_headings_keep_every_safe_cell():
     draft = fixture()
-    items = canonical_issues(draft).follow_ups
+    review = canonical_issues(draft)
+    items = review.follow_ups
     assert len(items) == 2
     assert all(item.status == "ongoing" for item in items)
     assert items[0].text.startswith("Pump vibration")
@@ -56,7 +60,14 @@ def test_confident_renamed_columns_and_duplicate_unknown_headings_keep_every_saf
     assert "$125" not in items[0].text
     assert "Work Status: Closed" in items[1].text
     assert items[1].evidence_note == ""
-    assert canonical_issues(canonical_issues(draft)).follow_ups == items
+    assert canonical_issues(review).follow_ups == items
+    document = Document(BytesIO(assemble_docx(
+        review, acknowledged_fingerprint=review.fingerprint)))
+    output = "\\n".join(paragraph.text for paragraph in document.paragraphs)
+    assert output.count("Pump vibration") == 1
+    assert output.count("Valve leak") == 1
+    assert output.count("Vendor observation") == 1
+    assert "$125" not in output and "$250" not in output
 
 
 def test_source_status_and_header_remapping_do_not_recreate_operator_edited_card():
@@ -156,3 +167,26 @@ def test_description_missing_is_explicit_not_silently_skipped():
     assert len(result.follow_ups) == 1
     assert "Unresolved issue-register row" in result.follow_ups[0].text
     assert "Assigned To: Operator A" in result.follow_ups[0].text
+
+def test_explicit_duplicate_role_heading_remains_ambiguous_even_when_numbered():
+    assert mapped_issue_register(
+        ("Issue", "Issue (2)", "Current Status", "Owner"),
+        (("A", "B", "Open", "Operator"),),
+        "source:role-ambiguous") is None
+    assert mapped_issue_register(
+        ("Issue 2026", "Status", "Owner"),
+        (("A", "Open", "Operator"),),
+        "source:year-is-not-a-duplicate-suffix") is None
+
+
+def test_source_linked_photo_provenance_survives_card_migration():
+    draft = fixture()
+    source_ref = draft.blocks[0].extra_tables[0].reference
+    photo_block = replace(draft.blocks[0], asset_hashes=("synthetic-photo.png",),
+                          asset_captions=("Synthetic inspection",),
+                          asset_provenance=(("synthetic-photo.png", (source_ref,)),))
+    review = canonical_issues(replace(draft, blocks=(photo_block,)))
+    assert review.blocks[0].asset_hashes == photo_block.asset_hashes
+    assert review.blocks[0].asset_captions == photo_block.asset_captions
+    assert review.blocks[0].asset_provenance == photo_block.asset_provenance
+    assert review.follow_ups[0].references == (source_ref,)
