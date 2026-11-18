@@ -287,7 +287,7 @@ def _scoped_participants(columns, cells, people):
         if people.startswith((HOSPITAL_LABEL, PROVIDER_LABEL)) and people.split(": ", 1)[1].strip():
             return people, ""  # A deliberate, inspectable human correction.
         return people, "Training participant staff type is unknown; label participants or omit the row."
-    parts = [part.strip() for part in re.split(r";\\s*", people) if part.strip()]
+    parts = [part.strip() for part in re.split(r";\s*", people) if part.strip()]
     if not parts:
         return people, ""
     return "; ".join(part if part.startswith(label) else label + part
