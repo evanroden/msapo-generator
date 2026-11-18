@@ -28,6 +28,8 @@ from time import perf_counter, process_time
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from docx import Document
+from openpyxl import Workbook
+from app.monthly_latency_spans import capture_spans, measure_span
 from docx.shared import Inches
 from PIL import Image
 import pymupdf as fitz
@@ -70,6 +72,10 @@ def _docx(pictures):
         photo.save(buffer, format="JPEG", quality=82)
         document.add_picture(BytesIO(buffer.getvalue()), width=Inches(5.5))
         document.add_paragraph(f"Invented image {number + 1}")
+        table = document.add_table(rows=3, cols=3)
+        for row in range(3):
+            for col in range(3):
+                table.cell(row, col).text = f"SYNTHETIC {number + 1} / {row} / {col}"
         photo.close()
     stream = BytesIO()
     document.save(stream)
@@ -98,6 +104,83 @@ def _image(profile, content, number=None):
             "height": image.height, "bytes": len(image.data), "number": number}
 
 
+def _work_order_bytes(suffix, rows=256):
+    """Invented work-order values only, preserving native table row counts."""
+    header = ("Work Order", "Status", "Facility", "Date", "Note")
+    data = [(f"QA-WO-{i:04d}", "Open" if i % 2 else "Completed",
+             "Invented Preview Site", "2026-09-15", f"synthetic item {i}")
+            for i in range(1, rows + 1)]
+    if suffix == ".csv":
+        return ("\n".join(",".join(row) for row in (header, *data)) + "\n").encode()
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Synthetic work orders"
+    sheet.append(header)
+    for row in data:
+        sheet.append(row)
+    stream = BytesIO()
+    workbook.save(stream)
+    workbook.close()
+    return stream.getvalue()
+
+
+def _table_cases():
+    output = []
+    for suffix in (".csv", ".xlsx"):
+        raw = _work_order_bytes(suffix)
+        cold, warm = [], []
+        for attempt in range(5):
+            profile = _profile(f"qa491-table-{suffix}-{attempt}")
+            with capture_spans() as spans:
+                with measure_span("source_ingest"):
+                    content, extras = sources.ingest(profile, "invented-orders" + suffix, raw)
+                started = perf_counter()
+                cached, cached_extras = sources.ingest(profile, "invented-orders" + suffix, raw)
+                warm.append(perf_counter() - started)
+            cold.append(spans[0]["elapsed_ms"] / 1000)
+            assert extras == cached_extras == ()
+            assert len(content.tables) == len(cached.tables) == 1
+            assert len(content.tables[0].rows) == len(cached.tables[0].rows) == 256
+            assert content.tables[0].rows == cached.tables[0].rows
+            assert content.source.sha256 == cached.source.sha256 == sha256(raw).hexdigest()
+        output.append({"workload": "work-orders-" + suffix[1:], "rows": 256,
+                       "fixture_sha256": sha256(raw).hexdigest(), "bytes": len(raw),
+                       "cold_ingest": _summary(cold), "warm_ingest": _summary(warm),
+                       "data_preserved": True, "raster": "not applicable: table/text source"})
+    return output
+
+
+def _mixed_and_negative():
+    """Real ingest boundaries, not browser or persisted-report acceptance."""
+    profile = _profile("qa491-mixed")
+    batch = (("source.pdf", _pdf(2, "MIXED")),
+             ("source.docx", _docx(1)),
+             ("work-orders.csv", _work_order_bytes(".csv")),
+             ("work-orders.xlsx", _work_order_bytes(".xlsx")))
+    received = []
+    for filename, raw in batch:
+        started = perf_counter()
+        content, _ = sources.ingest(profile, filename, raw)
+        received.append({"suffix": Path(filename).suffix,
+                         "sha256": content.source.sha256,
+                         "elapsed_ms": round((perf_counter() - started) * 1000, 3)})
+    # Same bytes under two labels are one immutable content identity, not two
+    # different files. A different revision must never alias the old source.
+    duplicate, _ = sources.ingest(profile, "duplicate-label.csv", batch[2][1])
+    assert duplicate.source.sha256 == received[2]["sha256"]
+    failures = []
+    for name, raw in (("empty.csv", b""), ("not-supported.exe", b"bytes"),
+                      ("malformed.csv", b'Work Order,Status\\n"unclosed,Open')):
+        try:
+            sources.ingest(profile, name, raw)
+        except ValueError:
+            failures.append(name.rsplit(".", 1)[-1] + ":rejected")
+        else:
+            raise AssertionError("Invalid synthetic input unexpectedly accepted")
+    return {"ingested": received, "duplicate_content_identity_preserved": True,
+            "rejections": failures, "expected_rejections": 3}
+
+
 def _source_cases():
     cases = (("pdf-small-2", ".pdf", _pdf(2)),
              ("pdf-representative-24", ".pdf", _pdf(24)),
@@ -113,9 +196,12 @@ def _source_cases():
         for number in range(5):
             profile = _profile(f"qa491-{case}-{number}")
             start = perf_counter()
-            content, extras = sources.ingest(profile, "invented" + suffix, raw)
-            ingest_at = perf_counter()
-            thumb = _image(profile, content)
+            with capture_spans() as spans:
+                with measure_span("source_ingest"):
+                    content, extras = sources.ingest(profile, "invented" + suffix, raw)
+                ingest_at = perf_counter()
+                with measure_span("source_thumbnail"):
+                    thumb = _image(profile, content)
             finished = perf_counter()
             assert extras == ()
             timings["cold_ingest"].append(ingest_at - start)
@@ -201,7 +287,8 @@ def _section_preview():
 
     def counted(*args, **kwargs):
         started = perf_counter()
-        raw = native_original(*args, **kwargs)
+        with measure_span("native_assembly"):
+            raw = native_original(*args, **kwargs)
         calls.append({"seconds": perf_counter() - started, "sha256": sha256(raw).hexdigest(),
                       "package_sha256": package_members_sha256(raw)})
         return raw
@@ -225,11 +312,13 @@ def _section_preview():
                 with owner_scope(owner, versions):
                     for index in range(3):
                         started = perf_counter()
-                        preview = preview_section(draft, "activity", assets.__getitem__)
-                        converted_at = perf_counter()
-                        ticket = store.put(owner or "qa491-control", preview)
-                        inserted_at = perf_counter()
-                        rasters = store.pages(owner or "qa491-control", ticket, (0, 1))
+                        with capture_spans() as spans:
+                            preview = preview_section(draft, "activity", assets.__getitem__)
+                            converted_at = perf_counter()
+                            ticket = store.put(owner or "qa491-control", preview)
+                            inserted_at = perf_counter()
+                            with measure_span("first_raster"):
+                                rasters = store.pages(owner or "qa491-control", ticket, (0, 1))
                         finished = perf_counter()
                         assert rasters and len(rasters) == 2
                         assert all(data.startswith(b"\xff\xd8") for _, data in rasters)
@@ -241,7 +330,8 @@ def _section_preview():
                                          "assembly_conversion_seconds": round(converted_at - started, 4),
                                          "pdf_ticket_seconds": round(inserted_at - converted_at, 4),
                                          "first_two_rasters_seconds": round(finished - inserted_at, 4),
-                                         "total_seconds": round(finished - started, 4)})
+                                         "total_seconds": round(finished - started, 4),
+                                         "critical_path_spans": list(spans)})
                         store.discard(owner or "qa491-control", ticket)
                         del preview, rasters
                         gc.collect()
@@ -305,6 +395,8 @@ def main():
         # has already consumed its headroom. Never suppress RenderBusy here.
         if part == "sources":
             result["sources"] = _source_cases()
+            result["work_order_tables"] = _table_cases()
+            result["mixed_source_and_negative"] = _mixed_and_negative()
             result["concurrent_visitor_sources"] = _concurrent()
             result["replacement"] = _replacement()
         else:
