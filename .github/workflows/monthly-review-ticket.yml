@@ -45,7 +45,7 @@ jobs:
             -e MSAPO_SHA="$MSAPO_SHA" \
             -v "$PWD/test-artifacts/monthly-review-ticket:/out" \
             --entrypoint python msapo-a04-ticket \
-            scripts/qa_monthly_review_ticket_benchmark.py
+            -m scripts.qa_monthly_review_ticket_benchmark
       - name: Verify all pages, geometry and 120-page cold-path improvement
         run: |
           python - <<'PY'
