@@ -137,7 +137,7 @@ def _finish_job(draft, prefix):
             st.session_state[prefix + "_ai_facts"] = (
                 current.id, current.fingerprint, tuple(retained.values()))
             st.session_state[prefix + "_ai_coverage"] = (
-                current.id, current.fingerprint, outcome)
+                current.id, current.fingerprint, outcome, job["plan"].pages)
         elif job["kind"] == "draft":
             if (
                 tuple(s.fingerprint for s in draft.sources)
@@ -530,8 +530,8 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                         prefix, draft, meta, prepare, lambda v: v[0] or read_image(v[1])
                     )
             coverage_state = st.session_state.get(prefix + "_ai_coverage")
-            if coverage_state and (coverage_state[0], coverage_state[1]) == (
-                    source.id, source.fingerprint):
+            if coverage_state and (coverage_state[0], coverage_state[1], coverage_state[3]) == (
+                    source.id, source.fingerprint, tuple(pages)):
                 outcome = coverage_state[2]
                 inventory = outcome["inventory"]
                 ready_pages = sum(status == "ready" for status in inventory.values())
@@ -539,7 +539,11 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                     f"Reader inventory: {len(inventory)}/{len(pages)} selected pages accounted; "
                     f"{ready_pages} classified from native evidence, "
                     f"{len(inventory) - ready_pages} need visual/manual review or a retry. "
-                    f"{outcome['rejected_claims']} ungrounded claims withheld.")
+                    f"{outcome['rejected_claims']} ungrounded claims withheld. "
+                    f"{outcome['admitted_calls']} new calls, "
+                    f"{outcome['cache_hits']} cache hits; "
+                    f"{outcome['total_seconds']:.2f}s network/queue worker time "
+                    "(simulated in tests; not a UI first-paint measurement).")
                 if ready_pages != len(inventory):
                     pending_pages = [str(n) for n, status in inventory.items()
                                      if status != "ready"]
