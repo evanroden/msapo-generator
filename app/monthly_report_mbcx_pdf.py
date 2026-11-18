@@ -73,6 +73,32 @@ def whole_pdf_pages(content, blocks, *, destination="mbcx_report"):
     return pages
 
 
+def _first_image_budget_overflow(profile, content, blocks, assets, pages):
+    """Identify the first unfittable source page only after a rejected batch.
+
+    Reuse cached print rasters; do not impose a second pass on a successful
+    whole-document inclusion. Existing report images count toward the 60 MiB
+    budget, including distinct occurrences of identical content.
+    """
+    from app import monthly_report_library as library
+    from app.monthly_report_section_uploads import MAX_PREPARED_IMAGE_BYTES
+
+    assets = {} if assets is None else assets
+    used = 0
+    for key, block in blocks.items():
+        if key not in sources.PAGE_DESTINATIONS:
+            continue
+        for reference in block.asset_hashes:
+            data = assets[reference] if reference in assets else library.read_asset(
+                profile.contract, profile.key, reference)
+            used += len(data)
+    for number in pages:
+        used += len(sources.page_image(profile, content, number).data)
+        if used > MAX_PREPARED_IMAGE_BYTES:
+            return number
+    return None
+
+
 def prepare_whole_pdf(profile, content, blocks, assets=None, *, destination="mbcx_report"):
     """Called only after explicit whole-document confirmation; failure is atomic."""
     pages = whole_pdf_pages(content, blocks, destination=destination)
@@ -82,8 +108,26 @@ def prepare_whole_pdf(profile, content, blocks, assets=None, *, destination="mbc
     source = replace(source, client_page_reviews=tuple(
         (number, page_fingerprint(source, number)) for number in pages))
     revised = replace(content, source=source)
-    additions = prepare_section_pages(profile, (revised,), destination, blocks, assets,
-                                     only_pages=frozenset((source.id, n) for n in pages))
+    try:
+        additions = prepare_section_pages(profile, (revised,), destination, blocks, assets,
+                                         only_pages=frozenset((source.id, n) for n in pages))
+    except ValueError as exc:
+        if "Prepared images exceed 60 MB" not in str(exc):
+            raise
+        # The general page renderer fails atomically on size, but its message
+        # has no offending page. Diagnose the already-failed batch without
+        # reprocessing any successfully committed report content.
+        try:
+            first = _first_image_budget_overflow(profile, revised, blocks, assets, pages)
+        except (ValueError, OSError):
+            raise exc
+        if first is not None:
+            over_limit = str(first) if first == len(pages) else f"{first}-{len(pages)}"
+            raise ValueError(
+                f"Prepared images exceed 60 MB. Over-limit pages {over_limit} "
+                "cannot fit this report's image budget. No pages were added."
+            ) from exc
+        raise
     if len(additions[destination].asset_hashes) != len(pages):
         raise ValueError("The complete PDF could not be prepared. No report pages were changed.")
     return revised, additions
