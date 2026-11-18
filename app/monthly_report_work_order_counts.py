@@ -158,10 +158,14 @@ def count_reviewed_work_orders(review: WorkOrderReview, *, approved_revision: st
                   for key in selected_sites)
     trade_groups = ()
     if include_trades:
-        labels, members = {}, {}
+        labels, members, aliases = {}, {}, {}
         for row in rows:
             key, label = _trade(row)
-            labels[key] = label
+            # Trade capitalization/spacing is not a distinct discipline.
+            # Keep the first reviewed spelling as the display/key contract.
+            canonical = re.sub(r"\\s+", " ", key).casefold()
+            key = aliases.setdefault(canonical, key)
+            labels.setdefault(key, label)
             members.setdefault(key, []).append(row)
         trade_groups = tuple(_group(key, labels[key], tuple(members[key]))
                              for key in sorted(labels))
