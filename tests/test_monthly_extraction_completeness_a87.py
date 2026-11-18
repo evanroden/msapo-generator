@@ -103,6 +103,7 @@ def _synthetic_originals():
         "A87-CSV-NORTH-01,North,2026-09-13,Closed,Vendor inspected VAV damper.\n"
         "A87-CSV-PENDING-02,North,2026-09-13,Did not start,Valve work remains pending.\n"
         "A87-CSV-SOUTH-03,South,2026-09-13,Closed,Outside the North report scope.\n"
+        "A87-CSV-OCTOBER-04,North,2026-10-02,Closed,Outside September period.\n"
     ).encode()
     txt_bytes = (
         "A87-TXT-UNKNOWN-01: Date unknown; vendor measured 40 psi; no completion date inferred.\n"
@@ -190,7 +191,7 @@ def test_six_format_truth_manifest_and_repeat_import(tmp_path, monkeypatch):
     truth = _truth()
     contents, originals = _ingested(tmp_path, monkeypatch)
     selected, locations = _audit(contents, truth)
-    assert len(selected) == 10 and len(locations) == 16
+    assert len(selected) == 10 and len(locations) == 17
 
     pdf = contents["pages.pdf"].source
     assert len(pdf.page_texts) == 3
@@ -209,7 +210,7 @@ def test_six_format_truth_manifest_and_repeat_import(tmp_path, monkeypatch):
 
     csv = contents["orders.csv"].tables
     xlsx = contents["orders.xlsx"].tables
-    assert len(csv) == 1 and len(csv[0].rows) == 3
+    assert len(csv) == 1 and len(csv[0].rows) == 4
     assert len(xlsx) == 2 and sum(len(table.rows) for table in xlsx) == 3
     assert csv[0].rows[1][3] == "Did not start"
     assert xlsx[0].rows[1][2] == ""  # Missing date remains unknown.

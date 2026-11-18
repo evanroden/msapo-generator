@@ -101,6 +101,12 @@
       "source": "vendor.eml",
       "page": 1,
       "reason": "Price-only sentence excluded while separate technical lines are retained."
+    },
+    {
+      "id": "A87-CSV-OCTOBER-04",
+      "source": "orders.csv",
+      "page": 1,
+      "reason": "October row belongs to another report month; do not count in September."
     }
   ]
 }
