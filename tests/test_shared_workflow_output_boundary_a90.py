@@ -17,12 +17,17 @@ import pymupdf as fitz
 from openpyxl import load_workbook
 
 from app import expense_ui, smartsheet, web_ui
+from app.contracts import RRH_CONTRACT
+from app.monthly_report_editor import _signature
 from app.expense_report import (
     build_expense_workbook,
     total_reimbursement,
     validate_expense_report,
 )
 from app.po_context import build_po_context
+# Fixture dependencies are resolved in this test module, not the module
+# where populated_workflows was originally defined.
+from test_expense_workspace_isolation import isolated_expenses  # noqa: F401
 from test_workflow_return_preservation import (
     change_workflow,
     populated_workflows,
@@ -42,10 +47,14 @@ def test_monthly_po_expense_monthly_preserves_identity_and_corrected_workbook(
     app, gate = populated_workflows
     monthly_text = "A90_MONTHLY_ONLY: manually accepted September activity."
     _control(app, "text_area", "Activity summary").set_value(monthly_text).run()
-    monthly_key = next(
-        key for key in app.session_state.filtered_state
-        if key.startswith("report_guided_") and key.endswith("_draft")
+    # Select the working report by its exact contract/profile/period key;
+    # other guided session keys can also end in "_draft".
+    monthly_key = (
+        "report_guided_"
+        + _signature((RRH_CONTRACT, "synthetic-guided", "2026-09"))
+        + "_draft"
     )
+    assert monthly_key in app.session_state.filtered_state
     monthly_draft = app.session_state[monthly_key]
     monthly_route = app.query_params["workflow"]
     assert monthly_route == ["monthly"]
