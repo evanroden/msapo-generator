@@ -216,3 +216,33 @@ def test_malformed_candidate_is_rejected_before_matching():
         fact(confidence=1.1)
     with pytest.raises(ValueError, match="Standing defaults"):
         fact(claim="standing", scope="report")
+
+
+def test_reviewed_table_noop_and_persisted_replay_remain_unchanged(tmp_path, monkeypatch):
+    from app import monthly_report_library as library
+    from app.monthly_report_model import ReportPeriod, synthetic_draft, synthetic_profiles
+
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    profile = synthetic_profiles()[0]
+    period = ReportPeriod(2026, 10)
+    library.save_profile(profile, expected_revision=0,
+                         actor="Synthetic Editor", confirmed=True)
+    initial = synthetic_draft(profile, period)
+    reviewed = ResolvedBlock(
+        "proposals", "This month",
+        rows=(("Demo North", "Synthetic Vendor", "Inspect pump", "Pending"),),
+        references=("synthetic-proposal-source",),
+        reviewed_fingerprint="approved-by-human")
+    initial = replace(initial, blocks=(*initial.blocks, reviewed))
+    first = library.save_snapshot(initial, expected_revision=0)
+    restored = library.load_snapshot(profile.contract, profile.key, period)
+    block = next(b for b in restored.draft.blocks if b.key == "proposals")
+    assert block == reviewed
+
+    # There is no document mutation to persist: both paths return the same
+    # object, even with rows, approved edits, and source receipts present.
+    assert native_update((), "proposals", block) is block
+    read, pages = reader_update((), "proposals", {"items": []}, block)
+    assert read is block and pages == {}
+    assert restored.draft.fingerprint == initial.fingerprint
+    assert library.load_snapshot(profile.contract, profile.key, period).revision == first.revision
