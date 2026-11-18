@@ -72,7 +72,7 @@ def test_aba_source_replacement_cannot_accept_first_generation(monkeypatch):
         ui._advance_preview_queue(state)
         assert state["cache"]["activity"]["ticket"] == fresh
         assert store.available(state["owner"], fresh)
-        assert store.pages(state["owner"], fresh, (0,))[0][1].startswith(b"\\xff\\xd8")
+        assert store.pages(state["owner"], fresh, (0,))[0][1].startswith(bytes.fromhex("ffd8"))
         store.discard(state["owner"], fresh)
         assert store.stats()["pdf_bytes"] == store.stats()["raster_bytes"] == 0
     finally:

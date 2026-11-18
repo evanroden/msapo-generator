@@ -14,6 +14,7 @@ from app.monthly_report_preview import (
     _section_scope, preview_page, preview_section, section_preview_fingerprint,  # noqa: F401 (tests patch preview_page here)
 )
 from app.monthly_report_preview_store import STORE, PreviewTicket
+from app.monthly_report_source_view_runtime import source_revision_identity
 from app.monthly_report_preview_view import render_view, viewport
 
 
@@ -77,7 +78,8 @@ def _reset_report_preview_identity(state, identity):
     for entry in tuple(state.get('last_good', {}).values()):
         _discard(state, entry)
     for field in ('wanted', 'queue', 'cache', 'requests', 'last_good',
-                  'visible', 'page_requests', 'ready_after', 'timers'):
+                  'visible', 'page_requests', 'ready_after', 'timers',
+                  'generations', 'source_revisions'):
         state[field] = {}
     state['report_identity'] = identity
     # A worker already running on the old report is discarded when complete,
@@ -109,7 +111,12 @@ def _advance_preview_queue(state):
             entry = future.result()
         except Exception:
             entry = {'error': 'The section preview could not update. Your edits are still here.'}
-        if state['wanted'].get(section) == fingerprint:
+        # Fingerprint equality alone is insufficient after A -> B -> A while
+        # A#1 is in flight. Only the exact admitted request generation can
+        # publish A#3's result, including its labels and raster ticket.
+        if (state['wanted'].get(section) == fingerprint
+                and state.get('generations', {}).get(section, 0)
+                    == state.get('running_generation', 0)):
             if entry.get('busy'):
                 request = state.get('running_request')
                 if request is not None and _is_visible(state, section):
@@ -126,6 +133,7 @@ def _advance_preview_queue(state):
             _discard(state, entry)
         state['running'] = None
         state.pop('running_request', None)
+        state.pop('running_generation', None)
         _bound_ordered_preview_cache(state)
     for section, request in list(state['queue'].items()):
         if state['wanted'].get(section) != request[0] or not _is_visible(state, section):
@@ -155,6 +163,7 @@ def _advance_preview_queue(state):
     else:
         state['running'] = (ready, fingerprint, future)
         state['running_request'] = (fingerprint, draft, assets, title)
+        state['running_generation'] = state.get('generations', {}).get(ready, 0)
 
 
 def _ordered_preview_state(prefix):
@@ -380,9 +389,21 @@ def render_ordered_section_preview(draft, section_key, assets, prefix):
         return None
     prior = state['wanted'].get(section_key)
     if prior != fingerprint:
+        # Do not recycle a stale page from a replaced source while rebuilding.
+        # For text-only edits the prior page remains available, explicitly
+        # labeled older, exactly as before.
+        source_revision = source_revision_identity(draft)
+        old_revision = state.setdefault('source_revisions', {}).get(section_key)
+        state['source_revisions'][section_key] = source_revision
+        state['generation_sequence'] = state.get('generation_sequence', 0) + 1
+        state.setdefault('generations', {})[section_key] = state['generation_sequence']
         state['wanted'][section_key] = fingerprint
         previous = state['cache'].pop(section_key, {})
-        _remember_previous_preview(state, section_key, previous)
+        if prior is not None and old_revision != source_revision:
+            _discard(state, previous)
+            _discard(state, state.setdefault('last_good', {}).pop(section_key, {}))
+        else:
+            _remember_previous_preview(state, section_key, previous)
         state['queue'].pop(section_key, None)
         scope, needed_assets = _request_scope(draft, section_key, assets)
         state['requests'][section_key] = (fingerprint, scope, needed_assets, title)

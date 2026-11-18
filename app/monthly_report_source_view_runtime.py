@@ -121,6 +121,17 @@ def derive_import_view(path, inspection):
     return fresh
 
 
+def source_revision_identity(draft):
+    """Ordered source-byte and review-revision identities for preview admission.
+
+    Filenames are descriptive, never authority: the immutable SHA and the
+    reviewed record revision distinguish a replaced same-name upload. This
+    identity is operation-local and cannot change standing data or receipts.
+    """
+    return tuple(sorted((source.id, source.filename, source.sha256, source.fingerprint)
+                        for source in draft.sources))
+
+
 def cache_identity(draft):
     """Invalidate preview tickets on changed evidence; never grants approval.
 
