@@ -36,14 +36,16 @@ def _fresh(record):
 
 
 def status(profile, period, key):
-    root, _, path = _paths(profile, period, key)
-    with library._locked(root):
-        if ai.cached(profile, "extraction", key) is not None:
-            return "accepted"
-        record = _receipt(path)
-        if _fresh(record):
-            return "pending"
-        return "failed" if record else "unread"
+    # Reads of the atomically replaced cache/receipt are safe without a write
+    # lock. A routine Streamlit rerun must not create lock files or wait for
+    # another session's network claim just to show page progress.
+    _, _, path = _paths(profile, period, key)
+    if ai.cached(profile, "extraction", key) is not None:
+        return "accepted"
+    record = _receipt(path)
+    if _fresh(record):
+        return "pending"
+    return "failed" if record else "unread"
 
 
 def claim(profile, period, key):
