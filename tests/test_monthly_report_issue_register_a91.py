@@ -1,0 +1,158 @@
+"""A91 synthetic regressions: issue registers must append, not replace, reviewed cards."""
+from dataclasses import asdict, replace
+import hashlib
+import json
+
+from app import monthly_report_library as library
+from app.monthly_report_issue_register import mapped_issue_register
+from app.monthly_report_issues import canonical_issues
+from app.monthly_report_model import (
+    ReportFollowUp, ReportPeriod, ReportSource, ReportTable, ResolvedBlock,
+    default_sections, synthetic_draft, synthetic_profiles,
+)
+from app.monthly_report_setup import merge_drafts
+from app.monthly_report_sources import source_reference
+
+
+COLUMNS = ("Facility Name", "Issue Summary", "Work Status", "Assigned To",
+           "Priority Level", "Date Opened", "Update Due", "Additional", "Additional",
+           "Quoted Price")
+ROWS = (
+    ("Synthetic Site", "Pump vibration", "Open", "Operator A", "High",
+     "2026-09-03", "2026-10-01", "Unit A", "Vendor observation", "$125"),
+    ("Synthetic Site", "Valve leak", "Closed", "Operator B", "Low",
+     "2026-09-07", "2026-09-30", "Unit B", "Needs verification", "$250"),
+)
+
+
+def fixture(columns=COLUMNS, rows=ROWS, *, source_id="register-a", fill="a"):
+    profile = synthetic_profiles()[0]
+    draft = synthetic_draft(profile, ReportPeriod(2026, 9))
+    source = ReportSource(source_id, "synthetic-register.pdf", fill * 64, ".pdf",
+                          facility=profile.facilities[0].title,
+                          page_texts=("Synthetic issue register.",))
+    block = ResolvedBlock(
+        "equipment_issues", "This month",
+        extra_tables=(ReportTable(columns, rows, source_reference(source, 1)),),
+    )
+    return replace(draft, sections=tuple(section for section in default_sections()
+                                        if section.key == "issues"),
+                   blocks=(block,), sources=(source,))
+
+
+def test_confident_renamed_columns_and_duplicate_unknown_headings_keep_every_safe_cell():
+    draft = fixture()
+    items = canonical_issues(draft).follow_ups
+    assert len(items) == 2
+    assert all(item.status == "ongoing" for item in items)
+    assert items[0].text.startswith("Pump vibration")
+    assert "Facility Name: Synthetic Site" in items[0].text
+    assert "Priority Level: High" in items[0].text
+    assert "Date Opened: 2026-09-03" in items[0].text
+    assert "Update Due: 2026-10-01" in items[0].text
+    assert "Additional: Unit A" in items[0].text
+    assert "Additional (2): Vendor observation" in items[0].text
+    assert "Quoted Price" not in items[0].text
+    assert "$125" not in items[0].text
+    assert "Work Status: Closed" in items[1].text
+    assert items[1].evidence_note == ""
+    assert canonical_issues(canonical_issues(draft)).follow_ups == items
+
+
+def test_source_status_and_header_remapping_do_not_recreate_operator_edited_card():
+    initial = fixture()
+    accepted = canonical_issues(initial)
+    first = accepted.follow_ups[0]
+    changed = replace(first, text="Operator verified noise still present",
+                      status="updated", update="Reinspection required",
+                      included=False)
+    retained = library.draft_from_dict(json.loads(json.dumps(
+        asdict(replace(accepted, follow_ups=(changed, accepted.follow_ups[1]))))))
+    revised_columns = ("Site", "Finding", "Current Status", "Owner", "Severity",
+                       "Identified Date", "Notes")
+    revised_rows = (
+        ("Synthetic Site", "Pump vibration", "Pending", "Operator A", "High",
+         "2026-09-03", "Unit A"),
+        ("Synthetic Site", "Valve leak", "Closed", "Operator B", "Low",
+         "2026-09-07", "Unit B"),
+    )
+    same_source_block = replace(initial.blocks[0], extra_tables=(
+        ReportTable(revised_columns, revised_rows, initial.blocks[0].extra_tables[0].reference),))
+    remapped = canonical_issues(replace(retained, blocks=(same_source_block,)))
+    assert len(remapped.follow_ups) == 2
+    assert remapped.follow_ups[0] == changed
+    assert remapped.follow_ups[1] == accepted.follow_ups[1]
+    assert remapped.follow_ups[0].references == first.references
+    assert not remapped.follow_ups[0].included
+
+
+def test_second_source_appends_without_replacing_manual_card_and_reimport_is_idempotent():
+    initial = fixture()
+    accepted = canonical_issues(initial)
+    manual = ReportFollowUp("manual-issue-A91", "issue",
+                            "Manually entered observation", initial.period.key,
+                            update="Operator note")
+    adjusted = replace(accepted.follow_ups[0], text="Human-edited pump finding",
+                       status="updated", update="Monitoring", included=False)
+    saved = library.draft_from_dict(json.loads(json.dumps(asdict(
+        replace(accepted, follow_ups=(adjusted, accepted.follow_ups[1], manual))))))
+    second = fixture(rows=(ROWS[0],), source_id="register-b", fill="b")
+    joined = merge_drafts(saved, second)
+    joined = replace(joined, sources=(*saved.sources, *second.sources))
+    reviewed = canonical_issues(joined)
+    assert len(reviewed.follow_ups) == 4
+    assert reviewed.follow_ups[:3] == saved.follow_ups
+    new = reviewed.follow_ups[-1]
+    assert new.key != adjusted.key
+    assert new.references == (second.blocks[0].extra_tables[0].reference,)
+    readded = replace(reviewed, blocks=(replace(second.blocks[0],
+        extra_tables=second.blocks[0].extra_tables * 2),))
+    again = canonical_issues(readded)
+    assert again.follow_ups == reviewed.follow_ups
+    reopened = library.draft_from_dict(json.loads(json.dumps(asdict(again))))
+    assert reopened.follow_ups == reviewed.follow_ups
+
+
+def test_duplicate_source_issue_rows_are_distinct_but_reimport_once_per_source():
+    source = fixture(rows=(ROWS[0], ROWS[0]))
+    reviewed = canonical_issues(source)
+    assert len(reviewed.follow_ups) == 2
+    assert reviewed.follow_ups[0].key != reviewed.follow_ups[1].key
+    again = canonical_issues(replace(reviewed, blocks=source.blocks))
+    assert again.follow_ups == reviewed.follow_ups
+
+
+def test_ambiguous_or_empty_registers_do_not_guess_roles_or_drop_generic_rows():
+    assert mapped_issue_register((), (), "source:none") is None
+    assert mapped_issue_register(COLUMNS, (), "source:empty") is None
+    assert mapped_issue_register(("Issue", "Issue", "Status", "Owner"),
+                                 (("A", "B", "Open", "Operator"),), "source:ambiguous") is None
+    fallback = fixture(columns=("Issue", "Issue", "Status", "Owner"),
+                       rows=(("A", "B", "Open", "Operator"),))
+    result = canonical_issues(fallback)
+    assert len(result.follow_ups) == 1
+    assert "Issue: A" in result.follow_ups[0].text
+    assert "Issue: B" in result.follow_ups[0].text
+
+
+def test_old_register_row_key_still_protects_saved_review_decisions():
+    draft = fixture()
+    reference = draft.blocks[0].extra_tables[0].reference
+    old_hash = hashlib.sha256(json.dumps(
+        ["issue-register-v1", reference, 0, COLUMNS, ROWS[0]],
+        sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:20]
+    saved = ReportFollowUp("follow-" + old_hash, "issue",
+                           "Previously reviewed operator correction", draft.period.key,
+                           references=(reference,), included=False)
+    remapped = canonical_issues(replace(draft, follow_ups=(saved,)))
+    assert remapped.follow_ups[0] == saved
+    assert len(remapped.follow_ups) == 2
+
+
+def test_description_missing_is_explicit_not_silently_skipped():
+    draft = fixture(rows=(("Synthetic Site", "", "Open", "Operator A", "High",
+                           "2026-09-03", "2026-10-01", "Unknown", "Check", ""),))
+    result = canonical_issues(draft)
+    assert len(result.follow_ups) == 1
+    assert "Unresolved issue-register row" in result.follow_ups[0].text
+    assert "Assigned To: Operator A" in result.follow_ups[0].text
