@@ -108,6 +108,7 @@ def convert_to_pdf(path, *, wait_seconds=10, lossless_images=False):
 # document, so holding the conversion lock around assembly would deadlock it.
 _WORK_SLOT = threading.Lock()
 _WORK_LOCAL = threading.local()
+_PREVIEW_REQUEST_LOCAL = threading.local()
 _PRIORITY_LOCK = threading.Lock()
 _FOREGROUND_WAITING = 0
 _REVIEW_WAITING = 0
@@ -177,6 +178,18 @@ class _PreviewMemoryGuard:
 def preview_memory_guard():
     """Inherited only by a nested operation inside this exact preview lease."""
     return getattr(_WORK_LOCAL, 'preview_guard', None) if getattr(_WORK_LOCAL, 'active', False) else None
+
+
+
+@contextmanager
+def preview_revision_guard(is_current):
+    """A worker's read-only revision test; never mutate an operator's draft."""
+    previous = getattr(_PREVIEW_REQUEST_LOCAL, 'is_current', None)
+    _PREVIEW_REQUEST_LOCAL.is_current = is_current
+    try:
+        yield
+    finally:
+        _PREVIEW_REQUEST_LOCAL.is_current = previous
 
 
 def _wait_for_review_slot(wait_seconds):
@@ -265,7 +278,8 @@ def _parallel_work_slot(*, preview, review, wait_seconds):
     timeout = min(wait_seconds, 10) if review else 0 if preview else wait_seconds
     try:
         with lease('heavy', priority=priority, wait_seconds=timeout,
-                   headroom=memory_headroom):
+                   headroom=memory_headroom,
+                   is_current=getattr(_PREVIEW_REQUEST_LOCAL, 'is_current', None) if preview else None):
             _WORK_LOCAL.active = True
             _WORK_LOCAL.preview_guard = _PreviewMemoryGuard(headroom) if preview else None
             try:
@@ -300,7 +314,9 @@ def _parallel_conversion_slot(*, wait_seconds):
                  if own_heavy else nullcontext())
         with outer:
             with lease('conversion', priority=inherited_priority,
-                       wait_seconds=wait_seconds, headroom=memory_headroom) as index:
+                       wait_seconds=wait_seconds, headroom=memory_headroom,
+                       is_current=getattr(_PREVIEW_REQUEST_LOCAL, 'is_current', None)
+                       if preview_memory_guard() else None) as index:
                 office_process._OFFICE_MARKER_LOCAL.slot = index
                 try:
                     try:
