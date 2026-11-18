@@ -226,7 +226,8 @@ def test_foundry_capability_cache_and_endpoint_isolation(monkeypatch):
     assert "cache_control" in seen[3]["messages"][0]["content"][0]
 
 
-def test_stale_inflight_completion_cannot_cross_period(monkeypatch):
+@pytest.mark.parametrize("kind", ["extraction", "draft", "ocr"])
+def test_stale_inflight_completion_cannot_cross_period(monkeypatch, kind):
     from concurrent.futures import Future
     from app import monthly_report_ai_ui as ui
     from app.monthly_report_model import synthetic_draft
@@ -243,7 +244,7 @@ def test_stale_inflight_completion_cannot_cross_period(monkeypatch):
     future.set_result({"facts": []})
     state[prefix + "_evidence"] = (SimpleNamespace(source=SOURCE),)
     state[prefix + "_ai_job"] = {
-        "kind": "extraction", "future": future,
+        "kind": kind, "future": future,
         "approval_scope": current_scope,
         "source_id": SOURCE.id, "source_fingerprint": SOURCE.fingerprint,
         "pages": (1,), "key": "f" * 64,
