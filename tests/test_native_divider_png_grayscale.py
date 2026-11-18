@@ -71,10 +71,10 @@ def test_opaque_png_occurrence_is_grayscale_without_mutating_shared_original():
 def test_opaque_rgba_png_is_eligible_but_transparent_logo_is_not():
     document = Document()
     root, opaque = _insert(document, _png(mode="RGBA"))
-    _, transparent = _insert(document, _png(mode="RGBA", alpha=0))
-    _, partly_transparent = _insert(document, _png(mode="RGBA", alpha=120))
+    transparent_root, transparent = _insert(document, _png(mode="RGBA", alpha=0))
+    half_root, partly_transparent = _insert(document, _png(mode="RGBA", alpha=120))
     pre = [_raw(document, blip) for blip in (opaque, transparent, partly_transparent)]
-    monochrome_divider_photos(document, [root, transparent.getparent().getparent().getparent().getparent().getparent().getparent()])
+    monochrome_divider_photos(document, [root, transparent_root, half_root])
     _check_gray(_raw(document, opaque))
     assert _raw(document, transparent) == pre[1]
     assert _raw(document, partly_transparent) == pre[2]
@@ -109,3 +109,32 @@ def test_small_png_not_mistaken_for_full_page_divider():
     old = selected.get(R + "embed")
     monochrome_divider_photos(document, [root])
     assert selected.get(R + "embed") == old
+
+
+def test_converted_pdf_image_pixels_are_gray(tmp_path, monkeypatch):
+    from conftest import libreoffice_can_convert
+    if not libreoffice_can_convert():
+        pytest.skip("LibreOffice Writer/Calc unavailable")
+    import pymupdf as fitz
+    from app import pdf_converter
+    document = Document()
+    root, selected = _insert(document, _png())
+    monochrome_divider_photos(document, [root])
+    source = tmp_path / "synthetic-native-divider.docx"
+    document.save(source)
+    monkeypatch.setattr(pdf_converter, "OUTPUT_DIR", tmp_path)
+    with fitz.open(pdf_converter.convert_to_pdf(source)) as pdf:
+        assert len(pdf) == 1
+        pictures = pdf[0].get_images(full=True)
+        assert pictures, "Word-to-PDF must retain the selected photograph"
+        pixmaps = [fitz.Pixmap(pdf, item[0]) for item in pictures]
+        samples = [p.samples for p in pixmaps if p.n in (1, 3) and p.width >= 800]
+        assert samples, "The full-page grayscale photograph must be present"
+        # A PDF encoder may store neutral RGB or a single-channel indexed raster.
+        for pixmap in pixmaps:
+            if pixmap.width < 800 or pixmap.n == 1:
+                continue
+            assert pixmap.n == 3
+            pixels = pixmap.samples
+            assert all(pixels[i] == pixels[i+1] == pixels[i+2]
+                       for i in range(0, len(pixels), 3))
