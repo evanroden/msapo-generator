@@ -289,9 +289,63 @@ def _strip_prices(text: str) -> str:
         text,
         flags=re.IGNORECASE,
     )
+    # A price following "for" should not leave dangling "for ." in the SOW.
+    text = re.sub(r"\bfor\s+(?=[.,;]|$)", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+([.,;])", r"\1", text)
     # Clean up leftover artifacts like double spaces or orphaned colons
     text = re.sub(r"  +", " ", text)
     return text.strip()
+
+
+# Prices and tax status belong only in the financial summary, never in the
+# scope or its checkbox items. Filter after parsing, since a model can violate
+# the prompt even when the JSON structure is otherwise valid.
+_COST_ONLY_SCOPE_LINE = re.compile(
+    r"""
+    ^\s*(?:(?:[-*•]\s*|\d+[.)]\s*)+)?
+    (?:
+        (?:sales|use|excise)\s+tax(?:es)? | tax(?:es)?
+        | freight(?:\s+(?:charges?|costs?|fees?))?
+        | shipping(?:\s+(?:charges?|costs?|fees?))?
+        | delivery\s+(?:charges?|fees?)
+        | (?:(?:handling|service|processing|administrative|convenience)\s+)?fees?
+        | (?:(?:fuel|energy|environmental)\s+)?surcharges?
+        | sub[\s-]*totals? | grand\s+totals? | totals?(?:\s+(?:due|amount|price))?
+        | deposits? | payment\s+terms? | terms\s+of\s+payment
+    )\b
+    """,
+    flags=re.IGNORECASE | re.VERBOSE,
+)
+_SCOPE_WORK_ACTION = re.compile(
+    r"\b(?:deliver|install|installation|replace|repair|test|commission|remove|"
+    r"inspect|supply|assemble|fabricate|transport|perform)\b",
+    flags=re.IGNORECASE,
+)
+
+
+def _clean_scope_item(text: str) -> str:
+    """Keep work descriptions but remove standalone financial line items."""
+    clean = _strip_prices(text)
+    label = re.sub(r"^\[AI ESTIMATE:\s*(.*?)\]$", r"\1", clean, flags=re.IGNORECASE)
+    matched = _COST_ONLY_SCOPE_LINE.match(label)
+    if matched:
+        # "Shipping and installation of the pump" describes work, whereas
+        # "Shipping charge", tax, fees and totals are cost-only entries.
+        header = matched.group(0).casefold()
+        actionable = _SCOPE_WORK_ACTION.search(label[matched.end():])
+        if not actionable or re.search(
+            r"\b(?:tax|charge|cost|fee|surcharge|total|deposit|payment)\b", header
+        ):
+            return ""
+    return clean
+
+
+def _clean_scope_text(text: str) -> str:
+    """Clean each model-provided scope line without collapsing paragraphs."""
+    return "\n".join(
+        item for line in text.splitlines()
+        if (item := _clean_scope_item(line)) or not line.strip()
+    ).strip()
 
 
 def _call_api_with_retry(client, quote_text: str, max_retries: int = 3, *, until: float | None = None) -> str:
@@ -342,8 +396,15 @@ def analyze_quote(quote_text: str) -> QuoteAnalysis:
         if key in data and data[key]:
             data[key] = _strip_prices(data[key])
 
-    data["inclusions"] = [_strip_prices(i) for i in data.get("inclusions", []) if _strip_prices(i)]
-    data["exclusions"] = [_strip_prices(e) for e in data.get("exclusions", []) if _strip_prices(e)]
+    data["scope_of_work"] = _clean_scope_text(data.get("scope_of_work", ""))
+    data["inclusions"] = [
+        item for line in data.get("inclusions", [])
+        if (item := _clean_scope_item(line))
+    ]
+    data["exclusions"] = [
+        item for line in data.get("exclusions", [])
+        if (item := _clean_scope_item(line))
+    ]
 
     # Cross-reference facility
     fac_name, fac_addr = _match_facility(
@@ -365,9 +426,12 @@ def analyze_quote(quote_text: str) -> QuoteAnalysis:
     # Convert raw JSON dicts to AIAssumption objects
     raw_assumptions = data.get("ai_assumptions", [])
     data["ai_assumptions"] = [
-        AIAssumption(text=a["text"], section=a.get("section", "exclusion"))
-        if isinstance(a, dict) else AIAssumption(text=str(a), section="exclusion")
+        AIAssumption(
+            text=clean,
+            section=a.get("section", "exclusion") if isinstance(a, dict) else "exclusion",
+        )
         for a in raw_assumptions
+        if (clean := _clean_scope_item(a["text"] if isinstance(a, dict) else str(a)))
     ]
 
     return QuoteAnalysis(**data)

@@ -75,3 +75,83 @@ def test_degraded_request_type_does_not_leak_an_original_po_number():
 
     assert result["request_type_guess"] is None
     assert result["original_po_number"] is None
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Sales tax $8.00", "Tax: 8%", "Freight: $12.00",
+        "Shipping charge $6.00", "Handling fee $2.00",
+        "Fuel surcharge $3.00", "Subtotal: $120.00",
+        "Total $135.00", "Grand total: $135.00",
+        "Deposit required: $30.00", "Payment terms: net 30",
+        "Delivery charge: $5.00", "Processing fees", "2. Sales tax $8.00",
+    ],
+)
+def test_model_cost_only_items_never_become_scope_lines(line):
+    from app.quote_analyzer import _clean_scope_item
+
+    assert _clean_scope_item(line) == ""
+
+
+def test_model_scope_cost_lines_are_removed_without_losing_work_or_totals(monkeypatch):
+    import re
+    import app.quote_analyzer as quote_analyzer
+
+    class Client:
+        def close(self):
+            pass
+
+    response = _response(
+        scope_of_work=(
+            "Remove failed pump and install replacement for $120.00.\n"
+            "Sales tax: $8.00\n"
+            "Shipping charge: $4.00\n"
+            "Test and commission the replacement.\n"
+            "Grand total $132.00"
+        ),
+        inclusions=[
+            "Sales tax $8.00", "Freight charge $4.00",
+            "Deliver and install the pump", "Replace gasket $120.00",
+            "Shipping and installation of replacement pump",
+        ],
+        exclusions=[
+            "Handling fee", "Payment terms: net 30", "Work on other equipment",
+        ],
+        ai_assumptions=[
+            {"text": "Processing fee $4.00", "section": "inclusion"},
+            {"text": "Test equipment", "section": "inclusion"},
+            {"text": "Subtotal $120.00", "section": "exclusion"},
+        ],
+        subtotal_amount="$120.00",
+        tax_amount="$8.00",
+        total_amount="$132.00",
+    )
+    monkeypatch.setattr(quote_analyzer, "make_client", lambda *a, **kw: Client())
+    monkeypatch.setattr(
+        quote_analyzer, "_call_api_with_retry", lambda *a, **kw: response
+    )
+    result = quote_analyzer.analyze_quote("Synthetic pump quote")
+
+    assert result.inclusions == [
+        "Deliver and install the pump",
+        "Replace gasket",
+        "Shipping and installation of replacement pump",
+    ]
+    assert result.exclusions == ["Work on other equipment"]
+    assert [a.text for a in result.ai_assumptions] == ["Test equipment"]
+    assert result.scope_of_work.splitlines() == [
+        "Remove failed pump and install replacement.",
+        "Test and commission the replacement.",
+    ]
+    scope_lines = [
+        *result.scope_of_work.splitlines(), *result.inclusions, *result.exclusions,
+        *(a.text for a in result.ai_assumptions),
+    ]
+    assert all(not re.search(r"\$\s*\d", line) for line in scope_lines)
+    assert all(
+        not re.match(r"^\s*(?:sales tax|tax|subtotal|grand total|total)\b", line, re.I)
+        for line in scope_lines
+    )
+    assert (result.subtotal_amount, result.tax_amount, result.total_amount) == (
+        "$120.00", "$8.00", "$132.00"
+    )
