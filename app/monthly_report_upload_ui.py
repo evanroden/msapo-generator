@@ -655,7 +655,7 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
     by_source = defaultdict(list)
     for choice in choices:
         by_source[choice.source_id].append(choice)
-        if (choice.action == "ready" and choice.destination
+        if (choice.action in {"ready", "review", "retained"} and choice.destination
                 and not (choice.source_id in section_page_owners and choice.destination == "water_reports")):
             destinations.append((choice.source_id, choice.destination, choice.page))
     for filename, identity, _ in route_controls:
@@ -664,7 +664,7 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
         for decision in decisions:
             grouped[decision.destination or decision.section].append(decision.page)
         if grouped:
-            st.caption(filename + " · " + "; ".join(
+            st.text(filename + " · " + "; ".join(
                 f"{labels.get(slot, slot)}: {', '.join(map(str, pages))}"
                 for slot, pages in grouped.items()))
         corrections = [decision for decision in decisions if decision.action in {"blocked", "review"}]
