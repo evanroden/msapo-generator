@@ -269,6 +269,11 @@ def change_row(bundle, group_index, row_key, changes, *, excluded=None):
         if excluded is not None:
             review = exclude_row(review, row_key, excluded=excluded, expected_revision=review.revision)
         group["record"] = review_record(review)
+        if value["filename"].casefold().endswith(".pdf"):
+            # An edited WO may release (or create) a collision on another page.
+            # Never promote either page without re-evaluating both source rows.
+            from app.monthly_report_work_order_pdf_review import reconcile_pdf_group_duplicates
+            reconcile_pdf_group_duplicates(value["groups"])
     else:
         if changes:
             review = correct_service_call(review, row_key, changes, expected_revision=review.revision)
