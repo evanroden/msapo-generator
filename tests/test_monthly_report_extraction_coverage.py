@@ -220,3 +220,61 @@ def test_reviewed_image_with_context_marker_is_not_falsely_unread(monkeypatch):
     ledger = source_coverage(ready, source, replace(content, source=source))
     assert ledger.unread_pages == 0
     assert ledger.items[0].state == "applied"
+
+
+def test_independent_expected_data_manifest_including_price_irrelevance():
+    """The manifest is authored without consulting ledger-generated digest values."""
+    import json
+    from pathlib import Path
+    from app.monthly_report_sources import source_reference
+
+    manifest = json.loads((Path(__file__).parent / "fixtures" /
+                           "a11_coverage_expected.json").read_text())
+    assert set(manifest) == {"control", "mixed_price_irrelevant", "interrupted_reader"}
+    for name, spec in manifest.items():
+        draft, content = fixture(pages=tuple(spec["pages"]),
+                                 notices=tuple(spec["notices"]))
+        source = content.source
+        accepted = [item for item in spec["expected"] if item["state"] == "applied"]
+        if accepted:
+            # The synthetic acceptance receipt identifies only page one; a
+            # price page must never enter the text of the published block.
+            first = accepted[0]
+            reference = source_reference(source, 1)
+            original = draft.blocks[0]
+            receipt = contribution_receipt(reference, draft.profile, draft.period,
+                original.key, text=first["value"], source=source, prior_block=original)
+            draft = replace(draft, blocks=(replace(original, text=first["value"],
+                                       references=(reference, receipt)),))
+        for entry in spec["expected"]:
+            if entry["state"] == "excluded":
+                item = next(item for item in source_coverage(draft, source, content).items
+                            if item.item_id == entry["item_id"])
+                draft = exclude_from_coverage(draft, item, entry["reason"], content=content)
+        ledger = source_coverage(draft, source, content)
+        observed = {item.item_id: item for item in ledger.items}
+        assert len(observed) == len(spec["expected"]), name
+        for entry in spec["expected"]:
+            item = observed[entry["item_id"]]
+            independent_digest = sha256(json.dumps(entry["value"], sort_keys=True,
+                ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+            assert item.digest == independent_digest, (name, entry["item_id"])
+            assert item.state == entry["state"], (name, entry["item_id"])
+            if "destination" in entry:
+                assert item.destination == entry["destination"]
+        expected_supported = [
+            {"source_id": source.id, "item_id": entry["item_id"],
+             "digest": sha256(json.dumps(entry["value"], sort_keys=True,
+                 ensure_ascii=False, separators=(",", ":")).encode()).hexdigest(),
+             "destination": entry["destination"]}
+            for entry in spec["expected"] if entry["state"] == "applied"]
+        score = exact_manifest_scores((ledger,), expected_supported)
+        assert score["manifest_supported"] == len(expected_supported)
+        if expected_supported:
+            assert score["exact_supported_precision"] == 1.0
+            assert all(value == 1 for value in score["recall_by_destination"].values())
+        if name == "mixed_price_irrelevant":
+            assert ledger.excluded == 2
+            assert "Proposal fee" not in draft.blocks[0].text
+        if name == "interrupted_reader":
+            assert ledger.limited and ledger.needs_review == 2
