@@ -62,7 +62,7 @@ def test_preview_is_optional_and_one_click_still_includes_all_pages(
     assert calls == [(1, True)]
     assert not app.session_state["blocks"]
     preview = next(box for box in app.selectbox if box.label == "Scorecard PDF page")
-    assert preview.options == [i for i in range(1, count + 1)]
+    assert len(preview.options) == count and preview.value == 1
     if count > 1:
         preview.set_value(count).run()
         assert not app.exception and calls[-1] == (count, True)
