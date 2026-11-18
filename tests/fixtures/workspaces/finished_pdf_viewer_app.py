@@ -91,14 +91,19 @@ if reset:
 
 package = st.session_state.get(prefix + "_package")
 draft = SimpleNamespace(fingerprint=fingerprint, period=SimpleNamespace(label="November 2026"))
+if package and package.fingerprint != fingerprint:
+    # Mirror the real guided editor's fail-closed retirement on edits.
+    output_ui.discard_current_session_pdf_preview(prefix, scope)
+    st.session_state.pop(prefix + "_package", None)
+    package = None
+output_ui.outdated_output_status(prefix, scope, draft)
 if package and package.pdf:
-    # The exact application viewer, byte pair and download-label helpers. No
-    # shared report version or persistent finished PDF is created in this QA.
-    word_label, pdf_label = output_ui.output_download_labels(package, draft)
+    # The exact application viewer, paired byte hashes and native downloads.
+    # No shared report version or persistent finished PDF is created in QA.
     output_ui.render_output_status(package, draft, None, prefix)
-    st.download_button(word_label, package.docx, file_name=package.docx_name,
+    st.download_button("Download DOCX", package.docx, file_name=package.docx_name,
                        key=prefix + "_word_download", on_click="ignore")
-    st.download_button(pdf_label, package.pdf,
+    st.download_button("Download PDF", package.pdf,
                        file_name=package.pdf_name, mime="application/pdf",
                        key=prefix + "_download", on_click="ignore")
     output_ui.render_current_session_pdf_preview(
@@ -115,4 +120,7 @@ st.caption("QA current PDF: " + (
     "absent" if package is None else "none" if not package.pdf
     else "alpha" if package.pdf_name == "alpha.pdf" else "bravo"))
 st.caption("QA current draft: " + ("edited" if fingerprint != initial_fingerprint else "original"))
-st.caption("QA package stale: " + str(bool(package and package.fingerprint != fingerprint)))
+st.caption("QA earlier output retired: " + str(bool(
+    output_ui.st.session_state.get(prefix + "_last_created_output")
+    and output_ui.st.session_state[prefix + "_last_created_output"] == (scope, initial_fingerprint)
+    and fingerprint != initial_fingerprint)))
