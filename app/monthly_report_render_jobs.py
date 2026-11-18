@@ -174,67 +174,78 @@ def preview_memory_guard():
     return getattr(_WORK_LOCAL, 'preview_guard', None) if getattr(_WORK_LOCAL, 'active', False) else None
 
 
-def _wait_for_review_slot(wait_seconds):
-    """Reserve a short Review turn; final exports keep first claim.
+AUTO_PREVIEW_WAIT_SECONDS = 2.0
 
-    Automatic section previews must yield while this deliberate request waits.
-    Never stop an existing job, and never hold the priority lock while waiting.
-    """
-    global _REVIEW_WAITING
-    deadline = time.monotonic() + max(0, min(float(wait_seconds), 10))
-    with _PRIORITY_LOCK:
-        _REVIEW_WAITING += 1
-    try:
-        while True:
-            with _PRIORITY_LOCK:
-                if not _FOREGROUND_WAITING and _WORK_SLOT.acquire(blocking=False):
-                    return True
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return False
-            time.sleep(min(.05, remaining))
-    finally:
-        with _PRIORITY_LOCK:
-            _REVIEW_WAITING -= 1
+
+def queue_state():
+    """Live waiting counts only; output becomes ready only after verification."""
+    from app.monthly_report_visible_queue import QUEUE
+    return QUEUE.snapshot()
+
+
+def cancel_queued_preview(owner):
+    """Navigation may cancel queued preview work, never a save/export."""
+    from app.monthly_report_visible_queue import QUEUE
+    QUEUE.cancel_owner(owner)
 
 
 @contextmanager
-def work_slot(*, preview=False, review=False, wait_seconds=130):
-    """Admit one heavy job: final export, deliberate Review, automatic preview."""
+def work_slot(*, preview=False, review=False, wait_seconds=130,
+              owner=None, revision=None, is_current=None):
+    """One admitted heavy job, preferring bounded visible work over bulk jobs.
+
+    The current exclusive assembly lock and nested preview memory guard remain
+    authoritative. No queued cancellation can interrupt an admitted export or
+    modify a shared saved version.
+    """
     if review and not preview:
         raise ValueError("Review priority requires the preview memory guard.")
-    global _FOREGROUND_WAITING
+    if not preview and (owner is not None or revision is not None or is_current is not None):
+        raise ValueError("Revision cancellation applies only to previews.")
     if getattr(_WORK_LOCAL, 'active', False):
         yield
         return
+    headroom = None
     if preview:
         headroom = memory_headroom()
         if headroom is not None and headroom < PREVIEW_HEADROOM_BYTES:
             raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
-        if review:
-            acquired = _wait_for_review_slot(wait_seconds)
-        else:
+    global _FOREGROUND_WAITING, _REVIEW_WAITING
+    from app.monthly_report_visible_queue import QUEUE, QueueBusy
+    if preview:
+        timeout = max(0, min(float(wait_seconds), 10 if review else AUTO_PREVIEW_WAIT_SECONDS))
+        if not review:
             with _PRIORITY_LOCK:
-                if _FOREGROUND_WAITING or _REVIEW_WAITING:
-                    raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
-                acquired = _WORK_SLOT.acquire(blocking=False)
+                if _REVIEW_WAITING:
+                    raise RenderBusy('Preview is queued behind a requested Review. Your edits are still here.')
     else:
-        with _PRIORITY_LOCK:
+        timeout = max(0, min(float(wait_seconds), 130))
+    with _PRIORITY_LOCK:
+        if review:
+            _REVIEW_WAITING += 1
+        elif not preview:
             _FOREGROUND_WAITING += 1
+    try:
         try:
-            acquired = _WORK_SLOT.acquire(timeout=max(0, min(float(wait_seconds), 130)))
-        finally:
-            with _PRIORITY_LOCK:
+            QUEUE.acquire(_WORK_SLOT, preview=preview, review=review, wait_seconds=timeout,
+                          owner=owner, revision=revision, is_current=is_current if preview else None)
+        except QueueBusy as exc:
+            raise RenderBusy(str(exc)) from exc
+    finally:
+        with _PRIORITY_LOCK:
+            if review:
+                _REVIEW_WAITING -= 1
+            elif not preview:
                 _FOREGROUND_WAITING -= 1
-    if not acquired:
-        raise RenderBusy('Another report is being prepared. Your saved work is unchanged; retry generation shortly.')
     _WORK_LOCAL.active = True
     _WORK_LOCAL.preview_guard = _PreviewMemoryGuard(headroom) if preview else None
     try:
         if preview:
             _WORK_LOCAL.preview_guard()
+            if is_current is not None and not is_current():
+                raise RenderBusy('The preview request is obsolete. Your edits are still here.')
         yield
     finally:
         _WORK_LOCAL.preview_guard = None
         _WORK_LOCAL.active = False
-        _WORK_SLOT.release()
+        QUEUE.release(_WORK_SLOT)
