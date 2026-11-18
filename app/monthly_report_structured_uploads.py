@@ -874,12 +874,17 @@ def reader_request(profile, contents, destination, page_refs=None, table_columns
 
 
 def reader_update(contents, destination, value, existing=None, *, table_columns=None,
-                  corrections=None, accepted_pages=()):
+                  corrections=None, accepted_pages=(), profile=None, period=None):
     """Validate provenance and native grounding before accepting any generated values."""
     items = value.get("items") if isinstance(value, dict) else None
     if not isinstance(items, list) or len(items) > 500:
         raise ValueError("The document reader returned invalid section details.")
     by_id = {c.source.id: c for c in contents}
+    native_mapped = _native_reader_page_pairs(contents, destination, table_columns)
+    admitted = (set(choose_reader_pages(
+        profile, contents, destination, period=period, corrections=corrections,
+        accepted_pages=accepted_pages, native_mapped=native_mapped))
+        if profile is not None else None)
     contact_pages = _activity_contact_pages(contents, value) if destination == "activity_summary" else set()
     block = existing or ResolvedBlock(destination, "This month")
     texts, rows, refs, pages, blocked_notices = [], [], [], {}, []
@@ -907,7 +912,9 @@ def reader_update(contents, destination, value, existing=None, *, table_columns=
         chosen = (corrections or {}).get((source.id, number, source.sha256))
         if (page_role.ambiguous and chosen != destination
                 or page_role.destinations and destination not in page_role.destinations
-                or (source.id, number) in accepted_pages):
+                or (source.id, number) in accepted_pages
+                or (source.id, number) in native_mapped
+                or admitted is not None and (source.id, number) not in admitted):
             continue
         text, row = item.get("text", ""), item.get("row", [])
         if not isinstance(text, str) or len(text) > 8000 or not isinstance(row, list) or any(not isinstance(c, str) or len(c) > 4000 for c in row):
