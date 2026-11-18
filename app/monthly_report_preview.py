@@ -353,10 +353,12 @@ def _section_preview_docx(draft, section_key, asset_loader=None, *, source_view=
         revision = None
         if assembly_cache.active():
             # Preflight and pinned-source validation still run on every request.
-            # A full draft fingerprint is conservative: unrelated edits may
-            # miss the cache, but cannot reuse old native content.
+            # This exact scoped draft is what the native assembler receives.
+            # Unrelated section edits can reuse identical bytes, while report
+            # period, operator, design pin, source view and section dependencies
+            # remain in its digest. Unsaved asset bytes are owner-scope-bound.
             from app.monthly_report_source_view_runtime import cache_identity
-            revision = (draft.fingerprint, section_key, cache_identity(draft))
+            revision = (scope.fingerprint, section_key, cache_identity(draft))
             cached = assembly_cache.read(revision)
             if cached is not None:
                 return cached
