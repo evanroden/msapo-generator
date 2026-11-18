@@ -512,10 +512,13 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
                 if item.kind == "image" and analysis.site_relation == "same":
                     plan.setdefault("automatic_divider_skips", {}).setdefault(slot, []).append(item.id)
                 continue  # The pinned native master owns its page art, not monthly content.
-            # Only verified generic ENFRA branding is shareable across sites.
-            # Client marks and native divider pixels may contain site identity;
-            # the selected contract's pinned design owns its own artwork.
-            design = slot == "brand_logo"
+            # Only exact, independently approved ENFRA page furniture may cross
+            # sites. Client marks, unverified "brand logo" captions and native
+            # divider pixels may carry source-site identity. The target's pinned
+            # design remains its own contract-scoped owner.
+            from app.monthly_report_static_branding import is_company_artwork_digest
+            design = (item.kind == "image" and slot == "brand_logo"
+                      and is_company_artwork_digest(item.image_digest))
             if analysis.site_relation != "same" and not design:
                 # Different sites may reuse table headings, never their rows.
                 if item.kind == "table" and section.key not in ("cover", "other"):

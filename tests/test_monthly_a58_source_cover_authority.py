@@ -121,6 +121,22 @@ def test_unknown_site_with_only_body_alias_is_not_approved(tmp_path):
                for title in inspection.cover_title_candidates)
 
 
+def test_foreign_site_unverified_brand_logo_is_not_cross_site_design():
+    from app.monthly_report_import import DocxInspection, ImportItem
+    from app.monthly_report_start_import import StartingReportAnalysis
+
+    unverified = ImportItem(
+        "unverified-logo", "image", "word/document.xml", 2, 1, "cover",
+        "brand_logo", image_part="word/media/fake.png", image_digest="a" * 64)
+    inspection = DocxInspection("b" * 64, (unverified,), (), (), 1,
+                                cover_title_candidates=("Synthetic South",))
+    analysis = StartingReportAnalysis((), "other", (), (), ())
+    plans = automatic_section_plans(inspection, analysis)
+    assert unverified.id not in plans["cover"]["selected"]
+    assert not any(unverified.id in p.get("automatic_logo_skips", {}).get("brand_logo", ())
+                   for p in plans.values())
+
+
 def test_standalone_cover_month_is_authority_but_issue_date_is_not(tmp_path):
     profile = synthetic_profiles()[0]
     for title in ("Sept 2026", "09/2026", "September 2026"):
