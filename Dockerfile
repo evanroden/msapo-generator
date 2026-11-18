@@ -32,6 +32,8 @@ RUN apt-get update \
         fontconfig \
         libreoffice-calc \
         libreoffice-writer \
+        tesseract-ocr \
+        tesseract-ocr-eng \
         curl \
         fonts-dejavu-core \
         fonts-dejavu-extra \
