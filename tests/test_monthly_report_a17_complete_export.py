@@ -51,9 +51,9 @@ def golden_synthetic_draft(setenv, directory: Path):
     setenv.setenv("EPC_DATA_DIR", str(directory))
     assets = {}
     def register(raw: bytes) -> str:
-        digest = sha256(raw).hexdigest()
-        assets[digest] = raw
-        return digest
+        reference = sha256(raw).hexdigest() + ".png"
+        assets[reference] = raw
+        return reference
 
     mark = register(_png((600, 140), (40, 180, 100), alpha=True, label="SYNTHETIC MARK"))
     client = register(_png((360, 100), (50, 80, 170), alpha=True))
@@ -255,11 +255,29 @@ def audit_golden_package(package, draft):
 def test_complete_twelve_section_application_export_audit(monkeypatch, tmp_path):
     from app import pdf_converter
     monkeypatch.setattr(pdf_converter, "OUTPUT_DIR", tmp_path)
+    from app import monthly_report_library as library
     draft, assets = golden_synthetic_draft(monkeypatch, tmp_path / "data")
     original = {key: sha256(value).hexdigest() for key, value in assets.items()}
+    # Native operator changes must travel through the real on-disk snapshot,
+    # not merely a mocked in-memory session or rehydrated UI control.
+    revised = replace(draft, blocks=tuple(
+        replace(block, text=block.text + "\\nA17-OPERATOR-EDIT-RELOADED")
+        if block.key == "activity_summary" else block for block in draft.blocks))
+    saved = library.save_snapshot(revised, expected_revision=0,
+                                  assets=tuple(assets.items()),
+                                  entered_editor="Synthetic Editor")
+    opened = library.load_snapshot(draft.profile.contract, draft.profile.key, draft.period)
+    assert opened is not None and opened.revision == saved.revision == 1
+    assert opened.draft.fingerprint == revised.fingerprint
+    draft = opened.draft
+    def persisted_asset(ref):
+        return library.read_asset(draft.profile.contract, draft.profile.key, ref)
     package = generate_report(draft, acknowledged_fingerprint=draft.fingerprint,
-                              asset_loader=assets.__getitem__)
+                              asset_loader=persisted_asset)
     manifest = audit_golden_package(package, draft)
+    assert b"A17-OPERATOR-EDIT-RELOADED" in package.docx
+    with fitz.open(stream=package.pdf, filetype="pdf") as pdf:
+        assert any("A17-OPERATOR-EDIT-RELOADED" in page.get_text() for page in pdf)
     assert list(manifest["sections"]) == [section.key for section in included_sections(draft.sections)]
     assert len(manifest["pdf"]["page_raster_sha256_20pct"]) == manifest["pdf"]["pages"]
     assert {key: sha256(value).hexdigest() for key, value in assets.items()} == original
