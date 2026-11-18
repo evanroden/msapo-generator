@@ -23,7 +23,7 @@ MAX_LOCAL_OCR_PAGES = 20
 MAX_LOCAL_OCR_SECONDS = 90
 MAX_OCR_PIXELS = 8_000_000
 MAX_OCR_PIXELS_LOW_MEMORY = 4_000_000
-MIN_IMAGE_PAGE_FRACTION = 0.09
+MIN_IMAGE_PAGE_FRACTION = 0.04
 
 
 @dataclass(frozen=True)
@@ -64,6 +64,10 @@ def _image_regions(page) -> tuple[fitz.Rect, ...]:
     for item in images:
         box = fitz.Rect(item["bbox"]) & unrotated
         if box.is_empty or box.get_area() < area * MIN_IMAGE_PAGE_FRACTION:
+            continue
+        # Small logos confined to the top page margin are not unread charts.
+        if (box.get_area() < area * 0.09
+                and box.y1 < unrotated.y0 + unrotated.height * 0.18):
             continue
         # A scanned underlay with a searchable text layer is *not* a missing
         # region. Native headers elsewhere on the page do not hide image text.
@@ -181,10 +185,11 @@ def read_page(page, number: int, *, native_text: str, needs_ocr: bool,
     native = native_text.strip()
     ordered, columns = _column_text(page, native)
     regions = _image_regions(page)
-    needs_visual = bool(needs_ocr or regions or columns)
+    has_annotations = bool(page.first_annot)
+    needs_visual = bool(needs_ocr or regions or columns or has_annotations)
     if not needs_visual:
         return PageRead(ordered)
-    if not (needs_ocr or regions):
+    if not (needs_ocr or regions or has_annotations):
         return PageRead(ordered, True, f"Page {number}: side-by-side text columns need visual reading-order review.")
     label = f"Page {number}: unread/needs visual review"
     # Searchable text layers over scanned/image-heavy pages should not be
@@ -192,7 +197,7 @@ def read_page(page, number: int, *, native_text: str, needs_ocr: bool,
     # image regions are still read selectively above.
     if native and len(native) >= 20 and not regions:
         return PageRead(ordered, True,
-                        f"Page {number}: native text overlays image/graphics; verify its completeness visually.")
+                        f"Page {number}: native text with image/graphic/annotation content; verify completeness visually.")
     if not may_ocr:
         return PageRead(ordered, True, label + " (local OCR page/time budget reached).")
     if not shutil.which("tesseract"):
