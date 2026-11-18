@@ -702,3 +702,40 @@ test('cold section preview starts at meaningful content once and preserves subse
     assert.equal(panel._previewState.page,0,'the initial hint never overrides an existing reading choice');
     cleanup();
 });
+
+
+test('scoped JPEG URL is stable, malformed paths are rejected, and stale media errors cannot hijack a new ticket',()=>{
+    const {root,panel}=dom(), timers=new Map();
+    const document=new Element();document.createElement=tag=>new Element(tag);
+    class Observer {constructor(callback){this.callback=callback;}observe(){}disconnect(){}}
+    const context={window:{devicePixelRatio:1},document,Map,JSON,Array,Number,Math,String,
+        IntersectionObserver:Observer,ResizeObserver:Observer,MutationObserver:Observer,
+        setTimeout:callback=>{const id=timers.size+1;timers.set(id,callback);return id;},
+        clearTimeout:id=>timers.delete(id)};
+    const source=fs.readFileSync('app/monthly_report_preview_view.py','utf8').split('JS = r"""\\n')[1].split('\\n"""')[0];
+    const render=vm.runInNewContext('('+source.replace('export default function','function')+')',context);
+    const media=n=>'/media/'+n.repeat(32)+'.jpg';
+    const input=(revision,url)=>({parentElement:root,
+        data:{viewScope:'owner|site|month',generation:revision,title:'Synthetic',
+              sizes:[[612,792]],ready:true,stale:false,status:'Current',pages:[{index:0,url}]},
+        setStateValue:()=>{}});
+    const old=render(input('revision-a',media('a')));
+    const first=panel.querySelector('img');
+    assert.equal(first.getAttribute('src'),media('a'));
+    assert.equal(first.loading,'eager');
+    assert.equal(first.decoding,'async');
+    const staleError=first.onerror;
+    const current=render(input('revision-b',media('b')));
+    assert.equal(panel.querySelector('img').getAttribute('src'),media('b'));
+    staleError(); // The request was retired after a newer response mounted.
+    assert.equal(panel.querySelector('img').getAttribute('src'),media('b'));
+    assert.equal(panel.querySelector('.report-preview-retry').hidden,true);
+    panel.querySelector('img').onerror();
+    assert.equal(panel.querySelector('img'),null,'failed media must not cover the page placeholder');
+    assert.equal(panel.querySelector('.report-preview-retry').hidden,false);
+    const malformed=render(input('revision-c','https://external.invalid/secret.jpg'));
+    assert.equal(panel.querySelector('img'),null,'untrusted/nonlocal URL is never displayed');
+    assert.equal(panel.querySelector('.report-preview-retry').hidden,true,
+        'a new ticket clears an obsolete media failure');
+    old();current();malformed();
+});
