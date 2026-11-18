@@ -47,7 +47,7 @@ export default function(component) {
         if (timer !== null) clearTimeout(timer);
         timer = setTimeout(sendWhenVisible, 200);
     }
-    const observer = new IntersectionObserver(schedule, {rootMargin:'160px 0px',threshold:0});
+    const observer = new IntersectionObserver(schedule, {rootMargin:'0px',threshold:0});
     observer.observe(marker);
     const appObserver = app ? new MutationObserver(schedule) : null;
     appObserver?.observe(app, {attributes:true,attributeFilter:['data-test-script-state']});
