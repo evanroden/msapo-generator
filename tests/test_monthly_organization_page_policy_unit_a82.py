@@ -83,8 +83,9 @@ def test_approved_diagram_alt_replaces_source_only_client_description():
     assert "OLD SOURCE" not in document.element.xml
 
 
-def test_generic_chart_workflow_and_contacts_have_distinct_page_starts():
-    value = _draft()
+@pytest.mark.parametrize("chart", [True, False])
+def test_generic_chart_workflow_and_contacts_have_distinct_page_starts(chart):
+    value = _draft(chart=chart)
     image = BytesIO()
     Image.new("RGB", (1800, 450), "blue").save(image, "PNG")
     raw = image.getvalue()
@@ -102,13 +103,13 @@ def test_generic_chart_workflow_and_contacts_have_distinct_page_starts():
     ))
     workflow_text = next(p for p in document.paragraphs
                          if p.text == "Synthetic approved procedure summary")
-    assert workflow_text.paragraph_format.page_break_before is True
+    assert workflow_text.paragraph_format.page_break_before is (True if chart else None)
     contact_heading = next(p for p in document.paragraphs
                            if p.text == "Facility contacts")
     assert contact_heading.paragraph_format.page_break_before is True
     descriptions = [shape._inline.docPr.get("descr")
                     for shape in document.inline_shapes]
-    assert descriptions.count("Organization chart for this report") == 1
+    assert descriptions.count("Organization chart for this report") == int(chart)
     assert descriptions.count("Business-hours workflow diagram for this contract") == 1
     picture_shape = next(shape for shape in document.inline_shapes
                          if shape._inline.docPr.get("descr", "").startswith("Business-hours"))
