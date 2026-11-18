@@ -16,7 +16,8 @@ from threading import BoundedSemaphore
 
 # 24-page and visible two-page previews remain serial. A pool may only pay for
 # itself on substantially larger batches and has an explicit per-process lane.
-MIN_PARALLEL_PAGES = 48
+MIN_PARALLEL_PAGES = 64
+MIN_PDF_BYTES = 256 * 1024
 MIN_MEMORY_BYTES = 2 * 1024 ** 3
 MIN_FREE_MEMORY_BYTES = 768 * 1024 ** 2
 MAX_WORKERS = 2
