@@ -65,11 +65,16 @@ def _render_saved_source_reuse(draft, prefix, field):
     st.caption("Choose a saved original instead of uploading it again. Its saved source details and page decisions are retained.")
     options = {choice.period.key + ":" + choice.source.sha256: choice for choice in choices}
     choice_key = field(prefix + "_source_reuse_choice", next(iter(options)))
-    if st.session_state[choice_key] not in options:
+    # If a saved report changed since the selector was displayed, do not
+    # replace the old click target with whichever file now sorts first.
+    stale_selection = st.session_state[choice_key] not in options
+    if stale_selection:
         st.session_state[choice_key] = next(iter(options))
+        st.warning("The saved-file list changed. Review the current selection before reusing it.")
     selected = st.selectbox("Saved source", tuple(options), key=choice_key,
                             format_func=lambda identity: options[identity].label)
-    if st.button("Reuse saved source", key=prefix + "_reuse_saved_source"):
+    if st.button("Reuse saved source", key=prefix + "_reuse_saved_source",
+                 disabled=stale_selection):
         choice = options[selected]
         try:
             content = reuse_saved_source(draft.profile, choice)
