@@ -57,15 +57,27 @@ def canonical_issues(draft):
     tables += [(table.columns, table.rows, table.reference) for table in block.extra_tables]
     # Accepted table rows have a source-row identity separate from their
     # editable text. Reimporting that source must not recreate a changed card.
-    candidates = [(text, block.references, None, "ongoing", "", "", "") for text in texts]
+    candidates = [(text, block.references, None, "ongoing", "", "", "", "") for text in texts]
     row_occurrences = {}
+    source_offsets, seen_source_tables = {}, set()
     for columns, rows, reference in tables:
+        # A second upload of the same source table must not create more cards,
+        # even when the importer has renamed its display headings.
+        source_table = (reference, tuple(tuple(row) for row in rows))
+        if reference and source_table in seen_source_tables:
+            continue
+        if reference:
+            seen_source_tables.add(source_table)
+        row_offset = source_offsets.get(reference, 0) if reference else 0
+        if reference:
+            source_offsets[reference] = row_offset + len(rows)
         from app.monthly_report_issue_register import mapped_issue_register
-        mapped = mapped_issue_register(columns, rows, reference)
+        mapped = mapped_issue_register(columns, rows, reference, row_offset=row_offset)
         if mapped is not None:
             for record in mapped:
                 candidates.append((record.text, (*block.references, *((reference,) if reference else ())),
-                                   record.key, record.status, record.update, record.legacy_text, reference))
+                                   record.key, record.status, record.update, record.legacy_text,
+                                   reference, record.legacy_key))
             continue
         width = max((len(row) for row in rows), default=len(columns))
         columns = (*columns, *(f"Detail {n + 1}" for n in range(len(columns), width)))
@@ -82,12 +94,12 @@ def canonical_issues(draft):
                 row_occurrences[identity] = occurrence + 1
                 row_key = "follow-" + _digest((identity, occurrence))[:20]
                 candidates.append((text, (*block.references, *((reference,) if reference else ())),
-                                   row_key, "ongoing", "", text, reference))
+                                   row_key, "ongoing", "", text, reference, ""))
     items = list(draft.follow_ups)
     keys = {item.key for item in items if item.category == "issue"}
     seen = {item.text.strip() for item in items if item.category == "issue"}
     statements = []
-    for text, references, row_key, status, update, legacy_text, table_reference in candidates:
+    for text, references, row_key, status, update, legacy_text, table_reference, legacy_key in candidates:
         if _no_equipment_issues(text):
             if _REMOVED_STATEMENT + _digest(text) not in block.references:
                 statements.append(text)
@@ -99,7 +111,7 @@ def canonical_issues(draft):
         if key in keys or (row_key is None and text.strip() in seen):
             continue
         if row_key and any(
-            item.category == "issue" and item.key == issue_key(legacy_text)
+            item.category == "issue" and item.key in (issue_key(legacy_text), legacy_key)
             and (not table_reference or not item.references or table_reference in item.references)
             for item in legacy_items
         ):
