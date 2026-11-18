@@ -159,7 +159,7 @@ def test_duplicate_wo_and_wrong_period_are_explicit_and_exclusions_are_scoped(sc
     source = imported(profile, "duplicates.csv",
         b"WO Number,Site,Date,Status,Type\n"
         b"0001,North,2026-09-02,Open,PM\n"
-        b"0001,North,2026-09-03,Closed,PM\n"
+        b"0001,North,2026-09-02,Closed,PM\n"
         b"0002,South,2026-10-02,Closed,Corrective\n"
         b"0003,South,2026-09-05,Deferred,Corrective\n")
     draft = review_csv(source, profile, period)
