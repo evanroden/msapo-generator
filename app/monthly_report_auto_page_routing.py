@@ -98,6 +98,17 @@ def _valid_site(source, profile):
     return not label and bool((reviewed_scope(source, profile) or {}).get("kind") == "sites")
 
 
+def _page_site_ok(text, profile):
+    """An explicit foreign page-level site label overrides a mixed-file hint."""
+    if profile is None:
+        return True
+    known = {" ".join(name.casefold().split()) for facility in profile.facilities
+             for name in (facility.key, facility.title, *facility.aliases)}
+    labels = re.findall(
+        r"(?im)^[ \\t]*(?:facility|site|building)[ \\t]*[:=][ \\t]*([^\\r\\n]{1,160})", text)
+    return all(" ".join(label.casefold().split()) in known for label in labels)
+
+
 def _valid_period(source, period):
     if period is None or not source.service_date:
         return True
@@ -151,8 +162,8 @@ def route_pages(contents, profile=None, *, period=None, overrides=None, owned=No
                                             next(iter(owner)), "retained"))
                 continue
             base = (source.id, source.filename, number, section)
-            if not site_ok:
-                result.append(PageRoute(*base, None, "blocked", "Confirm this file's exact site before including its pages."))
+            if not site_ok or not _page_site_ok(text, profile):
+                result.append(PageRoute(*base, None, "blocked", "Confirm this page's exact site before including it."))
                 continue
             if not period_ok:
                 result.append(PageRoute(*base, None, "blocked", "Confirm this file's report month before including its pages."))
