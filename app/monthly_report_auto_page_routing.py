@@ -92,10 +92,13 @@ def _valid_site(source, profile):
     names = {" ".join(value.casefold().split()) for facility in profile.facilities
              for value in (facility.key, facility.title, *facility.aliases)}
     label = " ".join(source.facility.casefold().split())
-    if label and label in names:
-        return True
-    # An unresolved or foreign label cannot be waived by a page classification.
-    return not label and bool((reviewed_scope(source, profile) or {}).get("kind") == "sites")
+    if label and label not in names:
+        return False
+    # A stale explicit scope receipt must never be rescued by a plausible
+    # extracted facility label. Unknown sites require a current sites receipt.
+    if source.scope_review or not label:
+        return (reviewed_scope(source, profile) or {}).get("kind") == "sites"
+    return True
 
 
 def _page_site_ok(text, profile):
