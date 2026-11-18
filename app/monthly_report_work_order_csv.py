@@ -9,7 +9,6 @@ import re
 
 from app.monthly_report_sources import SourceContent, source_reference
 from app.monthly_report_model import ReportPeriod, ReportProfile
-from app.monthly_report_work_order_normalized import source_header_positions
 
 
 @dataclass(frozen=True)
@@ -42,7 +41,7 @@ def _name(value):
 
 
 def _column(columns, kind):
-    positions = source_header_positions(columns, _HEADERS[kind])
+    positions = [i for i, title in enumerate(columns) if _name(title) in _HEADERS[kind]]
     return positions[0] if len(positions) == 1 else None
 
 
