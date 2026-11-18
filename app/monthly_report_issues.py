@@ -75,7 +75,10 @@ def canonical_issues(draft):
         mapped = mapped_issue_register(columns, rows, reference, row_offset=row_offset)
         if mapped is not None:
             for record in mapped:
-                candidates.append((record.text, (*block.references, *((reference,) if reference else ())),
+                # A table with its own source/page never inherits citations
+                # from unrelated issue pages already on the containing block.
+                row_refs = (reference,) if reference else block.references
+                candidates.append((record.text, row_refs,
                                    record.key, record.status, record.update, record.legacy_text,
                                    reference, record.legacy_key))
             continue
@@ -93,7 +96,8 @@ def canonical_issues(draft):
                 occurrence = row_occurrences.get(identity, 0)
                 row_occurrences[identity] = occurrence + 1
                 row_key = "follow-" + _digest((identity, occurrence))[:20]
-                candidates.append((text, (*block.references, *((reference,) if reference else ())),
+                row_refs = (reference,) if reference else block.references
+                candidates.append((text, row_refs,
                                    row_key, "ongoing", "", text, reference, ""))
     items = list(draft.follow_ups)
     keys = {item.key for item in items if item.category == "issue"}
