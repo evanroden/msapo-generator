@@ -357,3 +357,42 @@ def test_unverified_identity_date_and_status_on_another_page_never_promoted():
     assert checked["facts"] == ()
     assert checked["rejected_claims"] == 21
     assert len(checked["inventory"]) == 21
+
+def test_joined_two_source_read_keeps_exact_page_and_source_references():
+    first = source(21)
+    second = replace(source(1), id="d" * 64, sha256="e" * 64)
+    first_plan, second_plan = cover.plan(first), cover.plan(second)
+    combined = cover.join_prepared((
+        {"cached": (), "requests": tuple(
+            (b.key, cover._payload(b, first)) for b in first_plan.batches),
+         "unavailable": ()},
+        {"cached": (), "requests": tuple(
+            (b.key, cover._payload(b, second)) for b in second_plan.batches),
+         "unavailable": ()},
+    ))
+    outcome = cover.run(combined, read=fake_reply)
+    one = cover.collect(first_plan, outcome, first, PROFILE, PERIOD)
+    two = cover.collect(second_plan, outcome, second, PROFILE, PERIOD)
+    assert set(one["inventory"]) == set(range(1, 22))
+    assert two["inventory"] == {1: "ready"}
+    assert len(one["facts"]) == 21 and len(two["facts"]) == 1
+    assert all(f.source_id == first.id for f in one["facts"])
+    assert all(f.source_id == second.id for f in two["facts"])
+    assert one["admitted_calls"] == 2 and two["admitted_calls"] == 1
+
+
+def test_reviewed_source_survives_synthetic_disk_serialization(tmp_path):
+    from app import monthly_report_library as library
+    from app.monthly_report_model import synthetic_draft
+    original = source(21)
+    planned = cover.plan(original)
+    completed = cover.collect(
+        planned, result_for(planned, original), original, PROFILE, PERIOD)
+    reviewed_source = replace(original, facts=completed["facts"])
+    draft = replace(synthetic_draft(PROFILE, PERIOD), sources=(reviewed_source,))
+    target = tmp_path / "reviewed-source.json"
+    target.write_text(json.dumps(asdict(draft)), encoding="utf-8")
+    reloaded = library.draft_from_dict(json.loads(target.read_text(encoding="utf-8")))
+    assert reloaded.sources[0] == reviewed_source
+    assert [b.key for b in cover.plan(reloaded.sources[0]).batches] == [
+        b.key for b in planned.batches]
