@@ -73,13 +73,13 @@ def verify_claim_qualifiers(text: str, quote: str) -> None:
 # in its final prose. These completion assertions require the same affirmative
 # action in at least one cited fact AND its own source excerpt.
 _COMPLETED_ASSERTIONS = (
-    re.compile(r"\\breplaced\\b", re.I),
-    re.compile(r"\\brepaired\\b", re.I),
-    re.compile(r"\\bcompleted\\b", re.I),
-    re.compile(r"\\bresolved\\b", re.I),
-    re.compile(r"\\binstalled\\b", re.I),
-    re.compile(r"\\brestored\\b", re.I),
-    re.compile(r"\\bcommissioned\\b", re.I),
+    re.compile(r"\breplaced\b", re.I),
+    re.compile(r"\brepaired\b", re.I),
+    re.compile(r"\bcompleted\b", re.I),
+    re.compile(r"\bresolved\b", re.I),
+    re.compile(r"\binstalled\b", re.I),
+    re.compile(r"\brestored\b", re.I),
+    re.compile(r"\bcommissioned\b", re.I),
 )
 
 
