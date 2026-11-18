@@ -6,6 +6,7 @@ images; the original chart remains in native drawing review.
 """
 from defusedxml import ElementTree as ET
 from defusedxml.common import DefusedXmlException
+from lxml import etree
 
 from app.monthly_report_xml_parser import parse_xml_stream
 
@@ -36,7 +37,7 @@ def chart_relationship_evidence(archive, graphics, relations, names):
         try:
             with archive.open(target) as source:
                 root = parse_xml_stream(source).getroot()
-        except (ET.ParseError, DefusedXmlException, ValueError, OSError, RuntimeError) as exc:
+        except (ET.ParseError, etree.XMLSyntaxError, DefusedXmlException, ValueError, OSError, RuntimeError) as exc:
             notices.append(f"Chart {identity} could not be read safely ({type(exc).__name__}); review the original.")
             continue
         # Only chart titles, series names and category labels are text evidence.
