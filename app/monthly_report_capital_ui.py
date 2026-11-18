@@ -113,6 +113,17 @@ def _native_capital_items(draft, block, master, *, confirm_priority_changes=Fals
                   sha256(repr(signature).encode()).hexdigest()[:20] +
                   f"-{occurrence:03d}")
         old = by_source.get(source)
+        if old is None:
+            # A later month's DOCX has a new file SHA. Reuse a unique reviewed
+            # site/item identity rather than appending an identical row; the
+            # original approved source pointer remains intact.
+            matching = [item for item in master.items
+                        if item.site_keys == (site.key,) and not item.override_of
+                        and item.recommendation.casefold() == action.casefold()
+                        and item.asset.casefold() == equipment.casefold()]
+            if len(matching) > 1:
+                raise ValueError("Duplicate reviewed capital recommendations need exact row identity.")
+            old = matching[0] if matching else None
         if old is not None and set(old.site_keys) != {site.key}:
             raise ValueError("Imported capital identity conflicts with approved facility scope.")
         # A native source is not permission to duplicate or replace a global
@@ -128,7 +139,8 @@ def _native_capital_items(draft, block, master, *, confirm_priority_changes=Fals
         item = CapitalItem(
             key=old.key if old else "import-" + sha256(source.encode()).hexdigest()[:24],
             priority=level, recommendation=action, asset=equipment,
-            site_keys=(site.key,), extra_fields=extra, source_reference=source,
+            site_keys=(site.key,), extra_fields=extra,
+            source_reference=old.source_reference if old and old.source_reference else source,
         )
         if old is not None and old.priority != level and not confirm_priority_changes:
             raise ValueError("Approved capital priority changes need separate explicit confirmation.")
