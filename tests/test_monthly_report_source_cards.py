@@ -7,6 +7,7 @@ from datetime import date
 from hashlib import sha256
 
 from app import monthly_report_library as library, monthly_report_sources as sources
+from app import monthly_report_upload_ui as upload_ui
 from app.monthly_report_model import (
     BlockSpec, ReportDraft, ReportPeriod, ReportSource, ResolvedBlock, SectionSpec,
     default_sections, synthetic_profiles,
@@ -59,12 +60,24 @@ def test_fresh_then_mixed_source_cards_have_one_intake_and_direct_edit(monkeypat
          b"Work Order,Date,Status,Facility\n001,2026-09-04,Completed,Demo North\n"),
         ("synthetic-utility.pdf", utility_pdf()),
     ))
+    # The synthetic intake replaces st.file_uploader itself, so AppTest cannot
+    # report its native widget after upload. Count the routed uploader key
+    # instead; the initial render above still checks the real native widget.
+    synthetic_uploader = upload_ui.st.file_uploader
+    intake_keys = set()
+
+    def traced_uploader(label, *args, **kwargs):
+        if label == "Add source files":
+            intake_keys.add(kwargs["key"])
+        return synthetic_uploader(label, *args, **kwargs)
+
+    monkeypatch.setattr(upload_ui.st, "file_uploader", traced_uploader)
     app.run()
     assert not app.exception
     draft = current_draft(app)
     assert len(draft.sources) == 2
     first, second = draft.sources
-    assert sum(item.label == "Add source files" for item in app.get("file_uploader")) == 1
+    assert len(intake_keys) == 1
     assert len([b for b in app.button if b.label == "Edit" and "_source_card_" in b.key]) == 2
     captions = [item.value for item in app.caption]
     assert any("Type: " in text and "(CSV)" in text for text in captions)
@@ -80,7 +93,7 @@ def test_fresh_then_mixed_source_cards_have_one_intake_and_direct_edit(monkeypat
     assert select(app, "File to review").value == first.id
     # Switching cards never duplicates uploads, sources, or page identities.
     assert len(current_draft(app).sources) == 2
-    assert sum(item.label == "Add source files" for item in app.get("file_uploader")) == 1
+    assert len(intake_keys) == 1
 
 
 def test_direct_edit_keeps_captions_and_metadata_buffers_across_done_reopen(monkeypatch, tmp_path):
