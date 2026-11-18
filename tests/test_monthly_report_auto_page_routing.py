@@ -1,7 +1,6 @@
 """A14: deterministic per-page placement; originals and manual decisions prevail."""
 from dataclasses import replace
 from hashlib import sha256
-from io import BytesIO
 
 import pymupdf
 import pytest
@@ -104,6 +103,44 @@ def test_same_source_page_can_be_prepared_once_from_mixed_routes(monkeypatch, tm
         prepare_pages(profile, (reviewed,), (route, route))
     with pytest.raises(ValueError, match="Check page 1"):
         prepare_pages(profile, (reviewed,), ((source.id, "improvements", 1),))
+
+
+
+def test_mixed_source_foreign_page_identity_cannot_ride_same_site_metadata():
+    profile = synthetic_profiles()[0]
+    site = profile.facilities[0].title
+    src = content("SERVICE REPORT\nSite: " + site + "\nPump inspected.",
+                  "SERVICE REPORT\nSite: Different Hospital\nMotor replaced.")
+    first, second = route_pages((src,), profile)
+    assert first.action == "ready" and first.destination == "improvements"
+    assert second.action == "blocked" and second.destination is None
+    assert second.page == 2 and "site" in second.reason
+
+
+def test_report_period_warning_does_not_reclassify_previous_month_activity():
+    from app.monthly_report_model import ReportPeriod
+    src = content("SERVICE REPORT\nRoutine inspection performed.")
+    dated = replace(src, source=replace(src.source, service_date="2026-08-12"))
+    decision, = route_pages((dated,), synthetic_profiles()[0], period=ReportPeriod(2026, 9))
+    assert decision.action == "blocked" and "month" in decision.reason
+    assert decision.page == 1
+    assert route_pages((dated,), synthetic_profiles()[0], period=ReportPeriod(2026, 8))[0].action == "ready"
+
+
+def test_no_empty_mbcx_or_narrative_cross_section_duplicate():
+    src = content("SERVICE REPORT\nInspection reviewed the water treatment team's notes.",
+                  "UTILITY ANALYSIS\nMonthly meter consumption data.")
+    result = route_pages((src,), synthetic_profiles()[0])
+    assert [(item.page, item.destination, item.action) for item in result] == [
+        (1, "improvements", "ready"), (2, "utility_analysis", "ready")]
+    assert all(item.destination != "mbcx_report" for item in result)
+
+
+def test_duplicate_source_with_conflicting_human_edits_fails_closed():
+    src = content("SERVICE REPORT\nFilter replaced.")
+    changed = replace(src, source=replace(src.source, classification="MBCx"))
+    with pytest.raises(ValueError, match="Conflicting revisions"):
+        route_pages((src, changed), synthetic_profiles()[0])
 
 
 def test_missing_and_malformed_inputs_do_not_invent_routes():
