@@ -194,10 +194,16 @@ def _pending(state, section):
                 state.get('running') and state['running'][0] == section))
 
 
-def _current_page_request(state, section):
-    """A viewport acknowledgment belongs to the exact wanted revision."""
+def _current_page_request(state, section, ticket=None):
+    """Only acknowledge a viewport for this revision AND exact PDF ticket.
+
+    Before the ticket exists the placeholder page-zero request is provisional;
+    it must not override a later real ticket's initial content page.
+    """
     view = state.get('page_requests', {}).get(section)
-    if (isinstance(view, dict) and view.get('generation') == state['wanted'].get(section):
+    key = ticket.key if ticket is not None else None
+    if (isinstance(view, dict) and view.get('generation') == state['wanted'].get(section)
+            and view.get('ticket_key') == key):
         return view
     return None
 
@@ -205,11 +211,18 @@ def _current_page_request(state, section):
 def _viewport_changed(prefix, section, widget_key):
     state = _ordered_preview_state(prefix)
     value = st.session_state.get(widget_key, {})
-    view = viewport(value.get('viewport'), state['wanted'].get(section)) if isinstance(value, dict) else None
+    raw = value.get('viewport') if isinstance(value, dict) else None
+    view = viewport(raw, state['wanted'].get(section))
     if view is None:
         return
+    ticket_key = raw.get('ticketKey')
+    if (ticket_key is not None and (type(ticket_key) is not str or len(ticket_key) != 32
+            or any(char not in '0123456789abcdef' for char in ticket_key))):
+        return
     state['visible'][section] = view['visible']
-    state['page_requests'][section] = {**view, 'generation': state['wanted'].get(section)}
+    state['page_requests'][section] = {
+        **view, 'generation': state['wanted'].get(section), 'ticket_key': ticket_key,
+    }
     if not view['visible']:
         state['queue'].pop(section, None)
         prior = state.setdefault('last_good', {}).pop(section, {})
@@ -296,7 +309,7 @@ def _render_ordered_preview(section_key, prefix, title):
     if ticket and state['visible'].get(section_key):
         # A new ticket starts at its content page, not an unrelated divider.
         # Ignore old revision viewports until the browser requests this one.
-        view = _current_page_request(state, section_key) or {
+        view = _current_page_request(state, section_key, ticket) or {
             'pages': (ticket.initial_page,), 'dpi': 120,
         }
         indexes = tuple(index for index in view['pages'] if index < ticket.pages) or (ticket.initial_page,)
@@ -353,7 +366,7 @@ def _render_ordered_preview(section_key, prefix, title):
     widget_key = prefix + '_preview_surface_' + section_key
     render_view(key=widget_key, view_scope=state['owner'] + '|' + widget_key, generation=state['wanted'].get(section_key, ''), title=title,
                 ticket=ticket, images=images, status=status, stale=stale,
-                acknowledged_viewport=_current_page_request(state, section_key),
+                acknowledged_viewport=_current_page_request(state, section_key, ticket),
                 pending=pending,
                 on_poll=_scoped_callback(_poll_changed, prefix, section_key, widget_key),
                 on_change=_scoped_callback(_viewport_changed, prefix, section_key, widget_key))
