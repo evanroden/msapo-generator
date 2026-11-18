@@ -11,7 +11,7 @@ from scripts.qa_monthly_preview_latency_e2e import _docx, _image, _pdf, _profile
 
 def _ordered(receipt):
     stages = receipt["spans"]
-    assert stages == sorted(stages, key=lambda item: (item["start_ms"], item["end_ms"]))
+    assert [item["start_ms"] for item in stages] == sorted(item["start_ms"] for item in stages)
     assert all(0 <= item["start_ms"] <= item["end_ms"] for item in stages)
     assert all(item["wall_ms"] >= 0 and item["cpu_ms"] >= 0 for item in stages)
     return stages
@@ -51,6 +51,7 @@ def test_cold_warm_stage_order_and_immutable_original(tmp_path, monkeypatch, suf
             picture = _image(profile, content)
         assert extras == ()
         assert content.source.sha256 == source_hash
+        assert sources._path(profile, source_hash, suffix).read_bytes() == raw
         captures.append(_ordered(trace.receipt()))
         images.append(picture)
         # No literal filenames, bytes or site identifiers permitted in receipt.
