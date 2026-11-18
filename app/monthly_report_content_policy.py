@@ -93,6 +93,9 @@ _SOURCE_CONTACT = re.compile(
     r"\b(?:technician|engineer|operator|reported\s+by|performed\s+by)\s+"
     r"(?-i:[A-Z][a-z]+\s+[A-Z][a-z]+)\b", re.I)
 _SOURCE_BARE_NUMBER = re.compile(r"^\s*" + _AMOUNT_VALUE + r"\s*$", re.I)
+# An unqualified Total/amount row cannot be assumed to be a work count.
+_SOURCE_UNQUALIFIED_TOTAL = re.compile(
+    r"^(?:grand\s+)?total\s*[:=]?\s+" + _AMOUNT_VALUE + r"\s*$", re.I)
 
 
 def contains_private_contact(text: str) -> bool:
@@ -162,6 +165,7 @@ def technical_source_text(text: str) -> str:
                 piece = clause.strip()
                 if (not piece or contains_price(piece)
                         or _MONEY.search(piece) or _SOURCE_CONTACT.search(piece)
+                        or _SOURCE_UNQUALIFIED_TOTAL.fullmatch(piece)
                         or (_SOURCE_BARE_NUMBER.fullmatch(piece) and not technical_number)):
                     continue
                 safe.append(piece)
