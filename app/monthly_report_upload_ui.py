@@ -1673,7 +1673,10 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                                   for r in value["coverage"]))
             if not job.get("cached") and cache_safe:
                 try:
-                    ai.save_cache(profile, "section_upload", job["digest"], value)
+                    earlier_cached = ai.cached(profile, "section_upload", job["digest"]) if coverage_mode else None
+                    safe_value = (structured.merge_reader_coverage(earlier_cached, value)
+                                  if coverage_mode else value)
+                    ai.save_cache(profile, "section_upload", job["digest"], safe_value)
                 except (ValueError, OSError) as exc:
                     st.session_state[local_key + "_error"] = "The reading is ready, but its reuse cache could not be saved: " + str(exc)
         except ValueError as exc:
