@@ -20,7 +20,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-
+from app.image_open import open_image
 from app.monthly_report_preview import ReportPreview
 from app.monthly_report_preview_store import PreviewStore
 from app.monthly_report_preview_ticket import private_ticket_pdf
@@ -88,7 +88,7 @@ def sample(raw, count, route, repetition):
         first_two_ms = (perf_counter() - started) * 1000
         assert len(visible) == min(count, 2)
         started = perf_counter()
-        image = Image.open(BytesIO(visible[0][1]))
+image = open_image(BytesIO(visible[0][1]), formats=("JPEG",))
         image.load()
         first_decode_ms = (perf_counter() - started) * 1000
         started = perf_counter()
