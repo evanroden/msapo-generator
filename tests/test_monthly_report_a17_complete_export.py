@@ -261,7 +261,7 @@ def test_complete_twelve_section_application_export_audit(monkeypatch, tmp_path)
     # Native operator changes must travel through the real on-disk snapshot,
     # not merely a mocked in-memory session or rehydrated UI control.
     revised = replace(draft, blocks=tuple(
-        replace(block, text=block.text + "\\nA17-OPERATOR-EDIT-RELOADED")
+        replace(block, text=block.text + "\nA17-OPERATOR-EDIT-RELOADED")
         if block.key == "activity_summary" else block for block in draft.blocks))
     saved = library.save_snapshot(revised, expected_revision=0,
                                   assets=tuple(assets.items()),
@@ -275,7 +275,7 @@ def test_complete_twelve_section_application_export_audit(monkeypatch, tmp_path)
     package = generate_report(draft, acknowledged_fingerprint=draft.fingerprint,
                               asset_loader=persisted_asset)
     manifest = audit_golden_package(package, draft)
-    assert b"A17-OPERATOR-EDIT-RELOADED" in package.docx
+    assert "A17-OPERATOR-EDIT-RELOADED" in "\\n".join(\n        paragraph.text for paragraph in Document(BytesIO(package.docx)).paragraphs)
     with fitz.open(stream=package.pdf, filetype="pdf") as pdf:
         assert any("A17-OPERATOR-EDIT-RELOADED" in page.get_text() for page in pdf)
     assert list(manifest["sections"]) == [section.key for section in included_sections(draft.sections)]
