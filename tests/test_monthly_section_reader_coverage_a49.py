@@ -37,7 +37,9 @@ def model_payload(payload, *, duplicate=False):
          "row": [], "include_page": False}
         for sid, page in refs(payload)
     ]
-    return {"items": values + values if duplicate else values}
+    return {"items": values + values if duplicate else values,
+            "pages": [{"source": sid, "page": page, "result": "read"}
+                      for sid, page in refs(payload)]}
 
 
 @pytest.mark.parametrize("count,expected", [(24, [20, 4]), (96, [20, 20, 20, 20, 16])])
@@ -197,3 +199,35 @@ def test_cached_partial_coverage_survives_retry_and_reload(monkeypatch):
     assert len(reader.reader_coverage_update(
         (content,), "activity_summary", again)[2]) == 24
     assert len(block.references) == 24
+
+
+def test_model_must_receipt_every_page_even_when_no_facts(monkeypatch):
+    content = source(24)
+    def incomplete(payload):
+        complete = model_payload(payload)
+        complete["pages"] = complete["pages"][:-1]
+        return complete
+    monkeypatch.setattr(ai, "request_json", incomplete)
+    payloads = reader.reader_batches(None, (content,), "activity_summary")
+    result = reader.read_batches(payloads)
+    assert len(result["coverage"]) == 2
+    assert all(receipt["status"] == "failed" for receipt in result["coverage"])
+    assert not result["items"]
+    _, _, done, failed, _ = reader.reader_coverage_update(
+        (content,), "activity_summary", result)
+    assert not done and len(failed) == 24
+
+
+def test_model_unreadable_page_receipted_as_manual_review_not_fact(monkeypatch):
+    content = source(24)
+    def unreadable(payload):
+        result = model_payload(payload)
+        if refs(payload)[0][1] == 1:
+            result["pages"][2]["result"] = "unreadable"
+            result["items"] = [i for i in result["items"] if i["page"] != 3]
+        return result
+    monkeypatch.setattr(ai, "request_json", unreadable)
+    value = reader.read_batches(reader.reader_batches(None, (content,), "activity_summary"))
+    _, _, accepted, failed, skipped = reader.reader_coverage_update(
+        (content,), "activity_summary", value)
+    assert len(accepted) == 23 and not failed and skipped == ((SOURCE_ID, 3),)
