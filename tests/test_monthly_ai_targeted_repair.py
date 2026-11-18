@@ -90,6 +90,36 @@ def test_malformed_json_or_extra_keys_repair_only_current_chunk(monkeypatch, dam
     assert "repair" in str(seen[1]["messages"]).lower()
 
 
+
+def test_two_complete_json_payloads_trigger_repair_instead_of_losing_second(monkeypatch):
+    partial = {"facts": [VALUE["facts"][0]]}
+    seen = _reader(
+        monkeypatch,
+        _response(json.dumps({"facts": []}) + "\\n" + json.dumps(partial)),
+        _response(json.dumps(VALUE)),
+    )
+    result = ai.request_json(
+        [{"type": "text", "text": "Source chunk with useful synthetic evidence"}],
+        response_kind="facts",
+        validator=_facts,
+    )
+    assert result == VALUE
+    assert len(seen) == 2
+
+
+def test_single_json_with_trailing_commentary_is_still_accepted(monkeypatch):
+    seen = _reader(
+        monkeypatch,
+        _response("```json\\n" + json.dumps(VALUE) + "\\n```\\nReview the cited page."),
+    )
+    assert ai.request_json(
+        [{"type": "text", "text": "Synthetic"}],
+        response_kind="facts",
+        validator=_facts,
+    ) == VALUE
+    assert len(seen) == 1
+
+
 def test_token_truncated_response_is_repaired_and_never_accepted_partially(monkeypatch):
     seen = _reader(monkeypatch,
                    _response(json.dumps(VALUE), stop_reason="max_tokens"),
