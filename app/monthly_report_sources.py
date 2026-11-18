@@ -428,9 +428,9 @@ def _csv_first_row_is_data(row) -> bool:
     """Only promote strongly identified headerless CMMS records.
 
     An arbitrary unlabeled table cannot be guessed safely; it retains the
-    existing header interpretation. A date and a recognized work-order state
-    in the first physical record are sufficient to preserve that record as
-    data, but never sufficient to choose a source field mapping or site.
+    existing header interpretation. A date with either a recognized work-order
+    state or a position-one order identifier can preserve the first record as
+    data; neither condition is permission to choose field mappings or a site.
     """
     if len(row) < 3:
         return False
