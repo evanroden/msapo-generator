@@ -217,6 +217,31 @@ def test_first_click_accept_keeps_manual_text_and_persists_displayed_suggestion(
     assert app.session_state['returned_draft'].sources[0].id == source.id
 
 
+def test_edit_and_single_accept_saves_exact_native_candidate(monkeypatch, tmp_path):
+    app, source, facts = component(monkeypatch, tmp_path)
+    checked_suggestion(app, source, facts)
+    next(item for item in app.button if item.label == 'Edit suggestion').click().run()
+    revised = 'Inspected synthetic pump.'
+    next(item for item in app.text_area if item.label == 'Suggested paragraph 1').set_value(revised).run()
+    next(item for item in app.button if item.label == 'Accept edited suggestion').click().run()
+    assert not app.exception
+    assert app.session_state['current_block'].text == 'Manual current wording.\\n- ' + revised
+    assert app.session_state['current_block'].ai_paragraphs[0].text == revised
+
+
+def test_dismissed_candidate_edit_does_not_resurrect_on_same_suggestion(monkeypatch, tmp_path):
+    app, source, facts = component(monkeypatch, tmp_path)
+    checked_suggestion(app, source, facts)
+    next(item for item in app.button if item.label == 'Edit suggestion').click().run()
+    next(item for item in app.text_area if item.label == 'Suggested paragraph 1').set_value('Abandoned manual candidate.').run()
+    next(item for item in app.button if item.label == 'Dismiss suggestion').click().run()
+    assert not app.exception
+    assert app.session_state['current_block'].text == 'Manual current wording.'
+    checked_suggestion(app, source, facts)
+    next(item for item in app.button if item.label == 'Edit suggestion').click().run()
+    assert next(item for item in app.text_area if item.label == 'Suggested paragraph 1').value == facts[0].text
+
+
 def test_suggestions_in_two_sessions_do_not_share_edits(monkeypatch, tmp_path):
     app1, source, facts = component(monkeypatch, tmp_path)
     app2, _, _ = component(monkeypatch, tmp_path)
