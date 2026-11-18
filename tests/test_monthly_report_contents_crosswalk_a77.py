@@ -154,9 +154,13 @@ def test_attachment_rerender_replaces_old_cache_and_rejects_stale_output():
     assert notice == "" and list(_cache(word_final).values()) == ["5", "40"]
     assert word_final != word_early
     assert synchronize(word_final, shifted, sections)[1] == ""
-    assert synchronize(word_final, None, sections) == (
-        word_final, synchronize(word_final, None, sections)[1])
-    assert "could not be verified" in synchronize(word_final, None, sections)[1]
+    unavailable, notice = synchronize(word_final, None, sections)
+    assert unavailable == word_final
+    assert "could not be verified" in notice
+    # An earlier saved section order cannot certify a newer PDF's contents.
+    reordered, notice = synchronize(original, shifted, tuple(reversed(sections)))
+    assert reordered == original
+    assert "could not be verified" in notice
 
 
 def test_missing_or_malformed_pdf_never_fills_unknown_page_numbers():
