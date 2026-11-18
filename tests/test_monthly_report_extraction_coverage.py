@@ -295,3 +295,56 @@ def test_bulk_receipts_are_parsed_once_for_large_sheet(monkeypatch):
     ledger = coverage.source_coverage(updated, content.source, content)
     assert ledger.rows == 200
     assert len(count) <= len(updated.source_coverage_receipts) + 1
+
+
+def test_duplicate_rows_require_separate_accepted_occurrences():
+    from app.monthly_report_model import ColumnSpec
+    from app.monthly_report_sources import source_reference
+    table = SourceTable("Sheet 1", ("ID", "Status"),
+                        (("001", "Completed"), ("001", "Completed")))
+    draft, content = fixture(pages=("ID\\tStatus\\n001\\tCompleted\\n001\\tCompleted",),
+                             suffix=".csv", tables=(table,))
+    source = content.source
+    reference = source_reference(source, 1)
+    columns = (ColumnSpec("id", "ID"), ColumnSpec("status", "Status"))
+    accepted_row = (("001", "Completed"),)
+    receipt = contribution_receipt(reference, draft.profile, draft.period, "service_calls",
+                                   columns=("ID", "Status"), rows=accepted_row, source=source)
+    block = ResolvedBlock("service_calls", "This month", rows=accepted_row,
+                          references=(reference, receipt))
+    draft = replace(draft,
+        sections=(SectionSpec("maintenance", "5", "Service Calls",
+                             (BlockSpec("service_calls", "table", columns=columns),)),),
+        blocks=(block,))
+    ledger = source_coverage(draft, source, content)
+    row_items = [item for item in ledger.items if item.kind == "row"]
+    assert len(row_items) == 2
+    assert [item.state for item in row_items] == ["applied", "review"]
+    assert ledger.applied == 1
+
+
+@pytest.mark.parametrize("reason", ("boundary", "limit"))
+def test_passage_notice_follows_existing_page_exclusion_receipt(reason):
+    from app.monthly_report_vendor_passages import passage_notice
+    from app.monthly_report_content_policy import page_fingerprint
+    draft, content = fixture(pages=("Synthetic technical operating note.",),
+                             suffix=".pdf", notices=(passage_notice(1, reason=reason),))
+    source = content.source
+    before = source_coverage(draft, source, content)
+    assert before.limited and before.items[-1].state == "blocked"
+    source = replace(source, client_page_exclusions=((1, page_fingerprint(source, 1)),))
+    current = source_coverage(replace(draft, sources=(source,)), source,
+                              replace(content, source=source))
+    assert current.items[-1].state == "excluded"
+    assert not current.limited
+
+
+def test_unrecognized_page_notice_cannot_be_waived_by_page_decision():
+    from app.monthly_report_content_policy import page_fingerprint
+    draft, content = fixture(pages=("Synthetic technical note.",), suffix=".pdf",
+                             notices=("Page 1: unknown parser failure.",))
+    source = content.source
+    source = replace(source, client_page_exclusions=((1, page_fingerprint(source, 1)),))
+    ledger = source_coverage(replace(draft, sources=(source,)), source,
+                             replace(content, source=source))
+    assert ledger.items[-1].state == "blocked" and ledger.limited
