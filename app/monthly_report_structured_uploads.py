@@ -975,8 +975,8 @@ def reader_batches(profile, contents, destination, *, table_columns=None, page_r
         for chunk in chunks)
 
 
-_SOURCE_MARKER = re.compile(r"\\ASOURCE ([a-f0-9]{64}) PAGE ([1-9]\\d*)\\n")
-_VISUAL_MARKER = re.compile(r"\\AVISUALLY CHECKED SOURCE ([a-f0-9]{64}) PAGE ([1-9]\\d*)\\Z")
+_SOURCE_MARKER = re.compile(r"\ASOURCE ([a-f0-9]{64}) PAGE ([1-9]\d*)\n")
+_VISUAL_MARKER = re.compile(r"\AVISUALLY CHECKED SOURCE ([a-f0-9]{64}) PAGE ([1-9]\d*)\Z")
 
 
 def _payload_pages(payload):
