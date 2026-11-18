@@ -337,3 +337,26 @@ def test_local_qa_metrics_do_not_expose_filename_contract_or_digest(profile, mon
     assert "wall_ms=" in messages and "derived_bytes=" in messages
     assert "private-FILE" not in messages
     assert profile.contract not in messages and first.source.sha256 not in messages
+
+
+def test_rejected_batch_upload_does_not_leave_unapproved_parse_text(profile, monkeypatch):
+    raw = b"Asset,Note\nDEMO-99,Do not retain unapproved content\n"
+    digest = sha256(raw).hexdigest()
+    accepted, _ = sources.ingest(profile, "kept.csv", CSV)
+    original_facts = sources.suggest_facts
+
+    def reject(record, current_profile):
+        if record.sha256 == digest:
+            raise ValueError("synthetic policy refusal after parse")
+        return original_facts(record, current_profile)
+
+    monkeypatch.setattr(sources, "suggest_facts", reject)
+    records, notes = sources.ingest_batch(profile, (("rejected.csv", raw),),
+                                         existing=(accepted,))
+    assert records == (accepted,)
+    assert len(notes) == 1 and "Not read: rejected.csv" in notes[0]
+    assert not sources._path(profile, digest, ".csv").exists()
+    assert not sources._path(profile, digest, ".json").exists()
+    assert not sources._path(profile, digest, ".json").with_name(
+        digest + ".parse-stage.json").exists()
+    assert sources.source_bytes(profile, accepted.source) == CSV
