@@ -84,7 +84,7 @@ def test_missing_thumbnail_is_explicit_and_never_erases_caption_or_changes_sourc
     before = app.session_state.photos_draft.blocks[0]
     assert len(app.get("image")) == 2
     assert len(app.text_area) == 3
-    assert any("preview" in item.message.lower() or "image" in item.message.lower()
+    assert any("preview" in item.value.lower() or "image" in item.value.lower()
                for item in app.warning)
     app.text_area[1].set_value("Corrected without changing missing sibling").run()
     updated = app.session_state.photos_draft.blocks[0]
