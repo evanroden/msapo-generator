@@ -88,7 +88,7 @@ def _asserted_without_negation(text: str, assertion) -> bool:
     # outcome ("no repair was completed") must not be converted to success or
     # rejected merely because the verb "completed" occurs in that sentence.
     for match in assertion.finditer(text):
-        clause = re.split(r"[.;,\\n]", text[:match.start()])[-1]
+        clause = re.split(r"[.;,\n]", text[:match.start()])[-1]
         if not _NEGATION.search(clause):
             return True
     return False
