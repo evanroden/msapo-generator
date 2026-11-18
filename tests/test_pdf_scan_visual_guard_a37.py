@@ -193,4 +193,3 @@ def test_missing_empty_and_malformed_sources_are_rejected_without_fake_page_data
         sources.ingest(profile, "bad.pdf", b"")
     with pytest.raises((ValueError, RuntimeError, fitz.FileDataError)):
         sources.ingest(profile, "bad.pdf", b"%PDF-1.4 not a real PDF")
-    assert not ocr._page_visual_decision if False else True  # No OCR/model access in these cases.
