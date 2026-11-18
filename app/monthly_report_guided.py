@@ -2086,7 +2086,15 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             st.session_state.pop(empty_confirmation_key, None)
             try:
                 with st.spinner("Preparing the Word and PDF downloads…"):
-                    package = generate_report(draft, acknowledged_fingerprint=draft.fingerprint, asset_loader=loader)
+                    # Never share completed conversion bytes between visitors or
+                    # report incarnations. Include unsaved image bytes in the
+                    # scope even when their reference labels have not changed.
+                    from hashlib import sha256
+                    asset_versions = tuple(sorted((ref, sha256(raw).digest())
+                                                  for ref, raw in assets.items()))
+                    package = generate_report(
+                        draft, acknowledged_fingerprint=draft.fingerprint, asset_loader=loader,
+                        reuse_owner=browser_token, reuse_asset_versions=asset_versions)
             except ValueError as exc:
                 st.error(str(exc))
                 st.caption("Your edits and saved versions are unchanged. Retry generation when the service is ready.")
