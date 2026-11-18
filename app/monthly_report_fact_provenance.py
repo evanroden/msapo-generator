@@ -83,13 +83,25 @@ _COMPLETED_ASSERTIONS = (
 )
 
 
+def _asserted_without_negation(text: str, assertion) -> bool:
+    # Only positive assertions need completed-work proof. A linked negative
+    # outcome ("no repair was completed") must not be converted to success or
+    # rejected merely because the verb "completed" occurs in that sentence.
+    for match in assertion.finditer(text):
+        clause = re.split(r"[.;,\\n]", text[:match.start()])[-1]
+        if not _NEGATION.search(clause):
+            return True
+    return False
+
+
 def verify_draft_outcomes(text: str, facts) -> None:
     for assertion in _COMPLETED_ASSERTIONS:
-        if not assertion.search(text):
+        if not _asserted_without_negation(text, assertion):
             continue
         if not any(
-            assertion.search(fact.text) and assertion.search(fact.quote)
-            and not _NEGATION.search(fact.quote) and not _PLANNED.search(fact.quote)
+            _asserted_without_negation(fact.text, assertion)
+            and _asserted_without_negation(fact.quote, assertion)
+            and not _PLANNED.search(fact.quote)
             for fact in facts
         ):
             raise ValueError(
