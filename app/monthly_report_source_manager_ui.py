@@ -169,11 +169,11 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
             current = replace(draft, blocks=tuple(blocks.values()))
             included = used_source_ids(current)
             corrected = {}
-            # A native form retains browser-only edits until its own Submit.
-            # Never render all 50 old files just to keep one active correction.
-            # First-visit order also holds the delta paths of visited forms.
-            residents = _resident_source_forms(prefix, ids, requested, selected, opened)
-            for source_id in residents:
+            # Lightweight anchor shells stay at their original source positions
+            # so cold source-warning links and later browser delta paths remain
+            # valid. Only a visited source installs date/site/native form widgets.
+            residents = set(_resident_source_forms(prefix, ids, requested, selected, opened))
+            for source_id in ids:
                 source = _current_source_detail(ordered[source_id], contents)
                 owner_key = prefix + "_managed_source_" + source.id
                 st.markdown('<style>.st-key-' + owner_key + '{display:' +
@@ -183,6 +183,17 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
                     st.markdown('<a class="enfra-source-review-return" data-source-id="' +
                                 escape(source.id, quote=True) + '" href="#report-review" hidden>Return to review</a>',
                                 unsafe_allow_html=True)
+                    if source.id not in residents:
+                        # The existing native warning/navigation adapter expects
+                        # source-details-ID (and date/site aliases) before its
+                        # first click, even when the manager is closed. Its
+                        # content is an anchor-only shell, *not* a hidden form.
+                        p = prefix + "_evidence_" + source.id + "_source_details"
+                        anchor = "source-details-" + escape(source.id, quote=True)
+                        with st.container(key="source_detail_editor_" + p):
+                            st.markdown("".join('<span id="' + anchor + suffix + '"></span>'
+                                for suffix in ("", "--site", "--date")), unsafe_allow_html=True)
+                        continue
                     def source_preview(source_id=source.id):
                         if not opened or selected != source_id or st.session_state.get(prefix + "_source_review_context") != source_id:
                             return
