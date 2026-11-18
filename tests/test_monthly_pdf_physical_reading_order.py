@@ -56,7 +56,7 @@ def test_separate_columns_share_vertical_band_and_require_page_review(monkeypatc
     assert not sources.action_evidence(source)[0]
     assert read_vendor_document(source)[1] == ((), True)
     assert native_update((content,), "activity_summary").text == ""
-    assert any("passage" in note and "Page 1" in note for note in source.notices)
+    assert any("adjacent PDF columns" in note and "Page 1" in note for note in source.notices)
     assert "did not start." in source.page_texts[0]
     assert "Follow-up: Return when parts arrive." in source.page_texts[0]
     assert source.sha256 == sha256(raw).hexdigest()
@@ -85,6 +85,36 @@ def test_same_text_in_one_column_retains_exact_negative_and_page_reference(monke
     assert activity.references == (sources.source_reference(source, 1),)
     assert not any("Replaced the demo filter" in p for p in sources.action_evidence(source)[1])
     assert sources.source_bytes(profile, source) == raw
+
+
+def test_unrelated_column_margins_do_not_assign_site_vendor_or_date(monkeypatch, tmp_path):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    profile = synthetic_profiles()[0]
+    with fitz.open(stream=_pdf(side_by_side=True), filetype="pdf") as pdf:
+        page = pdf[0]
+        page.insert_text((35, 84), "Site: Unrelated Remote Site", fontsize=10)
+        page.insert_text((35, 103), "Vendor: Fictional Outside Company", fontsize=10)
+        raw = pdf.tobytes()
+    content, _ = sources.ingest(profile, "unrelated-margins.pdf", raw)
+    source = content.source
+    assert source.classification == "Vendor service"
+    assert not source.facility and not source.vendor and not source.service_date
+    assert "Site: Unrelated Remote Site" in source.page_texts[0]
+    assert "Report date: 2026-10-16" in source.page_texts[0]
+    assert not source.actions and not source.follow_ups
+    assert sources.source_bytes(profile, source) == raw
+    # Disposable cache replay cannot restore the older, unsafe date/site guess.
+    replay, _ = sources.ingest(profile, "unrelated-margins.pdf", raw)
+    assert (replay.source.facility, replay.source.vendor, replay.source.service_date) == ("", "", "")
+    assert replay.source.page_texts == source.page_texts
+
+
+def test_metadata_on_ordinary_single_column_remains_available(monkeypatch, tmp_path):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    profile = synthetic_profiles()[0]
+    content, _ = sources.ingest(profile, "ordinary-single-column.pdf", _pdf(side_by_side=False))
+    assert content.source.service_date == "2026-10-16"
+    assert not any("adjacent PDF columns" in text for text in content.source.notices)
 
 
 def test_missing_or_unlabelled_pdf_never_gets_column_based_certification():
