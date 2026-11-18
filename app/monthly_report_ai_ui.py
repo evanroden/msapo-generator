@@ -436,14 +436,13 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
             eligible_all = tuple(
                 c for c in structured.reader_sources(contents, "activity_summary")
                 if c.source.classification != "Reference only"
-                and (not c.source.facility
-                     or c.source.facility.casefold() in names)
+                and c.source.facility.casefold() in names
             )
             if len(contents) > 1:
                 st.caption(
                     f"{len(eligible_all)} of {len(contents)} uploaded sources are "
                     "eligible for a single full-document fact read. Unknown "
-                    "classification, other-site and unmapped activity sources "
+                    "classification, unknown-site, other-site and unmapped activity sources "
                     "remain intact and require individual review.")
                 if st.button(
                     "Find facts across eligible uploaded files",
@@ -504,6 +503,8 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                 disabled=busy or not pages,
             ):
                 try:
+                    if source.facility and source.facility.casefold() not in names:
+                        raise ValueError("This file is assigned to another site. Correct its source scope before sending it to the reader.")
                     needs_coverage = (
                         len(pages) > 20
                         or sum(len(source.page_texts[n - 1]) for n in pages) > ai.MAX_EVIDENCE_CHARS
@@ -621,7 +622,7 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                     f"{outcome['admitted_calls']} new calls, "
                     f"{outcome['cache_hits']} cache hits; "
                     f"{outcome['total_seconds']:.2f}s network/queue worker time "
-                    "(simulated in tests; not a UI first-paint measurement).")
+                    "(not a UI first-paint measurement).")
                 if ready_pages != len(inventory):
                     pending_pages = [str(n) for n, status in inventory.items()
                                      if status != "ready"]
