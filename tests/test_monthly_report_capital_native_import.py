@@ -140,6 +140,10 @@ def test_unknown_site_unverified_identity_and_malformed_source_fail_closed(nativ
                                         "Asset", "Status", "Source note"))
     with pytest.raises(ValueError, match="column"):
         reviewed_capital_items(ambiguous, block, master)
+    importer_renamed_duplicate = _replace_headers(
+        draft, ("Facility", "Priority", "Priority (3)", "Asset", "Status", "Source note"))
+    with pytest.raises(ValueError, match="column"):
+        reviewed_capital_items(importer_renamed_duplicate, block, master)
     financial = _replace_headers(draft, ("Facility", "Priority", "Recommendation",
                                         "Asset", "Cost", "Source note"))
     with pytest.raises(ValueError, match="financial|Financial|monetary"):
