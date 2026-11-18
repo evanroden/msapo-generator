@@ -83,7 +83,10 @@ def test_large_synthetic_staging_keeps_heap_bounded_and_hash_exact(mib):
             assert staged.size == mib * MIB
             with staged.path.open("rb") as f:
                 assert hashlib.file_digest(f, "sha256").hexdigest() == staged.sha256
-            assert staged.sha256 == hashlib.sha256(CHUNK * 1).hexdigest() if mib == 1 else staged.sha256
+            expected = hashlib.sha256()
+            for _ in range(mib):
+                expected.update(CHUNK)
+            assert staged.sha256 == expected.hexdigest()
             path = staged.path
         _, peak_heap = tracemalloc.get_traced_memory()
     finally:
