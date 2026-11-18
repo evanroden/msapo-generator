@@ -195,6 +195,9 @@ def _mapping(sheet):
 
 def _sites_or_exclusion(workbook, sheet, mapping, exclusions):
     """One unreadable worksheet is excluded by name; the rest of the batch continues."""
+    for coordinate, role in directory.unnamed_contact_details(sheet, mapping[0], mapping[1], mapping[3]):
+        exclusions.append(WorkbookExclusion(
+            sheet.name, f"{role}: phone/email has no named contact; the source cell remains for manual review and was not imported.", coordinate))
     try:
         return directory.matrix_sites(workbook, sheet, *mapping)
     except ValueError as exc:

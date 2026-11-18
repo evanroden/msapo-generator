@@ -703,6 +703,33 @@ def contact_value(value):
     return value
 
 
+def unnamed_contact_details(sheet: DirectorySheet, header_row: int, label_column: int,
+                            groups: list[dict]) -> tuple[tuple[str, str], ...]:
+    """Coordinates/roles of detail cells without a named person to own them.
+
+    This is only an import warning; the workbook is unchanged and the review
+    screen keeps every source cell. It does not turn a phone into an identity.
+    """
+    values = sheet.values()
+    unknown = {}
+    for column in sorted({c for r, c in values if r == header_row and c > label_column}):
+        title = values.get((header_row, column), "").strip()
+        if not title or re.fullmatch(r"(?:grand\s+)?totals?|summary", title, re.I):
+            continue
+        for group in groups:
+            if not group.get("Use"):
+                continue
+            name_row = int(group.get("Name row") or 0)
+            if name_row and contact_value(values.get((name_row, column), "")):
+                continue
+            role = str(group.get("Role") or "").strip()
+            for key in ("Phone row", "Email row"):
+                detail_row = int(group.get(key) or 0)
+                if detail_row and contact_value(values.get((detail_row, column), "")):
+                    unknown[(f"{column_name(column)}{detail_row}", role)] = None
+    return tuple(unknown)
+
+
 def matrix_sites(workbook: DirectoryWorkbook, sheet: DirectorySheet, header_row: int, label_column: int,
                  address_row: int, groups: list[dict]) -> tuple[DirectorySite, ...]:
     values = sheet.values()
@@ -722,7 +749,7 @@ def matrix_sites(workbook: DirectoryWorkbook, sheet: DirectorySheet, header_row:
             def at(key):
                 return contact_value(values.get((int(group.get(key) or 0), column), ""))
             fields = (at("Name row"), at("Phone row"), at("Email row"))
-            if any(fields):
+            if fields[0]:  # A phone/email without a name is evidence, not a person.
                 coordinates = ",".join(f"{column_name(column)}{int(group[k])}" for k in ("Name row", "Phone row", "Email row") if group.get(k))
                 contacts.append(DirectoryContact(role, *fields, source=f"{workbook.sha256}:{sheet.name}!{coordinates}"))
         sites.append(DirectorySite("site-" + hashlib.sha256(source.encode()).hexdigest()[:24], title,
@@ -746,7 +773,9 @@ def sheet_findings(workbook, selected):
         overlap = selected_titles & titles(sheet)
         if overlap:
             findings.append(f"{len(overlap)} proposed site name(s) also appear on worksheet {sheet.name}. Confirm which contract owns them; copied worksheet headings are not proof of membership.")
-    _, _, _, groups = suggest_matrix(selected)
+    header, label, _, groups = suggest_matrix(selected)
+    for coordinate, role in unnamed_contact_details(selected, header, label, groups):
+        findings.append(f"{selected.name}!{coordinate}: {role} has phone/email detail but no named contact. The source cell remains available for manual review and is not automatically imported.")
     contact_rows = {int(g[k]) for g in groups for k in ("Name row", "Phone row", "Email row") if g[k]}
     if not any(contact_value(c.value) for c in selected.cells if c.row in contact_rows and c.column > 1):
         findings.append("No populated leadership/contact records were found for the suggested roles. Check that this tab is current rather than an unfinished template.")
