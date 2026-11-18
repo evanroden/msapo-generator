@@ -23,6 +23,7 @@ from lxml import etree
 
 from app.image_open import open_image, image_formats_for_suffix
 from app.monthly_report_xml_parser import parse_xml_stream
+from app.monthly_report_shape_labels import DrawingLabel, collect_drawing_labels
 from app.monthly_report_docx import normalize_report_image
 from app.monthly_report_model import (
     BlockSpec,
@@ -122,6 +123,8 @@ class ImportItem:
     # Original rows stay intact for source identity and native geometry checks.
     # Only a proved full-width service-call title may precede the real header.
     table_header_row: int = 0
+    # Source-bound review evidence only; never grants drawing editability or export.
+    drawing_labels: tuple[DrawingLabel, ...] = ()
 
     @property
     def label(self) -> str:
@@ -797,6 +800,17 @@ def inspect_docx(path: Path) -> DocxInspection:
                             picture_table = element.tag == W + "tbl" and section == "activity" and content_slot == "improvements" and any(
                                 node.tag in (A + "blip", V + "imagedata") for node in element.iter())
                             parents = {child: parent for parent in element.iter() for child in parent}
+                            try:
+                                drawing_labels = collect_drawing_labels(
+                                    element, part=part, position=position, word_section=word_section
+                                ) if (has_native_frame or any(node.tag in (
+                                    A + "t", V + "group", W + "object"
+                                ) for node in element.iter())) else ()
+                            except ValueError as exc:
+                                raise ImportError(str(exc)) from exc
+                            # Shape text is evidence, not permission to flatten its geometry.
+                            drawing_text = "\n".join(label.text for label in drawing_labels
+                                                     if label.source == "drawing_text")
                             from app.monthly_report_native_design import mint_divider_background
                             if (part == "word/document.xml" and _is_native_divider_background(element, text)
                                     and (alternatives_equivalent or not mint_divider_background(element, text))):
@@ -832,7 +846,8 @@ def inspect_docx(path: Path) -> DocxInspection:
                                         and not node.get("uri", "").endswith("/picture"))
                                     for node in element.iter())
                                 if complex_table:
-                                    add("unsupported", part, position, text=text,
+                                    add("unsupported", part, position, text=text or drawing_text,
+                                        drawing_labels=drawing_labels,
                                         note="Word table contains text boxes or unsupported drawings and needs manual layout review. "
                                              "Retain its source page or add a reviewed replacement; extracted text does not preserve the layout.")
                                 elif rows and not picture_table:
@@ -858,7 +873,8 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 if part == "word/document.xml" and word_section <= 2 and section in ("", "cover"):
                                     note += " " + _cover_unreadable_object_note(
                                         element, word_section=word_section, position=position)
-                                add("unsupported", part, position, text=text, note=note)
+                                add("unsupported", part, position, text=text, note=note,
+                                    drawing_labels=drawing_labels)
                             elif text:
                                 # A floating Word textbox has separate layout/review
                                 # ownership. Do not also offer its words as ordinary
@@ -976,9 +992,13 @@ def inspect_docx(path: Path) -> DocxInspection:
                                         if divergent_native:
                                             note += " The modern and fallback Word representations disagree."
                                     add("native_layout" if native_role else "unsupported", part, position,
-                                        text=text, note=note)
-                            if element.find(".//" + W + "altChunk") is not None or element.tag == W + "altChunk":
-                                add("unsupported", part, position, note="Embedded document content was not executed. Review it in the original.")
+                                        text=text or drawing_text, note=note, drawing_labels=drawing_labels)
+                            if (element.find(".//" + W + "altChunk") is not None or element.tag == W + "altChunk"
+                                    or element.find(".//" + W + "object") is not None or element.tag == W + "object"):
+                                add("unsupported", part, position, text=drawing_text,
+                                    note="Embedded or unsupported Word object was not interpreted or executed. "
+                                         "Review the exact source region in the original; supply an explicit safe replacement.",
+                                    drawing_labels=drawing_labels)
                             if part == "word/document.xml" and element.find(".//" + W + "sectPr") is not None:
                                 word_section += 1
                             element.clear()
