@@ -9,7 +9,7 @@ import streamlit as st
 
 from app import monthly_report_library as library
 from app import monthly_report_section_assembly_cache as assembly_cache
-from app.monthly_report_render_jobs import RenderBusy
+from app.monthly_report_render_jobs import RenderBusy, cancel_queued_preview, queue_state
 from app.monthly_report_preview import (
     _section_scope, preview_page, preview_section, section_preview_fingerprint,  # noqa: F401 (tests patch preview_page here)
 )
@@ -22,20 +22,31 @@ PREVIEW_HEIGHT = 760
 # are bounded across all visitors by STORE, rather than once for each session.
 ORDERED_CACHE_BYTES = 256 * 1024
 DEBOUNCE_SECONDS = 1.5
-_PREVIEW_WORKER = ThreadPoolExecutor(max_workers=1, thread_name_prefix='report-preview')
-_PREVIEW_SLOT = BoundedSemaphore(1)
+_PREVIEW_WORKER = ThreadPoolExecutor(max_workers=3, thread_name_prefix='report-preview')
+# Three *waiting* workers only: work_slot still admits one heavy assembly.
+_PREVIEW_SLOT = BoundedSemaphore(3)
 
 
-def _build_preview_entry(draft, section_key, assets, title, owner=None):
+def _build_preview_entry(draft, section_key, assets, title, owner=None,
+                         is_current=None, revision=None):
     def loader(ref):
         return assets.get(ref) or library.read_asset(draft.profile.contract, draft.profile.key, ref)
     try:
+        if is_current is not None and not is_current():
+            return {'busy': True}
         # Include unsaved asset bytes, not just their reference labels, in the
         # session-scoped reuse key. Library-backed assets are SHA-verified.
         asset_versions = tuple(sorted((ref, hashlib.sha256(raw).digest())
                                       for ref, raw in assets.items())) if owner else ()
         with assembly_cache.owner_scope(owner, asset_versions):
-            preview = preview_section(draft, section_key, loader)
+            if is_current is None:
+                preview = preview_section(draft, section_key, loader)
+            else:
+                preview = preview_section(draft, section_key, loader,
+                                          owner=(owner, section_key), revision=revision,
+                                          is_current=is_current)
+        if is_current is not None and not is_current():
+            return {'busy': True}  # Never publish an obsolete computed PDF.
         ticket = STORE.put(owner or uuid4().hex, preview)
         return {'ticket': ticket, 'pages': ticket.pages}
     except RenderBusy:
@@ -137,6 +148,11 @@ def _advance_preview_queue(state):
     if ready is None or not _PREVIEW_SLOT.acquire(blocking=False):
         return
     fingerprint, draft, assets, title = state['queue'].pop(ready)
+    owner = state.setdefault('owner', uuid4().hex)
+    def is_current():
+        return (state.get('owner') == owner and
+                state.get('wanted', {}).get(ready) == fingerprint and
+                _is_visible(state, ready))
     try:
         # When the hidden QA workflow is active, the worker must inherit its
         # physical storage namespace. Ordinary live scheduling is unchanged.
@@ -145,10 +161,10 @@ def _advance_preview_queue(state):
             from contextvars import copy_context
             future = _PREVIEW_WORKER.submit(copy_context().run, _build_preview_entry,
                                             draft, ready, assets, title,
-                                            state.setdefault('owner', uuid4().hex))
+                                            owner, is_current, fingerprint)
         else:
             future = _PREVIEW_WORKER.submit(_build_preview_entry, draft, ready, assets, title,
-                                            state.setdefault('owner', uuid4().hex))
+                                            owner, is_current, fingerprint)
     except Exception:
         _PREVIEW_SLOT.release()
         state['cache'][ready] = {'fingerprint': fingerprint, 'error': 'The preview could not start. Your edits are still here.'}
@@ -204,6 +220,7 @@ def _viewport_changed(prefix, section, widget_key):
     state['page_requests'][section] = view
     if not view['visible']:
         state['queue'].pop(section, None)
+        cancel_queued_preview((state['owner'], section))
         prior = state.setdefault('last_good', {}).pop(section, {})
         _discard(state, prior)
     else:
@@ -339,6 +356,11 @@ def _render_ordered_preview(section_key, prefix, title):
             st.button('Retry preview', key=prefix + '_ordered_retry_' + section_key,
                       on_click=_scoped_callback(_retry_preview, prefix, section_key))
     widget_key = prefix + '_preview_surface_' + section_key
+    # A capacity count reports waiting work, never an unverified completion.
+    if pending:
+        depth = queue_state()['depth']
+        if depth:
+            status += f' · {depth} report job' + ('s' if depth != 1 else '') + ' waiting'
     render_view(key=widget_key, view_scope=state['owner'] + '|' + widget_key, generation=state['wanted'].get(section_key, ''), title=title,
                 ticket=ticket, images=images, status=status, stale=stale,
                 acknowledged_viewport=state['page_requests'].get(section_key),
@@ -380,6 +402,7 @@ def render_ordered_section_preview(draft, section_key, assets, prefix):
         return None
     prior = state['wanted'].get(section_key)
     if prior != fingerprint:
+        cancel_queued_preview((state['owner'], section_key))
         state['wanted'][section_key] = fingerprint
         previous = state['cache'].pop(section_key, {})
         _remember_previous_preview(state, section_key, previous)
