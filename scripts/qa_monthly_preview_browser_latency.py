@@ -37,7 +37,8 @@ def _decoded(image):
     assert image.evaluate("(node) => node.naturalWidth > 0 && node.naturalHeight > 0")
     return {"width": image.evaluate("(node) => node.naturalWidth"),
             "height": image.evaluate("(node) => node.naturalHeight"),
-            "sha256": sha256((image.get_attribute("src") or "").encode()).hexdigest()}
+            "src_sha256": sha256((image.get_attribute("src") or "").encode()).hexdigest(),
+            "decoded_png_sha256": sha256(image.screenshot()).hexdigest()}
 
 
 def _exercise(browser_type, engine):
