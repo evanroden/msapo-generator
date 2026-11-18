@@ -11,7 +11,7 @@ from docx import Document
 
 from app import monthly_report_library as library
 from app.monthly_report_docx import assemble_docx
-from app.monthly_report_followups import confirmation
+from app.monthly_report_followups import confirmation, problems, seed_followups
 from app.monthly_report_model import (
     ReportDraft, ReportFollowUp, ReportPeriod, ReportSource, ReportTable,
     ResolvedBlock, default_sections, synthetic_draft, synthetic_profiles,
@@ -95,6 +95,20 @@ def JanuarySafety(entries, source, proof):
     assert entries["issue-hidden"].reviewed_fingerprint == ""
     return True
 
+
+
+def test_repeated_source_claim_is_not_reintroduced_as_included_after_omission():
+    previous, _, _ = _fixture()
+    january = new_month_draft(previous, JANUARY)
+    assert not problems(_followup_map(january)["proposal-hidden"], january)
+    # Reprocessed identical text must match its existing omission receipt,
+    # not create a second printable proposal with a new generated key.
+    replay = replace(january, blocks=tuple(
+        replace(block, source="This month", text="Synthetic replacement estimate")
+        if block.key == "proposals" else block for block in january.blocks))
+    followups = seed_followups(replay)
+    proposals = [item for item in followups if item.category == "proposal"]
+    assert [(item.key, item.included) for item in proposals] == [("proposal-hidden", False)]
 
 def test_auth01_two_successive_saves_reloads_and_second_rollover_preserve_old_snapshot(
         monkeypatch, tmp_path):
