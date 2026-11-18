@@ -13,6 +13,7 @@ import json
 import logging
 import os
 from pathlib import Path
+from zipfile import ZipFile
 import resource
 from threading import Barrier, Event, Thread
 import tempfile
@@ -51,14 +52,19 @@ def run_pair(draft, assets):
         document = Document(BytesIO(native))
         text = '\n'.join(paragraph.text for paragraph in document.paragraphs)
         assert 'Synthetic current inspection completed.' in text
-        assert len(document.inline_shapes) >= 8
+        # Native masters may anchor images as floating shapes. The DOCX
+        # package media count is valid for either anchored or inline photos.
+        with ZipFile(BytesIO(native)) as archive:
+            photo_count = sum(name.startswith('word/media/') and not name.endswith('/')
+                              for name in archive.namelist())
+        assert photo_count >= 8
         return {
             'visitor': index, 'wait_seconds': round(entered - queued, 3),
             'assemble_seconds': round(completed - entered, 3),
             'elapsed_seconds': round(completed - queued, 3),
             'retry_count': retries,
             'docx_sha256': sha256(native).hexdigest(),
-            'photo_count': len(document.inline_shapes),
+            'photo_count': photo_count,
         }
 
     with ThreadPoolExecutor(max_workers=2) as pool:
