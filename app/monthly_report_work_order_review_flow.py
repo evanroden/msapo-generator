@@ -232,7 +232,9 @@ def prepare_bundle(draft, content, *, kind="workorders", mapping=None, date_orde
             value["groups"].append(_group(f"Page {page.page}",
                 review_record(page.review) if page.review else None,
                 notes=page.notices if not page.review else (),
-                unmatched=[" | ".join(row) for row in page.unmatched_rows]))
+                unmatched=[f"PDF page {page.page}, {origin}: {' | '.join(row)}"
+                           for row, origin in zip(page.unmatched_rows,
+                                                  page.unmatched_origins)]))
     elif kind == "workorders" and source.suffix == ".docx":
         from app.monthly_report_work_order_docx_review import review_docx_workorders
         result = review_docx_workorders(draft.profile, content, draft.period)
@@ -273,6 +275,11 @@ def change_row(bundle, group_index, row_key, changes, *, excluded=None):
         if excluded is not None:
             review = exclude_row(review, row_key, excluded=excluded, expected_revision=review.revision)
         group["record"] = review_record(review)
+        if value["filename"].casefold().endswith(".pdf"):
+            # An edited WO may release (or create) a collision on another page.
+            # Never promote either page without re-evaluating both source rows.
+            from app.monthly_report_work_order_pdf_review import reconcile_pdf_group_duplicates
+            reconcile_pdf_group_duplicates(value["groups"])
     else:
         if changes:
             review = correct_service_call(review, row_key, changes, expected_revision=review.revision)
