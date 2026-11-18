@@ -1389,24 +1389,31 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     # can make the first keystroke disappear despite an unchanged widget key.
     read_status = st.empty()
     read_checkpoint = st.empty()
-    try:
-        if draft_key not in st.session_state or resume or completed_setup == selected:
-            # Fresh entry/resume rechecks the original and candidate snapshots.
-            # Do NOT cache the source proof: each independent reader invocation
-            # retains its own before/after immutable-source verification.
-            imported, prior, prior_draft = read_with_capacity_wait(
+
+    def read_checked_start():
+        # Cold entries and deliberate publication use the SAME bounded
+        # capacity wait. Never queue a mutable save, only a fresh read-only
+        # original/source-view proof; cancellation cannot publish stale work.
+        try:
+            return read_with_capacity_wait(
                 lambda: read_starting_state(contract, selected, period),
                 read_checkpoint.empty,
                 lambda: read_status.info("Waiting for report capacity… Your edits are kept."),
             )
-            # A warm editor needs only this label, not another imported DOCX
-            # digest or a retained multi-megabyte previous-month draft.
-            st.session_state[prefix + "_prior_display_period"] = (
-                prior_draft.period.label if prior_draft else "")
-        else:
-            imported = prior = prior_draft = None
-    finally:
-        read_status.empty()
+        finally:
+            read_status.empty()
+
+    if draft_key not in st.session_state or resume or completed_setup == selected:
+        # Fresh entry/resume rechecks the original and candidate snapshots.
+        # Do NOT cache the source proof: each independent reader invocation
+        # retains its own before/after immutable-source verification.
+        imported, prior, prior_draft = read_checked_start()
+        # A warm editor needs only this label, not another imported DOCX
+        # digest or a retained multi-megabyte previous-month draft.
+        st.session_state[prefix + "_prior_display_period"] = (
+            prior_draft.period.label if prior_draft else "")
+    else:
+        imported = prior = prior_draft = None
     if completed_setup == selected:
         # The editor replaces the setup review but keeps its scroll offset.
         # Start this deliberate entry at monthly work, once.
@@ -1785,7 +1792,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         # A deliberate publication, unlike a keystroke, must recheck the
         # starting original and read the latest prior-month carryover. Never
         # substitute a warm session label for verified source or saved issues.
-        _, latest_prior, _ = read_starting_state(contract, selected, period)
+        _, latest_prior, _ = read_checked_start()
         ancestor = snapshot or latest_prior
         return (ancestor.open_issues if ancestor else (),
                 ancestor.pending_proposals if ancestor else ())
