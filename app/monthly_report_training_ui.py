@@ -225,11 +225,13 @@ def _render_monthly_sessions(events, matrix, period, key, scope):
     editor_key = key + "_event_" + state["token"]
     fields = {name: editor_key + "_" + name for name in ("title", "when", "mode", "participants", "hours")}
     st.subheader("Training completed this month")
-    if rows:
+    # A true pending conflict already shows both competing tables above.
+    # Avoid a third duplicate table until that conflict has been resolved.
+    if rows and not blocked:
         st.table([{"Training": title, "Date": when, "Method": mode,
                    "Participants": participants, "Hours": _session_hours(hours)}
                   for title, when, mode, participants, hours in rows])
-    else:
+    elif not rows:
         st.caption("No training sessions added this month.")
     label = "Edit training session" if editing else "Add completed training"
     # The main form is open on the first paint and after every successful Add.
