@@ -160,6 +160,17 @@ def test_without_owner_or_revision_never_reuses(draft, backend):
         assert cache.read(("converter",)) is None
 
 
+def test_pinned_design_validation_executes_on_cache_hit(draft, backend, monkeypatch):
+    from app import monthly_report_designs as designs
+    assert generate(draft).pdf
+    monkeypatch.setattr(
+        designs, "source_for",
+        lambda profile: (_ for _ in ()).throw(ValueError("Pinned design verification failed")))
+    with pytest.raises(ValueError, match="Pinned design verification failed"):
+        generate(draft)
+    assert len(backend) == 1
+
+
 def test_preflight_runs_on_hit_and_blocks_newly_invalid_report(draft, backend, monkeypatch):
     assert generate(draft).pdf
     ordinary = output.preflight
