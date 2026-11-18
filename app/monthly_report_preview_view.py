@@ -1,5 +1,6 @@
 """A scrollable preview that requests only visible pages, without remote scripts."""
 from functools import lru_cache
+from time import time
 
 import streamlit as st
 from streamlit.runtime import Runtime
@@ -38,6 +39,13 @@ export default function(component) {
     const scroll = panel.querySelector('.report-preview-scroll');
     const status = panel.querySelector('.report-preview-status');
     const state = panel._previewState || (panel._previewState = {visible:false, sent:'', page:0});
+    const mediaIdentity = String(data.generation) + ':' + String(data.ticketKey || '');
+    if (state.mediaIdentity !== mediaIdentity) {
+        state.mediaIdentity = mediaIdentity;
+        state.requestFailed = false;
+        state.requestAttempts = 0;
+        state.sent = '';
+    }
     // A browser send is not proof that its callback survived a competing
     // rerender. Reconcile with the server's applied view on every invocation.
     // Reading position remains client state; only this bounded request retries.
@@ -316,6 +324,22 @@ export default function(component) {
         }
         image.loading = 'eager';
         image.decoding = 'async';
+        image.onload = () => {
+            // Server registration and actual DOM decode are separate events.
+            // Headless same-host browser probes read these measurements; cross-
+            // host clocks must be calibrated before interpreting this delta.
+            if (!active || image.parentElement !== page || image.getAttribute('src') !== src) return;
+            const ready = Number(data.readyEpochMs);
+            if (!Number.isFinite(ready) || ready <= 0) return;
+            image.decode().then(() => {
+                if (!active || image.parentElement !== page || image.getAttribute('src') !== src ||
+                        !image.complete || image.naturalWidth <= 0) return;
+                const now = Date.now();
+                image.dataset.serverReadyEpochMs = String(ready);
+                image.dataset.decodedAtEpochMs = String(now);
+                image.dataset.readyToDecodedMs = String(now - ready);
+            }).catch(() => image.onerror?.());
+        };
         image.onerror = () => {
             // A retired/failed read must not leave a broken image or mutate
             // a newer generation's DOM. Keep its page placeholder and offer
@@ -327,6 +351,7 @@ export default function(component) {
             retryRequest.hidden = false;
         };
         if (image.getAttribute('src') !== src) image.setAttribute('src', src);
+        else if (image.complete && image.naturalWidth > 0) image.onload();
     });
     function sizePages() {
         if (!active) return;
@@ -560,6 +585,8 @@ def render_view(*, key, generation, title, ticket=None, images=(), status='', st
             'generation': generation, 'title': title, 'viewScope': scope, 'ready': ticket is not None and not stale, 'stale': bool(stale),
             'sizes': ticket.sizes if ticket else (), 'status': status, 'pending': bool(pending),
             'initialPage': ticket.initial_page if ticket else 0,
+            'ticketKey': ticket.key if ticket else None,
+            'readyEpochMs': int(time() * 1000) if delivered else None,
             'acknowledgedViewport': {'visible': bool(applied['visible']), 'pages': list(applied['pages']),
                                      'dpi': applied['dpi'], 'generation': generation},
             'pages': delivered,
