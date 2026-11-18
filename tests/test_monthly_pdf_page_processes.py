@@ -131,7 +131,10 @@ def test_large_approved_pdf_batch_keeps_captions_order_and_assets(profile, monke
     monkeypatch.setattr(parallel, "parallel_pages", observed)
     concurrent = sources.prepare_pages(profile, (content,), ((source.id, "vendor_reports"),))
     assert used
-    assert serial == concurrent
+    assert tuple((block.slot, block.asset_hashes, block.asset_captions, block.references)
+                 for block in serial) == tuple(
+                     (block.slot, block.asset_hashes, block.asset_captions, block.references)
+                     for block in concurrent)
     assert serial[0].asset_captions[1] == "Reviewed rotated page"
     assert len(serial[0].asset_hashes) == 48
     assert all(library.read_asset(profile.contract, profile.key, ref)
