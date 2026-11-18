@@ -7,6 +7,7 @@ Model replies are untrusted and remain suggestions until source review.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import BoundedSemaphore
 from dataclasses import dataclass
 import hashlib
 import json
@@ -20,6 +21,7 @@ MAX_BATCH_REGIONS = 20
 MAX_VISUALS_PER_BATCH = 1
 MAX_PARALLEL_READS = 2
 VERSION = "monthly-full-coverage-v1"
+_MODEL_SLOTS = BoundedSemaphore(MAX_PARALLEL_READS)
 
 # The extra receipt is deliberately not part of the old single-call prompt.
 # An absent receipt is incomplete coverage, NOT an empty, successful page.
@@ -82,11 +84,11 @@ def plan(source, pages=None, *, model=None):
     if model is None:
         from app import monthly_report_ai as ai
         model = ai.ANTHROPIC_MODEL
-    selected = tuple(dict.fromkeys(
-        range(1, len(source.page_texts) + 1) if pages is None else pages))
-    if not selected or any(type(n) is not int or n < 1 or n > len(source.page_texts)
-                           for n in selected):
+    requested = tuple(range(1, len(source.page_texts) + 1) if pages is None else pages)
+    if not requested or any(type(n) is not int or n < 1 or n > len(source.page_texts)
+                            for n in requested):
         raise ValueError("Choose real source pages to read.")
+    selected = tuple(dict.fromkeys(requested))
     batches, current, size, empty = [], [], 0, []
 
     def flush():
@@ -94,7 +96,7 @@ def plan(source, pages=None, *, model=None):
         if current:
             signature = [(r.identity, r.page, r.text, r.visual) for r in current]
             key = _digest((VERSION, PROMPT_VERSION, model, "facts",
-                           source.id, source.sha256, source.fingerprint, signature))
+                           source.id, source.sha256, signature))
             batches.append(Batch(key, tuple(current)))
         current, size = [], 0
 
@@ -105,9 +107,32 @@ def plan(source, pages=None, *, model=None):
         if not native and not visual:
             empty.append(number)
             continue
-        pieces = ([native[n:n + MAX_REGION_CHARS]
-                   for n in range(0, len(native), MAX_REGION_CHARS)]
-                  if native else [""])
+        # Preserve complete spreadsheet rows and paragraph lines where feasible.
+        # Oversized single lines are split without deleting a character.
+        pieces = []
+        if native:
+            current_piece = ""
+            for line in native.splitlines(keepends=True):
+                while line:
+                    room = MAX_REGION_CHARS - len(current_piece)
+                    if not room:
+                        pieces.append(current_piece)
+                        current_piece = ""
+                        room = MAX_REGION_CHARS
+                    if len(line) <= room:
+                        current_piece += line
+                        line = ""
+                    else:
+                        if current_piece:
+                            pieces.append(current_piece)
+                            current_piece = ""
+                        else:
+                            pieces.append(line[:MAX_REGION_CHARS])
+                            line = line[MAX_REGION_CHARS:]
+            if current_piece:
+                pieces.append(current_piece)
+        else:
+            pieces = [""]
         for part, text in enumerate(pieces, 1):
             region = Region(f"{number}.{part}", number, text, visual)
             if (current and (visual or current[0].visual
@@ -203,9 +228,13 @@ def run(prepared, *, read=None):
     first_ready = None
     started = time.monotonic()
     tasks = prepared["requests"]
+    def limited_read(payload):
+        with _MODEL_SLOTS:  # Global per-process cap, also across concurrent sessions.
+            return reader(payload)
+
     with ThreadPoolExecutor(max_workers=MAX_PARALLEL_READS,
                             thread_name_prefix="monthly-cover") as executor:
-        futures = {executor.submit(reader, payload): key for key, payload in tasks}
+        futures = {executor.submit(limited_read, payload): key for key, payload in tasks}
         for future in as_completed(futures):
             key = futures[future]
             seconds = time.monotonic() - started
@@ -353,6 +382,7 @@ def collect(plan_value, result, source, profile, period, *, ai_module=None):
             inventory[number] = "needs_review"
     return {"facts": tuple(facts.values()), "inventory": inventory,
             "valid_batches": good, "review_batches": bad,
+            "admitted_calls": len(result["responses"]), "cache_hits": len(result["cached"]),
             "rejected_claims": invalid, "cacheable": tuple(cacheable),
             "unavailable": result["unavailable"],
             "first_response_seconds": result["first_response_seconds"],
