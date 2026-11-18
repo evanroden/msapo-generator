@@ -260,3 +260,44 @@ def test_opaque_total_and_sensitive_fact_status_never_reach_public_reader():
     assert '"private"' not in output[0]["text"]
     assert '"flags"' not in output[0]["text"]
     assert "$7,600" not in output[0]["text"]
+
+
+
+def test_optional_section_reader_has_no_raw_price_text_or_unreviewed_raster(
+        monkeypatch, tmp_path):
+    from app import monthly_report_sources as sources
+    from app.monthly_report_model import synthetic_profiles
+
+    original = source(PRICE + "\n" + TECH + "\n" + CONTACT, ".pdf")
+    content = SourceContent(original, ())
+    def forbidden(*args, **kwargs):
+        pytest.fail("Unreviewed source-page raster must never be transmitted.")
+    monkeypatch.setattr(sources, "page_image", forbidden)
+    payload = structured.reader_request(synthetic_profiles()[0],
+                                        (content,), "activity_summary")
+    outbound = "\n".join(part.get("text", "") for part in payload)
+    assert TECH in outbound
+    assert PRICE not in outbound and CONTACT not in outbound
+    assert not any(part.get("type") == "image" for part in payload)
+    assert all("18,675.50" not in str(part) for part in payload)
+    # Price-only source: no model call with an empty/financial payload.
+    priced_only = SourceContent(source(PRICE, ".pdf"), ())
+    with pytest.raises(ValueError, match="No policy-permitted"):
+        structured.reader_request(synthetic_profiles()[0],
+                                  (priced_only,), "proposals")
+
+
+def test_raster_only_reader_requires_local_review_before_model_transmission(
+        monkeypatch, tmp_path):
+    from dataclasses import replace
+    from app import monthly_report_sources as sources
+    from app.monthly_report_model import synthetic_profiles
+
+    original = replace(source("", ".pdf"), needs_vision=(1,))
+    content = SourceContent(original, ())
+    monkeypatch.setattr(sources, "image_numbers", lambda *_: (1,))
+    monkeypatch.setattr(sources, "page_image", lambda *_:
+                        pytest.fail("Unreviewed raster bytes must not be read for AI."))
+    with pytest.raises(ValueError, match="No policy-permitted"):
+        structured.reader_request(synthetic_profiles()[0],
+                                  (content,), "activity_summary")
