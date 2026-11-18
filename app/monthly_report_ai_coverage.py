@@ -414,11 +414,11 @@ def validate_batch(batch, value, source, profile, period, *, ai_module=None):
             continue
         facts.extend(validated)
         accepted_regions.add(region.identity)
-    return (tuple(dict((fact.id, fact) for fact in facts).values())),
+    return (tuple(dict((fact.id, fact) for fact in facts).values()),
             rejected, rejected_regions, accepted_regions)
 
 
-def collect(plan_value, result, source, profile, period, *, ai_module=None:
+def collect(plan_value, result, source, profile, period, *, ai_module=None):
     """Canonical source/page/quote facts with honest 100%-accounted inventory.
 
     A 'ready' page has all regions verified; a visual-only page remains manual
