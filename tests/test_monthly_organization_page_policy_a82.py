@@ -154,3 +154,82 @@ def test_actual_pdf_source_bound_contacts_repeat_and_chart_has_own_page(tmp_path
             "chart_pages_0based": chart_pages,
             "contact_pages_0based": contact_pages,
         }, indent=2))
+
+
+def test_scoped_chart_is_reused_next_month_without_mutating_defaults(tmp_path, monkeypatch):
+    """An explicitly approved picture is copied, never looked up across contracts.
+
+    Editing this month's report and rolling forward must not republish the
+    shared default, change another site's choice, or drop source bytes.
+    """
+    from dataclasses import replace
+    from app import monthly_report_library as library
+    from app import monthly_report_org_chart_defaults as defaults
+    from app.monthly_report_asset_review import approve_all_assets
+    from app.monthly_report_guided import _initial_draft
+    from app.monthly_report_model import synthetic_profiles
+    from app.monthly_report_setup import new_month_draft
+
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    original_profile = synthetic_profiles()[0]
+    profile_a = replace(
+        original_profile, contract="A82 Synthetic A", key="north",
+        facilities=(Facility("north", "North"),),
+    )
+    profile_b = replace(
+        profile_a, contract="A82 Synthetic B", key="south",
+        facilities=(Facility("south", "South"),),
+    )
+    for profile in (profile_a, profile_b):
+        library.save_profile(
+            profile, expected_revision=0, actor="Synthetic Tester", confirmed=True,
+        )
+
+    image = BytesIO()
+    Image.new("RGB", (900, 360), "blue").save(image, "PNG")
+    raw = image.getvalue()
+    picture_id = library.asset_reference(raw, "png")
+    block = approve_all_assets(
+        ResolvedBlock("org_chart", "This month", asset_hashes=(picture_id,))
+    )
+    initial = replace(_initial_draft(
+        library.load_profile(profile_a.contract, profile_a.key),
+        ReportPeriod(2026, 9), "Synthetic Tester",
+    ), synthetic=False)
+    initial = replace(initial, blocks=tuple(
+        block if current.key == "org_chart" else current
+        for current in initial.blocks
+    ))
+    defaults.save_default(
+        initial, block, {picture_id: raw}, scope="contract", expected_revision=0,
+        expected_fingerprint=block.fingerprint, confirmed=True,
+    )
+    manifest_path = defaults._path(profile_a.contract) / "manifest.json"
+    standing_before = manifest_path.read_bytes()
+    assets = {}
+    month = _initial_draft(
+        library.load_profile(profile_a.contract, profile_a.key),
+        ReportPeriod(2026, 10), "Synthetic Tester", assets=assets,
+    )
+    current = next(item for item in month.blocks if item.key == "org_chart")
+    assert current.asset_hashes == (picture_id,)
+    assert assets[picture_id] == raw
+    # Report-local notes must never rewrite the approved chart manifest.
+    edited = replace(month, blocks=tuple(
+        replace(item, text="Synthetic report-only note")
+        if item.key == "org_chart" else item for item in month.blocks
+    ))
+    following = new_month_draft(edited, ReportPeriod(2026, 11))
+    next_chart = next(item for item in following.blocks if item.key == "org_chart")
+    assert next_chart.asset_hashes == (picture_id,)
+    assert next_chart.text == "Synthetic report-only note"
+    assert manifest_path.read_bytes() == standing_before
+    assert defaults.read_asset(profile_a.contract, picture_id) == raw
+    unrelated = _initial_draft(
+        library.load_profile(profile_b.contract, profile_b.key),
+        ReportPeriod(2026, 11), "Synthetic Tester", assets={},
+    )
+    assert picture_id not in next(
+        item for item in unrelated.blocks if item.key == "org_chart"
+    ).asset_hashes
+    assert defaults.load_defaults(profile_b.contract).revision == 0
