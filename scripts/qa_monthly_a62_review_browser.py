@@ -30,7 +30,22 @@ def value_after(page, label):
 
 
 def go_review(page):
-    page.locator("#report-review").scroll_into_view_if_needed(timeout=20000)
+    """Scroll Review into view and make sure it stays there.
+
+    Right after the first run a late rerender can leave the page at the top,
+    so a single scroll is not proof the person reached Review. Retry the
+    ordinary scroll a few times; fail if Review never stays in view.
+    """
+    from playwright.sync_api import expect
+    heading = page.locator("#report-review")
+    for _ in range(4):
+        heading.scroll_into_view_if_needed(timeout=20000)
+        page.wait_for_timeout(400)
+        if heading.evaluate("""node => { const r = node.getBoundingClientRect();
+                return r.bottom > 0 && r.top < window.innerHeight; }"""):
+            return
+        settled(page)
+    expect(heading).to_be_in_viewport()
 
 
 def set_checkbox(page, name, selected):
@@ -90,6 +105,7 @@ def check():
                         go_review(page)
                         expect(page.get_by_text("Current draft · page 1 of 2", exact=False)).to_be_visible(timeout=45000)
                         timings["cold_first_review_ms"] = round((time.perf_counter() - begin) * 1000, 2)
+                        settled(page)  # read the captions that run wrote, not stale copies
                         initial = value_after(page, "QA canonical revision:")
                         assert initial == value_after(page, "QA ticket revision:")
                         assert "Synthetic unvisited last-section fact." in value_after(page, "QA rendered text:")
@@ -121,6 +137,7 @@ def check():
                                                 exact=True)).to_be_visible(timeout=45000)
                         timings["failed_refresh_visible_ms"] = round((time.perf_counter() - fail_start) * 1000, 2)
                         expect(page.get_by_text("Older draft · page 1 of 2", exact=False)).to_be_visible()
+                        settled(page)
                         assert value_after(page, "QA ticket revision:") == initial
                         assert "Synthetic unvisited last-section fact." in value_after(page, "QA rendered text:")
                         assert "Synthetic accepted A62" in note.input_value()
@@ -134,6 +151,7 @@ def check():
                         page.get_by_role("button", name="Preview current draft").click()
                         expect(page.get_by_text("Current draft · page 1 of 2", exact=False)).to_be_visible(timeout=45000)
                         timings["warm_retry_ms"] = round((time.perf_counter() - retry_start) * 1000, 2)
+                        settled(page)
                         assert value_after(page, "QA ticket revision:") == value_after(page, "QA canonical revision:")
                         assert "Synthetic accepted A62 edited last-section fact." in value_after(page, "QA rendered text:")
                         timings["user_preview_clicks"] = 1  # explicit failure recovery only
