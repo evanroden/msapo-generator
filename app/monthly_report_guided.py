@@ -1340,14 +1340,20 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     entry_active = not bool(last_profile) or bool(st.session_state.get(ENTRY_STAGE))
     entry_upload = entry_stage = None
     inferred_accounts = ()
-    if entry_active:
-        entry_upload, entry_stage, inferred_accounts = render_first_upload(field, contract_choices())
-        if len(inferred_accounts) == 1 and not last_contract:
-            contract_key = field("report_contract", "")
-            if not st.session_state.get(contract_key) and not st.session_state.get("report_change_contract"):
-                st.session_state[contract_key] = inferred_accounts[0]
-        elif len(inferred_accounts) == 1 and last_contract and last_contract != inferred_accounts[0]:
-            st.warning("The uploaded cover suggests a different contract. Use Change contract if this report belongs to that account; site identity must still be reviewed.")
+    # One keyed slot on every run, filled only while the entry upload applies.
+    # It can stop applying between runs with no click (this browser's report
+    # preferences are remembered shortly after a report starts). Without a
+    # fixed slot everything below would move up, and Streamlit would briefly
+    # show the old and new copies of the editor together.
+    with st.container(key="monthly_entry_upload_slot"):
+        if entry_active:
+            entry_upload, entry_stage, inferred_accounts = render_first_upload(field, contract_choices())
+            if len(inferred_accounts) == 1 and not last_contract:
+                contract_key = field("report_contract", "")
+                if not st.session_state.get(contract_key) and not st.session_state.get("report_change_contract"):
+                    st.session_state[contract_key] = inferred_accounts[0]
+            elif len(inferred_accounts) == 1 and last_contract and last_contract != inferred_accounts[0]:
+                st.warning("The uploaded cover suggests a different contract. Use Change contract if this report belongs to that account; site identity must still be reviewed.")
     recovery_available = active_work.enabled(browser_token)
     with st.expander("Help"):
         st.write("1. Choose sites and month.\n2. Update the sections below; sections without a new update can stay blank.\n3. Review source pages that need attention, then create and download Word/PDF.")

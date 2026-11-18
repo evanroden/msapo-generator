@@ -816,28 +816,31 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             st.session_state.pop(prefix + "_image_replacements", None)
             st.rerun()
 
-    if entry_active:
-        # The first-use drop zone is mounted above contract/site selection.
-        # Consume its *same* validated bytes; never show a duplicate picker.
-        if entry_stage is not None:
-            st.session_state[prefix + "_stage"] = entry_stage
-        upload = entry_upload
-        if state:
-            with st.expander("Original-file recovery (optional)"):
+    # A keyed slot keeps the setup below at fixed positions when the entry
+    # upload stops applying between runs (see render_guided_workflow).
+    with st.container(key=prefix + "_starting_upload_slot"):
+        if entry_active:
+            # The first-use drop zone is mounted above contract/site selection.
+            # Consume its *same* validated bytes; never show a duplicate picker.
+            if entry_stage is not None:
+                st.session_state[prefix + "_stage"] = entry_stage
+            upload = entry_upload
+            if state:
+                with st.expander("Original-file recovery (optional)"):
+                    _open_saved_original()
+        elif optional_import:
+            with st.expander("Use a different starting report",
+                             expanded=bool(st.session_state.get(prefix + "_stage")
+                                           or st.session_state.get(prefix + "_failed_digest"))):
+                st.caption("Upload an earlier or unfinished Word report.")
+                upload = st.file_uploader("Starting report", type=["docx"],
+                                          key=prefix + "_upload", **starting_upload_options())
                 _open_saved_original()
-    elif optional_import:
-        with st.expander("Use a different starting report",
-                         expanded=bool(st.session_state.get(prefix + "_stage")
-                                       or st.session_state.get(prefix + "_failed_digest"))):
+        else:
+            st.subheader("Start with a report")
             st.caption("Upload an earlier or unfinished Word report.")
             upload = st.file_uploader("Starting report", type=["docx"],
                                       key=prefix + "_upload", **starting_upload_options())
-            _open_saved_original()
-    else:
-        st.subheader("Start with a report")
-        st.caption("Upload an earlier or unfinished Word report.")
-        upload = st.file_uploader("Starting report", type=["docx"],
-                                  key=prefix + "_upload", **starting_upload_options())
     if (entry_active and upload is not None
             and st.session_state.get("report_entry_failed_digest") ==
             hashlib.sha256(upload.getvalue()).hexdigest()):
