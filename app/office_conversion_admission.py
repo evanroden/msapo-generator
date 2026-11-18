@@ -118,31 +118,30 @@ def conversion_lane(*, wait_seconds, serial_lock, folder, memory_headroom):
         # Windows never opts into parallel and retains the legacy lock only.
         mode_file = folder / '.conversion-mode.lock'
         with mode_file.open('a+b') as mode:
-            while not _try_lock(mode, shared=parallel):
+            while True:
+                if _try_lock(mode, shared=parallel):
+                    try:
+                        for lane in range(2 if parallel else 1):
+                            if lane == 1:
+                                free = memory_headroom()
+                                if free is None or free < SECOND_LANE_HEADROOM:
+                                    continue
+                            name = '.conversion-lock' if lane == 0 else '.conversion-lock-1'
+                            with (folder / name).open('a+b') as handle:
+                                if not _try_lock(handle):
+                                    continue
+                                try:
+                                    yield lane, parallel
+                                    return
+                                finally:
+                                    _unlock(handle)
+                    finally:
+                        _unlock(mode)
+                # A queued parallel waiter must not retain the shared mode
+                # lock: a resource downgrade needs an exclusive serial turn.
                 if time.monotonic() >= deadline:
                     raise OfficeLaneBusy('Another report is rendering. Please try again shortly.')
                 time.sleep(min(.05, max(0, deadline - time.monotonic())))
-            try:
-                while True:
-                    for lane in range(2 if parallel else 1):
-                        if lane == 1:
-                            free = memory_headroom()
-                            if free is None or free < SECOND_LANE_HEADROOM:
-                                continue
-                        name = '.conversion-lock' if lane == 0 else '.conversion-lock-1'
-                        with (folder / name).open('a+b') as handle:
-                            if not _try_lock(handle):
-                                continue
-                            try:
-                                yield lane, parallel
-                                return
-                            finally:
-                                _unlock(handle)
-                    if time.monotonic() >= deadline:
-                        raise OfficeLaneBusy('Another report is rendering. Please try again shortly.')
-                    time.sleep(min(.05, max(0, deadline - time.monotonic())))
-            finally:
-                _unlock(mode)
     finally:
         if not parallel:
             serial_lock.release()
