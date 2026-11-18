@@ -235,3 +235,20 @@ def test_pdf_page_link_repair_does_not_alter_ambiguous_or_false_contents(damage)
     assert ensure_pdf_page_links(corrupted, sections) == corrupted
     assert ensure_pdf_page_links(None, sections) is None
     assert ensure_pdf_page_links(b"not-a-pdf", sections) == b"not-a-pdf"
+
+
+def test_pdf_repair_keeps_reversed_visible_contents_unchanged_when_number_links_missing():
+    sections = _sections(2)
+    original = _pdf(sections, (1, 14), 15, reversed_visible=True)
+    with fitz.open(stream=original, filetype="pdf") as report:
+        contents = report[0]
+        for link in list(contents.get_links()):
+            if contents.get_textbox(link["from"]).strip().isdecimal():
+                contents.delete_link(link)
+        without_number_links = report.tobytes()
+    with fitz.open(stream=without_number_links, filetype="pdf") as report:
+        assert len(report[0].get_links()) == 2  # Title-only links, as with Writer.
+    assert ensure_pdf_page_links(without_number_links, sections) == without_number_links
+    raw = _word(sections)
+    unchanged, notice = synchronize(raw, without_number_links, sections)
+    assert unchanged == raw and "could not be verified" in notice
