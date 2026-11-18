@@ -868,3 +868,19 @@ test('a fresh server landing replaces a pending same-target command without losi
     assert.equal(h.state.landingRequest,'monthly_activity');h.measure();
     assert.equal(h.progress.dataset.section,'monthly_activity');assert.equal(h.state.navigationRequest,null);
 });
+
+test('A13 preflight marker without DOM closest preserves exact section navigation status',()=>{
+    const h=harness('compact',true);
+    const original=h.app.querySelector;
+    h.app.querySelector=selector=>selector==='.epc-review-attention-source'
+        ? {dataset:{count:'3'}} : original(selector);
+    assert.doesNotThrow(()=>h.measure());
+    assert.equal(h.progress.textContent,'1 of 6 · Cover');
+    h.nextButton.onclick();h.measure();
+    assert.equal(h.progress.textContent,'2 of 6 · Monthly Activity Summary');
+    h.app.querySelector=selector=>selector==='.epc-review-attention-source'
+        ? {dataset:{count:'not-a-number'},closest:()=>null} : original(selector);
+    assert.doesNotThrow(()=>h.measure());
+    assert.equal(h.progress.textContent,'2 of 6 · Monthly Activity Summary');
+    h.dispose();
+});
