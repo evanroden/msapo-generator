@@ -12,7 +12,7 @@ from app.monthly_report_model import (
     Facility, OrgChartNode, ReportDraft, ReportFollowUp, ReportPeriod,
     ReportProfile, ResolvedBlock, default_sections,
 )
-from app.monthly_report_setup import new_month_draft
+from app.monthly_report_setup import WorkOrderRolloverError, new_month_draft
 
 
 SEPTEMBER = ReportPeriod(2026, 9)
@@ -58,7 +58,7 @@ def test_rollover_refuses_foreign_report_identity_even_without_work_order_grids(
             *old.profile.facilities, Facility("south", "Synthetic South")),
             scope_type="multi_site")
     baseline = old.fingerprint
-    with pytest.raises(ValueError, match="(site|profile|contract|membership|identity|different)"):
+    with pytest.raises(WorkOrderRolloverError, match="(site|profile|contract|membership|identity|different)"):
         new_month_draft(old, period, profile=target)
     assert old.fingerprint == baseline
 
@@ -83,7 +83,7 @@ def test_same_site_renames_and_design_pin_are_allowed_without_reclassifying_mont
 
 def test_rollover_rejects_backdated_month_instead_of_reasserting_old_work():
     old = previous_report()
-    with pytest.raises(ValueError, match="(earlier|previous|older|backward|chronological)"):
+    with pytest.raises(WorkOrderRolloverError, match="(earlier|previous|older|backward|chronological)"):
         new_month_draft(old, ReportPeriod(2026, 8))
 
 
