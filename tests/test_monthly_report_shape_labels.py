@@ -10,7 +10,7 @@ from docx import Document
 from docx.oxml import parse_xml
 import pytest
 
-from app.monthly_report_import import ImportError, inspect_docx
+from app.monthly_report_import import ImportError, ImportMapping, inspect_docx, map_items
 from app.monthly_report_sections import section_reviews
 from app.monthly_report_shape_labels import collect_drawing_labels, source_review_lines
 from app.monthly_report_start_import import source_sites
@@ -241,3 +241,36 @@ def test_missing_or_malformed_source_and_label_budget_fail_closed(tmp_path):
     )
     with pytest.raises(ValueError, match="bounded label inventory"):
         collect_drawing_labels(too_long, part="word/document.xml", position=1, word_section=1)
+
+
+def test_unsupported_group_cannot_be_mapped_to_public_output(tmp_path):
+    path = _fixture(tmp_path)
+    raw = path.read_bytes()
+    inspection = inspect_docx(path)
+    candidate = next(item for item in inspection.items
+                     if item.kind == "unsupported" and "Group node B" in item.text)
+    with pytest.raises(ImportError, match="Unsupported items must remain in review"):
+        map_items(path, inspection, (ImportMapping(candidate.id, "activity_summary"),))
+    assert path.read_bytes() == raw
+
+
+def test_picture_alt_text_is_not_misattributed_to_neighbor_text_frame():
+    unit = parse_xml(
+        '<w:p ' + NAMESPACES + '><w:r><w:drawing>'
+        '<wp:anchor><wp:docPr id="1" name="frame" title="Actual frame description"/>'
+        '<a:graphic><a:graphicData '
+        'uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">'
+        '<wps:wsp><wps:txbx><w:txbxContent><w:p><w:r><w:t>Frame A</w:t>'
+        '</w:r></w:p></w:txbxContent></wps:txbx></wps:wsp>'
+        '</a:graphicData></a:graphic></wp:anchor>'
+        '</w:drawing></w:r>'
+        '<w:r><w:drawing><wp:anchor>'
+        '<wp:docPr id="2" name="picture" title="Unrelated picture alt"/>'
+        '<a:graphic><a:graphicData '
+        'uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'
+        '</a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p>'
+    )
+    labels = collect_drawing_labels(unit, part="word/document.xml", position=9, word_section=1)
+    assert {label.text for label in labels} == {"Frame A", "Actual frame description"}
+    meta = next(label for label in labels if label.text == "Actual frame description")
+    assert meta.source == "alternative_text" and meta.confidence == "metadata"
