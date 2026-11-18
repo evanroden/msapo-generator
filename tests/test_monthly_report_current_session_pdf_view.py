@@ -123,22 +123,25 @@ def test_replacement_retires_old_fragments_before_new_package_becomes_current(
     discarded = []
 
     def discard(owner):
-        # The previous byte-backed fragment must be retired before any new
-        # report package, including a failed PDF retry, becomes authoritative.
-        assert rendered.state["monthly_package"] is previous
-        discarded.append(owner)
+        discarded.append((owner, rendered.state["monthly_package"] is previous))
 
     monkeypatch.setattr(reference_preview, "discard_reference_scope", discard)
     replacement = package(pdf=replacement_pdf)
     output_ui.replace_current_session_pdf_package("monthly", "session-A", replacement)
 
-    assert discarded == [output_ui._final_pdf_scope("monthly", "session-A")]
+    # The previous byte-backed fragment is retired while it is still the
+    # current package, before any new package (even a failed PDF retry) takes over.
+    scope = output_ui._final_pdf_scope("monthly", "session-A")
+    assert discarded == [(scope, True)]
     assert rendered.state["monthly_package"] is replacement
     output_ui.render_current_session_pdf_preview(
         replacement, SimpleNamespace(fingerprint="draft-1"),
         "monthly", session_scope="session-A",
     )
     assert bool(rendered.previews) == bool(replacement_pdf)
+    # With no usable PDF, rendering revokes the same scope once more for any
+    # late callback from the retired fragment; it never shows the old bytes.
+    assert discarded[1:] == ([] if replacement_pdf else [(scope, False)])
 
 
 def test_same_package_rerender_does_not_dispose_current_preview(monkeypatch, rendered):

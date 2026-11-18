@@ -102,7 +102,9 @@ def check_engine(engine, name, width):
         image_a = image_ready(page)
         first_a_ms = round((time.perf_counter() - start_a) * 1000)
         view_box = page.locator(".report-preview").first.bounding_box()
-        assert view_box and 0 <= view_box["y"] < page.viewport_size["height"], view_box
+        # Scrolling to the viewer's start can land a fraction of a pixel past
+        # it (y = -0.4375 at this width); that is still at the top of the view.
+        assert view_box and -1 < view_box["y"] < page.viewport_size["height"], view_box
         assert view_box["x"] >= -2 and view_box["x"] + view_box["width"] <= width + 2, view_box
         pdf_a = download_current(page)
         word_a = download_current(page, "Download DOCX")
