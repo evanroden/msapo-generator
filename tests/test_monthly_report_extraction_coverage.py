@@ -348,3 +348,41 @@ def test_unrecognized_page_notice_cannot_be_waived_by_page_decision():
     ledger = source_coverage(replace(draft, sources=(source,)), source,
                              replace(content, source=source))
     assert ledger.items[-1].state == "blocked" and ledger.limited
+
+
+def test_malformed_extra_table_has_explicit_parser_issue():
+    a = SourceTable("One", ("ID",), (("1",),))
+    b = SourceTable("Unexpected second table", ("ID",), (("2",),))
+    draft, content = fixture(pages=("ID\\n1",), suffix=".csv", tables=(a, b))
+    ledger = source_coverage(draft, content.source, content)
+    assert ledger.rows == 2
+    assert any(item.item_id == "tables:page-mismatch" and item.state == "blocked"
+               for item in ledger.items)
+
+
+def test_native_summary_and_source_item_jump_without_extra_editor_approval(monkeypatch, tmp_path):
+    from streamlit.testing.v1 import AppTest
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    draft, content = fixture(pages=("Unaccepted technical statement.",))
+    app = AppTest.from_string("""
+import streamlit as st
+from app.monthly_report_coverage_ui import render_coverage
+draft = st.session_state["test_draft"]
+source_content = st.session_state["test_content"]
+st.session_state["test_draft"] = render_coverage(
+    draft, (source_content,), "a11-native", {block.key: block for block in draft.blocks})
+""")
+    app.session_state["test_draft"] = draft
+    app.session_state["test_content"] = content
+    app.run()
+    assert not app.exception
+    assert any("All sources · 1 files analyzed" in x.value and
+               "1 issues need review" in x.value for x in app.caption)
+    next(button for button in app.button if button.label == "Review extraction coverage").click().run()
+    assert not app.exception
+    assert any(widget.label == "Source item needing review" for widget in app.selectbox)
+    next(button for button in app.button if button.label == "Open original item for review").click().run()
+    assert not app.exception
+    assert app.session_state["a11-native_evidence_selected"] == content.source.id
+    assert app.session_state["a11-native_evidence_" + content.source.id + "_page"] == 1
+    assert app.session_state["test_draft"].blocks == draft.blocks
