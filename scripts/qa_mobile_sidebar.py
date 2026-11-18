@@ -89,6 +89,15 @@ def close_after_open(page, label):
         opener.click()
     wait_sidebar(page, True)
     screenshot(page, label + "-open")
+    administration = sidebar.get_by_test_id("stExpander").filter(
+        has_text="Administration")
+    expect(administration).to_be_visible()
+    administration.get_by_text("Administration", exact=True).click()
+    links = administration.get_by_role("link")
+    expect(links).to_have_count(4)
+    for index in range(4):
+        expect(links.nth(index)).to_be_visible()
+    check(label + " native Administration links remain accessible", True)
     sidebar.get_by_test_id("stSidebarCollapseButton").get_by_role("button").click()
     wait_sidebar(page, False)
     settle(page)
@@ -167,15 +176,6 @@ def monthly(browser, engine, width, height, *, resize=False):
                 check(label + " tablet editor starts full width",
                       initial_state == "false", {"expanded": initial_state})
         close_after_open(page, label)
-        inline = page.locator(".st-key-monthly_inline_administration")
-        sidebar_links = page.locator(".st-key-monthly_sidebar_administration")
-        check(label + " one visible in-page administration surface",
-              inline.is_visible() and not sidebar_links.is_visible()
-              and inline.get_by_role("link").count() == 4,
-              {"inline": inline.is_visible(),
-               "sidebar": sidebar_links.is_visible(),
-               "links": inline.get_by_role("link").count()})
-
         # These native elements must receive events at their own centre; a
         # translated zero-opacity sidebar cannot pass this probe.
         cover = page.locator(".st-key-epc_pair_monthly_cover")
@@ -230,7 +230,9 @@ def other_workflow(browser, engine, name, width, height):
         if name == "purchase":
             page.get_by_role("heading", name="Purchase order", exact=True).wait_for(
                 timeout=60000)
-            control = page.locator('[data-testid="stRadio"] label').first
+            # The label is intentionally hidden by the native segmented
+            # control; probe its visible Purchase order radio button instead.
+            control = page.locator('.st-key-workflow_mode button[role="radio"]').first
         else:
             page.get_by_role("heading", name="Expense reimbursement",
                              exact=True).wait_for(timeout=60000)

@@ -1,5 +1,4 @@
 """Separate Monthly administration routes; navigation carries no report data."""
-from functools import lru_cache
 from urllib.parse import urlencode
 
 import streamlit as st
@@ -23,48 +22,37 @@ def admin_url(kind="directory"):
     return report_url() + "&" + urlencode({"monthly_admin": kind})
 
 
-# 1024px includes portrait tablets. The native opener stays outside stSidebar.
-# Hiding the closed *container* (not merely translating or fading its content)
-# removes the otherwise transparent overlay from hit-testing and keyboard focus.
+# The native Streamlit opener is outside stSidebar. Removing the collapsed
+# container prevents a transparent 300px sidebar from intercepting touches.
+# Keep this style-only st.html independent of the editor layout.
 MOBILE_SIDEBAR_CSS = """<style>
 [data-testid="stSidebar"][aria-expanded="false"] {
     display: none !important;
     pointer-events: none !important;
 }
-@media (max-width: 1024px) {
-    .st-key-monthly_sidebar_administration { display: none !important; }
-}
-@media (min-width: 1025px) {
-    .st-key-monthly_inline_administration { display: none !important; }
-}
 </style>"""
 
-_MOBILE_SIDEBAR_JS = r"""
-export default function(component) {
+
+# st.html can execute a trusted same-document script without a Components v2
+# blob/module or an extra one-pixel editor row. Reuse Streamlit's actual native
+# collapse button; opening the sidebar later remains an explicit user action.
+MOBILE_SIDEBAR_SCRIPT = r"""<script>
+(() => {
+    if (window.__epcMobileSidebar) return;
     const media = window.matchMedia('(max-width: 1024px)');
-    // The component rerenders with the editor. Remember the initial viewport
-    // only within this document, not in a saved report or a browser cookie.
-    const state = window.__epcMobileSidebar || (window.__epcMobileSidebar = {
-        initialized: false, narrow: false, pending: false
-    });
-    if (!state.initialized) {
-        state.initialized = true;
-        state.narrow = media.matches;
-        state.pending = media.matches;
-    }
-    let frame = null;
-    let disposed = false;
+    const state = window.__epcMobileSidebar = {
+        narrow: media.matches, pending: media.matches, frame: null
+    };
     const collapseIfNeeded = () => {
-        frame = null;
-        if (disposed || !state.pending || !media.matches) return;
+        state.frame = null;
+        if (!state.pending || !media.matches
+            || !document.querySelector('.epc-workspace')) return;
         const sidebar = document.querySelector('[data-testid="stSidebar"]');
         if (!sidebar || !sidebar.hasAttribute('aria-expanded')) return;
         if (sidebar.getAttribute('aria-expanded') === 'false') {
             state.pending = false;
             return;
         }
-        // Use the actual Streamlit control, retaining the framework's state;
-        // never manipulate React attributes or a report input directly.
         const button = sidebar.querySelector(
             '[data-testid="stSidebarCollapseButton"] button');
         if (!button) return;
@@ -72,8 +60,8 @@ export default function(component) {
         button.click();
     };
     const schedule = () => {
-        if (!disposed && state.pending && frame === null)
-            frame = requestAnimationFrame(collapseIfNeeded);
+        if (state.pending && state.frame === null)
+            state.frame = requestAnimationFrame(collapseIfNeeded);
     };
     const resized = () => {
         const narrow = media.matches;
@@ -82,58 +70,30 @@ export default function(component) {
         state.narrow = narrow;
         schedule();
     };
-    const observer = new MutationObserver(schedule);
-    observer.observe(document.body, {
+    new MutationObserver(schedule).observe(document.body, {
         subtree: true, childList: true, attributes: true,
         attributeFilter: ['aria-expanded']
     });
     media.addEventListener('change', resized);
     window.addEventListener('resize', resized);
-    resized();
     schedule();
-    return () => {
-        disposed = true;
-        observer.disconnect();
-        media.removeEventListener('change', resized);
-        window.removeEventListener('resize', resized);
-        if (frame !== null) cancelAnimationFrame(frame);
-    };
-}
-"""
-
-
-@lru_cache(maxsize=2)
-def _mobile_sidebar_controller(runtime):
-    return st.components.v2.component(
-        "enfra_monthly_mobile_sidebar", js=_MOBILE_SIDEBAR_JS,
-        isolate_styles=False)
-
-
-def _links(place):
-    st.caption("Opens separately; your report tab stays available.")
-    for kind, label in (("directory", "Contract and site directory"),
-                        ("logos", "Shared contract logos"),
-                        ("storage", "Storage maintenance"),
-                        ("master", "Master design administration")):
-        # Different stable widget keys ensure each responsive surface owns its
-        # own native link, even though CSS renders just one surface at a time.
-        st.link_button(label, admin_url(kind), on_click="ignore",
-                       key=f"monthly_admin_{place}_{kind}")
+})();
+</script>"""
 
 
 def render_administration_links():
-    """The same scoped routes, visible in-page on narrow screens only."""
-    from streamlit.runtime import Runtime
+    """Keep the native administration disclosure available when the sidebar opens."""
     st.html(MOBILE_SIDEBAR_CSS)
-    _mobile_sidebar_controller(Runtime.instance())(
-        key="monthly_mobile_sidebar_controller", data={}, height=1, width="stretch")
     with st.sidebar:
-        with st.container(key="monthly_sidebar_administration"):
-            with st.expander("Administration", expanded=False):
-                _links("sidebar")
-    with st.container(key="monthly_inline_administration"):
+        # A script-only element inside the sidebar does not move the editor.
+        st.html(MOBILE_SIDEBAR_SCRIPT, unsafe_allow_javascript=True)
         with st.expander("Administration", expanded=False):
-            _links("inline")
+            st.caption("Opens separately; your report tab stays available.")
+            for kind, label in (("directory", "Contract and site directory"),
+                                ("logos", "Shared contract logos"),
+                                ("storage", "Storage maintenance"),
+                                ("master", "Master design administration")):
+                st.link_button(label, admin_url(kind), on_click="ignore")
 
 
 def render_administration(kind, field, *, mode):
