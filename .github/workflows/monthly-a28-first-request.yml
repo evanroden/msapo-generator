@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'app/monthly_report_section_preview_ui.py'
+      - 'app/monthly_report_preview_view.py'
       - 'tests/test_a28_first_requested_section_pages.py'
       - 'scripts/qa_a28_first_page.py'
       - '.github/workflows/monthly-a28-first-request.yml'
@@ -11,6 +12,7 @@ on:
     branches: [main]
     paths:
       - 'app/monthly_report_section_preview_ui.py'
+      - 'app/monthly_report_preview_view.py'
       - 'scripts/qa_a28_first_page.py'
       - '.github/workflows/monthly-a28-first-request.yml'
 
