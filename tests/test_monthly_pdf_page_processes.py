@@ -114,10 +114,10 @@ def test_large_approved_pdf_batch_keeps_captions_order_and_assets(profile, monke
     raw = synthetic_pdf(96, marks=80)
     content, _ = sources.ingest(profile, "synthetic.pdf", raw)
     pages = tuple(range(1, 97))
-    source = replace(content.source, selected_pages=pages,
-                     captions=((2, "Reviewed rotated page"),),
-                     client_page_reviews=tuple(
-                         (number, page_fingerprint(content.source, number)) for number in pages))
+    with_captions = replace(content.source, selected_pages=pages,
+                            captions=((2, "Reviewed rotated page"),))
+    source = replace(with_captions, client_page_reviews=tuple(
+        (number, page_fingerprint(with_captions, number)) for number in pages))
     content = replace(content, source=source)
     monkeypatch.setattr(parallel, "eligible", lambda count: False)
     serial = sources.prepare_pages(profile, (content,), ((source.id, "vendor_reports"),))
