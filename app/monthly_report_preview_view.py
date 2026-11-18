@@ -1,9 +1,10 @@
 """A scrollable preview that requests only visible pages, without remote scripts."""
-from base64 import b64encode
 from functools import lru_cache
 
 import streamlit as st
 from streamlit.runtime import Runtime
+
+from app.monthly_report_picture_group import _media_url
 
 
 CSS = """
@@ -305,7 +306,26 @@ export default function(component) {
             image.alt = data.title + ' — page ' + (index + 1);
             page.append(image);
         }
-        const src = 'data:image/jpeg;base64,' + wanted.image;
+        // The server sends a bounded, native session-scoped media URL, not
+        // an entire JPEG in every v2 component update. The URL is stable
+        // while an unchanged ticket/page is still rendered by this session.
+        const src = wanted.url;
+        if (typeof src !== 'string' || !/^\/(?:[A-Za-z0-9_-]+\/)*media\/[a-f0-9]{32}\.jpe?g$/.test(src)) {
+            if (image) image.remove();
+            return;
+        }
+        image.loading = 'eager';
+        image.decoding = 'async';
+        image.onerror = () => {
+            // A retired/failed read must not leave a broken image or mutate
+            // a newer generation's DOM. Keep its page placeholder and offer
+            // the existing bounded explicit Retry path instead.
+            if (!active || image.parentElement !== page || image.getAttribute('src') !== src) return;
+            image.remove();
+            state.requestFailed = true;
+            status.textContent = 'Preview image could not load — retry.';
+            retryRequest.hidden = false;
+        };
         if (image.getAttribute('src') !== src) image.setAttribute('src', src);
     });
     function sizePages() {
@@ -522,16 +542,26 @@ def _preview_component(_runtime):
 def render_view(*, key, generation, title, ticket=None, images=(), status='', stale=False, on_change, view_scope=None, pending=False, on_poll=None, acknowledged_viewport=None):
     view = _preview_component(Runtime.instance())
     applied = acknowledged_viewport or {'visible': False, 'pages': (0,), 'dpi': 96}
+    scope = str(view_scope or key)
+    # STORE has already validated the owner's opaque ticket and bounded the
+    # requested raster pages. Re-register every visible page on each rerender
+    # so Streamlit's native session media refs survive normal fragment/full
+    # renders. A ticket UUID and view scope bind the media coordinate to the
+    # current report/source identity; URL payloads contain no raw JPEG/base64.
+    delivered = [{'index': index,
+                  'url': _media_url(raw, 'image/jpeg',
+                                    f'report-preview:{scope}:{ticket.key}:{index}')}
+                 for index, raw in images] if ticket is not None and not stale else []
     # The native container arrives before the asynchronous browser component.
     # Reserve the same viewport-sized space during that gap, including reloads,
     # so a short section cannot grow underneath a pointer aimed at the next one.
     with st.container(key='epc_preview_slot_' + key):
         return view(key=key, data={
-            'generation': generation, 'title': title, 'viewScope': str(view_scope or key), 'ready': ticket is not None and not stale, 'stale': bool(stale),
+            'generation': generation, 'title': title, 'viewScope': scope, 'ready': ticket is not None and not stale, 'stale': bool(stale),
             'sizes': ticket.sizes if ticket else (), 'status': status, 'pending': bool(pending),
             'initialPage': ticket.initial_page if ticket else 0,
             'acknowledgedViewport': {'visible': bool(applied['visible']), 'pages': list(applied['pages']),
                                      'dpi': applied['dpi'], 'generation': generation},
-            'pages': [{'index': index, 'image': b64encode(raw).decode('ascii')} for index, raw in images],
+            'pages': delivered,
         }, default={'viewport': None, 'poll': None}, on_viewport_change=on_change,
             on_poll_change=on_poll or (lambda: None), height='content')
