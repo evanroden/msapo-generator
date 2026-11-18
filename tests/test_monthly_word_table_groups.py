@@ -30,7 +30,7 @@ def _fixture(tmp_path):
     calls.cell(0, 0).merge(calls.cell(0, 4)).text = "Client Service Calls"
     headings = ("WO", "Finish Date", "Area", "Task Code/Description", "Tag")
     _fill(calls.rows[1], headings)
-    _set_header(calls.rows[1])
+    # A two-level title/header is structural even if Word lacks tblHeader.
     _fill(calls.rows[2], ("SC-07", "2026-09-14", "Mechanical", "Inspected filter", "AHU-7"))
     _fill(calls.rows[3], headings)
     _set_header(calls.rows[3])  # Native repeated page header, not a service call.
@@ -45,7 +45,7 @@ def _fixture(tmp_path):
     summary = doc.add_table(rows=3, cols=3)
     summary.cell(0, 0).merge(summary.cell(0, 2)).text = "Synthetic Water Summary"
     _fill(summary.rows[1], ("Sample", "Value", "Note"))
-    _set_header(summary.rows[1])
+    # A second-level native heading need not carry the tblHeader flag.
     _fill(summary.rows[2], ("Tower A", "0", "Checked"))
     # A nested grid cannot masquerade as one flat parent data row.
     outer = doc.add_table(rows=1, cols=1)
@@ -118,6 +118,24 @@ def test_unclassified_bands_and_nested_grid_are_not_invented_work(tmp_path):
     assert not any(i.kind == "table" and "N-1" in str(i.rows)
                    and i.table_header_row == 0 and "Pending" in str(i.rows)
                    and "Code" not in str(i.rows) for i in inspection.items)
+
+
+
+
+def test_ambiguous_group_band_is_never_promoted_to_a_contact(tmp_path):
+    from app.monthly_report_source_table_roles import native_table_class
+    path = _fixture(tmp_path)
+    doc = Document(path)
+    doc.tables[1].cell(2, 0).text = ""  # Contact identity is absent.
+    doc.save(path)
+    inspection = inspect_docx(path)
+    vendors = _table(inspection, "Synthetic Air Co")
+    assert vendors.table_row_roles == ("header", "group_band", "data", "group_band", "data")
+    assert grouped_vendor_contacts(vendors) is None
+    assert native_table_class(vendors) == ""
+    # No replacement row is invented; the full original grid remains available.
+    assert vendors.rows[2] == ("", "555-0101", "wire@example.invalid")
+    assert len(vendors.table_cell_refs) == 11
 
 
 
