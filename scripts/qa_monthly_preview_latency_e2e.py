@@ -170,7 +170,7 @@ def _mixed_and_negative():
     assert duplicate.source.sha256 == received[2]["sha256"]
     failures = []
     for name, raw in (("empty.csv", b""), ("not-supported.exe", b"bytes"),
-                      ("malformed.csv", b'Work Order,Status\\n"unclosed,Open')):
+                      ("malformed.csv", b'Work Order,Status\n"unclosed,Open')):
         try:
             sources.ingest(profile, name, raw)
         except ValueError:
