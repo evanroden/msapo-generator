@@ -8,6 +8,7 @@ from docx.shared import Inches
 from lxml import etree as XML
 import pytest
 
+from conftest import requires_libreoffice
 from app.monthly_report_import import ImportError, inspect_docx
 from app.monthly_report_native_package import passive_docx
 
@@ -155,33 +156,28 @@ def test_missing_and_malformed_docx_do_not_create_any_import_items(tmp_path):
         inspect_docx(tmp_path / "not-uploaded.docx")
     malformed = tmp_path / "malformed.docx"
     malformed.write_bytes(b"not a DOCX")
-    with pytest.raises((ImportError, Exception)) as exc:
+    with pytest.raises(ImportError, match="could not be safely read"):
         inspect_docx(malformed)
-    assert exc.value is not None
 
 
+@requires_libreoffice
 def test_passive_docx_pdf_layout_and_accepted_cells(tmp_path):
-    from conftest import requires_libreoffice
     from app.pdf_converter import convert_to_pdf
     import pymupdf
 
-    @requires_libreoffice
-    def render():
-        path = _fixture(tmp_path)
-        output = tmp_path / "a38-passive.docx"
-        output.write_bytes(passive_docx(path))
-        pdf_path = convert_to_pdf(output)
-        try:
-            with pymupdf.open(pdf_path) as pages:
-                assert pages.page_count >= 1
-                page = pages[0]
-                assert abs(page.rect.width - 792) < 2
-                assert abs(page.rect.height - 612) < 2
-                content = "".join(p.get_text() for p in pages)
-                assert "ACCEPTED-CELL" in content
-                assert "Merged accepted" in content
-                assert all(s not in content for s in (DELETED, COMMENT, MOVED))
-        finally:
-            pdf_path.unlink(missing_ok=True)
-
-    render()
+    path = _fixture(tmp_path)
+    output = tmp_path / "a38-passive.docx"
+    output.write_bytes(passive_docx(path))
+    pdf_path = convert_to_pdf(output)
+    try:
+        with pymupdf.open(pdf_path) as pages:
+            assert pages.page_count >= 1
+            page = pages[0]
+            assert abs(page.rect.width - 792) < 2
+            assert abs(page.rect.height - 612) < 2
+            content = "".join(p.get_text() for p in pages)
+            assert "ACCEPTED-CELL" in content
+            assert "Merged accepted" in content
+            assert all(s not in content for s in (DELETED, COMMENT, MOVED))
+    finally:
+        pdf_path.unlink(missing_ok=True)
