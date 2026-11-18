@@ -11,7 +11,7 @@ from app.monthly_report_model import ResolvedBlock
 from app.monthly_report_training import EVENT_REF
 from app.monthly_report_training_import import (
     accepted_training_block, correct_training_row, exclude_training_row,
-    restore_training_review, training_review_record,
+    restore_training_review, training_review_record, review_training_event_source,
 )
 from test_monthly_report_training_import import PROFILE, PERIOD, ingest, reviewed
 
@@ -27,7 +27,7 @@ def test_singular_roster_staff_scope_and_exact_event_duplicates(storage):
         b"Course,Date,Method,Attendee,Hours,Completion Status,Staff type\n"
         b"Pump orientation,2026-09-13,In person,Alice,1,Completed,Hospital staff\n"
         b"Pump orientation,2026-09-13,In person,Alice,1,Completed,Hospital staff\n"
-        b"Pump orientation,2026-09-13,In person,Morgan,1,Completed,Service provider\n"
+        b"Pump orientation,2026-09-13,In person,Morgan; Jordan,1,Completed,Service provider\n"
     )
     content = ingest("synthetic_training_roster.csv", original)
     review = reviewed(content, "events")
@@ -36,7 +36,7 @@ def test_singular_roster_staff_scope_and_exact_event_duplicates(storage):
     assert [row.origin.row_number for row in review.rows] == [2, 3, 4]
     assert review.rows[0].values[3] == "Hospital/client staff: Alice"
     assert review.rows[1].values[3] == "Hospital/client staff: Alice"
-    assert review.rows[2].values[3] == "Service provider staff: Morgan"
+    assert review.rows[2].values[3] == "Service provider staff: Morgan; Service provider staff: Jordan"
     assert all(not row.issues and not row.excluded for row in review.rows)
     receipt = training_review_record(review)
     assert restore_training_review(receipt) == review
@@ -49,7 +49,7 @@ def test_singular_roster_staff_scope_and_exact_event_duplicates(storage):
     assert events.rows[0] == (
         "Pump orientation", "2026-09-13", "In person", "Hospital/client staff: Alice", "1")
     assert events.rows[1] == (
-        "Pump orientation", "2026-09-13", "In person", "Service provider staff: Morgan", "1")
+        "Pump orientation", "2026-09-13", "In person", "Service provider staff: Morgan; Service provider staff: Jordan", "1")
     assert block.text == original_block.text
     assert block.references == (review.source.reference,)
     assert accepted_training_block(review, block, expected_block_fingerprint=block.fingerprint) == block
@@ -73,6 +73,13 @@ def test_roster_fails_closed_on_unverified_completion_hours_staff_role_and_old_d
     assert "does not show completed" in " ".join(review.rows[2].issues)
     assert "Hours must be positive" in " ".join(review.rows[3].issues)
     assert "staff type" in " ".join(review.rows[4].issues).lower()
+    original_unknown = review.rows[-1].origin.cells
+    corrected_unknown = correct_training_row(
+        review, review.rows[-1].key, {"Participants": "Service provider staff: Lee"},
+        expected_revision=review.revision, profile=PROFILE, period=PERIOD)
+    assert not corrected_unknown.rows[-1].issues
+    assert corrected_unknown.rows[-1].origin.cells == original_unknown
+    review = corrected_unknown
     for row in review.rows[1:]:
         review = exclude_training_row(review, row.key, expected_revision=review.revision)
     assert review.ready_for_import
@@ -92,3 +99,26 @@ def test_roster_fails_closed_on_unverified_completion_hours_staff_role_and_old_d
             updated, updated.rows[0].key, {"Hours": "2"},
             expected_revision=stale_revision, profile=PROFILE, period=PERIOD)
     assert restore_training_review(training_review_record(updated)) == updated
+
+def test_older_saved_review_cannot_bypass_new_staff_role_scope(storage):
+    original = (
+        b"Course,Date,Method,Attendee,Hours,Status,Personnel type\\n"
+        b"Generator safety,2026-09-08,Virtual,Morgan,1,Completed,Vendor\\n"
+    )
+    review = reviewed(ingest("prior_undifferentiated_roster.csv", original), "events")
+    assert review.ready_for_import
+    legacy = replace(review, rows=(
+        replace(review.rows[0], values=(
+            "Generator safety", "2026-09-08", "Virtual", "Morgan", "1")),))
+    assert not legacy.rows[0].issues, "This simulates a valid older, undifferentiated receipt"
+    checked = review_training_event_source(legacy, PROFILE)
+    assert not checked.ready_for_import
+    assert "staff type label" in " ".join(checked.rows[0].issues)
+    block = ResolvedBlock("training_summary", "This month")
+    with pytest.raises(ValueError, match="Review"):
+        accepted_training_block(checked, block, expected_block_fingerprint=block.fingerprint)
+    corrected = correct_training_row(
+        checked, checked.rows[0].key, {"Participants": "Service provider staff: Morgan"},
+        expected_revision=checked.revision, profile=PROFILE, period=PERIOD)
+    assert corrected.ready_for_import
+    assert corrected.rows[0].origin.cells[-1] == "Vendor"
