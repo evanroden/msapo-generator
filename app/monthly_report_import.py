@@ -594,9 +594,11 @@ def _service_call_title_band(element, rows, section):
     if any(value not in ("cost", "unitprice", "amount") for value in headers[5:]):
         return False
     width = len(headers)
-    native_rows = element.findall(W + "tr")
-    title_cells = native_rows[0].findall(W + "tc")
-    header_cells = native_rows[1].findall(W + "tc")
+    native_rows = _controlled_children(element, W + "tr")
+    if len(native_rows) < 2:
+        return False
+    title_cells = _controlled_children(native_rows[0], W + "tc")
+    header_cells = _controlled_children(native_rows[1], W + "tc")
     if len(title_cells) != 1 or len(header_cells) != width:
         return False
     span = title_cells[0].find(f"{W}tcPr/{W}gridSpan")
@@ -730,10 +732,11 @@ def inspect_docx(path: Path) -> DocxInspection:
                             if part.startswith(("word/header", "word/footer")):
                                 _remove_page_field_results(element, page_fields)
                             text = _text(element)
+                            table_element = _controlled_table(element)
                             # Some Word producers emit text frames without the
                             # DrawingML/VML wrappers inventoried below. Their labels
                             # are layout evidence, not ordinary narrative or headings.
-                            standalone_frame = (element.tag != W + "tbl"
+                            standalone_frame = (table_element is None
                                 and any(node.tag == W + "txbxContent" for node in element.iter())
                                 and not any(node.tag in (V + "group", V + "shape", V + "rect")
                                     or (node.tag == A + "graphicData"
@@ -761,7 +764,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                             if standalone_frame:
                                 heading_fragments = []
                                 heading_positions = []
-                            if part == "word/document.xml" and element.tag != W + "tbl" and not standalone_frame:
+                            if part == "word/document.xml" and table_element is None and not standalone_frame:
                                 if "tableofcontents" in re.sub(r"[^a-z]", "", text.casefold()):
                                     toc_section, section, heading_fragments = word_section, "", []
                                     heading_positions = []
@@ -826,7 +829,6 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 for kind in ("footnote", "endnote"):
                                     for reference in element.iter(W + kind + "Reference"):
                                         note_owners[(kind, reference.get(W + "id", ""))] = (section, content_slot)
-                            table_element = _controlled_table(element)
                             picture_table = table_element is not None and section == "activity" and content_slot == "improvements" and any(
                                 node.tag in (A + "blip", V + "imagedata") for node in element.iter())
                             parents = {child: parent for parent in element.iter() for child in parent}
