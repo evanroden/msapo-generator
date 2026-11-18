@@ -54,7 +54,8 @@ def test_priced_adjacent_page_and_review_or_scope_fail_closed():
     foreign = replace(src, source=replace(src.source, facility="Unrelated facility"))
     assert all(choice.action == "blocked" for choice in route_pages((foreign,), profile))
     unknown = replace(src, source=replace(src.source, facility=""))
-    assert all(choice.action == "blocked" for choice in route_pages((unknown,), profile))
+    assert [choice.action for choice in route_pages((unknown,), profile)] == ["blocked", "ready"]
+    assert route_pages((replace(unknown, source=replace(unknown.source, client_page_reviews=())),), profile)[1].action == "review"
 
 
 def test_duplicate_import_existing_owner_manual_omission_and_override():
