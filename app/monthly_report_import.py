@@ -961,8 +961,14 @@ def inspect_docx(path: Path) -> DocxInspection:
                                     image_occurrences[target] = (prior_id or added_id, occurrence + 1)
                             graphics = [e for e in element.iter() if e.tag == A + "graphicData" and not e.get("uri", "").endswith("/picture")]
                             legacy_groups = element.findall(".//" + V + "group")
-                            legacy_text = any(node.find(".//" + W + "txbxContent") is not None for node in element.iter() if node.tag in (V + "shape", V + "rect"))
-                            if graphics or legacy_groups or legacy_text:
+                            legacy_shapes = [node for node in element.iter()
+                                if node.tag in (V + "shape", V + "rect", V + "roundrect", V + "oval", V + "line")
+                                and node.find(".//" + V + "imagedata") is None]
+                            legacy_text = any(node.find(".//" + W + "txbxContent") is not None
+                                              for node in legacy_shapes)
+                            # Unlabelled standalone VML artwork is still artwork; do not
+                            # silently equate an unread decoration with an empty paragraph.
+                            if graphics or legacy_groups or legacy_shapes:
                                 from app.monthly_report_smartart import closed_smartart_text
                                 smartart = closed_smartart_text(archive, graphics, relations) if section == "organization" and not legacy_groups and not legacy_text else None
                                 if smartart is not None:
@@ -980,6 +986,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                                         native_role = ""
                                     note = native_role or ("Alternate Word representations contain different or unsupported content. Review and replace this exact drawing; every original representation is retained." if divergent_native else
                                               "Unmapped native SmartArt: complete local text-only drawing could not be established." if diagram else
+                                              "Unlabelled VML artwork: source shape is retained for layout review, not treated as empty text." if legacy_shapes and not drawing_labels and not text else
                                               "Native divider artwork" if detected and detected != "unmatched" else
                                               "Native Word drawing: preserve and review its complete page layout, or add a replacement picture. Nothing is executed during inspection.")
                                     # Recognized divider artwork is matched by exact note
