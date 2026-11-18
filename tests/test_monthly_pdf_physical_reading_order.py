@@ -6,10 +6,11 @@ from dataclasses import replace
 from hashlib import sha256
 
 import pymupdf as fitz
+import pytest
 
 from app import monthly_report_sources as sources
 from app.monthly_report_model import synthetic_profiles
-from app.monthly_report_structured_uploads import native_update
+from app.monthly_report_structured_uploads import native_update, reader_update, reader_sources
 from app.monthly_report_vendor_passages import block_spans, read_vendor_document
 
 
@@ -56,6 +57,13 @@ def test_separate_columns_share_vertical_band_and_require_page_review(monkeypatc
     assert not sources.action_evidence(source)[0]
     assert read_vendor_document(source)[1] == ((), True)
     assert native_update((content,), "activity_summary").text == ""
+    assert reader_sources((content,), "activity_summary") == ()
+    with pytest.raises(ValueError, match="physical reading-order review"):
+        reader_update((content,), "activity_summary", {
+            "items": [{"source": source.id, "page": 1,
+                       "text": "Actions: Inspected the demo fan",
+                       "row": [], "include_page": False}],
+        })
     assert any("adjacent PDF columns" in note and "Page 1" in note for note in source.notices)
     assert "did not start." in source.page_texts[0]
     assert "Follow-up: Return when parts arrive." in source.page_texts[0]
@@ -83,6 +91,13 @@ def test_same_text_in_one_column_retains_exact_negative_and_page_reference(monke
     activity = native_update((content,), "activity_summary")
     assert "did not start." in activity.text
     assert activity.references == (sources.source_reference(source, 1),)
+    read, _ = reader_update((content,), "activity_summary", {
+        "items": [{"source": source.id, "page": 1,
+                   "text": "Actions: Inspected the demo fan but it did not start.",
+                   "row": [], "include_page": False}],
+    }, activity)
+    assert read.text == activity.text and read.references == activity.references
+    assert read.text.count("did not start.") == 1
     assert not any("Replaced the demo filter" in p for p in sources.action_evidence(source)[1])
     assert sources.source_bytes(profile, source) == raw
 
