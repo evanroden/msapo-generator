@@ -100,7 +100,9 @@ def _native_capital_items(draft, block, master, *, confirm_priority_changes=Fals
         if not level or not action:
             raise ValueError("Every imported capital row needs an explicit priority and recommendation.")
         equipment = row[asset].strip() if asset is not None else ""
-        extra = tuple((title, value) for i, (title, value) in enumerate(zip(headings, row))
+        extra = tuple((("Source status (historical, not current completion)"
+                        if title.strip().casefold() == "status" else title), value)
+                      for i, (title, value) in enumerate(zip(headings, row))
                       if i not in (facility, priority, recommendation, asset))
         # A duplicate recommendation on a different asset is a separate item.
         # Exact duplicates remain separate numbered source occurrences.
