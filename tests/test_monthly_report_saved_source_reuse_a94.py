@@ -172,8 +172,9 @@ def test_native_guided_add_area_exposes_direct_reuse_without_second_review_path(
 
     app = monthly(monkeypatch, tmp_path)
     actual = library.list_profiles(RRH_CONTRACT)[0]
-    source = make_source(actual, "saved-direct.txt", b"Synthetic completed service 2026-09-15.")
-    save(actual, ReportPeriod(2026, 9), (source,))
+    source = make_source(actual, "saved-direct.txt", b"Synthetic completed service 2026-08-15.",
+                         date="2026-08-15")
+    save(actual, ReportPeriod(2026, 8), (source,))
     app.run()
     assert not app.exception
     assert sum(item.label == "Add source files" for item in app.get("file_uploader")) == 1
