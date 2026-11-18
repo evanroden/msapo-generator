@@ -13,6 +13,24 @@ def source_table_role(item):
     return next((role for row in item.rows for cell in row if (role := text_role(cell))), "")
 
 
+def native_table_class(item):
+    """Strongly proved typed intent only; a section heading is not evidence of work.
+
+    Source-table instructions use source_table_role, independently of this
+    classification. Unclassified tables retain all their source cells for
+    explicit review and mapping.
+    """
+    if item.kind != "table":
+        return ""
+    if item.section == "maintenance" and item.table_header_row == 1:
+        return "service_calls"
+    if item.section == "subcontractors":
+        from app.monthly_report_vendor_groups import grouped_vendor_contacts
+        if grouped_vendor_contacts(item) is not None:
+            return "vendor_contacts"
+    return ""
+
+
 def _stamp(source_sha, item):
     return hashlib.sha256(json.dumps((source_stamp(source_sha, item), item.rows),
                                      ensure_ascii=False).encode()).hexdigest()
