@@ -194,6 +194,14 @@ def _pending(state, section):
                 state.get('running') and state['running'][0] == section))
 
 
+def _current_page_request(state, section):
+    """A viewport acknowledgment belongs to the exact wanted revision."""
+    view = state.get('page_requests', {}).get(section)
+    if (isinstance(view, dict) and view.get('generation') == state['wanted'].get(section):
+        return view
+    return None
+
+
 def _viewport_changed(prefix, section, widget_key):
     state = _ordered_preview_state(prefix)
     value = st.session_state.get(widget_key, {})
@@ -201,7 +209,7 @@ def _viewport_changed(prefix, section, widget_key):
     if view is None:
         return
     state['visible'][section] = view['visible']
-    state['page_requests'][section] = view
+    state['page_requests'][section] = {**view, 'generation': state['wanted'].get(section)}
     if not view['visible']:
         state['queue'].pop(section, None)
         prior = state.setdefault('last_good', {}).pop(section, {})
@@ -286,8 +294,12 @@ def _render_ordered_preview(section_key, prefix, title):
             _discard(state, state['last_good'].pop(section_key))
 
     if ticket and state['visible'].get(section_key):
-        view = state['page_requests'].get(section_key, {'pages': (0,), 'dpi': 120})
-        indexes = tuple(index for index in view['pages'] if index < ticket.pages) or (0,)
+        # A new ticket starts at its content page, not an unrelated divider.
+        # Ignore old revision viewports until the browser requests this one.
+        view = _current_page_request(state, section_key) or {
+            'pages': (ticket.initial_page,), 'dpi': 120,
+        }
+        indexes = tuple(index for index in view['pages'] if index < ticket.pages) or (ticket.initial_page,)
         try:
             raster = STORE.pages(state['owner'], ticket, indexes, dpi=view['dpi'])
         except (ValueError, OSError):
@@ -341,7 +353,7 @@ def _render_ordered_preview(section_key, prefix, title):
     widget_key = prefix + '_preview_surface_' + section_key
     render_view(key=widget_key, view_scope=state['owner'] + '|' + widget_key, generation=state['wanted'].get(section_key, ''), title=title,
                 ticket=ticket, images=images, status=status, stale=stale,
-                acknowledged_viewport=state['page_requests'].get(section_key),
+                acknowledged_viewport=_current_page_request(state, section_key),
                 pending=pending,
                 on_poll=_scoped_callback(_poll_changed, prefix, section_key, widget_key),
                 on_change=_scoped_callback(_viewport_changed, prefix, section_key, widget_key))
