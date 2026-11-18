@@ -160,6 +160,19 @@ def collect_drawing_labels(element, *, part, position, word_section):
         for descriptor in element.iter():
             if descriptor.tag.rsplit("}", 1)[-1] not in ("docPr", "cNvPr"):
                 continue
+            # A sibling picture in the same Word paragraph has its own
+            # picture/alt-text inventory. Do not misattribute its description
+            # to an unrelated floating text frame.
+            owner = _ancestor(descriptor, parents, {
+                WP + "anchor", WP + "inline", WPS + "wsp", WPG + "wgp"
+            })
+            if owner is None or not (
+                any(node.tag == W + "txbxContent" for node in owner.iter())
+                or any(node.tag == A + "graphicData"
+                       and not node.get("uri", "").endswith("/picture")
+                       for node in owner.iter())
+            ):
+                continue
             for attribute in ("descr", "title"):
                 label = descriptor.get(attribute, "").strip()
                 if label:
@@ -175,7 +188,7 @@ def source_review_lines(item):
         return ()
     lines = []
     for label in labels:
-        source = "Visible Word text" if label.source == "word_text" else (
+        source = "Word text box value (display unverified)" if label.source == "word_text" else (
             "DrawingML label (layout unverified)" if label.source == "drawing_text"
             else "Alternative text (not proven visible)")
         lines.append(
