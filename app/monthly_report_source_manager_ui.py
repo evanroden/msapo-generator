@@ -57,6 +57,27 @@ def open_source_review(prefix, source_id, target, page=None):
     st.session_state[prefix + "_source_review_context"] = source_id
 
 
+def _resident_source_forms(prefix, available, requested, selected, opened):
+    """Mount only visited source forms, never drop an unsubmitted native form.
+
+    Streamlit form fields are sent to Python only on Submit. Simply caching
+    their defaults cannot recover a user's browser-only, unsubmitted date/site
+    edits. Keep every *visited* form mounted, even when hidden or Done, in
+    first-visit order so earlier delta paths do not move during source switches.
+    Unvisited files require no metadata widgets. Drop forms for removed IDs.
+    """
+    key = prefix + "_source_resident_forms"
+    available_ids = set(available)
+    resident = [identity for identity in st.session_state.get(key, ())
+                if identity in available_ids]
+    if opened:
+        for identity in (selected, requested):
+            if identity in available_ids and identity not in resident:
+                resident.append(identity)
+    st.session_state[key] = tuple(resident)
+    return tuple(resident)
+
+
 def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, keep_missing, *,
                                  assets=None, table_columns=None):
     """One stable source workspace; hiding never retires buffered native forms."""
@@ -148,8 +169,12 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
             current = replace(draft, blocks=tuple(blocks.values()))
             included = used_source_ids(current)
             corrected = {}
-            for source in ordered.values():
-                source = _current_source_detail(source, contents)
+            # A native form retains browser-only edits until its own Submit.
+            # Never render all 50 old files just to keep one active correction.
+            # First-visit order also holds the delta paths of visited forms.
+            residents = _resident_source_forms(prefix, ids, requested, selected, opened)
+            for source_id in residents:
+                source = _current_source_detail(ordered[source_id], contents)
                 owner_key = prefix + "_managed_source_" + source.id
                 st.markdown('<style>.st-key-' + owner_key + '{display:' +
                             ("block" if source.id == selected else "none") + ';}</style>',
