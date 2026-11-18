@@ -18,7 +18,7 @@ def make_source(directory, scenario, suffix=''):
     from app.monthly_report_model import synthetic_profiles
     directory=Path(directory);directory.mkdir(parents=True,exist_ok=True)
     north,south=synthetic_profiles()[1].facilities
-    doc=Document();doc.add_heading(north.title,0)
+    doc=Document();doc.add_heading(south.title if scenario=='scope' else north.title,0)
     doc.add_paragraph('Monthly Report '+('July 2026' if scenario=='stale' else 'September 2026'))
     if scenario=='scope':
         doc.add_page_break();doc.add_paragraph('Reference only: '+south.title+' is outside this report. '+suffix)
