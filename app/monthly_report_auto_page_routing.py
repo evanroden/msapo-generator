@@ -125,10 +125,10 @@ def route_pages(contents, profile=None, *, period=None, overrides=None, owned=No
         source = content.source
         previous = seen.get(source.id)
         if previous is not None:
-            if previous != source.sha256:
-                raise ValueError("One source identity refers to different originals.")
+            if previous != source.fingerprint:
+                raise ValueError("Conflicting revisions for the same source identity; review the saved original again.")
             continue
-        seen[source.id] = source.sha256
+        seen[source.id] = source.fingerprint
         if any(type(n) is not int or n < 1 or n > len(source.page_texts)
                for n in source.selected_pages):
             raise ValueError("Selected source page does not exist.")
