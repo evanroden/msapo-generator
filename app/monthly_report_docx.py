@@ -818,10 +818,15 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
 def generate_report(draft: ReportDraft, *, acknowledged_fingerprint: str = "",
                     asset_loader: Callable[[str], bytes] | None = None, source_view=None,
                     reuse_owner: str | None = None, reuse_asset_versions=()) -> ReportPackage:
+    from contextlib import nullcontext
     from app import monthly_report_final_conversion_cache as final_cache
     report = (draft.profile.contract, draft.profile.key, draft.period.key)
+    # Existing callers can opt into an explicitly established owner context
+    # without adding kwargs to legacy Streamlit test doubles.
+    owner_context = (final_cache.owner_scope(reuse_owner, report, reuse_asset_versions)
+                     if reuse_owner is not None else nullcontext())
     try:
-        with final_cache.owner_scope(reuse_owner, report, reuse_asset_versions):
+        with owner_context:
             with monthly_render_jobs.work_slot():
                 return _generate_report(draft, acknowledged_fingerprint=acknowledged_fingerprint, asset_loader=asset_loader, source_view=source_view)
     except monthly_render_jobs.RenderBusy as exc:
