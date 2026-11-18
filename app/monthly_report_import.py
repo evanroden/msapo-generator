@@ -958,6 +958,11 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 if target:
                                     image_occurrences[target] = (prior_id or added_id, occurrence + 1)
                             graphics = [e for e in element.iter() if e.tag == A + "graphicData" and not e.get("uri", "").endswith("/picture")]
+                            chart_ids, chart_labels, chart_notices = (), (), ()
+                            if graphics:
+                                from app.monthly_report_docx_chart_coverage import chart_relationship_evidence
+                                chart_ids, chart_labels, chart_notices = chart_relationship_evidence(
+                                    archive, graphics, relations, names)
                             legacy_groups = element.findall(".//" + V + "group")
                             legacy_text = any(node.find(".//" + W + "txbxContent") is not None for node in element.iter() if node.tag in (V + "shape", V + "rect"))
                             if graphics or legacy_groups or legacy_text:
@@ -989,8 +994,11 @@ def inspect_docx(path: Path) -> DocxInspection:
                                             element, word_section=word_section, position=position)
                                         if divergent_native:
                                             note += " The modern and fallback Word representations disagree."
+                                    if chart_notices:
+                                        note += " " + " ".join(chart_notices)
                                     add("native_layout" if native_role else "unsupported", part, position,
-                                        text=text, note=note)
+                                        text="\n".join(t for t in (text, *chart_labels) if t),
+                                        relationship_id=";".join(chart_ids), note=note)
                             if element.find(".//" + W + "altChunk") is not None or element.tag == W + "altChunk":
                                 add("unsupported", part, position, note="Embedded document content was not executed. Review it in the original.")
                             if part == "word/document.xml" and element.find(".//" + W + "sectPr") is not None:
