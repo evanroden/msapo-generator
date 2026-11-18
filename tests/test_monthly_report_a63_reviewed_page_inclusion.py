@@ -5,6 +5,7 @@ PDFs. No genuine client reports, remote AI calls, or served-browser claims.
 """
 
 from dataclasses import asdict, replace
+from hashlib import sha256
 from io import BytesIO
 
 import pymupdf as fitz
@@ -89,6 +90,24 @@ def test_last_page_decision_appends_without_an_extra_button_and_saves(monkeypatc
     resumed = library.load_snapshot(profile.contract, profile.key, period)
     assert resumed.draft == draft
     assert sources.source_bytes(profile, resumed.draft.sources[0]) == raw
+
+    # Exercise the actual Word renderer from the individually reviewed,
+    # persisted source/page selection, not just a mock or whole-PDF shortcut.
+    from docx import Document
+    from app.monthly_report_asset_review import approve_all_assets, refresh_asset_source_context
+    from app.monthly_report_docx import assemble_docx
+    reviewed_source = replace(source, service_date="2026-09-12",
+                              facility=profile.facilities[0].key)
+    reviewed_block = approve_all_assets(refresh_asset_source_context(block, (reviewed_source,)))
+    section_key = "mbcx" if destination == "mbcx_report" else "scorecards"
+    printable = replace(draft, sources=(reviewed_source,), blocks=(reviewed_block,),
+                        sections=(replace(section, key=section_key),))
+    docx_bytes = assemble_docx(
+        printable, acknowledged_fingerprint=printable.fingerprint,
+        asset_loader=lambda name: library.read_asset(profile.contract, profile.key, name),
+    )
+    assert len(Document(BytesIO(docx_bytes)).inline_shapes) == 1
+    assert sha256(docx_bytes).hexdigest() != sha256(raw).hexdigest()
 
 
 @pytest.mark.parametrize("destination", TECHNICAL)
