@@ -175,3 +175,23 @@ def test_identical_person_rows_require_review_without_dropping_category_bands(
     state = _publish(north, ResolvedBlock(
         "subcontractor_matrix", "This month", extra_tables=(band,)))
     assert len(state.entries[0].tables[0].rows) == 3
+
+
+def test_native_save_button_reports_noop_without_a_second_revision(monkeypatch, tmp_path):
+    from test_monthly_report_subcontractor_roster_ui import launch, check, button
+
+    north = profile("Synthetic Contract A")
+    block = rows(row(north.facilities[0].title, "Synthetic Vendor"))
+    app = launch(monkeypatch, tmp_path, north, block)
+    check(app, "I reviewed these vendor contacts").check().run()
+    button(app, "Save shared subcontractors").click().run()
+    assert not app.exception
+    assert load_rosters(north.contract).revision == 1
+
+    app.run()
+    check(app, "I reviewed these vendor contacts").check().run()
+    button(app, "Save shared subcontractors").click().run()
+    assert not app.exception
+    assert load_rosters(north.contract).revision == 1
+    assert any("already matches the saved contract version" in info.value
+               for info in app.info)
