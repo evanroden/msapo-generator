@@ -965,7 +965,7 @@ def _prepared_page_images(profile, planned):
     Never move two-page PreviewStore paints, source identity or human review
     policy into a worker. Do not hold a cache or report-library lock in children.
     """
-    from app.monthly_report_parallel_pages import RASTER_SLOT, eligible, parallel_pages
+    from app.monthly_report_parallel_pages import MIN_PDF_BYTES, RASTER_SLOT, eligible, parallel_pages
 
     for _, records in groupby(planned, key=lambda item: item[0].source.id):
         items = tuple(records)
@@ -976,7 +976,8 @@ def _prepared_page_images(profile, planned):
             prepared = path.parent / "prepared" / source.sha256
             cold = sum(not (prepared / f"{number}-print.json").is_file()
                        for _, _, number in items)
-            if eligible(cold) and RASTER_SLOT.acquire(blocking=False):
+            if (path.stat().st_size >= MIN_PDF_BYTES and eligible(cold)
+                    and RASTER_SLOT.acquire(blocking=False)):
                 try:
                     # Authenticate the exact original before dispatch; each
                     # process revalidates it before opening its own PDF.
