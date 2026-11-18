@@ -63,9 +63,12 @@ def test_large_unchanged_source_controls_skip_repeated_ui_identity_reads(
 
     # This remains the final consumer contract: full bounded original read on
     # each call, no shortcuts. It is also the actual current-main control.
-    baseline_wall, baseline_cpu = measured(
-        lambda: [sha256(sources.source_bytes(profile, source)).hexdigest()
-                 for _ in range(3)])
+    def full_read_control():
+        for _ in range(3):
+            # The existing reader already hashes on every call. Never retain
+            # multiple 128-MiB buffers or add a second SHA to this control.
+            assert len(sources.source_bytes(profile, source)) == size_mib * 1024 * 1024
+    baseline_wall, baseline_cpu = measured(full_read_control)
     assert len(reads) == 3
     reads.clear()
     cold_wall, cold_cpu = measured(lambda: verified_source_revision(profile, source))
