@@ -280,8 +280,12 @@ def test_mixed_mbcx_pages_keep_all_corners_and_order_in_final_word_pdf(tmp_path,
             )
 
 
-def test_rotated_price_sheet_cannot_be_included_with_technical_pages(tmp_path, monkeypatch):
-    """One financial sheet blocks a full-PDF shortcut, even when rotated."""
+@pytest.mark.parametrize("restricted_text", [
+    "Invoice amount $500.",
+    "Terms and conditions. Limitation of liability applies.",
+])
+def test_rotated_price_or_legal_sheet_blocks_whole_pdf(tmp_path, monkeypatch, restricted_text):
+    """A financial or legal sheet blocks full-PDF inclusion when rotated."""
     from app.monthly_report_mbcx_pdf import whole_pdf_pages
 
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "report-store"))
@@ -290,7 +294,7 @@ def test_rotated_price_sheet_cannot_be_included_with_technical_pages(tmp_path, m
         page = document.new_page(width=612, height=792)
         page.insert_text((50, 70), "Synthetic equipment inspection completed.", fontsize=11)
         priced = document.new_page(width=595.28, height=841.89)
-        priced.insert_text((50, 70), "Invoice amount $500.", fontsize=11)
+        priced.insert_text((50, 70), restricted_text, fontsize=11)
         priced.set_rotation(90)
         original = document.tobytes()
     content, _ = sources.ingest(profile, "synthetic-mixed-with-price.pdf", original)
