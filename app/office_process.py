@@ -8,11 +8,13 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Sequence
 
 _DIAGNOSTIC_BYTES = 16 * 1024
 _CLEANUP_SECONDS = 5
+_OFFICE_MARKER_LOCAL = threading.local()
 
 
 class OfficeCleanupPending(RuntimeError):
@@ -23,7 +25,10 @@ def _marker() -> Path:
     from app.monthly_report_library import _root
     folder = _root() / 'render-jobs'
     folder.mkdir(parents=True, exist_ok=True)
-    return folder / '.active-office.json'
+    slot = getattr(_OFFICE_MARKER_LOCAL, 'slot', None)
+    if slot is not None and slot not in (0, 1):
+        raise OfficeCleanupPending('Invalid office slot; conversion was not started.')
+    return folder / ('.active-office.json' if slot in (None, 0) else '.active-office-1.json')
 
 
 def _boot_id() -> str:
@@ -34,8 +39,16 @@ def _boot_id() -> str:
 
 
 def require_idle() -> None:
-    """Called under the cross-process lease before *any* office job is admitted."""
+    """Check this owned slot; legacy single-slot mode checks retired slot 1 too."""
     marker = _marker()
+    _require_marker_idle(marker)
+    if getattr(_OFFICE_MARKER_LOCAL, 'slot', None) is None:
+        # A process may have switched from high-resource mode. Never launch a
+        # legacy converter while an older slot-1 child is still running.
+        _require_marker_idle(marker.parent / '.active-office-1.json')
+
+
+def _require_marker_idle(marker: Path) -> None:
     try:
         with marker.open() as stream:
             raw = stream.read(1025)
