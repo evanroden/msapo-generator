@@ -81,3 +81,62 @@ def stage_upload(upload, limit: int, *, on_progress: Callable[[int], None] | Non
                 upload.seek(0)
             except (OSError, ValueError):
                 pass
+
+
+def ingest_uploaded_selection(profile, uploads, existing=(), *, on_progress=None, on_checkpoint=None):
+    """Admit one source at a time; each successful sibling is checkpointable.
+
+    Return (contents, messages, file receipts). Receipts contain no file bytes.
+    A broken upload is isolated from its siblings. Unexpected BaseException is
+    deliberately propagated after the anonymous stage has been reclaimed.
+    """
+    from app import monthly_report_sources as sources
+    from app.monthly_report_upload_limits import source_size_error
+
+    contents = tuple(existing)
+    messages = []
+    receipts = []
+    for upload in uploads:
+        filename = Path(str(getattr(upload, "name", "")).replace("\\", "/")).name
+        suffix = Path(filename).suffix.casefold()
+        if suffix not in sources.SUPPORTED:
+            reason = "Unsupported file type. Choose PDF, DOCX, XLSX, CSV, EML, MSG, TXT or a supported image."
+            message = f"Not read: {filename or 'unnamed file'}. {reason}"
+            messages.append(message)
+            receipts.append((filename, "rejected", message))
+            continue
+        limit = sources.file_size_limit(suffix)
+        try:
+            with stage_upload(upload, limit, on_progress=(
+                    (lambda n, name=filename, declared=getattr(upload, "size", None):
+                     on_progress(name, n, declared)) if on_progress else None)) as staged:
+                before = {c.source.sha256 for c in contents}
+                contents, new_messages = sources.ingest_batch(
+                    profile, ((filename, staged),), contents)
+                for message in new_messages:
+                    if message not in messages:
+                        messages.append(message)
+                rejected = next((m for m in new_messages if m.startswith(
+                    f"Not read: {filename}.") or m.startswith(
+                    f"Could not restore saved source: {filename}.")), None)
+                if rejected is not None or staged.sha256 not in {c.source.sha256 for c in contents}:
+                    receipts.append((filename, "rejected", rejected or f"Not read: {filename}. File was not accepted."))
+                elif staged.sha256 not in before:
+                    receipts.append((filename, "accepted", f"Accepted: {filename} ({staged.size:,} bytes)."))
+                elif any(m.startswith(f"Saved source restored: {filename}.") for m in new_messages):
+                    receipts.append((filename, "restored", f"Restored: {filename}. Existing source reviews are unchanged."))
+                else:
+                    receipts.append((filename, "duplicate", f"Duplicate skipped: {filename}. Existing source reviews are unchanged."))
+                if on_checkpoint is not None:
+                    on_checkpoint(contents)
+        except (ValueError, OSError) as exc:
+            if isinstance(exc, OSError):
+                reason = "The file could not be staged. Retry this file."
+            elif "File exceeds the " in str(exc):
+                reason = source_size_error(suffix, limit)
+            else:
+                reason = str(exc)[:300]
+            message = f"Not read: {filename}. {reason}"
+            messages.append(message)
+            receipts.append((filename, "rejected", message))
+    return contents, tuple(messages), tuple(receipts)
