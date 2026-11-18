@@ -96,6 +96,10 @@ def test_good_bad_good_email_children_have_durable_parent_links_and_safe_body(pr
     # Full draft/source metadata is serializable without changing content hashes.
     loaded = library.draft_from_dict(asdict(draft))
     assert loaded.sources == draft.sources
+    saved = library.save_snapshot(draft, expected_revision=0,
+                                  entered_editor="Synthetic Operator")
+    assert library.load_snapshot(profile.contract, profile.key, ReportPeriod(2026, 9)) == saved
+    assert saved.draft.sources == draft.sources
 
 
 def test_duplicate_bytes_are_not_substituted_and_reimport_keeps_human_edits(profile):
