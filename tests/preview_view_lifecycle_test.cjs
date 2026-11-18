@@ -729,13 +729,13 @@ test('scoped JPEG URL is stable, malformed paths are rejected, and stale media e
     assert.equal(panel.querySelector('img').getAttribute('src'),media('b'));
     staleError(); // The request was retired after a newer response mounted.
     assert.equal(panel.querySelector('img').getAttribute('src'),media('b'));
-    assert.equal(panel.querySelector('.report-preview-retry').hidden,true);
+    assert.equal(panel.querySelector('[data-action="retry-request"]').hidden,true);
     panel.querySelector('img').onerror();
     assert.equal(panel.querySelector('img'),null,'failed media must not cover the page placeholder');
-    assert.equal(panel.querySelector('.report-preview-retry').hidden,false);
+    assert.equal(panel.querySelector('[data-action="retry-request"]').hidden,false);
     const malformed=render(input('revision-c','https://external.invalid/secret.jpg'));
     assert.equal(panel.querySelector('img'),null,'untrusted/nonlocal URL is never displayed');
-    assert.equal(panel.querySelector('.report-preview-retry').hidden,true,
+    assert.equal(panel.querySelector('[data-action="retry-request"]').hidden,true,
         'a new ticket clears an obsolete media failure');
     old();current();malformed();
 });
