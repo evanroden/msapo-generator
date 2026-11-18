@@ -712,7 +712,7 @@ test('scoped JPEG URL is stable, malformed paths are rejected, and stale media e
         IntersectionObserver:Observer,ResizeObserver:Observer,MutationObserver:Observer,
         setTimeout:callback=>{const id=timers.size+1;timers.set(id,callback);return id;},
         clearTimeout:id=>timers.delete(id)};
-    const source=fs.readFileSync('app/monthly_report_preview_view.py','utf8').split('JS = r"""\\n')[1].split('\\n"""')[0];
+    const source=fs.readFileSync('app/monthly_report_preview_view.py','utf8').split('JS = r"""\n')[1].split('\n"""')[0];
     const render=vm.runInNewContext('('+source.replace('export default function','function')+')',context);
     const media=n=>'/media/'+n.repeat(32)+'.jpg';
     const input=(revision,url)=>({parentElement:root,
