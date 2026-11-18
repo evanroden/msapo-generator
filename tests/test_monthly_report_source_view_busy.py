@@ -77,6 +77,10 @@ render_guided_workflow('', '', _field, _move)
     prepared = next(w for w in app.text_input if w.label == 'Prepared by')
     prepared.set_value('Synthetic unsaved editor name')
     state.update(calls=0, armed=True)
+    # A05 warm reruns skip the starting-source reread, so drop the draft key
+    # to force a cold entry for this busy simulation.
+    for key in [key for key in app.session_state if key.endswith('_draft')]:
+        del app.session_state[key]
     try:
         app.run()
         assert not app.exception
