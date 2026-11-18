@@ -6,7 +6,8 @@ from typing import NamedTuple
 from app import monthly_report_sources as sources
 from app.monthly_report_content_policy import (
     _CURRENCIES, _CURRENCY_SYMBOLS, ambiguous_price_columns, contains_price,
-    page_status, price_column, table_price_columns,
+    contains_private_contact, page_status, price_column, table_price_columns,
+    technical_source_text,
 )
 from app.monthly_report_model import ResolvedBlock
 
@@ -659,7 +660,13 @@ def _activity_source_pages(content):
     if content.source.suffix not in {".csv", ".xlsx"} or not content.tables:
         for number, text in enumerate(content.source.page_texts, 1):
             view = _docx_invoice_activity_view(text) if content.source.suffix == ".docx" else None
-            yield number, text if view is None else view.text
+            text = text if view is None else view.text
+            # A priced page remains ineligible as unchanged source artwork,
+            # but independently safe source-authored lines may still become
+            # cited technical Activity. This changes no source or review.
+            if contains_price(text) or contains_private_contact(text):
+                text = technical_source_text(text)
+            yield number, text
         return
     for number, table in enumerate(content.tables, 1):
         # The spreadsheet extractor has already selected the column headings.
@@ -705,7 +712,9 @@ def _csv_activity_entries(content):
         for row in table.rows:
             def cell(index):
                 return str(row[index]).strip() if index is not None and index < len(row) else ""
-            narrative = _activity_text(cell(action))
+            action_text = cell(action)
+            narrative = _activity_text(technical_source_text(action_text)
+                                       if contains_price(action_text) else action_text)
             if _date_only_source_label(narrative) or not useful_activity(narrative) or contains_price(narrative):
                 continue
             if contains_price(cell(status)):
@@ -774,6 +783,8 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
                                   _activity_lines(text, content.source.suffix, with_dates=True))
                 for line, header_date in activity_lines:
                     line = _activity_text(line)
+                    if contains_price(line) or contains_private_contact(line):
+                        line = technical_source_text(line)
                     if _date_only_source_label(line):
                         continue
                     if useful_activity(line) and not contains_price(line):

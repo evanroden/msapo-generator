@@ -20,7 +20,7 @@ from app.api_retry import (
 )
 from app.ai_client import ai_available, make_client
 from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
-from app.monthly_report_content_policy import contains_price
+from app.monthly_report_content_policy import contains_price, contains_private_contact, technical_source_text
 from app.monthly_report_model import EvidenceFact, DraftParagraph, ResolvedBlock
 from app.monthly_report_prompts import EXTRACT_PROMPT, DRAFT_PROMPT, PROMPT_VERSION
 from app.monthly_report_sources import source_reference
@@ -370,7 +370,11 @@ def extraction_request(source, pages):
         type(n) is not int or not 1 <= n <= len(source.page_texts) for n in pages
     ):
         raise ValueError("Choose real source pages to read.")
-    evidence = [{"page": n, "text": source.page_texts[n - 1]} for n in pages]
+    # Never transmit the full raw source page: it may contain unrelated quote
+    # amounts, priced footers or private contacts next to valid work. The
+    # original source remains immutable for later exact-quote validation.
+    evidence = [{"page": n, "text": technical_source_text(source.page_texts[n - 1])}
+                for n in pages]
     if sum(len(p["text"]) for p in evidence) > MAX_EVIDENCE_CHARS:
         raise ValueError(
             "These pages exceed 60,000 characters. Choose fewer pages; the remaining pages are preserved."
@@ -660,7 +664,9 @@ def drafting_request(block_key, sources, period, vendors=(), tags=(), instructio
     # priced fact wording into an outward AI drafting payload.
     facts = tuple(
         f for f in candidates if not (
-            contains_price(f.text) or contains_price(f.quote)))
+            contains_price(f.text) or contains_price(f.quote)
+            or any(contains_private_contact(value) for value in (
+                f.text, f.quote, f.vendor, f.facility, *f.tags))))
     if not facts:
         if candidates:
             raise ValueError(
@@ -672,6 +678,14 @@ def drafting_request(block_key, sources, period, vendors=(), tags=(), instructio
         )
     if problems := _unverified_fact_dates(facts, sources):
         raise ValueError(problems[0])
+    if contains_price(instruction) or contains_private_contact(instruction):
+        raise ValueError("Remove pricing and private contacts from redrafting notes before sending them.")
+    # UI-supplied vendor/tag hints are optional and cannot grant disclosure
+    # of unrelated source contact or financial fields to the reader.
+    vendors = tuple(item for item in vendors if isinstance(item, str)
+                    and not contains_price(item) and not contains_private_contact(item))
+    tags = tuple(item for item in tags if isinstance(item, str)
+                 and not contains_price(item) and not contains_private_contact(item))
     payload = {
         "block": block_key,
         "period": period.key,

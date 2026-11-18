@@ -81,6 +81,93 @@ _ENGINEERING_LOAD_ESTIMATE = re.compile(
 _LEGAL_TERMS = ("terms and conditions", "limitation of liability", "indemnif", "governing law", "entire agreement", "waiver", "arbitration", "force majeure", "consequential damages", "jurisdiction", "severability", "warranty disclaimer")
 
 
+
+# This projection is for *new, extractive* technical suggestions/reader input,
+# never for author-edited report text, immutable source records or page images.
+# Native/raster source-page inclusion keeps the separate full-page safety veto.
+_SOURCE_CLAUSES = re.compile(r";\s*|(?<=[.!?])\s+(?=[A-Z])")
+_SOURCE_CONTACT = re.compile(
+    r"\b(?:contact|phone|telephone|mobile|fax|e-?mail|email|attn|attention|"
+    r"prepared\s+by)\s*[:=]|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|"
+    r"(?:\+?1[-. ]?)?(?:\(\d{3}\)|\d{3})[-. ]\d{3}[-. ]\d{4}\b|"
+    r"\b(?:technician|engineer|operator|reported\s+by|performed\s+by)\s+"
+    r"(?-i:[A-Z][a-z]+\s+[A-Z][a-z]+)\b", re.I)
+_SOURCE_BARE_NUMBER = re.compile(r"^\s*" + _AMOUNT_VALUE + r"\s*$", re.I)
+
+
+def contains_private_contact(text: str) -> bool:
+    """Recognize explicit private contact fields, addresses and phone forms."""
+    return bool(_SOURCE_CONTACT.search(text))
+
+
+def technical_source_text(text: str) -> str:
+    """Project only independently safe source spans, preserving their wording.
+
+    A priced line/page is not an authorization to drop unrelated work.
+    Source-authored semicolon/sentence boundaries and *positioned* table
+    columns allow unpriced neighbors through. Mixed/unresolved fragments and
+    unlabelled numeric-only cells are held for private source review rather
+    than guessed into client Activity or an external model prompt. No image
+    pixels are changed or approved by this text-only projection.
+    """
+    if not isinstance(text, str):
+        raise TypeError("Source text must be a string.")
+    safe = []
+    table = None  # (physical width, excluded columns, original headings)
+    financial_label = False
+
+    for line in text.splitlines():
+        if not line.strip():
+            table = None
+            financial_label = False
+            continue
+        cells = line.split("\t")
+        if len(cells) > 1:
+            # Headers identify *positions*, not values: a bare amount in the
+            # Quote Amount column must never become an unlabelled safe number.
+            headings = tuple(cell.strip() for cell in cells)
+            excluded = set(table_price_columns(headings, ())) | set(
+                ambiguous_price_columns(headings))
+            if excluded:
+                table = (len(cells), excluded, headings)
+            elif table is not None and len(cells) != table[0]:
+                table = None
+            chosen = ((i, cell) for i, cell in enumerate(cells)
+                      if table is None or i not in table[1])
+            financial_label = False
+        else:
+            table = None
+            label = line.strip().rstrip(" :")
+            if _PRICE_LABEL.fullmatch(label) or (
+                    _price_heading(label) and not re.search(r"\d", label)
+                    and len(label) <= 60
+                    and not re.search(r"\b(?:pending|requested|received|reviewed|approved|declined)\b", label, re.I)):
+                financial_label = True
+                continue
+            if financial_label and _SOURCE_BARE_NUMBER.fullmatch(line):
+                financial_label = False
+                continue
+            financial_label = False
+            chosen = ((0, line),)
+        for index, cell in chosen:
+            # Only a known technical-column title can establish that a bare
+            # number is a reading rather than a cost. Otherwise omit it.
+            technical_number = bool(table and len(cells) == table[0]
+                                    and index not in table[1]
+                                    and re.search(
+                                        r"\b(?:flow|pressure|temperature|rpm|cfm|gpm|"
+                                        r"hours?|counts?|readings?|voltage|power|"
+                                        r"kW|kWh|psi|amperage)\b", table[2][index], re.I))
+            for clause in _SOURCE_CLAUSES.split(cell):
+                piece = clause.strip()
+                if (not piece or contains_price(piece)
+                        or _MONEY.search(piece) or _SOURCE_CONTACT.search(piece)
+                        or (_SOURCE_BARE_NUMBER.fullmatch(piece) and not technical_number)):
+                    continue
+                safe.append(piece)
+    return "\n".join(safe)
+
+
 def _nonmonetary_detail(label, tail, *, heading=False):
     # Separators carry no semantic difference in imported table headings.
     detail = tail.lstrip(" \t,:/–—-([")
