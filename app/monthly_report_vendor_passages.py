@@ -114,13 +114,51 @@ def field_boundary(line):
     return not (technical and re.match(r"\d{2}\b", value))
 
 
-def block_spans(page, text, number):
+
+def _parallel_reading_order_ambiguous(blocks):
+    """Reject labeled blocks beside *other* text in the same physical band.
+
+    PyMuPDF can keep whole columns as separate, individually well-aligned
+    blocks. Native text order alone then cannot establish which adjacent
+    date, status, or continuation belongs to which event. Keep the complete
+    original page available for review instead of certifying either column.
+    """
+    candidates = [block for block in blocks if _LABEL.search(block[4])]
+    if not candidates:
+        return False
+    # A pathological dense page cannot spend unbounded quadratic work proving
+    # passage identity. The bounded fallback is source-page review, not a
+    # partial import or a reordered text substitute.
+    comparisons = 0
+    for candidate in candidates:
+        for other in blocks:
+            comparisons += 1
+            if comparisons > 50_000:
+                return True
+            if candidate[5] == other[5]:
+                continue
+            overlap = min(candidate[3], other[3]) - max(candidate[1], other[1])
+            shorter = min(candidate[3] - candidate[1], other[3] - other[1])
+            if (shorter > 0 and overlap >= shorter * 0.45
+                    and (candidate[2] + 12 <= other[0]
+                         or other[2] + 12 <= candidate[0])):
+                return True
+    return False
+
+
+def block_spans(page, text, number, *, ambiguous_pages=None):
     """Only accept native blocks that tile the unchanged text in native order."""
     spans, cursor = [], 0
     geometry = {b['number']: b for b in page.get_text(
         'dict', flags=fitz.TEXTFLAGS_DICT & ~fitz.TEXT_PRESERVE_IMAGES)['blocks']
         if b.get('type') == 0}
-    for block in page.get_text('blocks'):
+    native_blocks = [block for block in page.get_text('blocks')
+                     if len(block) >= 7 and block[6] == 0 and block[4].strip()]
+    if _parallel_reading_order_ambiguous(native_blocks):
+        if ambiguous_pages is not None:
+            ambiguous_pages.add(number)
+        return ()
+    for block in native_blocks:
         if len(block) < 7 or block[6] != 0:
             continue
         raw = block[4].strip()
@@ -307,6 +345,8 @@ _NOTICE_TEXT = {
                  'before including it, or leave it out. Add verified wording manually.'),
     'limit': ('Page {page}: passage text exceeds the suggestion limit and was not auto-imported. '
               'Review the full source page before including it, or leave it out. Add verified wording manually.'),
+    'geometry': ('Page {page}: adjacent PDF columns have uncertain reading order. '
+                 'No dates, sites, or service events were inferred from this page. Review the original page.'),
 }
 
 
