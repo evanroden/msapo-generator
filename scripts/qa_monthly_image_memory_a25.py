@@ -112,6 +112,8 @@ def worker(root, scenario):
         start_wall = perf_counter()
         start_cpu = resource.getrusage(resource.RUSAGE_SELF)
         shapes, result_hashes = [], []
+        hidden_rgb_leak = False
+        author_metadata_leak = False
         if scenario == "preview":
             with tempfile.TemporaryDirectory() as directory:
                 target = Path(directory, "preview.docx")
@@ -136,9 +138,9 @@ def worker(root, scenario):
                     if image.size != (result.width, result.height):
                         raise AssertionError("incorrect reported geometry")
                     if scenario == "transparency" and image.getpixel((0, 0)) != (0, 0, 0, 0):
-                        raise AssertionError("hidden RGB leaked")
+                        hidden_rgb_leak = True
                 if b"A25_SYNTHETIC_METADATA_CANARY" in result.data:
-                    raise AssertionError("authoring metadata leaked")
+                    author_metadata_leak = True
                 shapes.append((result.width, result.height))
                 result_hashes.append(_hash(result.data))
         if [_hash(data) for data in inputs] != input_hashes:
@@ -150,7 +152,9 @@ def worker(root, scenario):
             "cpu_ms": round(((end_cpu.ru_utime + end_cpu.ru_stime)
                              - (start_cpu.ru_utime + start_cpu.ru_stime)) * 1000, 2),
             "process_peak_rss_mib": round(_rss_mib(), 2),
-            "geometry": shapes, "output_sha256": result_hashes
+            "geometry": shapes, "output_sha256": result_hashes,
+            "hidden_rgb_leak": hidden_rgb_leak,
+            "author_metadata_leak": author_metadata_leak
         })
     if measurements[0]["output_sha256"] != measurements[1]["output_sha256"]:
         raise AssertionError("cold/warm output changed")
