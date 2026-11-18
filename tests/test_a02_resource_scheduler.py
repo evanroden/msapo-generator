@@ -86,7 +86,9 @@ def test_slow_export_no_longer_blocks_small_visible_preview(parallel):
     assert scheduler.snapshot()["running"]["heavy"] == 0
 
 
-def test_foreground_priority_is_fifo_within_class(parallel):
+def test_foreground_priority_is_fifo_within_class(parallel, monkeypatch):
+    # One lane makes the visible execution order the actual admission order.
+    monkeypatch.setitem(scheduler.CAPACITIES, "heavy", 1)
     entered = []
     release = Event()
     holders_ready = Event()
@@ -94,24 +96,23 @@ def test_foreground_priority_is_fifo_within_class(parallel):
         with scheduler.lease("heavy", priority="optional", wait_seconds=1,
                              headroom=jobs.memory_headroom):
             entered.append("holder")
-            if entered.count("holder") == 2:
-                holders_ready.set()
+            holders_ready.set()
             assert release.wait(4)
     def contender(name, priority):
         with scheduler.lease("heavy", priority=priority, wait_seconds=3,
                              headroom=jobs.memory_headroom):
             entered.append(name)
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        holds = [pool.submit(holder) for _ in range(2)]
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        hold = pool.submit(holder)
         assert holders_ready.wait(2)
         optional = pool.submit(contender, "optional", "optional")
         _eventually(lambda: scheduler.snapshot()["queued"]["heavy"] == 1)
         export = pool.submit(contender, "export", "export")
         _eventually(lambda: scheduler.snapshot()["queued"]["heavy"] == 2)
         release.set()
-        for task in (*holds, optional, export):
+        for task in (hold, optional, export):
             task.result(timeout=4)
-    assert entered.index("export") < entered.index("optional")
+    assert entered == ["holder", "export", "optional"]
     assert scheduler.snapshot()["queued"]["heavy"] == 0
 
 
