@@ -104,6 +104,19 @@ def test_plausible_fabricated_repair_rejected_after_a_valid_inspection_quote():
     assert source.facts == (original,)
 
 
+def test_explicitly_negated_completion_remains_valid_after_drafting():
+    statement = "no repair was completed."
+    original = ai.normalize_facts({"facts": [{"page": 2, "kind": "finding",
+        "text": statement, "quote": statement}]},
+        SOURCE, (2,), PROFILE, PERIOD)[0]
+    source = replace(SOURCE, facts=(original,))
+    block = ai.normalize_draft(
+        {"paragraphs": [{"text": "No repair was completed.", "fact_ids": [original.id]}]},
+        "equipment_issues", (original,), (source,))
+    assert block.ai_paragraphs[0].text == "No repair was completed."
+    assert source.facts == (original,)
+
+
 def test_saved_quote_cannot_be_reused_after_page_rewrite_or_source_swap():
     fact, = normalize()
     source = replace(SOURCE, facts=(fact,))
