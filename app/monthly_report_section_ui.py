@@ -1601,6 +1601,14 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                     if st.session_state.get("report_entry_stage") is staged:
                         st.session_state.pop("report_entry_stage", None)
                         st.session_state["report_entry_committed_digest"] = inspection.sha256
+                        # This one temporary original can have been reviewed
+                        # against more than one proposed site selection. Never
+                        # leave a second review pointing to cleaned-up bytes.
+                        for review_key in tuple(st.session_state):
+                            if (review_key.startswith("report_setup_")
+                                    and review_key.endswith("_stage")
+                                    and st.session_state[review_key] is staged):
+                                st.session_state.pop(review_key, None)
                     st.session_state.pop(original_token_key, None)
                     if staged[0]:
                         st.session_state[prefix + "_committed_upload_digest"] = inspection.sha256
