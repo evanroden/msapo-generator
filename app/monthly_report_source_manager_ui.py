@@ -98,8 +98,10 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
               key=prefix + "_source_manager_" + str(opened),
               on_click=_open_manager if not opened else _close_manager,
               args=(manager_key, selection_key, "") if not opened else (manager_key,))
-    # Operator-only, read-only ledger. Keep it separate from the existing
-    # source acceptance and generation/preflight decisions.
+    from app.monthly_report_coverage_ui import render_coverage
+    draft = render_coverage(draft, st.session_state.get(prefix + "_evidence", ()),
+                            prefix, blocks)
+    # Operator-only, read-only ledger. Keep source acceptance/generation unchanged.
     from app.monthly_report_source_manifest_ui import render_source_manifest_audit
     render_source_manifest_audit(replace(draft, blocks=tuple(blocks.values())),
         st.session_state.get(prefix + "_evidence", ()), prefix)
