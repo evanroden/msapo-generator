@@ -243,6 +243,21 @@ def table_price_columns(columns, rows):
     return tuple(sorted(excluded))
 
 
+def proposal_price_columns(columns, rows=()):
+    """Money-only headings in proposal schedules, not engineering tables.
+
+    Bare Total and Unit Rate are common commercial headings whose numeric
+    cells lack a currency marker. Their source columns remain immutable; only
+    the report-facing projection excludes them.
+    """
+    excluded = set(table_price_columns(columns, rows))
+    excluded.update(i for i, title in enumerate(logical_table_columns(columns))
+                    if " ".join(str(title).casefold().split()) in {
+                        "unit rate", "unit rates", "total", "totals", "grand total",
+                    })
+    return tuple(sorted(excluded))
+
+
 def schema_price_columns(columns, rows, *, kinds=()):
     """Keep raw-title/type guards, with the same complete load-heading proof."""
     headings = _table_headings(columns, rows)
