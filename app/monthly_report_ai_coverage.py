@@ -223,7 +223,7 @@ def prepare_run(plan_value, content, profile, period, *, ai_module=None):
             saved = ai.cached(profile, "full_coverage", batch.key)
             if saved is not None:
                 # An old/poisoned cache is never authority to mark pages done.
-                _, rejected = validate_batch(batch, saved, content.source, profile, period, ai_module=ai)
+                _, rejected, _, _ = validate_batch(batch, saved, content.source, profile, period, ai_module=ai)
                 if rejected:
                     raise ValueError("Cached reader claims require fresh verification.")
                 cached.append((batch.key, saved))
@@ -332,9 +332,16 @@ def validate_batch(batch, value, source, profile, period, *, ai_module=None):
             or set(reviewed) | set(unsupported_ids) != set(expected)):
         raise ValueError("Reader did not account for every original region.")
     facts, rejected = [], 0
+     rejected_regions, accepted_regions = set(), set()
+
+    def reject(bad_region):
+             nonlocal rejected
+             rejected += 1
+             if bad_region is not None:
+                          rejected_regions.add(bad_region.identity)
     for raw in value["facts"]:
-        if not isinstance(raw, dict):
-            rejected += 1
+        if not isinstance(raw, dict):                
+                        reject(None)
             continue
         region = expected.get(raw.get("region"))
         if (region is None or region.identity not in reviewed
@@ -342,14 +349,14 @@ def validate_batch(batch, value, source, profile, period, *, ai_module=None):
                 or type(raw.get("page")) is not int or raw["page"] != region.page
                 or not isinstance(raw.get("quote"), str)
                 or not raw["quote"] or raw["quote"] not in region.text):
-            rejected += 1
+            reject(region)
             continue
         if (any(raw.get(field) and _token(raw[field]) not in _token(raw["quote"])
                 for field in ("vendor", "facility"))
                 or any(not isinstance(t, str) or _token(t) not in _token(raw["quote"])
                        for t in raw.get("tags", ()) if isinstance(raw.get("tags", ()), list))
                 or raw.get("date") and not ai._date_supported(raw["quote"], raw["date"])):
-            rejected += 1
+            reject(region)
             continue
         if any(
                 _activity_text(raw.get(field, "")) != raw.get(field, "").strip()
@@ -361,22 +368,22 @@ def validate_batch(batch, value, source, profile, period, *, ai_module=None):
                                "limitation of liability", "governing law",
                                "payment terms", "net 30", "net 60")
         ):
-            rejected += 1
+            reject(region)
             continue
         quoted, claimed = _token(raw.get("quote", "")), _token(raw.get("text", ""))
         # A negative/pending source must not become a positive maintenance or
         # training completion. Failing closed also avoids attribution of a
         # vendor visit to an ENFRA technician on a different employer's report.
         conditional = re.search(
-            r"\\b(?:did not|was not|were not|not yet|has not|had not|"
+            r"\b(?:did not|was not|were not|not yet|has not|had not|"
             r"could not|would not|scheduled|pending|planned|proposed|"
-            r"awaiting|to be performed|not started)\\b", quoted)
+            r"awaiting|to be performed|not started)\b", quoted)
         if (conditional and not re.search(
-                r"\\b(?:did not|was not|were not|not yet|has not|had not|"
+                r"\b(?:did not|was not|were not|not yet|has not|had not|"
                 r"could not|would not|scheduled|pending|planned|proposed|"
-                r"awaiting|to be performed|not started)\\b", claimed)
+                r"awaiting|to be performed|not started)\b", claimed)
                 or "enfra" in claimed and "enfra" not in quoted):
-            rejected += 1
+            reject(region)
             continue
         if raw.get("kind") == "action" and any(
                 stem in _token(raw.get("text", ""))
@@ -384,7 +391,7 @@ def validate_batch(batch, value, source, profile, period, *, ai_module=None):
                 for stem in ("replac", "repair", "complet", "perform",
                              "resolv", "instal", "finish", "restor")
         ):
-            rejected += 1
+            reject(region)
             continue
         if raw.get("kind") == "action" and any(
                 word in _token(raw["quote"])
@@ -393,20 +400,22 @@ def validate_batch(batch, value, source, profile, period, *, ai_module=None):
         ) and any(word in _token(raw.get("text", "")) for word in
                   ("completed", "repaired", "replaced", "performed", "finished",
                    "installed", "resolved")):
-            rejected += 1
+            reject(region)
             continue
         try:
             validated = ai.normalize_facts(
                 {"facts": [raw]}, source, (region.page,), profile, period)
         except (ValueError, TypeError, KeyError):
-            rejected += 1
+            reject(region)
             continue
         if any(flag != "Reader marked this fact uncertain"
                for fact in validated for flag in fact.flags):
-            rejected += 1
+            reject(region)
             continue
         facts.extend(validated)
-    return tuple(dict((fact.id, fact) for fact in facts).values()), rejected
+        accepted_regions.add(region.identity)
+        return (tuple(dict((fact.id, fact) for fact in facts).values()),
+                            rejected, rejected_regions, accepted_regions)
 
 
 def collect(plan_value, result, source, profile, period, *, ai_module=None):
@@ -424,6 +433,7 @@ def collect(plan_value, result, source, profile, period, *, ai_module=None):
     region_status = {}
     facts, good, bad, invalid, cacheable = {}, 0, 0, 0, []
     for batch in plan_value.batches:
+             rejected_regions, accepted_regions = set(), set()
         if batch.key in missing:
             status = "needs_review"
         elif batch.key not in returned or returned[batch.key][1]:
@@ -431,7 +441,7 @@ def collect(plan_value, result, source, profile, period, *, ai_module=None):
         else:
             try:
                 value = returned[batch.key][0]
-                batch_facts, rejected = validate_batch(
+                batch_facts, rejected, rejected_regions, accepted_regions = validate_batch(
                     batch, value, source, profile, period, ai_module=ai)
                 invalid += rejected
                 status = "needs_review" if rejected else "ready"
@@ -444,7 +454,17 @@ def collect(plan_value, result, source, profile, period, *, ai_module=None):
             except (ValueError, TypeError, KeyError):
                 status = "retry"
         for region in batch.regions:
-            own = "visual_review" if region.visual and status == "ready" else status
+                                 # A rejected claim taints only its own region. A sibling region
+                     # that produced a verified fact stays ready even when its batch
+            # also carried a rejected claim; a region with no verified fact
+                     # in a tainted batch stays needs_review with the batch.
+            if region.identity in rejected_regions:
+                             own = "needs_review"
+            elif region.identity in accepted_regions:
+                             own = "ready"
+            else:
+                             own = status
+            own = "visual_review" if region.visual and own == "ready" else own
             region_status.setdefault(region.page, []).append(own)
     inventory = {}
     for number in plan_value.pages:
