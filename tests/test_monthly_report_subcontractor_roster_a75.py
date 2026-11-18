@@ -146,6 +146,14 @@ def test_nested_people_dates_roles_and_category_bands_round_trip(monkeypatch, tm
                            if r[3] == "North Technician" else r
                            for r in first.extra_tables[0].rows)),))
     assert report_only != first
+    edited_draft = replace(draft, blocks=(report_only,))
+    revised = library.save_snapshot(edited_draft, expected_revision=saved.revision,
+                                    entered_editor="Synthetic Reviewer")
+    assert revised.draft.blocks[0] == report_only
+    assert library.load_snapshot(north.contract, north.key,
+                                 ReportPeriod(2026, 9)).draft.blocks[0] == report_only
+    assert library.load_snapshot_version(north.contract, north.key,
+                                         ReportPeriod(2026, 9), saved.revision).draft.blocks[0] == first
     assert load_rosters(north.contract) == state  # report correction never writes master
     assert reopened.draft.blocks[0] == first
 
