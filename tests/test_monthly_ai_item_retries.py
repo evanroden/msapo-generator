@@ -1,0 +1,248 @@
+"""A52: isolated, synthetic page receipts and fault-injected reader tests."""
+from concurrent.futures import Future
+from dataclasses import replace
+from types import SimpleNamespace
+import json
+
+import httpx
+import pytest
+
+from app import api_retry, monthly_report_ai as ai
+from app import monthly_report_ai_items as items
+from app import monthly_report_ai_ui as ui
+from app import monthly_report_library as library
+from app.monthly_report_model import (
+    ReportPeriod, ReportSource, synthetic_profiles, synthetic_draft
+)
+from app.monthly_report_sources import SourceContent
+
+
+@pytest.fixture
+def sample(monkeypatch, tmp_path):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    profile = synthetic_profiles()[0]
+    period = ReportPeriod(2026, 9)
+    source = ReportSource(
+        "synthetic-a52", "three-pages.txt", "7" * 64, ".txt",
+        page_texts=tuple(f"Serviced unit {n}." for n in (1, 2, 3)),
+    )
+    return profile, period, source, synthetic_draft(profile, period)
+
+
+def _page_key(source, page):
+    return ai.extraction_request(source, (page,))[0]
+
+
+def test_two_session_claim_is_atomic_and_fencing_prevents_stale_overwrite(sample):
+    profile, period, source, _ = sample
+    key = _page_key(source, 1)
+    assert items.status(profile, period, key) == "unread"
+    state, first = items.claim(profile, period, key)
+    assert state == "claimed" and first
+    assert items.claim(profile, period, key) == ("pending", None)
+    assert items.status(profile, period, key) == "pending"
+    root = library._profile_path(profile.contract, profile.key) / "ai" / "budgets"
+    assert library._read(root / (period.key + ".json"))["calls"] == 1
+    result = {"facts": [{"page": 1, "kind": "action",
+                         "text": "Serviced unit 1.", "quote": "Serviced unit 1."}]}
+    assert items.accept(profile, period, key, "other-session-token", result) is False
+    assert items.accept(profile, period, key, first, result) is True
+    assert items.status(profile, period, key) == "accepted"
+    assert items.claim(profile, period, key) == ("accepted", None)
+    assert items.fail(profile, period, key, first) is False
+    assert ai.cached(profile, "extraction", key) == result
+    assert library._read(root / (period.key + ".json"))["calls"] == 1
+    with pytest.raises(ValueError, match="identity"):
+        items.claim(profile, period, "not-a-sha")
+
+
+def test_failure_receipt_retry_and_expired_token_do_not_replace_success(sample, monkeypatch):
+    profile, period, source, _ = sample
+    key = _page_key(source, 2)
+    _, first = items.claim(profile, period, key)
+    assert items.fail(profile, period, key, first)
+    assert items.status(profile, period, key) == "failed"
+    _, second = items.claim(profile, period, key)
+    assert first != second
+    good = {"facts": []}
+    assert not items.accept(profile, period, key, first, {"facts": [{"bad": True}]})
+    assert items.accept(profile, period, key, second, good)
+    assert ai.cached(profile, "extraction", key) == good
+    # A new month can reuse the same immutable source reading, but human
+    # approval and report state are not moved to that month.
+    assert items.status(profile, ReportPeriod(2026, 10), key) == "accepted"
+    other_site = replace(profile, key="synthetic-a52-other")
+    assert items.status(other_site, period, key) == "unread"
+
+
+@pytest.mark.parametrize("failure", ["socket", "malformed"])
+def test_page_batch_keeps_two_successes_and_only_retries_the_failure(
+    sample, monkeypatch, failure
+):
+    profile, period, source, draft = sample
+    state = {"unit_evidence": (SourceContent(source),)}
+    notices = []
+    monkeypatch.setattr(ui, "st", SimpleNamespace(
+        session_state=state, warning=notices.append,
+        info=notices.append, rerun=lambda: None,
+    ))
+    calls = []
+    fail_once = [True]
+
+    def fake_start(prepare, read):
+        content = prepare()
+        number = json.loads(content[0]["text"].split("\n")[-1])["pages"][0]["page"]
+        calls.append(number)
+        future = Future()
+        if number == 2 and fail_once[0]:
+            fail_once[0] = False
+            if failure == "socket":
+                future.set_exception(httpx.ConnectError("synthetic disconnect"))
+            else:
+                future.set_result({"facts": [{"page": 2, "kind": "action",
+                                              "text": "Invented work.",
+                                              "quote": "not present"}]})
+        else:
+            future.set_result({"facts": [{
+                "page": number, "kind": "action",
+                "text": f"Serviced unit {number}.",
+                "quote": f"Serviced unit {number}.",
+            }]})
+        return future
+
+    monkeypatch.setattr(ui, "start_receipt", fake_start)
+
+    def run_jobs():
+        for _ in range(8):
+            ui._finish_job(draft, "unit")
+            ui._advance_page_reads(draft, "unit")
+            if "unit_ai_job" not in state and "unit_ai_page_batch" not in state:
+                return
+        pytest.fail("page queue did not settle")
+
+    ui._queue_page_reads(draft, "unit", source, (1, 2, 3))
+    run_jobs()
+    assert calls == [1, 2, 3]  # failure did not restart sibling pages
+    assert [items.status(profile, period, _page_key(source, n))
+            for n in (1, 2, 3)] == ["accepted", "failed", "accepted"]
+    assert {fact.page for fact in state["unit_ai_facts"][2]} == {1, 3}
+    assert notices and "Reading was not applied" in " ".join(notices)
+
+    ui._queue_page_reads(draft, "unit", source, (1, 2, 3), failed_only=True)
+    run_jobs()
+    assert calls == [1, 2, 3, 2]
+    assert {fact.page for fact in state["unit_ai_facts"][2]} == {1, 2, 3}
+    assert all(items.status(profile, period, _page_key(source, n)) == "accepted"
+               for n in (1, 2, 3))
+    ui._queue_page_reads(draft, "unit", source, (1, 2, 3))
+    run_jobs()
+    assert calls == [1, 2, 3, 2]  # repeat click is free
+
+
+def test_human_accepted_fact_is_not_overwritten_by_same_id(sample, monkeypatch):
+    profile, period, source, draft = sample
+    candidate = ai.normalize_facts(
+        {"facts": [{"page": 1, "kind": "action",
+                    "text": "Serviced unit 1.", "quote": "Serviced unit 1."}]},
+        source, (1,), profile, period,
+    )[0]
+    edited = replace(candidate, flags=("Human reviewed original wording",))
+    current = replace(source, facts=(edited,))
+    state = {
+        "unit_evidence": (SourceContent(current),),
+        "unit_ai_facts": (current.id, current.fingerprint, (candidate,)),
+        "unit_ai_source": current.id,
+    }
+    state["unit_pending_fact_approval"] = ui._fact_approval(draft, "unit", current, (candidate,))
+    monkeypatch.setattr(ui, "st", SimpleNamespace(
+        session_state=state, warning=lambda _: pytest.fail("unexpected stale approval"),
+    ))
+    ui._apply_pending_fact_approval(draft, "unit")
+    assert state["unit_evidence"][0].source.facts == (edited,)
+
+
+def test_missing_and_unsupported_page_selection_is_not_billed(sample):
+    profile, period, source, _ = sample
+    for selection in ((), (4,), ("1",), (False,)):
+        with pytest.raises(ValueError):
+            ai.extraction_request(source, selection)
+    key = _page_key(source, 1)
+    assert items.status(profile, period, key) == "unread"
+
+
+def test_jittered_transients_are_bounded_and_nontransients_do_not_retry(monkeypatch):
+    class FakeStatus(Exception):
+        def __init__(self, code):
+            self.status_code = code
+            super().__init__(f"HTTP {code}")
+
+    monkeypatch.setattr(api_retry.anthropic, "APIStatusError", FakeStatus)
+    clock = [0.0]
+    delays = []
+    monkeypatch.setattr(api_retry.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(api_retry.time, "sleep",
+                        lambda s: (delays.append(s), clock.__setitem__(0, clock[0] + s)))
+    monkeypatch.setattr(api_retry.random, "uniform", lambda a, b: 1.0)
+    sequence = [FakeStatus(429), FakeStatus(503)]
+
+    def work(timeout):
+        if sequence:
+            raise sequence.pop(0)
+        return "ok"
+
+    assert api_retry.request_with_retry(work, until=30.0) == "ok"
+    assert delays == [3.0, 6.0] and clock[0] == 9.0
+
+    delays.clear()
+    sequence[:] = [httpx.ReadError("socket disconnect")]
+    assert api_retry.request_with_retry(work, until=30.0) == "ok"
+    assert delays == [3.0]
+
+    def unauthorized(timeout):
+        raise FakeStatus(401)
+
+    with pytest.raises(FakeStatus):
+        api_retry.request_with_retry(unauthorized, until=30.0)
+    assert delays == [3.0]  # 401 has no retry
+
+
+def test_incomplete_response_cannot_claim_success(sample):
+    from app.api_retry import IncompleteResponseError, complete_response_text
+    with pytest.raises(IncompleteResponseError):
+        complete_response_text(SimpleNamespace(stop_reason="max_tokens", content=[]))
+    profile, period, source, _ = sample
+    key = _page_key(source, 1)
+    _, token = items.claim(profile, period, key)
+    assert items.fail(profile, period, key, token)
+    assert ai.cached(profile, "extraction", key) is None
+
+
+def test_completed_page_from_stale_generation_cannot_apply(sample, monkeypatch):
+    profile, period, source, draft = sample
+    key = _page_key(source, 1)
+    _, token = items.claim(profile, period, key)
+    future = Future()
+    future.set_result({"facts": [{
+        "page": 1, "kind": "action", "text": "Serviced unit 1.",
+        "quote": "Serviced unit 1.",
+    }]})
+    warnings = []
+    state = {
+        "unit_evidence": (SourceContent(source),),
+        "_monthly_qa_generation": "new-fixture-run",
+        "unit_ai_job": {
+            "kind": "extraction", "page_job": True, "key": key,
+            "source_id": source.id, "source_fingerprint": source.fingerprint,
+            "pages": (1,), "scope": (profile.contract, profile.key, period.key, "retired-run"),
+            "profile": profile, "period": period, "token": token,
+            "future": future,
+        },
+    }
+    monkeypatch.setattr(ui, "st", SimpleNamespace(
+        session_state=state, warning=warnings.append,
+    ))
+    ui._finish_job(draft, "unit")
+    assert "unit_ai_facts" not in state and "unit_ai_job" not in state
+    assert items.status(profile, period, key) == "failed"
+    assert ai.cached(profile, "extraction", key) is None
+    assert any("Source details changed" in message for message in warnings)

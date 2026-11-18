@@ -9,6 +9,7 @@ from __future__ import annotations
 import time
 import os
 import math
+import random
 from collections.abc import Callable
 from typing import TypeVar
 
@@ -82,7 +83,7 @@ def request_with_retry(
                     min(REQUEST_TIMEOUT_SECONDS, remaining), connect=min(5.0, remaining)
                 )
             )
-        except (anthropic.APIConnectionError, anthropic.APIStatusError) as exc:
+        except (anthropic.APIConnectionError, anthropic.APIStatusError, httpx.TransportError) as exc:
             if (
                 model_name
                 and isinstance(exc, anthropic.APIStatusError)
@@ -94,12 +95,15 @@ def request_with_retry(
                     "ANTHROPIC_MODEL environment setting (including Render dashboard "
                     "overrides), select an available model, and retry."
                 ) from exc
-            retryable = isinstance(exc, anthropic.APIConnectionError) or (
-                exc.status_code == 429 or exc.status_code >= 500
+            retryable = isinstance(exc, (anthropic.APIConnectionError, httpx.TransportError)) or (
+                isinstance(exc, anthropic.APIStatusError)
+                and (exc.status_code == 429 or exc.status_code >= 500)
             )
             if not retryable or attempt == attempts - 1:
                 raise
-            delay = backoff * (attempt + 1)
+            # Bounded jitter spreads simultaneous item retries without
+            # extending the global operation deadline or SDK retry count.
+            delay = min(10.0, backoff * (attempt + 1) * random.uniform(0.75, 1.25))
             if time.monotonic() + delay >= until:
                 raise TimeoutError(
                     "Automatic reading timed out. Retry or enter the details manually."
