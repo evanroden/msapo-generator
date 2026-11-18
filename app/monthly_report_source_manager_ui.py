@@ -47,8 +47,12 @@ def _statuses(draft, blocks, prefix):
         pending=_pending_source_selection(prefix))
 
 
-def _render_saved_source_reuse(draft, prefix, field):
+def _render_saved_source_reuse(draft, prefix, field, *, visible):
     """One saved-original action next to the native Add source files control."""
+    # The manager stays mounted while closed to preserve native form buffers.
+    # Do not deserialize historical report snapshots on a hidden rerun.
+    if not visible:
+        return draft
     from app.monthly_report_saved_source_reuse import saved_source_choices, reuse_saved_source
     from app.monthly_report_source_details import source_date
     evidence_key = prefix + "_evidence"
@@ -179,7 +183,7 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
         else:
             sources, additions = draft.sources, {}
         draft = replace(draft, sources=keep_missing(prefix, sources))
-        draft = _render_saved_source_reuse(draft, prefix, field)
+        draft = _render_saved_source_reuse(draft, prefix, field, visible=opened)
         if additions:
             from app.monthly_report_guided import merge_blocks, _advance_rich_text_receipt
             for key, block in additions.items():
