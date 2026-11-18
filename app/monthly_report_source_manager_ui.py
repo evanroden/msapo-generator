@@ -61,7 +61,13 @@ def _render_saved_source_reuse(draft, prefix, field, *, visible):
                 for identity in (source.id, source.sha256)}
     existing.update(identity for content in contents
                     for identity in (content.source.id, content.source.sha256))
-    choices = saved_source_choices(draft.profile, exclude_ids=existing)
+    try:
+        choices = saved_source_choices(draft.profile, exclude_ids=existing)
+    except (ValueError, OSError) as exc:
+        # One damaged old snapshot must not take down the current report or
+        # block uploading a fresh file. Never treat it as an empty catalog.
+        st.warning("Saved-source catalog needs review; current report and original files were kept. " + str(exc))
+        return draft
     st.markdown("**Already uploaded**")
     if not choices:
         st.caption("No other saved files for this exact contract and site selection.")
