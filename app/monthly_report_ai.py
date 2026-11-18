@@ -662,11 +662,17 @@ def drafting_request(block_key, sources, period, vendors=(), tags=(), instructio
     )
     # Preserve saved historical facts, but never serialize priced quotes or
     # priced fact wording into an outward AI drafting payload.
-    facts = tuple(
-        f for f in candidates if not (
-            contains_price(f.text) or contains_price(f.quote)
-            or any(contains_private_contact(value) for value in (
-                f.text, f.quote, f.vendor, f.facility, *f.tags))))
+    # Every string in asdict(f) is serialized into the outbound JSON, not
+    # just the visible quote/text. Historical status, flags and vendor fields
+    # can carry a private amount/contact even with a clean technical quote.
+    def permitted_fact(f):
+        fields = (f.id, f.source_id, f.kind, f.text, f.quote, f.date,
+                  f.facility, f.vendor, f.status, *f.tags, *f.flags)
+        return all(isinstance(value, str)
+                   and not contains_price(value)
+                   and not contains_private_contact(value)
+                   for value in fields)
+    facts = tuple(f for f in candidates if permitted_fact(f))
     if not facts:
         if candidates:
             raise ValueError(
