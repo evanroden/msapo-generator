@@ -75,11 +75,11 @@ def canonical_issues(draft):
     row_occurrences = {}
     source_offsets, seen_source_tables = {}, set()
     for columns, rows, reference in tables:
-        # A second upload of the same source table must not create more cards,
-        # even when the importer has renamed its display headings.
+        # Equal text and an unverified/shared reference do not prove the same
+        # physical table: keep all occurrences unless tied to a known upload.
         source_key = _register_original_identity(draft, reference) if reference else ""
         source_table = (source_key, tuple(columns), tuple(tuple(row) for row in rows))
-        if reference and source_table in seen_source_tables:
+        if reference and source_key != reference and source_table in seen_source_tables:
             continue
         if reference:
             seen_source_tables.add(source_table)

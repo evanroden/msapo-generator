@@ -233,3 +233,17 @@ def test_distinct_same_page_tables_are_not_dropped_merely_for_equal_cell_values(
     assert len(reviewed.follow_ups) == 2
     assert reviewed.follow_ups[0].key != reviewed.follow_ups[1].key
     assert reviewed.follow_ups[0].references == reviewed.follow_ups[1].references
+
+
+def test_shared_unverified_reference_retains_separate_physical_tables():
+    # A shared display reference without a matching uploaded original is not
+    # evidence that two physically present issue-register tables are one.
+    draft = fixture(rows=(ROWS[0], ROWS[0]))
+    table = ReportTable(COLUMNS, (ROWS[0], ROWS[0]), "source:shared")
+    block = replace(draft.blocks[0], extra_tables=(table, table))
+    source = replace(draft, blocks=(block,), sources=())
+    reviewed = canonical_issues(source)
+    assert len(reviewed.follow_ups) == 4
+    assert len({item.key for item in reviewed.follow_ups}) == 4
+    replayed = canonical_issues(replace(reviewed, blocks=(block,)))
+    assert replayed.follow_ups == reviewed.follow_ups
