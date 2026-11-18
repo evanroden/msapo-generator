@@ -808,19 +808,24 @@ def _native_reader_page_pairs(contents, destination, table_columns=None):
     covered = set()
     for content in contents:
         source = content.source
-        if len(content.tables) != len(source.page_texts) or not content.tables:
+        if (source.suffix not in {".csv", ".xlsx"}
+                or len(content.tables) != len(source.page_texts) or not content.tables):
+            # Word/PDF pages can contain narrative adjacent to native tables.
+            # Mapping a row must not suppress that separate technical evidence.
             continue
         if destination == "activity_summary":
             if source.suffix == ".csv":
                 extracted = _csv_activity_entries(content)
-                # Known schemas with no usable rows remain in manual review.
-                if extracted:
-                    covered.update((source.id, number) for number, _ in extracted)
+                # A partial table mapping still needs source review. Do not
+                # pronounce the entire worksheet complete from one safe row.
+                for number, table in enumerate(content.tables, 1):
+                    if table.rows and sum(page == number for page, _ in extracted or ()) == len(table.rows):
+                        covered.add((source.id, number))
         elif destination in COLUMNS:
             for number, table in enumerate(content.tables, 1):
                 part = replace(content, tables=(table,),
                                source=replace(source, page_texts=(source.page_texts[number - 1],)))
-                if mapped_rows(part, destination, table_columns):
+                if table.rows and len(mapped_rows(part, destination, table_columns)) == len(table.rows):
                     covered.add((source.id, number))
     return frozenset(covered)
 
