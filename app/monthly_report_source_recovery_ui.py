@@ -25,6 +25,10 @@ def render_failed_file_retries(profile, period, revision, local_key, picked, con
         profile, period, revision, picked, contents)
         if any(message.startswith("Not read: " + request.filename + ". ")
                for message in messages))
+    # Keep the single source workspace available while a rejected chooser
+    # item still needs its own correction, even when its good siblings already
+    # satisfy ordinary source-status checks. An empty chooser clears this flag.
+    st.session_state[local_key + "_failed_original"] = bool(requests)
     if not requests:
         return None
     st.caption("Only the failed file needs attention. Retry its unchanged bytes below, "
