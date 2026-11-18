@@ -110,7 +110,11 @@ def parallel_pages(path, digest, numbers, *, dpi, max_pixels, max_source_bytes):
     join workers before releasing the session's single raster lane.
     """
     pages = iter(numbers)
-    context = multiprocessing.get_context("spawn")
+    # forkserver starts from a clean interpreter (no inherited PyMuPDF state)
+    # and avoids repeatedly importing the entire application in every child.
+    # Windows and installations without forkserver use safe spawn instead.
+    method = "forkserver" if "forkserver" in multiprocessing.get_all_start_methods() else "spawn"
+    context = multiprocessing.get_context(method)
     pool = context.Pool(processes=MAX_WORKERS)
     pending = deque()
     def submit(number):
