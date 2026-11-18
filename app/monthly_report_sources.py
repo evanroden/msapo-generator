@@ -6,6 +6,9 @@ images on the caller thread; only prepared network requests enter receipt_jobs.
 
 from __future__ import annotations
 
+from collections import OrderedDict
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime
 from email import policy
@@ -927,6 +930,49 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
     return tuple(sources.values()), tuple(messages)
 
 
+# A single page-publication operation may need dozens of pages from the same
+# large source. Only one caller/thread owns this context: no cross-session
+# Streamlit objects, and nothing here grants report/source approval.
+_PAGE_READS = ContextVar("monthly_page_verified_sources", default=None)
+MAX_PAGE_READ_CACHE_BYTES = 64 * 1024 * 1024
+
+
+@contextmanager
+def _page_read_scope():
+    scope = {"raw": OrderedDict(), "bytes": 0, "reused": set(),
+             "verified": {}, "docx": None}
+    token = _PAGE_READS.set(scope)
+    try:
+        yield
+        # A replacement of an original while pages were being prepared must
+        # never return a seemingly complete set of source references.
+        for key in scope["reused"]:
+            profile, source = scope["verified"][key]
+            source_bytes(profile, source)
+    finally:
+        _PAGE_READS.reset(token)
+
+
+def _page_verified_bytes(profile, source):
+    scope = _PAGE_READS.get()
+    if scope is None:
+        return source_bytes(profile, source)
+    key = (profile.contract, profile.key, source.sha256, source.suffix)
+    if key in scope["raw"]:
+        scope["reused"].add(key)
+        scope["raw"].move_to_end(key)
+        return scope["raw"][key]
+    raw = source_bytes(profile, source)
+    scope["verified"][key] = (profile, source)
+    if len(raw) <= MAX_PAGE_READ_CACHE_BYTES:
+        while scope["raw"] and scope["bytes"] + len(raw) > MAX_PAGE_READ_CACHE_BYTES:
+            _, evicted = scope["raw"].popitem(last=False)
+            scope["bytes"] -= len(evicted)
+        scope["raw"][key] = raw
+        scope["bytes"] += len(raw)
+    return raw
+
+
 def page_image(profile: ReportProfile, content: SourceContent, number: int, *, preview: bool = False):
     source = content.source
     if number < 1 or number > len(source.page_texts):
@@ -963,7 +1009,7 @@ def page_image(profile: ReportProfile, content: SourceContent, number: int, *, p
             # source is decoded and an atomic fresh derivative is published
             # only after it has been prepared successfully.
             pass
-    raw = source_bytes(profile, source) if source.suffix != ".docx" else b""
+    raw = _page_verified_bytes(profile, source) if source.suffix != ".docx" else b""
     if source.suffix == ".pdf":
         with fitz.open(stream=raw, filetype="pdf") as pdf:
             page = pdf[number-1]
@@ -981,7 +1027,17 @@ def page_image(profile: ReportProfile, content: SourceContent, number: int, *, p
         if not item_id:
             raise ValueError("This DOCX item has no raster image. Use its extracted text/table instead.")
         path = _path(profile, source.sha256, source.suffix)
-        inspected = inspect_docx(path)
+        active = _PAGE_READS.get()
+        key = (profile.contract, profile.key, source.sha256, source.suffix)
+        prior = active["docx"] if active is not None else None
+        if prior is not None and prior[0] == key:
+            inspected = prior[1]
+            active["reused"].add(key)
+        else:
+            inspected = inspect_docx(path)
+            if active is not None:
+                active["verified"][key] = (profile, source)
+                active["docx"] = (key, inspected)
         if inspected.sha256 != source.sha256:
             raise ValueError("A source file failed its integrity check.")
         item = next(i for i in inspected.items if i.id == item_id)
@@ -1043,15 +1099,16 @@ def prepare_pages(profile: ReportProfile, contents: tuple[SourceContent, ...],
         if not page_allowed(content.source, number, profile=profile, destination=slot):
             raise ValueError(f"Check page {number} of {content.source.filename} before including it. Prices, legal-only and blank/signature-only pages cannot be included.")
     grouped, total = {}, 0
-    for content, slot, number in planned:
-        normalized = page_image(profile, content, number)
-        total += len(normalized.data)
-        if total > 60 * 1024 * 1024:
-            raise ValueError("Prepared images exceed 60 MB. Reduce the selected pages or image dimensions.")
-        ref = library.asset_reference(normalized.data, normalized.extension)
-        library._atomic_write(library._profile_path(profile.contract, profile.key) / "assets" / ref, normalized.data)
-        caption = dict(content.source.captions).get(number, f"{content.source.filename} · page/item {number}")
-        grouped.setdefault(slot, []).append((ref, caption, source_reference(content.source, number)))
+    with _page_read_scope():
+        for content, slot, number in planned:
+            normalized = page_image(profile, content, number)
+            total += len(normalized.data)
+            if total > 60 * 1024 * 1024:
+                raise ValueError("Prepared images exceed 60 MB. Reduce the selected pages or image dimensions.")
+            ref = library.asset_reference(normalized.data, normalized.extension)
+            library._atomic_write(library._profile_path(profile.contract, profile.key) / "assets" / ref, normalized.data)
+            caption = dict(content.source.captions).get(number, f"{content.source.filename} · page/item {number}")
+            grouped.setdefault(slot, []).append((ref, caption, source_reference(content.source, number)))
     from app.monthly_report_asset_instances import new_asset_instance, with_asset_instances
     blocks = tuple(with_asset_instances(ResolvedBlock(slot, "This month", asset_hashes=tuple(v[0] for v in values),
                                asset_captions=tuple(v[1] for v in values), references=tuple(v[2] for v in values),
