@@ -54,7 +54,9 @@ def word_table_geometry(table, rows) -> WordTableGeometry:
         tr_pr = row.find(W + "trPr")
         before = _number(tr_pr.find(W + "gridBefore") if tr_pr is not None else None)
         after = _number(tr_pr.find(W + "gridAfter") if tr_pr is not None else None)
-        marked = tr_pr is not None and tr_pr.find(W + "tblHeader") is not None
+        header_flag = tr_pr.find(W + "tblHeader") if tr_pr is not None else None
+        marked = (header_flag is not None and
+                  header_flag.get(W + "val", "1").casefold() not in ("0", "false", "off"))
         column = before
         cells = row.findall(W + "tc")
         spans = []
