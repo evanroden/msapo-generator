@@ -81,32 +81,38 @@ def _image_regions(page) -> tuple[fitz.Rect, ...]:
 
 
 def _column_text(page, native: str) -> tuple[str, bool]:
-    """Reorder only an unambiguous two-column run, never mingle row neighbors.
+    """Reorder only unambiguous two-column lines, not adjacent table cells.
 
-    This conservative operation does *not* create verified vendor block spans;
-    the calling parser continues to validate those against the untouched PDF.
+    PyMuPDF sometimes puts side-by-side lines into *one text block*, so block
+    bboxes are insufficient. Native reading order is retained for uncertainty.
     """
-    blocks = [block for block in page.get_text("blocks")
-              if len(block) > 6 and block[6] == 0 and str(block[4]).strip()]
-    if len(blocks) < 4:
+    if native.count("\n") < 2:
+        return native, False
+    lines = []
+    for block in page.get_text("dict", flags=fitz.TEXTFLAGS_DICT & ~fitz.TEXT_PRESERVE_IMAGES)["blocks"]:
+        if block.get("type") != 0:
+            continue
+        for line in block.get("lines", ()):
+            if line.get("wmode") != 0 or tuple(line.get("dir", ())) != (1.0, 0.0):
+                continue
+            content = "".join(span.get("text", "") for span in line.get("spans", ())).strip()
+            if content:
+                lines.append((fitz.Rect(line["bbox"]), content))
+    if len(lines) < 4:
         return native, False
     middle = (page.rect * page.derotation_matrix).width / 2
-    left = [b for b in blocks if b[2] < middle - 8]
-    right = [b for b in blocks if b[0] > middle + 8]
-    if len(left) < 2 or len(right) < 2 or len(left) + len(right) != len(blocks):
+    left = [(box, value) for box, value in lines if box.x1 < middle - 8]
+    right = [(box, value) for box, value in lines if box.x0 > middle + 8]
+    if len(left) < 2 or len(right) < 2 or len(left) + len(right) != len(lines):
         return native, False
-    # Real columns overlap vertically. Avoid mistaking two disconnected page
-    # sections for columns when only their horizontal position differs.
-    if max(b[1] for b in left) < min(b[1] for b in right) or max(b[1] for b in right) < min(b[1] for b in left):
+    if max(box.y0 for box, _ in left) < min(box.y0 for box, _ in right) or max(box.y0 for box, _ in right) < min(box.y0 for box, _ in left):
         return native, False
-    reading = "\n".join(str(b[4]).strip() for column in (left, right)
-                        for b in sorted(column, key=lambda v: (v[1], v[0])))
-    # Word inventory must remain identical; unexpected text transformations
-    # require manual review instead of lossy replacement.
+    reading = "\n".join(value for column in (left, right)
+                        for box, value in sorted(column, key=lambda item: (item[0].y0, item[0].x0)))
+    # Refuse to fabricate source words when native and geometric reading differ.
     if sorted(reading.split()) != sorted(native.split()):
         return native, True
     return reading, True
-
 
 def _ocr_image(png: bytes, *, timeout: float) -> str:
     """Tesseract TSV permits per-line source offsets, boxes and confidence."""
