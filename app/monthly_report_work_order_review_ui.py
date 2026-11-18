@@ -335,19 +335,22 @@ def render_reviewed_rows(draft, blocks, prefix, content):
                     f"({newer.work_date or 'unknown date'}). Neither was silently preferred.")
                 selected = {"existing": "Keep existing source",
                             "incoming": "Use incoming source"}.get(decisions.get(collision.binding), "Review needed")
-                if selected == "Review needed":
-                    widget = local + "_collision_" + collision.binding
-                    st.radio("Correct which source to use for this report",
-                        ("Review needed", "Keep existing source", "Use incoming source"),
-                        key=widget)
-                    st.button("Save this conflict choice", key=widget + "_save",
-                        on_click=_queue, args=(request_key,
-                            {**base, "action": "reconcile", "binding": collision.binding},
-                            (("winner", widget),)))
+                widget = local + "_collision_" + collision.binding
+                options = ("Review needed", "Keep existing source", "Use incoming source")
+                st.radio("Correct which source to use for this report", options,
+                         index=options.index(selected), key=widget)
+                st.button("Save this conflict choice", key=widget + "_save",
+                          disabled=st.session_state.get(widget) == "Review needed",
+                          on_click=_queue, args=(request_key,
+                              {**base, "action": "reconcile", "binding": collision.binding},
+                              (("winner", widget),)))
+                # An unsaved change in the native radio is never misrepresented
+                # as the prior saved choice. Switching winners remains possible.
+                if selected == "Review needed" or st.session_state.get(widget) != selected:
                     ready = False
                 else:
                     st.caption(f"Saved report-only choice: {selected.lower()}. "
-                               "Both source rows and prior choices remain reviewable.")
+                               "Both original claims and previous choices remain in report history.")
         except ValueError as exc:
             st.warning(str(exc))
             ready = False
