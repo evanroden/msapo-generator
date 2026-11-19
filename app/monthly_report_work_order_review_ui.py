@@ -53,6 +53,11 @@ def apply_request(draft, content, request):
             raise ValueError("Confirm rebuilding this table's mapping before replacing row corrections.")
         date_order = values.pop("date_order", "")
         value = flow.remap_group(draft, content, old, request["group"], values, date_order)
+    elif action == "reconcile":
+        winner = {"Keep existing source": "existing", "Use incoming source": "incoming"}.get(
+            values.get("winner"))
+        return flow.record_cross_source_decision(draft, old, request["binding"], winner,
+            expected_revision=request["expected"])
     elif action == "publish":
         return flow.publish_bundle(draft, old, expected_revision=request["expected"],
             expected_block=request["block"], include_trades=bool(values.get("include_trades")),
@@ -147,7 +152,8 @@ def render_reviewed_rows(draft, blocks, prefix, content):
     if record:
         for note in (record.questions if kind == "workorders" else record.notes):
             st.warning(note)
-        if content.source.suffix in (".csv", ".xlsx"):
+        if (content.source.suffix in (".csv", ".xlsx")
+                or (kind == "workorders" and content.source.suffix == ".docx")):
             unresolved = tuple(LABELS[name] for name in fields
                 if name in record.mapping.ambiguous
                 or (name in ("work_order", "site", "work_date", "status")
@@ -170,7 +176,7 @@ def render_reviewed_rows(draft, blocks, prefix, content):
                         st.selectbox(LABELS[name] + " column", options, index=options.index(current),
                             format_func=lambda n: "Not mapped" if n is None else f"{n + 1}: {record.original_columns[n]}", key=widget)
                         pairs.append((name, widget))
-                    if kind == "workorders":
+                    if kind == "workorders" and content.source.suffix in (".csv", ".xlsx"):
                         widget = local + "_date_order"
                         orders = ("", "MDY", "DMY")
                         st.selectbox("Numeric date order", orders, index=orders.index(group.get("date_order", "")),
@@ -182,11 +188,11 @@ def render_reviewed_rows(draft, blocks, prefix, content):
                     st.form_submit_button("Apply source mapping", on_click=_queue,
                         args=(request_key, {**base, "action": "mapping", "group": index}, pairs))
         if record.rows:
-            st.dataframe([{"Source row": row.origin.row_number,
+            st.dataframe([{"Source row": row.origin.native_row_number or row.origin.row_number,
                 **{LABELS[n]: getattr(row, n) for n in fields},
                 "Review needed": "; ".join(row.issues), "Omitted": row.excluded} for row in record.rows], hide_index=True)
             selected = st.selectbox("Row to correct", range(len(record.rows)),
-                format_func=lambda n: f"Source row {record.rows[n].origin.row_number} · {getattr(record.rows[n], fields[0]) or 'Missing ID'}",
+                format_func=lambda n: f"Source row {record.rows[n].origin.native_row_number or record.rows[n].origin.row_number} · {getattr(record.rows[n], fields[0]) or 'Missing ID'}",
                 key=local + "_row")
             row = record.rows[selected]
             st.caption("Original cells: " + " | ".join(row.origin.cells))
@@ -323,6 +329,44 @@ def render_reviewed_rows(draft, blocks, prefix, content):
     except ValueError as exc:
         ready = False
         st.info(str(exc))
+    if kind == "workorders" and ready:
+        try:
+            candidates = flow.cross_source_candidates(draft, bundle)
+            decisions = {item["binding"]: item["winner"] for item in bundle.get("cross_source_decisions", ())}
+            for collision in candidates:
+                older, newer = collision.existing, collision.incoming
+                if collision.kind == "duplicate":
+                    st.caption(
+                        f"Matching source rows: {older.locator} and {newer.locator}. "
+                        "Counted once; both originals remain available for review.")
+                    continue
+                st.warning(
+                    f"Conflicting source claims for {newer.site} work order {newer.work_order}: "
+                    f"{older.locator} records {older.status or 'unknown'} "
+                    f"({older.work_date or 'unknown date'}); "
+                    f"{newer.locator} records {newer.status or 'unknown'} "
+                    f"({newer.work_date or 'unknown date'}). Neither was silently preferred.")
+                selected = {"existing": "Keep existing source",
+                            "incoming": "Use incoming source"}.get(decisions.get(collision.binding), "Review needed")
+                widget = local + "_collision_" + collision.binding
+                options = ("Review needed", "Keep existing source", "Use incoming source")
+                st.radio("Correct which source to use for this report", options,
+                         index=options.index(selected), key=widget)
+                st.button("Save this conflict choice", key=widget + "_save",
+                          disabled=st.session_state.get(widget) == "Review needed",
+                          on_click=_queue, args=(request_key,
+                              {**base, "action": "reconcile", "binding": collision.binding},
+                              (("winner", widget),)))
+                # An unsaved change in the native radio is never misrepresented
+                # as the prior saved choice. Switching winners remains possible.
+                if selected == "Review needed" or st.session_state.get(widget) != selected:
+                    ready = False
+                else:
+                    st.caption(f"Saved report-only choice: {selected.lower()}. "
+                               "Both original claims and previous choices remain in report history.")
+        except ValueError as exc:
+            st.warning(str(exc))
+            ready = False
     destination = "work_orders" if kind == "workorders" else "service_calls"
     block = blocks.get(destination, ResolvedBlock(destination, "This month"))
     publish_fields = [("include_trades", key + "_trades")] if kind == "workorders" else []

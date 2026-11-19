@@ -46,11 +46,13 @@ from decimal import Decimal
 from pathlib import Path
 
 import streamlit as st
+from app.field_help import field_with_help
 
 from app.service_closed import close_if_moved
 
 from app import contracts
 from app.ui_highlight import highlight_needed_fields
+from app.po_step_spine import po_step_spine, po_step_states
 from app.asset_guess import guess_asset_uid, lowest_numbered_of_type
 from app.asset_picker import (
     ASSET_SEARCH_LIMIT,
@@ -64,6 +66,7 @@ from app.config import (
     WORK_CATEGORY_DISPLAY,
     facility_key_from_name,
     lookup_cost_code,
+    operator_today,
     valid_categories_for_site,
 )
 from app.device_identity import device_token, ensure_device_cookie
@@ -91,6 +94,7 @@ from app.memory import (
     remembered_vendor_contact,
 )
 from app.ocr import extract_text
+from app.upload_validation import QUOTE_NEXT_STEP, quote_upload_problem
 from app.po_context import (
     _document_signature,
     account_manager_memory_context_id,
@@ -465,6 +469,59 @@ __WORKFLOW_SHELL_CSS__
         margin: 0;
     }
 
+    /* PO navigation uses the same numbered and titled pieces as expenses. */
+    .po-step-spine { margin: 0.55rem 0 0.85rem; }
+    .po-step-spine ol {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0.55rem;
+        list-style: none;
+        margin: 0;
+        padding: 0;
+    }
+    .po-step-spine li { min-width: 0; }
+    .po-step-link {
+        align-items: flex-start;
+        background: #FFFFFF;
+        border: 1px solid var(--enfra-concrete);
+        border-bottom: 3px solid var(--enfra-concrete);
+        border-radius: 5px;
+        box-sizing: border-box;
+        color: var(--enfra-ocean);
+        display: flex;
+        gap: 0.55rem;
+        height: 100%;
+        min-height: 78px;
+        padding: 0.6rem;
+        text-decoration: none !important;
+        touch-action: manipulation;
+    }
+    .po-step-link[data-state="current"] {
+        background: #F5F9F7;
+        border-bottom-color: var(--enfra-yellow);
+    }
+    .po-step-link[data-state="current"] .step-num {
+        background: var(--enfra-yellow);
+        color: var(--enfra-ocean);
+    }
+    .po-step-link[data-state="pending"] .step-num {
+        background: #FFFFFF;
+        border: 1px solid var(--enfra-concrete);
+        box-sizing: border-box;
+        color: var(--enfra-ocean);
+    }
+    .po-step-link:hover { background: var(--enfra-iced); }
+    .po-step-copy { display: flex; flex-direction: column; min-width: 0; }
+    .po-step-link .step-title { font-size: 0.95rem; }
+    .po-step-summary {
+        color: var(--enfra-ocean);
+        display: block;
+        font-size: 0.77rem;
+        line-height: 1.3;
+        margin-top: 0.25rem;
+    }
+    .po-step-anchor { display: block; height: 0; scroll-margin-top: 1rem; }
+
     .metric-card {
         background: #FFFFFF;
         border: 1px solid var(--enfra-concrete);
@@ -633,6 +690,11 @@ __WORKFLOW_SHELL_CSS__
         .hero-subtitle { font-size: 0.92rem; }
         .step-header { align-items: flex-start; margin-top: 1.2rem; }
         .step-title { font-size: 1.13rem; padding-top: 0.2rem; }
+        .po-step-spine ol { grid-template-columns: minmax(0, 1fr); gap: 0.2rem; }
+        .po-step-link { min-height: 51px; padding: 0.35rem 0.6rem; }
+        .po-step-link .step-num { height: 26px; width: 26px; }
+        .po-step-link .step-title { font-size: 0.9rem; padding: 0; }
+        .po-step-summary { font-size: 0.75rem; margin-top: 0.1rem; }
         div[data-testid="stHorizontalBlock"] { flex-wrap: wrap; }
         div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
             flex: 1 1 100% !important;
@@ -1213,6 +1275,7 @@ def _load_test_into_state() -> None:
     st.session_state["extract_hash"] = hashlib.sha256(quote_bytes).hexdigest()
     st.session_state.pop("scope_pdf_bytes", None)
     st.session_state.pop("scope_pdf_signature", None)
+    st.session_state.pop("scope_pdf_generated_on", None)
     st.session_state.pop("analysis_error_signature", None)
     st.session_state.pop("analysis_error_message", None)
     st.session_state.pop("extraction_error_hash", None)
@@ -1586,7 +1649,7 @@ def _render_asset_control(
     def commit_large_picker_selection() -> None:
         st.session_state[asset_state_key] = st.session_state[picker_key]
 
-    raw_asset = st.selectbox(
+    raw_asset = field_with_help(st.selectbox, 
         "Specific asset *",
         options,
         format_func=lambda uid: (
@@ -1598,10 +1661,7 @@ def _render_asset_control(
         ),
         key=picker_key if large_picker else asset_state_key,
         on_change=commit_large_picker_selection if large_picker else None,
-        help=(
-            "The tool suggests the asset from the quote and selected site. "
-            "Choose a different one only if the suggestion is wrong."
-        ),
+        help="Choose the asset associated with this work, or select no asset when none applies. The choice is included in the request.",
     )
     if large_picker:
         raw_asset = st.session_state[asset_state_key]
@@ -1640,8 +1700,8 @@ def _render_footer(workflow: str = PURCHASE_WORKFLOW) -> None:
     with st.expander("About"):
         st.caption("Running code: " + (commit if commit else "build identifier unavailable"))
         if workflow == PURCHASE_WORKFLOW:
-            st.button("Load synthetic quote", key="load_synthetic_test",
-                      help="Replace this browser's current quote with the built-in synthetic example. No request is sent.",
+            field_with_help(st.button, "Load synthetic quote", key="load_synthetic_test",
+                      help="Load a built-in example to explore quote review. This replaces the current browser draft without submitting a request.",
                       on_click=_load_synthetic_quote_from_about)
             from app.owner_contacts_ui import render_owner_contacts
             render_owner_contacts()
@@ -1868,10 +1928,14 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
 
     st.title("Purchase order")
     st.caption("Add the vendor quote, complete missing details, then create the two-file package.")
+    step_spine = st.empty()
+    step_spine.markdown(po_step_spine(po_step_states()), unsafe_allow_html=True)
 
     presentation.enter_context(workspace_section("purchase_review", "Quote and request review"))
     editor, reference = workspace_columns("purchase_review")
     presentation.enter_context(editor)
+    st.markdown('<span id="po-step-quote" class="po-step-anchor" aria-hidden="true"></span>',
+                unsafe_allow_html=True)
 
     st.markdown(
         """
@@ -1895,12 +1959,10 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
     uploaded = None
 
     if input_mode == UPLOAD_MODE:
+        st.caption("Accepted: PDF, Word (.docx), photos and .txt files; or choose Paste text.")
         uploaded = st.file_uploader(
             "Upload quote",
-            type=[
-                "pdf", "png", "jpg", "jpeg", "webp", "tif", "tiff", "bmp",
-                "heic", "heif", "hif", "txt",
-            ],
+            type=None,
             # Derived from the Smartsheet attachment ceiling, not chosen. The
             # quote the operator uploads IS one of the two attachments, so a file
             # the uploader accepts but Smartsheet later refuses is a failure the
@@ -1920,8 +1982,20 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
             st.caption(f"Retained quote: {uploaded.name}")
             st.button("Remove retained quote", on_click=_clear_quote_upload)
         if uploaded is not None:
-            st.session_state["po_upload_available"] = True
             file_bytes = uploaded.getvalue()
+            rejection = quote_upload_problem(uploaded.name, file_bytes)
+            if rejection:
+                clear_active_analysis(st.session_state)
+                for key in (
+                    "uploaded_file_bytes", "uploaded_file_name", "extracted_text",
+                    "extract_hash", "extraction_error_hash", "extraction_error_message",
+                ):
+                    st.session_state.pop(key, None)
+                st.session_state["po_upload_available"] = False
+                st.error(rejection)
+                _render_footer()
+                return
+            st.session_state["po_upload_available"] = True
             st.session_state["uploaded_file_bytes"] = file_bytes
             st.session_state["uploaded_file_name"] = uploaded.name
             # Every decision below keys off the file's CONTENT hash, never its
@@ -1951,23 +2025,18 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
                         # error path as a genuine exception.
                         if not extracted:
                             raise ValueError("No readable text was found in the file.")
-                    except Exception as exc:
+                    except Exception:
                         st.session_state["extracted_text"] = ""
                         st.session_state["extraction_error_hash"] = file_hash
-                        st.session_state["extraction_error_message"] = str(exc)[:300]
+                        # Parser errors can include MIME types or internals.
+                        st.session_state["extraction_error_message"] = ""
                     else:
                         st.session_state["extracted_text"] = extracted
                         st.session_state["extract_hash"] = file_hash
                         st.session_state.pop("extraction_error_hash", None)
                         st.session_state.pop("extraction_error_message", None)
             if st.session_state.get("extraction_error_hash") == file_hash:
-                st.error(
-                    "The file could not be read. Try reading it again, upload a "
-                    "clearer copy, or switch to Paste text."
-                )
-                details = st.session_state.get("extraction_error_message", "")
-                if details:
-                    st.caption(f"File-reading detail: {details}")
+                st.error("The quote could not be read. " + QUOTE_NEXT_STEP)
                 st.button(
                     "Try reading this file again",
                     key=f"retry_extract_{file_hash[:12]}",
@@ -2071,6 +2140,7 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
                 st.session_state["quote_source"] = quote_source
                 st.session_state.pop("scope_pdf_bytes", None)
                 st.session_state.pop("scope_pdf_signature", None)
+                st.session_state.pop("scope_pdf_generated_on", None)
                 st.session_state.pop("analysis_error_signature", None)
                 st.session_state.pop("analysis_error_message", None)
 
@@ -2440,6 +2510,8 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
     final_inclusions: list[str] = []
     final_exclusions: list[str] = []
     unified_inclusions, unified_exclusions = _build_unified_lists(analysis)
+    st.markdown('<span id="po-step-scope" class="po-step-anchor" aria-hidden="true"></span>',
+                unsafe_allow_html=True)
     with st.expander(
         "Review scope, inclusions, and exclusions",
         expanded=False,
@@ -2456,14 +2528,11 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
         # because the document template would otherwise read the untouched
         # analysis text and discard every correction, on the exact page contract
         # administration signs.
-        scope_value = st.text_area(
+        scope_value = field_with_help(st.text_area, 
             "Scope of Work",
             key=scope_key,
             height=160,
-            help=(
-                "Edit the tool's draft when the quote was interpreted "
-                "incorrectly. This exact text is used in the supporting PDF."
-            ),
+            help="Review and correct the proposed work description. This text is copied into the supporting document.",
         ).strip()
         inclusion_column, exclusion_column = st.columns(2)
         with inclusion_column:
@@ -2496,6 +2565,8 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
                 "stated in the quote."
             )
 
+    st.markdown('<span id="po-step-details" class="po-step-anchor" aria-hidden="true"></span>',
+                unsafe_allow_html=True)
     if current_needs.any:
         st.markdown(
             '<div class="needs-banner"><strong>Needed from you</strong><br>'
@@ -2533,12 +2604,12 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
         )
 
     with corrections:
-        request_type = st.selectbox(
+        request_type = field_with_help(st.selectbox, 
             "What kind of request is this? *",
             tuple(REQUEST_TYPE_LABELS),
             format_func=lambda value: REQUEST_TYPE_LABELS[value],
             key=request_type_key,
-            help="The tool guesses this from the quote. Change it only if needed.",
+            help="Select whether this is a new order or a change to an existing order. This choice determines which details are required.",
         )
 
     if request_type == "CHANGE ORDER":
@@ -2576,29 +2647,22 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
                 else job_suggestion or JOB_NUMBER_PLACEHOLDER
             )
         with questions if needs.job_number else corrections:
-            st.selectbox(
+            field_with_help(st.selectbox, 
                 "Job number *",
                 selectable_job_options,
                 key=job_key,
-                help=(
-                    "The choices match Smartsheet exactly. Unity choices are "
-                    "for Unity Health System in Arkansas; Rochester-area "
-                    "Unity hospitals use RRH job numbers."
-                ),
+                help="Select the job number for the chosen contract and site. It routes the request to the appropriate job.",
             )
     else:
         job_key = ""
 
     with questions if route_uncertain else corrections:
-        purchase_route = st.selectbox(
+        purchase_route = field_with_help(st.selectbox, 
             "How will this work or purchase be handled? *",
             PURCHASE_ROUTES,
             format_func=lambda route: PURCHASE_ROUTE_LABELS[route],
             key=route_key,
-            help=(
-                "Labor and rentals take priority. Equipment applies only to "
-                "complete Group A equipment purchases."
-            ),
+            help="Choose whether the work involves labor, rentals, or equipment. The selection sets the initial accounting fields.",
         )
         if route_uncertain:
             st.caption(
@@ -2619,13 +2683,10 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
         )
 
     with questions if needs.total else corrections:
-        total_value = st.text_input(
+        total_value = field_with_help(st.text_input, 
             "PO/CO amount — final total including every fee and tax *",
             key=total_key,
-            help=(
-                "Use the final amount payable, including sales tax, freight, "
-                "delivery, surcharges, and any other quoted fees."
-            ),
+            help="Enter the final total including applicable taxes, delivery, and fees. This is the total entered on the request.",
         ).strip()
 
     price_issues = pricing_problems(
@@ -2637,13 +2698,13 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
     # block the completed package with no way to repair it. Keep the controls
     # visible when they need attention, otherwise with the optional corrections.
     with questions if price_issues else corrections:
-        subtotal_value = st.text_input(
+        subtotal_value = field_with_help(st.text_input, 
             "Subtotal after discounts (optional)", key=subtotal_key,
-            help="Correct the quoted net subtotal. Leave blank only if not stated.",
+            help="Enter the quoted subtotal after discounts when one is stated. It helps reconcile the final total.",
         ).strip()
-        tax_value = st.text_input(
+        tax_value = field_with_help(st.text_input, 
             "Sales tax (optional)", key=tax_key,
-            help="Enter the quoted sales tax, including zero. Leave blank only if not stated.",
+            help="Enter the tax amount shown on the quote, including zero when stated. Leave blank when no tax amount is provided.",
         ).strip()
 
     with questions if needs.vendor else corrections:
@@ -2653,10 +2714,10 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
         st.text_input("Vendor representative name *", key=contact_key)
 
     with questions if needs.contact_email else corrections:
-        st.text_input(
+        field_with_help(st.text_input, 
             "Vendor representative email *",
             key=email_key,
-            help="Enter the representative's complete email address.",
+            help="Enter the representative's complete email address. It identifies who can answer questions about the quote.",
         )
 
     if remembered_contact_active:
@@ -2696,14 +2757,11 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
                 browser_token, contract
             )
         with questions:
-            requester_value = st.text_input(
+            requester_value = field_with_help(st.text_input, 
                 "Your name (Requester / Asset Manager) *",
                 key=requester_key,
                 placeholder="Enter your name once",
-                help=(
-                    "After a successful package, this browser remembers the most "
-                    "recent name for this ENFRA account."
-                ),
+                help="Enter the name of the person submitting this request. This browser can reuse the name on future requests.",
             ).strip()
 
     # Emitted AFTER the fields render, because the requester's value is not
@@ -2747,17 +2805,17 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
     # Toggling off does NOT hide existing text. Silently concealing content the
     # operator wrote is the failure this whole change is about; they clear the
     # box to remove the note.
-    reveal_note = st.toggle(
+    reveal_note = field_with_help(st.toggle, 
         "Add Additional Information",
         key=f"show_optional_{token}",
-        help="Use this only when the Smartsheet reviewer needs an extra note.",
+        help="Turn this on when the reviewer needs an extra explanation. Leave it off if the other fields are sufficient.",
     )
     if reveal_note or instructions_value:
-        st.text_area(
+        field_with_help(st.text_area, 
             "Additional information (optional)",
             key=instructions_key,
             placeholder="Only enter something the Smartsheet reviewer needs",
-            help="Only add a note the Smartsheet reviewer needs to see.",
+            help="Enter details the reviewer needs that are not captured elsewhere. This note is included with the request.",
         )
 
     with corrections:
@@ -2801,29 +2859,21 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
     )
 
     with corrections:
-        st.selectbox(
+        field_with_help(st.selectbox, 
             "Object Account",
             OBJECT_ACCOUNT_OPTIONS,
             key=f"object_account_{token}",
             on_change=_remember_po_coding_choice,
             args=(token, "object_account"),
-            help=(
-                "Defaults from how the work is handled. Change it when the "
-                "funding or contract vehicle needs a different account, such as "
-                "5490-OTHER for ISDC-funded work."
-            ),
+            help="Select the accounting category that applies to this request. Change the suggested value if the coding differs.",
         )
-        st.selectbox(
+        field_with_help(st.selectbox, 
             "Agreement Type for PO",
             AGREEMENT_TYPE_OPTIONS,
             key=f"agreement_type_{token}",
             on_change=_remember_po_coding_choice,
             args=(token, "agreement_type"),
-            help=(
-                "Defaults from how the work is handled. Change it when the "
-                "contract vehicle differs -- for example CSAPO (CONSTRUCTION) "
-                "under a CSA rather than an MSA."
-            ),
+            help="Select the agreement category authorizing this purchase. Change the suggested value when another agreement applies.",
         )
 
     object_account_value = str(st.session_state.get(f"object_account_{token}", "") or "")
@@ -2948,15 +2998,26 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
     ):
         st.session_state.pop("scope_pdf_bytes", None)
         st.session_state.pop("scope_pdf_signature", None)
+        st.session_state.pop("scope_pdf_generated_on", None)
         st.warning(
             "A PDF-bearing detail changed. Generate the package again before "
             "opening Smartsheet."
         )
 
+    # Give legacy in-session PDFs a date once, rather than changing their
+    # download names on every later rerun.
+    if (
+        st.session_state.get("scope_pdf_bytes")
+        and st.session_state.get("scope_pdf_signature") == current_pdf_signature
+    ):
+        st.session_state.setdefault("scope_pdf_generated_on", operator_today().isoformat())
+
     presentation.close()
     presentation.enter_context(workspace_section("purchase_package", "Generated package review"))
     editor, reference = workspace_columns("purchase_package")
     presentation.enter_context(editor)
+    st.markdown('<span id="po-step-generate" class="po-step-anchor" aria-hidden="true"></span>',
+                unsafe_allow_html=True)
 
     st.markdown(
         """
@@ -2998,7 +3059,10 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
             # and invites repeat taps.
             with st.spinner("Preparing the MSAPO form PDF…"):
                 scope_pdf = st.session_state.get("scope_pdf_bytes")
-                if not scope_pdf or st.session_state.get("scope_pdf_signature") != current_pdf_signature:
+                reused_pdf = bool(scope_pdf) and (
+                    st.session_state.get("scope_pdf_signature") == current_pdf_signature
+                )
+                if not reused_pdf:
                     scope_pdf = build_msapo_pdf(
                         analysis=analysis,
                         scope=scope_value,
@@ -3019,6 +3083,10 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
         else:
             st.session_state["scope_pdf_bytes"] = scope_pdf
             st.session_state["scope_pdf_signature"] = current_pdf_signature
+            if not reused_pdf:
+                st.session_state["scope_pdf_generated_on"] = operator_today().isoformat()
+            else:
+                st.session_state.setdefault("scope_pdf_generated_on", operator_today().isoformat())
             context = build_po_context(st.session_state)
             if context is not None:
                 st.session_state[generated_key] = context.context_id
@@ -3077,6 +3145,23 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
         st.warning(
             "A detail changed. Use the button again to refresh both files and the link."
         )
+
+    step_spine.markdown(
+        po_step_spine(po_step_states(
+            quote_ready=True,
+            scope_ready=bool(scope_value),
+            details_ready=not draft_problems,
+            generated=bool(
+                context is not None
+                and context.ready
+                and not draft_problems
+                and generated_context == context.context_id
+                and st.session_state.get("scope_pdf_bytes")
+                and st.session_state.get("scope_pdf_signature") == current_pdf_signature
+            ),
+        )),
+        unsafe_allow_html=True,
+    )
 
     with reference:
         current_pdf = st.session_state.get("scope_pdf_bytes")

@@ -81,7 +81,7 @@ def test_only_changed_photo_opens_until_all_photos_are_requested():
     app.session_state.photos_draft = replace(original, blocks=(block,))
     app.run()
     assert [value.value for value in app.text_area] == ["Changed second caption"]
-    assert not any(item.label.startswith('Move ') for item in app.button)
+    assert any(item.label == 'Move earlier' and not item.disabled for item in app.button)
     assert pending_asset_indexes(app.session_state.photos_draft.blocks[0]) == (1,)
     app.text_area[0].set_value("Corrected second caption").run()
     assert app.session_state.photos_draft.blocks[0].asset_captions == ("First photo", "Corrected second caption")
@@ -91,13 +91,13 @@ def test_only_changed_photo_opens_until_all_photos_are_requested():
     assert not app.exception
 
 
-def test_guided_photos_use_full_editor_width_without_a_duplicate_thumbnail():
+def test_guided_photos_have_inline_caption_thumbnails_without_second_page_preview():
     script = SCRIPT.replace('assets, _field)', 'assets, _field, show_preview=False)')
     app = AppTest.from_string(script).run()
     button(app, "Edit photos or captions").click().run()
     assert len(app.text_area) == 2
-    assert not app.get("image")
-    assert not app.get("column")
+    assert len(app.get("image")) == 2, "Each photo gets one contained thumbnail beside its caption"
+    assert len(app.get("column")) == 4, "One thumbnail and caption column per editable photo"
     assert not app.exception
 
 

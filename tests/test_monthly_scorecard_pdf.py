@@ -78,7 +78,12 @@ def test_scorecard_one_click_and_individual_review(monkeypatch, tmp_path):
     app.run()
     assert len(app.session_state['blocks']['utility_analysis'].asset_hashes) == 3
     app.toggle[0].set_value(True).run()
-    assert any(w.label == 'Page to review' for w in app.selectbox)
+    assert not app.exception
+    # All pages were already included by the whole-PDF action; there is no
+    # undecided page to review and no second Add action.
+    assert not any(w.label == 'Page to review' for w in app.selectbox)
+    assert not any(w.label == 'Add reviewed pages' for w in app.button)
+    assert len(app.session_state['blocks']['utility_analysis'].asset_hashes) == 3
 
 
 def test_default_caption_initialization_preserves_first_click(monkeypatch, tmp_path):
