@@ -9,13 +9,17 @@ from openpyxl import Workbook
 
 from app import monthly_report_sources as sources
 from app.monthly_report_model import Facility, ReportPeriod, ReportProfile
-from app.monthly_report_work_order_csv import is_work_order_source, work_order_evidence
+from app.monthly_report_work_order_csv import (
+    is_work_order_source, needs_work_order_mapping, work_order_evidence,
+)
 from app.monthly_report_work_order_csv_review import (
     csv_review_record, mapped_columns, reimport_csv_review, restore_csv_review,
     review_csv, review_spreadsheet,
 )
 from app.monthly_report_work_order_normalized import suggest_mapping, unmapped_cells
-from app.monthly_report_structured_uploads import mapped_rows, reader_sources, native_update
+from app.monthly_report_structured_uploads import (
+    mapped_rows, native_update, reader_notices, reader_sources,
+)
 
 
 @pytest.fixture
@@ -159,4 +163,24 @@ def test_hidden_worksheet_cannot_auto_fill_capital_table(context):
     assert content.tables[1].rows[0][2] == "Synthetic hidden proposal"
     assert mapped_rows(content, "capital_renewal") == ()
     assert reader_sources((content,), "activity_summary") == ()
+    assert native_update((content,), "activity_summary").text == ""
+
+
+def test_repeated_status_workbook_without_site_stays_out_of_both_activity_paths(context):
+    """A visible, fully cached work-order workbook whose Status column repeats is
+    neither counted automatically nor read into Activity by either route."""
+    profile, period = context
+    wb = Workbook()
+    wb.active.append(("WO Number", "Date", "Status", "Status", "Work Description"))
+    wb.active.append(("00031", "2026-09-08", "Open", "Closed", "Synthetic chiller inspection"))
+    memory = BytesIO()
+    wb.save(memory)
+    content = _ingest(profile, "repeated-status.xlsx", memory.getvalue())
+    assert not any(table.hidden or table.missing_formula_cache_count for table in content.tables)
+    assert not is_work_order_source(content)
+    assert needs_work_order_mapping(content)
+    assert not work_order_evidence(content, period, profile)
+    assert reader_sources((content,), "activity_summary") == ()
+    notice, = reader_notices((content,), "activity_summary")
+    assert "Review counted work-order rows" in notice
     assert native_update((content,), "activity_summary").text == ""

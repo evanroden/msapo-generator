@@ -746,13 +746,14 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
     references = list(existing.references)
     if destination == "activity_summary":
         paragraphs = []
-        from app.monthly_report_work_order_csv import is_work_order_source
+        from app.monthly_report_work_order_csv import is_work_order_source, needs_work_order_mapping
         for content in contents:
             if content.source.suffix == ".xlsx" and any(
                     table.hidden or table.missing_formula_cache_count for table in content.tables):
                 continue  # No hidden or uncached workbook claims in automatic Activity.
-            if is_work_order_source(content):
-                # CMMS/counting sources use their own reviewed metrics path.
+            if is_work_order_source(content) or needs_work_order_mapping(content):
+                # CMMS/counting sources use their own reviewed metrics path,
+                # including files whose repeated column still needs a mapping.
                 continue
             if _spreadsheet_has_site_scope_column(content) or _txt_site_activity_table(content):
                 # Row-specific sites need the same review as the reader route.
