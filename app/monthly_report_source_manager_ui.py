@@ -171,6 +171,31 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
                 st.session_state[selection_key] = ids[0]
             requested = st.selectbox("File to review", ids,
                 format_func=lambda identity: ordered[identity].filename, key=selection_key)
+            # Every retained file has its own actionable card, but all edits
+            # continue through the one mounted native form and page workspace.
+            # The Edit callback changes only the existing file selector; the
+            # canonical selected source is switched after the former source's
+            # delivered controls have been processed below.
+            from app.monthly_report_source_card_summary import source_card_evidence
+            current = replace(draft, blocks=tuple(blocks.values()))
+            cards = {item.source_id: item for item in _statuses(current, blocks, prefix)}
+            for identity in ids:
+                item = cards.get(identity)
+                if item is None:
+                    continue
+                source = ordered[identity]
+                evidence = source_card_evidence(source, item, current)
+                card_key = prefix + "_source_card_" + sha256(identity.encode()).hexdigest()[:16]
+                with st.container(key=card_key, border=True):
+                    st.text(source.filename)
+                    st.caption("Type: " + evidence.source_type + " · Site evidence: " +
+                               evidence.site + " · Month evidence: " + evidence.month)
+                    st.caption("Destination: " + evidence.destination)
+                    st.caption("Contribution: " + evidence.contribution)
+                    if evidence.warning:
+                        st.warning(evidence.warning)
+                    st.button("Edit", key=card_key + "_edit", on_click=_open_manager,
+                              args=(manager_key, selection_key, identity))
             selected = st.session_state.setdefault(active_key, requested)
             if selected not in ordered:
                 selected = requested
@@ -245,9 +270,9 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
             selected_status = next((item for item in _statuses(draft, blocks, prefix)
                                     if item.source_id == selected), None)
             if selected_status and not _pending_source_selection(prefix):
-                if selected_status.needs_correction:
-                    st.caption(selected_status.reason)
-                elif selected_status.summary:
+                # The card owns the single visible correction warning. Preserve
+                # the accepted-file summary without a permanent Needs Review.
+                if not selected_status.needs_correction and selected_status.summary:
                     st.caption(selected_status.filename + " · " + selected_status.summary)
         else:
             selected = requested = None
