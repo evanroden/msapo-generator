@@ -102,13 +102,28 @@ def exercise(engine,name,source,base,scenario,replacement=None):
     context.route('**/*',guard)
     def open_details(box):
         if not box.locator('details').evaluate('node=>node.open'):box.locator('summary').click()
+    def settled():
+        page.wait_for_function("""() => document.querySelector('[data-testid="stApp"]')
+            ?.getAttribute('data-test-script-state') === 'notRunning'""", timeout=45000)
     def choose_north():
         correction=page.get_by_test_id('stExpander').filter(has=page.locator('summary').filter(has_text='Correct source sites'))
         open_details(correction)
         combo=correction.get_by_role('combobox')
-        # Native Backspace removes the last preselected tag (South), no DOM mutation.
-        combo.click();combo.press('Backspace');combo.press('Tab')
-        expect(correction.get_by_text('Demonstration South Facility',exact=True)).to_have_count(0)
+        south=correction.get_by_text('Demonstration South Facility',exact=True)
+        north=correction.get_by_text('Demonstration North Facility',exact=True)
+        # Since A58 the cover names only South (later-page mentions no longer
+        # vote). Native Backspace removes that detected tag; then choose North
+        # from the filtered list, as a person does. No DOM mutation. Each step
+        # waits for its rerun, so a keystroke never lands on a remounted input.
+        settled();combo.click();expect(combo).to_be_focused()
+        combo.press('Backspace');expect(south).to_have_count(0);settled()
+        combo.click();expect(combo).to_be_focused()
+        combo.press_sequentially('Demonstration North')
+        expect(page.get_by_role('option',name='Demonstration North Facility',exact=True)).to_have_count(1)
+        # The filtered list holds exactly that option: select it from the
+        # keyboard, which both engines deliver identically.
+        combo.press('ArrowDown');combo.press('Enter');combo.press('Tab');settled()
+        expect(south).to_have_count(0);expect(north).to_have_count(1)
     try:
         page.goto(URL)
         page.get_by_role('button',name='Prepare disposable site catalog',exact=True).click()

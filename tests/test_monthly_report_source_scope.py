@@ -121,6 +121,7 @@ def test_absent_scope_record_preserves_legacy_source_and_report_fingerprints(sam
     draft_record.pop("cover_recovery_request")  # Private intent did not exist in old reports.
     draft_record.pop("source_row_reviews", None)
     draft_record.pop("omitted_sections", None)  # Absent from the historical schema.
+    draft_record.pop("source_coverage_receipts", None)
     # The historical report schema predates occurrence metadata, report-owned
     # row-review receipts, as well as
     # source-scope receipts. Current asdict() otherwise invents a new empty
@@ -406,6 +407,12 @@ def test_isolated_replay_scope_correction_has_exact_durable_report_ack(monkeypat
         saved = library.load_snapshot(fixture.CONTRACT, fixture.profile().key, fixture.PERIOD)
     assert site_blockers(saved.draft)
     original = next(source for source in saved.draft.sources if source.filename == "synthetic-activity.txt")
+    # A30 mounts a source's detail form only once the source is visited.
+    next(button for button in app.button if button.label == "Manage source files").click().run()
+    files = next(widget for widget in app.selectbox if widget.label == "File to review")
+    if files.value != original.id:
+        files.set_value(original.id).run()
+    assert not app.exception
     selector = next(widget for widget in app.multiselect if widget.label == "Source sites" and original.id in widget.key)
     assert selector.value == []
     selector.set_value(["qa-north"])

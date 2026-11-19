@@ -17,13 +17,66 @@ from typing import Mapping
 from app.monthly_report_model import ReportPeriod, ReportProfile
 from app.monthly_report_sources import SourceContent
 from app.monthly_report_work_order_normalized import (
-    FIELDS, ColumnMapping, WorkOrderReview, _issues, _mark_duplicates,
-    correct_row, exclude_row, normalize_table, reimport_review,
-    restore_review, review_record, suggest_mapping,
+    ALIASES, FIELDS, MONTHS, ColumnMapping, WorkOrderReview, _aggregate, _issues,
+    _mark_duplicates, _name, correct_row, exclude_row, normalize_table,
+    reimport_review, restore_review, review_record,
 )
 
 DATE_ORDERS = ("", "MDY", "DMY")
 _NUMERIC_DATE = re.compile(r"^\s*(\d{1,2})[/-](\d{1,2})[/-](\d{4})\s*$")
+
+# Safe CMMS export heading variants: these denote a physical column, not a
+# guessed value. Extend only this CSV review adapter, not legacy metric totals.
+_CSV_ALIASES = {
+    "work_order": {"ticketid", "ticketno", "workorderno", "workordercode",
+                   "jobticket", "requestnumber", "serviceordernumber"},
+    "site": {"sitename", "sitelabel", "facilityname", "facilitylabel",
+             "locationname", "locationlabel", "campusname"},
+    "work_date": {"servicewhen", "servicedon", "reportedon", "openedon",
+                  "dateopened", "datecreated", "workorderdate", "requesteddate"},
+    "completed_date": {"completedon", "closedon", "datecompleted", "dateclosed"},
+    "status": {"currentstate", "statusdescription", "statustext", "jobstatus"},
+    "work_type": {"repairtype", "maintenancetype", "maintenanceworktype",
+                  "workordertype"},
+    "trade": {"tradename", "tradegroup", "crafttype", "worktrade"},
+}
+
+
+def suggest_csv_mapping(columns):
+    """One pass over physical headings; duplicate aliases remain unresolved.
+
+    Saved CSV imports disambiguate repeated literal headings by adding '(2)'.
+    Treat that suffix as another candidate ONLY when the unsuffixed heading
+    is present, so the first duplicate never wins by accident.
+    """
+    labels = tuple(str(column) for column in columns)
+    existing = {label.casefold() for label in labels}
+    headings = []
+    for label in labels:
+        numbered = re.fullmatch(r"(.+?) \(([2-9]\d*)\)", label)
+        if numbered and numbered.group(1).casefold() in existing:
+            label = numbered.group(1)
+        headings.append(_name(label))
+    picks, ambiguous = {}, []
+    for field in FIELDS:
+        aliases = ALIASES[field] | _CSV_ALIASES[field]
+        positions = [index for index, name in enumerate(headings) if name in aliases]
+        picks[field] = positions[0] if len(positions) == 1 else None
+        if len(positions) > 1:
+            ambiguous.append(field)
+    return ColumnMapping(**picks, ambiguous=tuple(ambiguous))
+
+
+def _aggregate_csv_grid(columns, rows):
+    """Month/total grids are counts, even when their row label says 'WO'."""
+    # The generic normalized adapter detects month headings, but historically
+    # preferred the presence of a WO heading when choosing the review kind.
+    # An actual monthly matrix must never acquire invented individual IDs.
+    return _aggregate(columns, rows) and any(
+        _name(column) in MONTHS
+        or re.fullmatch(r"20\d\d(?:0?[1-9]|1[0-2])", _name(column))
+        for column in columns
+    )
 
 
 @dataclass(frozen=True)
@@ -102,7 +155,7 @@ def mapped_columns(columns, choices: Mapping[str, int | None], *,
     """
     if not isinstance(choices, Mapping) or any(field not in FIELDS for field in choices):
         raise ValueError("Choose supported work-order columns.")
-    suggestion = suggested if suggested is not None else suggest_mapping(columns)
+    suggestion = suggested if suggested is not None else suggest_csv_mapping(columns)
     result = {}
     for field in FIELDS:
         index = choices.get(field, getattr(suggestion, field))
@@ -148,6 +201,15 @@ def review_spreadsheet(content: SourceContent, profile: ReportProfile, period: R
         raise ValueError("Work-order review requires a saved CSV or workbook source.")
     if numeric_date_order not in DATE_ORDERS:
         raise ValueError("Choose MDY, DMY, or leave numeric dates for review.")
+    if (content.source.suffix == ".csv" and type(table_number) is int
+            and 1 <= table_number <= len(content.tables)):
+        table = content.tables[table_number - 1]
+        if mapping is None:
+            mapping = suggest_csv_mapping(table.columns)
+        if _aggregate_csv_grid(table.columns, table.rows) and mapping.work_order is not None:
+            # Mark this table as aggregate without discarding source rows or
+            # allowing even an explicit WO remap to invent per-order records.
+            mapping = replace(mapping, work_order=None)
     review = normalize_table(content, table_number, profile, period, mapping=mapping)
     if not numeric_date_order or review.kind != "records":
         return CsvReview(review, numeric_date_order)
