@@ -48,9 +48,9 @@ def _contact_key(contract: str, row: dict) -> str:
 
 
 def render_owner_contacts() -> None:
+    # This screen is already inside About; do not demand a second disclosure
+    # click before showing saved contact identities and their native editors.
     st.markdown("**Saved contacts and PO history**")
-    if not st.checkbox("Show saved contacts and PO history", key="owner_contacts_open"):
-        return
 
     contracts = contracts_with_saved_contacts()
     if not contracts:

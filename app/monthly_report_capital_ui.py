@@ -31,8 +31,19 @@ def _site(profile, name):
     return found[0]
 
 
+def _row_id(kind: str, value: str) -> str:
+    """A new capital row ID that the client price check can never read as money.
+
+    A bare hex ending such as "...5cad" or "...7aed" reads as an amount in
+    Canadian dollars or dirhams, and the report then refuses its capital
+    details (about one ID in 3,000). A final non-hex letter means no currency
+    code and no number can close the ID. Saved IDs keep their value.
+    """
+    return f"{kind}-{sha256(value.encode()).hexdigest()[:24]}x"
+
+
 def _new_key(site, row, position):
-    return "report-" + sha256(repr((site, row, position)).encode()).hexdigest()[:24]
+    return _row_id("report", repr((site, row, position)))
 
 
 
@@ -141,7 +152,7 @@ def _native_capital_items(draft, block, master, *, confirm_priority_changes=Fals
             raise ValueError("A matching contract-wide capital item is approved. "
                              "Use the approved list to review a site exception.")
         item = CapitalItem(
-            key=old.key if old else "import-" + sha256(source.encode()).hexdigest()[:24],
+            key=old.key if old else _row_id("import", source),
             priority=level, recommendation=action, asset=equipment,
             site_keys=(site.key,), extra_fields=extra,
             source_reference=old.source_reference if old and old.source_reference else source,

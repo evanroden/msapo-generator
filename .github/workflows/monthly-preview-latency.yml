@@ -4,6 +4,13 @@ on:
   pull_request:
     paths:
       - 'scripts/qa_monthly_preview_latency_e2e.py'
+      - 'app/monthly_report_preview.py'
+      - 'app/monthly_report_preview_store.py'
+      - 'app/monthly_report_section_assembly_cache.py'
+      - 'app/monthly_report_review_preview_ui.py'
+      - 'app/monthly_report_preview_ticket.py'
+      - 'tests/test_monthly_report_review_ticket_first_pages.py'
+      - 'tests/test_monthly_report_section_assembly_cache.py'
       - 'scripts/qa_monthly_preview_browser_latency.py'
       - 'tests/test_monthly_preview_latency_lifecycle.py'
       - 'docs/MONTHLY_PREVIEW_LATENCY_E2E.md'
