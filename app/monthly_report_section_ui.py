@@ -520,6 +520,19 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                         caption += "; No cover photograph is selected, so it is not included"
                     st.image(image.data, width="stretch", caption=caption)
             if any(i.kind == "unsupported" for i in section.items):
+                # Display drawing evidence only inside private unsupported source review.
+                from app.monthly_report_shape_labels import source_review_lines
+                for item in section.items:
+                    if item.kind != "unsupported" or not item.drawing_labels:
+                        continue
+                    st.caption(f"Word drawing source labels · {item.id}")
+                    st.caption(
+                        "Exact text from this original Word object; region is approximate "
+                        "(Word section is not a physical page). A rasterized preview "
+                        "does not establish native editability. The original is retained."
+                    )
+                    for line in source_review_lines(item):
+                        st.text(line)
                 # Do not silently exclude a difficult SmartArt/VML/OLE frame
                 # after removing the old generic "continue without" radio.
                 # It must be rendered into the original section or have an
