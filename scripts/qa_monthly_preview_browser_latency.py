@@ -32,13 +32,15 @@ qa.URL = URL
 
 
 def _decoded(image):
+    started_ns = time.monotonic_ns()
     image.wait_for(state="visible", timeout=90000)
     expect(image).to_have_js_property("complete", True, timeout=30000)
     # complete + naturalWidth can precede the actual decoded pixel. Browser
     # decode() awaits the image decoder before the first-useful-page clock ends.
     image.evaluate("(node) => node.decode()")
     assert image.evaluate("(node) => node.naturalWidth > 0 && node.naturalHeight > 0")
-    return {"width": image.evaluate("(node) => node.naturalWidth"),
+    return {"decode_ready_wait_ms": round((time.monotonic_ns() - started_ns) / 1_000_000, 3),
+            "width": image.evaluate("(node) => node.naturalWidth"),
             "height": image.evaluate("(node) => node.naturalHeight"),
             "sha256": sha256((image.get_attribute("src") or "").encode()).hexdigest()}
 
@@ -66,6 +68,7 @@ def _exercise(browser_type, engine):
                 load_button = page.get_by_role("button", name="Load known-value report", exact=True)
                 expect(load_button).to_be_visible(timeout=90000)
                 start = time.perf_counter()
+                start_ns = time.monotonic_ns()
                 load_button.click()
                 expect(page.get_by_text(re.compile(r"^QA fixture state: known-value prefill"))).to_be_visible(timeout=90000)
                 field = page.get_by_role("textbox", name="Activity summary", exact=True)
@@ -74,6 +77,7 @@ def _exercise(browser_type, engine):
                 qa.current_image(page, qa.ACTIVITY)
                 image = page.locator(qa.ACTIVITY).locator(".report-preview img").first
                 first = _decoded(image)
+                first_decoded_ns = time.monotonic_ns()
                 preview_panel = page.locator(qa.ACTIVITY).locator(".report-preview").first
                 before_layout = preview_panel.evaluate("(node) => JSON.parse(node._previewState.layout)")
                 assert before_layout[2] is True and before_layout[3] is False
@@ -89,6 +93,7 @@ def _exercise(browser_type, engine):
                     manager.click()
                 uploader = page.get_by_test_id("stFileUploader").filter(has_text="Add source files")
                 upload_started = time.perf_counter()
+                upload_started_ns = time.monotonic_ns()
                 uploader.locator('input[type="file"]').set_input_files([
                     {"name": "synthetic-preview-latency.pdf", "mimeType": "application/pdf", "buffer": alpha},
                     {"name": "synthetic-preview-control.pdf", "mimeType": "application/pdf", "buffer": beta}])
@@ -101,6 +106,7 @@ def _exercise(browser_type, engine):
                 caption = "synthetic-preview-latency.pdf · page 1 · Preview only; original and issue links are unchanged."
                 expect(issue.get_by_text(caption, exact=True)).to_be_visible(timeout=90000)
                 thumb = _decoded(issue.get_by_test_id("stImage").locator("img").first)
+                thumbnail_decoded_ns = time.monotonic_ns()
                 thumbnail_seconds = time.perf_counter() - upload_started
 
                 # Newest rendered revision must win after a real edit. This
@@ -139,7 +145,18 @@ def _exercise(browser_type, engine):
                 assert after_layout[0] != before_generation and after_layout[2] is True and after_layout[3] is False
                 assert field.input_value() == revised, "Manual edit was lost."
                 assert not external and not errors, {"external": external, "pageerrors": errors}
-                records.append({"index": sequence + 1, "fresh_report_press_to_decoded_section_seconds": round(first_seconds, 4),
+                records.append({"index": sequence + 1, "cache_path": "cold",
+                                 "source_kind": "pdf",
+                                 "browser_stage_receipt": {
+                                     "clock": "monotonic_ns",
+                                     "first_decoded_browser_image": {
+                                         "stage": "first_decoded_browser_image",
+                                         "start_ms": 0,
+                                         "end_ms": round((first_decoded_ns - start_ns) / 1_000_000, 3),
+                                         "wall_ms": round((first_decoded_ns - start_ns) / 1_000_000, 3)},
+                                     "upload_to_decoded_thumbnail_ms":
+                                         round((thumbnail_decoded_ns - upload_started_ns) / 1_000_000, 3)},
+                                 "fresh_report_press_to_decoded_section_seconds": round(first_seconds, 4),
                                 "native_upload_to_requested_decoded_thumbnail_seconds": round(thumbnail_seconds, 4),
                                 "edit_commit_to_current_section_seconds": round(time.perf_counter() - update_started, 4),
                                 "first_section_image": first, "thumbnail": thumb, "latest_section_image": latest,
