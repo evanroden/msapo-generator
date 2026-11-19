@@ -403,7 +403,7 @@ def exercise(page, name, qa):
         initial = wait_pages(page, [])
         baseline = initial["working"]["unrelated_sha256"]
         record("before-upload", initial)
-                upload(page, raw)
+        upload(page, raw)
         state = wait_pages(page, [1, 2], pending=[])
         unchanged(state)
         assert len(state["working"]["sources"]) == 1
