@@ -77,13 +77,20 @@ def _edited_session_index(editing, events):
     return index if events.rows[index] == editing.get("row") else None
 
 
-def _session_description(row):
-    title, when, mode, participants, hours = row
+def _session_hours(hours):
+    """Format only measured hours; an absent source value remains unknown."""
+    if not hours:
+        return "Unknown"
     try:
         singular = float(hours) == 1
     except (ValueError, TypeError):
         singular = False
-    duration = f"{hours} {'hour' if singular else 'hours'}" if hours else ""
+    return f"{hours} {'hour' if singular else 'hours'}"
+
+
+def _session_description(row):
+    title, when, mode, participants, hours = row
+    duration = _session_hours(hours) if hours else ""
     return " · ".join((when, mode, participants, *([duration] if duration else [])))
 
 
@@ -168,6 +175,7 @@ def _render_monthly_sessions(events, matrix, period, key, scope):
         kind = request.get("kind")
         if kind == "cancel" and request.get("token") == state["token"]:
             state = _new_session_editor(scope)
+            state["closed_after_cancel"] = True
         elif kind == "edit":
             index = request.get("index", -1)
             if request.get("revision") == revision and 0 <= index < len(rows):
@@ -218,10 +226,19 @@ def _render_monthly_sessions(events, matrix, period, key, scope):
     editor_key = key + "_event_" + state["token"]
     fields = {name: editor_key + "_" + name for name in ("title", "when", "mode", "participants", "hours")}
     st.subheader("Training completed this month")
+    # A true pending conflict already shows both competing tables above.
+    # Avoid a third duplicate table until that conflict has been resolved.
+    if rows and not blocked:
+        st.table([{"Training": title, "Date": when, "Method": mode,
+                   "Participants": participants, "Hours": _session_hours(hours)}
+                  for title, when, mode, participants, hours in rows])
+    elif not rows:
+        st.caption("No training sessions added this month.")
     label = "Edit training session" if editing else "Add completed training"
-    # A successful addition creates a fresh open disclosure and blank form.
-    # Invalid input keeps the same native fields and their delivered values.
-    with st.expander(label, expanded=bool(editing or errors or state.get("continue_adding")), key=editor_key + "_disclosure"):
+    # The main form is open on the first paint and after every successful Add.
+    # Invalid input keeps the same native fields and delivered values.
+    with st.expander(label, expanded=bool(editing or errors or state.get("continue_adding")
+                                          or not state.get("closed_after_cancel")), key=editor_key + "_disclosure"):
         with st.form(editor_key + "_form", clear_on_submit=False):
             st.text_input("Training topic", value=seed[0], key=fields["title"])
             if errors.get("title"):
@@ -284,8 +301,6 @@ def _render_monthly_sessions(events, matrix, period, key, scope):
                     st.button("Remove\n\nsession: " + detail,
                         key=key + f"_remove_session_{action_revision}_{index}_training_session_action_remove",
                         disabled=blocked, on_click=_queue_session_removal, args=(key + "_remove_session_request", revision, index, scope))
-    else:
-        st.caption("No training sessions added this month.")
     if not blocked:
         if _sessions_revision(events) != canonical_revision:
             # Rendering a successful action is not its final canonical commit.
@@ -386,57 +401,58 @@ def render_training(draft, blocks, prefix, field):
         if matrix != previous:
             st.session_state[matrix_key] = matrix
             st.session_state[key + "_generation"] = st.session_state.get(key + "_generation", 0) + 1
-        st.subheader("Staff training requirements")
-        st.caption("Requirements are reused by site and year. Recorded sessions and monthly notes stay in this report.")
-        if st.session_state.get(key + "_stale_standing"):
-            st.warning("This report has an older training matrix. Review the latest shared training before changing the matrix. "
-                       "Monthly notes and the saved report version are unchanged.")
-        with st.expander("Add requirement", expanded=False):
-            new_training = st.text_input("Requirement name", key=key + "_new_requirement")
-            add_requirement = st.button("Add requirement", key=key + "_add_requirement", disabled=not new_training.strip())
-        matrix_slot = st.empty()
-        with matrix_slot.container():
-            rows = _matrix_grid(matrix, draft.profile, key)
-        # Defaults apply to absent new cells; an existing/explicit blank remains
-        # distinct from the recorded "Not recorded" option and is never saved
-        # merely because the matrix was displayed.
-        edited = ReportTable(matrix.columns, tuple(tuple(str(row.get(c, "Not recorded" if i > 1 else "") or "").strip()
-                              for i, c in enumerate(matrix.columns)) for row in rows if row.get("Team member")), matrix.reference)
-        if hospital_matrix(draft.profile, edited, directory) != edited:
-            raise ValueError("This matrix is for hospital staff. Remove the identified ENFRA, asset-management or vendor person before saving.")
-        # Capture the delivered old grid before changing its column-based key.
-        # Commit the edit and new requirement together; failed saves keep that
-        # same visible grid available for correction or explicit retry.
-        if add_requirement:
-            title = new_training.strip()
-            if title.casefold() in {c.casefold() for c in edited.columns}:
-                st.error("That training already has a column.")
-            else:
-                edited = replace(edited, columns=(*edited.columns, title),
-                                 rows=tuple((*row, "Not recorded") for row in edited.rows))
-        if edited != matrix:
+        with st.expander("Yearly training requirements", expanded=False, key=key + "_yearly_requirements"):
+            st.subheader("Staff training requirements")
+            st.caption("Requirements are reused by site and year. Recorded sessions and monthly notes stay in this report.")
             if st.session_state.get(key + "_stale_standing"):
-                raise library.RevisionConflict("Shared training has newer information. Reload saved training before editing its matrix.")
-            stored = save_training(draft.profile, edited, expected_revision=stored["revision"], actor=draft.prepared_by)
-            st.session_state[store_key] = stored
-            st.session_state[matrix_key] = edited
-            changed_columns = matrix.columns != edited.columns
-            matrix = edited
-            explicit = True
-            if changed_columns:
+                st.warning("This report has an older training matrix. Review the latest shared training before changing the matrix. "
+                           "Monthly notes and the saved report version are unchanged.")
+            with st.container():
+                new_training = st.text_input("Requirement name", key=key + "_new_requirement")
+                add_requirement = st.button("Add requirement", key=key + "_add_requirement", disabled=not new_training.strip())
+            matrix_slot = st.empty()
+            with matrix_slot.container():
+                rows = _matrix_grid(matrix, draft.profile, key)
+            # Defaults apply to absent new cells; an existing/explicit blank remains
+            # distinct from the recorded "Not recorded" option and is never saved
+            # merely because the matrix was displayed.
+            edited = ReportTable(matrix.columns, tuple(tuple(str(row.get(c, "Not recorded" if i > 1 else "") or "").strip()
+                                  for i, c in enumerate(matrix.columns)) for row in rows if row.get("Team member")), matrix.reference)
+            if hospital_matrix(draft.profile, edited, directory) != edited:
+                raise ValueError("This matrix is for hospital staff. Remove the identified ENFRA, asset-management or vendor person before saving.")
+            # Capture the delivered old grid before changing its column-based key.
+            # Commit the edit and new requirement together; failed saves keep that
+            # same visible grid available for correction or explicit retry.
+            if add_requirement:
+                title = new_training.strip()
+                if title.casefold() in {c.casefold() for c in edited.columns}:
+                    st.error("That training already has a column.")
+                else:
+                    edited = replace(edited, columns=(*edited.columns, title),
+                                     rows=tuple((*row, "Not recorded") for row in edited.rows))
+            if edited != matrix:
+                if st.session_state.get(key + "_stale_standing"):
+                    raise library.RevisionConflict("Shared training has newer information. Reload saved training before editing its matrix.")
+                stored = save_training(draft.profile, edited, expected_revision=stored["revision"], actor=draft.prepared_by)
+                st.session_state[store_key] = stored
+                st.session_state[matrix_key] = edited
+                changed_columns = matrix.columns != edited.columns
+                matrix = edited
+                explicit = True
+                if changed_columns:
+                    with matrix_slot.container():
+                        _matrix_grid(matrix, draft.profile, key)
+            matrix, stored, switched_year = _requirements_year(
+                draft, block, matrix, stored, directory, key, prefix)
+            if switched_year:
+                st.session_state[store_key] = stored
+                st.session_state[matrix_key] = matrix
+                st.session_state[key + "_generation"] = st.session_state.get(key + "_generation", 0) + 1
+                # Replace the old grid immediately, with a new native edit-delta
+                # identity. Do not replay an old-year packet against the new rows.
                 with matrix_slot.container():
                     _matrix_grid(matrix, draft.profile, key)
-        matrix, stored, switched_year = _requirements_year(
-            draft, block, matrix, stored, directory, key, prefix)
-        if switched_year:
-            st.session_state[store_key] = stored
-            st.session_state[matrix_key] = matrix
-            st.session_state[key + "_generation"] = st.session_state.get(key + "_generation", 0) + 1
-            # Replace the old grid immediately, with a new native edit-delta
-            # identity. Do not replay an old-year packet against the new rows.
-            with matrix_slot.container():
-                _matrix_grid(matrix, draft.profile, key)
-            explicit = True
+                explicit = True
     except library.RevisionConflict as exc:
         st.session_state[key + "_conflict"] = str(exc)
         st.error(str(exc))
