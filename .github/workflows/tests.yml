@@ -32,6 +32,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Every Python file compiles
+        # Browser jobs load scripts/ only when they finally get a runner, so a
+        # syntax error there used to surface hours into the queue. Fail the PR
+        # here, in seconds.
+        run: python -m compileall -q app scripts tests pages run_web.py
       - name: Select PR tests
         run: python scripts/ci_select_tests.py --event pull_request --base "${{ github.event.pull_request.base.sha }}" --head "${{ github.event.pull_request.head.sha }}" --out selected-tests.txt
       - name: Choose affected tests or full-suite shards
