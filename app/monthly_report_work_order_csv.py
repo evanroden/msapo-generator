@@ -81,7 +81,9 @@ def _date(value):
 
 
 def is_work_order_source(content: SourceContent) -> bool:
+    # Duplicate or competing site aliases cannot silently select a site.
     return (content.source.suffix in (".csv", ".xlsx")
+            and not requires_work_order_column_mapping(content)
             and any(all(_column(table.columns, kind) is not None
                         for kind in ("identity", "status", "date"))
                     for table in content.tables))
@@ -89,7 +91,8 @@ def is_work_order_source(content: SourceContent) -> bool:
 
 def work_order_evidence(content: SourceContent, period: ReportPeriod,
                         profile: ReportProfile) -> tuple[WorkOrderEvidence, ...]:
-    if content.source.suffix not in (".csv", ".xlsx"):
+    if content.source.suffix not in (".csv", ".xlsx") or requires_work_order_column_mapping(content):
+        # Do not produce legacy totals while any work-order/site mapping is ambiguous.
         return ()
     output = []
     sites = {}
