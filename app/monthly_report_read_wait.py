@@ -2,6 +2,7 @@
 from time import monotonic, sleep
 
 from app.monthly_report_render_jobs import RenderBusy
+from app.monthly_report_latency_trace import span
 
 READ_WAIT_SECONDS = 20
 
@@ -23,4 +24,5 @@ def read_with_capacity_wait(read, checkpoint, waiting, *, wait_seconds=READ_WAIT
             if remaining <= 0:
                 raise
             waiting()
-            sleep(min(.1, remaining))
+            with span("job_queue"):
+                sleep(min(.1, remaining))
