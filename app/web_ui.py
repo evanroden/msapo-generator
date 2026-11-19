@@ -51,6 +51,7 @@ from app.service_closed import close_if_moved
 
 from app import contracts
 from app.ui_highlight import highlight_needed_fields
+from app.po_step_spine import po_step_spine, po_step_states
 from app.asset_guess import guess_asset_uid, lowest_numbered_of_type
 from app.asset_picker import (
     ASSET_SEARCH_LIMIT,
@@ -467,6 +468,59 @@ __WORKFLOW_SHELL_CSS__
         margin: 0;
     }
 
+    /* PO navigation uses the same numbered and titled pieces as expenses. */
+    .po-step-spine { margin: 0.55rem 0 0.85rem; }
+    .po-step-spine ol {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0.55rem;
+        list-style: none;
+        margin: 0;
+        padding: 0;
+    }
+    .po-step-spine li { min-width: 0; }
+    .po-step-link {
+        align-items: flex-start;
+        background: #FFFFFF;
+        border: 1px solid var(--enfra-concrete);
+        border-bottom: 3px solid var(--enfra-concrete);
+        border-radius: 5px;
+        box-sizing: border-box;
+        color: var(--enfra-ocean);
+        display: flex;
+        gap: 0.55rem;
+        height: 100%;
+        min-height: 78px;
+        padding: 0.6rem;
+        text-decoration: none !important;
+        touch-action: manipulation;
+    }
+    .po-step-link[data-state="current"] {
+        background: #F5F9F7;
+        border-bottom-color: var(--enfra-yellow);
+    }
+    .po-step-link[data-state="current"] .step-num {
+        background: var(--enfra-yellow);
+        color: var(--enfra-ocean);
+    }
+    .po-step-link[data-state="pending"] .step-num {
+        background: #FFFFFF;
+        border: 1px solid var(--enfra-concrete);
+        box-sizing: border-box;
+        color: var(--enfra-ocean);
+    }
+    .po-step-link:hover { background: var(--enfra-iced); }
+    .po-step-copy { display: flex; flex-direction: column; min-width: 0; }
+    .po-step-link .step-title { font-size: 0.95rem; }
+    .po-step-summary {
+        color: var(--enfra-ocean);
+        display: block;
+        font-size: 0.77rem;
+        line-height: 1.3;
+        margin-top: 0.25rem;
+    }
+    .po-step-anchor { display: block; height: 0; scroll-margin-top: 1rem; }
+
     .metric-card {
         background: #FFFFFF;
         border: 1px solid var(--enfra-concrete);
@@ -635,6 +689,11 @@ __WORKFLOW_SHELL_CSS__
         .hero-subtitle { font-size: 0.92rem; }
         .step-header { align-items: flex-start; margin-top: 1.2rem; }
         .step-title { font-size: 1.13rem; padding-top: 0.2rem; }
+        .po-step-spine ol { grid-template-columns: minmax(0, 1fr); gap: 0.2rem; }
+        .po-step-link { min-height: 51px; padding: 0.35rem 0.6rem; }
+        .po-step-link .step-num { height: 26px; width: 26px; }
+        .po-step-link .step-title { font-size: 0.9rem; padding: 0; }
+        .po-step-summary { font-size: 0.75rem; margin-top: 0.1rem; }
         div[data-testid="stHorizontalBlock"] { flex-wrap: wrap; }
         div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
             flex: 1 1 100% !important;
@@ -1871,10 +1930,14 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
 
     st.title("Purchase order")
     st.caption("Add the vendor quote, complete missing details, then create the two-file package.")
+    step_spine = st.empty()
+    step_spine.markdown(po_step_spine(po_step_states()), unsafe_allow_html=True)
 
     presentation.enter_context(workspace_section("purchase_review", "Quote and request review"))
     editor, reference = workspace_columns("purchase_review")
     presentation.enter_context(editor)
+    st.markdown('<span id="po-step-quote" class="po-step-anchor" aria-hidden="true"></span>',
+                unsafe_allow_html=True)
 
     st.markdown(
         """
@@ -2449,6 +2512,8 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
     final_inclusions: list[str] = []
     final_exclusions: list[str] = []
     unified_inclusions, unified_exclusions = _build_unified_lists(analysis)
+    st.markdown('<span id="po-step-scope" class="po-step-anchor" aria-hidden="true"></span>',
+                unsafe_allow_html=True)
     with st.expander(
         "Review scope, inclusions, and exclusions",
         expanded=False,
@@ -2505,6 +2570,8 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
                 "stated in the quote."
             )
 
+    st.markdown('<span id="po-step-details" class="po-step-anchor" aria-hidden="true"></span>',
+                unsafe_allow_html=True)
     if current_needs.any:
         st.markdown(
             '<div class="needs-banner"><strong>Needed from you</strong><br>'
@@ -2975,6 +3042,8 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
     presentation.enter_context(workspace_section("purchase_package", "Generated package review"))
     editor, reference = workspace_columns("purchase_package")
     presentation.enter_context(editor)
+    st.markdown('<span id="po-step-generate" class="po-step-anchor" aria-hidden="true"></span>',
+                unsafe_allow_html=True)
 
     st.markdown(
         """
@@ -3102,6 +3171,23 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
         st.warning(
             "A detail changed. Use the button again to refresh both files and the link."
         )
+
+    step_spine.markdown(
+        po_step_spine(po_step_states(
+            quote_ready=True,
+            scope_ready=bool(scope_value),
+            details_ready=not draft_problems,
+            generated=bool(
+                context is not None
+                and context.ready
+                and not draft_problems
+                and generated_context == context.context_id
+                and st.session_state.get("scope_pdf_bytes")
+                and st.session_state.get("scope_pdf_signature") == current_pdf_signature
+            ),
+        )),
+        unsafe_allow_html=True,
+    )
 
     with reference:
         current_pdf = st.session_state.get("scope_pdf_bytes")
