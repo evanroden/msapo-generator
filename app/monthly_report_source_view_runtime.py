@@ -3,12 +3,14 @@
 No saved record means the unchanged legacy route. A recorded view is always
 rederived; neither a receipt nor this private context grants content approval.
 """
+from collections import OrderedDict
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 import hashlib
 from pathlib import Path
-from threading import get_ident
+from stat import S_ISREG
+from threading import RLock, get_ident
 
 _CURRENT = ContextVar('monthly_verified_source_operation', default=None)
 
@@ -121,20 +123,70 @@ def derive_import_view(path, inspection):
     return fresh
 
 
-def cache_identity(draft):
-    """Invalidate preview tickets on changed evidence; never grants approval.
+# Preview-only identity hints. These contain no source bytes or authorization.
+# Full render/preview operations continue to rederive and hash the original.
+_IDENTITY_HINTS = OrderedDict()
+_IDENTITY_HINT_LOCK = RLock()
+_MAX_IDENTITY_HINTS = 64
 
-    Rendering independently rederives. Reading source/receipt bytes here stops
-    a stale successful ticket surviving replacement with identical timestamps.
+
+def _evidence_stamp(path, limit):
+    """Reject links/oversized files; include ctime to detect restored mtime."""
+    from app import monthly_report_library as library
+    library._qa_path_guard(path)
+    status = path.lstat()
+    if not S_ISREG(status.st_mode) or status.st_size > limit:
+        raise ValueError('Source-view evidence is unavailable or oversized.')
+    return (status.st_dev, status.st_ino, status.st_mode, status.st_nlink,
+            status.st_size, status.st_mtime_ns, status.st_ctime_ns)
+
+
+def _drop_identity_hint(key):
+    with _IDENTITY_HINT_LOCK:
+        _IDENTITY_HINTS.pop(key, None)
+
+
+def cache_identity(draft):
+    """Preview-ticket invalidation, not an import approval or render authority.
+
+    Once a digest was verified, ordinary UI reruns check the *same* scoped
+    original, receipt and manifest through inode/size/mtime/ctime metadata.
+    A changed, missing or linked file cannot reuse the hint. Independent
+    render_operation() and saved-source reads still perform full-byte checks.
     """
     import json
     from dataclasses import asdict
     from app import monthly_report_library as library
     from app.monthly_report_compatibility_view import MAX_VIEW_SOURCE_BYTES, POLICY
+
     folder = library._profile_path(draft.profile.contract, draft.profile.key)
     manifest = folder / 'manifest.json'
+    # Profile values and the exact physical namespace are part of the key;
+    # never share an identity across a site, contract, month or QA root.
+    profile_identity = json.dumps(asdict(draft.profile), sort_keys=True, separators=(',', ':'))
+    key = (str(folder), draft.period.key, profile_identity)
     if not manifest.exists():
+        _drop_identity_hint(key)
         return ''
+    with _IDENTITY_HINT_LOCK:
+        hint = _IDENTITY_HINTS.get(key)
+    if hint is not None:
+        identity, paths, limits, previous = hint
+        try:
+            current = tuple(_evidence_stamp(path, limit) for path, limit in zip(paths, limits))
+        except (OSError, ValueError):
+            _drop_identity_hint(key)
+            raise
+        if current == previous:
+            with _IDENTITY_HINT_LOCK:
+                if key in _IDENTITY_HINTS:
+                    _IDENTITY_HINTS.move_to_end(key)
+            return identity
+        _drop_identity_hint(key)
+
+    # The first request, or any metadata revision, rechecks all original bytes
+    # with existing size bounds and saved scope/receipt validation.
+    manifest_before = _evidence_stamp(manifest, library.MAX_JSON_BYTES)
     value = library._read(manifest)
     digest = draft.profile.imported_from
     if not library._source_view_is_recorded(value, digest) and 'import_source_view' not in value:
@@ -150,18 +202,33 @@ def cache_identity(draft):
             draft.profile.contract, draft.profile.key, POLICY):
         raise library.LibraryError('The saved source-view scope or policy changed.')
     original = folder / 'imports' / (digest + '.docx')
+    receipt = library._source_view_receipt_path(folder, scope)
+    paths = (manifest, original, receipt)
+    limits = (library.MAX_JSON_BYTES, MAX_VIEW_SOURCE_BYTES, library.MAX_JSON_BYTES)
+    before = (manifest_before,
+              _evidence_stamp(original, MAX_VIEW_SOURCE_BYTES),
+              _evidence_stamp(receipt, library.MAX_JSON_BYTES))
     actual = _file_digest(original, MAX_VIEW_SOURCE_BYTES)
     if actual != digest:
         raise library.LibraryError('The saved source-view original changed.')
-    receipt = library._source_view_receipt_path(folder, scope)
     receipt_digest = _file_digest(receipt, library.MAX_JSON_BYTES)
     if receipt_digest != scope.get('receipt_sha256'):
         raise library.LibraryError('The saved source-view receipt changed.')
+    manifest_digest = _file_digest(manifest, library.MAX_JSON_BYTES)
+    after = tuple(_evidence_stamp(path, limit) for path, limit in zip(paths, limits))
+    if before != after:
+        raise library.LibraryError('Saved source-view evidence changed during preview identity verification.')
     # Full manifest identity includes the scoped visual suitability record;
-    # unrelated stored changes may invalidate a cache, never reuse authority.
-    return hashlib.sha256(json.dumps((asdict(draft.profile), draft.period.key,
-        _file_digest(manifest, library.MAX_JSON_BYTES), actual, receipt_digest),
+    # unrelated saved changes invalidate a hint, never confer approval.
+    identity = hashlib.sha256(json.dumps((asdict(draft.profile), draft.period.key,
+        manifest_digest, actual, receipt_digest),
         sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    with _IDENTITY_HINT_LOCK:
+        _IDENTITY_HINTS[key] = (identity, paths, limits, after)
+        _IDENTITY_HINTS.move_to_end(key)
+        while len(_IDENTITY_HINTS) > _MAX_IDENTITY_HINTS:
+            _IDENTITY_HINTS.popitem(last=False)
+    return identity
 
 
 def preview_fingerprint(draft):

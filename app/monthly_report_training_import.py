@@ -412,7 +412,9 @@ def _mark_training_duplicates(rows, kind):
         if kind == "events" and row.values[0] and row.values[1]:
             key = (row.values[0].casefold(), row.values[1], row.values[3].casefold())
         elif kind == "requirements" and row.values[0] and row.values[1]:
-            key = (row.values[0].casefold(), row.values[1].casefold())
+            # The same team member/site identity validate_matrix enforces, so a
+            # spacing variant is reviewed here instead of failing at import.
+            key = tuple(" ".join(value.casefold().split()) for value in row.values[:2])
         else:
             continue
         groups.setdefault(key, []).append(index)
@@ -624,7 +626,15 @@ def accepted_training_block(review: TrainingImportReview, block: ResolvedBlock,
         if year != report_year and not carry_prior_requirements:
             raise ValueError("Review older requirements before carrying them into another year.")
         values = []
+        seen = set()
         for item in selected:
+            # An exact repeated source row is one requirement, as add_event
+            # represents an exact repeated attendance once. Review
+            # (_mark_training_duplicates) flags any other repeat of a team
+            # member and site, so validate_matrix sees each identity once.
+            if item.values in seen:
+                continue
+            seen.add(item.values)
             if year == report_year:
                 values.append(item.values)
             else:
