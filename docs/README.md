@@ -6,6 +6,8 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 # Documentation index
 
+[PO and Expense shared-runtime guardrails](PO_EXPENSE_SHARED_RUNTIME_GUARDRAILS_2026-11-17.md) — synthetic cross-workflow handoff, independent session state, original-quote integrity, and disabled API-row-writer assertions; no live acceptance claim. Refs #270/#941.
+
 [Optional A19 compute scale-up decision](A19_COMPUTE_SCALEUP_DECISION.md) — read-only Render 1 CPU/2 GiB observations, opt-in cgroup-bounded assembly work, no shared conversion parallelism, listed plan prices, safety and benchmark gates; no hosting change approved. Refs #491/#941.
 
 [Finishing the move to Azure Container Apps](AZURE_CUTOVER_PLAN.md) — the owner's decisions of 17 November 2026 (existing Container Apps, this repository made private later, agents carrying out Azure changes from the owner's prompts), the end state, and twelve ordered tasks with commands, checks and rollback, written with placeholders instead of real names. Tracker #941.

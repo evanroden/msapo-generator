@@ -34,6 +34,9 @@ qa.URL = URL
 def _decoded(image):
     image.wait_for(state="visible", timeout=90000)
     expect(image).to_have_js_property("complete", True, timeout=30000)
+    # complete + naturalWidth can precede the actual decoded pixel. Browser
+    # decode() awaits the image decoder before the first-useful-page clock ends.
+    image.evaluate("(node) => node.decode()")
     assert image.evaluate("(node) => node.naturalWidth > 0 && node.naturalHeight > 0")
     return {"width": image.evaluate("(node) => node.naturalWidth"),
             "height": image.evaluate("(node) => node.naturalHeight"),
