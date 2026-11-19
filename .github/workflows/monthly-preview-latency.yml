@@ -4,8 +4,19 @@ on:
   pull_request:
     paths:
       - 'scripts/qa_monthly_preview_latency_e2e.py'
+      - 'app/monthly_report_preview.py'
+      - 'app/monthly_report_preview_store.py'
+      - 'app/monthly_report_section_assembly_cache.py'
+      - 'app/monthly_report_review_preview_ui.py'
+      - 'app/monthly_report_preview_ticket.py'
+      - 'tests/test_monthly_report_review_ticket_first_pages.py'
+      - 'tests/test_monthly_report_section_assembly_cache.py'
       - 'scripts/qa_monthly_preview_browser_latency.py'
       - 'tests/test_monthly_preview_latency_lifecycle.py'
+      - 'tests/test_monthly_latency_stage_receipt.py'
+      - 'app/monthly_report_latency_trace.py'
+      - 'app/monthly_report_sources.py'
+      - 'app/monthly_report_render_jobs.py'
       - 'docs/MONTHLY_PREVIEW_LATENCY_E2E.md'
       - '.github/workflows/monthly-preview-latency.yml'
   push:
@@ -62,6 +73,43 @@ jobs:
         if: always()
         run: docker rm --force msapo-491-latency-sources msapo-491-latency-native || true
 
+  uncapped-backend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the same production runtime without resource quotas
+        run: docker build --build-arg APP_GIT_COMMIT="${{ github.event.pull_request.head.sha || github.sha }}" -t msapo-491-uncapped .
+      - name: Collect matched five cold and warm attempts per source and native section
+        timeout-minutes: 22
+        run: |
+          for part in sources native; do
+            docker run --name "msapo-491-uncapped-$part" \
+              --env ANTHROPIC_API_KEY=test-key-not-used \
+              --entrypoint python msapo-491-uncapped scripts/qa_monthly_preview_latency_e2e.py --part "$part"
+          done
+      - name: Preserve uncapped timings and resource diagnostics
+        if: always()
+        run: |
+          mkdir -p test-artifacts/monthly-preview-latency
+          for part in sources native; do
+            docker cp "msapo-491-uncapped-$part:/tmp/monthly-preview-latency/backend-$part.json" \
+              "test-artifacts/monthly-preview-latency/backend-uncapped-$part.json" || true
+            docker logs "msapo-491-uncapped-$part" > "test-artifacts/monthly-preview-latency/$part-uncapped.log" 2>&1 || true
+            docker inspect "msapo-491-uncapped-$part" > "test-artifacts/monthly-preview-latency/$part-uncapped-inspect.json" || true
+          done
+      - name: Upload matched uncapped evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monthly-preview-latency-uncapped-${{ github.run_attempt }}
+          path: test-artifacts/monthly-preview-latency/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Remove disposable benchmark containers
+        if: always()
+        run: docker rm --force msapo-491-uncapped-sources msapo-491-uncapped-native || true
+
   native-browser:
     runs-on: ubuntu-24.04
     timeout-minutes: 35
@@ -85,7 +133,7 @@ jobs:
       - name: Focused owner/revision, store and stale-worker correctness
         timeout-minutes: 6
         run: |
-          python -m pytest -q             tests/test_monthly_preview_latency_lifecycle.py             tests/test_monthly_report_preview_resources.py             tests/test_monthly_report_preview_store.py             tests/test_monthly_report_section_assembly_cache.py
+          python -m pytest -q             tests/test_monthly_latency_stage_receipt.py             tests/test_monthly_preview_latency_lifecycle.py             tests/test_monthly_report_preview_resources.py             tests/test_monthly_report_preview_store.py             tests/test_monthly_report_section_assembly_cache.py
       - name: Measure actual source upload/gallery and real section first decoded image
         timeout-minutes: 12
         env:
