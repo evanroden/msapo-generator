@@ -25,8 +25,10 @@ from app.monthly_report_testing import isolated
 PDF_STATUSES = {
     "QA_Vendor_Service_MixedPages.pdf":
         ("technical", "blank", "legal", "signature", "pricing"),
+    # Page 2 is native text with a material trend chart: since A37 an image that
+    # may carry unread content needs a visual check before it is included.
     "QA_Water_Treatment_MixedPages.pdf":
-        ("technical", "technical", "legal", "signature", "blank"),
+        ("technical", "review", "legal", "signature", "blank"),
     "QA_Vendor_AmbiguousDate.pdf":
         ("technical", "technical"),
     "QA_Chemical_DifferentSite.pdf":
@@ -81,7 +83,9 @@ def test_checked_in_pdf_and_docx_pack_is_pinned_complete_and_imperfect():
                 if wanted == "blank":
                     assert not text and not page.get_image_info() and not page.get_drawings()
                 if wanted == "review":
-                    assert not text and page.get_image_info()
+                    assert page.get_image_info()
+                    if (item["name"], number) != ("QA_Water_Treatment_MixedPages.pdf", 2):
+                        assert not text
     with fitz.open(stream=evidence["QA_Vendor_Service_MixedPages.pdf"], filetype="pdf") as vendor:
         assert "25.1 PSID" in vendor[0].get_text()
         assert "$4,875.00" in vendor[4].get_text()
@@ -121,7 +125,10 @@ def test_original_bytes_ingest_in_isolated_namespace_without_report_mutation(
             assert vendor.selected_pages == (1,)
             water = next(c.source for c in contents
                          if c.source.filename == "QA_Water_Treatment_MixedPages.pdf")
-            assert water.selected_pages == (1, 2)
+            # The chart page is kept for a visual check, not included unseen.
+            assert water.selected_pages == (1,)
+            assert 2 in water.needs_vision
+            assert any(note.startswith("Page 2:") for note in water.notices)
             scan = next(c.source for c in contents
                         if c.source.filename == "QA_Water_Treatment_ImageOnlyScan.pdf")
             assert scan.needs_vision == (1,)

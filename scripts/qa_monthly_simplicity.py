@@ -322,7 +322,11 @@ def exercise(engine, name, record):
 
         record["phase"] = "three sequential native training additions"
         summary = disclosure(page)
-        summary.click()  # One initial deliberate open only.
+        # A69 opens the form on first paint; only click to open if it starts closed.
+        initial_open_clicks = 0
+        if summary.locator("xpath=ancestor::details[1]").get_attribute("open") is None:
+            summary.click()
+            initial_open_clicks = 1
         form_open(page)
         expected, source_baseline = [], receipt(page)["sources"]
         for number in (1, 2, 3):
@@ -372,7 +376,7 @@ def exercise(engine, name, record):
         assert not external and not errors, {"external": external, "browser_errors": errors}
         record["result"] = "pass"
         record["completed_task_activations"] = {
-            "fresh_intake_open": 0, "initial_training_disclosure_open": 1,
+            "fresh_intake_open": 0, "initial_training_disclosure_open": initial_open_clicks,
             "post_add_training_disclosure_open": 0, "successful_training_submissions": 3,
             "validation_training_submissions": 2, "total_training_submissions": 5,
             "manual_training_close_reopen_pairs": 1}
