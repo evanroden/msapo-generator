@@ -98,6 +98,7 @@ _ANALYSIS_KEYS = (
     "last_sig",
     "scope_pdf_bytes",
     "scope_pdf_signature",
+    "scope_pdf_generated_on",
     "analysis_error_signature",
     "analysis_error_message",
 )

@@ -39,6 +39,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
+from datetime import date
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Mapping
@@ -49,6 +51,7 @@ from app.config import (
     FACILITY_SHORT_NAMES,
     WORK_CATEGORY_DISPLAY,
     lookup_cost_code,
+    operator_today,
 )
 from app.job_numbers import JOB_NUMBER_OPTIONS, RRH_JOB_NUMBERS
 from app.smartsheet import AGREEMENT_TYPE_OPTIONS, OBJECT_ACCOUNT_OPTIONS
@@ -173,38 +176,60 @@ def _state_text(state: Mapping[str, Any], key: str, default: str = "") -> str:
     return str(value).strip()
 
 
-def _safe_basename(contract: str, site: str, description: str, rrh: bool) -> str:
-    """Build the download stem for the two-file package.
+def _filename_segment(value: str) -> str:
+    """ASCII, hyphenated, Windows-safe label with no trailing punctuation."""
+    ascii_value = (
+        unicodedata.normalize("NFKD", str(value or ""))
+        .encode("ascii", "ignore")
+        .decode("ascii")
+    )
+    return re.sub(r"[^A-Za-z0-9]+", "-", ascii_value).strip("-")
 
-    The result is consumed by ``smartsheet.download_names``, whose stem regex
-    strips a trailing "MSAPO" or "Scope" word -- so the literal "MSAPO" tail
-    below is not decoration, it is the token that regex expects to find and
-    remove. A stem built without it renames both downloads incorrectly.
 
-    Two different sanitisers run, and they are not redundant:
+def _safe_basename(
+    contract: str,
+    site: str,
+    description: str,
+    rrh: bool,
+    *,
+    short_description: str = "",
+    generated_on: str | None = None,
+) -> str:
+    """Return the shared SITE_Description_YYYY-MM-DD package stem.
 
-    * ``[^\\w\\s-]`` cleans only the free-text DESCRIPTION, which comes from the
-      analyzer and can contain anything the vendor wrote.
-    * ``[<>:"/\\|?*\\x00-\\x1f]`` then cleans the WHOLE name, because the
-      contract and site segments never passed through the first pass and come
-      from catalogs that legitimately contain "/" and ":" (for example
-      "LCMC - Children's"). Those are the characters Windows refuses in a
-      filename, and the operator downloads these files onto Windows.
+    The 20-character field the operator reviewed wins over the longer extracted
+    project description. If it is blank, fall back to whole words from that
+    description instead of cutting a long filename halfway through a word.
+    Both files are named from this same stem; Smartsheet still assigns file
+    kinds by attachment position (quote first, generated PDF second).
 
-    The 50-character truncation trims back to the last whole word only when it
-    actually cut mid-string, so a short description is never shortened further.
-    ``or "PO MSAPO"`` cannot fire while "MSAPO" is an unconditional part; it is
-    a guard against a future edit that makes every part optional.
+    The contract prefix is intentionally omitted, including for non-RRH
+    accounts: it is already part of the reviewed request and submission key,
+    while the download convention calls for the displayed site code first.
+    Keep the old positional parameters for existing callers.
     """
-    prefix = "RRH" if rrh else contract.strip()
-    clean_description = re.sub(r"[^\w\s-]", "", description or "SOW")[:50]
-    if len(clean_description) == 50 and " " in clean_description:
-        clean_description = clean_description.rsplit(" ", 1)[0]
-    parts = [prefix, site.strip(), clean_description.strip(), "MSAPO"]
-    name = " ".join(part for part in parts if part)
-    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", name)
-    return re.sub(r"\s+", " ", name).strip() or "PO MSAPO"
-
+    _ = (contract, rrh)
+    site_code = _filename_segment(site)[:40].rstrip("-").upper() or "SITE"
+    short = _filename_segment(short_description)
+    if short:
+        short = short[:20].rstrip("-")
+    else:
+        words = _filename_segment(description).split("-")
+        short = ""
+        for word in words:
+            candidate = f"{short}-{word}" if short else word
+            if len(candidate) > 20:
+                break
+            short = candidate
+        if not short:
+            short = _filename_segment(description)[:20].rstrip("-")
+    short = short or "PO"
+    package_date = (
+        date.fromisoformat(generated_on).isoformat()
+        if generated_on
+        else operator_today().isoformat()
+    )
+    return f"{site_code}_{short}_{package_date}"
 
 def _selected_contract(state: Mapping[str, Any], token: str) -> str:
     """The chosen contract, or "" when the placeholder is still selected."""
@@ -541,7 +566,7 @@ def _attachments(
 
     scope_pdf = state.get("scope_pdf_bytes")
     if scope_pdf_valid and isinstance(scope_pdf, bytes) and scope_pdf:
-        result.append((f"{base}.pdf", scope_pdf))
+        result.append((f"MSAPO_{base}.pdf", scope_pdf))
     return tuple(result), warnings
 
 
@@ -739,7 +764,14 @@ def build_po_context(
     # on them. If the two sides ever disagree, every package reports a
     # fingerprint-mismatch warning that no operator action can clear.
     expected_token = hashlib.sha256(quote_text.encode("utf-8", "ignore")).hexdigest()[:12] if quote_text else ""
-    base = _safe_basename(contract, site, getattr(analysis, "project_description", ""), rrh)
+    base = _safe_basename(
+        contract,
+        site,
+        getattr(analysis, "project_description", ""),
+        rrh,
+        short_description=description,
+        generated_on=_state_text(state, "scope_pdf_generated_on") or None,
+    )
 
     expected_document_signature = _document_signature(
         token,
