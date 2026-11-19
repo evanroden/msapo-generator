@@ -1,0 +1,30 @@
+{
+  "control": {
+    "pages": ["Exact synthetic completion note."],
+    "notices": [],
+    "expected": [
+      {"item_id": "page:1:text", "kind": "text", "value": "Exact synthetic completion note.", "state": "applied", "destination": "activity_summary"}
+    ]
+  },
+  "mixed_price_irrelevant": {
+    "pages": [
+      "Exact synthetic completion note.",
+      "Proposal fee: $5,000.00",
+      "Unrelated synthetic cafeteria menu."
+    ],
+    "notices": [],
+    "expected": [
+      {"item_id": "page:1:text", "kind": "text", "value": "Exact synthetic completion note.", "state": "applied", "destination": "activity_summary"},
+      {"item_id": "page:2:text", "kind": "text", "value": "Proposal fee: $5,000.00", "state": "excluded", "reason": "Price-only proposal; not a technical report fact."},
+      {"item_id": "page:3:text", "kind": "text", "value": "Unrelated synthetic cafeteria menu.", "state": "excluded", "reason": "Unrelated to the report or equipment."}
+    ]
+  },
+  "interrupted_reader": {
+    "pages": ["Report technical data awaiting review."],
+    "notices": ["AI reader interrupted before completing all pages."],
+    "expected": [
+      {"item_id": "page:1:text", "kind": "text", "value": "Report technical data awaiting review.", "state": "review"},
+      {"item_id": "notice:1", "kind": "notice", "value": "AI reader interrupted before completing all pages.", "state": "blocked"}
+    ]
+  }
+}

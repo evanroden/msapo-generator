@@ -44,10 +44,10 @@ def image_ready(page):
     return b64decode(value.partition(",")[2], validate=True)
 
 
-def download_current(page):
-    """Download actual native Streamlit bytes, not the fixture's Python variable."""
+def download_current(page, label="Download PDF"):
+    """Download native Streamlit bytes, never the fixture's Python variable."""
     with page.expect_download(timeout=45000) as operation:
-        page.get_by_role("button", name="Download current synthetic PDF", exact=True).click()
+        page.get_by_role("button", name=label, exact=True).click()
     return Path(operation.value.path()).read_bytes()
 
 
@@ -90,21 +90,35 @@ def check_engine(engine, name, width):
     try:
         page.goto(URL, wait_until="domcontentloaded")
         expect(page.get_by_text("QA current PDF: absent", exact=True)).to_be_visible()
-        assert page.get_by_text("View PDF here (this session)", exact=True).count() == 0
+        assert page.get_by_text("Final PDF · current draft", exact=True).count() == 0
         details["events"].append("empty browser starts without a saved PDF")
 
+        start_a = time.perf_counter()
         page.get_by_role("button", name="Create PDF A").click()
         expect(page.get_by_text("QA current PDF: alpha", exact=True)).to_be_visible()
-        pdf_a = download_current(page)
-        expander = page.get_by_text("View PDF here (this session)", exact=True)
-        expander.click()
+        expect(page.get_by_text("Final PDF · current draft", exact=True)).to_be_visible()
+        # No disclosure or View click: the first finished page must load and
+        # navigate into the viewport after the single Create action.
         image_a = image_ready(page)
+        first_a_ms = round((time.perf_counter() - start_a) * 1000)
+        view_box = page.locator(".report-preview").first.bounding_box()
+        # Scrolling to the viewer's start can land a fraction of a pixel past
+        # it (y = -0.4375 at this width); that is still at the top of the view.
+        assert view_box and -1 < view_box["y"] < page.viewport_size["height"], view_box
+        assert view_box["x"] >= -2 and view_box["x"] + view_box["width"] <= width + 2, view_box
+        pdf_a = download_current(page)
+        word_a = download_current(page, "Download DOCX")
         dpi_a = assert_download_matches_view(pdf_a, image_a, "SYNTHETIC FINISHED PDF ALPHA")
+        identity_a = page.get_by_text("Exact PDF SHA-256:", exact=False).first.inner_text()
+        assert sha256(pdf_a).hexdigest() in identity_a
+        assert sha256(word_a).hexdigest() in identity_a
         details["artifacts"]["A"] = {"pdf_sha256": sha256(pdf_a).hexdigest(),
+                                      "docx_sha256": sha256(word_a).hexdigest(),
                                       "visible_jpeg_sha256": sha256(image_a).hexdigest(),
-                                      "matching_dpi": dpi_a}
+                                      "matching_dpi": dpi_a, "first_page_ms": first_a_ms,
+                                      "viewer_box": view_box}
         page.screenshot(path=str(OUT / f"{label}-pdf-a.png"))
-        details["events"].append("A exact downloaded PDF and displayed page JPEG match")
+        details["events"].append("A opens with no View click; exact PDF, Word identity and displayed page match")
 
         # A different browser must NOT inherit the PDF while the first viewer
         # is still live and its disposable raster ticket remains active.
@@ -114,39 +128,66 @@ def check_engine(engine, name, width):
             other_page = other.new_page()
             other_page.goto(URL, wait_until="domcontentloaded")
             expect(other_page.get_by_text("QA current PDF: absent", exact=True)).to_be_visible()
-            expect(other_page.get_by_text("View PDF here (this session)", exact=True)).to_have_count(0)
+            expect(other_page.get_by_text("Final PDF · current draft", exact=True)).to_have_count(0)
             details["events"].append("separate browser session cannot access live finished PDF")
         finally:
             other.close()
+
+        page.get_by_role("button", name="Edit draft").click()
+        expect(page.get_by_text("QA earlier output retired: True", exact=True)).to_be_visible()
+        expect(page.get_by_text("Final PDF · current draft", exact=True)).to_have_count(0)
+        expect(page.get_by_role("button", name="Download PDF")).to_have_count(0)
+        expect(page.get_by_role("button", name="Download DOCX")).to_have_count(0)
+        expect(page.get_by_text("Earlier files were retired", exact=False)).to_be_visible()
+        expect(page.get_by_text("QA owner entries: 0", exact=True)).to_be_visible()
+        expect(page.locator(".report-preview img")).to_have_count(0)
+        details["events"].append("draft edit retires both old downloads and viewer; stale notice persists")
 
         page.get_by_role("button", name="Replace with no PDF").click()
         expect(page.get_by_text("QA current PDF: none", exact=True)).to_be_visible()
         expect(page.get_by_text("QA owner entries: 0", exact=True)).to_be_visible()
         expect(page.get_by_text("QA live preview tickets: 0", exact=True)).to_be_visible()
-        expect(page.get_by_text("View PDF here (this session)", exact=True)).to_have_count(0)
-        expect(page.get_by_role("button", name="Download current synthetic PDF")).to_have_count(0)
+        expect(page.get_by_text("Final PDF · current draft", exact=True)).to_have_count(0)
+        expect(page.get_by_role("button", name="Download PDF")).to_have_count(0)
         expect(page.locator(".report-preview img")).to_have_count(0)
         details["events"].append("same-draft no-PDF replacement retired viewer and download")
 
+        start_b = time.perf_counter()
         page.get_by_role("button", name="Replace with PDF B").click()
         expect(page.get_by_text("QA current PDF: bravo", exact=True)).to_be_visible()
-        pdf_b = download_current(page)
-        assert sha256(pdf_b).digest() != sha256(pdf_a).digest(), "Replacement kept PDF A bytes."
-        page.get_by_text("View PDF here (this session)", exact=True).click()
         image_b = image_ready(page)
+        first_b_ms = round((time.perf_counter() - start_b) * 1000)
+        pdf_b = download_current(page)
+        word_b = download_current(page, "Download DOCX")
+        assert sha256(pdf_b).digest() != sha256(pdf_a).digest(), "Replacement kept PDF A bytes."
         assert image_a != image_b, "New package did not replace the visible page raster."
         dpi_b = assert_download_matches_view(pdf_b, image_b, "SYNTHETIC FINISHED PDF BRAVO")
+        identity_b = page.get_by_text("Exact PDF SHA-256:", exact=False).first.inner_text()
+        assert sha256(pdf_b).hexdigest() in identity_b and sha256(word_b).hexdigest() in identity_b
+        assert sha256(pdf_a).hexdigest() not in identity_b
         details["artifacts"]["B"] = {"pdf_sha256": sha256(pdf_b).hexdigest(),
+                                      "docx_sha256": sha256(word_b).hexdigest(),
                                       "visible_jpeg_sha256": sha256(image_b).hexdigest(),
-                                      "matching_dpi": dpi_b}
+                                      "matching_dpi": dpi_b, "first_page_ms": first_b_ms}
         page.screenshot(path=str(OUT / f"{label}-pdf-b.png"))
-        details["events"].append("B exact downloaded PDF and displayed page JPEG match; A retired")
+        details["events"].append("B navigates directly to fresh exact PDF, never A's raster")
+
+        # A browser reload starts a new server session, not a history-driven
+        # PDF recreation. No prior source bytes are fetched from a public URL.
+        page.reload(wait_until="domcontentloaded")
+        expect(page.get_by_text("QA current PDF: absent", exact=True)).to_be_visible()
+        expect(page.get_by_text("Final PDF · current draft", exact=True)).to_have_count(0)
+        expect(page.get_by_role("button", name="Download PDF")).to_have_count(0)
+        details["events"].append("reload does not recover finished bytes from history")
+
+        page.get_by_role("button", name="Replace with PDF B").click()
+        image_ready(page)
 
         page.get_by_role("button", name="Start over").click()
         expect(page.get_by_text("QA current PDF: absent", exact=True)).to_be_visible()
         expect(page.get_by_text("QA owner entries: 0", exact=True)).to_be_visible()
         expect(page.locator(".report-preview img")).to_have_count(0)
-        expect(page.get_by_role("button", name="Download current synthetic PDF")).to_have_count(0)
+        expect(page.get_by_role("button", name="Download PDF")).to_have_count(0)
         details["events"].append("reset discarded viewer, download and disposable owner")
 
         assert not details["errors"] and not details["external_attempts"], details

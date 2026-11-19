@@ -1,0 +1,112 @@
+{
+  "schema": "a87-synthetic-truth-v1",
+  "description": "Independent canary expectations; content and decisions are synthetic and authored separately from extractor output.",
+  "report_scope": "Demonstration / North / September 2026",
+  "include": [
+    {
+      "id": "A87-DOCX-PARA-01",
+      "source": "evidence.docx"
+    },
+    {
+      "id": "A87-DOCX-TABLE-02",
+      "source": "evidence.docx"
+    },
+    {
+      "id": "A87-PDF-TECH-01",
+      "source": "pages.pdf",
+      "page": 1
+    },
+    {
+      "id": "A87-XLSX-NORTH-01",
+      "source": "orders.xlsx",
+      "page": 1
+    },
+    {
+      "id": "A87-CSV-NORTH-01",
+      "source": "orders.csv",
+      "page": 1
+    },
+    {
+      "id": "A87-CSV-PENDING-02",
+      "source": "orders.csv",
+      "page": 1
+    },
+    {
+      "id": "A87-TXT-UNKNOWN-01",
+      "source": "notes.txt",
+      "page": 1
+    },
+    {
+      "id": "A87-TXT-PENDING-02",
+      "source": "notes.txt",
+      "page": 1
+    },
+    {
+      "id": "A87-EML-TECH-01",
+      "source": "vendor.eml",
+      "page": 1
+    },
+    {
+      "id": "A87-ATT-TXT-01",
+      "source": "attached-note.txt",
+      "page": 1
+    }
+  ],
+  "withhold": [
+    {
+      "id": "A87-DOCX-ASSET-03",
+      "source": "evidence.docx",
+      "asset": true,
+      "reason": "Native picture remains source-linked for visual review; no inferred maintenance claim."
+    },
+    {
+      "id": "A87-PDF-PRICE-02",
+      "source": "pages.pdf",
+      "page": 2,
+      "reason": "Price-only page excluded from technical output."
+    },
+    {
+      "id": "A87-PDF-SCAN-03",
+      "source": "pages.pdf",
+      "page": 3,
+      "asset": true,
+      "reason": "Image-only page needs human visual review; absence of text is not evidence of an empty page."
+    },
+    {
+      "id": "A87-XLSX-UNDATED-02",
+      "source": "orders.xlsx",
+      "page": 1,
+      "reason": "Missing service date; item remains correctable, not reported as September completion."
+    },
+    {
+      "id": "A87-XLSX-SOUTH-03",
+      "source": "orders.xlsx",
+      "page": 2,
+      "reason": "South facility is outside the North-only report."
+    },
+    {
+      "id": "A87-CSV-SOUTH-03",
+      "source": "orders.csv",
+      "page": 1,
+      "reason": "South facility is outside the North-only report."
+    },
+    {
+      "id": "A87-TXT-PRICE-03",
+      "source": "notes.txt",
+      "page": 1,
+      "reason": "Price sentence excluded while separate technical lines are retained."
+    },
+    {
+      "id": "A87-EML-PRICE-02",
+      "source": "vendor.eml",
+      "page": 1,
+      "reason": "Price-only sentence excluded while separate technical lines are retained."
+    },
+    {
+      "id": "A87-CSV-OCTOBER-04",
+      "source": "orders.csv",
+      "page": 1,
+      "reason": "October row belongs to another report month; do not count in September."
+    }
+  ]
+}

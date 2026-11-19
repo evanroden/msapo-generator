@@ -73,6 +73,9 @@ def _convert_libreoffice_locked(docx_path: Path, *, lossless_images: bool = Fals
     from app.office_process import run_office
     # Private output prevents a failed conversion from returning another job's
     # PDF. Keep it on the output filesystem for atomic, no-overwrite publication.
+    # Reap only expired private scratch from prior hard exits, never outputs.
+    from app.office_conversion_admission import prune_orphaned_profiles
+    prune_orphaned_profiles(OUTPUT_DIR)
     with tempfile.TemporaryDirectory(prefix=".office-", dir=OUTPUT_DIR) as job_dir:
         job = Path(job_dir)
         profile_uri = prepare_profile(job / 'profile')
