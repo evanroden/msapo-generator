@@ -2118,7 +2118,17 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             st.session_state.pop(empty_confirmation_key, None)
             try:
                 with st.spinner("Preparing the Word and PDF downloads…"):
-                    package = generate_report(draft, acknowledged_fingerprint=draft.fingerprint, asset_loader=loader)
+                    # Never share completed conversion bytes between visitors or
+                    # report incarnations. Include unsaved image bytes in the
+                    # scope even when their reference labels have not changed.
+                    from hashlib import sha256
+                    asset_versions = tuple(sorted((ref, sha256(raw).digest())
+                                                  for ref, raw in assets.items()))
+                    from app import monthly_report_final_conversion_cache as final_cache
+                    report_identity = (draft.profile.contract, draft.profile.key, draft.period.key)
+                    with final_cache.owner_scope(browser_token, report_identity, asset_versions):
+                        package = generate_report(
+                            draft, acknowledged_fingerprint=draft.fingerprint, asset_loader=loader)
             except ValueError as exc:
                 st.error(str(exc))
                 st.caption("Your edits and saved versions are unchanged. Retry generation when the service is ready.")
