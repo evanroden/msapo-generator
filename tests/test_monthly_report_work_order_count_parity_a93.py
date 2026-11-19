@@ -221,10 +221,12 @@ def test_another_exports_grid_cannot_be_recounted_in_list_and_distinct_dates_rem
     grid_bound = flow.decoded(flow.encoded({**original, "grid_receipt": receipt}))
     draft = flow.store_bundle(draft, grid_bound)
     other = flow.prepare_bundle(draft, same_content)
+    draft = flow.store_bundle(draft, other)
     with pytest.raises(ValueError, match="annual grids"):
         flow.publish_bundle(draft, other, expected_revision=flow.revision(other),
             expected_block=draft.blocks[0].fingerprint)
     clean = flow.prepare_bundle(draft, different_content)
+    draft = flow.store_bundle(draft, clean)
     published = flow.publish_bundle(draft, clean, expected_revision=flow.revision(clean),
         expected_block=draft.blocks[0].fingerprint)
     assert published.blocks[0].extra_tables[:4] == frames
@@ -241,6 +243,7 @@ def test_other_exports_published_list_cannot_be_recounted_in_annual_grid(monkeyp
         (ResolvedBlock("work_orders", "This month"),), synthetic=True,
         sources=(first_content.source, second_content.source))
     first = flow.prepare_bundle(draft, first_content)
+    draft = flow.store_bundle(draft, first)
     draft = flow.publish_bundle(draft, first, expected_revision=flow.revision(first),
         expected_block=draft.blocks[0].fingerprint)
     frames = tuple(ReportTable(("PM Received", *rolling_labels(SEPT)), (),
@@ -249,6 +252,7 @@ def test_other_exports_published_list_cannot_be_recounted_in_annual_grid(monkeyp
         extra_tables=(*draft.blocks[0].extra_tables, *frames))
     draft = replace(draft, blocks=(block,))
     other = flow.prepare_bundle(draft, second_content)
+    draft = flow.store_bundle(draft, other)
     monkeypatch.setattr(grid, "_frames", lambda _: (frames, {}))
     with pytest.raises(ValueError, match="detailed list"):
         grid.publish(draft, other, expected_revision=flow.revision(other),
