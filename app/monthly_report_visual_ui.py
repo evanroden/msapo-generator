@@ -758,7 +758,8 @@ def edit_photos(draft, block, prefix, assets, field, *, show_preview=True):
     kind = request.get("kind") if request else None
     editing_key = p + "_editing"
     editing = bool(st.session_state.get(editing_key))
-    if kind in {"done", "move"} and not editing:
+    if ((kind == "done" and not editing)
+            or (kind == "move" and not (editing or pending_asset_indexes(block)))):
         request, kind = None, None
 
     def clear_photo_fields():
@@ -845,6 +846,9 @@ def edit_photos(draft, block, prefix, assets, field, *, show_preview=True):
     correction_slots = []
     original = block
     with left:
+        from app.monthly_report_picture_cards import caption_thumbnail
+        from PIL import Image
+
         field_identity = photo_caption_identity(draft, block, scope=scope)
         from app.monthly_report_native_loading import reserve_photo_count_slider
         reserve_photo_count_slider(p + "_count_" + field_identity)
@@ -858,10 +862,24 @@ def edit_photos(draft, block, prefix, assets, field, *, show_preview=True):
             with st.expander("Photo " + str(n + 1),
                              expanded=n in pending_indexes or len(block.asset_hashes) <= 2,
                              key=p + "_panel_" + panel_identity):
-                captions[n] = st.text_area("Caption", key=field(p + f"_caption_{field_identity}_{n}", existing_captions[n]),
-                                          max_chars=600, height=90)
+                thumbnail, editor = st.columns([1, 2], gap="small")
+                with thumbnail:
+                    try:
+                        ref = block.asset_hashes[n]
+                        raw = assets.get(ref)
+                        if raw is None:
+                            raw = library.read_asset(draft.profile.contract, draft.profile.key, ref)
+                        st.image(caption_thumbnail(raw), width="stretch")
+                    except (KeyError, ValueError, OSError, SyntaxError, Image.DecompressionBombError):
+                        st.warning("Preview unavailable. This photo and its caption are retained for correction.")
+                with editor:
+                    captions[n] = st.text_area("Caption", key=field(p + f"_caption_{field_identity}_{n}", existing_captions[n]),
+                                              max_chars=600, height=90)
                 correction_slots.append((n, st.empty(), p + f"_caption_{field_identity}_{n}"))
-                earlier, later = (st.empty(), st.empty()) if editing and len(block.asset_hashes) > 1 else (None, None)
+                # Pending photos can be reordered directly: no separate
+                # "Edit all" click, and the same revision-bound move receipt
+                # still carries unsent captions from other visible cards.
+                earlier, later = (st.empty(), st.empty()) if (editing or pending_indexes) and len(block.asset_hashes) > 1 else (None, None)
                 slots.append((n, earlier, later, st.empty()))
         changed = None
         if kind in {"move", "remove"}:

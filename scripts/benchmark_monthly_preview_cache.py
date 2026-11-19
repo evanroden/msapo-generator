@@ -42,10 +42,14 @@ def fixture(pages, marks):
 
 
 def distribution(values):
+    """Preserve raw samples; small sample tail percentiles are not credible."""
     ordered = sorted(values)
-    return {"samples": len(values), "median_ms": statistics.median(ordered),
-            "p95_ms": ordered[max(0, (95 * len(ordered) + 99) // 100 - 1)],
-            "min_ms": ordered[0], "max_ms": ordered[-1]}
+    result = {"samples": len(values), "samples_ms": list(values),
+              "median_ms": statistics.median(ordered),
+              "min_ms": ordered[0], "max_ms": ordered[-1]}
+    if len(ordered) >= 20:
+        result["p95_ms"] = ordered[max(0, (95 * len(ordered) + 99) // 100 - 1)]
+    return result
 
 
 def measure(pages, marks, *, repeats=7, warm_reads=60):
@@ -118,6 +122,8 @@ def main():
               "store_sha256": hashlib.sha256(implementation).hexdigest(),
               "benchmark_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
               "repeats": args.repeats, "warm_reads_per_repeat": args.warm_reads,
+              "commit": __import__("os").environ.get("APP_GIT_COMMIT")
+                        or __import__("os").environ.get("MSAPO_SHA") or "unreported",
               "workloads": [measure(pages, marks, repeats=args.repeats, warm_reads=args.warm_reads)
                             for pages, marks in ((2, 8), (24, 80), (120, 120))]}
     args.output.parent.mkdir(parents=True, exist_ok=True)
