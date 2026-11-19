@@ -1482,6 +1482,8 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                               managed=False):
     """Keep native extraction free; read externally only on an exact user request."""
     from app import monthly_report_structured_uploads as structured
+    from app.monthly_report_pre_model_routing import classify_page, choose_reader_pages
+    from app.monthly_report_section_uploads import included_pages
     from app import monthly_report_ai as ai
     from app.receipt_jobs import start_receipt
     from app import monthly_report_library as library, monthly_report_testing as testing
@@ -1545,6 +1547,26 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                 and delivered in sources.CLASSIFICATIONS
                 and delivered != source.classification)
 
+    def correction_key(role):
+        return (local_key + "_page_destination_" + role.source_id + "_" +
+                str(role.page) + "_" + role.page_sha256)
+
+    def reader_corrections():
+        result = {}
+        for content in contents:
+            if content.source.id not in picked_ids:
+                continue
+            for number in range(1, len(content.source.page_texts) + 1):
+                role = classify_page(content, number)
+                if role.ambiguous:
+                    chosen = st.session_state.get(correction_key(role), "")
+                    if chosen in role.destinations:
+                        result[(role.source_id, role.page, content.source.sha256)] = chosen
+        return result
+
+    def accepted_page_pairs():
+        return tuple(sorted(included_pages(blocks)))
+
     def activity_input(content):
         # The one managed intake also accepts sources for other sections.
         # Their extracted operational values must not become Activity prose
@@ -1555,9 +1577,10 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
             return True
         if _classification_delivery_pending(content):
             return False
-        return content.source.classification in {
+        return (content.source.classification in {
             "Vendor service", "CMMS export", "Improvement / training photo",
-        }
+        } or any("activity_summary" in classify_page(content, n).destinations
+                 for n in range(1, len(content.source.page_texts) + 1)))
 
     def native_input(content):
         # Native (free) plain-text merge into Activity. Reference-only
@@ -1577,6 +1600,8 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
         eligible = tuple(c for c in contents if c.source.id in picked_ids and activity_input(c))
         return {"context": context, "files": _signature(tuple((c.source.filename, c.source.id) for c in eligible)),
                 "sources": tuple(c.source.fingerprint for c in eligible),
+                "corrections": tuple(sorted((*key, choice) for key, choice in reader_corrections().items())),
+                "accepted_pages": accepted_page_pairs(),
                 "revision": st.session_state.get(prefix + "_revision", 0)}
 
     def read_request():
@@ -1623,7 +1648,8 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                 st.session_state[local_key + "_pending"] = (job, value)
                 raise ValueError("New source suggestions are ready. Your edits were kept; add the suggestions below when ready.")
             result, pages = structured.reader_update(job["contents"], destination, value, current,
-                table_columns=job.get("table_columns"))
+                table_columns=job.get("table_columns"), corrections=job.get("corrections"),
+                accepted_pages=job.get("accepted_pages", ()), profile=profile, period=period)
             prepared = ()
             if destination == "activity_summary" and pages:
                 selected = []
@@ -1712,9 +1738,36 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
     for notice in structured.reader_notices(scoped, destination):
         st.warning(notice)
     scoped = structured.reader_sources(scoped, destination)
+    # Multiple positive section headings require one explicit page decision.
+    # This never changes original source type, page reviews or report content.
+    for content in scoped:
+        for number in range(1, len(content.source.page_texts) + 1):
+            role = classify_page(content, number)
+            if not role.ambiguous or destination not in role.destinations:
+                continue
+            st.caption(content.source.filename + " · page " + str(number) +
+                       " · " + role.rule + ": " + ", ".join(role.destinations))
+            st.selectbox("Choose destination for this ambiguous page",
+                         ("", *role.destinations),
+                         format_func=lambda name: name or "Keep out of external reading",
+                         key=correction_key(role))
+    corrections = reader_corrections()
+    accepted_pages = accepted_page_pairs()
+    eligible = set(choose_reader_pages(
+        profile, scoped, destination, period=period, corrections=corrections,
+        accepted_pages=accepted_pages,
+        native_mapped=structured._native_reader_page_pairs(scoped, destination, table_columns)))
+    skipped = sum(len(c.source.page_texts) for c in scoped) - len(eligible)
+    if skipped:
+        st.caption(f"{skipped} source page(s) are not sent to the document reader: "
+                   "already accepted, native mapped, different section, "
+                   "unrelated site/month or awaiting destination correction. "
+                   "Originals remain available.")
+    scoped = tuple(c for c in scoped if any((c.source.id, n) in eligible
+                   for n in range(1, len(c.source.page_texts) + 1)))
     target = read_target()
-    digest = ai.digest(("section-upload-v5", destination, tuple(table_columns or ()),
-                        sorted(c.source.id for c in scoped)))
+    digest = ai.digest(("section-upload-v6", destination, tuple(table_columns or ()),
+                        sorted(eligible), target["corrections"], accepted_pages))
     pending = st.session_state.get(local_key + "_pending")
     if pending and pending[0].get("request") != target:
         st.session_state.pop(local_key + "_pending", None)
@@ -1735,6 +1788,7 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                     "future": future, "contents": scoped, "digest": digest,
                     "baseline": current.fingerprint if current else None,
                     "table_columns": table_columns, "request": target,
+                    "corrections": corrections, "accepted_pages": accepted_pages,
                     "token": uuid4().hex, "cached": True}
         except (ValueError, OSError) as exc:
             st.session_state[local_key + "_error"] = str(exc)
@@ -1753,7 +1807,10 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                     raise ValueError("The document reader is not configured. Native extracted text and manual editing remain available.")
                 def prepare():
                     payloads = structured.reader_batches(profile, scoped, destination,
-                            table_columns=table_columns)
+                            table_columns=table_columns, period=period,
+                            corrections=corrections, accepted_pages=accepted_pages)
+                    if not payloads:
+                        raise ValueError("No unmapped eligible pages remain for external reading.")
                     for _ in payloads:
                         ai.reserve_call(profile, period)
                     return payloads
@@ -1765,6 +1822,7 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                     "future": future, "contents": scoped, "digest": digest,
                     "baseline": current.fingerprint if current else None,
                     "table_columns": table_columns, "request": target,
+                    "corrections": corrections, "accepted_pages": accepted_pages,
                     "token": uuid4().hex}
                 st.session_state.pop(local_key + "_error", None)
             except (ValueError, OSError, RuntimeError) as exc:

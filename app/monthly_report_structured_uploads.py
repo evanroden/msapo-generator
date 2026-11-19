@@ -9,6 +9,7 @@ from app.monthly_report_content_policy import (
     page_status, price_column, table_price_columns, proposal_price_columns,
 )
 from app.monthly_report_model import ResolvedBlock
+from app.monthly_report_pre_model_routing import choose_reader_pages, classify_page
 from app.monthly_report_reconciliation import preserve_noop_block
 
 COLUMNS = {
@@ -773,6 +774,16 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
             from app.monthly_report_vendor_passages import read_vendor_document
             passage_pages = read_vendor_document(content.source)
             for number, text in _activity_source_pages(content):
+                # A mixed water/MBCx/quote page never becomes vendor Activity
+                # merely because another page made the whole file look native.
+                # Only the page's own heading or table can exclude it: the
+                # file-level fallback may reflect a different part of a mixed
+                # file (one training line labels a vendor-activity file
+                # "Training"), and excluding on that would drop real Activity.
+                role = classify_page(content, number)
+                if role.ambiguous or (role.rule in ("page heading", "native table columns")
+                    and role.destinations and "activity_summary" not in role.destinations):
+                    continue
                 reference = sources.source_reference(content.source, number)
                 # Source-referenced manual corrections and deliberate deletions
                 # must not be reinserted when the same file is read again.
@@ -816,11 +827,49 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
     return preserve_noop_block(existing, rows=tuple(dict.fromkeys(rows)), references=tuple(dict.fromkeys(references)))
 
 
-def reader_request(profile, contents, destination, page_refs=None, table_columns=None):
-    """Bounded visual reading for scanned documents and unstructured quotes."""
+def _native_reader_page_pairs(contents, destination, table_columns=None):
+    """Native-mapped spreadsheet pages need no duplicate external reading.
+
+    Only recognized, nonempty native rows establish complete page coverage.
+    An unrelated worksheet in the same workbook remains eligible for review.
+    """
+    covered = set()
+    for content in contents:
+        source = content.source
+        if (source.suffix not in {".csv", ".xlsx"}
+                or len(content.tables) != len(source.page_texts) or not content.tables):
+            # Word/PDF pages can contain narrative adjacent to native tables.
+            # Mapping a row must not suppress that separate technical evidence.
+            continue
+        if destination == "activity_summary":
+            if source.suffix == ".csv":
+                extracted = _csv_activity_entries(content)
+                # A partial table mapping still needs source review. Do not
+                # pronounce the entire worksheet complete from one safe row.
+                for number, table in enumerate(content.tables, 1):
+                    if table.rows and sum(page == number for page, _ in extracted or ()) == len(table.rows):
+                        covered.add((source.id, number))
+        elif destination in COLUMNS:
+            for number, table in enumerate(content.tables, 1):
+                part = replace(content, tables=(table,),
+                               source=replace(source, page_texts=(source.page_texts[number - 1],)))
+                if table.rows and len(mapped_rows(part, destination, table_columns)) == len(table.rows):
+                    covered.add((source.id, number))
+    return frozenset(covered)
+
+
+def reader_request(profile, contents, destination, page_refs=None, table_columns=None, *,
+                   period=None, corrections=None, accepted_pages=()):
+    """Bounded visual reading for scanned documents and unstructured quotes.
+
+    Direct calls obey the same page-level admission gate as queued batches.
+    """
     from app.ocr import image_blocks_for_vision
     contents = reader_sources(contents, destination)
-    eligible = {(c.source.id, n) for c in contents for n in range(1, len(c.source.page_texts) + 1)}
+    eligible = set(choose_reader_pages(
+        profile, contents, destination, period=period, corrections=corrections,
+        accepted_pages=accepted_pages,
+        native_mapped=_native_reader_page_pairs(contents, destination, table_columns)))
     selected = set(page_refs) & eligible if page_refs is not None else eligible
     count = len(selected)
     if count > 20 or sum(len(t) for c in contents for n, t in enumerate(c.source.page_texts, 1) if (c.source.id, n) in selected) > 60000:
@@ -857,12 +906,27 @@ def reader_request(profile, contents, destination, page_refs=None, table_columns
     return payload
 
 
-def reader_update(contents, destination, value, existing=None, *, table_columns=None):
+def reader_update(contents, destination, value, existing=None, *, table_columns=None,
+                  corrections=None, accepted_pages=(), profile=None, period=None):
     """Validate provenance and native grounding before accepting any generated values."""
     items = value.get("items") if isinstance(value, dict) else None
     if not isinstance(items, list) or len(items) > 500:
         raise ValueError("The document reader returned invalid section details.")
     by_id = {c.source.id: c for c in contents}
+    # A native-mappable table is not automatically accepted. Direct validators
+    # must still check a reader result when no native contribution was added.
+    # Only the exact source page cited by an already accepted native block is
+    # skipped on an old cached/in-flight response.
+    native_candidates = _native_reader_page_pairs(contents, destination, table_columns)
+    native_mapped = frozenset(
+        pair for pair in native_candidates
+        if existing is not None and any(
+            reference.startswith(f"{pair[0]}:{pair[1]}:")
+            for reference in existing.references))
+    admitted = (set(choose_reader_pages(
+        profile, contents, destination, period=period, corrections=corrections,
+        accepted_pages=accepted_pages, native_mapped=native_mapped))
+        if profile is not None else None)
     contact_pages = _activity_contact_pages(contents, value) if destination == "activity_summary" else set()
     block = existing or ResolvedBlock(destination, "This month")
     texts, rows, refs, pages, blocked_notices = [], [], [], {}, []
@@ -884,6 +948,21 @@ def reader_update(contents, destination, value, existing=None, *, table_columns=
         number = item.get("page")
         if type(number) is not int or not 1 <= number <= len(source.page_texts):
             raise ValueError("The document reader returned an unknown page.")
+        # Old cached or in-flight results may include a different explicit
+        # section of the same mixed original. Keep only this source/page role.
+        # Only the page's own heading or table can exclude it: the file-level
+        # fallback may reflect a different part of a mixed file (one CMMS
+        # identifier labels a vendor-activity page "CMMS export"), and
+        # excluding on that would drop real Activity.
+        page_role = classify_page(by_id[source.id], number)
+        chosen = (corrections or {}).get((source.id, number, source.sha256))
+        if (page_role.ambiguous and chosen != destination
+                or page_role.rule in ("page heading", "native table columns")
+                and page_role.destinations and destination not in page_role.destinations
+                or (source.id, number) in accepted_pages
+                or (source.id, number) in native_mapped
+                or admitted is not None and (source.id, number) not in admitted):
+            continue
         text, row = item.get("text", ""), item.get("row", [])
         if not isinstance(text, str) or len(text) > 8000 or not isinstance(row, list) or any(not isinstance(c, str) or len(c) > 4000 for c in row):
             raise ValueError("The document reader returned invalid text.")
@@ -949,12 +1028,19 @@ def reader_update(contents, destination, value, existing=None, *, table_columns=
     return result, pages
 
 
-def reader_batches(profile, contents, destination, *, table_columns=None):
-    """Split internally, preserving the original source identities and page numbers."""
+def reader_batches(profile, contents, destination, *, table_columns=None, period=None,
+                   corrections=None, accepted_pages=()):
+    """Split exact eligible pages without spending allowance on native routes."""
     chunks, current, size = [], [], 0
     contents = reader_sources(contents, destination)
+    eligible = set(choose_reader_pages(
+        profile, contents, destination, period=period, corrections=corrections,
+        accepted_pages=accepted_pages,
+        native_mapped=_native_reader_page_pairs(contents, destination, table_columns)))
     for content in contents:
         for number, text in enumerate(content.source.page_texts, 1):
+            if (content.source.id, number) not in eligible:
+                continue
             if len(text) > 60000:
                 raise ValueError("One extracted page exceeds the reading budget; its native text remains available below.")
             if current and (len(current) >= 20 or size + len(text) > 60000):
@@ -965,6 +1051,9 @@ def reader_batches(profile, contents, destination, *, table_columns=None):
     if current:
         chunks.append(tuple(current))
     return tuple(
+        reader_request(profile, contents, destination, chunk, table_columns,
+                       period=period, corrections=corrections, accepted_pages=accepted_pages)
+        if period is not None or corrections or accepted_pages else
         reader_request(profile, contents, destination, chunk, table_columns)
         if table_columns else reader_request(profile, contents, destination, chunk)
         for chunk in chunks)
