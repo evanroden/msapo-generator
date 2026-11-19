@@ -35,6 +35,7 @@ from PIL import Image
 import pymupdf as fitz
 
 from app import monthly_report_sources as sources
+from app.monthly_report_latency_trace import TimingTrace, span, synthetic_timing
 from app.monthly_report_model import Facility, ReportProfile
 from app.monthly_report_source_preview import source_thumbnail_uri
 from scripts.qa_monthly_report_resources import _fixture, _memory, _memory_events, _current_rss
@@ -91,6 +92,19 @@ def _summary(values):
     if len(ordered) >= 20:
         result["p95_ms"] = round(ordered[round(.95 * (len(ordered) - 1))] * 1000, 3)
     return result
+
+
+def _dominant_stage(receipts, stages):
+    """Compare disjoint top-level phases, not nested PDF raster twice."""
+    totals = {stage: 0.0 for stage in stages}
+    for receipt in receipts:
+        for event in receipt["spans"]:
+            if not event["point"] and event["stage"] in totals:
+                totals[event["stage"]] += event["wall_ms"]
+    return {"stage": max(totals, key=totals.get),
+            "mean_ms": round(max(totals.values()) / len(receipts), 3),
+            "stage_means_ms": {key: round(value / len(receipts), 3)
+                               for key, value in totals.items()}}
 
 
 def _image(profile, content, number=None):
@@ -194,27 +208,33 @@ def _source_cases():
         timings = {key: [] for key in ("cold_ingest", "cold_thumbnail", "cold_total",
                                       "warm_ingest", "warm_thumbnail", "warm_total")}
         preserved = None
+        stage_receipts = {"cold": [], "warm": []}
         cold_spans = []
         for number in range(5):
             profile = _profile(f"qa491-{case}-{number}")
-            start = perf_counter()
-            with capture_spans() as spans:
+            cold_trace = TimingTrace()
+            with synthetic_timing(cold_trace), capture_spans() as spans:
+                start = perf_counter()
                 with measure_span("source_ingest"):
                     content, extras = sources.ingest(profile, "invented" + suffix, raw)
                 ingest_at = perf_counter()
                 with measure_span("source_thumbnail"):
                     thumb = _image(profile, content)
-            finished = perf_counter()
+                finished = perf_counter()
+            stage_receipts["cold"].append(cold_trace.receipt())
             cold_spans.append(list(spans))
             assert extras == ()
             timings["cold_ingest"].append(ingest_at - start)
             timings["cold_thumbnail"].append(finished - ingest_at)
             timings["cold_total"].append(finished - start)
-            warm_start = perf_counter()
-            warm, extras = sources.ingest(profile, "invented" + suffix, raw)
-            warm_ingest_at = perf_counter()
-            warm_thumb = _image(profile, warm)
-            warm_finished = perf_counter()
+            warm_trace = TimingTrace()
+            with synthetic_timing(warm_trace):
+                warm_start = perf_counter()
+                warm, extras = sources.ingest(profile, "invented" + suffix, raw)
+                warm_ingest_at = perf_counter()
+                warm_thumb = _image(profile, warm)
+                warm_finished = perf_counter()
+            stage_receipts["warm"].append(warm_trace.receipt())
             assert extras == () and warm_thumb == thumb and warm.source.sha256 == content.source.sha256
             timings["warm_ingest"].append(warm_ingest_at - warm_start)
             timings["warm_thumbnail"].append(warm_finished - warm_ingest_at)
@@ -230,10 +250,16 @@ def _source_cases():
                 preserved["first_middle_last_thumbnail_geometry_and_hash"] = checks
             del content, warm
             gc.collect()
-        results.append({"workload": case, "source_bytes": len(raw),
+        results.append({"workload": case, "source_kind": suffix[1:],
+                        "source_bytes": len(raw),
                         "fixture_sha256": sha256(raw).hexdigest(),
                         "samples": {key: _summary(values) for key, values in timings.items()},
                         "cold_critical_path_spans": cold_spans,
+                        "stage_receipts": stage_receipts,
+                        "dominant_cold_stage": _dominant_stage(stage_receipts["cold"],
+                            ("hash_cache_lookup", "parse", "optional_visual_read")),
+                        "dominant_warm_stage": _dominant_stage(stage_receipts["warm"],
+                            ("hash_cache_lookup", "parse", "optional_visual_read")),
                         "preservation": preserved})
     return results
 
@@ -291,7 +317,7 @@ def _section_preview():
 
     def counted(*args, **kwargs):
         started = perf_counter()
-        with measure_span("native_assembly"):
+        with span("native_assembly"), measure_span("native_assembly"):
             raw = native_original(*args, **kwargs)
         calls.append({"seconds": perf_counter() - started, "sha256": sha256(raw).hexdigest(),
                       "package_sha256": package_members_sha256(raw)})
@@ -315,15 +341,16 @@ def _section_preview():
                 from app.monthly_report_section_assembly_cache import owner_scope
                 with owner_scope(owner, versions):
                     for index in range(3):
-                        started = perf_counter()
-                        with capture_spans() as spans:
+                        trace = TimingTrace()
+                        with synthetic_timing(trace), capture_spans() as spans:
+                            started = perf_counter()
                             preview = preview_section(draft, "activity", assets.__getitem__)
                             converted_at = perf_counter()
                             ticket = store.put(owner or "qa491-control", preview)
                             inserted_at = perf_counter()
-                            with measure_span("first_raster"):
+                            with span("raster"), measure_span("first_raster"):
                                 rasters = store.pages(owner or "qa491-control", ticket, (0, 1))
-                        finished = perf_counter()
+                            finished = perf_counter()
                         assert rasters and len(rasters) == 2
                         assert all(data.startswith(b"\xff\xd8") for _, data in rasters)
                         geometry = {"pages": ticket.pages,
@@ -331,6 +358,7 @@ def _section_preview():
                                     "rasters": tuple(sha256(data).hexdigest() for _, data in rasters)}
                         controls.append(geometry)
                         measures.append({"run": index + 1,
+                                         "stage_receipt": trace.receipt(),
                                          "assembly_conversion_seconds": round(converted_at - started, 4),
                                          "pdf_ticket_seconds": round(inserted_at - converted_at, 4),
                                          "first_two_rasters_seconds": round(finished - inserted_at, 4),
@@ -340,6 +368,9 @@ def _section_preview():
                         del preview, rasters
                         gc.collect()
                 result["runs"][name] = {"samples": measures, "native_assemblies": len(calls),
+                                        "dominant_stage": _dominant_stage(
+                                            [sample["stage_receipt"] for sample in measures],
+                                            ("job_queue", "native_assembly", "conversion", "raster")),
                                         "native_assembly_seconds": [round(c["seconds"], 4) for c in calls],
                                         "native_docx_sha256": [c["sha256"] for c in calls],
                                          "native_docx_package_sha256": [c["package_sha256"] for c in calls]}

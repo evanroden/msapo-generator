@@ -148,6 +148,60 @@ these proposed targets, keep #491 open and route the next bounded fix and
 served verification through P20. Do not close it from synthetic benchmark
 code or a host change alone.
 
+## A22 synthetic stage attribution (17 November 2026)
+
+At the inspected starting main `f0af99567223aea3375f60e671450048be2bf0a0`,
+the existing reproducible harness offered five cold/warm total-ingest and
+thumbnail attempts for six source workloads, and three native runs per reuse
+mode. **It did not distinguish hash/cache lookup, parse, visual read,
+admission, conversion and raster in an ordered trace**. This missing
+attribution is the baseline failure A22 exercises; it is not a measured
+regression in rendering or proof of a conversion bottleneck.
+
+The A22 collector in `app/monthly_report_latency_trace.py` is activated only
+inside disposable synthetic harness calls and uses process monotonic clocks.
+It emits allowlisted stage labels and relative elapsed/CPU milliseconds. It
+never collects source filenames, contents, report identities, user IDs,
+prompts, paths, model secrets or raw images. No collection, log or saved receipt
+runs for normal application requests. Source-received is a point marker at the
+beginning of the validated upload path. Hash/cache covers the content hash,
+scope lookup and cache policy. Parse covers source inspection and derivative
+metadata publication on a miss. Optional visual-read covers the actual
+first-page derivative request, with raster nested within on a cold PDF miss.
+No parse/raster span on a warm hit is correct and does not mean a page was
+silently skipped.
+
+Native-section receipts include work admission (`job_queue`), original DOCX
+assembly (`native_assembly`), real LibreOffice conversion
+(`conversion`) and first-two-page `PreviewStore` rasterization (`raster`).
+A cooperative `read_with_capacity_wait` retry records only its actual queue
+sleep, not the subsequent admitted read. The headless browser adds
+`first_decoded_browser_image` from a real Load button press until decoded
+image availability; uploaded-source first-image timing is measured separately.
+These are **distinct clock origins and journeys**: server spans may be nested;
+do not add them to browser end-to-end wall time.
+
+The CI evidence workflow now runs the *same checked-out SHA and synthetic
+fixtures* under both 512 MiB/0.5 CPU and no explicit Docker cgroup caps,
+with at least five cold/warm source attempts per 2/24/96-page PDF and
+1/4/8-image DOCX, plus three native attempts per reuse mode and three browser
+attempts per Chromium/WebKit engine. Production-image CPU and RSS/cgroup OOM
+counters, source hashes, native package-member digests, thumbnail hashes,
+page counts and geometry remain in the existing receipts. Uncapped is a
+CI-runner resource class, **not a larger authorized production instance**.
+The synthetic test asserts cold parse/warm reuse, strictly ordered nonnegative
+clock spans, disabled-telemetry safety, invalid inputs, independent profiles,
+same-source digest, replacement survival and cooperative retry cancellation.
+
+Interpret `dominant_*_stage` only after both exact-head CI artifact families
+finish. It is a mean among the listed *nonoverlapping top-level stages*,
+not a proof that a specific service is the live-user bottleneck; visual raster
+is nested inside visual read and must not be double-counted. If capped and
+uncapped artifacts disagree, report both rather than selecting a favorable
+sample. No scheduling or cache-policy optimization is justified merely by
+adding this trace. Real client documents, a served production writer, physical
+Safari and authentic DOCX/PDF report acceptance are outside this harness.
+
 ## A01 extension — critical-path receipts (17 November 2026)
 
 Baseline SHA: `f0af99567223aea3375f60e671450048be2bf0a0`.

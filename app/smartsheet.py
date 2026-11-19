@@ -1064,34 +1064,21 @@ def _safe_filename(filename: str, default: str = "attachment") -> str:
 def download_names(
     attachments: Sequence[tuple[str, bytes]], base: str
 ) -> list[tuple[str, str, bytes]]:
-    """Rename the package for download as "<stem> <n> <kind><ext>".
+    """Name both downloads Kind_SITE_Short-Description_YYYY-MM-DD.ext.
 
-    Positional by contract: the caller guarantees attachment 1 is the unchanged
-    vendor quote and attachment 2 is the generated MSAPO form PDF, and
-    ``smartsheet_inline`` refuses to render anything other than exactly two.
-    Bytes are passed through untouched -- only the presented name changes, so
-    the file the operator uploads is byte-identical to the one analyzed.
+    Positional by contract: attachment 1 is the unchanged quote (its original
+    extension is retained), and attachment 2 is the generated MSAPO PDF.
+    Bytes are never modified. The shared stem comes from the generation-time
+    date stored with the package, not the current clock on a resume.
     """
-    stem = re.sub(
-        r"\s*(?:MSAPO|Scope)\s*$",
-        "",
-        _safe_filename(base, "PO"),
-        flags=re.I,
-    ).strip() or "PO"
+    stem = re.sub(r"[^A-Za-z0-9_-]+", "-", _safe_filename(base, "SITE_PO")).strip("-_") or "SITE_PO"
     result: list[tuple[str, str, bytes]] = []
     for index, (filename, data) in enumerate(attachments, 1):
-        safe_original = _safe_filename(filename)
-        extension = Path(safe_original).suffix.lower()
-        # The second attachment is the MSAPO agreement form, not the former
-        # simplified scope sheet, so the file the operator hands to Smartsheet
-        # is named for what it actually is. The stem regex above already
-        # tolerates either word, so a base built before this change still
-        # normalizes correctly.
+        extension = Path(_safe_filename(filename)).suffix.lower()
         kind = "Quote" if index == 1 else "MSAPO"
         label = f"{kind} · {extension.lstrip('.').upper()}" if extension else kind
-        result.append((label, f"{stem} {index} {kind}{extension}", data))
+        result.append((label, _safe_filename(f"{kind}_{stem}{extension}"), data))
     return result
-
 
 def preflight_attachments(
     attachments: Sequence[tuple[str, bytes]]

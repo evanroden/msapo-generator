@@ -842,10 +842,19 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
 
 
 def generate_report(draft: ReportDraft, *, acknowledged_fingerprint: str = "",
-                    asset_loader: Callable[[str], bytes] | None = None, source_view=None) -> ReportPackage:
+                    asset_loader: Callable[[str], bytes] | None = None, source_view=None,
+                    reuse_owner: str | None = None, reuse_asset_versions=()) -> ReportPackage:
+    from contextlib import nullcontext
+    from app import monthly_report_final_conversion_cache as final_cache
+    report = (draft.profile.contract, draft.profile.key, draft.period.key)
+    # Existing callers can opt into an explicitly established owner context
+    # without adding kwargs to legacy Streamlit test doubles.
+    owner_context = (final_cache.owner_scope(reuse_owner, report, reuse_asset_versions)
+                     if reuse_owner is not None else nullcontext())
     try:
-        with monthly_render_jobs.work_slot():
-            return _generate_report(draft, acknowledged_fingerprint=acknowledged_fingerprint, asset_loader=asset_loader, source_view=source_view)
+        with owner_context:
+            with monthly_render_jobs.work_slot():
+                return _generate_report(draft, acknowledged_fingerprint=acknowledged_fingerprint, asset_loader=asset_loader, source_view=source_view)
     except monthly_render_jobs.RenderBusy as exc:
         raise ValueError(str(exc)) from exc
 
@@ -867,12 +876,22 @@ def _generate_verified_report(draft, *, acknowledged_fingerprint, asset_loader, 
     from app.monthly_report_media_privacy import sanitize_package_media, sanitize_package_transparency
     docx = sanitize_package_transparency(docx)
     docx = sanitize_package_media(docx)
-    pdf, error = _convert_report_pdf(draft, docx)
+    from app import monthly_report_final_conversion_cache as final_cache
+    # The operation was rederived from current source/receipt evidence, and
+    # assemble_docx re-ran preflight and warning acknowledgement above. Reuse
+    # only the actual PDF conversion, never that authority or Word assembly.
+    with final_cache.verified_revision((
+            draft.fingerprint, acknowledged_fingerprint,
+            getattr(operation, "manifest_digest", ""), getattr(operation, "receipt_digest", ""),
+            operation.art_digest, getattr(source_view, "receipt_sha256", ""))):
+        pdf, error = _convert_report_pdf(draft, docx)
     from app.monthly_report_contents_review import contents_notice_for
-    from app.monthly_report_contents_pagination import synchronize
+    from app.monthly_report_contents_pagination import ensure_pdf_page_links, synchronize
     notice = contents_notice_for(draft.profile)
     if generated_contents:
-        updated, generated_notice = synchronize(docx, pdf, included_sections(draft.sections))
+        selected = included_sections(draft.sections)
+        pdf = ensure_pdf_page_links(pdf, selected)
+        updated, generated_notice = synchronize(docx, pdf, selected)
         if generated_notice is not None:
             docx, notice = canonical_docx(updated), generated_notice
     return ReportPackage(docx, pdf, report_filename(draft, "docx"), report_filename(draft, "pdf"), draft.fingerprint, error,
@@ -919,9 +938,11 @@ def _retry_verified_report_pdf(draft, package, operation):
     if package.pdf:
         return package
     pdf, error = _convert_report_pdf(draft, package.docx)
-    from app.monthly_report_contents_pagination import synchronize
+    from app.monthly_report_contents_pagination import ensure_pdf_page_links, synchronize
     if package.generated_contents:
-        docx, notice = synchronize(package.docx, pdf, included_sections(draft.sections))
+        selected = included_sections(draft.sections)
+        pdf = ensure_pdf_page_links(pdf, selected)
+        docx, notice = synchronize(package.docx, pdf, selected)
         if notice is not None:
             return replace(package, docx=canonical_docx(docx), pdf=pdf, pdf_error=error, contents_notice=notice)
     return replace(package, pdf=pdf, pdf_error=error)
@@ -955,6 +976,16 @@ def _convert_report_pdf(draft, docx):
             # existed. Clean only its disposable PDF input, not that download.
             from app.monthly_report_media_privacy import sanitize_package_transparency
             converted_copy = sanitize_package_transparency(converted_copy)
+            from app import monthly_report_final_conversion_cache as final_cache
+            # Hash the *actual disposable input*, not merely the draft or
+            # downloadable DOCX: pinned photo budgets, renderer adaptations
+            # and transparency scrubbing may all change conversion geometry.
+            conversion = (hashlib.sha256(converted_copy).hexdigest(),
+                          pdf_converter.PDF_BACKEND, pdf_converter.GOTENBERG_URL,
+                          "lossless-final-v1")
+            cached = final_cache.read(conversion)
+            if cached is not None:
+                return cached, ""
             input_path.write_bytes(converted_copy)
             del converted_copy
             release_transient_word_memory()
@@ -962,6 +993,7 @@ def _convert_report_pdf(draft, docx):
             pdf = actual_pdf.read_bytes()
             if not pdf.startswith(b"%PDF-"):
                 raise ValueError("The converter returned an invalid PDF.")
+            final_cache.remember(conversion, pdf)
     except Exception as exc:  # noqa: BLE001 - keep the finished DOCX on any backend failure
         pdf = None
         if isinstance(exc, pdf_converter.PDFConversionTimeout):
