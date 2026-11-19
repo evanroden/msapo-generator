@@ -108,15 +108,23 @@ def conversion_lane(*, wait_seconds, serial_lock, folder, memory_headroom):
     A mode shared/exclusive flock prevents mixed-capacity deployments from
     occupying the same container budget. No spin lock is held while sleeping.
     """
-    deadline = time.monotonic() + max(0, min(float(wait_seconds), 130))
+    from app.monthly_latency_spans import record_span
+    started = time.monotonic()
+    deadline = started + max(0, min(float(wait_seconds), 130))
     parallel = parallel_enabled()
-    if not parallel and not serial_lock.acquire(timeout=max(0, deadline - time.monotonic())):
-        raise OfficeLaneBusy('Another report is rendering. Please try again shortly.')
+    if not parallel:
+        # A01 receipts: in-process thread wait, then the cross-process lock
+        # wait, each apart from the office execution that follows.
+        if not serial_lock.acquire(timeout=max(0, deadline - time.monotonic())):
+            record_span("office_thread_queue", time.monotonic() - started, outcome="busy")
+            raise OfficeLaneBusy('Another report is rendering. Please try again shortly.')
+        record_span("office_thread_queue", time.monotonic() - started)
     try:
         folder = Path(folder)
         folder.mkdir(parents=True, exist_ok=True)
         # Windows never opts into parallel and retains the legacy lock only.
         mode_file = folder / '.conversion-mode.lock'
+        process_started = time.monotonic()
         with mode_file.open('a+b') as mode:
             while True:
                 if _try_lock(mode, shared=parallel):
@@ -130,6 +138,7 @@ def conversion_lane(*, wait_seconds, serial_lock, folder, memory_headroom):
                             with (folder / name).open('a+b') as handle:
                                 if not _try_lock(handle):
                                     continue
+                                record_span("office_process_queue", time.monotonic() - process_started)
                                 try:
                                     yield lane, parallel
                                     return
@@ -140,6 +149,8 @@ def conversion_lane(*, wait_seconds, serial_lock, folder, memory_headroom):
                 # A queued parallel waiter must not retain the shared mode
                 # lock: a resource downgrade needs an exclusive serial turn.
                 if time.monotonic() >= deadline:
+                    record_span("office_process_queue", time.monotonic() - process_started,
+                                outcome="busy")
                     raise OfficeLaneBusy('Another report is rendering. Please try again shortly.')
                 time.sleep(min(.05, max(0, deadline - time.monotonic())))
     finally:
