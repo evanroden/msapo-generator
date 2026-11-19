@@ -112,3 +112,22 @@ def test_explicit_later_manual_checkpoint_reconciles_failed_package_save(monkeyp
     button(app, "Save shared version").click().run()
     assert_version(app, 3)
     assert_retained(before, generated)
+
+
+def test_new_monthly_edit_retires_finished_output_but_labels_stale_state(monkeypatch, tmp_path):
+    app, before, generated = setup(monkeypatch, tmp_path)
+    button(app, "Create Word and PDF").click().run()
+    assert [item.label for item in app.get("download_button")] == ["Download DOCX", "Download PDF"]
+
+    next(item for item in app.text_area if item.label == "Activity summary").set_value(
+        "Synthetic activity changed after the finished files were created.").run()
+    assert not app.exception
+    assert [item.label for item in app.get("download_button")] == []
+    assert any("Earlier files were retired" in item.value for item in app.warning)
+    assert not any("Word and PDF ready to download" in item.value for item in app.success)
+    assert not any(item.label == "Retry saving this version" for item in app.button)
+    assert len(generated) == 1, "Editing must not regenerate or silently save finished PDF bytes"
+    assert saved().revision == 3
+    app.run()
+    assert any("Earlier files were retired" in item.value for item in app.warning)
+    assert library.load_snapshot_version(RRH_CONTRACT, "synthetic-guided", PERIOD, 2) == before

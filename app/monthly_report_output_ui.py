@@ -5,7 +5,33 @@ import streamlit as st
 
 
 def package_identity(package):
+    # Shared-version receipts track the Word/draft contents, even when a
+    # retry later produces PDF bytes for an already-saved Word file.
     return (package.fingerprint, sha256(package.docx).hexdigest())
+
+
+def final_pdf_artifact_identity(package):
+    """Full byte identity for a *finished* PDF and its paired Word artifact.
+
+    Unlike the shared-save identity, this intentionally changes when only the
+    PDF bytes change. Display names and history revisions are never identities.
+    """
+    if (package is None or type(getattr(package, "docx", None)) is not bytes
+            or type(getattr(package, "pdf", None)) is not bytes):
+        return None
+    return (package.fingerprint, sha256(package.docx).hexdigest(),
+            sha256(package.pdf).hexdigest())
+
+
+def outdated_output_status(prefix: str, session_scope: str, draft) -> bool:
+    """Show an old-versus-current warning without retaining old output bytes."""
+    receipt = st.session_state.get(prefix + "_last_created_output")
+    if (not isinstance(receipt, tuple) or len(receipt) != 2
+            or receipt[0] != session_scope or receipt[1] == draft.fingerprint):
+        return False
+    st.warning("This report changed after Word/PDF creation. Earlier files were retired; "
+               "create Word and PDF again to view or download the latest draft.")
+    return True
 
 
 def record_shared_save(prefix, package, *, saved=None, error=""):
@@ -18,6 +44,11 @@ def record_shared_save(prefix, package, *, saved=None, error=""):
 
 def render_output_status(package, draft, snapshot, prefix):
     """Return whether this exact package still needs a shared-version save."""
+    if package.fingerprint != draft.fingerprint:
+        st.warning("Files are from an earlier draft. Create Word and PDF again to include the latest edits.")
+        st.caption("Earlier files must not be mistaken for current output; regenerate from the edited draft.")
+        # Never retry a save of earlier bytes against today's edited draft.
+        return False
     status = st.session_state.get(prefix + "_package_save")
     if not status or status["identity"] != package_identity(package):
         status = None
@@ -102,6 +133,7 @@ def replace_current_session_pdf_package(prefix: str, session_scope: str, package
             }
     if previous is not package:
         discard_current_session_pdf_preview(prefix, session_scope)
+    st.session_state[prefix + "_last_created_output"] = (session_scope, package.fingerprint)
     st.session_state[prefix + "_package"] = package
 
 
@@ -113,17 +145,25 @@ def render_current_session_pdf_preview(package, draft, prefix: str, *, session_s
     """
     if (package is None or st.session_state.get(prefix + "_package") is not package
             or package.fingerprint != draft.fingerprint or not package.pdf):
+        # An old fragment may still have a late visible-page callback. Explicitly
+        # revoke its disposable owner even when the UI no longer shows it.
+        discard_current_session_pdf_preview(prefix, session_scope)
         return
-    with st.expander("View PDF here (this session)", expanded=False,
-                     key=prefix + "_finished_pdf_view"):
-        st.caption("Only this generated PDF is available here. Shared version history stores "
-                   "the report draft, not finished PDF files. This view does not certify Word layout.")
-        if (type(package.pdf) is not bytes or not package.pdf.startswith(b"%PDF-")
+    identity = final_pdf_artifact_identity(package)
+    with st.container(key=prefix + "_finished_pdf_view"):
+        st.markdown("**Final PDF · current draft**")
+        if identity:
+            st.caption("Exact PDF SHA-256: `" + identity[2] + "` · Paired Word SHA-256: `"
+                       + identity[1] + "`")
+        st.caption("This session's generated PDF only; shared history stores the draft, not PDF bytes. "
+                   "PDF inspection does not certify native Word layout.")
+        if (identity is None or not package.pdf.startswith(b"%PDF-")
                 or len(package.pdf) > MAX_INLINE_FINAL_PDF_BYTES):
-            st.info("In-site PDF preview unavailable. Download PDF remains available.")
+            st.info("In-app PDF preview unavailable. Download PDF remains available.")
             return
         from app.reference_preview import render_reference
         render_reference(key="finished_report_pdf",
                          owner_scope=_final_pdf_scope(prefix, session_scope),
                          title="Finished report PDF", raw=package.pdf,
-                         filename=package.pdf_name or "report.pdf")
+                         filename=package.pdf_name or "report.pdf",
+                         focus_on_open=True)
