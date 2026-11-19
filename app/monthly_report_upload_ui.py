@@ -1235,11 +1235,19 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
             st.session_state[exceptions_key] = tuple(all_exceptions)
             if combined:
                 included_count = len(combined["water_reports"].asset_hashes)
-                st.caption(f"Included {included_count} native-text Water pages automatically. "
-                           "Open Report pages to review captions or remove an attachment.")
-                for notice in all_exceptions:
-                    st.warning(notice)
+                notice = (f"Included {included_count} native-text Water pages automatically. "
+                          "Open Report pages to review captions or remove an attachment.")
+                st.caption(notice)
+                for warning in all_exceptions:
+                    st.warning(warning)
+                # The caller commits these pages; then one rerun shows them in
+                # the page manager (file name and Report pages) with this notice.
+                st.session_state[local_key + "_automatic_included"] = notice
+                st.session_state[prefix + "_period_editor_refresh"] = True
                 return tuple(c.source for c in contents), combined, {}
+        included_notice = st.session_state.pop(local_key + "_automatic_included", None)
+        if included_notice:
+            st.caption(included_notice)
         for notice in st.session_state.get(exceptions_key, ()):
             st.warning(notice)
         st.caption("Clear native-text Water pages attach on upload. "
