@@ -191,7 +191,9 @@ def _enqueue_visible(state, section):
     if not state['visible'].get(section) or _current_entry(state, section):
         return
     running = state.get('running')
-    if running and running[:2] == (section, state['wanted'].get(section)):
+    if (running and running[:2] == (section, state['wanted'].get(section))
+            and state.get('running_generation', 0)
+                == state.get('generations', {}).get(section, 0)):
         return
     request = state['requests'].get(section)
     if request is not None:
