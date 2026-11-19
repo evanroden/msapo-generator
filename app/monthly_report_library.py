@@ -311,6 +311,12 @@ def draft_from_dict(value: dict) -> ReportDraft:
             from app.monthly_report_row_review_receipts import decoded
             for receipt in reviews:
                 decoded(receipt)  # Structural integrity only; preserve stale, intact receipts unchanged.
+        coverage_receipts = value.get("source_coverage_receipts", ())
+        if (not isinstance(coverage_receipts, (list, tuple))
+                or len(coverage_receipts) > 2500
+                or sum(len(item) for item in coverage_receipts if isinstance(item, str)) > 4_000_000
+                or any(not isinstance(item, str) or len(item) > 1500 for item in coverage_receipts)):
+            raise ValueError("Invalid source coverage receipts.")
         sections = tuple(SectionSpec(
             key=s["key"], number=s["number"], title=s["title"],
             blocks=tuple(BlockSpec(
@@ -335,6 +341,7 @@ def draft_from_dict(value: dict) -> ReportDraft:
             sources=tuple(source_from_dict(s) for s in value.get("sources", ())),
             follow_ups=tuple(ReportFollowUp(**{**item, "references":tuple(item.get("references",()))}) for item in value.get("follow_ups",())),
             source_row_reviews=tuple(reviews),
+            source_coverage_receipts=tuple(coverage_receipts),
             omitted_sections=tuple(omitted),
         )
         from app.monthly_report_section_control import verify_custom_page_scope

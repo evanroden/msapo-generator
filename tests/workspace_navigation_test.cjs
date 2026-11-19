@@ -14,12 +14,14 @@ function harness(mode='wide', sequential=false) {
     const reviewButton={isConnected:true,disabled:true,onclick:null};
     const backButton={isConnected:true,disabled:true,onclick:null}, nextButton={isConnected:true,disabled:true,onclick:null,textContent:'Next'};
     const progress={isConnected:true,textContent:'Cover',dataset:{}};
+    const attention={isConnected:true,textContent:'',hidden:true};
     const nav={isConnected:true,querySelector:selector=>({
         '.epc-review-shortcut':sequential?null:reviewButton,
         '.epc-section-selector':sequential?null:select,
         '.epc-section-back':sequential?backButton:null,
         '.epc-section-next':sequential?nextButton:null,
         '.epc-section-progress':sequential?progress:null,
+        '.epc-navigation-attention':sequential?attention:null,
     })[selector] || null,getBoundingClientRect:label.getBoundingClientRect};
     const field={value:'Unblurred human wording',selectionStart:3,selectionEnd:9,dispatchEvent(){nativeEvents++}};
     const target=(offset,height,outside=false)=>{
@@ -52,7 +54,7 @@ function harness(mode='wide', sequential=false) {
     }
     const choose=id=>{select.value=id;select.onchange();measure()};
     measure();
-    return {correct(href,options={}){let prevented=false; const link={getAttribute:()=>href,classList:{contains:value=>(options.classes||[]).includes(value)}};
+    return {attention,correct(href,options={}){let prevented=false; const link={getAttribute:()=>href,classList:{contains:value=>(options.classes||[]).includes(value)}};
         clickHandler({button:0,target:{closest:()=>link},preventDefault(){prevented=true},...options});
         measure();return prevented;},state,root,scrollport,select,reviewButton,backButton,nextButton,progress,field,pairs,review,app,document,measure,choose,nav,label,controller:()=>controller,
         land:request=>context.ENFRAWorkspaceNavigation.land(state,request),
@@ -867,4 +869,31 @@ test('a fresh server landing replaces a pending same-target command without losi
     assert.equal(h.state.navigationIntent,null);assert.equal(h.state.navigationRequest,'monthly_activity');
     assert.equal(h.state.landingRequest,'monthly_activity');h.measure();
     assert.equal(h.progress.dataset.section,'monthly_activity');assert.equal(h.state.navigationRequest,null);
+});
+
+test('A13 preflight marker without DOM closest preserves exact section navigation status',()=>{
+    const h=harness('compact',true);
+    const original=h.app.querySelector;
+    h.app.querySelector=selector=>selector==='.epc-review-attention-source'
+        ? {dataset:{count:'3'}} : original(selector);
+    // The server-owned status is mounted before the browser adapter runs.
+    // Measurements must never create new DOM nodes while a click is pending.
+    h.document.createElement=()=>{throw Error('no DOM insertion during navigation')};
+    assert.doesNotThrow(()=>h.measure());
+    assert.equal(h.attention.textContent,'3 items need attention');
+    assert.equal(h.attention.hidden,false);
+    assert.equal(h.progress.textContent,'1 of 6 · Cover');
+    h.nextButton.onclick();h.measure();
+    assert.equal(h.progress.textContent,'2 of 6 · Monthly Activity Summary');
+    assert.equal(h.attention.textContent,'3 items need attention');
+    h.app.querySelector=selector=>selector==='.epc-review-attention-source'
+        ? {dataset:{count:'not-a-number'},closest:()=>null} : original(selector);
+    assert.doesNotThrow(()=>h.measure());
+    assert.equal(h.attention.textContent,'');
+    assert.equal(h.attention.hidden,true);
+    assert.equal(h.progress.textContent,'2 of 6 · Monthly Activity Summary');
+    h.nextButton.onclick();h.measure();
+    assert.equal(h.progress.textContent,'3 of 6 · Short section');
+    assert.equal(h.counts().nativeEvents,0);
+    h.dispose();
 });

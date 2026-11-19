@@ -11,7 +11,9 @@ import re
 from dataclasses import dataclass, replace
 
 from app.monthly_report_content_policy import contains_price, table_has_pricing
-from app.monthly_report_import import MappedImport, is_logo_artwork, is_header_artwork
+from app.monthly_report_import import (
+    MappedImport, is_logo_artwork, is_header_artwork, report_period_from_title_candidates,
+)
 from app.monthly_report_model import known_sections, layout_blocks
 from app.monthly_report_sections import (
     build_section_import, _build_section_import,
@@ -65,17 +67,55 @@ def _named_group(profile):
     return any(token.isalpha() and token not in boilerplate for token in _words(profile.title).split())
 
 
+def authoritative_cover_lines(inspection):
+    """Only witnessed first-page cover text grants source-site/month authority.
+
+    Legacy hand-constructed inspections have no physical-page receipt. Their
+    title candidates remain usable for tests/older saved data, while a freshly
+    inspected DOCX never upgrades later-page unheaded narrative into a cover.
+    """
+    lines = getattr(inspection, "cover_title_candidates", None)
+    if lines is not None:
+        return tuple(lines)
+    # Older hand-built/imported inspections have no physical cover receipt.
+    # Preserve their existing cover-item inference so saved/imported identity
+    # contracts are not silently reinterpreted; new DOCX inspections always
+    # set the field and never admit text from an unheaded later page.
+    return tuple((*inspection.title_candidates, *(
+        item.text for item in inspection.items
+        if item.kind == "text" and item.part == "word/document.xml"
+        and item.section in ("", "cover") and 0 <= item.position <= 80)))
+
+
+def cover_report_periods(inspection):
+    """Explicit report-month captions, including split title/month cover lines."""
+    lines = authoritative_cover_lines(inspection)
+    candidates = (*lines, *(a + " " + b for a, b in zip(lines, lines[1:])))
+    periods = set()
+    for title in candidates:
+        identified, _ = report_period_from_title_candidates((title,))
+        if identified is not None:
+            periods.add((identified.year, identified.month))
+        # The strict reporting-label reader does not cover MM/YYYY; admit that
+        # format only when it appears next to explicit report/month wording.
+        # Never use an issue/printed/signature date as a report-month vote.
+        headline = re.split(r"\b(?:printed|prepared|issued|signed)?\s*Date\s*:", title,
+                            maxsplit=1, flags=re.I)[0]
+        if re.search(r"\b(?:monthly\s+(?:report|review)|report(?:ing)?\s+(?:month|period))\b", headline, re.I):
+            periods.update(mentioned_periods(headline))
+        # Covers sometimes put the report month on a line of its own.
+        # A standalone month/year is authoritative; a signature or issue
+        # date, service event, or incidental narrative remains untrusted.
+        if re.fullmatch(r"\s*(?:month\s*(?:of|:)\s*)?"
+                        r"(?:[A-Za-z]{3,9}\.?\s+20\d{2}|(?:0?[1-9]|1[0-2])/20\d{2})\s*",
+                        title, re.I):
+            periods.update(mentioned_periods(title))
+    return tuple(sorted(periods))
+
+
 def source_sites(inspection, known_sites):
-    """Match complete names/aliases on the cover, never incidental body names."""
-    # The inspector records some native cover text in the "cover"
-    # section rather than title_candidates. Only the first page's own
-    # document text may establish identity; body/service content is never
-    # permission to import another site's contacts or activity.
-    cover_lines = list(inspection.title_candidates)
-    cover_lines.extend(item.text for item in inspection.items
-                       if item.kind == "text" and item.part == "word/document.xml"
-                       and item.section in ("", "cover") and 0 <= item.position <= 80)
-    cover = " " + _words("\n".join(dict.fromkeys(cover_lines))) + " "
+    """Match complete known names/aliases on the actual cover, not body pages."""
+    cover = " " + _words("\n".join(authoritative_cover_lines(inspection))) + " "
     matches = []
     for site in known_sites:
         for name in (site.title, *site.aliases):
@@ -147,7 +187,8 @@ def _target_month_evidence(text, requested):
     return current, planned
 
 
-def analyze_starting_report(inspection, profile, period, known_sites=(), *, confirmed_sites=None, known_profiles=()):
+def analyze_starting_report(inspection, profile, period, known_sites=(), *, confirmed_sites=None,
+                            known_profiles=(), confirmed_period=None):
     known = {}
     # Existing target membership wins over a catalog's spelling/key for the
     # same named facility. A directory import must not turn a same-site report
@@ -163,7 +204,7 @@ def analyze_starting_report(inspection, profile, period, known_sites=(), *, conf
             known.setdefault(site.key, site)
     sites = tuple(confirmed_sites) if confirmed_sites is not None else source_sites(inspection, known.values())
     if confirmed_sites is None:
-        cover = " " + _words("\n".join(inspection.title_candidates)) + " "
+        cover = " " + _words("\n".join(authoritative_cover_lines(inspection))) + " "
         groups = [p for p in (*known_profiles, profile) if p.contract == profile.contract and _named_group(p)
                   and " " + _words(p.title) + " " in cover]
         memberships = {tuple(sorted(f.key for f in p.facilities)) for p in groups}
@@ -176,8 +217,18 @@ def analyze_starting_report(inspection, profile, period, known_sites=(), *, conf
     relation = "same" if sites and {s.key for s in sites} == target else "other" if sites else "unknown"
     current, older, uncertain, prospective = [], [], [], []
     requested = (period.year, period.month)
-    cover_periods = mentioned_periods("\n".join(inspection.title_candidates))
-    source_period = next(iter(cover_periods)) if len(cover_periods) == 1 else None
+    report_periods = cover_report_periods(inspection)
+    if confirmed_period is not None:
+        if tuple(confirmed_period) not in report_periods:
+            raise ValueError("The selected source reporting month is not on this original cover.")
+        source_period = tuple(confirmed_period)
+    elif len(report_periods) == 1:
+        source_period = report_periods[0]
+    elif len(report_periods) > 1:
+        source_period = None  # Require one explicit, source-bound choice in the UI.
+    else:
+        # A plain date or print/issue timestamp cannot certify a report month.
+        source_period = None
     for item in inspection.items:
         if item.suggested_slot not in MONTHLY_BLOCKS:
             continue
@@ -461,7 +512,13 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
                 if item.kind == "image" and analysis.site_relation == "same":
                     plan.setdefault("automatic_divider_skips", {}).setdefault(slot, []).append(item.id)
                 continue  # The pinned native master owns its page art, not monthly content.
-            design = slot in ("brand_logo", "client_logo") or slot.startswith("divider_")
+            # Only exact, independently approved ENFRA page furniture may cross
+            # sites. Client marks, unverified "brand logo" captions and native
+            # divider pixels may carry source-site identity. The target's pinned
+            # design remains its own contract-scoped owner.
+            from app.monthly_report_static_branding import is_company_artwork_digest
+            design = (item.kind == "image" and slot == "brand_logo"
+                      and is_company_artwork_digest(item.image_digest))
             if analysis.site_relation != "same" and not design:
                 # Different sites may reuse table headings, never their rows.
                 if item.kind == "table" and section.key not in ("cover", "other"):

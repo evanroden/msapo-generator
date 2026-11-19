@@ -1,19 +1,22 @@
-"""Short-lived, owner-isolated native section assembly reuse for preview retries.
+"""Short-lived, owner-isolated native section DOCX preview reuse.
 
-Only the disposable unfinished-section DOCX is cached. Final downloads and the
-client's saved reports never read from this cache.
+Disposable unfinished assemblies only. Never used for finalized report exports.
+A strict process-wide byte budget retains a few sections through navigation.
 """
-
+from collections import OrderedDict
 from contextlib import contextmanager
 from contextvars import ContextVar
 from threading import Lock
 from time import monotonic
 
 MAX_ENTRY_BYTES = 24 * 1024 * 1024
+MAX_TOTAL_BYTES = 24 * 1024 * 1024
+MAX_ENTRIES = 4
 TTL_SECONDS = 120
 _SCOPE = ContextVar("monthly_section_assembly_owner", default=None)
 _LOCK = Lock()
-_ENTRY = None
+_ENTRIES = OrderedDict()
+_BYTES = 0
 
 
 @contextmanager
@@ -35,23 +38,32 @@ def _cache_key(revision):
     return (scope, revision) if scope is not None else None
 
 
+def _expire(now):
+    """Called while holding _LOCK."""
+    global _BYTES
+    for key, (expires, raw) in tuple(_ENTRIES.items()):
+        if expires <= now:
+            del _ENTRIES[key]
+            _BYTES -= len(raw)
+
+
 def read(revision):
     """Return immutable bytes only for the same owner, revision and assets."""
-    global _ENTRY
     key = _cache_key(revision)
     if key is None:
         return None
     with _LOCK:
-        if _ENTRY is not None and _ENTRY[1] <= monotonic():
-            _ENTRY = None
-        if _ENTRY is not None and _ENTRY[0] == key:
-            return _ENTRY[2]
+        _expire(monotonic())
+        entry = _ENTRIES.pop(key, None)
+        if entry is not None:
+            _ENTRIES[key] = entry
+            return entry[1]
     return None
 
 
 def remember(revision, raw):
-    """Keep at most one bounded assembly when the render lease has headroom."""
-    global _ENTRY
+    """Retain a bounded number of sections when the render lease has headroom."""
+    global _BYTES
     key = _cache_key(revision)
     if key is None or type(raw) is not bytes or not 0 < len(raw) <= MAX_ENTRY_BYTES:
         return
@@ -60,11 +72,26 @@ def remember(revision, raw):
     if headroom is not None and headroom < jobs.PREVIEW_HEADROOM_BYTES + len(raw):
         return
     with _LOCK:
-        _ENTRY = (key, monotonic() + TTL_SECONDS, raw)
+        _expire(monotonic())
+        previous = _ENTRIES.pop(key, None)
+        if previous is not None:
+            _BYTES -= len(previous[1])
+        while _ENTRIES and (len(_ENTRIES) >= MAX_ENTRIES or _BYTES + len(raw) > MAX_TOTAL_BYTES):
+            _, (_, evicted) = _ENTRIES.popitem(last=False)
+            _BYTES -= len(evicted)
+        _ENTRIES[key] = (monotonic() + TTL_SECONDS, raw)
+        _BYTES += len(raw)
 
 
 def clear():
     """Discard disposable bytes (also used by the synthetic benchmark)."""
-    global _ENTRY
+    global _BYTES
     with _LOCK:
-        _ENTRY = None
+        _ENTRIES.clear()
+        _BYTES = 0
+
+
+def stats():
+    with _LOCK:
+        _expire(monotonic())
+        return {"entries": len(_ENTRIES), "bytes": _BYTES}

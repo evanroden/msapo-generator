@@ -123,3 +123,52 @@ def test_older_saved_review_cannot_bypass_new_staff_role_scope(storage):
         expected_revision=checked.revision, profile=PROFILE, period=PERIOD)
     assert corrected.ready_for_import
     assert corrected.rows[0].origin.cells[-1] == "Vendor"
+
+
+REQUIREMENTS_HEADER = b"Team member,Site,Safety refresher,Operations update\n"
+
+
+def test_exact_repeated_requirement_rows_import_as_one_row(storage):
+    original = (REQUIREMENTS_HEADER
+                + b"Alice Smith,North,Completed,\n"
+                + b"Jo,South,Pending,Not required\n"
+                + b"Alice Smith,North,Completed,\n")
+    content = ingest("synthetic_requirements_repeat.csv", original)
+    review = reviewed(content, "requirements", source_year=2026)
+    assert review.ready_for_import
+    assert len(review.rows) == 3, "Every physical source row remains inspectable"
+    assert all(not row.issues and not row.excluded for row in review.rows)
+    block = ResolvedBlock("training_summary", "This month", text="Human-authored note")
+    updated = accepted_training_block(
+        review, block, expected_block_fingerprint=block.fingerprint)
+    matrix, = updated.extra_tables
+    assert matrix.rows == (("Alice Smith", "Site North", "Completed", ""),
+                           ("Jo", "Site South", "Pending", "Not required"))
+    assert updated.text == block.text
+    assert updated.references == (review.source.reference,)
+    assert accepted_training_block(
+        review, updated, expected_block_fingerprint=updated.fingerprint) == updated
+    from app import monthly_report_sources as sources
+    assert sources.source_bytes(PROFILE, content.source) == original
+
+
+@pytest.mark.parametrize("repeat", [
+    b"Alice Smith,North,Pending,\n",     # conflicting status
+    b"alice smith,North,Completed,\n",   # same person, different case
+    b"Alice  Smith,North,Completed,\n",  # same person, different spacing
+], ids=["status", "case", "spacing"])
+def test_other_repeated_requirement_identities_stay_in_review(storage, repeat):
+    content = ingest("synthetic_requirements_conflict.csv",
+                     REQUIREMENTS_HEADER + b"Alice Smith,North,Completed,\n" + repeat)
+    review = reviewed(content, "requirements", source_year=2026)
+    assert not review.ready_for_import
+    assert all("Duplicate Training source row needs review." in row.issues
+               for row in review.rows)
+    block = ResolvedBlock("training_summary", "This month")
+    with pytest.raises(ValueError, match="Review unknown Training rows"):
+        accepted_training_block(review, block, expected_block_fingerprint=block.fingerprint)
+    kept = exclude_training_row(review, review.rows[1].key, expected_revision=review.revision)
+    assert kept.ready_for_import
+    matrix, = accepted_training_block(
+        kept, block, expected_block_fingerprint=block.fingerprint).extra_tables
+    assert matrix.rows == (("Alice Smith", "Site North", "Completed", ""),)
