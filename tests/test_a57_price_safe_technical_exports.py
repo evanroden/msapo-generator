@@ -257,8 +257,10 @@ def test_opaque_total_and_sensitive_fact_status_never_reach_public_reader():
     _, output, facts = ai.drafting_request(
         "activity_summary", (retained,), ReportPeriod(2026, 11))
     assert facts == (clean,)
-    assert '"private"' not in output[0]["text"]
-    assert '"flags"' not in output[0]["text"]
+    # The clean fact legitimately serializes an empty "flags" schema key;
+    # prove that the unsafe fact ID and its sensitive flag were excluded.
+    outgoing = json.loads(output[0]["text"].rsplit("\n", 1)[-1])
+    assert [fact["id"] for fact in outgoing["facts"]] == ["clean"]
     assert "$7,600" not in output[0]["text"]
 
 

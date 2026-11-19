@@ -92,6 +92,16 @@ _SOURCE_CONTACT = re.compile(
     r"(?:\+?1[-. ]?)?(?:\(\d{3}\)|\d{3})[-. ]\d{3}[-. ]\d{4}\b|"
     r"\b(?:technician|engineer|operator|reported\s+by|performed\s+by)\s+"
     r"(?-i:[A-Z][a-z]+\s+[A-Z][a-z]+)\b", re.I)
+_SOURCE_PHONE = re.compile(
+    r"(?:\+?1[-. ]?)?(?:\(\d{3}\)|\d{3})[-. ]\d{3}[-. ]\d{4}\b", re.I)
+# A phone-shaped substring in an explicitly identified equipment/CMMS number
+# is not a contact. Match the immediately adjacent technical label only.
+_SOURCE_TECHNICAL_ID = re.compile(
+    r"(?i)\b(?:asset(?:\s+(?:serial|number|no\.?|id))?|serial|"
+    r"model|tag|identifier|part|work\s+order|job)"
+    r"(?:\s+(?:number|no\.?|id))?\s*[:#]?\s*"
+    r"(?:[A-Za-z][A-Za-z0-9/_-]{0,63}[-_/])?$")
+
 _SOURCE_BARE_NUMBER = re.compile(r"^\s*" + _AMOUNT_VALUE + r"\s*$", re.I)
 # An unqualified Total/amount row cannot be assumed to be a work count.
 _SOURCE_UNQUALIFIED_TOTAL = re.compile(
@@ -100,7 +110,12 @@ _SOURCE_UNQUALIFIED_TOTAL = re.compile(
 
 def contains_private_contact(text: str) -> bool:
     """Recognize explicit private contact fields, addresses and phone forms."""
-    return bool(_SOURCE_CONTACT.search(text))
+    for match in _SOURCE_CONTACT.finditer(text):
+        if (_SOURCE_PHONE.fullmatch(match.group())
+                and _SOURCE_TECHNICAL_ID.search(text[max(0, match.start() - 100):match.start()])):
+            continue
+        return True
+    return False
 
 
 def technical_source_text(text: str) -> str:
@@ -161,14 +176,22 @@ def technical_source_text(text: str) -> str:
                                         r"\b(?:flow|pressure|temperature|rpm|cfm|gpm|"
                                         r"hours?|counts?|readings?|voltage|power|"
                                         r"kW|kWh|psi|amperage)\b", table[2][index], re.I))
-            for clause in _SOURCE_CLAUSES.split(cell):
+            clauses = _SOURCE_CLAUSES.split(cell)
+            permitted = []
+            for clause in clauses:
                 piece = clause.strip()
                 if (not piece or contains_price(piece)
-                        or _MONEY.search(piece) or _SOURCE_CONTACT.search(piece)
+                        or _MONEY.search(piece) or contains_private_contact(piece)
                         or _SOURCE_UNQUALIFIED_TOTAL.fullmatch(piece)
                         or (_SOURCE_BARE_NUMBER.fullmatch(piece) and not technical_number)):
                     continue
-                safe.append(piece)
+                permitted.append(piece)
+            if permitted:
+                # Retain authored punctuation when every clause is safe, and
+                # keep dependent negative tails on the same activity line when
+                # a preceding contact/price clause is removed.
+                safe.append(cell.strip() if len(permitted) == len(clauses)
+                            else "; ".join(permitted))
     return "\n".join(safe)
 
 

@@ -515,7 +515,7 @@ _ACTIVITY_PHONE = re.compile(
 _ACTIVITY_INTERNATIONAL_PHONE = re.compile(
     r"(?<!\w)(?:\+|00)[1-9](?:[ .()-]*\d){6,14}(?!\w)")
 _ACTIVITY_ID_LABEL = re.compile(
-    r"(?i)\b(?:asset|serial|model|tag|identifier|part|work order|job)"
+    r"(?i)\b(?:asset(?:\s+serial)?|serial|model|tag|identifier|part|work order|job)"
     r"(?:\s+(?:number|no\.?|id))?\s*[:#]?\s*"
     r"(?:[A-Za-z][A-Za-z0-9/_-]{0,63}[-_/])?$")
 _ACTIVITY_PHONE_LABEL = re.compile(
@@ -681,6 +681,12 @@ def _activity_source_pages(content):
     """
     if content.source.suffix not in {".csv", ".xlsx"} or not content.tables:
         for number, text in enumerate(content.source.page_texts, 1):
+            if (content.source.suffix == ".txt" and contains_price(text)
+                    and not any(_EVENT_START.match(line) for line in text.splitlines())):
+                # An untagged priced TXT has no independently scoped event
+                # boundary. Preserve the existing whole-source review hold.
+                yield number, ""
+                continue
             view = _docx_invoice_activity_view(text) if content.source.suffix == ".docx" else None
             text = text if view is None else view.text
             # A priced page remains ineligible as unchanged source artwork,
@@ -824,8 +830,17 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
                         # only recovery when the remaining labelled work has no
                         # unknown fields and no omitted completion/status qualifier.
                         from app.monthly_report_vendor_passages import unsupported_fields, _STATUS
+                        raw_page = content.source.page_texts[number - 1]
+                        # A removed contact field can also carry a negative
+                        # operational qualifier. Never turn pending vendor
+                        # evidence into a completed action by dropping it.
+                        negative_qualifier = re.search(
+                            r"(?i)\b(?:not\s+(?:operational|completed?|done|working)|"
+                            r"did\s+not|could\s+not|failed|cancelled|incomplete|"
+                            r"pending|unresolved)\b", raw_page)
                         if (not unsupported_fields(text)
-                                and not _STATUS.search(content.source.page_texts[number - 1])):
+                                and not _STATUS.search(raw_page)
+                                and not negative_qualifier):
                             activity_lines = _activity_lines(
                                 text, content.source.suffix, with_dates=True)
                 else:
@@ -939,8 +954,9 @@ def reader_request(profile, contents, destination, page_refs=None, table_columns
                     continue
                 payload.append({"type": "text", "text": f"VISUALLY CHECKED SOURCE {source.id} PAGE {number}"})
                 payload.extend(image_blocks_for_vision(image.data, "." + image.extension))
-    if not any(part.get("type") == "image" or part.get("text", "").startswith("SOURCE ")
-               for part in payload[1:]):
+    if contents and not any(
+            part.get("type") == "image" or part.get("text", "").startswith("SOURCE ")
+            for part in payload[1:]):
         raise ValueError("No policy-permitted readable source content. Review the original locally; no private page was sent.")
     return payload
 
