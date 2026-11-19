@@ -86,6 +86,44 @@ def test_full_draft_revision_change_invalidates(report, writer):
     assert len(writer) == 2
 
 
+def test_unrelated_section_edit_reuses_equivalent_assembly(report, writer):
+    selected, _ = preview._section_scope(report, "activity")
+    scoped_keys = {block.key for block in selected.blocks}
+    outside = next(block for block in report.blocks if block.key not in scoped_keys)
+    changed = replace(report, blocks=tuple(
+        replace(block, text=block.text + " synthetic unrelated update")
+        if block.key == outside.key else block for block in report.blocks
+    ))
+    assert report.fingerprint != changed.fingerprint
+    assert preview._section_scope(report, "activity")[0].fingerprint == (
+        preview._section_scope(changed, "activity")[0].fingerprint
+    )
+    with cache.owner_scope("visitor-a"):
+        assert assemble(report) == assemble(changed)
+    assert len(writer) == 1
+
+
+def test_switching_between_sections_keeps_unchanged_assemblies(report, writer):
+    with cache.owner_scope("visitor-a"):
+        first = assemble(report)
+        preview._section_preview_docx(report, "organization")
+        assert assemble(report) == first
+    assert len(writer) == 2
+    assert cache.stats()["entries"] == 2
+    assert cache.stats()["bytes"] <= cache.MAX_TOTAL_BYTES
+
+
+def test_total_byte_budget_evicts_old_sections_without_cross_owner_reuse(report, writer):
+    with cache.owner_scope("visitor-a"):
+        cache.remember(("first",), b"a" * (cache.MAX_TOTAL_BYTES // 2))
+        cache.remember(("second",), b"b" * (cache.MAX_TOTAL_BYTES // 2 + 1))
+        assert cache.read(("first",)) is None
+        assert cache.read(("second",)) is not None
+        assert cache.stats()["bytes"] <= cache.MAX_TOTAL_BYTES
+    with cache.owner_scope("visitor-b"):
+        assert cache.read(("second",)) is None
+
+
 def test_source_view_revision_change_invalidates(report, writer, monkeypatch):
     with cache.owner_scope("visitor-a"):
         assemble(report)

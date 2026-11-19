@@ -12,6 +12,8 @@ from email import policy
 from email.parser import BytesParser
 from html.parser import HTMLParser
 from io import BytesIO, StringIO
+from contextlib import closing
+from itertools import groupby
 import codecs
 import csv
 import hashlib
@@ -897,7 +899,7 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
     return tuple(sources.values()), tuple(messages)
 
 
-def page_image(profile: ReportProfile, content: SourceContent, number: int, *, preview: bool = False):
+def page_image(profile: ReportProfile, content: SourceContent, number: int, *, preview: bool = False, _pdf_image=None):
     source = content.source
     if number < 1 or number > len(source.page_texts):
         raise ValueError("Source page does not exist.")
@@ -933,16 +935,20 @@ def page_image(profile: ReportProfile, content: SourceContent, number: int, *, p
             # source is decoded and an atomic fresh derivative is published
             # only after it has been prepared successfully.
             pass
-    raw = source_bytes(profile, source) if source.suffix != ".docx" else b""
+    raw = source_bytes(profile, source) if source.suffix != ".docx" and _pdf_image is None else b""
     if source.suffix == ".pdf":
-        with fitz.open(stream=raw, filetype="pdf") as pdf:
-            page = pdf[number-1]
-            dpi = 96 if preview else 150
-            width, height = page.rect.width * dpi / 72, page.rect.height * dpi / 72
-            if width <= 0 or height <= 0 or width * height > ocr._MAX_PIXELS_PER_FRAME:
-                raise ValueError("This PDF page is too large to rasterize safely.")
-            png = page.get_pixmap(dpi=dpi, alpha=False).tobytes("png")
-        result = normalize_report_image(png, ".png", line_art=True, dpi=dpi)
+        if _pdf_image is not None:
+            # Only the internal verified process-worker path supplies this.
+            result = _pdf_image
+        else:
+            with fitz.open(stream=raw, filetype="pdf") as pdf:
+                page = pdf[number-1]
+                dpi = 96 if preview else 150
+                width, height = page.rect.width * dpi / 72, page.rect.height * dpi / 72
+                if width <= 0 or height <= 0 or width * height > ocr._MAX_PIXELS_PER_FRAME:
+                    raise ValueError("This PDF page is too large to rasterize safely.")
+                png = page.get_pixmap(dpi=dpi, alpha=False).tobytes("png")
+            result = normalize_report_image(png, ".png", line_art=True, dpi=dpi)
     elif source.suffix in ocr.SUPPORTED_IMAGE_SUFFIXES:
         result = normalize_report_image(raw, source.suffix, dpi=96 if preview else 200,
                                         **({"frame_index": number - 1} if source.suffix == ".mpo" else {}))
@@ -977,10 +983,53 @@ def image_numbers(content: SourceContent) -> tuple[int, ...]:
     return ()
 
 
+
+def _prepared_page_images(profile, planned):
+    """Keep the canonical page order and content-addressed cache writer in parent.
+
+    The process path is exclusive to a *large*, uncached, single-PDF range.
+    Never move two-page PreviewStore paints, source identity or human review
+    policy into a worker. Do not hold a cache or report-library lock in children.
+    """
+    from app.monthly_report_parallel_pages import MIN_PDF_BYTES, RASTER_SLOT, eligible, parallel_pages
+
+    for _, records in groupby(planned, key=lambda item: item[0].source.id):
+        items = tuple(records)
+        content = items[0][0]
+        source = content.source
+        if source.suffix == ".pdf":
+            path = _path(profile, source.sha256, source.suffix)
+            prepared = path.parent / "prepared" / source.sha256
+            cold = sum(not (prepared / f"{number}-print.json").is_file()
+                       for _, _, number in items)
+            if (path.stat().st_size >= MIN_PDF_BYTES and eligible(cold)
+                    and RASTER_SLOT.acquire(blocking=False)):
+                try:
+                    # Authenticate the exact original before dispatch; each
+                    # process revalidates it before opening its own PDF.
+                    source_bytes(profile, source)
+                    rasters = parallel_pages(
+                        path, source.sha256, (number for _, _, number in items),
+                        dpi=150, max_pixels=ocr._MAX_PIXELS_PER_FRAME,
+                        max_source_bytes=file_size_limit(source.suffix))
+                    with closing(rasters):
+                        for (record_content, slot, number), (returned, image) in zip(
+                                items, rasters, strict=True):
+                            if returned != number:
+                                raise ValueError("Prepared PDF page order changed.")
+                            yield record_content, slot, number, page_image(
+                                profile, record_content, number, _pdf_image=image)
+                finally:
+                    RASTER_SLOT.release()
+                continue
+        for record_content, slot, number in items:
+            yield record_content, slot, number, page_image(profile, record_content, number)
+
+
 def prepare_pages(profile: ReportProfile, contents: tuple[SourceContent, ...],
                   destinations: tuple[tuple[str, str], ...], *,
                   only_pages: frozenset[tuple[str, int]] | None = None) -> tuple[ResolvedBlock, ...]:
-    """Prepare serially into content-addressed storage, with an aggregate limit.
+    """Prepare into content-addressed storage, with an aggregate limit.
 
     An optional subset restricts which pages are actually inserted without
     changing the canonical source fingerprint used in provenance references.
@@ -1013,15 +1062,16 @@ def prepare_pages(profile: ReportProfile, contents: tuple[SourceContent, ...],
         if not page_allowed(content.source, number, profile=profile, destination=slot):
             raise ValueError(f"Check page {number} of {content.source.filename} before including it. Prices, legal-only and blank/signature-only pages cannot be included.")
     grouped, total = {}, 0
-    for content, slot, number in planned:
-        normalized = page_image(profile, content, number)
-        total += len(normalized.data)
-        if total > 60 * 1024 * 1024:
-            raise ValueError("Prepared images exceed 60 MB. Reduce the selected pages or image dimensions.")
-        ref = library.asset_reference(normalized.data, normalized.extension)
-        library._atomic_write(library._profile_path(profile.contract, profile.key) / "assets" / ref, normalized.data)
-        caption = dict(content.source.captions).get(number, f"{content.source.filename} · page/item {number}")
-        grouped.setdefault(slot, []).append((ref, caption, source_reference(content.source, number)))
+    # Explicit closing propagates aborted/stale requests into worker teardown.
+    with closing(_prepared_page_images(profile, planned)) as prepared:
+        for content, slot, number, normalized in prepared:
+            total += len(normalized.data)
+            if total > 60 * 1024 * 1024:
+                raise ValueError("Prepared images exceed 60 MB. Reduce the selected pages or image dimensions.")
+            ref = library.asset_reference(normalized.data, normalized.extension)
+            library._atomic_write(library._profile_path(profile.contract, profile.key) / "assets" / ref, normalized.data)
+            caption = dict(content.source.captions).get(number, f"{content.source.filename} · page/item {number}")
+            grouped.setdefault(slot, []).append((ref, caption, source_reference(content.source, number)))
     from app.monthly_report_asset_instances import new_asset_instance, with_asset_instances
     blocks = tuple(with_asset_instances(ResolvedBlock(slot, "This month", asset_hashes=tuple(v[0] for v in values),
                                asset_captions=tuple(v[1] for v in values), references=tuple(v[2] for v in values),

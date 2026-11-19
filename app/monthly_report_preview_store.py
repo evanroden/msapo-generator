@@ -17,6 +17,8 @@ from uuid import uuid4
 
 import pymupdf as fitz
 
+from app.monthly_report_preview_metrics import measured
+
 
 MAX_DISK_BYTES = 64 * 1024 * 1024
 MAX_RASTER_BYTES = 8 * 1024 * 1024
@@ -84,6 +86,7 @@ class PreviewStore:
             if entry.retired or now - entry.used > self.max_age:
                 self._remove(key)
 
+    @measured("preview_store_put")
     def put(self, owner, preview):
         if not owner or not isinstance(owner, str):
             raise ValueError('A private preview owner is required.')
@@ -147,6 +150,7 @@ class PreviewStore:
             if self._get(owner, ticket) is not None:
                 self._remove(ticket.key)
 
+    @measured("preview_store_pages_decode")
     def pages(self, owner, ticket, indexes, *, dpi=120):
         """Decode only the one/two visible pages; never build a whole-page HTML."""
         if dpi not in (96, 120, 150):
