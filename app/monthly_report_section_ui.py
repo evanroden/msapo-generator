@@ -814,6 +814,23 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     optional_import = working_draft is not None
     original_token_key = prefix + "_original_review_token"
     cleanup_notice_key = prefix + "_cleanup_notice_digest"
+    upload_epoch_key = prefix + "_upload_epoch"
+    upload_epoch = st.session_state.get(upload_epoch_key, 0)
+    upload_key = prefix + "_upload" + (f"_v{upload_epoch}" if upload_epoch else "")
+
+    def _remove_loaded_file():
+        # Streamlit file uploaders cannot be assigned an empty widget value.
+        # Rotate only the unsaved picker identity; never touch saved reports.
+        prior = st.session_state.pop(prefix + "_stage", None)
+        st.session_state[upload_epoch_key] = st.session_state.get(upload_epoch_key, 0) + 1
+        for suffix in ("_uploaded_filename", "_failed_digest", "_failed_notice",
+                       "_committed_upload_digest", "_image_replacements"):
+            st.session_state.pop(prefix + suffix, None)
+        if prior and prior[0] is not None:
+            try:
+                prior[0].cleanup()
+            except OSError:
+                st.session_state[prefix + "_removed_cleanup_warning"] = True
 
     def _open_saved_original():
         if not state:
@@ -828,19 +845,23 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             st.session_state.pop(prefix + "_image_replacements", None)
             st.rerun()
 
-    if optional_import:
-        with st.expander("Use a different starting report",
-                         expanded=bool(st.session_state.get(prefix + "_stage")
-                                       or st.session_state.get(prefix + "_failed_digest"))):
-            st.caption("Upload an earlier or unfinished Word report.")
+    # The picker stays in the same native parent across every rerun. Before
+    # selection it is open and needs no extra click; after inspection the
+    # loaded file, preview and actions occupy this one bordered card.
+    with st.container(border=True):
+        if not optional_import:
+            st.subheader("Start with a report")
+        loaded_card_slot = st.empty()
+        with st.expander("Use a different starting report" if optional_import else
+                         "Choose or replace a Word report",
+                         expanded=(bool(st.session_state.get(prefix + "_failed_digest"))
+                                   if optional_import else
+                                   not bool(st.session_state.get(prefix + "_stage")))):
+            st.caption("Upload an earlier or unfinished Word report. Its original is unchanged.")
             upload = st.file_uploader("Starting report", type=["docx"],
-                                      key=prefix + "_upload", **starting_upload_options())
-            _open_saved_original()
-    else:
-        st.subheader("Start with a report")
-        st.caption("Upload an earlier or unfinished Word report.")
-        upload = st.file_uploader("Starting report", type=["docx"],
-                                  key=prefix + "_upload", **starting_upload_options())
+                                      key=upload_key, **starting_upload_options())
+            if optional_import:
+                _open_saved_original()
     # File selection is the Analyze action. The exact content hash, never
     # its reusable filename or a widget rerun, determines whether a new
     # source must be inspected. An error leaves the existing staged draft
@@ -860,7 +881,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
         unchanged_committed_upload = not staged and digest == committed_hash
         if digest != loaded_hash and not unchanged_committed_upload and (digest != failed_hash or retry):
             try:
-                with st.spinner("Reading sections and cover pictures…"):
+                with st.spinner("Stage 1 of 2 · Validating the Word file and reading sections…"):
                     incoming = _stage(upload)
             except (ValueError, OSError) as exc:
                 # Retain only a vetted reason; parser strings can contain
@@ -872,6 +893,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             else:
                 previous = st.session_state.get(prefix + "_stage")
                 st.session_state[prefix + "_stage"] = incoming
+                st.session_state[prefix + "_uploaded_filename"] = getattr(upload, "name", "Uploaded Word report")
                 st.session_state[prefix + "_image_conflict_incarnation"] = uuid4().hex
                 st.session_state.pop(prefix + "_image_replacements", None)
                 st.session_state.pop(original_token_key, None)
@@ -901,7 +923,19 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             # remains available through its independent action below.
             previous[0].cleanup()
             st.session_state.pop(prefix + "_stage", None)
+            st.session_state.pop(prefix + "_uploaded_filename", None)
     if upload is not None and st.session_state.get(prefix + "_failed_digest") == digest:
+        prior = st.session_state.get(prefix + "_stage")
+        if prior:
+            # A rejected replacement does not discard the last valid loaded
+            # source or make the newly selected, malformed bytes look approved.
+            from app.monthly_report_start_file_card import render_loaded_file_card
+            with loaded_card_slot.container():
+                render_loaded_file_card(
+                    prior, (st.session_state.get(prefix + "_uploaded_filename", "Uploaded Word report")
+                            if prior[0] is not None else "Saved original report"),
+                    None, identity or (state.profile if state else None), period,
+                    remove_key=prefix + "_remove_loaded", on_remove=_remove_loaded_file)
         st.warning(st.session_state.get(prefix + "_failed_notice",
                   "This report could not be analyzed. Choose a valid DOCX or retry; your existing work was preserved."))
         if failed_hash != digest:
@@ -918,6 +952,19 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
         st.session_state.pop(original_token_key, None)
         return False
     _, path, inspection = staged
+    from app.monthly_report_start_file_card import render_loaded_file_card
+
+    def _show_loaded_card(analysis=None, target=None, *, source_month_unconfirmed=False):
+        filename = (st.session_state.get(prefix + "_uploaded_filename", "Uploaded Word report")
+                    if staged[0] is not None else "Saved original report")
+        with loaded_card_slot.container():
+            render_loaded_file_card(
+                staged, filename, analysis, target, period,
+                remove_key=prefix + "_remove_loaded", on_remove=_remove_loaded_file,
+                source_month_unconfirmed=source_month_unconfirmed)
+
+    if st.session_state.pop(prefix + "_removed_cleanup_warning", False):
+        st.warning("The selected file was removed from review; its old temporary copy could not be cleaned up.")
     if st.session_state.pop(cleanup_notice_key, None) == inspection.sha256:
         st.warning("The new report is ready for review; the previous temporary review could not be removed.")
     automatic_view = source_view is None
@@ -925,7 +972,8 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     if source_view is None:
         from app.monthly_report_source_view_runtime import derive_import_view
         try:
-            source_view = derive_import_view(path, inspection)
+            with st.spinner("Stage 2 of 2 · Inspecting Word artwork and source structure…"):
+                source_view = derive_import_view(path, inspection)
         except (ValueError, OSError) as exc:
             # Original audit and existing blocking questions remain truthful.
             from app.monthly_report_compatibility_view import CompatibilityBudgetError, MAX_VIEW_SOURCE_BYTES
@@ -961,6 +1009,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
         try:
             source_view = verify_inspection(path, inspection, source_view)
         except (ValueError, OSError) as exc:
+            _show_loaded_card(target=identity or (state.profile if state else None))
             st.error(str(exc))
             return True
     p = prefix + "_" + inspection.sha256[:16]
@@ -981,6 +1030,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                 st.session_state.pop(key, None)
         st.rerun()
     if state and staged[0] is None and not prepared.strip():
+        _show_loaded_card(target=state.profile)
         st.info("Enter Prepared by above to review the saved original.")
         return True
     if identity:
@@ -991,6 +1041,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     else:
         candidate, actor, missing = _identity(contract, prepared, p, field, state, inspection)
     if not candidate:
+        _show_loaded_card(target=identity or (state.profile if state else None))
         for message in missing:
             st.info(message)
         return True
@@ -1027,10 +1078,12 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             if name:
                 if not _key(name):
                     st.error("Enter the source site's name using letters or numbers.")
+                    _show_loaded_card(analysis, candidate)
                     return True
                 confirmed_sites.append(next((f for f in known_sites.values() if name.casefold() in
                                               {n.casefold() for n in (f.title, *f.aliases)}), Facility(_key(name), name)))
         if not confirmed_sites:
+            _show_loaded_card(analysis, candidate)
             return True
         analysis = analyze_starting_report(inspection, candidate, period, known_sites.values(),
                                           confirmed_sites=tuple({f.key: f for f in confirmed_sites}.values()))
@@ -1038,6 +1091,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     selected_source_period, period_undecided = choose_source_report_month(
         inspection, candidate, period, p, field, source_view=source_view)
     if period_undecided:
+        _show_loaded_card(analysis, candidate, source_month_unconfirmed=True)
         return True  # One explicit decision, before any site/period data is mapped.
     if selected_source_period is not None:
         analysis = analyze_starting_report(
@@ -1047,8 +1101,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     p += "_source_scope_" + source_review_epoch(
         inspection, candidate, period, analysis.source_sites,
         (analysis.site_relation, analysis.source_period), source_view)
-    source_names = "; ".join(site.title for site in analysis.source_sites)
-    st.caption("Starting report: " + source_names + (f" · {analysis.source_period[0]}-{analysis.source_period[1]:02d}" if analysis.source_period else " · source month not stated"))
+    _show_loaded_card(analysis, candidate)
     if analysis.site_relation == "other":
         st.info("This report covers different sites. Its layout and table headings will be reused; your selected sites keep their own contacts, photos and work.")
     elif analysis.older_items:
