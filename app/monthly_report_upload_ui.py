@@ -13,6 +13,11 @@ from app.monthly_report_content_policy import page_status, page_fingerprint, pag
 from app.monthly_report_upload_guidance import evidence_limits_summary, evidence_upload_options
 
 
+# Exact, explicit page-review receipts permit single-action append only for
+# supported technical-page sections. Other evidence keeps its existing route.
+AUTO_INCLUDE_PAGE_DESTINATIONS = frozenset({"water_reports", "mbcx_report", "utility_analysis"})
+
+
 def _signature(value) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()
 
@@ -786,10 +791,10 @@ def _omitted_water_recovery(contents, blocks, local_key, prefix):
 
 
 def _included_page_controls(source, page, prefix, field, blocks, preview_ok, contents, *,
-                            scope="", caption_source=None, navigation_prefix=None):
+                            destination="water_reports", scope="", caption_source=None, navigation_prefix=None):
     """Edit the attached page beside its source, not in a second picture panel."""
     from app.monthly_report_page_controls import included_page_caption, page_asset_index, revise_included_page
-    block = blocks.get("water_reports")
+    block = blocks.get(destination)
     index = page_asset_index(block, source.id, page)
     if index is None:
         return source, False
@@ -855,10 +860,10 @@ def _included_page_controls(source, page, prefix, field, blocks, preview_ok, con
 
 
 def _render_section_page_review(profile, content, prefix, field, blocks, *, period, auto_include=False, contents=(),
-                                editor_prefix=None):
-    """Review pages once; completed Water reviews can add pages automatically."""
+                                editor_prefix=None, destination="water_reports"):
+    """Review pages once; only an exact completed technical review adds pages."""
     from app.monthly_report_section_uploads import included_pages
-    from app.monthly_report_page_controls import retained_water_omission
+    from app.monthly_report_page_controls import retained_page_section_omission
 
     source = content.source
     canonical_source = source
@@ -877,7 +882,7 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, peri
             st.session_state[refresh_prefix + "_period_editor_refresh"] = True
         return updated
 
-    section_omitted = auto_include and retained_water_omission(blocks.get("water_reports"))
+    section_omitted = auto_include and retained_page_section_omission(blocks.get(destination))
     p = prefix + "_" + source.id
     widget_source = _page_widget_source(source, p, refresh_prefix)
     _sync_source_fields(source, p, field)
@@ -929,7 +934,7 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, peri
                 st.session_state[p + "_canonical_view"] = source
                 return finish(replace(content, source=source))
             stamp = _signature((scope, widget_source.fingerprint,
-                                blocks.get("water_reports")))[:20]
+                                blocks.get(destination)))[:20]
             close_reviews = st.button("Close report pages", key=p + "_close_page_reviews_" + stamp)
     page_key = field(p + "_page", undecided[0] if undecided else image_pages[0])
     pending = st.session_state.pop(p + "_next_page", None)
@@ -959,7 +964,8 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, peri
     if (source.id, page) in existing:
         if auto_include:
             source, handled = _included_page_controls(source, page, prefix, field, blocks, preview_ok, contents,
-                                                       scope=scope, caption_source=widget_source, navigation_prefix=refresh_prefix)
+                                                       destination=destination, scope=scope,
+                                                       caption_source=widget_source, navigation_prefix=refresh_prefix)
             if handled:
                 st.session_state[p + "_canonical_view"] = source
                 return finish(replace(content, source=source))
@@ -984,7 +990,7 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, peri
         (st.warning if blocked else st.caption)(reason)
         st.caption("Include confirms that you checked this page and caption: relevant work, no prices, and no legal-only, blank or signature-only content.")
         if section_omitted:
-            st.caption("Water treatment is left out. Include its retained section below before adding pages; its other retained content will stay unchanged.")
+            st.caption("This section is left out. Restore its retained content before adding pages.")
         if len(image_pages) > 1:
             st.caption("After each decision, the next unreviewed page opens.")
         keep, omit = st.columns(2)
@@ -1066,12 +1072,14 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
     local_key = key + "_section_" + destination
     contents = st.session_state.setdefault(key, ())
     bindings = dict(st.session_state.setdefault(key + "_section_routes", {}))
-    if (destination == "water_reports" and retained_water_omission(blocks.get(destination))
+    from app.monthly_report_page_controls import retained_page_section_omission
+    if (destination in AUTO_INCLUDE_PAGE_DESTINATIONS
+            and retained_page_section_omission(blocks.get(destination))
             and st.session_state.pop(local_key + "_auto_include", None) is not None):
-        # Retire a completion from before omission even when a distinct
-        # section-inclusion action is delivered in this same native run.
+        # A previous review cannot reverse a deliberate omitted section,
+        # including after a stale browser request or report reload.
         st.session_state.pop(local_key + "_auto_include_failure", None)
-        st.warning("Water treatment is left out. Include its retained section before adding more pages.")
+        st.warning("This section is left out. Restore its retained content before adding pages.")
     pending_edit = st.session_state.pop(local_key + "_page_edit", None)
     if pending_edit:
         from app.monthly_report_page_controls import apply_page_request
@@ -1241,7 +1249,8 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
     revised = _render_section_page_review(
         profile, choices[selected], local_key, field, blocks,
         period=period,
-        auto_include=(destination == "water_reports"), contents=contents, editor_prefix=prefix,
+        auto_include=(destination in AUTO_INCLUDE_PAGE_DESTINATIONS), contents=contents,
+        editor_prefix=prefix, destination=destination,
     )
     contents = tuple(revised if c.source.id == selected else c for c in contents)
     st.session_state[key] = contents
@@ -1258,7 +1267,7 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
     ready = bool(pending) and all(page_allowed(by_id[identity].source, number) for identity, number in pending)
     additions = {}
 
-    if destination == "water_reports":
+    if destination in AUTO_INCLUDE_PAGE_DESTINATIONS:
         # Only the last explicit include/leave-out click authorizes auto-add.
         # Merely reopening an earlier reviewed file, changing sections, or
         # removing an already included page can NEVER restore that page.
@@ -1294,7 +1303,7 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
                         st.error(previous_failure[1])
                     elif retry:
                         try:
-                            with st.spinner("Including reviewed water-treatment pages…"):
+                            with st.spinner("Including reviewed technical report pages…"):
                                 additions = prepare_section_pages(
                                     profile, (content,), destination, blocks, assets,
                                     only_pages=frozenset(expected))
@@ -1311,7 +1320,7 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
                               and not st.session_state.get(
                                   local_key + "_" + selected + "_edit_page_reviews", False))
         if (current_is_compact and not additions and not st.session_state.get(request_key)
-                and not retained_water_omission(blocks.get(destination))):
+                and not retained_page_section_omission(blocks.get(destination))):
             # A finished file may be selected while a different file still
             # needs decisions. Name that file and reopen the ordinary review.
             # Only show this shortcut from the compact state, which has no
@@ -1344,23 +1353,27 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
     return tuple(c.source for c in contents), additions, {}
 
 
-def acknowledge_autoincluded_water_pages(prefix, blocks):
-    """Clear one review receipt only after the caller actually merges pages."""
+def acknowledge_autoincluded_pages(prefix, blocks, destination):
+    """Consume only an exact merged page receipt, never an uncommitted click."""
+    if destination not in AUTO_INCLUDE_PAGE_DESTINATIONS:
+        return
     from app.monthly_report_section_uploads import included_pages
-    key = prefix + "_evidence_section_water_reports_auto_include"
+    key = prefix + "_evidence_section_" + destination + "_auto_include"
     request = st.session_state.get(key)
     if not request:
         return
     owners = included_pages(blocks)
     expected = ((request["source_id"], page) for page in request["pages"])
-    if all("water_reports" in owners.get(identity, ()) for identity in expected):
+    if all(destination in owners.get(identity, ()) for identity in expected):
         st.session_state.pop(key, None)
         st.session_state.pop(key + "_failure", None)
-        # Page controls were drawn before this batch became canonical. Reuse
-        # the guided editor's historically named, one-shot post-commit refresh
-        # (also used by dated-item decisions). Never rerun here: the caller
-        # must first finish the draft assignment and durable recovery attempt.
+        # Caller commits the canonical draft before refreshing native widgets.
         st.session_state[prefix + "_period_editor_refresh"] = True
+
+
+def acknowledge_autoincluded_water_pages(prefix, blocks):
+    """Preserve Water's existing caller and review receipt identity."""
+    acknowledge_autoincluded_pages(prefix, blocks, "water_reports")
 
 
 @st.fragment(run_every=1)
