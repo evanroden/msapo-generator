@@ -134,7 +134,9 @@ def assert_dependent(page, flow, label):
             expect(page.get_by_label("Reimbursable amount *", exact=True).first).to_be_visible()
         elif label == "Include reimbursable business mileage":
             expect(page.get_by_label("Business miles *", exact=True)).to_be_visible()
-            expect(page.get_by_label("Travel date *", exact=True)).to_be_visible()
+            # Streamlit names its date field "Select a date.", not by the visible
+            # label, so find the date control through that label's text.
+            expect(page.get_by_test_id("stDateInput").filter(has_text="Travel date *")).to_be_visible()
         elif label.startswith("I confirm this generated signature represents me"):
             expect(page.get_by_role("button", name="Generate expense report and email draft",
                                     exact=True)).to_be_enabled(timeout=15000)
@@ -156,13 +158,20 @@ def test_flow(page, flow, browser_name, view_name, touch):
             route.abort()
     page.route("**/*", local_only)
     page.goto(url, wait_until="domcontentloaded", timeout=30000)
+    if flow == "purchase":
+        # The scope checkboxes come first in the purchase form and sit in a
+        # collapsed expander, so open it before waiting for a visible box.
+        scope = page.get_by_text("Review scope, inclusions, and exclusions", exact=True)
+        expect(scope).to_be_visible(timeout=60000)
+        if scope.locator("xpath=ancestor::details[1]").get_attribute("open") is None:
+            scope.click()
+        page.wait_for_timeout(100)  # expander animation; no control state is inferred from this
     page.wait_for_selector(INPUTS, timeout=60000)
     page.wait_for_function("""() => document.querySelector('[data-testid="stApp"]')
         ?.getAttribute('data-test-script-state') === 'notRunning'""", timeout=35000)
 
     if flow == "purchase":
-        page.get_by_text("Review scope, inclusions, and exclusions", exact=True).click()
-        page.wait_for_timeout(100)  # expander animation; no control state is inferred from this
+        expect(scope.locator("xpath=ancestor::details[1]")).to_have_attribute("open", "")
     else:
         expect(page.get_by_label("Include reimbursable business mileage", exact=True)).to_have_count(1)
         expect(page.get_by_label("Split this receipt into multiple reimbursement lines",
