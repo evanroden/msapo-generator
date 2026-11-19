@@ -78,7 +78,9 @@ SQLite databases: `epc_memory.db` (learning and preferences) and
   `app/memory.py` states it: the app is single-instance only, and learning must
   move to a shared transactional database before it is ever scaled out.
 - **Avoid overlapping revisions.** An update normally runs the new revision
-  beside the old one for a short time. Deploy in a quiet window.
+  beside the old one for a short time. Deploy by hand in a quiet window. The
+  automatic deploy after each merge (cutover plan, M9; the owner's choice) does
+  not wait for one, so a deploy can briefly overlap the two.
 - **SQLite on a network share:** SQLite's WAL mode does not work over a network
   filesystem, and both databases used it. Both now detect an NFS or SMB mount
   under the data folder and use SQLite's rollback journal there, keeping WAL on
@@ -176,8 +178,9 @@ on the target until every file and database has been checked.
 - The live QA runs a browser from GitHub Actions after every merge to main and
   waits for the served site to show that commit. Behind the Microsoft sign-in
   it cannot reach the app unless a test identity or an exception is arranged,
-  and with manual deploys the new commit is not served anyway. That is a
-  decision for the owner and IT; until then served-build QA is manual.
+  and until the automatic Azure deploy is on (cutover plan, M9) the new commit
+  is not served there anyway. That is a decision for the owner and IT; until
+  then served-build QA is manual.
 - **At cutover, turn the live QA off** (Actions → Monthly Isolated Live
   Acceptance → ⋯ → Disable workflow), or every merge to main shows a failed
   run once Render is suspended. Turn it back on, with `MONTHLY_QA_PUBLIC_URL`

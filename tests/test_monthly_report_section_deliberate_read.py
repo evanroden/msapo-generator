@@ -300,7 +300,7 @@ def test_partial_chunk_success_retries_only_failed_pages_and_keeps_manual_draft(
             ref = (content.source.id, 1)
             if allowed is None or ref in allowed:
                 payloads.append([{"type": "text", "text":
-                                 f"SOURCE {ref[0]} PAGE 1\\n{content.source.page_texts[0]}"}])
+                                 f"SOURCE {ref[0]} PAGE 1\n{content.source.page_texts[0]}"}])
         attempted.append(tuple(structured._payload_pages(p)[0] for p in payloads))
         return tuple(payloads)
 
@@ -320,7 +320,7 @@ def test_partial_chunk_success_retries_only_failed_pages_and_keeps_manual_draft(
     monkeypatch.setattr(structured, "read_batches", worker)
 
     app.run()
-    originals = tuple(c.source.sha256 for c in app.session_state["test_draft"].sources)
+    originals = tuple(c.sha256 for c in app.session_state["test_draft"].sources)
     read(app).click().run()
     assert not app.exception
     key = next(k for k in app.session_state.filtered_state if k.endswith("_coverage"))
@@ -337,7 +337,7 @@ def test_partial_chunk_success_retries_only_failed_pages_and_keeps_manual_draft(
     assert attempted[1] == ((state["failed"][0],),)
     state = app.session_state[key]
     assert len(state["processed"]) == 2 and not state["failed"]
-    assert tuple(c.source.sha256 for c in app.session_state["test_draft"].sources) == originals
+    assert tuple(c.sha256 for c in app.session_state["test_draft"].sources) == originals
     assert "Kept manual wording." in app.session_state["test_draft"].blocks[0].text
     app.run()
     assert len(attempted) == 2  # No automatic paid replays after completion.

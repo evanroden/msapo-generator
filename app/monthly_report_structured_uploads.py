@@ -6,9 +6,11 @@ from typing import NamedTuple
 from app import monthly_report_sources as sources
 from app.monthly_report_content_policy import (
     _CURRENCIES, _CURRENCY_SYMBOLS, ambiguous_price_columns, contains_price,
-    page_status, price_column, table_price_columns,
+    page_status, price_column, table_price_columns, proposal_price_columns,
 )
 from app.monthly_report_model import ResolvedBlock
+from app.monthly_report_pre_model_routing import choose_reader_pages, classify_page
+from app.monthly_report_reconciliation import preserve_noop_block
 
 COLUMNS = {
     "capital_renewal": ("Facility", "Priority", "Recommendation"),
@@ -123,6 +125,8 @@ def mapped_rows(content, destination, table_columns=None):
     if not requested or len(requested) > 100:
         raise ValueError("The selected report table has an invalid column layout.")
     role = tuple(_output_role(destination, title) for title in requested)
+    financial_targets = set(proposal_price_columns(requested, ())
+                            if destination == "proposals" else ())
     decision_targets = proposal_decision_titles(requested) if destination == "proposals" else ()
     required = "Recommendation" if destination == "capital_renewal" else "Scope"
     required_positions = tuple(n for n, item in enumerate(role) if item == required)
@@ -133,12 +137,13 @@ def mapped_rows(content, destination, table_columns=None):
     rows = []
     for table in native_tables(content):
         excluded = (set(ambiguous_price_columns(table.columns, table.rows)) |
-                    set(table_price_columns(table.columns, table.rows)))
+                    set(proposal_price_columns(table.columns, table.rows)
+                        if destination == "proposals" else table_price_columns(table.columns, table.rows)))
         decision_sources = proposal_decision_titles(table.columns) if decision_targets else ()
         decision_indexes = {n for n, title in enumerate(decision_sources) if title}
         indexes = []
         for output_position, (output_title, semantic) in enumerate(zip(requested, role)):
-            if price_column(output_title):
+            if price_column(output_title) or output_position in financial_targets:
                 indexes.append(None)
                 continue
             if decision_targets and decision_targets[output_position]:
@@ -403,10 +408,23 @@ def _spreadsheet_has_site_scope_column(content):
 
 
 def _activity_reader_notice(content):
-    from app.monthly_report_work_order_csv import is_work_order_source
+    from app.monthly_report_work_order_csv import (
+        is_work_order_source, requires_work_order_column_mapping,
+    )
+    if requires_work_order_column_mapping(content):
+        return (content.source.filename + ": duplicate physical or headerless work-order, status, date "
+                "or facility columns need explicit column-position mapping before using these records. "
+                "The original and unrelated sources are retained; this file is not auto-read into Activity.")
     if is_work_order_source(content):
         return (content.source.filename + ": work-order records use Review counted work-order rows "
                 "and Add totals to summary; this file is not sent to the Activity reader.")
+    if content.source.suffix == ".pdf":
+        from app.monthly_report_vendor_passages import passage_notice
+        if any(passage_notice(n, reason="geometry") in content.source.notices
+               for n in range(1, len(content.source.page_texts) + 1)):
+            return (content.source.filename + ": parallel PDF columns need a physical reading-order review. "
+                    "This file is not sent to the Activity reader; inspect the original page and "
+                    "add only verified work directly in Activity. The source is retained.")
     if _txt_site_activity_table(content):
         return (content.source.filename + ": site-specific rows in this tab-separated text file need "
                 "an explicit target-site mapping. Review the original and add verified work directly "
@@ -462,9 +480,13 @@ def _ambiguous_csv_activity_columns(content):
         bases = tuple(re.sub(r"(?: \((?:[2-9]|[1-9][0-9]+)\))+$", "", title)
                       for title in table.columns)
         names = tuple(re.sub(r"[^a-z0-9]", "", title.casefold()) for title in bases)
-        if not any(name in _CSV_ACTIVITY_COLUMNS["work"] for name in names):
+        if not any(name in (_CSV_ACTIVITY_COLUMNS["work"] | {"work"}) for name in names):
             continue  # An unknown schema keeps its existing generic route.
         for field, aliases in _CSV_ACTIVITY_COLUMNS.items():
+            if field == "work":
+                # "Work" alone is too generic to auto-import; competing
+                # physical Work headings do need an explicit review gate.
+                aliases = aliases | {"work"}
             positions = tuple(index for index, name in enumerate(names) if name in aliases)
             if (len(positions) > 1 or
                     any(bases[index] != table.columns[index] for index in positions)):
@@ -729,9 +751,11 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
     references = list(existing.references)
     if destination == "activity_summary":
         paragraphs = []
-        from app.monthly_report_work_order_csv import is_work_order_source
+        from app.monthly_report_work_order_csv import (
+            is_work_order_source, requires_work_order_column_mapping,
+        )
         for content in contents:
-            if is_work_order_source(content):
+            if is_work_order_source(content) or requires_work_order_column_mapping(content):
                 # CMMS/counting sources use their own reviewed metrics path.
                 continue
             if _spreadsheet_has_site_scope_column(content) or _txt_site_activity_table(content):
@@ -750,6 +774,16 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
             from app.monthly_report_vendor_passages import read_vendor_document
             passage_pages = read_vendor_document(content.source)
             for number, text in _activity_source_pages(content):
+                # A mixed water/MBCx/quote page never becomes vendor Activity
+                # merely because another page made the whole file look native.
+                # Only the page's own heading or table can exclude it: the
+                # file-level fallback may reflect a different part of a mixed
+                # file (one training line labels a vendor-activity file
+                # "Training"), and excluding on that would drop real Activity.
+                role = classify_page(content, number)
+                if role.ambiguous or (role.rule in ("page heading", "native table columns")
+                    and role.destinations and "activity_summary" not in role.destinations):
+                    continue
                 reference = sources.source_reference(content.source, number)
                 # Source-referenced manual corrections and deliberate deletions
                 # must not be reinserted when the same file is read again.
@@ -783,21 +817,59 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
                             paragraphs.append(grounded)
                             references.append(reference)
         text = "\n\n".join(dict.fromkeys(filter(None, (*existing.text.split("\n\n"), *paragraphs))))
-        return replace(existing, text=text, references=tuple(dict.fromkeys(references)), reviewed_fingerprint="")
+        return preserve_noop_block(existing, text=text, references=tuple(dict.fromkeys(references)))
     rows = list(existing.rows)
     for content in contents:
         extracted = mapped_rows(content, destination, table_columns)
         rows.extend(extracted)
         if extracted:
             references.extend(sources.source_reference(content.source, n) for n in range(1, len(content.source.page_texts) + 1))
-    return replace(existing, rows=tuple(dict.fromkeys(rows)), references=tuple(dict.fromkeys(references)), reviewed_fingerprint="")
+    return preserve_noop_block(existing, rows=tuple(dict.fromkeys(rows)), references=tuple(dict.fromkeys(references)))
 
 
-def reader_request(profile, contents, destination, page_refs=None, table_columns=None):
-    """Bounded visual reading for scanned documents and unstructured quotes."""
+def _native_reader_page_pairs(contents, destination, table_columns=None):
+    """Native-mapped spreadsheet pages need no duplicate external reading.
+
+    Only recognized, nonempty native rows establish complete page coverage.
+    An unrelated worksheet in the same workbook remains eligible for review.
+    """
+    covered = set()
+    for content in contents:
+        source = content.source
+        if (source.suffix not in {".csv", ".xlsx"}
+                or len(content.tables) != len(source.page_texts) or not content.tables):
+            # Word/PDF pages can contain narrative adjacent to native tables.
+            # Mapping a row must not suppress that separate technical evidence.
+            continue
+        if destination == "activity_summary":
+            if source.suffix == ".csv":
+                extracted = _csv_activity_entries(content)
+                # A partial table mapping still needs source review. Do not
+                # pronounce the entire worksheet complete from one safe row.
+                for number, table in enumerate(content.tables, 1):
+                    if table.rows and sum(page == number for page, _ in extracted or ()) == len(table.rows):
+                        covered.add((source.id, number))
+        elif destination in COLUMNS:
+            for number, table in enumerate(content.tables, 1):
+                part = replace(content, tables=(table,),
+                               source=replace(source, page_texts=(source.page_texts[number - 1],)))
+                if table.rows and len(mapped_rows(part, destination, table_columns)) == len(table.rows):
+                    covered.add((source.id, number))
+    return frozenset(covered)
+
+
+def reader_request(profile, contents, destination, page_refs=None, table_columns=None, *,
+                   period=None, corrections=None, accepted_pages=()):
+    """Bounded visual reading for scanned documents and unstructured quotes.
+
+    Direct calls obey the same page-level admission gate as queued batches.
+    """
     from app.ocr import image_blocks_for_vision
     contents = reader_sources(contents, destination)
-    eligible = {(c.source.id, n) for c in contents for n in range(1, len(c.source.page_texts) + 1)}
+    eligible = set(choose_reader_pages(
+        profile, contents, destination, period=period, corrections=corrections,
+        accepted_pages=accepted_pages,
+        native_mapped=_native_reader_page_pairs(contents, destination, table_columns)))
     selected = set(page_refs) & eligible if page_refs is not None else eligible
     count = len(selected)
     if count > 20 or sum(len(t) for c in contents for n, t in enumerate(c.source.page_texts, 1) if (c.source.id, n) in selected) > 60000:
@@ -840,12 +912,27 @@ def reader_request(profile, contents, destination, page_refs=None, table_columns
     return payload
 
 
-def reader_update(contents, destination, value, existing=None, *, table_columns=None):
+def reader_update(contents, destination, value, existing=None, *, table_columns=None,
+                  corrections=None, accepted_pages=(), profile=None, period=None):
     """Validate provenance and native grounding before accepting any generated values."""
     items = value.get("items") if isinstance(value, dict) else None
     if not isinstance(items, list) or len(items) > 500:
         raise ValueError("The document reader returned invalid section details.")
     by_id = {c.source.id: c for c in contents}
+    # A native-mappable table is not automatically accepted. Direct validators
+    # must still check a reader result when no native contribution was added.
+    # Only the exact source page cited by an already accepted native block is
+    # skipped on an old cached/in-flight response.
+    native_candidates = _native_reader_page_pairs(contents, destination, table_columns)
+    native_mapped = frozenset(
+        pair for pair in native_candidates
+        if existing is not None and any(
+            reference.startswith(f"{pair[0]}:{pair[1]}:")
+            for reference in existing.references))
+    admitted = (set(choose_reader_pages(
+        profile, contents, destination, period=period, corrections=corrections,
+        accepted_pages=accepted_pages, native_mapped=native_mapped))
+        if profile is not None else None)
     contact_pages = _activity_contact_pages(contents, value) if destination == "activity_summary" else set()
     block = existing or ResolvedBlock(destination, "This month")
     texts, rows, refs, pages, blocked_notices = [], [], [], {}, []
@@ -867,6 +954,21 @@ def reader_update(contents, destination, value, existing=None, *, table_columns=
         number = item.get("page")
         if type(number) is not int or not 1 <= number <= len(source.page_texts):
             raise ValueError("The document reader returned an unknown page.")
+        # Old cached or in-flight results may include a different explicit
+        # section of the same mixed original. Keep only this source/page role.
+        # Only the page's own heading or table can exclude it: the file-level
+        # fallback may reflect a different part of a mixed file (one CMMS
+        # identifier labels a vendor-activity page "CMMS export"), and
+        # excluding on that would drop real Activity.
+        page_role = classify_page(by_id[source.id], number)
+        chosen = (corrections or {}).get((source.id, number, source.sha256))
+        if (page_role.ambiguous and chosen != destination
+                or page_role.rule in ("page heading", "native table columns")
+                and page_role.destinations and destination not in page_role.destinations
+                or (source.id, number) in accepted_pages
+                or (source.id, number) in native_mapped
+                or admitted is not None and (source.id, number) not in admitted):
+            continue
         text, row = item.get("text", ""), item.get("row", [])
         if not isinstance(text, str) or len(text) > 8000 or not isinstance(row, list) or any(not isinstance(c, str) or len(c) > 4000 for c in row):
             raise ValueError("The document reader returned invalid text.")
@@ -926,21 +1028,24 @@ def reader_update(contents, destination, value, existing=None, *, table_columns=
         # Keep the precise sole-source scope block for callers of this validator.
         # The UI never offers paid reading when every selected file is unrouted.
         raise ValueError(blocked_notices[0])
-    result = replace(block, text="\n\n".join(dict.fromkeys(filter(None, (*block.text.split("\n\n"), *texts)))),
-                     rows=tuple(dict.fromkeys((*block.rows, *rows))),
-                     references=tuple(dict.fromkeys((*block.references, *refs))), reviewed_fingerprint="")
+    result = preserve_noop_block(block, text="\n\n".join(dict.fromkeys(filter(None, (*block.text.split("\n\n"), *texts)))),
+                                 rows=tuple(dict.fromkeys((*block.rows, *rows))),
+                                 references=tuple(dict.fromkeys((*block.references, *refs))))
     return result, pages
 
 
-def reader_page_plan(contents, destination, page_refs=None):
+def reader_page_plan(contents, destination, page_refs=None, *, profile=None, table_columns=None,
+                     period=None, corrections=None, accepted_pages=()):
     """Deterministic page inventory: every eligible page is sent or explicitly skipped.
 
     A single too-large page cannot suppress its readable siblings. A retry
     supplies only the source/page identities that failed earlier.
     """
     contents = reader_sources(contents, destination)
-    eligible = tuple((c.source.id, n) for c in contents
-                     for n in range(1, len(c.source.page_texts) + 1))
+    eligible = tuple(choose_reader_pages(
+        profile, contents, destination, period=period, corrections=corrections,
+        accepted_pages=accepted_pages,
+        native_mapped=_native_reader_page_pairs(contents, destination, table_columns)))
     if page_refs is not None:
         requested = tuple(page_refs)
         if any(not isinstance(ref, (tuple, list)) or len(ref) != 2
@@ -968,12 +1073,15 @@ def reader_page_plan(contents, destination, page_refs=None):
     return tuple(chunks), tuple(skipped), eligible
 
 
-def reader_batches(profile, contents, destination, *, table_columns=None, page_refs=None):
-    """Bounded payloads, preserving source SHA, physical page and request ceilings."""
-    chunks, _, _ = reader_page_plan(contents, destination, page_refs)
-    return tuple(
-        reader_request(profile, contents, destination, chunk, table_columns)
-        if table_columns else reader_request(profile, contents, destination, chunk)
+def reader_batches(profile, contents, destination, *, table_columns=None, page_refs=None,
+                   period=None, corrections=None, accepted_pages=()):
+    """Bounded payloads using main's exact page-admission and site/month gates."""
+    chunks, _, _ = reader_page_plan(
+        contents, destination, page_refs, profile=profile, table_columns=table_columns,
+        period=period, corrections=corrections, accepted_pages=accepted_pages)
+    return tuple(reader_request(
+        profile, contents, destination, chunk, table_columns,
+        period=period, corrections=corrections, accepted_pages=accepted_pages)
         for chunk in chunks)
 
 
@@ -1141,7 +1249,8 @@ def merge_reader_coverage(previous, latest):
             )))}
 
 
-def reader_coverage_update(contents, destination, value, existing=None, *, table_columns=None):
+def reader_coverage_update(contents, destination, value, existing=None, *, table_columns=None,
+                           corrections=None, accepted_pages=(), profile=None, period=None):
     """Ground each completed chunk independently, retaining safe sibling chunks.
 
     A failed model response or fabricated claim cannot erase previously accepted
@@ -1182,7 +1291,9 @@ def reader_coverage_update(contents, destination, value, existing=None, *, table
         try:
             if data["items"]:
                 updated, pages = reader_update(
-                    contents, destination, data, current, table_columns=table_columns)
+                    contents, destination, data, current, table_columns=table_columns,
+                    corrections=corrections, accepted_pages=accepted_pages,
+                    profile=profile, period=period)
             else:
                 updated, pages = current, {}
         except ValueError:

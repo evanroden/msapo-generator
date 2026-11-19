@@ -25,3 +25,27 @@ def render_section_inclusion(draft, section, prefix, field):
     # Native fields delivered with the checkbox click must reach their normal
     # collectors before those widgets disappear on the next rerun.
     return included
+
+
+def render_section_preferences(draft, prefix, field):
+    """Keep deliberate whole-section omissions out of routine editing.
+
+    Native controls stay mounted while the disclosure is closed. The caller
+    applies choices only after all section editors collect same-event text
+    and table changes, as the former in-section controls did.
+    """
+    import streamlit as st
+
+    omitted = sum(not section.included for section in draft.sections)
+    choices = {}
+    with st.expander("Report sections (optional)", expanded=False,
+                     key=prefix + "_section_options_open", on_change="rerun"):
+        st.caption(
+            f"{len(draft.sections) - omitted} sections included"
+            + (f" · {omitted} deliberately left out" if omitted else "")
+            + ". Only uncheck a section that does not apply. Its content and "
+              "saved history stay available; the report renumbers automatically."
+        )
+        for section in draft.sections:
+            choices[section.key] = render_section_inclusion(draft, section, prefix, field)
+    return choices

@@ -13,6 +13,11 @@ from app.monthly_report_content_policy import page_status, page_fingerprint, pag
 from app.monthly_report_upload_guidance import evidence_limits_summary, evidence_upload_options
 
 
+# Exact, explicit page-review receipts permit single-action append only for
+# supported technical-page sections. Other evidence keeps its existing route.
+AUTO_INCLUDE_PAGE_DESTINATIONS = frozenset({"water_reports", "mbcx_report", "utility_analysis"})
+
+
 def _signature(value) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()
 
@@ -610,11 +615,29 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
               "utility_analysis": "Monthly scorecards — utility results and charts",
               "improvements": "Monthly activity — vendor service reports and photos"}
     route_controls = []
+    # A source's destination is delivered outside any form. Keep the last
+    # delivered value in ordinary session state when its selectbox is unmounted,
+    # otherwise Streamlit widget cleanup drops a previous explicit route.
+    routes_key = key + "_destination_route_values"
+    rendered_key = key + "_destination_route_rendered"
+    route_values = st.session_state.get(routes_key, {})
+    previously_rendered = set(st.session_state.get(rendered_key, ()))
+    rendered_routes = []
     for item in contents:
         if not sources.image_numbers(item):
             continue
-        control = field(key + "_destination_" + item.source.id + "_" + item.source.classification,
-                        defaults.get(item.source.classification, "Do not embed"))
+        control_key = key + "_destination_" + item.source.id + "_" + item.source.classification
+        visible = selected_source_id is None or item.source.id == selected
+        # Once a selectbox is unmounted Streamlit drops its widget value, and
+        # reading the key can fall back to the default first seeded for it.
+        # Only a selectbox shown on the previous render can carry a newer
+        # choice; otherwise the last delivered route is authoritative.
+        if control_key in route_values and (control_key not in st.session_state or not (
+                visible and control_key in previously_rendered)):
+            st.session_state[control_key] = route_values[control_key]
+        if visible:
+            rendered_routes.append(control_key)
+        control = field(control_key, defaults.get(item.source.classification, "Do not embed"))
         options = ("Do not embed", *sources.PAGE_DESTINATIONS)
         if st.session_state[control] not in options:
             st.session_state[control] = defaults.get(item.source.classification, "Do not embed")
@@ -626,13 +649,21 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                 selected_slot = st.session_state[control]
                 st.text(filename + " → " + labels.get(selected_slot, selected_slot))
             with st.expander("Change destination (optional)"):
+                # Only the current file needs an editable route widget. Other
+                # delivered routes still participate in bulk Add unchanged.
                 for filename, identity, control in route_controls:
-                    slot = st.selectbox("Report section for " + filename,
-                                        ("Do not embed", *sources.PAGE_DESTINATIONS),
-                                        format_func=labels.get, key=control)
-                    if (slot != "Do not embed"
-                            and not (identity in section_page_owners and slot == "water_reports")):
-                        destinations.append((identity, slot))
+                    if selected_source_id is None or identity == selected:
+                        st.selectbox("Report section for " + filename,
+                                     ("Do not embed", *sources.PAGE_DESTINATIONS),
+                                     format_func=labels.get, key=control)
+    st.session_state[routes_key] = {control: st.session_state[control]
+                                  for _, _, control in route_controls}
+    st.session_state[rendered_key] = tuple(rendered_routes)
+    for _, identity, control in route_controls:
+        slot = st.session_state[control]
+        if (slot != "Do not embed"
+                and not (identity in section_page_owners and slot == "water_reports")):
+            destinations.append((identity, slot))
     cmms_contents = [c for c in contents if (selected_source_id is None or c.source.id == selected_source_id)
                      and c.tables and c.source.classification == "CMMS export"
                      and any(i in c.source.selected_pages for i in range(1, len(c.tables)+1))]
@@ -760,10 +791,10 @@ def _omitted_water_recovery(contents, blocks, local_key, prefix):
 
 
 def _included_page_controls(source, page, prefix, field, blocks, preview_ok, contents, *,
-                            scope="", caption_source=None, navigation_prefix=None):
+                            destination="water_reports", scope="", caption_source=None, navigation_prefix=None):
     """Edit the attached page beside its source, not in a second picture panel."""
     from app.monthly_report_page_controls import included_page_caption, page_asset_index, revise_included_page
-    block = blocks.get("water_reports")
+    block = blocks.get(destination)
     index = page_asset_index(block, source.id, page)
     if index is None:
         return source, False
@@ -829,10 +860,10 @@ def _included_page_controls(source, page, prefix, field, blocks, preview_ok, con
 
 
 def _render_section_page_review(profile, content, prefix, field, blocks, *, period, auto_include=False, contents=(),
-                                editor_prefix=None):
-    """Review pages once; completed Water reviews can add pages automatically."""
+                                editor_prefix=None, destination="water_reports"):
+    """Review pages once; only an exact completed technical review adds pages."""
     from app.monthly_report_section_uploads import included_pages
-    from app.monthly_report_page_controls import retained_water_omission
+    from app.monthly_report_page_controls import retained_page_section_omission
 
     source = content.source
     canonical_source = source
@@ -851,7 +882,7 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, peri
             st.session_state[refresh_prefix + "_period_editor_refresh"] = True
         return updated
 
-    section_omitted = auto_include and retained_water_omission(blocks.get("water_reports"))
+    section_omitted = auto_include and retained_page_section_omission(blocks.get(destination))
     p = prefix + "_" + source.id
     widget_source = _page_widget_source(source, p, refresh_prefix)
     _sync_source_fields(source, p, field)
@@ -903,7 +934,7 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, peri
                 st.session_state[p + "_canonical_view"] = source
                 return finish(replace(content, source=source))
             stamp = _signature((scope, widget_source.fingerprint,
-                                blocks.get("water_reports")))[:20]
+                                blocks.get(destination)))[:20]
             close_reviews = st.button("Close report pages", key=p + "_close_page_reviews_" + stamp)
     page_key = field(p + "_page", undecided[0] if undecided else image_pages[0])
     pending = st.session_state.pop(p + "_next_page", None)
@@ -933,7 +964,8 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, peri
     if (source.id, page) in existing:
         if auto_include:
             source, handled = _included_page_controls(source, page, prefix, field, blocks, preview_ok, contents,
-                                                       scope=scope, caption_source=widget_source, navigation_prefix=refresh_prefix)
+                                                       destination=destination, scope=scope,
+                                                       caption_source=widget_source, navigation_prefix=refresh_prefix)
             if handled:
                 st.session_state[p + "_canonical_view"] = source
                 return finish(replace(content, source=source))
@@ -958,7 +990,7 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, peri
         (st.warning if blocked else st.caption)(reason)
         st.caption("Include confirms that you checked this page and caption: relevant work, no prices, and no legal-only, blank or signature-only content.")
         if section_omitted:
-            st.caption("Water treatment is left out. Include its retained section below before adding pages; its other retained content will stay unchanged.")
+            st.caption("This section is left out. Restore its retained content before adding pages.")
         if len(image_pages) > 1:
             st.caption("After each decision, the next unreviewed page opens.")
         keep, omit = st.columns(2)
@@ -1040,12 +1072,14 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
     local_key = key + "_section_" + destination
     contents = st.session_state.setdefault(key, ())
     bindings = dict(st.session_state.setdefault(key + "_section_routes", {}))
-    if (destination == "water_reports" and retained_water_omission(blocks.get(destination))
+    from app.monthly_report_page_controls import retained_page_section_omission
+    if (destination in AUTO_INCLUDE_PAGE_DESTINATIONS
+            and retained_page_section_omission(blocks.get(destination))
             and st.session_state.pop(local_key + "_auto_include", None) is not None):
-        # Retire a completion from before omission even when a distinct
-        # section-inclusion action is delivered in this same native run.
+        # A previous review cannot reverse a deliberate omitted section,
+        # including after a stale browser request or report reload.
         st.session_state.pop(local_key + "_auto_include_failure", None)
-        st.warning("Water treatment is left out. Include its retained section before adding more pages.")
+        st.warning("This section is left out. Restore its retained content before adding pages.")
     pending_edit = st.session_state.pop(local_key + "_page_edit", None)
     if pending_edit:
         from app.monthly_report_page_controls import apply_page_request
@@ -1215,7 +1249,8 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
     revised = _render_section_page_review(
         profile, choices[selected], local_key, field, blocks,
         period=period,
-        auto_include=(destination == "water_reports"), contents=contents, editor_prefix=prefix,
+        auto_include=(destination in AUTO_INCLUDE_PAGE_DESTINATIONS), contents=contents,
+        editor_prefix=prefix, destination=destination,
     )
     contents = tuple(revised if c.source.id == selected else c for c in contents)
     st.session_state[key] = contents
@@ -1232,7 +1267,7 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
     ready = bool(pending) and all(page_allowed(by_id[identity].source, number) for identity, number in pending)
     additions = {}
 
-    if destination == "water_reports":
+    if destination in AUTO_INCLUDE_PAGE_DESTINATIONS:
         # Only the last explicit include/leave-out click authorizes auto-add.
         # Merely reopening an earlier reviewed file, changing sections, or
         # removing an already included page can NEVER restore that page.
@@ -1268,7 +1303,7 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
                         st.error(previous_failure[1])
                     elif retry:
                         try:
-                            with st.spinner("Including reviewed water-treatment pages…"):
+                            with st.spinner("Including reviewed technical report pages…"):
                                 additions = prepare_section_pages(
                                     profile, (content,), destination, blocks, assets,
                                     only_pages=frozenset(expected))
@@ -1285,7 +1320,7 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
                               and not st.session_state.get(
                                   local_key + "_" + selected + "_edit_page_reviews", False))
         if (current_is_compact and not additions and not st.session_state.get(request_key)
-                and not retained_water_omission(blocks.get(destination))):
+                and not retained_page_section_omission(blocks.get(destination))):
             # A finished file may be selected while a different file still
             # needs decisions. Name that file and reopen the ordinary review.
             # Only show this shortcut from the compact state, which has no
@@ -1318,23 +1353,27 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
     return tuple(c.source for c in contents), additions, {}
 
 
-def acknowledge_autoincluded_water_pages(prefix, blocks):
-    """Clear one review receipt only after the caller actually merges pages."""
+def acknowledge_autoincluded_pages(prefix, blocks, destination):
+    """Consume only an exact merged page receipt, never an uncommitted click."""
+    if destination not in AUTO_INCLUDE_PAGE_DESTINATIONS:
+        return
     from app.monthly_report_section_uploads import included_pages
-    key = prefix + "_evidence_section_water_reports_auto_include"
+    key = prefix + "_evidence_section_" + destination + "_auto_include"
     request = st.session_state.get(key)
     if not request:
         return
     owners = included_pages(blocks)
     expected = ((request["source_id"], page) for page in request["pages"])
-    if all("water_reports" in owners.get(identity, ()) for identity in expected):
+    if all(destination in owners.get(identity, ()) for identity in expected):
         st.session_state.pop(key, None)
         st.session_state.pop(key + "_failure", None)
-        # Page controls were drawn before this batch became canonical. Reuse
-        # the guided editor's historically named, one-shot post-commit refresh
-        # (also used by dated-item decisions). Never rerun here: the caller
-        # must first finish the draft assignment and durable recovery attempt.
+        # Caller commits the canonical draft before refreshing native widgets.
         st.session_state[prefix + "_period_editor_refresh"] = True
+
+
+def acknowledge_autoincluded_water_pages(prefix, blocks):
+    """Preserve Water's existing caller and review receipt identity."""
+    acknowledge_autoincluded_pages(prefix, blocks, "water_reports")
 
 
 @st.fragment(run_every=1)
@@ -1443,6 +1482,8 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                               managed=False):
     """Keep native extraction free; read externally only on an exact user request."""
     from app import monthly_report_structured_uploads as structured
+    from app.monthly_report_pre_model_routing import classify_page, choose_reader_pages
+    from app.monthly_report_section_uploads import included_pages
     from app import monthly_report_ai as ai
     from app.receipt_jobs import start_receipt
     from app import monthly_report_library as library, monthly_report_testing as testing
@@ -1506,6 +1547,26 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                 and delivered in sources.CLASSIFICATIONS
                 and delivered != source.classification)
 
+    def correction_key(role):
+        return (local_key + "_page_destination_" + role.source_id + "_" +
+                str(role.page) + "_" + role.page_sha256)
+
+    def reader_corrections():
+        result = {}
+        for content in contents:
+            if content.source.id not in picked_ids:
+                continue
+            for number in range(1, len(content.source.page_texts) + 1):
+                role = classify_page(content, number)
+                if role.ambiguous:
+                    chosen = st.session_state.get(correction_key(role), "")
+                    if chosen in role.destinations:
+                        result[(role.source_id, role.page, content.source.sha256)] = chosen
+        return result
+
+    def accepted_page_pairs():
+        return tuple(sorted(included_pages(blocks)))
+
     def activity_input(content):
         # The one managed intake also accepts sources for other sections.
         # Their extracted operational values must not become Activity prose
@@ -1516,9 +1577,10 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
             return True
         if _classification_delivery_pending(content):
             return False
-        return content.source.classification in {
+        return (content.source.classification in {
             "Vendor service", "CMMS export", "Improvement / training photo",
-        }
+        } or any("activity_summary" in classify_page(content, n).destinations
+                 for n in range(1, len(content.source.page_texts) + 1)))
 
     def native_input(content):
         # Native (free) plain-text merge into Activity. Reference-only
@@ -1538,6 +1600,8 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
         eligible = tuple(c for c in contents if c.source.id in picked_ids and activity_input(c))
         return {"context": context, "files": _signature(tuple((c.source.filename, c.source.id) for c in eligible)),
                 "sources": tuple(c.source.fingerprint for c in eligible),
+                "corrections": tuple(sorted((*key, choice) for key, choice in reader_corrections().items())),
+                "accepted_pages": accepted_page_pairs(),
                 "revision": st.session_state.get(prefix + "_revision", 0)}
 
     def read_request():
@@ -1587,8 +1651,14 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
             if coverage_mode:
                 result, pages, accepted, failed, visually_skipped = structured.reader_coverage_update(
                     job["contents"], destination, value, current,
-                    table_columns=job.get("table_columns"))
-                _, oversized, eligible = structured.reader_page_plan(job["contents"], destination)
+                    table_columns=job.get("table_columns"),
+                    corrections=job.get("corrections"),
+                    accepted_pages=job.get("accepted_pages", ()), profile=profile, period=period)
+                _, oversized, eligible = structured.reader_page_plan(
+                    job["contents"], destination, profile=profile,
+                    table_columns=job.get("table_columns"), period=period,
+                    corrections=job.get("corrections"),
+                    accepted_pages=job.get("accepted_pages", ()))
                 earlier = st.session_state.get(local_key + "_coverage", {})
                 if earlier.get("target") != job["request"]:
                     earlier = {}
@@ -1606,7 +1676,9 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                 st.session_state[local_key + "_coverage"] = coverage_state
             else:
                 result, pages = structured.reader_update(job["contents"], destination, value, current,
-                    table_columns=job.get("table_columns"))
+                    table_columns=job.get("table_columns"),
+                    corrections=job.get("corrections"),
+                    accepted_pages=job.get("accepted_pages", ()), profile=profile, period=period)
             prepared = ()
             if destination == "activity_summary" and pages:
                 selected = []
@@ -1643,8 +1715,7 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
             if coverage_mode:
                 seen = processed | skipped
                 for content in job["contents"]:
-                    if all((content.source.id, n) in seen
-                           for n in range(1, len(content.source.page_texts) + 1)):
+                    if all(ref in seen for ref in all_pages if ref[0] == content.source.id):
                         finished.add(content.source.id)
                 remaining = all_pages - seen
                 if remaining:
@@ -1730,9 +1801,36 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
     for notice in structured.reader_notices(scoped, destination):
         st.warning(notice)
     scoped = structured.reader_sources(scoped, destination)
+    # Multiple positive section headings require one explicit page decision.
+    # This never changes original source type, page reviews or report content.
+    for content in scoped:
+        for number in range(1, len(content.source.page_texts) + 1):
+            role = classify_page(content, number)
+            if not role.ambiguous or destination not in role.destinations:
+                continue
+            st.caption(content.source.filename + " · page " + str(number) +
+                       " · " + role.rule + ": " + ", ".join(role.destinations))
+            st.selectbox("Choose destination for this ambiguous page",
+                         ("", *role.destinations),
+                         format_func=lambda name: name or "Keep out of external reading",
+                         key=correction_key(role))
+    corrections = reader_corrections()
+    accepted_pages = accepted_page_pairs()
+    eligible = set(choose_reader_pages(
+        profile, scoped, destination, period=period, corrections=corrections,
+        accepted_pages=accepted_pages,
+        native_mapped=structured._native_reader_page_pairs(scoped, destination, table_columns)))
+    skipped = sum(len(c.source.page_texts) for c in scoped) - len(eligible)
+    if skipped:
+        st.caption(f"{skipped} source page(s) are not sent to the document reader: "
+                   "already accepted, native mapped, different section, "
+                   "unrelated site/month or awaiting destination correction. "
+                   "Originals remain available.")
+    scoped = tuple(c for c in scoped if any((c.source.id, n) in eligible
+                   for n in range(1, len(c.source.page_texts) + 1)))
     target = read_target()
-    digest = ai.digest(("section-upload-v5", destination, tuple(table_columns or ()),
-                        sorted(c.source.id for c in scoped)))
+    digest = ai.digest(("section-upload-v6", destination, tuple(table_columns or ()),
+                        sorted(eligible), target["corrections"], accepted_pages))
     pending = st.session_state.get(local_key + "_pending")
     if pending and pending[0].get("request") != target:
         st.session_state.pop(local_key + "_pending", None)
@@ -1753,6 +1851,7 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                     "future": future, "contents": scoped, "digest": digest,
                     "baseline": current.fingerprint if current else None,
                     "table_columns": table_columns, "request": target,
+                    "corrections": corrections, "accepted_pages": accepted_pages,
                     "token": uuid4().hex, "cached": True}
         except (ValueError, OSError) as exc:
             st.session_state[local_key + "_error"] = str(exc)
@@ -1772,20 +1871,36 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                 def prepare():
                     coverage = st.session_state.get(local_key + "_coverage", {})
                     if coverage.get("target") == target:
-                        _, _, eligible = structured.reader_page_plan(scoped, destination)
+                        _, _, eligible_pages = structured.reader_page_plan(
+                            scoped, destination, profile=profile,
+                            table_columns=table_columns, period=period,
+                            corrections=corrections, accepted_pages=accepted_pages)
                         complete = set(coverage.get("processed", ())) | set(coverage.get("skipped", ()))
-                        pending_pages = tuple(ref for ref in eligible if ref not in complete)
-                        payloads = structured.reader_batches(profile, scoped, destination,
-                            table_columns=table_columns, page_refs=pending_pages)
+                        pending_pages = tuple(ref for ref in eligible_pages if ref not in complete)
+                        payloads = structured.reader_batches(
+                            profile, scoped, destination, table_columns=table_columns,
+                            page_refs=pending_pages, period=period, corrections=corrections,
+                            accepted_pages=accepted_pages)
                     else:
-                        payloads = structured.reader_batches(profile, scoped, destination,
-                            table_columns=table_columns)
+                        payloads = structured.reader_batches(
+                            profile, scoped, destination, table_columns=table_columns,
+                            period=period, corrections=corrections,
+                            accepted_pages=accepted_pages)
+                    if not payloads:
+                        # Oversized-only evidence must still acquire a visible
+                        # manual-review receipt, without a paid model request.
+                        _, oversized, eligible_pages = structured.reader_page_plan(
+                            scoped, destination, profile=profile,
+                            table_columns=table_columns, period=period,
+                            corrections=corrections, accepted_pages=accepted_pages)
+                        if not eligible_pages or set(oversized) != set(eligible_pages):
+                            raise ValueError("No unmapped eligible pages remain for external reading.")
                     if len(payloads) > ai.MAX_CALLS:
                         raise ValueError("These files require more than 80 bounded reading requests. Select fewer sources; no requests were spent.")
                     for payload in payloads:
                         refs, _, unavailable = structured._payload_pages(payload)
                         if refs and set(refs).issubset(unavailable):
-                            continue  # Only skipped imagery; no external call.
+                            continue
                         ai.reserve_call(profile, period)
                     return payloads
                 future = start_receipt(prepare, structured.read_batches)
@@ -1796,6 +1911,7 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                     "future": future, "contents": scoped, "digest": digest,
                     "baseline": current.fingerprint if current else None,
                     "table_columns": table_columns, "request": target,
+                    "corrections": corrections, "accepted_pages": accepted_pages,
                     "token": uuid4().hex}
                 st.session_state.pop(local_key + "_error", None)
             except (ValueError, OSError, RuntimeError) as exc:

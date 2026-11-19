@@ -160,7 +160,7 @@ def test_unavailable_scanned_only_page_is_skipped_without_model_request(monkeypa
     content = source(1)
     content = replace(content, source=replace(content.source, needs_vision=(1,)))
     payload = [{"type": "text", "text":
-                f"SOURCE {SOURCE_ID} PAGE 1\\n{content.source.page_texts[0]}"},
+                f"SOURCE {SOURCE_ID} PAGE 1\n{content.source.page_texts[0]}"},
                {"type": "text", "text":
                 "Visual reading unavailable within the image allowance. Use native text only; never include this original page."}]
     monkeypatch.setattr(ai, "request_json", lambda _: pytest.fail("image-only batch may not call model"))
@@ -231,3 +231,11 @@ def test_model_unreadable_page_receipted_as_manual_review_not_fact(monkeypatch):
     _, _, accepted, failed, skipped = reader.reader_coverage_update(
         (content,), "activity_summary", value)
     assert len(accepted) == 23 and not failed and skipped == ((SOURCE_ID, 3),)
+
+
+def test_page_plan_keeps_main_routing_filter_for_non_activity_sources():
+    content = source(1)
+    content = replace(content, source=replace(content.source, classification="Water treatment"))
+    chunks, skipped, eligible = reader.reader_page_plan((content,), "activity_summary")
+    assert not chunks and not skipped and not eligible
+    assert reader.reader_batches(None, (content,), "activity_summary") == ()
