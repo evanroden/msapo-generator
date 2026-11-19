@@ -1,0 +1,77 @@
+name: Monthly Review ticket first-pixel budget
+
+on:
+  pull_request:
+    paths:
+      - 'app/monthly_report_preview.py'
+      - 'app/monthly_report_preview_ticket.py'
+      - 'app/monthly_report_preview_metrics.py'
+      - 'app/monthly_report_preview_store.py'
+      - 'app/monthly_report_review_preview_ui.py'
+      - 'tests/test_monthly_report_review_ticket_first_pages.py'
+      - 'scripts/qa_monthly_review_ticket_benchmark.py'
+      - '.github/workflows/monthly-review-ticket.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'app/monthly_report_preview_ticket.py'
+      - 'scripts/qa_monthly_review_ticket_benchmark.py'
+      - '.github/workflows/monthly-review-ticket.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  capped-review-ticket:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build actual production Python and PDF renderer image
+        run: docker build --build-arg APP_GIT_COMMIT="${{ github.event.pull_request.head.sha || github.sha }}" -t msapo-a04-ticket .
+      - name: Run standalone old-loop and private-ticket control at 512MiB / half CPU
+        timeout-minutes: 12
+        env:
+          MSAPO_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          mkdir -p test-artifacts/monthly-review-ticket
+          docker run --rm --name msapo-a04-ticket \
+            --memory=512m --memory-swap=512m --cpus=0.5 \
+            -e QA_A04_OUTPUT=/out -e QA_MEMORY_MIB=512 -e QA_CPU_FRACTION=0.5 \
+            -e MSAPO_SHA="$MSAPO_SHA" \
+            -v "$PWD/test-artifacts/monthly-review-ticket:/out" \
+            --entrypoint python msapo-a04-ticket \
+            -m scripts.qa_monthly_review_ticket_benchmark
+      - name: Verify all pages, geometry and 120-page cold-path improvement
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('test-artifacts/monthly-review-ticket/benchmark.json')
+          data = json.loads(p.read_text())
+          assert data['commit'] == "${{ github.event.pull_request.head.sha || github.sha }}"
+          rows = data['rows']
+          assert len(rows) == 12
+          for count in (1, 2, 120):
+              one = [r for r in rows if r['pages'] == count]
+              assert len(one) == 4
+              assert len({r['geometry_sha256'] for r in one}) == 1
+              assert all(r['ticket_entries'] == 1 and r['raster_entries'] <= 3 for r in one)
+          slow = sum(r['processing_wall_ms'] for r in rows if r['pages'] == 120 and r['route'] == 'eager_baseline')
+          fast = sum(r['processing_wall_ms'] for r in rows if r['pages'] == 120 and r['route'] == 'private_ticket')
+          print('120-page synthetic baseline two runs:', slow, 'ms')
+          print('120-page synthetic private-ticket two runs:', fast, 'ms')
+          assert fast < slow, 'No cold-path improvement under equal capped resources'
+          PY
+      - name: Preserve constrained source-safe measurement evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monthly-review-ticket-capped-${{ github.run_attempt }}
+          path: test-artifacts/monthly-review-ticket/
+          if-no-files-found: warn
+          retention-days: 14

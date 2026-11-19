@@ -154,3 +154,18 @@ def test_word_only_saved_receipt_is_unchanged_when_pdf_becomes_available(ui):
     assert show(ui, package(), snapshot(2))[0] is False
     assert ui[1].success[-1] == "Word and PDF ready to download"
     assert ui[1].caption[-1].startswith("[Shared version 3]")
+
+
+def test_edit_after_generation_cannot_claim_old_download_as_ready_or_retry_save(ui):
+    state, messages = ui
+    files = package()
+    output.record_shared_save(PREFIX, files, saved=snapshot(9))
+    before = deepcopy(state)
+    assert output.render_output_status(files, draft("edited-draft"), snapshot(9), PREFIX) is False
+    assert state == before
+    assert not messages.success
+    assert not any("Shared version" in caption for caption in messages.caption)
+    assert messages.warning == [
+        "Files are from an earlier draft. Create Word and PDF again to include the latest edits."
+    ]
+    assert "Earlier files must not" in messages.caption[-1]

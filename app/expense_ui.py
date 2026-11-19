@@ -48,6 +48,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 
 import streamlit as st
+from app.field_help import field_with_help
 import streamlit.components.v1 as components
 
 from app import contracts
@@ -109,6 +110,7 @@ from app.receipt_analyzer import (
 from app.receipt_jobs import start_receipt
 from app.api_retry import OPERATION_BUDGET_SECONDS
 from app.ui_highlight import highlight_needed_fields
+from app.upload_validation import RECEIPT_NEXT_STEP, receipt_upload_problem
 from app.workspace_layout import workspace, workspace_section, workspace_columns
 from app.reference_preview import discard_reference_scope, discard_reference_entry, render_reference
 
@@ -261,22 +263,30 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
         # from the file list) keeps the key stable across ordinary reruns; a key
         # that changed every run would drop the operator's selection silently.
         uploader_nonce = int(st.session_state.get("expense_uploader_nonce", 0) or 0)
-        uploads = st.file_uploader(
+        uploads = field_with_help(st.file_uploader, 
             "Upload one image or PDF per receipt",
-            type=_RECEIPT_TYPES,
+            type=None,
             accept_multiple_files=True,
             max_upload_size=_MAX_RECEIPT_BYTES // (1024 * 1024),
             key=f"expense_receipt_uploader_{uploader_nonce}",
-            help=(
-                "Select multiple files at once. Screenshots, phone photos, HEIC, and "
-                "PDF receipts are supported. One file may contain multiple receipt pages."
-            ),
+            help="Upload images or PDFs that support this expense report. You can select several files, and each file may contain multiple pages.",
         )
         mirrored_uploads = list(st.session_state.get("expense_receipt_files", []) or [])
-        current_uploads = [
-            (upload.name, upload.getvalue(), upload.type or "application/octet-stream")
-            for upload in (uploads or [])
-        ]
+        current_uploads = []
+        for upload in uploads or []:
+            payload = upload.getvalue()
+            rejection = receipt_upload_problem(upload.name, payload)
+            if rejection:
+                st.error(rejection)
+            elif len(payload) > _MAX_RECEIPT_BYTES:
+                st.error(
+                    f"{upload.name} is larger than the 15 MB receipt limit. "
+                    + RECEIPT_NEXT_STEP
+                )
+            else:
+                current_uploads.append(
+                    (upload.name, payload, upload.type or "application/octet-stream")
+                )
         uploader_seen_key = f"expense_receipt_uploader_seen_{uploader_nonce}"
         previous_uploader_ids = st.session_state.get(uploader_seen_key, ())
         new_uploads = _new_receipt_uploads(previous_uploader_ids, current_uploads)
@@ -325,10 +335,10 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
                 + "."
             )
         if upload_sources:
-            if st.button(
+            if field_with_help(st.button, 
                 "Clear expense report and start over",
                 key="expense_clear_report",
-                help="Removes this in-progress expense report from the current browser session.",
+                help="Clear this in-progress report from the current browser. Use this to start a different report.",
             ):
                 _reset_expense_report()
                 st.rerun()
@@ -388,14 +398,11 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
         # scoping control that defaults without saying so is the unknown-facility
         # hazard already fixed on the purchase-order side.
         accounts = tuple(contracts.contract_names())
-        account = st.selectbox(
+        account = field_with_help(st.selectbox, 
             "Account / contract *",
             accounts,
             key="expense_account",
-            help=(
-                "This filters the verified job-number choices and sets the "
-                "account director the approval email goes to."
-            ),
+            help="Select the account for the expense report. This determines available job numbers and the approval route.",
         )
         # Must run after the account selectbox (it needs the chosen account) and
         # before any detail widget below is instantiated, for the same
@@ -535,13 +542,10 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
                         "Check this is YOUR name exactly as it should appear on the "
                         "report, and correct it if not."
                     )
-                employee_number = st.text_input(
+                employee_number = field_with_help(st.text_input, 
                     "Employee number *",
                     key=employee_number_key,
-                    help=(
-                        "After a confirmed report, this is recalled for the same employee "
-                        "name on this browser and account. It remains editable."
-                    ),
+                    help="Enter the employee identifier used on reimbursement records. A previously confirmed value may be prefilled for review.",
                     on_change=_clear_employee_number_recall,
                     args=(employee_number_recall_key,),
                 ).strip()
@@ -559,11 +563,11 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
                 # it without one shows an empty box and the operator has no way to
                 # correct it, because the field is (correctly) not editable.
                 st.session_state[home_bu_display_key] = employee_home_bu
-                st.text_input(
+                field_with_help(st.text_input, 
                     "Employee Home Business Unit",
                     disabled=True,
                     key=home_bu_display_key,
-                    help="Filled automatically from the selected ENFRA account.",
+                    help="This business unit is determined by the selected account. Review it to confirm the report uses the right account.",
                 )
             with detail_columns[1]:
                 report_date = st.date_input(
@@ -607,7 +611,7 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
                 )
                 if current_approver and current_option != current_approver:
                     st.session_state[approver_name_key] = current_option
-                selected_approver_option = str(st.selectbox(
+                selected_approver_option = str(field_with_help(st.selectbox, 
                     "ENFRA account director *",
                     approver_names,
                     index=None,
@@ -615,12 +619,7 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
                     placeholder="Type or select the account director",
                     accept_new_options=True,
                     filter_mode="fuzzy",
-                    help=(
-                        "The ENFRA director over this contract -- NOT the contract "
-                        "administrator. The approval email is addressed to them. "
-                        "Start typing to search directors confirmed for this account, "
-                        "or enter a new name. Selecting a remembered name fills the email."
-                    ),
+                    help="Choose the director responsible for approving this report, or enter their name. The approval draft is addressed to this person.",
                     on_change=_recall_approver_email,
                     args=(
                         approver_name_key,
@@ -656,13 +655,10 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
 
             manager_columns = st.columns(2)
             with manager_columns[0]:
-                manager_name = st.text_input(
+                manager_name = field_with_help(st.text_input, 
                     "Your manager's name (Cc) *",
                     key=f"expense_manager_name_{account_token}",
-                    help=(
-                        "Your own manager, copied on the approval email. Remembered on "
-                        "this browser after your first report."
-                    ),
+                    help="Enter your manager's name. This person is copied on the approval email draft.",
                 ).strip()
             with manager_columns[1]:
                 manager_email = st.text_input(
@@ -691,14 +687,11 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
             service_year = 1
             if contracts.is_rrh(account):
                 service_year = int(
-                    st.selectbox(
+                    field_with_help(st.selectbox, 
                         "RRH service year *",
                         tuple(range(1, 10)),
                         key=f"expense_service_year_{account_token}",
-                        help=(
-                            "The service year sets the editable Account / Cost Type default: "
-                            "year 1 = 01AMA, year 2 = 02AMA, and so on."
-                        ),
+                        help="Select the service year that applies to this expense. It determines the proposed cost type, which you can change.",
                     )
                 )
                 st.caption(
@@ -1144,13 +1137,10 @@ def _render_receipt(
                 st.caption(f"Review: {note}")
         for charge_note in _receipt_charge_notes(analysis):
             st.caption(charge_note)
-        merchant = st.text_input(
+        merchant = field_with_help(st.text_input, 
             "Merchant",
             key=merchant_key,
-            help=(
-                "Used as a receipt label; the Description / business purpose is "
-                "what appears on the form."
-            ),
+            help="Enter the merchant printed on the receipt. This helps identify the original receipt during review.",
         ).strip()
         # value=None is passed ONLY on the first render, and only when nothing
         # has been seeded. st.date_input defaults to TODAY when value is
@@ -1173,29 +1163,22 @@ def _render_receipt(
         if _tax_split_amounts(analysis) is not None:
             if st.button("Split out tax", key=f"expense_tax_split_{token}"):
                 _apply_receipt_tax_split(token, analysis)
-        split_receipt = st.toggle(
+        split_receipt = field_with_help(st.toggle, 
             "Split this receipt into multiple reimbursement lines",
             key=f"expense_split_{token}",
-            help=(
-                "Use this when one receipt contains reimbursable items with "
-                "different business purposes, sections, or job coding. The "
-                "receipt image will still be attached only once."
-            ),
+            help="Turn this on when receipt items have different purposes or coding. The receipt image is still attached only once.",
         )
         line_count = 1
         if split_receipt:
             line_count = int(
-                st.number_input(
+                field_with_help(st.number_input, 
                     "Number of reimbursement lines",
                     min_value=2,
                     max_value=MAX_MISCELLANEOUS_ITEMS,
                     value=2,
                     step=1,
                     key=f"expense_split_count_{token}",
-                    help=(
-                        "Create one line for each distinct reimbursable purpose "
-                        "or coding combination. Nonbusiness items need no line."
-                    ),
+                    help="Enter one line for each distinct reimbursable purpose or coding combination. Leave nonbusiness items out.",
                 )
             )
             st.caption(
@@ -1224,23 +1207,15 @@ def _render_receipt(
                     f"Suggested description ({analysis.receipt_type}): "
                     f"{analysis.suggested_description}"
                 )
-            description = st.text_input(
+            description = field_with_help(st.text_input, 
                 "Description / business purpose *",
                 key=line_description_key,
-                help=(
-                    "State the actual business purpose without accounting codes. "
-                    "For a split receipt, describe only this reimbursement line."
-                ),
+                help="Describe why this expense was needed for work. If the receipt is split, describe only this line.",
             ).strip()
-            amount = st.text_input(
+            amount = field_with_help(st.text_input, 
                 "Reimbursable amount *",
                 key=line_amount_key,
-                help=(
-                    "Enter only the business-reimbursable portion for this line. "
-                    "Detected item selections update the first line automatically. "
-                    "You can still edit it for tax, tip, fees, currency conversion, "
-                    "or a receipt-reading correction."
-                ),
+                help="Enter the business-reimbursable portion for this line, including relevant tax or tip. Correct the detected amount if needed.",
             ).strip()
             if line_index == 1:
                 suggestion = _receipt_section_suggestion(analysis)
@@ -1256,7 +1231,7 @@ def _render_receipt(
                 ):
                     st.session_state[line_section_key] = analysis.expense_section_guess
                     _mark_receipt_section_edited(line_token)
-            section = st.segmented_control(
+            section = field_with_help(st.segmented_control, 
                 "Expense section *",
                 tuple(_SECTION_LABELS),
                 format_func=lambda value: _SECTION_LABELS[value],
@@ -1265,11 +1240,7 @@ def _render_receipt(
                 key=line_section_key,
                 on_change=_mark_receipt_section_edited,
                 args=(line_token,),
-                help=(
-                    "Entertainment requires a business purpose and contact name. "
-                    "Ordinary travel, parking, supplies, and employee meals "
-                    "normally remain Miscellaneous."
-                ),
+                help="Choose the reimbursement section that matches the expense. Some sections require a contact and business purpose.",
             )
             contact_name = ""
             if section == EXPENSE_SECTION_ENTERTAINMENT:
@@ -1304,10 +1275,10 @@ def _render_receipt(
             reviews = tuple(usd_review_signature(item) for item in items)
             review_key = 'expense_usd_review_' + token + '_' + hashlib.sha256(repr(reviews).encode()).hexdigest()[:24]
             valid_amounts = all(parse_expense_amount(item.amount) is not None for item in items)
-            approved = st.checkbox(
+            approved = field_with_help(st.checkbox, 
                 "I entered the approved U.S.-dollar amounts for this receipt",
                 key=review_key, disabled=not valid_amounts,
-                help="Use the approved USD reimbursement, such as the bank-converted charge. This tool does not calculate an exchange rate.")
+                help="Confirm that all entered reimbursement amounts are in approved U.S. dollars. Convert foreign-currency charges before confirming.")
             if approved and valid_amounts:
                 items = [replace(item, usd_review_fingerprint=review) for item, review in zip(items, reviews)]
                 st.caption(f"{analysis.currency} receipt reviewed with the entered U.S.-dollar amounts.")
@@ -1425,7 +1396,6 @@ def _selected_receipt_item_amount(
 def _foreign_receipt(analysis: ReceiptAnalysis) -> bool:
     """Known non-USD values cannot be treated as reimbursement dollars."""
     return bool(analysis.currency and analysis.currency != "USD")
-
 
 
 def _receipt_charge_notes(analysis: ReceiptAnalysis) -> tuple[str, ...]:
@@ -1689,14 +1659,11 @@ def _render_job_allocation_fields(
 
     coding_columns = st.columns(3)
     with coding_columns[0]:
-        selected = st.selectbox(
+        selected = field_with_help(st.selectbox, 
             "Job number *",
             selectable,
             key=f"{prefix}_job_number",
-            help=(
-                "RRH normally uses 695400022 (O&M) or 695400023 (Startup). "
-                "The selected description is exported as its numeric identifier."
-            ),
+            help="Choose the job number to charge for this expense. Its numeric identifier is entered on the reimbursement form.",
         )
     with coding_columns[1]:
         account_cost_type = st.text_input(
@@ -2430,15 +2397,11 @@ def _render_generated_package(
     destination_key = "expense_email_destination"
     if st.session_state.get(destination_key) not in _EMAIL_DESTINATIONS:
         st.session_state[destination_key] = preferred_destination
-    destination = st.selectbox(
+    destination = field_with_help(st.selectbox, 
         "Open approval email in",
         _EMAIL_DESTINATIONS,
         key=destination_key,
-        help=(
-            "Both Outlook choices use the attachment-bearing email draft. On "
-            "iPhone/iPad, the browser share sheet passes the PDF and message "
-            "directly to Mail or Outlook."
-        ),
+        help="Choose the application used to open the prepared approval email. Review and send the draft yourself; nothing is sent automatically.",
     )
 
     if destination in {_EMAIL_OUTLOOK_APP, _EMAIL_OUTLOOK_WEB}:
