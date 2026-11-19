@@ -562,6 +562,14 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                                     "pages": pages,
                                 },
                                 prepare,
+                                read=lambda chunk: ai.request_json(
+                                    chunk,
+                                    response_kind="facts",
+                                    validator=lambda value: ai.normalize_facts(
+                                        value, source, tuple(pages), draft.profile,
+                                        draft.period, ai.vendor_names(draft),
+                                    ),
+                                ),
                             )
                 except ValueError as exc:
                     st.warning(str(exc))
@@ -774,6 +782,13 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                             ),
                         },
                         prepare,
+                        read=lambda chunk: ai.request_json(
+                            chunk,
+                            response_kind="paragraphs",
+                            validator=lambda value: ai.normalize_draft(
+                                value, target, facts, sources,
+                            ),
+                        ),
                     )
             except ValueError as exc:
                 st.warning(str(exc))
