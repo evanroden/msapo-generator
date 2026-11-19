@@ -181,10 +181,15 @@ export default function(component) {
                 if (field.bottom > bounds.top && field.top < bounds.bottom) position.edit = capture(target);
             }
         };
-        open.onclick = () => {
+        open.onclick = event => {
             const prior = position.edit;
             position.return = prior?.target?.isConnected && editor?.contains(prior.target) ? prior : capture(null);
             pair.dataset.epcPreviewOpen = 'true'; open.setAttribute('aria-expanded', 'true');
+            // Keyboard activation reports detail 0. Browsers decide differently
+            // whether scripted focus is :focus-visible (WebKit inherits it from
+            // how View preview itself got focus), so mark this route directly.
+            if (event?.detail === 0) reference.dataset.epcKeyboardFocus = 'true';
+            else delete reference.dataset.epcKeyboardFocus;
             reference.scrollIntoView({block:'start'}); reference.focus({preventScroll:true});
             schedule();
         };
@@ -198,6 +203,15 @@ export default function(component) {
             reference.prepend(titleNode);
         }
         if (titleNode.textContent !== title) titleNode.textContent = title;
+        // A keyed Streamlit container is not natively focusable. After opening
+        // a compact preview, move focus to its named group so Tab reaches the
+        // Back button instead of traversing the hidden-away editor again.
+        // -1 permits explicit focus without adding another Tab stop.
+        reference.tabIndex = -1;
+        reference.setAttribute('role', 'group');
+        reference.setAttribute('aria-label', title + ' preview');
+        // The keyboard ring belongs to this one entry; any later blur ends it.
+        reference.onblur = () => { delete reference.dataset.epcKeyboardFocus; };
         let back = reference.querySelector('.epc-compact-back');
         if (!back) {
             back = document.createElement('button');
