@@ -41,11 +41,33 @@ def _name(value):
     return re.sub(r"[^a-z0-9]", "", str(value).casefold())
 
 
+def _column_positions(columns, kind):
+    return source_header_positions(columns, _HEADERS[kind])
+
 def _column(columns, kind):
-    # The source parser labels physical repeats as e.g. Status and Status (2).
-    # Do not count the first column unless it is the sole matching candidate.
-    positions = source_header_positions(columns, _HEADERS[kind])
+    positions = _column_positions(columns, kind)
     return positions[0] if len(positions) == 1 else None
+
+
+def requires_work_order_column_mapping(content: SourceContent) -> bool:
+    """Hold ambiguous CMMS records out of generic Activity, not just totals."""
+    if content.source.suffix not in (".csv", ".xlsx"):
+        return False
+    from app.monthly_report_sources import _csv_first_row_is_data
+    return any(
+        (
+            content.source.suffix == ".csv" and table.rows
+            and all(title == f"Column {index + 1}"
+                    for index, title in enumerate(table.columns))
+            and _csv_first_row_is_data(table.rows[0])
+        ) or (
+            all(_column_positions(table.columns, kind) for kind in
+                ("identity", "status", "date"))
+            and any(len(_column_positions(table.columns, kind)) > 1
+                    for kind in ("identity", "status", "date", "facility"))
+        )
+        for table in content.tables
+    )
 
 
 def _date(value):
@@ -59,34 +81,18 @@ def _date(value):
 
 
 def is_work_order_source(content: SourceContent) -> bool:
+    # Duplicate or competing site aliases cannot silently select a site.
     return (content.source.suffix in (".csv", ".xlsx")
+            and not requires_work_order_column_mapping(content)
             and any(not table.hidden and all(_column(table.columns, kind) is not None
                         for kind in ("identity", "status", "date"))
                     for table in content.tables))
 
 
-def needs_work_order_mapping(content: SourceContent) -> bool:
-    """A work-order file whose repeated identity, status or date column needs a mapping.
-
-    Nothing in it is counted automatically, but its rows still belong to
-    Review counted work-order rows, where one physical column is chosen, and
-    never to the Activity reader.
-    """
-    if content.source.suffix not in (".csv", ".xlsx") or is_work_order_source(content):
-        return False
-    for table in content.tables:
-        if table.hidden:
-            continue
-        counts = [len(source_header_positions(table.columns, _HEADERS[kind]))
-                  for kind in ("identity", "status", "date")]
-        if all(counts) and any(count > 1 for count in counts):
-            return True
-    return False
-
-
 def work_order_evidence(content: SourceContent, period: ReportPeriod,
                         profile: ReportProfile) -> tuple[WorkOrderEvidence, ...]:
-    if content.source.suffix not in (".csv", ".xlsx"):
+    if content.source.suffix not in (".csv", ".xlsx") or requires_work_order_column_mapping(content):
+        # Do not produce legacy totals while any work-order/site mapping is ambiguous.
         return ()
     output = []
     sites = {}

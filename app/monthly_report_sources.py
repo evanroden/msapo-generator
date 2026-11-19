@@ -22,16 +22,19 @@ import re
 from xml.etree.ElementTree import ParseError as XMLParseError
 from zipfile import BadZipFile
 import zlib
+from time import perf_counter
 
 import pymupdf as fitz
 from lxml.etree import XMLSyntaxError
 from openpyxl import load_workbook
 
 from app import monthly_report_library as library, monthly_report_import as docx_import, ocr
+from app.monthly_latency_spans import measure_span, record_span
 from app.monthly_report_docx import ReportImage, normalize_report_image
 from app.monthly_report_import import inspect_docx, read_import_image
 from app.monthly_report_model import ReportProfile, ReportSource, ResolvedBlock
 from app.monthly_report_upload_limits import byte_limit_label, source_size_error
+from app.monthly_report_latency_trace import mark, span, traced
 
 
 CLASSIFICATIONS = (
@@ -382,7 +385,7 @@ def _cell(value) -> str:
     return str(value)
 
 
-def _table(name, records, *, strict_columns=False) -> SourceTable:
+def _table(name, records, *, strict_columns=False, csv_headerless=False) -> SourceTable:
     rows, cells = [], 0
     for record in records:
         row = tuple(_cell(v) for v in record)
@@ -405,6 +408,13 @@ def _table(name, records, *, strict_columns=False) -> SourceTable:
     if not rows:
         raise ValueError("Spreadsheet has no nonempty rows.")
     width = max(map(len, rows))
+    if csv_headerless and _csv_first_row_is_data(rows[0]):
+        # A definite first data record is not a heading. Keep its *original*
+        # physical cells, including blanks, duplicated values and leading 0s.
+        # Generic headings require explicit physical-position mapping before
+        # a work-order fact can enter the report.
+        return SourceTable(name, tuple(f"Column {i + 1}" for i in range(width)),
+                           tuple(row + ("",) * (width - len(row)) for row in rows))
     columns = []
     for i in range(width):
         value = rows[0][i] if i < len(rows[0]) else ""
@@ -415,6 +425,44 @@ def _table(name, records, *, strict_columns=False) -> SourceTable:
             count += 1
         columns.append(title)
     return SourceTable(name, tuple(columns), tuple(r + ("",) * (width - len(r)) for r in rows[1:]))
+
+
+_CSV_DATA_STATES = {
+    "open", "pending", "inprogress", "notstarted", "unresolved",
+    "awaitingparts", "completed", "complete", "closed", "finished", "done",
+}
+_CSV_HEADER_LABELS = {
+    "workorder", "workorderid", "workordernumber", "wonumber", "wo",
+    "ticketnumber", "status", "currentstatus", "workorderstatus",
+    "date", "workdate", "servicedate", "receiveddate", "facility", "site",
+    "location", "building", "hospital",
+}
+_CSV_DATA_DATE = re.compile(
+    r"(?:19|20)\d{2}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?"
+    r"|\d{1,2}[/-]\d{1,2}[/-]\d{4}"
+)
+_CSV_ID_VALUE = re.compile(r"(?:[A-Za-z]{1,12}[-_:/ ]*)?\d{1,18}(?:[-_:/]\d{1,18})?")
+
+
+def _csv_first_row_is_data(row) -> bool:
+    """Only promote strongly identified headerless CMMS records.
+
+    An arbitrary unlabeled table cannot be guessed safely; it retains the
+    existing header interpretation. A date with either a recognized work-order
+    state or a position-one order identifier can preserve the first record as
+    data; neither condition is permission to choose field mappings or a site.
+    """
+    if len(row) < 3:
+        return False
+    words = tuple(re.sub(r"[^a-z0-9]", "", str(cell).casefold()) for cell in row)
+    if any(word in _CSV_HEADER_LABELS for word in words):
+        return False
+    values = tuple(str(cell).strip() for cell in row)
+    # Unknown/deferred status is precisely the sort of value that must stay
+    # visible for correction, not disappear as a mistaken heading.
+    return (any(_CSV_DATA_DATE.fullmatch(value) for value in values)
+            and (any(word in _CSV_DATA_STATES for word in words)
+                 or bool(_CSV_ID_VALUE.fullmatch(values[0]))))
 
 
 def _csv_unicode_encoding(raw: bytes) -> str | None:
@@ -446,7 +494,7 @@ def _csv_table(text: str) -> SourceTable:
             table = _table("CSV", csv.reader(
                 StringIO(text, newline=""), delimiter=delimiter,
                 quotechar='"', doublequote=True, strict=True,
-            ), strict_columns=True)
+            ), strict_columns=True, csv_headerless=True)
         except csv.Error:
             malformed = True
             continue
@@ -601,7 +649,7 @@ def _cached_extraction(data, digest, suffix):
             raise ValueError("Invalid source extraction cache sequence.")
         return value
 
-    for name in ("client_page_policy", "native_action_policy", "vendor_passage_policy", "csv_dialect_policy"):
+    for name in ("client_page_policy", "native_action_policy", "vendor_passage_policy", "csv_dialect_policy", "csv_headerless_policy"):
         if type(data.get(name, 0)) is not int or data.get(name, 0) < 0:
             raise ValueError("Invalid source extraction cache policy.")
     record = data["source"]
@@ -677,6 +725,7 @@ def _same_source_bytes(path, raw):
 
 def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceContent, tuple[tuple[str, bytes], ...]]:
     """Cache local extraction. Caller enforces aggregate count/byte/text budgets."""
+    mark("upload_received")
     from app.monthly_report_content_policy import suggested_pages
     filename = Path(filename.replace("\\", "/")).name
     suffix = Path(filename).suffix.casefold()
@@ -687,157 +736,168 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
     limit = file_size_limit(suffix)
     if len(raw) > limit:
         raise ValueError(source_size_error(suffix, limit))
-    digest = hashlib.sha256(raw).hexdigest()
-    path, cache = _path(profile, digest, suffix), _path(profile, digest, ".json")
-    attachments = ()
-    unicode_csv = suffix == ".csv" and _csv_unicode_encoding(raw) is not None
-    rebuild_cache = False
-    if cache.exists() and path.exists() and suffix not in (".eml", ".msg"):
-        library._qa_path_guard(cache)
-        try:
-            data = library._read(cache)
-            content = _cached_extraction(data, digest, suffix)
-        except (ValueError, TypeError, LookupError, AttributeError):
-            # Cache damage is recoverable; a stale/foreign QA namespace is not.
+    with span("hash_cache_lookup"):
+        digest = hashlib.sha256(raw).hexdigest()
+        path, cache = _path(profile, digest, suffix), _path(profile, digest, ".json")
+        attachments = ()
+        unicode_csv = suffix == ".csv" and _csv_unicode_encoding(raw) is not None
+        rebuild_cache = False
+        if cache.exists() and path.exists() and suffix not in (".eml", ".msg"):
             library._qa_path_guard(cache)
-            content = None
-        # Only previously cached one-column CSVs can retain the old failed
-        # Sniffer fallback; already-correct multi-column caches stay warm.
-        # This disposable-extraction refresh never alters saved human edits.
-        old_csv_one_column = (suffix == ".csv" and content is not None
-                              and data.get("csv_dialect_policy") != 1
-                              and any(len(table.columns) == 1 for table in content.tables))
-        # Keep signed-Unicode migration independent of the delimiter policy.
-        if (content is not None and not old_csv_one_column
-                and (not unicode_csv or data.get("csv_unicode_policy") == 1)
-                and (suffix != ".xlsx" or (type(data.get("xlsx_currency_policy")) is int
-                                          and data["xlsx_currency_policy"] == 1
-                                          and data.get("xlsx_provenance_policy") == 1))
-                and (suffix != ".pdf" or (data.get("vendor_passage_policy", 0) >= 8
-                                           and data.get("pdf_scan_policy", 0) >= 1))):
-            source = content.source
-            if data.get("client_page_policy", 0) < 1 and suffix not in (".csv", ".xlsx"):
-                source = replace(source, selected_pages=suggested_pages(source))
-            if data.get("native_action_policy", 0) < 1:
-                # This is the original extraction cache, never a reviewed draft.
-                source = replace(source, actions="\n".join(line for line, _ in native_action_lines(source))[:6000])
-            if _labeled_facility("\n".join(source.page_texts), profile) == "":
-                # Correct only the disposable extraction view. Saved/manual
-                # sources are overlaid by restore_sources and remain unchanged.
-                source = replace(source, facility="")
-            return replace(content, source=replace(source, filename=filename)), ()
-        rebuild_cache = True
-    if not rebuild_cache or not _same_source_bytes(path, raw):
-        library._atomic_write(path, raw)
-    page_texts, needs_vision, tables, image_items, notices = [], [], (), [], []
-    pdf_text_blocks = []
-    span_budget_exceeded = False
-    if suffix == ".pdf":
-        with fitz.open(stream=raw, filetype="pdf") as pdf:
-            if pdf.is_encrypted and not pdf.authenticate(""):
-                raise ValueError("PDF needs a password. Upload an unlocked copy.")
-            if len(pdf) > MAX_PAGES:
-                raise ValueError(f"PDF exceeds {MAX_PAGES:,} pages; select a smaller document range.")
-            for number, page in enumerate(pdf, 1):
-                text = page.get_text().strip()
-                needs_ocr, review_notice = ocr._page_visual_decision(
-                    page, native_text=text,
-                )
-                if review_notice:
-                    # Keep an image-backed source unreviewed even if it appears
-                    # blank or has a searchable overlay; neither is human proof.
-                    needs_vision.append(number)
-                    notices.append(f"Page {number}: {review_notice}.")
-                page_texts.append(text)
-                if sum(map(len, page_texts)) > ocr._MAX_EXTRACTED_CHARS:
-                    raise ValueError(f"PDF text exceeds {ocr._MAX_EXTRACTED_CHARS:,} characters; select a smaller document range.")
-                from app.monthly_report_vendor_passages import block_spans, MAX_VENDOR_BLOCK_SPANS, passage_notice
-                if not span_budget_exceeded:
-                    geometry_uncertain = set()
-                    spans = block_spans(page, text, number, ambiguous_pages=geometry_uncertain)
-                    if geometry_uncertain:
-                        notices.append(passage_notice(number, reason="geometry"))
-                    if len(pdf_text_blocks) + len(spans) > MAX_VENDOR_BLOCK_SPANS:
-                        # No partial-page certainty after exhausting metadata capacity.
-                        # Raw original/page text and ordinary review remain available.
-                        pdf_text_blocks.clear()
-                        span_budget_exceeded = True
-                    else:
-                        pdf_text_blocks.extend(spans)
-    elif suffix in ocr.SUPPORTED_IMAGE_SUFFIXES:
-        if suffix == ".mpo":
-            from app.mpo_images import frame_count
-            count = frame_count(raw)
-            for index in range(count):
-                try:
-                    normalize_report_image(raw, suffix, frame_index=index)
-                except (OSError, EOFError, SyntaxError) as exc:
-                    # Pillow can report truncated MPO raster data only when a
-                    # selected frame is decoded, after its header inventory.
-                    raise ValueError("MPO image data is damaged or truncated. Export a fresh copy.") from exc
-            page_texts, needs_vision = [""] * count, list(range(1, count + 1))
-            notices.append("MPO pictures are separate source pages in their original order; review each picture before inclusion.")
-        else:
             try:
-                normalize_report_image(raw, suffix)  # Validate before caching or paid work.
-            except (OSError, EOFError, SyntaxError) as exc:
-                # These exceptions originate inside the bounded image decoder,
-                # not the surrounding original/cache storage operations. Do not
-                # mislabel invalid image bytes as a transient storage outage.
-                raise ValueError("Image data is damaged or unreadable. Export a fresh copy.") from exc
-            page_texts, needs_vision = [""], [1]
-    elif suffix == ".txt":
-        page_texts = [raw.decode("utf-8-sig")]
-    elif suffix in (".csv", ".xlsx"):
-        tables = _spreadsheet(raw, suffix)
-        page_texts = ["\n".join(["\t".join(t.columns), *("\t".join(r) for r in t.rows)]) for t in tables]
-        if suffix == ".xlsx":
-            notices.append("Workbook values use stored formula results; formulas are never executed. Missing cached results remain blank.")
-            hidden = [t.name for t in tables if t.hidden]
-            if hidden:
-                notices.append("Hidden worksheets retained for explicit review (not automatic work-order totals): "
-                               + ", ".join(hidden) + ".")
-            missing_count = sum(t.missing_formula_cache_count for t in tables)
-            if missing_count:
-                examples = ", ".join(f"{t.name}!{cell}" for t in tables
-                                     for cell in t.missing_formula_cache_cells[:3])
-                notices.append(f"{missing_count} formula cells without cached results "
-                               f"({examples}); check the original workbook before accepting these rows.")
-    elif suffix == ".docx":
-        inspected = inspect_docx(path)
-        for number, item in enumerate(inspected.items, 1):
-            page_texts.append(item.text or "\n".join("\t".join(r) for r in item.rows))
-            if item.kind == "unsupported":
-                notices.append(f"Item {number}: {item.note or 'This original item could not be read.'}")
-            elif item.note == "Unplaced package asset; confirm whether it belongs in this report.":
-                notices.append(f"Item {number}: {item.note}")
-            if item.kind == "image":
-                image_items.append((number, item.id))
-                needs_vision.append(number)
-        notices.extend(inspected.notices)
-        # Only this new inspection route has retained every unsupported-item
-        # notice. Old cached records keep their broader artwork-review notice.
-        notices.append("DOCX selections are extracted items, not Word page numbers.")
-    else:
-        text, attachments, extra = _email(raw) if suffix == ".eml" else _msg(raw)
-        page_texts = [text]
-        notices.extend(extra)
-    if sum(map(len, page_texts)) > ocr._MAX_EXTRACTED_CHARS:
-        raise ValueError(f"Source text exceeds {ocr._MAX_EXTRACTED_CHARS:,} characters; split the input before reading.")
-    source = ReportSource(digest, filename, digest, suffix, page_texts=tuple(page_texts),
-                          pdf_text_blocks=tuple(pdf_text_blocks),
-                          selected_pages=tuple(range(1, len(page_texts)+1)), needs_vision=tuple(needs_vision), notices=tuple(notices))
-    if suffix not in (".csv", ".xlsx"):
-        source = replace(source, selected_pages=suggested_pages(source))
-    source = suggest_facts(source, profile)
-    content = SourceContent(source, tables, tuple(image_items))
-    library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1,
-        "native_action_policy": 1, "vendor_passage_policy": 8,
-        **({"pdf_scan_policy": 1} if suffix == ".pdf" else {}),
-        **({"xlsx_currency_policy": 1, "xlsx_provenance_policy": 1} if suffix == ".xlsx" else {}),
-        **({"csv_unicode_policy": 1} if unicode_csv else {}),
-        **({"csv_dialect_policy": 1} if suffix == ".csv" else {}), **asdict(content)}))
-    return content, attachments
+                data = library._read(cache)
+                content = _cached_extraction(data, digest, suffix)
+            except (ValueError, TypeError, LookupError, AttributeError):
+                # Cache damage is recoverable; a stale/foreign QA namespace is not.
+                library._qa_path_guard(cache)
+                content = None
+            # Only previously cached one-column CSVs can retain the old failed
+            # Sniffer fallback; already-correct multi-column caches stay warm.
+            # This disposable-extraction refresh never alters saved human edits.
+            old_csv_one_column = (suffix == ".csv" and content is not None
+                                  and data.get("csv_dialect_policy") != 1
+                                  and any(len(table.columns) == 1 for table in content.tables))
+            # Older multi-column caches may have consumed a headerless first row.
+            # Rebuild only that disposable view; keep correct legacy caches warm.
+            old_csv_headerless = (suffix == ".csv" and content is not None
+                                  and data.get("csv_headerless_policy") != 1
+                                  and any(_csv_first_row_is_data(table.columns)
+                                          for table in content.tables))
+            # Keep signed-Unicode migration independent of the delimiter policy.
+            if (content is not None and not old_csv_one_column and not old_csv_headerless
+                    and (not unicode_csv or data.get("csv_unicode_policy") == 1)
+                    and (suffix != ".xlsx" or (type(data.get("xlsx_currency_policy")) is int
+                                              and data["xlsx_currency_policy"] == 1
+                                              and data.get("xlsx_provenance_policy") == 1))
+                    and (suffix != ".pdf" or (data.get("vendor_passage_policy", 0) >= 8
+                                               and data.get("pdf_scan_policy", 0) >= 1))):
+                source = content.source
+                if data.get("client_page_policy", 0) < 1 and suffix not in (".csv", ".xlsx"):
+                    source = replace(source, selected_pages=suggested_pages(source))
+                if data.get("native_action_policy", 0) < 1:
+                    # This is the original extraction cache, never a reviewed draft.
+                    source = replace(source, actions="\n".join(line for line, _ in native_action_lines(source))[:6000])
+                if _labeled_facility("\n".join(source.page_texts), profile) == "":
+                    # Correct only the disposable extraction view. Saved/manual
+                    # sources are overlaid by restore_sources and remain unchanged.
+                    source = replace(source, facility="")
+                return replace(content, source=replace(source, filename=filename)), ()
+            rebuild_cache = True
+    with span("parse"):
+        if not rebuild_cache or not _same_source_bytes(path, raw):
+            library._atomic_write(path, raw)
+        page_texts, needs_vision, tables, image_items, notices = [], [], (), [], []
+        pdf_text_blocks = []
+        span_budget_exceeded = False
+        extraction_started = perf_counter()
+        if suffix == ".pdf":
+            with fitz.open(stream=raw, filetype="pdf") as pdf:
+                if pdf.is_encrypted and not pdf.authenticate(""):
+                    raise ValueError("PDF needs a password. Upload an unlocked copy.")
+                if len(pdf) > MAX_PAGES:
+                    raise ValueError(f"PDF exceeds {MAX_PAGES:,} pages; select a smaller document range.")
+                for number, page in enumerate(pdf, 1):
+                    text = page.get_text().strip()
+                    needs_ocr, review_notice = ocr._page_visual_decision(
+                        page, native_text=text,
+                    )
+                    if review_notice:
+                        # Keep an image-backed source unreviewed even if it appears
+                        # blank or has a searchable overlay; neither is human proof.
+                        needs_vision.append(number)
+                        notices.append(f"Page {number}: {review_notice}.")
+                    page_texts.append(text)
+                    if sum(map(len, page_texts)) > ocr._MAX_EXTRACTED_CHARS:
+                        raise ValueError(f"PDF text exceeds {ocr._MAX_EXTRACTED_CHARS:,} characters; select a smaller document range.")
+                    from app.monthly_report_vendor_passages import block_spans, MAX_VENDOR_BLOCK_SPANS, passage_notice
+                    if not span_budget_exceeded:
+                        geometry_uncertain = set()
+                        spans = block_spans(page, text, number, ambiguous_pages=geometry_uncertain)
+                        if geometry_uncertain:
+                            notices.append(passage_notice(number, reason="geometry"))
+                        if len(pdf_text_blocks) + len(spans) > MAX_VENDOR_BLOCK_SPANS:
+                            # No partial-page certainty after exhausting metadata capacity.
+                            # Raw original/page text and ordinary review remain available.
+                            pdf_text_blocks.clear()
+                            span_budget_exceeded = True
+                        else:
+                            pdf_text_blocks.extend(spans)
+        elif suffix in ocr.SUPPORTED_IMAGE_SUFFIXES:
+            if suffix == ".mpo":
+                from app.mpo_images import frame_count
+                count = frame_count(raw)
+                for index in range(count):
+                    try:
+                        normalize_report_image(raw, suffix, frame_index=index)
+                    except (OSError, EOFError, SyntaxError) as exc:
+                        # Pillow can report truncated MPO raster data only when a
+                        # selected frame is decoded, after its header inventory.
+                        raise ValueError("MPO image data is damaged or truncated. Export a fresh copy.") from exc
+                page_texts, needs_vision = [""] * count, list(range(1, count + 1))
+                notices.append("MPO pictures are separate source pages in their original order; review each picture before inclusion.")
+            else:
+                try:
+                    normalize_report_image(raw, suffix)  # Validate before caching or paid work.
+                except (OSError, EOFError, SyntaxError) as exc:
+                    # These exceptions originate inside the bounded image decoder,
+                    # not the surrounding original/cache storage operations. Do not
+                    # mislabel invalid image bytes as a transient storage outage.
+                    raise ValueError("Image data is damaged or unreadable. Export a fresh copy.") from exc
+                page_texts, needs_vision = [""], [1]
+        elif suffix == ".txt":
+            page_texts = [raw.decode("utf-8-sig")]
+        elif suffix in (".csv", ".xlsx"):
+            tables = _spreadsheet(raw, suffix)
+            page_texts = ["\n".join(["\t".join(t.columns), *("\t".join(r) for r in t.rows)]) for t in tables]
+            if suffix == ".xlsx":
+                notices.append("Workbook values use stored formula results; formulas are never executed. Missing cached results remain blank.")
+                hidden = [t.name for t in tables if t.hidden]
+                if hidden:
+                    notices.append("Hidden worksheets retained for explicit review (not automatic work-order totals): "
+                                   + ", ".join(hidden) + ".")
+                missing_count = sum(t.missing_formula_cache_count for t in tables)
+                if missing_count:
+                    examples = ", ".join(f"{t.name}!{cell}" for t in tables
+                                         for cell in t.missing_formula_cache_cells[:3])
+                    notices.append(f"{missing_count} formula cells without cached results "
+                                   f"({examples}); check the original workbook before accepting these rows.")
+        elif suffix == ".docx":
+            inspected = inspect_docx(path)
+            for number, item in enumerate(inspected.items, 1):
+                page_texts.append(item.text or "\n".join("\t".join(r) for r in item.rows))
+                if item.kind == "unsupported":
+                    notices.append(f"Item {number}: {item.note or 'This original item could not be read.'}")
+                elif item.note == "Unplaced package asset; confirm whether it belongs in this report.":
+                    notices.append(f"Item {number}: {item.note}")
+                if item.kind == "image":
+                    image_items.append((number, item.id))
+                    needs_vision.append(number)
+            notices.extend(inspected.notices)
+            # Only this new inspection route has retained every unsupported-item
+            # notice. Old cached records keep their broader artwork-review notice.
+            notices.append("DOCX selections are extracted items, not Word page numbers.")
+        else:
+            text, attachments, extra = _email(raw) if suffix == ".eml" else _msg(raw)
+            page_texts = [text]
+            notices.extend(extra)
+        record_span("source_extraction", perf_counter() - extraction_started)
+        if sum(map(len, page_texts)) > ocr._MAX_EXTRACTED_CHARS:
+            raise ValueError(f"Source text exceeds {ocr._MAX_EXTRACTED_CHARS:,} characters; split the input before reading.")
+        source = ReportSource(digest, filename, digest, suffix, page_texts=tuple(page_texts),
+                              pdf_text_blocks=tuple(pdf_text_blocks),
+                              selected_pages=tuple(range(1, len(page_texts)+1)), needs_vision=tuple(needs_vision), notices=tuple(notices))
+        if suffix not in (".csv", ".xlsx"):
+            source = replace(source, selected_pages=suggested_pages(source))
+        with measure_span("source_mapping"):
+            source = suggest_facts(source, profile)
+        content = SourceContent(source, tables, tuple(image_items))
+        library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1,
+            "native_action_policy": 1, "vendor_passage_policy": 8,
+            **({"pdf_scan_policy": 1} if suffix == ".pdf" else {}),
+            **({"xlsx_currency_policy": 1, "xlsx_provenance_policy": 1} if suffix == ".xlsx" else {}),
+            **({"csv_unicode_policy": 1} if unicode_csv else {}),
+            **({"csv_dialect_policy": 1, "csv_headerless_policy": 1} if suffix == ".csv" else {}), **asdict(content)}))
+        return content, attachments
 
 
 def _discard_rejected(path, cache, digest, already_present, existing_cache):
@@ -962,6 +1022,7 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
     return tuple(sources.values()), tuple(messages)
 
 
+@traced("optional_visual_read")
 def page_image(profile: ReportProfile, content: SourceContent, number: int, *, preview: bool = False, _pdf_image=None):
     source = content.source
     if number < 1 or number > len(source.page_texts):
@@ -1010,7 +1071,8 @@ def page_image(profile: ReportProfile, content: SourceContent, number: int, *, p
                 width, height = page.rect.width * dpi / 72, page.rect.height * dpi / 72
                 if width <= 0 or height <= 0 or width * height > ocr._MAX_PIXELS_PER_FRAME:
                     raise ValueError("This PDF page is too large to rasterize safely.")
-                png = page.get_pixmap(dpi=dpi, alpha=False).tobytes("png")
+                with span("raster"):
+                    png = page.get_pixmap(dpi=dpi, alpha=False).tobytes("png")
             result = normalize_report_image(png, ".png", line_art=True, dpi=dpi)
     elif source.suffix in ocr.SUPPORTED_IMAGE_SUFFIXES:
         result = normalize_report_image(raw, source.suffix, dpi=96 if preview else 200,

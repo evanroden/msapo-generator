@@ -10,7 +10,7 @@ from openpyxl import Workbook
 from app import monthly_report_sources as sources
 from app.monthly_report_model import Facility, ReportPeriod, ReportProfile
 from app.monthly_report_work_order_csv import (
-    is_work_order_source, needs_work_order_mapping, work_order_evidence,
+    is_work_order_source, requires_work_order_column_mapping, work_order_evidence,
 )
 from app.monthly_report_work_order_csv_review import (
     csv_review_record, mapped_columns, reimport_csv_review, restore_csv_review,
@@ -178,9 +178,9 @@ def test_repeated_status_workbook_without_site_stays_out_of_both_activity_paths(
     content = _ingest(profile, "repeated-status.xlsx", memory.getvalue())
     assert not any(table.hidden or table.missing_formula_cache_count for table in content.tables)
     assert not is_work_order_source(content)
-    assert needs_work_order_mapping(content)
+    assert requires_work_order_column_mapping(content)
     assert not work_order_evidence(content, period, profile)
     assert reader_sources((content,), "activity_summary") == ()
     notice, = reader_notices((content,), "activity_summary")
-    assert "Review counted work-order rows" in notice
+    assert "explicit column-position mapping" in notice
     assert native_update((content,), "activity_summary").text == ""

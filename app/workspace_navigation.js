@@ -480,8 +480,29 @@ globalThis.ENFRAWorkspaceNavigation = {
                 if (nextButton.textContent !== label) nextButton.textContent = label;
             }
             if (progress && index >= 0) {
+                // Only the settled preflight from the mounted report owns this status.
+                // This is display-only; it cannot change content or validations.
+                const marker = app.querySelector('.epc-review-attention-source');
+                const stale = marker && typeof marker.closest === 'function' &&
+                    marker.closest('[data-stale="true"]');
+                const raw = marker && !stale ? Number(marker.dataset?.count) : 0;
+                const count = Number.isSafeInteger(raw) && raw > 0 ? raw : 0;
+                // Keep the established section progress text unchanged for
+                // navigation consumers and assistive technology. Attention is
+                // a separate, read-only receipt, not part of the section title.
                 const text = `${index + 1} of ${entries.length} · ${entries[index].title}`;
                 if (progress.textContent !== text) progress.textContent = text;
+                // Never insert DOM nodes during a layout measurement. Native
+                // Streamlit rerenders own this status element from first paint.
+                // Inserting one here can invalidate a pending Back/Next intent
+                // and strand navigation on the preceding report section.
+                const receipt = nav.querySelector('.epc-navigation-attention');
+                if (receipt) {
+                    const label = count === 1 ? '1 item needs attention' :
+                        count > 1 ? `${count} items need attention` : '';
+                    if (receipt.textContent !== label) receipt.textContent = label;
+                    if (receipt.hidden !== !label) receipt.hidden = !label;
+                }
                 if (progress.dataset.section !== active) progress.dataset.section = active;
             }
         };

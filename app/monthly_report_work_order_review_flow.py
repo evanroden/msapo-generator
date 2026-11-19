@@ -16,6 +16,7 @@ from app.monthly_report_model import ReportTable, ResolvedBlock
 from app.monthly_report_work_order_normalized import (
     FIELDS, ColumnMapping as ColumnMapping, correct_row, exclude_row, restore_review, review_record,
 )
+from app.monthly_report_cross_source_conflicts import claim as source_claim, compare as compare_claims
 from app.monthly_report_work_order_counts import count_reviewed_work_orders
 from app.monthly_report_work_order_coverage import CoverageDecision, restore_decision
 from app.monthly_report_work_order_csv_review import review_spreadsheet
@@ -68,6 +69,15 @@ def decoded(text):
             raise ValueError(message)
         for item in value.get("coverage", []):
             restore_decision(item)
+        choices = value.get("cross_source_decisions", [])
+        if (not isinstance(choices, list) or len(choices) > 200
+                or any(not isinstance(item, dict) or set(item) != {"binding", "winner"}
+                       or not isinstance(item.get("binding"), str)
+                       or len(item["binding"]) != 64
+                       or any(char not in "0123456789abcdef" for char in item["binding"])
+                       or item.get("winner") not in ("existing", "incoming")
+                       for item in choices)):
+            raise ValueError(message)
         if "grid_receipt" in value:
             from app.monthly_report_rolling_workflow import validate_receipt
             validate_receipt(value["grid_receipt"])
@@ -275,30 +285,50 @@ def change_row(bundle, group_index, row_key, changes, *, excluded=None):
         if excluded is not None:
             review = exclude_row(review, row_key, excluded=excluded, expected_revision=review.revision)
         group["record"] = review_record(review)
-        if value["filename"].casefold().endswith(".pdf"):
-            # An edited WO may release (or create) a collision on another page.
-            # Never promote either page without re-evaluating both source rows.
-            from app.monthly_report_work_order_pdf_review import reconcile_pdf_group_duplicates
-            reconcile_pdf_group_duplicates(value["groups"])
     else:
         if changes:
             review = correct_service_call(review, row_key, changes, expected_revision=review.revision)
         if excluded is not None:
             review = exclude_service_call(review, row_key, excluded=excluded, expected_revision=review.revision)
         group["record"] = service_call_review_record(review)
+    if value["filename"].casefold().endswith(".pdf"):
+        # An edited WO may release (or create) a collision on another page.
+        # Never promote either page without re-evaluating both source rows.
+        from app.monthly_report_work_order_pdf_review import reconcile_pdf_group_duplicates
+        reconcile_pdf_group_duplicates(value["groups"])
     return json.loads(encoded(value))
 
 
 def remap_group(draft, content, bundle, index, choices, date_order=""):
-    if content.source.suffix not in (".csv", ".xlsx"):
+    native_word = (content.source.suffix == ".docx"
+                   and bundle["kind"] == "workorders")
+    if content.source.suffix not in (".csv", ".xlsx") and not native_word:
         raise ValueError("Native PDF/Word layouts retain their inspected schema. Correct individual rows or use a spreadsheet export.")
+    if native_word and date_order:
+        raise ValueError("Native Word numeric dates need row correction; do not infer their date order.")
     value = json.loads(encoded(bundle))
     original = restored_group(value, value["groups"][index])
     if value["kind"] == "workorders":
         from app.monthly_report_work_order_csv_review import mapped_columns
         mapping = mapped_columns(original.original_columns, choices)
-        reviewed = review_spreadsheet(content, draft.profile, draft.period, mapping=mapping,
-            numeric_date_order=date_order, table_number=original.table_number).workorders
+        if native_word:
+            # A deliberate mapping changes only this inspected Word table.
+            # It cannot flatten other tables or silently replace saved edits.
+            from app.monthly_report_work_order_docx_review import review_docx_workorders
+            result = review_docx_workorders(draft.profile, content, draft.period,
+                mapping_by_item={original.table_number: mapping})
+            selected = next((table for table in result.tables
+                if table.source_item == original.table_number), None)
+            if selected is None or selected.review is None:
+                raise ValueError("The Word source table is no longer reviewable.")
+            reviewed = selected.review
+            value["groups"][index]["notes"] = list(selected.notices)
+            value["groups"][index]["unmatched"] = [
+                f"Word row {row.word_row}: {row.reason} — {' | '.join(row.cells)}"
+                for row in selected.unmatched]
+        else:
+            reviewed = review_spreadsheet(content, draft.profile, draft.period, mapping=mapping,
+                numeric_date_order=date_order, table_number=original.table_number).workorders
         record = review_record(reviewed)
     else:
         mapping = suggest_call_mapping(original.original_columns, choices)
@@ -326,9 +356,101 @@ def group_decisions(bundle, index, *, omitted, omit_unmatched=False, financial=F
     return json.loads(encoded(value))
 
 
-def reviewed_tables(draft, bundle, *, include_trades=False):
+def _selected_work_order_claims(bundle):
+    """Rows under explicit source review; never infer completion from missing cells."""
+    for group in bundle["groups"]:
+        if group["omitted"] or not group["record"]:
+            continue
+        review = restored_group(bundle, group)
+        for row in review.rows:
+            if not row.excluded and not row.issues:
+                yield source_claim(review, row)
+
+
+def cross_source_candidates(draft, bundle, included_tables=None):
+    """Compare this report's new claims with other still-published source rows.
+
+    Missing or changed original-source revisions are not authority to discard
+    previously printed rows. Refuse a stale comparison rather than accepting
+    a potentially false status or bypassing the current report-only review.
+    """
+    _validate(draft, bundle)
+    if bundle["kind"] != "workorders":
+        return ()
+    current = next((b for b in draft.blocks if b.key == "work_orders"), None)
+    included = tuple(current.extra_tables if current else ()) if included_tables is None else tuple(included_tables)
+    incoming = tuple(_selected_work_order_claims(bundle))
+    if not incoming:
+        return ()
+    # Index by the explicit work-order identity. A source can have thousands
+    # of unrelated rows, so don't compare every old row with every new row.
+    by_event = {}
+    for candidate in incoming:
+        by_event.setdefault(candidate.event, []).append(candidate)
+    seen, matches = set(), []
+    for text in draft.source_row_reviews:
+        other = saved_receipt(text)
+        if (other.get("kind") != "workorders" or other.get("scope") != bundle["scope"]
+                or other.get("source_id") == bundle["source_id"] or not other.get("published")):
+            continue
+        published = tuple(ReportTable(tuple(t["columns"]), tuple(tuple(r) for r in t["rows"]), t["reference"])
+                          for t in other["published"])
+        if not any(t in included for t in published):
+            continue
+        source = next((s for s in draft.sources if s.id == other["source_id"]), None)
+        if source is None or source.fingerprint != other["source_fingerprint"]:
+            raise ValueError("An included work-order source was changed or removed. Review its saved original and published rows before resolving a conflicting claim.")
+        _validate(draft, other)
+        # A source correction may already have superseded one old row while
+        # retaining the original in the saved review. Compare only its still
+        # published source rows, never obsolete assertions in the audit trail.
+        published_rows = {
+            tuple(row) for table in published
+            if table.columns[:2] == ("Work order", "Site")
+            for row in table.rows if len(row) == 7
+        }
+        for older in _selected_work_order_claims(other):
+            printed = (older.work_order, older.site, older.work_date,
+                       older.completed_date, older.status,
+                       older.work_type or "Unclassified", older.trade)
+            if printed not in published_rows:
+                continue
+            for newer in by_event.get(older.event, ()):
+                candidate = compare_claims(older, newer, report_scope=bundle["scope"])
+                if candidate and candidate.binding not in seen:
+                    seen.add(candidate.binding)
+                    matches.append(candidate)
+                    if len(matches) > 10000:
+                        raise ValueError("Too many conflicting work-order rows to compare in one review. Split the source by site or reporting period without discarding originals.")
+    return tuple(sorted(matches, key=lambda c: (c.incoming.source_id, c.incoming.row_number,
+                                                 c.existing.source_id, c.existing.row_number)))
+
+
+def record_cross_source_decision(draft, bundle, binding, winner, *, expected_revision):
+    """One report-only correction. Old choices remain readable but go stale on edits."""
+    _validate(draft, bundle)
+    if revision(bundle) != expected_revision or winner not in ("existing", "incoming"):
+        raise ValueError("The reviewed work-order source changed. Check both original claims again.")
+    current = saved_bundle(draft, bundle["source_id"], "workorders")
+    if current is None or revision(current) != expected_revision:
+        raise ValueError("Another row correction was saved. Reopen the current source and compare again.")
+    candidate = next((c for c in cross_source_candidates(draft, bundle)
+                      if c.binding == binding and c.kind == "conflict"), None)
+    if candidate is None:
+        raise ValueError("The conflicting source/date/status changed. Compare current originals again.")
+    value = json.loads(encoded(bundle))
+    choices = value.setdefault("cross_source_decisions", [])
+    if not any(item["binding"] == binding and item["winner"] == winner for item in choices):
+        choices.append({"binding": binding, "winner": winner})
+    if len(choices) > 200:
+        raise ValueError("Too many earlier conflict decisions. Save and review a fresh source bundle.")
+    return store_bundle(draft, value, expected_revision=expected_revision)
+
+
+def reviewed_tables(draft, bundle, *, include_trades=False, skip_rows=(), allow_empty=False):
     """No partial insertion: every selected source group must be resolved."""
     _validate(draft, bundle)
+    skipped = set(skip_rows)
     tables, identities = [], set()
     for group in bundle["groups"]:
         if group["omitted"]:
@@ -337,6 +459,9 @@ def reviewed_tables(draft, bundle, *, include_trades=False):
                 or group["unmatched"] and not group["omit_unmatched"]):
             raise ValueError("Review or explicitly omit unsupported source groups and unmatched rows first.")
         review = restored_group(bundle, group)
+        if skipped and bundle["kind"] == "workorders":
+            review = replace(review, rows=tuple(
+                replace(row, excluded=True) if row.key in skipped else row for row in review.rows))
         for row in review.rows:
             if row.excluded:
                 continue
@@ -365,6 +490,8 @@ def reviewed_tables(draft, bundle, *, include_trades=False):
                 tables.append(ReportTable(("Uploaded sample trade", "Total", "Recorded completed", "Recorded open"),
                     tuple((g.label, str(g.total), str(g.completed), str(g.open)) for g in counts.trades), review.source_reference))
     if not identities or not tables:
+        if allow_empty:
+            return ()
         raise ValueError("No reviewed rows remain to include.")
     from app.monthly_report_content_policy import table_has_pricing
     if any(table_has_pricing(t.columns, t.rows, work_orders=True) for t in tables):
@@ -379,7 +506,8 @@ def publish_bundle(draft, bundle, *, expected_revision, expected_block, include_
         raise ValueError("The report table changed. Your edits are retained; review the current table before adding rows.")
     if current.source == "Omit" and not include_omitted:
         raise ValueError("This report section is deliberately omitted. Include it before adding reviewed rows.")
-    tables = reviewed_tables(draft, bundle, include_trades=include_trades)
+    # Validate the entire incoming review before considering duplicate suppression.
+    reviewed_tables(draft, bundle, include_trades=include_trades)
     previous = tuple(ReportTable(tuple(t["columns"]), tuple(tuple(r) for r in t["rows"]), t["reference"])
                      for t in bundle["published"])
     remaining = list(current.extra_tables)
@@ -387,33 +515,88 @@ def publish_bundle(draft, bundle, *, expected_revision, expected_block, include_
         if old not in remaining:
             raise ValueError("Previously included rows were edited or removed. Keep those edits; remove this review's remaining report tables before including a replacement.")
         remaining.remove(old)
-    # Different files/exports can overlap. Refuse known accepted identities
-    # from other still-included review receipts rather than double-counting
-    # the same source work in a combined report.
-    incoming = {(row.site, (row.work_order if bundle["kind"] == "workorders" else row.wo).casefold())
-                for group in bundle["groups"] if group["record"] and not group["omitted"]
-                for row in restored_group(bundle, group).rows if not row.excluded}
-    for text in draft.source_row_reviews:
-        other = saved_receipt(text)
-        if (other.get("kind") != bundle["kind"] or other.get("source_id") == bundle["source_id"]
-                or other.get("scope") != bundle["scope"] or not other.get("published")):
-            continue
-        still_included = any(ReportTable(tuple(t["columns"]), tuple(tuple(r) for r in t["rows"]), t["reference"])
-                             in remaining for t in other["published"])
-        if still_included:
-            old_ids = {(row.site, (row.work_order if bundle["kind"] == "workorders" else row.wo).casefold())
-                for group in other["groups"] if group["record"] and not group["omitted"]
-                for row in restored_group(other, group).rows if not row.excluded}
-            if incoming & old_ids:
-                raise ValueError("Another included source already contains these work-order identities. Compare the sources and remove or omit duplicate rows before adding them.")
-    # Existing manual/native rows remain separate and are never retyped.
-    updated = replace(current, source="This month", extra_tables=tuple(remaining) + tables,
-        references=tuple(dict.fromkeys((*current.references, *(t.reference for t in tables)))),
-        reviewed_fingerprint="", client_reviewed_fingerprint="")
+    result = draft
+    decisions = {item["binding"]: item["winner"] for item in bundle.get("cross_source_decisions", [])}
+    if bundle["kind"] == "workorders":
+        candidates = cross_source_candidates(draft, bundle, remaining)
+        missing = next((c for c in candidates if c.kind == "conflict" and c.binding not in decisions), None)
+        if missing:
+            raise ValueError(
+                "Two sources disagree on a work-order date/status: "
+                f"{missing.existing.locator} records {missing.existing.status or 'unknown'} "
+                f"on {missing.existing.work_date or 'unknown date'}; "
+                f"{missing.incoming.locator} records {missing.incoming.status or 'unknown'} "
+                f"on {missing.incoming.work_date or 'unknown date'}. "
+                "Choose which reviewed source to use; neither claim was overwritten.")
+        skip_new = {c.incoming.row_key for c in candidates
+                    if c.kind == "duplicate" or decisions.get(c.binding) == "existing"}
+        remove_old = {}
+        for candidate in candidates:
+            if candidate.kind == "conflict" and decisions.get(candidate.binding) == "incoming":
+                remove_old.setdefault(candidate.existing.source_id, set()).add(candidate.existing.row_key)
+        # Rebuild only the exact previously published source table(s), retaining
+        # unrelated rows and their count summaries. All operations are on a
+        # detached draft; a stale/manual table edit leaves the caller unchanged.
+        for source_id, skipped in remove_old.items():
+            other = saved_bundle(result, source_id, "workorders")
+            if other is None:
+                raise ValueError("A previously published source changed. Compare the two originals again.")
+            old_tables = tuple(ReportTable(tuple(t["columns"]), tuple(tuple(r) for r in t["rows"]), t["reference"])
+                               for t in other["published"])
+            if not old_tables or any(table not in remaining for table in old_tables):
+                raise ValueError("Earlier included work-order rows were edited or removed. Preserve the human changes and review this conflict again.")
+            position = min(remaining.index(table) for table in old_tables)
+            for table in old_tables:
+                remaining.remove(table)
+            revised_tables = reviewed_tables(result, other, include_trades=bool(other.get("include_trades")),
+                                             skip_rows=skipped, allow_empty=True)
+            remaining[position:position] = revised_tables
+            revised_other = json.loads(encoded(other))
+            revised_other["published"] = [asdict(table) for table in revised_tables]
+            revised_other.setdefault("cross_source_superseded", []).extend(
+                {"source": bundle["source_id"], "row": key} for key in sorted(skipped))
+            result = store_bundle(result, revised_other, expected_revision=revision(other))
+        tables = reviewed_tables(result, bundle, include_trades=include_trades,
+                                 skip_rows=skip_new, allow_empty=True)
+        receipt = [{"binding": c.binding, "kind": c.kind,
+                    "winner": ("existing" if c.kind == "duplicate" else decisions[c.binding])}
+                   for c in candidates]
+    else:
+        tables = reviewed_tables(draft, bundle, include_trades=include_trades)
+        receipt = []
+        # Maintenance visits are not ENFRA work-order service calls. Retain
+        # their independent strict no-overlap gate; never auto-merge actors.
+        incoming = {(row.site, row.wo.casefold())
+                    for group in bundle["groups"] if group["record"] and not group["omitted"]
+                    for row in restored_group(bundle, group).rows if not row.excluded}
+        for text in draft.source_row_reviews:
+            other = saved_receipt(text)
+            if (other.get("kind") != bundle["kind"] or other.get("source_id") == bundle["source_id"]
+                    or other.get("scope") != bundle["scope"] or not other.get("published")):
+                continue
+            still_included = any(ReportTable(tuple(t["columns"]), tuple(tuple(r) for r in t["rows"]), t["reference"])
+                                 in remaining for t in other["published"])
+            if still_included:
+                old_ids = {(row.site, row.wo.casefold())
+                           for group in other["groups"] if group["record"] and not group["omitted"]
+                           for row in restored_group(other, group).rows if not row.excluded}
+                if incoming & old_ids:
+                    raise ValueError("Another included source already contains these work-order identities. Compare the sources and remove or omit duplicate rows before adding them.")
+    all_tables = tuple(remaining) + tuple(tables)
+    if current.source != "Omit" and all_tables == current.extra_tables:
+        updated = current
+    else:
+        updated = replace(current, source="This month", extra_tables=all_tables,
+            references=tuple(dict.fromkeys((*current.references, *(t.reference for t in tables)))),
+            reviewed_fingerprint="", client_reviewed_fingerprint="")
     value = json.loads(encoded(bundle))
     value["published"] = [asdict(t) for t in tables]
     value["include_trades"] = bool(include_trades)
-    result = store_bundle(draft, value, expected_revision=expected_revision)
+    if receipt:
+        value["cross_source_receipts"] = receipt
+    result = store_bundle(result, value, expected_revision=expected_revision)
+    if updated is current:
+        return result
     blocks = {b.key: b for b in result.blocks}
     blocks[destination] = updated
     return replace(result, blocks=tuple(blocks.values()))
