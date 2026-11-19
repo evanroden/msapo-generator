@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from hashlib import sha256
+import re
 
 import streamlit as st
 
@@ -11,7 +12,7 @@ from app.monthly_report_capital_master import (
     CapitalItem, capital_report_block, load_capital_master,
     save_capital_master, select_capital,
 )
-from app.monthly_report_content_policy import table_has_pricing
+from app.monthly_report_content_policy import price_column, table_has_pricing
 from app.monthly_report_ui_text import literal
 
 
@@ -30,15 +31,159 @@ def _site(profile, name):
     return found[0]
 
 
+def _row_id(kind: str, value: str) -> str:
+    """A new capital row ID that the client price check can never read as money.
+
+    A bare hex ending such as "...5cad" or "...7aed" reads as an amount in
+    Canadian dollars or dirhams, and the report then refuses its capital
+    details (about one ID in 3,000). A final non-hex letter means no currency
+    code and no number can close the ID. Saved IDs keep their value.
+    """
+    return f"{kind}-{sha256(value.encode()).hexdigest()[:24]}x"
+
+
 def _new_key(site, row, position):
-    return "report-" + sha256(repr((site, row, position)).encode()).hexdigest()[:24]
+    return _row_id("report", repr((site, row, position)))
 
 
-def reviewed_capital_items(draft, block, master):
+
+# Only named native columns are eligible for contract approval. A DOCX import
+# keeps its original headings/rows in the report; this adapter does not rewrite
+# that source or infer current status from a historical cell.
+_NATIVE_ROLES = {
+    "facility": {"facility", "facilityname", "site", "sitename"},
+    "priority": {"priority", "prioritylevel", "rank"},
+    "recommendation": {"recommendation", "recommendedaction", "capitalrecommendation"},
+    "asset": {"asset", "assetid", "equipmentid"},
+}
+
+
+def _native_capital_items(draft, block, master, *, confirm_priority_changes=False):
+    """Copy reviewed DOCX table occurrences to contract defaults, without editing the table.
+
+    Existing site-scoped approvals absent from this import are retained. A
+    native imported row has its own stable source occurrence identity: priority
+    and time-varying status are deliberately not part of that identity.
+    """
+    specs = [part for section in draft.sections for part in section.blocks
+             if part.key == "capital_renewal"]
+    if len(specs) != 1:
+        raise ValueError("The imported capital column schema cannot be verified.")
+    headings = tuple(column.title for column in specs[0].columns)
+    canonical = headings == MAIN and all(len(row) == len(MAIN) for row in block.rows)
+    if canonical and not any(ref.startswith("docx:") for ref in block.references):
+        return None  # Existing manual and approved-table paths remain unchanged.
+    if (len(block.references) != 1 or
+            not re.fullmatch(r"docx:[0-9a-f]{64}:[a-zA-Z0-9][\w.:-]{0,159}",
+                             block.references[0])):
+        raise ValueError("Imported capital rows need one verified DOCX source identity.")
+    if block.extra_tables:
+        raise ValueError("Review other capital source tables separately; nothing was discarded.")
+    if not headings or any(len(row) != len(headings) for row in block.rows):
+        raise ValueError("Imported capital rows do not match their original column schema.")
+
+    def position(role, *, required=True):
+        matched = [i for i, heading in enumerate(headings)
+                   if re.sub(r"[^a-z0-9]", "",
+                             re.sub(r"\s+\(\d+\)$", "", heading).casefold())
+                   in _NATIVE_ROLES[role]]
+        if len(matched) > 1 or required and not matched:
+            raise ValueError("Imported capital column mapping is missing or ambiguous: " + role)
+        return matched[0] if matched else None
+
+    facility = position("facility")
+    priority = position("priority")
+    recommendation = position("recommendation")
+    asset = position("asset", required=False)
+    if any(price_column(heading) for heading in headings) or table_has_pricing(headings, block.rows):
+        raise ValueError("Financial source columns cannot be approved; review them in the native report.")
+    # Do not accidentally release contact metadata in public technical reports.
+    if any(re.search(r"\b(?:contact|phone|email|address)\b", heading.casefold())
+           for heading in headings):
+        raise ValueError("Private contact source columns cannot enter approved capital defaults.")
+
+    source_items = [item for item in master.items if item.source_reference]
+    by_source = {item.source_reference: item for item in source_items}
+    if len(by_source) != len(source_items):
+        raise ValueError("Duplicate approved capital source identities require explicit review.")
+    selected = {site.key for site in draft.profile.facilities}
+    proposed = {}
+    occurrences = {}
+    for row in block.rows:
+        site = _site(draft.profile, row[facility])
+        level, action = row[priority].strip(), row[recommendation].strip()
+        if not level or not action:
+            raise ValueError("Every imported capital row needs an explicit priority and recommendation.")
+        equipment = row[asset].strip() if asset is not None else ""
+        extra = tuple((("Source status (historical, not current completion)"
+                        if title.strip().casefold() == "status" else title), value)
+                      for i, (title, value) in enumerate(zip(headings, row))
+                      if i not in (facility, priority, recommendation, asset))
+        # A duplicate recommendation on a different asset is a separate item.
+        # Exact duplicates remain separate numbered source occurrences.
+        signature = (site.key, action.casefold(), equipment.casefold())
+        occurrence = occurrences.get(signature, 0) + 1
+        occurrences[signature] = occurrence
+        source = (block.references[0] + ":r-" +
+                  sha256(repr(signature).encode()).hexdigest()[:20] +
+                  f"-{occurrence:03d}")
+        old = by_source.get(source)
+        if old is None:
+            # A later month's DOCX has a new file SHA. Reuse a unique reviewed
+            # site/item identity rather than appending an identical row; the
+            # original approved source pointer remains intact.
+            matching = [item for item in master.items
+                        if item.site_keys == (site.key,) and not item.override_of
+                        and item.recommendation.casefold() == action.casefold()
+                        and item.asset.casefold() == equipment.casefold()]
+            if len(matching) > 1:
+                raise ValueError("Duplicate reviewed capital recommendations need exact row identity.")
+            old = matching[0] if matching else None
+        if old is not None and set(old.site_keys) != {site.key}:
+            raise ValueError("Imported capital identity conflicts with approved facility scope.")
+        # A native source is not permission to duplicate or replace a global
+        # recommendation. The existing approved-list action supports explicit
+        # site exceptions while preserving its contract-wide parent.
+        if old is None and any(
+                not parent.site_keys and not parent.override_of and (
+                    parent.recommendation.casefold() == action.casefold() or
+                    bool(equipment) and parent.asset.casefold() == equipment.casefold())
+                for parent in master.items):
+            raise ValueError("A matching contract-wide capital item is approved. "
+                             "Use the approved list to review a site exception.")
+        item = CapitalItem(
+            key=old.key if old else _row_id("import", source),
+            priority=level, recommendation=action, asset=equipment,
+            site_keys=(site.key,), extra_fields=extra,
+            source_reference=old.source_reference if old and old.source_reference else source,
+        )
+        if old is not None and old.priority != level and not confirm_priority_changes:
+            raise ValueError("Approved capital priority changes need separate explicit confirmation.")
+        if item.key in proposed:
+            raise ValueError("Repeated imported capital row identities need review.")
+        proposed[item.key] = item
+
+    # An import might be only one page of a larger reviewed capital list.
+    # Never retire approved rows that were not present in this source.
+    retained = {item.key: item for item in master.items}
+    for key, item in proposed.items():
+        if key in retained and (not retained[key].site_keys
+                                or not set(retained[key].site_keys) <= selected):
+            raise ValueError("Imported capital cannot replace an unselected site's approved row.")
+        retained[key] = item
+    return tuple(retained.values()), ()
+
+
+
+def reviewed_capital_items(draft, block, master, *, confirm_priority_changes=False):
     """Reconcile an explicitly reviewed native table without changing other sites."""
     profile = draft.profile
     if block.key != "capital_renewal" or block.source == "Omit" or not block.rows:
         raise ValueError("Review an included Section 9 capital table before approval.")
+    native = _native_capital_items(
+        draft, block, master, confirm_priority_changes=confirm_priority_changes)
+    if native is not None:
+        return native
     refs = tuple(r for r in block.references if r.startswith("capital-master:"))
     if refs and refs != (master.reference,):
         raise ValueError("This report uses an earlier approved version. Use the current version explicitly before updating it.")
@@ -224,6 +369,13 @@ def render_capital_master(draft, block, prefix):
             return block
         st.markdown("**Approve this report's reviewed Section 9 table for future reuse**")
         st.caption("Only selected sites are updated; no vendor prices, private notes or attachments are shared.")
+        native_source = any(ref.startswith("docx:") for ref in block.references)
+        if native_source:
+            st.caption("Native source columns stay in this report. Capital approval copies only reviewed site, priority, recommendation and nonfinancial source details; undated status is historical source context, not current completion.")
+        confirm_priority_changes = (st.checkbox(
+            "I also confirm changes to previously approved capital priorities from this imported source",
+            key=key + "_priority_changes_" + block.fingerprint + "_" + str(baseline))
+            if native_source and master.revision else False)
         confirmed = st.checkbox(
             "I reviewed these capital recommendations and approve a new contract version",
             key=key + "_confirm_" + block.fingerprint + "_" + str(baseline))
@@ -231,7 +383,8 @@ def render_capital_master(draft, block, prefix):
                      key=key + "_save_" + block.fingerprint + "_" + str(baseline),
                      disabled=not confirmed):
             try:
-                items, removed = reviewed_capital_items(draft, block, master)
+                items, removed = reviewed_capital_items(
+                    draft, block, master, confirm_priority_changes=confirm_priority_changes)
                 saved = save_capital_master(
                     draft.profile, items, expected_revision=baseline,
                     actor=draft.prepared_by, confirmed=True, removed_ids=removed)

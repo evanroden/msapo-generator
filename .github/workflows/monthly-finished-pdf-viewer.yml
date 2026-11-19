@@ -11,6 +11,8 @@ on:
       - 'scripts/qa_monthly_finished_pdf_viewer.py'
       - 'tests/fixtures/workspaces/finished_pdf_viewer_app.py'
       - 'requirements-dev.lock'
+      - 'scripts/ci_ubuntu_mirror_priority.py'
+      - 'tests/test_ci_ubuntu_mirror_priority.py'
   workflow_dispatch:
 
 permissions:
@@ -33,11 +35,17 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install locked application and browser runtime
+        # On 18 Nov a slow Ubuntu mirror used this job's whole budget before
+        # the check started, on five PRs. Prefer the faster existing mirror,
+        # as the other browser jobs do, and bound the install on its own.
+        timeout-minutes: 20
         run: |
+          sudo python3 scripts/ci_ubuntu_mirror_priority.py
           python -m pip install -r requirements-dev.lock
           python -m pip install playwright==1.58.0
           python -m playwright install --with-deps chromium webkit
       - name: Native synthetic finished-PDF view, no-PDF replacement and reset
+        timeout-minutes: 8
         run: python scripts/qa_monthly_finished_pdf_viewer.py
       - name: Retain full browser evidence including first failures
         if: always()

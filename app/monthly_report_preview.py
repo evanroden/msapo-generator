@@ -15,6 +15,7 @@ from docx import Document
 from docx.oxml.ns import qn
 from PIL import Image
 
+from app.monthly_report_preview_metrics import measured, phase
 from app.monthly_report_render_compat import rendering_docx
 from app import monthly_report_library as library, pdf_converter
 from app import monthly_report_render_jobs as monthly_render_jobs
@@ -72,23 +73,28 @@ _REVIEW_CODES = {
 }
 
 
-def preview_report(draft, asset_loader=None, *, source_view=None):
+@measured("report_preview_total_including_queue")
+def preview_report(draft, asset_loader=None, *, source_view=None, ticket_only=False):
+    """Full review preview; ticket_only is exclusively for private raster-on-read stores."""
     with monthly_render_jobs.work_slot(preview=True, review=True, wait_seconds=10):
-        return _preview_report(draft, asset_loader, source_view=source_view)
+        return _preview_report(draft, asset_loader, source_view=source_view,
+                               ticket_only=ticket_only)
 
 
-def _preview_report(draft, asset_loader=None, *, source_view=None):
+def _preview_report(draft, asset_loader=None, *, source_view=None, ticket_only=False):
     from app.monthly_report_source_view_runtime import render_operation, preview_fingerprint
     with render_operation(draft, source_view) as operation:
         fingerprint = preview_fingerprint(draft)
         result = _preview_verified_report(draft, asset_loader, source_view=operation.view,
-                                          fingerprint=fingerprint)
+                                          fingerprint=fingerprint, ticket_only=ticket_only)
         if preview_fingerprint(draft) != fingerprint:
             raise ValueError('The source-view preview evidence changed during conversion; no output was published.')
         return result
 
 
-def _preview_verified_report(draft, asset_loader=None, *, source_view=None, fingerprint):
+@measured("report_preview_verified_total")
+def _preview_verified_report(draft, asset_loader=None, *, source_view=None, fingerprint,
+                             ticket_only=False):
     blockers = [
         c.message
         for c in preflight(draft)
@@ -114,7 +120,8 @@ def _preview_verified_report(draft, asset_loader=None, *, source_view=None, fing
         )
         return image.data
 
-    raw = _build_docx(draft, asset_loader=small_asset if asset_loader else None, source_view=source_view)
+    with phase("report_docx_assembly"):
+        raw = _build_docx(draft, asset_loader=small_asset if asset_loader else None, source_view=source_view)
     scratch = library._root() / "previews"
     scratch.mkdir(parents=True, exist_ok=True)
     stem = "preview-" + uuid4().hex
@@ -124,17 +131,34 @@ def _preview_verified_report(draft, asset_loader=None, *, source_view=None, fing
         with tempfile.TemporaryDirectory(prefix="report-", dir=scratch) as directory:
             path = Path(directory) / (stem + ".docx")
             from app.monthly_report_designs import render_profile_for
-            compatible = rendering_docx(raw, profile=render_profile_for(draft.profile))
+            with phase("report_render_compat"):
+                compatible = rendering_docx(raw, profile=render_profile_for(draft.profile))
             del raw
             from app.monthly_report_preview_images import write_preview_docx
-            write_preview_docx(compatible, path)
+            with phase("report_preview_image_copy"):
+                write_preview_docx(compatible, path)
             del compatible
             small_asset.cache_clear()
-            actual = monthly_render_jobs.convert_to_pdf(path, wait_seconds=0)
+            with phase("report_pdf_conversion"):
+                actual = monthly_render_jobs.convert_to_pdf(path, wait_seconds=0)
             if actual.stat().st_size > 80 * 1024 * 1024:
                 raise ValueError(
                     "Preview exceeds the 80 MB conversion bound. Preview fewer sections or reduce image sizes."
                 )
+            # Review uses a private PreviewStore ticket, which sends only
+            # JPEG page rasters to the browser. Unlike the legacy downloadable
+            # PDF, that server-only ticket need not flatten *every* page first.
+            # Preserve the original all-page raster path for large inputs and
+            # every caller that can download a draft PDF.
+            if ticket_only:
+                from app.monthly_report_preview_ticket import private_ticket_pdf
+                with fitz.open(actual) as native:
+                    fast = private_ticket_pdf(
+                        native, source_bytes=actual.stat().st_size,
+                        max_pages=MAX_PREVIEW_PAGES, max_bytes=MAX_PREVIEW_BYTES,
+                    )
+                    if fast is not None:
+                        return ReportPreview(fast, len(native), fingerprint, draft.period.label)
             output = fitz.open()
             try:
                 image_bytes = 0
@@ -305,6 +329,7 @@ def _slice_document_sections(raw, first, count):
     return _save(document)
 
 
+@measured("section_docx_assembly")
 def section_preview_docx(draft, section_key, asset_loader=None, *, source_view=None):
     """Private unfinished preview input, never an approved client download."""
     from app.monthly_report_source_view_runtime import render_operation
@@ -332,10 +357,12 @@ def _section_preview_docx(draft, section_key, asset_loader=None, *, source_view=
         revision = None
         if assembly_cache.active():
             # Preflight and pinned-source validation still run on every request.
-            # A full draft fingerprint is conservative: unrelated edits may
-            # miss the cache, but cannot reuse old native content.
+            # This exact scoped draft is what the native assembler receives.
+            # Unrelated section edits can reuse identical bytes, while report
+            # period, operator, design pin, source view and section dependencies
+            # remain in its digest. Unsaved asset bytes are owner-scope-bound.
             from app.monthly_report_source_view_runtime import cache_identity
-            revision = (draft.fingerprint, section_key, cache_identity(draft))
+            revision = (scope.fingerprint, section_key, cache_identity(draft))
             cached = assembly_cache.read(revision)
             if cached is not None:
                 return cached
@@ -365,6 +392,7 @@ def _section_preview_docx(draft, section_key, asset_loader=None, *, source_view=
     return _slice_document_sections(raw, 2 + 2 * index if section else 0, 2 if section else 1)
 
 
+@measured("section_preview_total_including_queue")
 def preview_section(draft, section_key, asset_loader=None, *, source_view=None):
     """High-quality, section-only preview with bounded, cleaned-up conversion."""
     with monthly_render_jobs.work_slot(preview=True):
@@ -402,7 +430,8 @@ def _preview_verified_section(draft, section_key, asset_loader=None, *, source_v
             from app.monthly_report_preview_images import write_preview_docx
             write_preview_docx(compatible, path)
             del compatible
-            actual = monthly_render_jobs.convert_to_pdf(path, wait_seconds=0)
+            with phase("section_pdf_conversion"):
+                actual = monthly_render_jobs.convert_to_pdf(path, wait_seconds=0)
             if actual.stat().st_size > MAX_PREVIEW_BYTES:
                 raise ValueError("This section preview exceeds 25 MB. Reduce the size of its pictures.")
             with fitz.open(actual) as pdf:
