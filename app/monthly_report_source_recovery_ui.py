@@ -31,15 +31,17 @@ def render_failed_file_retries(profile, period, revision, local_key, picked, con
     st.session_state[local_key + "_failed_original"] = bool(requests)
     if not requests:
         return None
-    st.caption("Only the failed file needs attention. Retry its unchanged bytes below, "
-               "or replace it by selecting a corrected copy in the uploader above. "
-               "Accepted files and report edits remain in place.")
+    guidance = st.empty()
+    guidance.caption("Only the failed file needs attention. Retry its unchanged bytes below, "
+                     "or replace it by selecting a corrected copy in the uploader above. "
+                     "Accepted files and report edits remain in place.")
     for request in requests:
         # An old button cannot address another chooser, source set or report
         # revision. The pure operation repeats those checks before reading.
         identity = sha256(repr(request).encode("utf-8")).hexdigest()[:24]
-        if not st.button("Retry failed file · " + safe_source_name(request),
-                         key=local_key + "_retry_file_" + identity):
+        action = st.empty()
+        if not action.button("Retry failed file · " + safe_source_name(request),
+                             key=local_key + "_retry_file_" + identity):
             continue
         try:
             recovered, notices = retry_failed_source(
@@ -47,5 +49,20 @@ def render_failed_file_retries(profile, period, revision, local_key, picked, con
         except ValueError:
             st.warning("This file selection or report changed. Review the current files before retrying.")
             return None
+        # A retry reports only its own result. Keep other failed originals'
+        # warnings so their separate actions remain available on the next run.
+        notices = tuple(message for message in messages
+                        if not message.startswith("Not read: " + request.filename + ". ")) + tuple(notices)
+        remaining = tuple(candidate for candidate in failed_source_retries(
+            profile, period, revision, picked, recovered)
+            if any(message.startswith("Not read: " + candidate.filename + ". ")
+                   for message in notices))
+        st.session_state[local_key + "_failed_original"] = bool(remaining)
+        if request.sha256 in {item.source.id for item in recovered}:
+            # This widget was rendered before the ingest result was known.
+            # Retire only its placeholder immediately; leave sibling buttons.
+            action.empty()
+            if not remaining:
+                guidance.empty()
         return recovered, notices, request
     return None
