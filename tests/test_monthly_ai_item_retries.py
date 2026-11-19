@@ -360,3 +360,37 @@ def test_empty_middle_page_does_not_omit_surrounding_eligible_pages(
     assert {f.page for f in state["unit_ai_facts"][2]} == {1, 3}
     assert any("Page 2: No readable text" in w for w in warnings)
     assert source.page_texts[1] == " "
+
+
+def test_deliberate_reread_repairs_only_an_unsupported_saved_date(sample, monkeypatch):
+    profile, period, original, draft = sample
+    source = replace(original, page_texts=(
+        "Serviced unit 1. September 17, 2026.",
+        *original.page_texts[1:],
+    ))
+    verified = ai.normalize_facts(
+        {"facts": [{"page": 1, "kind": "action",
+                    "text": "Serviced unit 1.", "quote": "Serviced unit 1.",
+                    "date": "2026-09-17"}]},
+        source, (1,), profile, period,
+    )[0]
+    legacy = replace(verified, date="2026-09-01")
+    current = replace(source, facts=(legacy,))
+    assert ai.fact_date_problems((legacy,), (current,))
+    assert not ai.fact_date_problems((verified,), (current,))
+    state = {
+        "unit_evidence": (SourceContent(current),),
+        "unit_ai_facts": (current.id, current.fingerprint, (verified,)),
+        "unit_ai_source": current.id,
+    }
+    state["unit_pending_fact_approval"] = ui._fact_approval(
+        draft, "unit", current, (verified,))
+    monkeypatch.setattr(ui, "st", SimpleNamespace(
+        session_state=state,
+        warning=lambda message: pytest.fail(f"unexpected rejection: {message}"),
+    ))
+    ui._apply_pending_fact_approval(draft, "unit")
+    repaired = state["unit_evidence"][0].source
+    assert repaired.facts == (verified,)
+    assert repaired.facts[0].id == legacy.id
+    assert not ai.fact_date_problems(repaired.facts, (repaired,))

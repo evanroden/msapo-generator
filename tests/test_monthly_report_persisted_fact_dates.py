@@ -133,7 +133,6 @@ def test_saved_date_warning_has_a_deliberate_fact_and_wording_recovery(monkeypat
     old_source, old_block = draft.sources[0], draft.blocks[0]
     fact = old_source.facts[0]
     requests, reservations = [], []
-    monkeypatch.setattr(ai, 'cached', lambda *args, **kwargs: None)
     monkeypatch.setattr(ai, 'reserve_call', lambda *args: reservations.append(args))
 
     def controlled_reader(prepare, read):
@@ -172,7 +171,12 @@ st.session_state['legacy_date_draft'] = replace(draft, blocks=tuple(blocks.value
     assert library.load_snapshot(draft.profile.contract, draft.profile.key, draft.period).draft == draft
 
     next(button for button in app.button if button.label == 'Find work, findings and follow-ups').click().run()
-    assert not app.exception and len(requests) == len(reservations) == 1
+    assert not app.exception and len(requests) == 1 and not reservations
+    # A52 admits a paid page through the per-page atomic receipt, not through
+    # the legacy whole-selection reserve_call hook.
+    budget_path = (library._profile_path(profile.contract, profile.key)
+                   / 'ai' / 'budgets' / (draft.period.key + '.json'))
+    assert library._read(budget_path)['calls'] == 1
     assert app.session_state['legacy_date_draft'].sources[0].facts == (fact,)
     next(button for button in app.button if button.label == 'Use these facts').click().run()
     assert not app.exception

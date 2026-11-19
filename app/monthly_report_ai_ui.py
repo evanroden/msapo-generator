@@ -392,7 +392,21 @@ def _apply_pending_fact_approval(draft, prefix):
     # this source. Deterministic fact IDs make unchanged reacceptance idempotent.
     facts = {fact.id: fact for fact in current.facts}
     for fact in proposed[2]:
-        facts.setdefault(fact.id, fact)  # Human-accepted same-ID facts take precedence.
+        prior = facts.get(fact.id)
+        if prior is None:
+            facts[fact.id] = fact
+        elif (
+            # Explicitly re-reading can repair a *provably unsupported* saved
+            # date on the same immutable quote, without changing any other
+            # human-edited field or replacing an already supported date.
+            prior.date and fact.date and prior.date != fact.date
+            and not prior.flags
+            and replace(prior, date=fact.date, flags=fact.flags) == fact
+            and ai.fact_date_problems((prior,), (current,))
+            and not ai.fact_date_problems((fact,), (current,))
+        ):
+            facts[fact.id] = fact
+        # Otherwise keep the accepted fact, including human corrections.
     updated = replace(current, facts=tuple(facts.values()))
     st.session_state[prefix + "_evidence"] = tuple(
         replace(content, source=updated) if content.source.id == current.id else content
