@@ -46,4 +46,6 @@ def test_cli_writes_only_one_full_suite_shard(tmp_path):
 
 
 def test_snapshot_has_measured_slowest_file():
-    assert shards.read_durations()["tests/test_streamlit_frontend_compat.py"] > 1400
+    # Main f0af9956, Tests 44203272158: 66 passed in 1041.26 seconds.
+    duration = shards.read_durations()["tests/test_streamlit_frontend_compat.py"]
+    assert 1000 < duration < 1100

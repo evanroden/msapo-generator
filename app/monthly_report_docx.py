@@ -25,6 +25,7 @@ from docx.enum.section import WD_SECTION_START
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
+from docx.text.paragraph import Paragraph
 
 from app.image_open import open_image, image_formats_for_suffix
 from app.monthly_report_render_compat import rendering_docx
@@ -387,7 +388,7 @@ def estimated_output_ranges(estimated_bytes: int) -> tuple[tuple[int, int], tupl
 
 def _picture(document, raw: bytes, *, width: float = 7, height: float = 8,
              inset: float = 0, page_break_before: bool = False,
-             keep_with_next: bool = False) -> None:
+             keep_with_next: bool = False, alt_text: str = "") -> None:
     paragraph = document.add_paragraph()
     paragraph.paragraph_format.left_indent = Inches(inset)
     paragraph.paragraph_format.space_after = Pt(0)
@@ -398,7 +399,7 @@ def _picture(document, raw: bytes, *, width: float = 7, height: float = 8,
         # caption paragraph that follows it; otherwise the renderer can
         # leave an orphan caption alone on the next page.
         paragraph.paragraph_format.keep_with_next = True
-    _fit_picture(paragraph.add_run(), raw, width, height)
+    _fit_picture(paragraph.add_run(), raw, width, height, alt_text=alt_text)
 
 
 def _stacked_pair(first: bytes, second: bytes) -> bool:
@@ -411,12 +412,15 @@ def _stacked_pair(first: bytes, second: bytes) -> bool:
     return sizes[0] == other and height > 0 and width / height >= 1.6
 
 
-def _fit_picture(run, raw, width, height):
+def _fit_picture(run, raw, width, height, *, alt_text=""):
     with open_image(BytesIO(raw), formats=("JPEG", "PNG")) as image:
         if image.width * image.height > _MAX_PIXELS_PER_FRAME:
             raise ValueError("Resolved image exceeds the pixel limit.")
         scale = min(width / image.width, height / image.height)
-        run.add_picture(BytesIO(raw), width=Inches(image.width * scale), height=Inches(image.height * scale))
+        shape = run.add_picture(BytesIO(raw), width=Inches(image.width * scale), height=Inches(image.height * scale))
+        if alt_text:
+            shape._inline.docPr.set("descr", alt_text)
+            shape._inline.docPr.set("title", alt_text)
 
 
 def _divider_background(document, raw):
@@ -684,12 +688,13 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
         heading = document.add_heading(f"{section.number}. {section.title}", 1)
         mark_target(heading, section.key, sections.index(section))
         chart_emitted = False
+        diagram_emitted = False
         for spec in section.blocks:
             block = blocks.get(spec.key)
             if block is None or block.source == "Omit":
                 continue
             if (section.key == "organization" and spec.key == "contact_matrix"
-                    and chart_emitted and (block.text.strip() or block.rows or
+                    and diagram_emitted and (block.text.strip() or block.rows or
                                           any(t.rows for t in block.extra_tables) or block.asset_hashes)):
                 # A full-size chart and facility contacts have distinct jobs.
                 # Never squeeze contact rows underneath the chart or split an
@@ -698,16 +703,25 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
                 # must be evaluated separately, never rewritten by this path.
                 heading = document.add_heading("Facility contacts", 2)
                 heading.paragraph_format.page_break_before = True
+            # A short landscape workflow must not occupy the chart's page.
+            # Place authored text on the new page, or attach the break to
+            # the first diagram when the block has no authored text.
+            workflow_starts_page = (section.key == "organization" and chart_emitted
+                                    and spec.key in ("business_hours_workflow", "after_hours_workflow")
+                                    and bool(block.text.strip() or block.asset_hashes))
             text_start = len(_body_items(document))
             _text(document, block.text)
             text_items = _body_items(document)[text_start:]
+            if workflow_starts_page and text_items:
+                Paragraph(text_items[0], document._body).paragraph_format.page_break_before = True
             placed_tables = []
             from app.monthly_report_visuals import org_groups, org_page, photo_count, photo_page
             if block.org_nodes:
                 for index in range(len(org_groups(block.org_nodes))):
                     if index:
                         document.add_page_break()
-                    _picture(document, org_page(block.org_nodes, index), height=7.7)
+                    _picture(document, org_page(block.org_nodes, index), height=7.7,
+                             alt_text="Organization chart for this report")
             elif spec.type == "image_grid" and block.asset_hashes:
                 if asset_loader is None:
                     raise ValueError("Photo pages require the library resolver.")
@@ -726,6 +740,11 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
                     else:
                         _picture(document, photo_page(photo_run(block, indexes), asset_loader, 0), height=7.7)
             pictures = block.asset_hashes if not block.org_nodes and spec.type != "image_grid" else ()
+            diagram_alt = {
+                "org_chart": "Organization chart for this report",
+                "business_hours_workflow": "Business-hours workflow diagram for this contract",
+                "after_hours_workflow": "After-hours workflow diagram for this contract",
+            }.get(spec.key, "")
             captions = tuple(block.asset_captions) + ("",) * len(pictures)
             index = page = 0
             while index < len(pictures):
@@ -740,11 +759,15 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
                 if partner is not None and _stacked_pair(raw, partner):
                     # Two slides of one deck (such as the two outage workflows)
                     # share a page, one above the other, as in the source report.
-                    _picture(document, raw, height=3.95, page_break_before=page > 0)
-                    _picture(document, partner, height=3.95)
+                    _picture(document, raw, height=3.95,
+                             page_break_before=page > 0 or (workflow_starts_page and not text_items),
+                             alt_text=diagram_alt)
+                    _picture(document, partner, height=3.95, alt_text=diagram_alt)
                     index += 2
                 else:
-                    _picture(document, raw, page_break_before=page > 0, keep_with_next=bool(captions[index]))
+                    _picture(document, raw,
+                             page_break_before=page > 0 or (workflow_starts_page and not text_items),
+                             keep_with_next=bool(captions[index]), alt_text=diagram_alt)
                     if captions[index]:
                         document.add_paragraph(captions[index], style="Caption")
                     index += 1
@@ -808,6 +831,9 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
             _after_pictures(text_items, picture_items, placed_tables)
             if spec.key == "org_chart" and (block.org_nodes or block.asset_hashes):
                 chart_emitted = True
+            if spec.key in ("org_chart", "business_hours_workflow", "after_hours_workflow") and (
+                    block.org_nodes or block.asset_hashes):
+                diagram_emitted = True
         carried = [item for item in draft.follow_ups if item.included and ("issues" if item.category == "issue" else "proposals") == section.key]
         if carried:
             from app.monthly_report_followups import report_text
@@ -822,10 +848,19 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
 
 
 def generate_report(draft: ReportDraft, *, acknowledged_fingerprint: str = "",
-                    asset_loader: Callable[[str], bytes] | None = None, source_view=None) -> ReportPackage:
+                    asset_loader: Callable[[str], bytes] | None = None, source_view=None,
+                    reuse_owner: str | None = None, reuse_asset_versions=()) -> ReportPackage:
+    from contextlib import nullcontext
+    from app import monthly_report_final_conversion_cache as final_cache
+    report = (draft.profile.contract, draft.profile.key, draft.period.key)
+    # Existing callers can opt into an explicitly established owner context
+    # without adding kwargs to legacy Streamlit test doubles.
+    owner_context = (final_cache.owner_scope(reuse_owner, report, reuse_asset_versions)
+                     if reuse_owner is not None else nullcontext())
     try:
-        with monthly_render_jobs.work_slot():
-            return _generate_report(draft, acknowledged_fingerprint=acknowledged_fingerprint, asset_loader=asset_loader, source_view=source_view)
+        with owner_context:
+            with monthly_render_jobs.work_slot():
+                return _generate_report(draft, acknowledged_fingerprint=acknowledged_fingerprint, asset_loader=asset_loader, source_view=source_view)
     except monthly_render_jobs.RenderBusy as exc:
         raise ValueError(str(exc)) from exc
 
@@ -847,12 +882,22 @@ def _generate_verified_report(draft, *, acknowledged_fingerprint, asset_loader, 
     from app.monthly_report_media_privacy import sanitize_package_media, sanitize_package_transparency
     docx = sanitize_package_transparency(docx)
     docx = sanitize_package_media(docx)
-    pdf, error = _convert_report_pdf(draft, docx)
+    from app import monthly_report_final_conversion_cache as final_cache
+    # The operation was rederived from current source/receipt evidence, and
+    # assemble_docx re-ran preflight and warning acknowledgement above. Reuse
+    # only the actual PDF conversion, never that authority or Word assembly.
+    with final_cache.verified_revision((
+            draft.fingerprint, acknowledged_fingerprint,
+            getattr(operation, "manifest_digest", ""), getattr(operation, "receipt_digest", ""),
+            operation.art_digest, getattr(source_view, "receipt_sha256", ""))):
+        pdf, error = _convert_report_pdf(draft, docx)
     from app.monthly_report_contents_review import contents_notice_for
-    from app.monthly_report_contents_pagination import synchronize
+    from app.monthly_report_contents_pagination import ensure_pdf_page_links, synchronize
     notice = contents_notice_for(draft.profile)
     if generated_contents:
-        updated, generated_notice = synchronize(docx, pdf, included_sections(draft.sections))
+        selected = included_sections(draft.sections)
+        pdf = ensure_pdf_page_links(pdf, selected)
+        updated, generated_notice = synchronize(docx, pdf, selected)
         if generated_notice is not None:
             docx, notice = canonical_docx(updated), generated_notice
     return ReportPackage(docx, pdf, report_filename(draft, "docx"), report_filename(draft, "pdf"), draft.fingerprint, error,
@@ -899,9 +944,11 @@ def _retry_verified_report_pdf(draft, package, operation):
     if package.pdf:
         return package
     pdf, error = _convert_report_pdf(draft, package.docx)
-    from app.monthly_report_contents_pagination import synchronize
+    from app.monthly_report_contents_pagination import ensure_pdf_page_links, synchronize
     if package.generated_contents:
-        docx, notice = synchronize(package.docx, pdf, included_sections(draft.sections))
+        selected = included_sections(draft.sections)
+        pdf = ensure_pdf_page_links(pdf, selected)
+        docx, notice = synchronize(package.docx, pdf, selected)
         if notice is not None:
             return replace(package, docx=canonical_docx(docx), pdf=pdf, pdf_error=error, contents_notice=notice)
     return replace(package, pdf=pdf, pdf_error=error)
@@ -935,6 +982,16 @@ def _convert_report_pdf(draft, docx):
             # existed. Clean only its disposable PDF input, not that download.
             from app.monthly_report_media_privacy import sanitize_package_transparency
             converted_copy = sanitize_package_transparency(converted_copy)
+            from app import monthly_report_final_conversion_cache as final_cache
+            # Hash the *actual disposable input*, not merely the draft or
+            # downloadable DOCX: pinned photo budgets, renderer adaptations
+            # and transparency scrubbing may all change conversion geometry.
+            conversion = (hashlib.sha256(converted_copy).hexdigest(),
+                          pdf_converter.PDF_BACKEND, pdf_converter.GOTENBERG_URL,
+                          "lossless-final-v1")
+            cached = final_cache.read(conversion)
+            if cached is not None:
+                return cached, ""
             input_path.write_bytes(converted_copy)
             del converted_copy
             release_transient_word_memory()
@@ -942,6 +999,7 @@ def _convert_report_pdf(draft, docx):
             pdf = actual_pdf.read_bytes()
             if not pdf.startswith(b"%PDF-"):
                 raise ValueError("The converter returned an invalid PDF.")
+            final_cache.remember(conversion, pdf)
     except Exception as exc:  # noqa: BLE001 - keep the finished DOCX on any backend failure
         pdf = None
         if isinstance(exc, pdf_converter.PDFConversionTimeout):

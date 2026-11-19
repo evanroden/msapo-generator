@@ -64,6 +64,42 @@ def _verified_saved_draft(value: dict) -> ReportDraft:
     return draft
 
 
+def _journal_assets(value: dict) -> tuple[str, ...]:
+    """A manifest is a bounded list of distinct content-addressed aliases.
+
+    A dict or string is not a list even if iteration happens to yield a valid
+    picture name. Never silently adopt a malformed journal or its old receipt.
+    """
+    names = value.get("assets", ())
+    if (not isinstance(names, (list, tuple)) or len(names) > 100
+            or any(not isinstance(name, str) or not library._ASSET.fullmatch(name)
+                   for name in names)
+            or len(set(names)) != len(names)):
+        raise library.LibraryError("The unfinished report picture list is invalid. Saved reports are unchanged.")
+    return tuple(names)
+
+
+def _verify_picture_scope(draft: ReportDraft, pending_names) -> None:
+    """Each included draft picture must be in this journal or this report.
+
+    Content digests establish byte identity, not permission to use another
+    site's image. The library path is report-scoped; final asset reads retain
+    their existing bounded digest/integrity verification. This check does not
+    change unused/removed picture history or publish standing information.
+    """
+    pending = set(pending_names)
+    contract, key = draft.profile.contract, draft.profile.key
+    for reference in library.used_asset_references(draft):
+        if not isinstance(reference, str) or not library._ASSET.fullmatch(reference):
+            raise library.LibraryError("An unfinished report picture reference is invalid.")
+        if reference not in pending:
+            own = library._profile_path(contract, key) / "assets" / reference
+            if own.is_symlink() or not own.is_file():
+                raise library.LibraryError(
+                    "An unfinished report references a picture unavailable to this report. "
+                    "Saved reports are unchanged.")
+
+
 def current_generation(token: str, contract: str, key: str, period: ReportPeriod) -> str:
     """Recover the new identity after an explicit discard, even without a draft."""
     if not enabled(token):
@@ -91,10 +127,10 @@ def load(token: str, contract: str, key: str, period: ReportPeriod) -> ActiveWor
     draft = _verified_saved_draft(value)
     if (draft.profile.contract, draft.profile.key, draft.period) != (contract, key, period):
         raise library.LibraryError("Unfinished browser work belongs to a different report.")
+    names = _journal_assets(value)
+    _verify_picture_scope(draft, names)
     result = []
-    for name in value.get("assets", ()):
-        if not isinstance(name, str) or not library._ASSET.fullmatch(name):
-            raise library.LibraryError("An unfinished report picture reference is invalid.")
+    for name in names:
         path = folder / "assets" / name
         try:
             if path.stat().st_size > library.MAX_ASSET_BYTES:
@@ -137,6 +173,7 @@ def save(token: str, draft: ReportDraft, *, expected_revision: int,
                 or not isinstance(raw, bytes) or len(raw) > library.MAX_ASSET_BYTES
                 or library.asset_reference(raw, name.rsplit(".", 1)[-1]) != name):
             raise library.LibraryError("An unsaved picture could not be retained safely.")
+    _verify_picture_scope(draft, pending)
     with library._locked(folder):
         path = folder / "working.json"
         previous = library._read(path) if path.exists() else None
@@ -146,7 +183,9 @@ def save(token: str, draft: ReportDraft, *, expected_revision: int,
                              and not isinstance(previous.get("draft"), dict))):
             raise library.LibraryError("The unfinished browser journal could not be read safely.")
         if previous and previous["kind"] == "browser_active_work_v1":
-            _verified_saved_draft(previous)
+            previous_draft = _verified_saved_draft(previous)
+            previous_assets = _journal_assets(previous)
+            _verify_picture_scope(previous_draft, previous_assets)
         generation = _generation(previous) if previous else ""
         revision = previous["revision"] if previous and previous["kind"] == "browser_active_work_v1" else 0
         asset_names = tuple(sorted(pending))

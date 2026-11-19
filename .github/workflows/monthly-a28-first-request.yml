@@ -1,0 +1,74 @@
+name: A28 first requested PDF page - capped synthetic budget
+
+on:
+  pull_request:
+    paths:
+      - 'app/monthly_report_section_preview_ui.py'
+      - 'app/monthly_report_preview_view.py'
+      - 'tests/test_a28_first_requested_section_pages.py'
+      - 'scripts/qa_a28_first_page.py'
+      - '.github/workflows/monthly-a28-first-request.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'app/monthly_report_section_preview_ui.py'
+      - 'app/monthly_report_preview_view.py'
+      - 'scripts/qa_a28_first_page.py'
+      - '.github/workflows/monthly-a28-first-request.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  first-page-cgroup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the locked application image
+        run: docker build --build-arg APP_GIT_COMMIT="${{ github.event.pull_request.head.sha || github.sha }}" -t a28-first-page .
+      - name: Compare prior default, selected-first and eager inventory under 512 MiB / half CPU
+        timeout-minutes: 12
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          mkdir -p test-artifacts/a28
+          docker run --rm --memory=512m --memory-swap=512m --cpus=0.5 \
+            -e A28_HEAD_SHA="$HEAD_SHA" \
+            -e A28_MEMORY_MIB=512 -e A28_CPU_FRACTION=0.5 \
+            -e A28_EVIDENCE_OUT=/out/first-page.json \
+            -v "$PWD/test-artifacts/a28:/out" \
+            --entrypoint python a28-first-page -m scripts.qa_a28_first_page
+      - name: Validate cold/warm metadata, source identity and selected page
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          result = json.loads(Path('test-artifacts/a28/first-page.json').read_text())
+          assert result['sha'] == os.environ['HEAD_SHA']
+          assert result['environment']['memory_mib'] == '512'
+          assert result['environment']['cpu_fraction'] == '0.5'
+          for n in (2, 24, 120):
+              rows = [r for r in result['samples'] if r['pages'] == n]
+              assert len(rows) == 6
+              assert {r['mode'] for r in rows} == {'prior_default', 'selected_first', 'eager_inventory'}
+              assert len({r['original_pdf_sha256'] for r in rows}) == 1
+              assert len({r['selected_jpeg_sha256'] for r in rows}) == 1
+              assert all(r['ticket_pages'] == n and r['selected_index'] == n-1 for r in rows)
+              assert all(r['warm_selected_wall_ms'] >= 0 for r in rows)
+          print('A28 synthetic samples and hashes verified at', result['sha'])
+          PY
+      - name: Preserve measurements even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a28-first-request-capped-${{ github.run_attempt }}
+          path: test-artifacts/a28/
+          if-no-files-found: warn
+          retention-days: 14
