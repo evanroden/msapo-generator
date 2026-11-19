@@ -1131,3 +1131,119 @@ def test_expense_receipt_mirror_keeps_source_names_without_numeric_prefixes(monk
     # prepends a sequence number. Live browser upload testing is separate.
     source = inspect.getsource(web_ui._render_purchase_workflow)
     assert 'st.session_state["uploaded_file_name"] = uploaded.name' in source
+
+
+def _synthetic_word_quote():
+    from docx import Document
+
+    document = Document()
+    document.add_paragraph("Synthetic repair work quote for test equipment.")
+    table = document.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "Scope"
+    table.cell(0, 1).text = "Replace the synthetic valve."
+    table.cell(1, 0).text = "Job"
+    table.cell(1, 1).text = "TEST-100"
+    document.add_paragraph("End of synthetic quote.")
+    buffer = BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def test_unsupported_quote_upload_shows_action_without_mime(monkeypatch):
+    _configure_smartsheet(monkeypatch)
+    app = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
+    assert not app.exception
+    app.file_uploader[0].upload(
+        "quote.xlsx", b"PK\x03\x04pretend spreadsheet",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ).run()
+    assert not app.exception
+    messages = [item.value for collection in (app.error, app.caption, app.warning)
+                for item in collection]
+    assert any("Excel files can't be read here" in str(value) for value in messages)
+    assert any("paste its text" in str(value) for value in messages)
+    assert not any("application/" in str(value) for value in messages)
+    assert not any(item.label == "Generate both files and Smartsheet link"
+                   and not item.disabled for item in app.button)
+
+
+def test_docx_quote_is_analyzed_in_order_and_original_is_attached(monkeypatch):
+    from app.ocr import extract_text_from_docx
+    from app.po_context import _active_quote_attachment
+    from app.smartsheet import preflight_attachments
+
+    _configure_smartsheet(monkeypatch)
+    source = _synthetic_word_quote()
+    captured = []
+
+    def fake_analyzer(text):
+        captured.append(text)
+        return QuoteAnalysis(
+            vendor_name="Synthetic Supplier",
+            scope_of_work="Replace the synthetic valve.",
+            project_description="Test equipment repair.",
+            purchase_route_guess="materials_purchase",
+            request_type_guess="PO",
+            tax_status="unclear",
+        )
+
+    monkeypatch.setattr(web_ui, "analyze_quote", fake_analyzer)
+    app = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
+    app.file_uploader[0].upload(
+        "synthetic-quote.docx", source,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ).run()
+    assert not app.exception
+    expected = extract_text_from_docx(source)
+    assert captured == [expected]
+    assert expected.index("Synthetic repair") < expected.index("Scope")
+    assert expected.index("Scope") < expected.index("Replace the synthetic valve.")
+    assert expected.index("Job") < expected.index("TEST-100")
+    assert expected.index("TEST-100") < expected.index("End of synthetic")
+    quote_state = {
+        key: app.session_state[key]
+        for key in (
+            "quote_source", "uploaded_file_bytes", "uploaded_file_name",
+            "extracted_text", "extract_hash",
+        )
+    }
+    attachment, problems = _active_quote_attachment(
+        quote_state, app.session_state["quote_text"]
+    )
+    assert problems == []
+    assert attachment == ("synthetic-quote.docx", source)
+    assert not preflight_attachments((attachment, ("Scope.pdf", b"%PDF-1.7\nsynthetic")))
+    assert app.session_state["uploaded_file_bytes"] == source
+
+
+def test_quote_upload_invalid_word_and_size_have_plain_steps():
+    from app.smartsheet import MAX_ATTACHMENT_BYTES
+    from app.upload_validation import quote_upload_problem
+
+    old_word = quote_upload_problem("old.doc", b"\xd0\xcf\x11\xe0")
+    bad_word = quote_upload_problem("bad.docx", b"PK\x03\x04not-a-zip")
+    large = quote_upload_problem("too-big.pdf", b"%PDF-1.7" + b"x" * MAX_ATTACHMENT_BYTES)
+    assert ".doc files can't be read here" in old_word
+    assert "unreadable or protected" in bad_word
+    assert "30 MB attachment limit" in large
+    assert all("paste its text" in text for text in (old_word, bad_word, large))
+    assert all("application/" not in text for text in (old_word, bad_word, large))
+
+
+def test_expense_docx_receipt_shows_plain_instructions(monkeypatch, tmp_path):
+    _configure_smartsheet(monkeypatch)
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    app = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
+    app.segmented_control[0].set_value("Expense reimbursement").run()
+    app.file_uploader[0].upload(
+        "receipt.docx", _synthetic_word_quote(),
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ).run()
+    assert not app.exception
+    messages = [item.value for collection in (app.error, app.caption, app.warning)
+                for item in collection]
+    assert any("Word documents cannot be used as receipts" in str(value)
+               for value in messages)
+    assert any("PDF or photo" in str(value) for value in messages)
+    assert not any("application/" in str(value) for value in messages)
+

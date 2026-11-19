@@ -20,6 +20,18 @@ HISTORY_TAGS = {W + name for name in (
     'customXmlMoveFromRangeStart', 'customXmlMoveFromRangeEnd', 'customXmlMoveToRangeStart', 'customXmlMoveToRangeEnd',
     'trackRevisions', 'revisionView',
 )}
+RANGE_DELETE_TAGS = {W + name for name in (
+    'moveFromRangeStart', 'moveFromRangeEnd',
+    'customXmlDelRangeStart', 'customXmlDelRangeEnd',
+    'customXmlMoveFromRangeStart', 'customXmlMoveFromRangeEnd',
+)}
+RANGE_MESSAGE = (
+    'This report contains tracked deletion or moved-from range markers whose '
+    'final visible content cannot be determined safely. Accept or reject the '
+    'range changes in Word, save a copy, and upload that copy. The original '
+    'and saved report versions were not changed.'
+)
+
 STRUCTURE_MESSAGE = (
     'This report contains tracked paragraph or table-structure changes that cannot be mapped safely. '
     'Accept or reject those structural changes in Word, save a copy, and upload that copy. '
@@ -44,6 +56,11 @@ def current_view(root):
 
     def visit(node, parent_tag=None):
         nonlocal revisions, comments
+        # Range delimiters are not wrappers: dropping only the markers would
+        # retain their moved-from/deleted text in both inspection and exports.
+        # Without a resolved range map, refuse rather than leak old content.
+        if node.tag in RANGE_DELETE_TAGS:
+            raise ValueError(RANGE_MESSAGE)
         # This check runs before removing any property marker that proves the
         # structural operation. A paragraph's current text must never disappear.
         if node.tag == W + 'p':
