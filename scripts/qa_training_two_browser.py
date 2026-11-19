@@ -94,26 +94,22 @@ def add_requirement_form(page, name):
 
 
 def ensure_requirement_panel_open(page):
-    """Make the Add requirement button visible, however the panel got there.
+    """Open the secondary yearly panel without toggling an already-open one.
 
-    Do NOT decide from the <details> open attribute: this page reruns every
-    few seconds in the conflict phase, and a single instantaneous read can
-    catch a fresh closed render of an open panel (or vice versa) and toggle
-    a pre-opened panel shut -- which removes the button from the DOM until
-    someone reopens it. Instead loop on the button itself: on a settled
-    page, a missing button means the panel is closed, so click the summary
-    once and re-check. A wrong-way toggle self-corrects on the next pass
-    because the check is the button, not the attribute.
+    A69 makes the annual matrix secondary while preserving the Add requirement
+    action. Under repeated reruns, inspect the actual button's visibility on
+    each settled page before opening the enclosing disclosure.
     """
     button = page.get_by_role("button", name="Add requirement", exact=True)
+    panel = page.locator('[data-testid="stExpander"] summary').filter(
+        has=page.get_by_text("Yearly training requirements", exact=True))
     for _ in range(4):
         settled(page)
         if button.count() and button.is_visible():
             return
-        panel = page.locator('[data-testid="stExpander"] summary').filter(
-            has=page.get_by_text("Add requirement", exact=True))
         expect(panel).to_have_count(1, timeout=30000)
-        panel.click()
+        if panel.get_attribute("aria-expanded") != "true":
+            panel.click()
     settled(page)
     if not (button.count() and button.is_visible()):
         raise AssertionError("Add requirement button never became visible")
@@ -150,6 +146,7 @@ def open_training(page):
     if not preparer.input_value():
         preparer.fill("Synthetic two-browser reviewer")
         preparer.press("Tab")
+    ensure_requirement_panel_open(page)
     expect(page.get_by_text("Staff training requirements", exact=True)).to_be_visible(timeout=40000)
 
 

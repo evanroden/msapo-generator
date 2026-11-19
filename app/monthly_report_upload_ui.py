@@ -610,11 +610,29 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
               "utility_analysis": "Monthly scorecards — utility results and charts",
               "improvements": "Monthly activity — vendor service reports and photos"}
     route_controls = []
+    # A source's destination is delivered outside any form. Keep the last
+    # delivered value in ordinary session state when its selectbox is unmounted,
+    # otherwise Streamlit widget cleanup drops a previous explicit route.
+    routes_key = key + "_destination_route_values"
+    rendered_key = key + "_destination_route_rendered"
+    route_values = st.session_state.get(routes_key, {})
+    previously_rendered = set(st.session_state.get(rendered_key, ()))
+    rendered_routes = []
     for item in contents:
         if not sources.image_numbers(item):
             continue
-        control = field(key + "_destination_" + item.source.id + "_" + item.source.classification,
-                        defaults.get(item.source.classification, "Do not embed"))
+        control_key = key + "_destination_" + item.source.id + "_" + item.source.classification
+        visible = selected_source_id is None or item.source.id == selected
+        # Once a selectbox is unmounted Streamlit drops its widget value, and
+        # reading the key can fall back to the default first seeded for it.
+        # Only a selectbox shown on the previous render can carry a newer
+        # choice; otherwise the last delivered route is authoritative.
+        if control_key in route_values and (control_key not in st.session_state or not (
+                visible and control_key in previously_rendered)):
+            st.session_state[control_key] = route_values[control_key]
+        if visible:
+            rendered_routes.append(control_key)
+        control = field(control_key, defaults.get(item.source.classification, "Do not embed"))
         options = ("Do not embed", *sources.PAGE_DESTINATIONS)
         if st.session_state[control] not in options:
             st.session_state[control] = defaults.get(item.source.classification, "Do not embed")
@@ -626,13 +644,21 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                 selected_slot = st.session_state[control]
                 st.text(filename + " → " + labels.get(selected_slot, selected_slot))
             with st.expander("Change destination (optional)"):
+                # Only the current file needs an editable route widget. Other
+                # delivered routes still participate in bulk Add unchanged.
                 for filename, identity, control in route_controls:
-                    slot = st.selectbox("Report section for " + filename,
-                                        ("Do not embed", *sources.PAGE_DESTINATIONS),
-                                        format_func=labels.get, key=control)
-                    if (slot != "Do not embed"
-                            and not (identity in section_page_owners and slot == "water_reports")):
-                        destinations.append((identity, slot))
+                    if selected_source_id is None or identity == selected:
+                        st.selectbox("Report section for " + filename,
+                                     ("Do not embed", *sources.PAGE_DESTINATIONS),
+                                     format_func=labels.get, key=control)
+    st.session_state[routes_key] = {control: st.session_state[control]
+                                  for _, _, control in route_controls}
+    st.session_state[rendered_key] = tuple(rendered_routes)
+    for _, identity, control in route_controls:
+        slot = st.session_state[control]
+        if (slot != "Do not embed"
+                and not (identity in section_page_owners and slot == "water_reports")):
+            destinations.append((identity, slot))
     cmms_contents = [c for c in contents if (selected_source_id is None or c.source.id == selected_source_id)
                      and c.tables and c.source.classification == "CMMS export"
                      and any(i in c.source.selected_pages for i in range(1, len(c.tables)+1))]

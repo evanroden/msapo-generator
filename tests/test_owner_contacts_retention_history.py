@@ -188,16 +188,15 @@ render_owner_contacts()
 """
 
 
-def test_owner_screen_lists_nothing_until_opened_then_shows_contacts_and_history():
+def test_owner_screen_shows_contacts_and_history_without_a_disclosure_click():
     from streamlit.testing.v1 import AppTest
     _contact()
     record_po_history(contract=ACCOUNT, context_id="ctx", vendor="Trane", total="1,250.00",
                       quote_filename="Trane Quote.pdf")
     at = AppTest.from_string(_SCRIPT).run()
     assert not at.exception
-    assert "rep1@example.com" not in _visible(at)
-    at.checkbox(key="owner_contacts_open").check().run()
     assert not at.exception
+    assert not any(box.key == "owner_contacts_open" for box in at.checkbox)
     rendered = _visible(at)
     assert "rep1@example.com" in rendered
     assert "Trane Quote.pdf" in rendered
@@ -207,7 +206,6 @@ def test_owner_screen_delete_removes_the_contact():
     from streamlit.testing.v1 import AppTest
     _contact()
     at = AppTest.from_string(_SCRIPT).run()
-    at.checkbox(key="owner_contacts_open").check().run()
     # Buttons now identify a contact, not its former position in the list.
     at.button[1].click().run()
     assert not at.exception
@@ -225,7 +223,6 @@ def test_owner_screen_delete_first_row_keeps_survivor_fields_and_only_edits_surv
              email="second@example.test", ctx="second")
     first, survivor = saved_vendor_contacts(contract)
     at = AppTest.from_string(_SCRIPT).run()
-    at.checkbox(key="owner_contacts_open").check().run()
     assert not at.exception
     assert [w.value for w in at.text_input] == [
         first["name"], first["email"], survivor["name"], survivor["email"]
@@ -254,7 +251,6 @@ def test_owner_screen_switch_account_shows_its_contact_and_only_edits_that_accou
     _contact(contract=second_account, vendor=vendor, name="Account B Contact",
              email="account-b@example.test", ctx="b")
     at = AppTest.from_string(_SCRIPT).run()
-    at.checkbox(key="owner_contacts_open").check().run()
     assert not at.exception
     assert at.selectbox(key="owner_contract").value == first_account
     assert [w.value for w in at.text_input] == [
@@ -299,8 +295,70 @@ def test_owner_screen_contact_labels_are_plain_text():
     _contact(contract="Example Account Labels", vendor="Example Vendor",
              name="*Literal* Contact", email="literal@example.test")
     at = AppTest.from_string(_SCRIPT).run()
-    at.checkbox(key="owner_contacts_open").check().run()
     assert not at.exception
     assert any("*Literal* Contact <literal@example.test>" in element.value
                for element in at.text)
     assert not any("literal@example.test" in element.value for element in at.markdown)
+
+
+def test_owner_screen_same_click_save_reloads_and_cannot_change_other_contact():
+    """One save activation uses the selected identity; a fresh session sees it."""
+    from streamlit.testing.v1 import AppTest
+
+    contract = "Synthetic A67 Same Click"
+    vendor = "A67 Fixture Vendor"
+    _contact(contract=contract, vendor=vendor, name="First Rep",
+             email="first@example.invalid", ctx="one")
+    _contact(contract=contract, vendor=vendor, name="Other Rep",
+             email="other@example.invalid", ctx="two")
+    before = saved_vendor_contacts(contract)
+    at = AppTest.from_string(_SCRIPT).run()
+    assert not at.exception
+    assert len(at.text_input) == 4
+    original_index = [widget.value for widget in at.text_input].index("First Rep") // 2
+    at.text_input[original_index * 2].set_value("Corrected First Rep")
+    at.button[original_index * 2].click().run()  # No independent input rerun required.
+    assert not at.exception
+    rows = saved_vendor_contacts(contract)
+    assert len(rows) == 2
+    assert ("Corrected First Rep", "first@example.invalid") in {
+        (row["name"], row["email"]) for row in rows
+    }
+    assert ("Other Rep", "other@example.invalid") in {
+        (row["name"], row["email"]) for row in rows
+    }
+    assert {row["vendor"] for row in rows} == {before[0]["vendor"]}
+
+    reopened = AppTest.from_string(_SCRIPT).run()
+    assert not reopened.exception
+    assert "Corrected First Rep" in [widget.value for widget in reopened.text_input]
+    assert "Other Rep" in [widget.value for widget in reopened.text_input]
+
+
+def test_owner_screen_two_sessions_stale_identity_cannot_overwrite_updated_row():
+    """A concurrent accepted correction retires the old original tuple."""
+    from streamlit.testing.v1 import AppTest
+
+    contract = "Synthetic A67 Concurrency"
+    vendor = "A67 Supplier"
+    _contact(contract=contract, vendor=vendor, name="Original Rep",
+             email="original@example.invalid", ctx="one")
+    older = AppTest.from_string(_SCRIPT).run()
+    newer = AppTest.from_string(_SCRIPT).run()
+    assert not older.exception and not newer.exception
+    newer.text_input[0].set_value("Current Rep").run()
+    newer.button[0].click().run()
+    assert not newer.exception
+    older.text_input[0].set_value("Stale Rep")
+    older.button[0].click().run()
+    assert not older.exception
+    assert [(row["name"], row["email"]) for row in saved_vendor_contacts(contract)] == [
+        ("Current Rep", "original@example.invalid")
+    ]
+    # The old identity-hashed Save widget is no longer rendered when the
+    # other session changes that identity. Its obsolete click is a no-op,
+    # rather than a database correction attempt that must show st.error.
+    assert [widget.value for widget in older.text_input] == [
+        "Current Rep", "original@example.invalid"
+    ]
+    assert "Stale Rep" not in [widget.value for widget in older.text_input]
