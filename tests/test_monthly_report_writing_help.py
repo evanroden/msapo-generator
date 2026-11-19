@@ -83,7 +83,7 @@ def test_old_fact_action_cannot_approve_a_new_proposal(monkeypatch, tmp_path, ch
 def _writing_scope(app):
     from app.monthly_report_guided import _signature
     return _signature(('writing', app.session_state['writing_rich_text_epoch'],
-                       app.session_state.get('_monthly_qa_generation', '')))
+                       app.session_state.filtered_state.get('_monthly_qa_generation', '')))
 
 
 def checked_suggestion(app, source, facts):
@@ -225,7 +225,7 @@ def test_edit_and_single_accept_saves_exact_native_candidate(monkeypatch, tmp_pa
     next(item for item in app.text_area if item.label == 'Suggested paragraph 1').set_value(revised).run()
     next(item for item in app.button if item.label == 'Accept edited suggestion').click().run()
     assert not app.exception
-    assert app.session_state['current_block'].text == 'Manual current wording.\\n- ' + revised
+    assert app.session_state['current_block'].text == 'Manual current wording.\n- ' + revised
     assert app.session_state['current_block'].ai_paragraphs[0].text == revised
 
 

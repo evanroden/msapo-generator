@@ -23,7 +23,7 @@ def fixture():
     fact = EvidenceFact(
         "synthetic-a60-fact", source.id, 1, "action",
         "Inspected the synthetic pump and replaced two seals.",
-        "Inspected the synthetic pump and replaced two seals.")
+        "Inspected the synthetic pump and replaced two seals on 2026-09-03.")
     source = replace(source, facts=(fact,))
     draft = replace(
         synthetic_draft(synthetic_profiles()[0], ReportPeriod(2026, 9)),

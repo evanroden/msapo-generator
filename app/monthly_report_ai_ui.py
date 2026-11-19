@@ -457,6 +457,9 @@ def edit_linked_paragraphs(draft, blocks, prefix, field, allowed_keys=None):
 
 def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_container=None):
     """Return updated draft/blocks; caller still owns snapshot confirmation."""
+    # Bind this editor incarnation even before a suggestion is displayed.
+    from app.monthly_report_guided import _rich_text_scope
+    _rich_text_scope(prefix)
     _finish_job(draft, prefix)
     _apply_pending_fact_approval(draft, prefix)
     busy = prefix + "_ai_job" in st.session_state
