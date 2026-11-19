@@ -1738,7 +1738,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     if section != before:
                         draft = replace(draft, sections=tuple(
                             section if item is before else item for item in draft.sections))
-                 numbered = next((s for s in included_sections(draft.sections) if s.key == section.key), None)
+                numbered = next((s for s in included_sections(draft.sections) if s.key == section.key), None)
                 heading = f"{numbered.number}. {title}" if numbered else title
                 st.subheader(heading, anchor="report-section-" + section.key,
                              help=editor_section_heading_help(section.key))
