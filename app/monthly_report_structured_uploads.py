@@ -404,7 +404,7 @@ _VENDOR_DATE_LABEL = re.compile(
 
 
 def _vendor_source_review_reason(source):
-    """Keep unknown source-wide status, invalid dates and mixed sites in review.
+    """Keep unlinked statuses and ambiguous PDF date/site scope in review.
 
     Non-table vendor documents do not provide a verified row/status mapping.
     Never promote their work sentence while leaving a separate qualification
@@ -418,6 +418,10 @@ def _vendor_source_review_reason(source):
     for text in source.page_texts:
         if _STATUS.search(text):
             return "a separate work status may qualify a technical passage"
+        if source.suffix != ".pdf":
+            # TXT/Word already retain their own event and site preflight rules;
+            # distinct TXT event dates are not a file-wide conflict.
+            continue
         for match in _DOC_DATE_TOKEN.finditer(text):
             # Serial numbers may contain date-shaped fragments. Only a
             # standalone calendar token may force a date review.
@@ -433,7 +437,7 @@ def _vendor_source_review_reason(source):
             return "conflicting or invalid printed dates need review"
         sites.update(" ".join(match.group(1).casefold().split())
                      for match in _VENDOR_SITE_LABEL.finditer(text))
-    if len(sites) > 1:
+    if source.suffix == ".pdf" and len(sites) > 1:
         return "different site headers need explicit source-to-site mapping"
     return ""
 
@@ -447,7 +451,7 @@ def _vendor_page_identity(source, page, fallback, *, has_date_labels=False,
     without printed page labels retain their existing reviewed source identity.
     """
     if source.classification != "Vendor service" or source.suffix not in {
-            ".pdf", ".docx", ".txt", ".eml", ".msg"}:
+            ".pdf", ".docx"}:
         return fallback
     pages = source.page_texts
     here = pages[page - 1]
