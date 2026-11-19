@@ -100,7 +100,9 @@ def JanuarySafety(entries, source, proof):
 def test_repeated_source_claim_is_not_reintroduced_as_included_after_omission():
     previous, _, _ = _fixture()
     january = new_month_draft(previous, JANUARY)
-    assert not problems(_followup_map(january)["proposal-hidden"], january)
+    # Exclusion controls output, not an unconfirmed proposal's decision receipt.
+    assert any("Confirm this proposal" in message for message in
+               problems(_followup_map(january)["proposal-hidden"], january))
     # Reprocessed identical text must match its existing omission receipt,
     # not create a second printable proposal with a new generated key.
     replay = replace(january, blocks=tuple(
@@ -139,6 +141,9 @@ def test_auth02_other_site_same_contract_gets_design_only_not_prior_source_value
         monkeypatch, tmp_path):
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
     previous, _, _ = _fixture()
+    # Generic demo_* section slots are not a persisted editable design schema.
+    # Use standard specifications for the cross-site design-only check.
+    previous = replace(previous, sections=default_sections())
     source_state = library.save_profile(previous.profile, expected_revision=0,
                                         actor="Synthetic Editor", confirmed=True)
     library.save_snapshot(previous, expected_revision=0, entered_editor="Synthetic Editor")
