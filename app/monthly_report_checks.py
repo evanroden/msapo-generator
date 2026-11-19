@@ -204,7 +204,10 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                               and section_key in draft.omitted_sections
                               and any(s.key == section_key and not s.included
                                       for s in draft.sections))
-        if explicitly_omitted:
+        if explicitly_omitted or (item.category == "proposal" and not item.included):
+            # Keep excluded proposal identities for reimport matching, but do
+            # not demand review of content that the user left out of output.
+            # Re-inclusion still requires the normal decision confirmation.
             continue
         for problem in problem_details(item, draft):
             checks.append(ReportCheck("follow_up", problem.message, True, item.key,
