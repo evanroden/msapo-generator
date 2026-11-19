@@ -20,6 +20,22 @@ def _app(monkeypatch, current):
     return app.run()
 
 
+def _complete_export_draft(current):
+    """Supply unrelated required sections with synthetic data for full export.
+
+    Keep the production preflight gate intact: only the fixture was incomplete.
+    """
+    from app.monthly_report_model import OrgChartNode
+    return replace(current, blocks=(
+        *current.blocks,
+        ResolvedBlock("org_chart", "This month", org_nodes=(
+            OrgChartNode("synthetic-lead", "Synthetic Site Lead", "Site Lead"),)),
+        ResolvedBlock("activity_summary", "This month", text="Synthetic monthly activity."),
+        ResolvedBlock("equipment_issues", "This month", text="Synthetic equipment follow-up."),
+        ResolvedBlock("training_summary", "This month", text="Synthetic training summary."),
+    ))
+
+
 def test_empty_saved_report_can_reuse_approved_capacity_in_one_click(profile, monkeypatch):
     standing = saved(profile)
     current = draft(profile, ResolvedBlock("thermal_capacity", "This month"))
@@ -109,9 +125,9 @@ def test_excluded_capacity_and_unknown_values_roll_forward_without_standing_muta
     assert capacity.load_capacity(profile.contract) == state
 
     from app.monthly_report_docx import assemble_docx
+    export_draft = _complete_export_draft(replace(next_month, blocks=(restored,)))
     document = Document(BytesIO(assemble_docx(
-        replace(next_month, blocks=(restored,)),
-        acknowledged_fingerprint=replace(next_month, blocks=(restored,)).fingerprint)))
+        export_draft, acknowledged_fingerprint=export_draft.fingerprint)))
     rows = [tuple(cell.text for cell in row.cells) for table in document.tables for row in table.rows]
     assert ("NH", "Chilled water", "NR", "1600", "tons") in rows
     assert ("NH", "Steam", "40000", "50000", "lb/hr") in rows
@@ -141,7 +157,7 @@ def test_two_sites_native_columns_units_and_unknown_survive_real_docx_pdf(profil
     block = capacity.capacity_block(both, state)
     assert block.extra_tables[0].columns == (
         "Facility", "Service", "Required capacity", "Available capacity", "Units")
-    current = draft(both, block)
+    current = _complete_export_draft(draft(both, block))
     word = assemble_docx(current, acknowledged_fingerprint=current.fingerprint)
     document = Document(BytesIO(word))
     tables = [[tuple(cell.text for cell in row.cells) for row in table.rows]
