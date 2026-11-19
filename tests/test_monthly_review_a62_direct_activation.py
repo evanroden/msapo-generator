@@ -49,7 +49,7 @@ def test_direct_review_visibility_auto_builds_unvisited_last_section_once(monkey
     app, store = setup(monkeypatch, tmp_path)
     try:
         calls = []
-        def checked(draft, loader):
+        def checked(draft, loader, *, ticket_only=False):
             calls.append(draft)
             return synthetic_preview(draft, loader)
         monkeypatch.setattr(review_ui, 'preview_report', checked)
@@ -90,7 +90,7 @@ def test_accepted_edit_refresh_failure_keeps_outdated_pages_and_retry(monkeypatc
         app.session_state['draft'] = changed
         identity = preview_fingerprint(changed)
         attempts = []
-        def broken(draft, loader):
+        def broken(draft, loader, *, ticket_only=False):
             attempts.append(draft)
             raise ValueError('Synthetic retryable PDF conversion failure')
         monkeypatch.setattr(review_ui, 'preview_report', broken)
@@ -121,7 +121,7 @@ def test_wrong_month_activation_never_renders_new_draft(monkeypatch, tmp_path):
     app, store = setup(monkeypatch, tmp_path)
     try:
         calls = []
-        monkeypatch.setattr(review_ui, 'preview_report', lambda draft, loader:
+        monkeypatch.setattr(review_ui, 'preview_report', lambda draft, loader, ticket_only=False:
                             calls.append(draft) or synthetic_preview(draft, loader))
         from app.monthly_report_model import ReportPeriod
         changed = replace(app.session_state['draft'], period=ReportPeriod(2026, 10))
@@ -143,7 +143,7 @@ def test_shared_snapshot_reopen_enters_review_directly_from_saved_draft(monkeypa
     # Run against the same synthetic profile and on-disk snapshot but a *new*
     # Streamlit session. No section preview component is activated by this test.
     calls = []
-    def renderer(draft, loader):
+    def renderer(draft, loader, *, ticket_only=False):
         calls.append(draft)
         with fitz.open() as pdf:
             pdf.new_page().insert_text((72, 72), 'Synthetic saved Review')
@@ -152,7 +152,7 @@ def test_shared_snapshot_reopen_enters_review_directly_from_saved_draft(monkeypa
     from app.monthly_report_preview_store import PreviewStore
     store = PreviewStore()
     monkeypatch.setattr(review_ui, 'STORE', store)
-    monkeypatch.setattr(review_ui, 'preview_report', lambda draft, loader:
+    monkeypatch.setattr(review_ui, 'preview_report', lambda draft, loader, ticket_only=False:
                         renderer(draft, loader))
     try:
         app = monthly(monkeypatch, tmp_path)

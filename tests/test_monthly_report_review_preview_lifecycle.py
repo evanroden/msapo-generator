@@ -15,7 +15,7 @@ from test_monthly_report_identity_history_ui import widget
 from test_monthly_report_ui import monthly
 
 
-def _preview(draft, loader):
+def _preview(draft, loader, *, ticket_only=False):
     # Exercise actual PDF files and raster retention without a converter job.
     with fitz.open() as pdf:
         pdf.new_page().insert_text((72, 72), "Synthetic Review lifecycle")

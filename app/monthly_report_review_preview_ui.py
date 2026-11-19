@@ -68,7 +68,10 @@ def _show_ticket(slot, owner, current, draft, prefix, *, stale):
             value=1, step=1, key=prefix + "_review_preview_page_" + ticket.key,
         )
         try:
-            visible = STORE.pages(owner, ticket, (int(page) - 1,), dpi=120)
+            # First two pages are decoded together, then only the visible pair
+            # when the reader advances. Never request the remaining report eagerly.
+            first = int(page) - 1
+            visible = STORE.pages(owner, ticket, tuple(range(first, min(first + 2, ticket.pages))), dpi=120)
             if not visible:
                 raise ValueError("The preview page expired.")
         except (ValueError, OSError):
@@ -76,12 +79,18 @@ def _show_ticket(slot, owner, current, draft, prefix, *, stale):
             st.session_state.pop(prefix + "_review_draft_preview", None)
             st.warning("This draft page could not be displayed. Recreate the preview to retry.")
             return False
-        st.image(visible[0][1], width="stretch")
+        for index, raster in visible:
+            st.image(raster, width="stretch")
+            if stale:
+                st.caption(f"Older draft page {index + 1} of {ticket.pages} · latest changes not shown")
+            else:
+                st.caption(f"Draft page {index + 1} of {ticket.pages}")
         if stale:
             st.caption(f"Older draft · page {page} of {ticket.pages} · "
                        f"{current.get('period', draft.period.label)} · latest changes not shown")
         else:
-            st.caption(f"Current draft · page {page} of {ticket.pages} · {draft.period.label}")
+            st.caption(f"Current draft · page {page} of {ticket.pages} · {draft.period.label} · "
+                       "full report, no omitted pages")
     return True
 
 
@@ -158,7 +167,9 @@ def render_review_preview(draft, assets, prefix):
         assets.get(ref) or library.read_asset(draft.profile.contract, draft.profile.key, ref))
     try:
         with st.spinner("Preparing the current draft preview…"):
-            preview = preview_report(draft, loader)
+            # Ticket PDFs never leave the store: only rasterized pages reach
+            # this UI. Downloadable draft PDFs keep the flattened path.
+            preview = preview_report(draft, loader, ticket_only=True)
             if preview.fingerprint != identity:
                 raise ValueError("The report changed while its draft preview was being prepared. Retry with the current version.")
             ticket = STORE.put(owner, preview)
