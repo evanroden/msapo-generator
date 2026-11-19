@@ -22,6 +22,7 @@ from PIL import Image, UnidentifiedImageError
 from lxml import etree
 
 from app.image_open import open_image, image_formats_for_suffix
+from app.monthly_report_shape_labels import DrawingLabel, collect_drawing_labels
 from app.monthly_report_xml_parser import parse_xml_stream
 from app.monthly_report_docx import normalize_report_image
 from app.monthly_report_model import (
@@ -125,6 +126,8 @@ class ImportItem:
     # Relationship identity is stable within the original source part and
     # must not be replaced with a guessed image/shape role.
     relationship_id: str = ""
+    # Review evidence only, never editable geometry.
+    drawing_labels: tuple[DrawingLabel, ...] = ()
 
     @property
     def label(self) -> str:
@@ -822,6 +825,19 @@ def inspect_docx(path: Path) -> DocxInspection:
                             picture_table = element.tag == W + "tbl" and section == "activity" and content_slot == "improvements" and any(
                                 node.tag in (A + "blip", V + "imagedata") for node in element.iter())
                             parents = {child: parent for parent in element.iter() for child in parent}
+                            try:
+                                drawing_labels = collect_drawing_labels(
+                                    element, part=part, position=position, word_section=word_section
+                                ) if (has_native_frame or any(
+                                    node.tag in (A + "t", V + "group", W + "object")
+                                    or (node.tag == A + "graphicData"
+                                        and not node.get("uri", "").endswith("/picture"))
+                                    for node in element.iter())) else ()
+                            except ValueError as exc:
+                                raise ImportError(str(exc)) from exc
+                            # Source labels do not establish native drawing editability.
+                            drawing_text = "\n".join(label.text for label in drawing_labels
+                                                     if label.source == "drawing_text")
                             from app.monthly_report_native_design import mint_divider_background
                             if (part == "word/document.xml" and _is_native_divider_background(element, text)
                                     and (alternatives_equivalent or not mint_divider_background(element, text))):
@@ -864,6 +880,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                                     elif complex_table:
                                         recorded = add("unsupported", part, position,
                                             item_id=nested_id, text=direct_text,
+                                            drawing_labels=drawing_labels if native_table is element else (),
                                             note="Word table contains text boxes or unsupported drawings and needs manual layout review. "
                                                  "Retain its source page or add a reviewed replacement; extracted text does not preserve the layout.")
                                     elif grid.rows and (native_table is not element or not picture_table):
@@ -893,7 +910,8 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 if part == "word/document.xml" and word_section <= 2 and section in ("", "cover"):
                                     note += " " + _cover_unreadable_object_note(
                                         element, word_section=word_section, position=position)
-                                add("unsupported", part, position, text=text, note=note)
+                                add("unsupported", part, position, text=text, note=note,
+                                    drawing_labels=drawing_labels)
                             elif text:
                                 # A floating Word textbox has separate layout/review
                                 # ownership. Do not also offer its words as ordinary
@@ -986,8 +1004,20 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 chart_ids, chart_labels, chart_notices = chart_relationship_evidence(
                                     archive, graphics, relations, names)
                             legacy_groups = element.findall(".//" + V + "group")
-                            legacy_text = any(node.find(".//" + W + "txbxContent") is not None for node in element.iter() if node.tag in (V + "shape", V + "rect"))
-                            if graphics or legacy_groups or legacy_text:
+                            legacy_shapes = [node for node in element.iter()
+                                if node.tag in (V + "shape", V + "rect", V + "roundrect", V + "oval", V + "line")
+                                and node.find(".//" + V + "imagedata") is None]
+                            legacy_text = any(node.find(".//" + W + "txbxContent") is not None
+                                              for node in legacy_shapes)
+                            # A standalone Word text-frame blocker already owns its
+                            # text-bearing VML wrapper. Inventory any sibling unlabeled
+                            # shape separately, without double-counting that textbox.
+                            remaining_legacy_shapes = [
+                                node for node in legacy_shapes
+                                if not (standalone_frame
+                                        and node.find(".//" + W + "txbxContent") is not None)
+                            ]
+                            if graphics or legacy_groups or remaining_legacy_shapes:
                                 from app.monthly_report_smartart import closed_smartart_text
                                 smartart = closed_smartart_text(archive, graphics, relations) if section == "organization" and not legacy_groups and not legacy_text else None
                                 if smartart is not None:
@@ -1005,6 +1035,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                                         native_role = ""
                                     note = native_role or ("Alternate Word representations contain different or unsupported content. Review and replace this exact drawing; every original representation is retained." if divergent_native else
                                               "Unmapped native SmartArt: complete local text-only drawing could not be established." if diagram else
+                                              "Unlabelled VML artwork: source shape is retained for layout review, not treated as empty text." if legacy_shapes and not drawing_labels and not text else
                                               "Native divider artwork" if detected and detected != "unmatched" else
                                               "Native Word drawing: preserve and review its complete page layout, or add a replacement picture. Nothing is executed during inspection.")
                                     # Recognized divider artwork is matched by exact note
@@ -1019,10 +1050,16 @@ def inspect_docx(path: Path) -> DocxInspection:
                                     if chart_notices:
                                         note += " " + " ".join(chart_notices)
                                     add("native_layout" if native_role else "unsupported", part, position,
-                                        text="\n".join(t for t in (text, *chart_labels) if t),
-                                        relationship_id=";".join(chart_ids), note=note)
+                                        text="\n".join(t for t in (text, drawing_text, *chart_labels) if t),
+                                        relationship_id=";".join(chart_ids), note=note,
+                                        drawing_labels=drawing_labels)
                             if element.find(".//" + W + "altChunk") is not None or element.tag == W + "altChunk":
                                 add("unsupported", part, position, note="Embedded document content was not executed. Review it in the original.")
+                            if element.find(".//" + W + "object") is not None or element.tag == W + "object":
+                                add("unsupported", part, position, text=drawing_text,
+                                    note="Embedded or unsupported Word object was not interpreted or executed. "
+                                         "Review the exact source region in the original; supply an explicit safe replacement.",
+                                    drawing_labels=drawing_labels)
                             if part == "word/document.xml":
                                 if cover_open and not page_break:
                                     for item in items[first_item:]:

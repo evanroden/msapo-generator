@@ -124,6 +124,10 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
     from app.monthly_report_coverage_ui import render_coverage
     draft = render_coverage(draft, st.session_state.get(prefix + "_evidence", ()),
                             prefix, blocks)
+    # Operator-only, read-only ledger. Keep source acceptance/generation unchanged.
+    from app.monthly_report_source_manifest_ui import render_source_manifest_audit
+    render_source_manifest_audit(replace(draft, blocks=tuple(blocks.values())),
+        st.session_state.get(prefix + "_evidence", ()), prefix)
     panel_key = prefix + "_source_manager_panel"
     # Keep child keys and delta paths stable. Native form buffers are not sent
     # by an unrelated file-selection click and cannot be reconstructed in Python.
