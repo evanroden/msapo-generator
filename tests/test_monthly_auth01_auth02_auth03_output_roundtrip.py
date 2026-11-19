@@ -152,8 +152,23 @@ def test_synthetic_auth_real_word_pdf_from_persisted_reviewed_start(
         source_fact, should_import):
     profile = synthetic_profiles()[0]
     north, south = synthetic_profiles()[1].facilities
+    # The imported synthetic DOCX is also this report's native page design.
+    # Unlike a generic short Starting sample, its layout must have every
+    # required edited section before the real native renderer can place it.
     path = report_file(tmp_path, title=south.title if foreign_site else north.title,
-                       month=source_month, activity=(source_fact,), contact=False)
+                       month=source_month, activity=(source_fact,), contact=True)
+    source = Document(path)
+    for title in ("8 Equipment Performance Issues", "11 Training Summary"):
+        source.add_heading(title, level=1)
+    for paragraph in source.paragraphs:
+        if paragraph.style.name == "Heading 1":
+            paragraph.paragraph_format.page_break_before = True
+    source.save(path)
+    from app.monthly_report_import import inspect_docx
+    assert {"organization", "activity", "issues", "training"} <= {
+        item.section for item in inspect_docx(path).items
+        if item.part == "word/document.xml"
+    }
     original = path.read_bytes()
     imported = save_start(start_app(monkeypatch, tmp_path, path,
                                     known_sites=(north, south) if foreign_site else None))
