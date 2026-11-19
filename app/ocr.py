@@ -253,12 +253,124 @@ def _images_cover_half_page(page, images: list[dict]) -> bool:
     return False
 
 
-def _page_needs_ocr(page, *, native_text: str | None = None) -> bool:
-    """Classify once during preflight, reusing text already decoded locally."""
+def _native_layer_covers_scan(page, image_rects, native: str) -> bool:
+    """Avoid a second (paid) OCR reading of a usable scanned text layer.
+
+    A header over an otherwise unread image is not a searchable scan: require
+    multiple lines of text distributed through the scanned area itself.
+    """
+    if len(native) < 120 or native.count("\n") < 4:
+        return False
+    import pymupdf as fitz
+
+    bounds = page.rect * page.derotation_matrix
+    for scan in image_rects:
+        if scan.get_area() < bounds.get_area() * 0.5:
+            continue
+        text_blocks = []
+        for block in page.get_text("blocks"):
+            if len(block) <= 6 or block[6] != 0 or not str(block[4]).strip():
+                continue
+            box = fitz.Rect(block[:4])
+            if box.get_area() and (box & scan).get_area() >= box.get_area() * 0.65:
+                text_blocks.append((box, str(block[4]).strip()))
+        if not text_blocks:
+            continue
+        amount = sum(len(value) for _, value in text_blocks)
+        extent = max(box.y1 for box, _ in text_blocks) - min(
+            box.y0 for box, _ in text_blocks
+        )
+        if amount >= max(120, len(native) * 0.7) and extent >= scan.height * 0.32:
+            return True
+    return False
+
+
+def _image_backed_page_looks_blank(page) -> bool:
+    """Low-resolution spend guard, never proof that an image is truly empty.
+
+    Keep each temporary grayscale preview at <=320 pixels on its longer edge.
+    A faint or very small inscription may escape this check; its page always
+    retains a separate unreviewed-image notice in Monthly ingestion.
+    """
+    import pymupdf as fitz
+
+    scale = min(1.0, 320.0 / max(page.rect.width, page.rect.height, 1.0))
+    try:
+        preview = page.get_pixmap(
+            matrix=fitz.Matrix(scale, scale), colorspace=fitz.csGRAY, alpha=False,
+        )
+    except (ValueError, RuntimeError, OSError):
+        return False  # Uncertain -> do not claim the page is blank.
+    pixels = preview.samples
+    return bool(pixels) and sum(pixel < 240 for pixel in pixels) < max(
+        4, len(pixels) // 1250
+    )
+
+
+def _page_visual_decision(
+    page, *, native_text: str | None = None,
+) -> tuple[bool, str]:
+    """Return (paid OCR needed, unreviewed-image notice).
+
+    PO only sends genuinely unread image/figure pages to vision; Monthly
+    conservatively discloses *all* image-backed uncertain pages for review.
+    Native text is never replaced with an OCR interpretation in this step.
+    """
+    import pymupdf as fitz
+
     native = page.get_text().strip() if native_text is None else native_text
     images = page.get_image_info()
+    if not images:
+        # A separator line is not itself a scanned page.
+        if len(native) < 20 and len(page.get_drawings()) >= 3:
+            return True, "vector artwork has no readable native text; visual review required"
+        return False, ""
+    bounds = page.rect * page.derotation_matrix
+    area = max(1.0, bounds.get_area())
+    regions = []
+    for info in images:
+        rect = fitz.Rect(info["bbox"]) & bounds
+        if not rect.is_empty and rect.get_area() > 0:
+            regions.append(rect)
+    if not regions:
+        return False, ""
     large_scan = _images_cover_half_page(page, images)
-    return large_scan or (len(native) < 20 and bool(images or page.get_drawings()))
+    if large_scan and _native_layer_covers_scan(page, regions, native):
+        return False, (
+            "searchable text overlaps an image-backed scan; verify it against "
+            "the original page"
+        )
+    if large_scan and len(native) < 20 and _image_backed_page_looks_blank(page):
+        return False, (
+            "image-backed page appears blank at preview scale; verify the "
+            "original before treating it as empty"
+        )
+    material = any(
+        (rect.get_area() / area >= 0.10 or (
+            rect.get_area() / area >= 0.07
+            and rect.y0 > bounds.y0 + bounds.height * 0.13
+        ))
+        and not (
+            rect.get_area() / area < 0.10
+            and rect.y1 < bounds.y0 + bounds.height * 0.17
+        )
+        for rect in regions
+    )
+    if large_scan or material or (
+        len(native) < 20 and any(rect.get_area() / area >= 0.03 for rect in regions)
+    ):
+        return True, (
+            "scanned or diagram image may contain unread technical content; "
+            "visual review required"
+        )
+    if len(native) < 20:
+        return False, "small embedded image on otherwise unread page; verify visually"
+    return False, ""
+
+
+def _page_needs_ocr(page, *, native_text: str | None = None) -> bool:
+    """Classify once during preflight, reusing text already decoded locally."""
+    return _page_visual_decision(page, native_text=native_text)[0]
 
 
 def _check_extracted_size(size: int) -> None:
@@ -295,12 +407,19 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
         # the known native-text budget after making paid OCR calls.
         plan: list[str | None] = []
         scanned = native_size = 0
-        for page in pdf:
+        for number, page in enumerate(pdf, 1):
             native = page.get_text().strip()
-            if _page_needs_ocr(page, native_text=native):
+            needs_ocr, review_notice = _page_visual_decision(
+                page, native_text=native,
+            )
+            if needs_ocr:
                 scanned += 1
                 plan.append(None)
             else:
+                # A visually blank *image* is not verified empty. Preserve its
+                # physical page position and give the analyzer no invented fact.
+                if review_notice and not native:
+                    native = f"[Source PDF page {number}: {review_notice}; no technical text extracted.]"
                 native_size += len(native)
                 _check_extracted_size(native_size)
                 plan.append(native)
@@ -422,6 +541,33 @@ def extract_text_from_image(file_bytes: bytes, suffix: str) -> str:
     return _ocr_request(content)
 
 
+def extract_text_from_docx(file_bytes: bytes) -> str:
+    """Read Word paragraphs and table cells in document order, without editing it."""
+    from docx import Document
+    from docx.oxml.table import CT_Tbl
+    from docx.oxml.text.paragraph import CT_P
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    document = Document(BytesIO(file_bytes))
+    parts: list[str] = []
+    for child in document.element.body.iterchildren():
+        if isinstance(child, CT_P):
+            value = Paragraph(child, document).text.strip()
+            if value:
+                parts.append(value)
+        elif isinstance(child, CT_Tbl):
+            for row in Table(child, document).rows:
+                for cell in row.cells:
+                    value = cell.text.strip()
+                    if value:
+                        parts.append(value)
+    text = "\n".join(parts)
+    if len(text) > _MAX_EXTRACTED_CHARS:
+        raise ValueError("This Word quote has too much text. Paste a shorter quote.")
+    return text
+
+
 def extract_text(file_bytes: bytes, filename: str) -> str:
     """Detect the uploaded file type and extract its text."""
     suffix = Path(filename).suffix.lower()
@@ -431,6 +577,9 @@ def extract_text(file_bytes: bytes, filename: str) -> str:
 
     if suffix == ".pdf":
         return extract_text_from_pdf(file_bytes)
+
+    if suffix == ".docx":
+        return extract_text_from_docx(file_bytes)
 
     if suffix in SUPPORTED_IMAGE_SUFFIXES:
         return extract_text_from_image(file_bytes, suffix)
