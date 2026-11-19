@@ -2159,6 +2159,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 save_status.shared_saved(saved.revision)
             except (ValueError, OSError) as exc:
                 record_shared_save(prefix, package, error=str(exc))
+        if package is None:
+            from app.monthly_report_output_ui import outdated_output_status
+            outdated_output_status(prefix, _rich_text_scope(prefix), draft)
         if package:
             from app.monthly_report_output_ui import render_output_status, record_shared_save, package_identity, queue_retry, matches_retry
             needs_shared_save = render_output_status(package, draft, snapshot, prefix)
