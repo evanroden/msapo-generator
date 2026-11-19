@@ -49,6 +49,12 @@ def _scope(profile, source):
     return record
 
 
+def _same_scope(stored, expected):
+    # Facility aliases are tuples in dataclasses and lists after JSON loading.
+    # Compare canonical wire values, preserving every source/site binding.
+    return library._json(stored) == library._json(expected)
+
+
 def _path(profile, scope):
     identity = sha256(library._json(scope)).hexdigest()
     return library._profile_path(profile.contract, profile.key) / "ai" / "accepted" / (identity + ".json")
@@ -105,7 +111,7 @@ def record_acceptance(profile, source, facts):
     path = _path(profile, scope)
     with library._locked(path.parent):
         value = library._read(path) if path.exists() else {"schema": 1, "scope": scope, "facts": {}}
-        if value.get("scope") != scope or not isinstance(value.get("facts"), dict):
+        if not _same_scope(value.get("scope"), scope) or not isinstance(value.get("facts"), dict):
             raise library.LibraryError("Saved fact acceptance belongs to a different source scope.")
         accepted = dict(value["facts"])
         for fact in eligible:
@@ -128,7 +134,7 @@ def replay_reviewed_facts(draft, source):
     if not path.exists():
         return ReviewedReplay()
     value = library._read(path)
-    if value.get("scope") != scope or not isinstance(value.get("facts"), dict):
+    if not _same_scope(value.get("scope"), scope) or not isinstance(value.get("facts"), dict):
         raise library.LibraryError("Saved fact acceptance source scope changed.")
     # A replaced/corrupt original never inherits an earlier acceptance.
     source_bytes(draft.profile, source)

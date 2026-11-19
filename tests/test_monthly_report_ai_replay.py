@@ -81,7 +81,8 @@ def test_changed_digest_or_other_site_cannot_reuse_accepted_fact(monkeypatch, tm
                        page_texts=("different original",), facts=())
     assert replay_reviewed_facts(historical(profile, modified, (), OCTOBER), modified) == ReviewedReplay()
     second = synthetic_profiles()[1]
-    alien = replace(profile, facilities=second.facilities)
+    # An individual report must have exactly one facility; use the other site.
+    alien = replace(profile, facilities=(second.facilities[1],))
     assert replay_reviewed_facts(historical(alien, source, (), OCTOBER), source) == ReviewedReplay()
 
 
