@@ -215,3 +215,31 @@ def review_pictures(images, section, path, prefix, scope, field, old, plan, bloc
     for slot in single:
         if list(choices.values()).count(slot) > 1:
             blocking.append("Choose just one picture for: " + options.get(slot, slot) + ".")
+
+
+def caption_thumbnail(raw):
+    """Bounded, white-backed contain preview matching progress-photo output.
+
+    Use the existing print-image decoder and EXIF orientation rules. The
+    original bytes remain untouched; this is only a low-resolution UI view.
+    """
+    from io import BytesIO
+
+    from PIL import Image, ImageOps
+
+    from app.image_open import open_image
+    from app.ocr import _MAX_PIXELS_PER_FRAME
+
+    if not isinstance(raw, bytes) or not raw:
+        raise ValueError("Photo preview has no image bytes.")
+    with open_image(BytesIO(raw), formats=("JPEG", "PNG")) as source:
+        if not 0 < source.width * source.height <= _MAX_PIXELS_PER_FRAME:
+            raise ValueError("Photo exceeds the safe preview pixel limit.")
+        image = ImageOps.exif_transpose(source)
+        image.thumbnail((288, 192), Image.Resampling.LANCZOS)
+        rgba = image.convert("RGBA")
+        frame = Image.new("RGB", (288, 192), "white")
+        frame.paste(rgba, ((288 - rgba.width) // 2, (192 - rgba.height) // 2), rgba)
+        output = BytesIO()
+        frame.save(output, format="PNG")
+        return output.getvalue()

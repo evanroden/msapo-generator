@@ -108,13 +108,24 @@ def test_guided_move_commits_all_captions_and_activity_before_refresh_and_recove
     assert reverse.asset_captions == (new.asset_captions[1], new.asset_captions[0], new.asset_captions[2])
     assert pending_asset_indexes(reverse) == (0, 2)
     button(app, 'Done editing photos').click().run()
-    assert not any(item.label.startswith('Move ') for item in app.button)
+    assert_only_pending_order_controls(app, photos(current(app)))
     reopened = AppTest.from_file(ROOT / 'run_web.py', default_timeout=20).run()
     reopened.segmented_control[0].set_value('Monthly report').run()
     choose_report(reopened, after.profile.facilities[0].title)
     assert not reopened.exception
     assert photos(current(reopened)) == reverse
     assert standing(before) == persisted
+
+
+def assert_only_pending_order_controls(app, block):
+    """A68: Done closes all-photos editing; pending photos keep direct Move controls."""
+    assert not any(item.label == 'Done editing photos' for item in app.button)
+    pending, last = pending_asset_indexes(block), len(block.asset_hashes) - 1
+    moves = [item for item in app.button if item.label.startswith('Move ')]
+    assert len(moves) == 2 * len(pending)
+    # The first photo cannot move earlier and the last cannot move later.
+    assert len([item for item in moves if not item.disabled]) == sum(
+        (index > 0) + (index < last) for index in pending)
 
 
 def test_order_only_keeps_reviews_density_omission_and_stales_old_native_actions(monkeypatch, tmp_path):
@@ -243,7 +254,7 @@ def test_photo_action_preserves_later_caption_and_activity_before_commit(monkeyp
     assert standing(before) == persisted
     assert all(library.read_asset(after.profile.contract, after.profile.key, ref) == raw for ref, raw in assets.items())
     if action_label == 'Done editing photos':
-        assert not any(item.label.startswith('Move ') for item in app.button)
+        assert_only_pending_order_controls(app, block)
 
 
 @pytest.mark.parametrize('pending', [False, True])

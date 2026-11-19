@@ -35,6 +35,9 @@ def _decoded(image):
     started_ns = time.monotonic_ns()
     image.wait_for(state="visible", timeout=90000)
     expect(image).to_have_js_property("complete", True, timeout=30000)
+    # complete + naturalWidth can precede the actual decoded pixel. Browser
+    # decode() awaits the image decoder before the first-useful-page clock ends.
+    image.evaluate("(node) => node.decode()")
     assert image.evaluate("(node) => node.naturalWidth > 0 && node.naturalHeight > 0")
     return {"decode_ready_wait_ms": round((time.monotonic_ns() - started_ns) / 1_000_000, 3),
             "width": image.evaluate("(node) => node.naturalWidth"),
