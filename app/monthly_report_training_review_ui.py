@@ -8,7 +8,7 @@ from app import monthly_report_training_review_flow as flow
 from app import monthly_report_sources as sources
 from app.monthly_report_training_import import (
     training_tables, restore_training_review, training_review_record,
-    confirm_training_word_layout,
+    confirm_training_word_layout, review_training_table,
     review_training_event_source,
 )
 from app.monthly_report_training import is_matrix_reference
@@ -148,6 +148,29 @@ def render_training_import(draft, blocks, prefix):
             local = key + "_" + source.id[:12] + "_" + str(table.number)
             if value is None:
                 st.text("Original columns: " + " | ".join(table.columns))
+                # Preview only rows that the retained, source-bound validator
+                # can verify now. Nothing is included or saved by this read.
+                try:
+                    candidate = review_training_table(table, draft.profile, draft.period)
+                except (ValueError, OSError):
+                    # Preview is optional: an unsupported source shape must
+                    # not suppress the explicit original-review workflow.
+                    candidate = None
+                if (candidate is not None and candidate.kind == "events"
+                        and not candidate.issues and not candidate.unmatched):
+                    verified = [row for row in candidate.rows
+                                if not row.issues and not row.excluded]
+                    if verified:
+                        st.caption("Verified completed source events for " + draft.period.label
+                                   + " (preview only). Review and include rows to add them to the report.")
+                        st.dataframe([{
+                            "Course": row.values[0],
+                            "Date": row.values[1],
+                            "Method": row.values[2],
+                            "Participants": row.values[3],
+                            "Hours": (f"{row.values[4]} {'hour' if float(row.values[4]) == 1 else 'hours'}"
+                                      if row.values[4] else "Unknown"),
+                        } for row in verified], hide_index=True)
                 with st.form(local + "_prepare"):
                     year = local + "_year"
                     st.text_input("Requirements source year (leave unknown if unconfirmed)", value="", key=year)

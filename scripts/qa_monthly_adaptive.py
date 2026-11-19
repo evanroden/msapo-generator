@@ -832,6 +832,23 @@ def exercise(browser_type, name):
         frames(page)
         empty = pair_state(capture(page, name, "actual-short-empty-section"), "mbcx")
         check(name, "empty section avoids fabricated screenful padding", empty["pair"]["height"] < 1600, empty)
+        # Match the same mounted editor at narrow phone, tablet and desktop
+        # widths. No alternate mobile report/state or synthetic DOM activation.
+        for width in (360, 768):
+            page.set_viewport_size({"width": width, "height": 844})
+            page.wait_for_function("""() => ['wide', 'book', 'compact'].includes(
+                document.querySelector('.epc-workspace')?.dataset.epcMode)""")
+            scroll_pair(page, ACTIVITY, inset=80)
+            frames(page)
+            nav_bounds = page.locator(".epc-section-navigation").bounding_box()
+            check(name, f"{width}px native navigation is horizontally reachable",
+                  bool(nav_bounds) and nav_bounds["x"] >= -TOLERANCE
+                  and nav_bounds["x"] + nav_bounds["width"] <= width + TOLERANCE,
+                  nav_bounds)
+            check(name, f"{width}px viewport has no document horizontal overflow",
+                  page.evaluate("document.documentElement.scrollWidth<=document.documentElement.clientWidth+2"))
+            check(name, f"{width}px resize preserves the one edited native Activity field",
+                  field.count() == 1 and field.input_value() == committed)
         page.set_viewport_size({"width": 390, "height": 844})
         mode(page, "compact")
         scroll_pair(page, ACTIVITY, inset=80)
@@ -854,10 +871,22 @@ def exercise(browser_type, name):
             else:
                 open_preview.press("Enter")
             current_image(page, ACTIVITY)
+            reference = page.locator(ACTIVITY).locator(".epc-workspace-reference")
+            expect(reference).to_have_attribute("role", "group")
+            expect(reference).to_have_attribute("aria-label", "Monthly Activity Summary preview")
+            expect(reference).to_be_focused()
+            check(name, action + " preview transfers focus to its named native reference",
+                  reference.evaluate("n=>document.activeElement===n && n.tabIndex===-1"))
             back = page.locator(ACTIVITY).get_by_role("button", name="Back to editing", exact=True)
             if action == "pointer":
                 back.click()
             else:
+                expect(reference).to_have_css("outline-style", "solid")
+                expect(reference).to_have_css("outline-width", "3px")
+                # Native Tab from the focused preview group reaches Back; a
+                # direct locator.press() alone would not prove the focus order.
+                page.keyboard.press("Tab")
+                expect(back).to_be_focused()
                 back.press("Enter")
             frames(page)
             returned_reading = reading_state(field)
