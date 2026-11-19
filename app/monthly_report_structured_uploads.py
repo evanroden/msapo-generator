@@ -410,10 +410,13 @@ def _activity_reader_notice(content):
             table.hidden or table.missing_formula_cache_count for table in content.tables):
         return (content.source.filename + ": hidden sheets or missing formula cached results "
                 "require explicit workbook review. This source is not auto-read into Activity.")
-    from app.monthly_report_work_order_csv import is_work_order_source
+    from app.monthly_report_work_order_csv import is_work_order_source, needs_work_order_mapping
     if is_work_order_source(content):
         return (content.source.filename + ": work-order records use Review counted work-order rows "
                 "and Add totals to summary; this file is not sent to the Activity reader.")
+    if needs_work_order_mapping(content):
+        return (content.source.filename + ": work-order records with a repeated column need one column "
+                "chosen in Review counted work-order rows; this file is not sent to the Activity reader.")
     if content.source.suffix == ".pdf":
         from app.monthly_report_vendor_passages import passage_notice
         if any(passage_notice(n, reason="geometry") in content.source.notices

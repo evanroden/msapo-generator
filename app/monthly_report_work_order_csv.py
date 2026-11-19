@@ -65,6 +65,25 @@ def is_work_order_source(content: SourceContent) -> bool:
                     for table in content.tables))
 
 
+def needs_work_order_mapping(content: SourceContent) -> bool:
+    """A work-order file whose repeated identity, status or date column needs a mapping.
+
+    Nothing in it is counted automatically, but its rows still belong to
+    Review counted work-order rows, where one physical column is chosen, and
+    never to the Activity reader.
+    """
+    if content.source.suffix not in (".csv", ".xlsx") or is_work_order_source(content):
+        return False
+    for table in content.tables:
+        if table.hidden:
+            continue
+        counts = [len(source_header_positions(table.columns, _HEADERS[kind]))
+                  for kind in ("identity", "status", "date")]
+        if all(counts) and any(count > 1 for count in counts):
+            return True
+    return False
+
+
 def work_order_evidence(content: SourceContent, period: ReportPeriod,
                         profile: ReportProfile) -> tuple[WorkOrderEvidence, ...]:
     if content.source.suffix not in (".csv", ".xlsx"):
