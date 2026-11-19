@@ -1678,8 +1678,11 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         with st.container(key="monthly_report_navigation"):
             st.markdown('<span class="epc-section-navigation">'
                         '<button type="button" class="epc-section-back" disabled>Back</button>'
+                        '<span class="epc-navigation-attention" role="status" aria-live="polite" hidden></span>'
                         '<span class="epc-section-progress" role="status" aria-live="polite">Cover</span>'
                         '<button type="button" class="epc-section-next" disabled>Next</button></span>', unsafe_allow_html=True)
+        from app.monthly_report_section_inclusion import render_section_preferences
+        section_choices = render_section_preferences(draft, prefix, field)
         with workspace_section("monthly_cover", "Cover"):
             editor_column, preview_column = workspace_columns("monthly_cover")
             with editor_column:
@@ -1720,7 +1723,6 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     render_section_preview(proposed_draft, "cover", proposed_assets, prefix, deferred=True)
         from app.monthly_report_section_help import editor_section_title
         from app.monthly_report_model import included_sections
-        section_choices = {}
         for section in draft.sections:
             title = editor_section_title(section) or section.key.replace("_", " ").capitalize()
             with workspace_section("monthly_" + section.key, title):
@@ -1736,8 +1738,6 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     if section != before:
                         draft = replace(draft, sections=tuple(
                             section if item is before else item for item in draft.sections))
-                from app.monthly_report_section_inclusion import render_section_inclusion
-                section_choices[section.key] = render_section_inclusion(draft, section, prefix, field)
                 numbered = next((s for s in included_sections(draft.sections) if s.key == section.key), None)
                 heading = f"{numbered.number}. {title}" if numbered else title
                 st.subheader(heading, anchor="report-section-" + section.key,
@@ -1995,6 +1995,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             if any(size and size.high > 15 * 1024 * 1024
                    for size in (sizes_forecast.word, sizes_forecast.pdf)):
                 st.caption("This range crosses the 15 MB target; only the finished files confirm their size.")
+        # Read-only preflight receipt; no draft or workflow changes.
+        st.markdown('<span class="epc-review-attention-source" data-count="' +
+                    str(len(checks)) + '" aria-hidden="true"></span>', unsafe_allow_html=True)
         if checks:
             count = len(checks)
             st.markdown(f"**{count} {'item needs' if count == 1 else 'items need'} attention**")
