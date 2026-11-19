@@ -122,11 +122,22 @@ def state_diagnostics(page, action: str, error: Exception) -> None:
     screenshot(page, "not-ready-" + action)
 
 
+def open_qa_details(page, *, timeout=45000):
+    """Browser diagnostics intentionally opt into the collapsed QA disclosure."""
+    label = page.get_by_text("QA details", exact=True).first
+    label.wait_for(timeout=timeout)
+    status = page.get_by_text(re.compile(r"^QA fixture state: ")).first
+    if not status.is_visible():
+        label.click()
+        status.wait_for(timeout=timeout)
+
+
 def await_fixture_state(page, mode: str, *, previous_generation: str | None = None,
                         timeout: int = 45000) -> dict:
     """Wait for a committed, generation-bound state, not an always-visible button."""
     if mode not in ("empty", "known-value prefill", "original-source replay"):
         raise ValueError("Invalid fixture state.")
+    open_qa_details(page, timeout=timeout)
     locator = page.get_by_text(re.compile(r"^QA fixture state: ")).first
     different = ("(?!" + re.escape(previous_generation) + r"\b)"
                  if previous_generation else "")

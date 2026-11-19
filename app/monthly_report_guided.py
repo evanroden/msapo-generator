@@ -379,6 +379,62 @@ def generation_block_reason(*, conflict, checks, warnings_ok):
     return ""
 
 
+
+def generation_block_actions(draft, *, conflict, checks, warnings_ok):
+    """Actionable, section-linked explanations for each existing export gate."""
+    actions = []
+    if conflict:
+        actions.append((
+            "Compare the newer saved version and choose Continue with my draft.",
+            "#monthly-conflict-review", "Compare saved changes",
+        ))
+    for check in checks:
+        if not check.blocking and warnings_ok:
+            continue
+        key = check.block_key
+        section = next((section for section in draft.sections
+                        if section.key == key or any(block.key == key for block in section.blocks)), None)
+        source = next((source for source in draft.sources if source.id == key), None)
+        if check.code == "client_pages":
+            message = "Review the new or changed pictures and confirm that they are relevant and contain no prices."
+            target, label = "#report-review", "Review pictures"
+        elif source is not None and check.code in {"source_facility", "source_period", "source_date_unknown"}:
+            message = review_message(check, draft)
+            detail = "site" if check.code == "source_facility" else "date"
+            target, label = f"#source-details-{source.id}--{detail}", "Correct source details"
+        elif section is not None:
+            message = review_message(check, draft)
+            target, label = "#report-section-" + section.key, "Edit this section"
+        elif key in {"cover", "cover_photo"}:
+            message = review_message(check, draft)
+            target, label = "#report-review" if key == "cover_photo" else "#report-prepared-by", "Review cover"
+        else:
+            message = review_message(check, draft)
+            target, label = "#report-review", "Review the report"
+        if not check.blocking:
+            message = "Read and acknowledge this warning: " + message
+        actions.append((message, target, label))
+    if not warnings_ok:
+        actions.append((
+            "Check ‘I checked these specific warnings’ after reviewing the warnings above.",
+            "#report-review", "Review warnings",
+        ))
+    return tuple(dict.fromkeys(actions))
+
+
+def render_generation_block_actions(draft, *, conflict, checks, warnings_ok):
+    """Keep the reasons and correction links in the action's own viewport."""
+    actions = generation_block_actions(
+        draft, conflict=conflict, checks=checks, warnings_ok=warnings_ok)
+    if not actions:
+        return
+    # Long preflight lists scroll independently so the Generate action remains
+    # alongside them at narrow widths; every reason is still available.
+    with st.container(height=180 if len(actions) > 3 else None, border=False):
+        for message, target, label in actions:
+            st.caption(f"Before generating: {message} [{label}]({target})")
+
+
 def monthly_entries_by_section(draft):
     """Count substantive monthly inputs, not corporate furniture or blank grids.
 
@@ -1795,6 +1851,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         return (ancestor.open_issues if ancestor else (),
                 ancestor.pending_proposals if ancestor else ())
     if conflict:
+        st.markdown('<span id="monthly-conflict-review"></span>', unsafe_allow_html=True)
         st.warning("Another version was saved. Your working draft is preserved. Compare it with the saved report before creating another version.")
         with st.expander("Compare saved content"):
             from app.monthly_report_compare_ui import render_conflict_comparison
@@ -2084,8 +2141,6 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         if not warnings_ok:
             warnings_ok = st.checkbox("I checked these specific warnings", key=prefix + "_warnings_" + draft.fingerprint)
         blocked_reason = generation_block_reason(conflict=conflict, checks=checks, warnings_ok=warnings_ok)
-        if blocked_reason:
-            st.caption(blocked_reason)
         # Re-confirm only a completely empty monthly input set. This is a
         # soft editorial guard, never a way around mandatory preflight gates.
         empty_confirmation_key = prefix + "_empty_generation_confirmation"
@@ -2101,6 +2156,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             st.caption("Method: tracked text/image bytes with Word (0.1–7×) and PDF (0.05–6×) "
                    "margins for packaging and conversion; check actual sizes against 15 MB.")
         st.caption("Creating files also attempts to save a shared version.")
+        if blocked_reason:
+            st.caption(blocked_reason)
+            render_generation_block_actions(
+                draft, conflict=conflict, checks=checks, warnings_ok=warnings_ok)
         pressed = st.button("Create Word and PDF", key=prefix + "_generate",
                             type="secondary" if blocked_reason else "primary", disabled=bool(blocked_reason))
         if pressed and not monthly_entry_sections:
@@ -2111,6 +2170,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             st.warning("No new monthly updates were entered. "
                        "This report may contain saved details and dividers only. "
                        "Review it before sharing.")
+            st.caption("Before generating: Review the empty report preview above, then confirm this creation.")
             generate_anyway = st.button("Create anyway", key=prefix + "_empty_generate_anyway")
         if (pressed and bool(monthly_entry_sections)) or generate_anyway:
             st.session_state.pop(empty_confirmation_key, None)

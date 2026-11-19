@@ -206,12 +206,28 @@ def _render_generation_receipt(generation):
                f"generation {generation[:12]} · revision {receipt['revision']} · "
                f"fingerprint {receipt['fingerprint'][:12]} · received {receipt['accepted_at']}")
     if receipt["status"] == "rejected":
-        st.error("QA export was blocked: " + receipt["message"])
+        st.caption("QA generation failure detail: " + receipt["message"])
         changes = receipt.get("part_changes") or {}
         if changes:
             st.caption("QA structural change since accepted click (hashes only): " +
                        ", ".join(f"{name} {item['accepted']} → {item['current']}"
                                  for name, item in changes.items()))
+
+
+def _render_generation_problem(generation, draft):
+    """Place the QA export's human remedy above its action, not in the trace."""
+    from app.monthly_report_checks import preflight
+    from app.monthly_report_guided import render_generation_block_actions
+    blocking = tuple(check for check in preflight(draft)
+                     if check.blocking and check.code != "empty")
+    if blocking:
+        render_generation_block_actions(
+            draft, conflict=False, checks=blocking, warnings_ok=True)
+    receipt = st.session_state.get("monthly_qa_generation_receipt")
+    if (isinstance(receipt, dict) and receipt.get("generation") == generation
+            and receipt.get("status") == "rejected"):
+        st.error("Before generating: " + receipt["message"])
+        st.caption("[Review the report and its corrections](#report-review)")
 
 
 def _active_jobs() -> bool:
@@ -371,20 +387,10 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
 
     saved = library.load_snapshot(fixture.CONTRACT, fixture.profile().key, fixture.PERIOD)
     current_generation = testing.generation()
-    _render_reset_readiness(live_storage_root)
     kind = ("original-source replay" if saved.draft.sources else "known-value prefill") if saved else "empty"
-    st.caption(f"QA fixture state: {kind} · generation {current_generation[:12]} · revision {saved.revision if saved else 0}")
-    if receipt := st.session_state.get("monthly_qa_fixture_receipt"):
-        if (saved and receipt["generation"] == current_generation
-                and receipt["revision"] == saved.revision
-                and receipt["mode"] == ("replay" if saved.draft.sources else "prefill")):
-            st.caption(f"QA fixture action accepted and committed: {receipt['mode']} · "
-                       f"action {receipt['id'][:12]} · revision {saved.revision} · "
-                       f"received {receipt['accepted_at']} · committed {receipt['committed_at']}")
-    if reset_receipt := st.session_state.get("_monthly_qa_reset_receipt"):
-        if not saved and reset_receipt["prior_generation"] != current_generation:
-            st.caption(f"QA reset acknowledged: empty fixture · generation {current_generation[:12]} · "
-                       f"action {reset_receipt['id'][:12]} · received {reset_receipt['accepted_at']}")
+    diagnostics_surface = st.empty()
+    working = None
+    active = None
     if saved:
         # A fresh browser session has no widget state. Keep the same QA
         # fixture's contract, site set and month across refresh/reconnect;
@@ -449,12 +455,10 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
         x.button("Compare fixture facts", key="monthly_qa_compare",
                  on_click=_queue_compare_request)
         generation_context = _generation_context(saved, current_generation)
+        generation_surface = y.empty()
         y.button("Generate QA Word and PDF", key="monthly_qa_generate",
                  on_click=_queue_generation_request,
                  args=(generation_context,))
-        generation_surface = st.empty()
-        with generation_surface.container():
-            _render_generation_receipt(current_generation)
         # Allocate this near the toolbar; resolve content after the editor finalizes.
         result_surface = st.container()
         st.divider()
@@ -465,19 +469,6 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
         # Bind the mounted toolbar to the finalized editor for this completed run.
         # Streamlit retains this callback argument object until the next click.
         generation_context.update(_generation_context(saved, current_generation))
-        # Test-only diagnosis: record exactly what the finalized server draft
-        # contains, independent of the browser textarea and unfinished journal.
-        # Synthetic QA scope is enforced at render() entry; never echo text.
-        from hashlib import sha256
-        activity_text = next((block.text for block in working.blocks
-                              if block.key == "activity_summary"), "")
-        st.caption("QA working report SHA256: " + working.fingerprint)
-        st.caption("QA working Activity SHA256: " +
-                   sha256(activity_text.encode("utf-8")).hexdigest())
-        for index, callback in enumerate(st.session_state.get("monthly_qa_activity_callbacks", ())):
-            st.caption(f"QA Activity callback {index + 1}: widget {callback['widget']} · "
-                       f"scope {callback['scope']} · baseline {callback['baseline']} · "
-                       f"before {callback['before']} · after {callback['after']}")
         with result_surface:
             compare_request = st.session_state.get("monthly_qa_compare_pending")
             if compare_request:
@@ -523,18 +514,12 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
                         st.session_state["monthly_qa_package"] = (working.fingerprint, package)
                         _finish_generation(request, "completed")
             with generation_surface.container():
-                _render_generation_receipt(current_generation)
+                _render_generation_problem(current_generation, working)
             if state := st.session_state.get("monthly_qa_comparison"):
                 if state.get("fingerprint") != working.fingerprint:
                     st.info("Previous comparison is outdated. Run Compare fixture facts again after editing.")
                 else:
                     st.write(f"{state['mode']}: {state['matched']}/{len(state['checks'])} independent content/provenance checks.")
-                    if state.get("id"):
-                        st.caption(f"QA comparison completed: {state['mode']} · "
-                                   f"{state['matched']}/{len(state['checks'])} · "
-                                   f"action {state['id'][:12]} · at {state['at']}")
-                    for name, passed in state["checks"].items():
-                        st.write(("PASS — " if passed else "CHECK — ") + name)
             retained = st.session_state.get("monthly_qa_package")
             if retained and retained[0] != working.fingerprint:
                 st.info("The previous QA export is outdated. Generate again to include your latest edits.")
@@ -549,24 +534,59 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
                                        on_click="ignore")
                 if package.pdf_error:
                     st.warning(package.pdf_error)
-        # The real browser must not reload a just-edited report until its
-        # specific Activity contents have reached the durable recovery journal.
-        # Expose only a one-way digest of INVENTED test text inside this
-        # already isolated QA namespace, never any real report data. An absent
-        # journal provides no acknowledgment and must not pass the browser test.
-        from hashlib import sha256
+        # Preserve a one-way test-only recovery identity; render it only in the
+        # collapsed diagnostics below, never in the ordinary editor viewport.
         from app.monthly_report_active_work import load as load_active
         try:
             active = load_active(browser_token, fixture.CONTRACT,
                                  fixture.profile().key, fixture.PERIOD)
         except (library.LibraryError, OSError):
             st.warning("The isolated QA recovery journal could not be verified.")
-        else:
+    else:
+        st.info("Choose known-value prefill or source replay to populate this isolated test.")
+
+    # Exactly one QA-only disclosure owns all fingerprints, action receipts,
+    # revision captions and callback traces. Production never calls this route.
+    with diagnostics_surface.container():
+        with st.expander("QA details", expanded=False):
+            from hashlib import sha256
+            _render_reset_readiness(live_storage_root)
+            st.caption(f"QA fixture state: {kind} · generation {current_generation[:12]} · "
+                       f"revision {saved.revision if saved else 0}")
+            receipt = st.session_state.get("monthly_qa_fixture_receipt")
+            if (saved and receipt and receipt["generation"] == current_generation
+                    and receipt["revision"] == saved.revision
+                    and receipt["mode"] == ("replay" if saved.draft.sources else "prefill")):
+                st.caption(f"QA fixture action accepted and committed: {receipt['mode']} · "
+                           f"action {receipt['id'][:12]} · revision {saved.revision} · "
+                           f"received {receipt['accepted_at']} · committed {receipt['committed_at']}")
+            reset_receipt = st.session_state.get("_monthly_qa_reset_receipt")
+            if (not saved and reset_receipt
+                    and reset_receipt["prior_generation"] != current_generation):
+                st.caption(f"QA reset acknowledged: empty fixture · generation {current_generation[:12]} · "
+                           f"action {reset_receipt['id'][:12]} · received {reset_receipt['accepted_at']}")
+            _render_generation_receipt(current_generation)
+            if working is not None:
+                activity_text = next((block.text for block in working.blocks
+                                      if block.key == "activity_summary"), "")
+                st.caption("QA working report SHA256: " + working.fingerprint)
+                st.caption("QA working Activity SHA256: " +
+                           sha256(activity_text.encode("utf-8")).hexdigest())
+                for index, callback in enumerate(st.session_state.get("monthly_qa_activity_callbacks", ())):
+                    st.caption(f"QA Activity callback {index + 1}: widget {callback['widget']} · "
+                               f"scope {callback['scope']} · baseline {callback['baseline']} · "
+                               f"before {callback['before']} · after {callback['after']}")
+                state = st.session_state.get("monthly_qa_comparison")
+                if state and state.get("fingerprint") == working.fingerprint:
+                    if state.get("id"):
+                        st.caption(f"QA comparison completed: {state['mode']} · "
+                                   f"{state['matched']}/{len(state['checks'])} · "
+                                   f"action {state['id'][:12]} · at {state['at']}")
+                    for name, passed in state["checks"].items():
+                        st.write(("PASS — " if passed else "CHECK — ") + name)
             if active:
                 st.caption("QA durable report SHA256: " + active.draft.fingerprint)
                 activity = next((b.text for b in active.draft.blocks
                                  if b.key == "activity_summary"), "")
                 st.caption("QA durable Activity SHA256: " +
                            sha256(activity.encode("utf-8")).hexdigest())
-    else:
-        st.info("Choose known-value prefill or source replay to populate this isolated test.")
