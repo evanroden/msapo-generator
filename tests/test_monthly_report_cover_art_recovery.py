@@ -194,16 +194,33 @@ def test_contents_image_is_not_promoted_when_earliest_cover_has_only_small_art(m
     assert continue_button(app).disabled
 
 
+def _company_logo_png():
+    stream = BytesIO()
+    Image.new("RGB", (300, 70), "teal").save(stream, "PNG")
+    return stream.getvalue()
+
+
+def recognize_company_logo(monkeypatch):
+    """Register the synthetic logo's exact bytes as approved ENFRA artwork.
+
+    Since A58 only exact approved company furniture may cross sites; a
+    "company logo" caption alone is not proof (see the test below).
+    """
+    import hashlib
+    from app import monthly_report_static_branding as branding
+    digest = hashlib.sha256(_company_logo_png()).hexdigest()
+    monkeypatch.setattr(branding, "_COMPANY_ARTWORK_BYTES", branding._COMPANY_ARTWORK_BYTES | {digest})
+
+
 def foreign_cover_report(tmp_path, *, logo=True):
     from docx.shared import Inches
     source, _ = drawing_report(tmp_path, "cover")
     document = Document(source)
     document.paragraphs[0].text = synthetic_profiles()[1].facilities[1].title
     if logo:
-        stream = BytesIO()
-        Image.new("RGB", (300, 70), "teal").save(stream, "PNG")
-        shape = document.sections[0].header.paragraphs[0].add_run().add_picture(BytesIO(stream.getvalue()), width=Inches(2))
-        # This scenario carries recognized company art, not arbitrary header art.
+        shape = document.sections[0].header.paragraphs[0].add_run().add_picture(BytesIO(_company_logo_png()), width=Inches(2))
+        # The scenarios below register these bytes as company art when they
+        # need recognized company furniture rather than arbitrary header art.
         shape._inline.docPr.set("descr", "ENFRA company logo")
     document.add_heading("Activity Summary", 1)
     document.add_paragraph("Foreign site motor work must not reach the target report.")
@@ -213,6 +230,7 @@ def foreign_cover_report(tmp_path, *, logo=True):
 
 def test_excluded_foreign_art_keeps_only_recognized_source_branding_with_current_design(monkeypatch, tmp_path):
     from app.monthly_report_asset_review import pending_asset_indexes
+    recognize_company_logo(monkeypatch)
     source = foreign_cover_report(tmp_path)
     original = source.read_bytes()
     monkeypatch.setattr(ui, "_site_options", lambda contract: synthetic_profiles()[1].facilities)
@@ -248,11 +266,26 @@ def test_fresh_foreign_source_cannot_hide_unread_cover_in_new_native_design(monk
     assert not library.list_profiles(synthetic_profiles()[0].contract)
 
 
+def test_foreign_logo_with_only_a_company_caption_stays_out(tmp_path):
+    # A58: a caption can be typed on any picture, including another site's or
+    # a client's mark. Without the approved bytes nothing crosses sites.
+    from app.monthly_report_import import inspect_docx
+    from app.monthly_report_start_import import analyze_starting_report, automatic_section_plans
+    source = foreign_cover_report(tmp_path)
+    inspection = inspect_docx(source)
+    analysis = analyze_starting_report(inspection, synthetic_profiles()[0], ReportPeriod(2026, 9), synthetic_profiles()[1].facilities)
+    assert analysis.site_relation == "other"
+    logo = next(i for i in inspection.items if i.kind == "image" and i.suggested_slot == "brand_logo")
+    plan = automatic_section_plans(inspection, analysis).get("cover", {})
+    assert logo.id not in plan.get("selected", [])
+
+
 @pytest.mark.parametrize("tamper", ["source", "site", "photo", "new_photo"])
-def test_foreign_art_exclusion_receipt_cannot_cover_stale_or_unrecognized_material(tmp_path, tamper):
+def test_foreign_art_exclusion_receipt_cannot_cover_stale_or_unrecognized_material(monkeypatch, tmp_path, tamper):
     from app.monthly_report_import import inspect_docx
     from app.monthly_report_start_import import analyze_starting_report, automatic_section_plans, build_starting_import
     from app.monthly_report_docx import normalize_report_image
+    recognize_company_logo(monkeypatch)
     source = foreign_cover_report(tmp_path)
     inspection = inspect_docx(source)
     analysis = analyze_starting_report(inspection, synthetic_profiles()[0], ReportPeriod(2026, 9), synthetic_profiles()[1].facilities)

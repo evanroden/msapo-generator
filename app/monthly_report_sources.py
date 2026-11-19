@@ -12,6 +12,8 @@ from email import policy
 from email.parser import BytesParser
 from html.parser import HTMLParser
 from io import BytesIO, StringIO
+from contextlib import closing
+from itertools import groupby
 import codecs
 import csv
 import hashlib
@@ -186,6 +188,17 @@ def _labeled_facility(text, profile):
 
 def suggest_facts(source: ReportSource, profile: ReportProfile) -> ReportSource:
     text = "\n".join(source.page_texts)
+    from app.monthly_report_vendor_passages import passage_notice
+    # Never infer date/site/vendor from page furniture next to unrelated
+    # physical columns. The original page text remains available for review.
+    uncertain_pdf_pages = {
+        number for number in range(1, len(source.page_texts) + 1)
+        if source.suffix == ".pdf"
+        and passage_notice(number, reason="geometry") in source.notices
+    }
+    metadata_text = "\n".join(
+        value for number, value in enumerate(source.page_texts, 1)
+        if number not in uncertain_pdf_pages)
     sample = (source.filename + "\n" + text[:30_000]).casefold()
     patterns = (("Water treatment", ("water treatment", "conductivity", "water analysis")),
                 ("CMMS export", ("work order", "cmms", "task code")),
@@ -200,16 +213,16 @@ def suggest_facts(source: ReportSource, profile: ReportProfile) -> ReportSource:
     if not hits and source.suffix in ocr.SUPPORTED_IMAGE_SUFFIXES:
         classification = "Improvement / training photo"
     def labeled(label):
-        match = re.search(r"(?im)^[ \t]*(?:" + label + r")[ \t]*[:=][ \t]*([^\r\n]{1,160})", text)
+        match = re.search(r"(?im)^[ \t]*(?:" + label + r")[ \t]*[:=][ \t]*([^\r\n]{1,160})", metadata_text)
         return match[1].strip() if match else ""
     raw_date = labeled("service date|report date|completed date|date")
     date_match = re.search(r"\b(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}/\d{1,2}/\d{2,4})\b", raw_date)
-    facility = _labeled_facility(text, profile)
+    facility = _labeled_facility(metadata_text, profile)
     if facility is None:
         # Filenames can suggest a document type, but cannot establish which
         # site's facts its contents describe. Scope needs native source text
         # or the user's explicit item-specific correction.
-        scope_text = text[:30_000].casefold()
+        scope_text = metadata_text[:30_000].casefold()
         matches = [f.title for f in profile.facilities if any(re.search(r"(?<!\w)" + re.escape(n.casefold()) + r"(?!\w)", scope_text) for n in (f.title, *f.aliases))]
         facility = matches[0] if len(matches) == 1 else ""
     source = replace(source, classification=classification)
@@ -238,7 +251,7 @@ def suggest_facts(source: ReportSource, profile: ReportProfile) -> ReportSource:
     oversized_pages = sorted(limit_pages | {n for field in oversized for n in field_pages[field]})
     notices = tuple(dict.fromkeys((*source.notices,
         *(passage_notice(n, reason="limit") for n in oversized_pages),
-        *(passage_notice(n) for n in pending if n not in oversized_pages))))
+        *(passage_notice(n) for n in pending if n not in oversized_pages and n not in uncertain_pdf_pages))))
     def lines(term, field=""):
         if labeled_pages and field:
             return field_values[field] if field not in oversized else ""
@@ -668,8 +681,9 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
                 and (not unicode_csv or data.get("csv_unicode_policy") == 1)
                 and (suffix != ".xlsx" or (type(data.get("xlsx_currency_policy")) is int
                                           and data["xlsx_currency_policy"] == 1))
-                and (suffix != ".pdf" or (data.get("vendor_passage_policy", 0) >= 7
-                                          and data.get("pdf_reader_policy") == 1))):
+                and (suffix != ".pdf" or (data.get("vendor_passage_policy", 0) >= 8
+                                           and data.get("pdf_scan_policy", 0) >= 1
+                                           and data.get("pdf_reader_policy") == 1))):
             source = content.source
             if data.get("client_page_policy", 0) < 1 and suffix not in (".csv", ".xlsx"):
                 source = replace(source, selected_pages=suggested_pages(source))
@@ -697,20 +711,26 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
             ocr_attempts = 0
             ocr_deadline = time.monotonic() + pdf_reader.MAX_LOCAL_OCR_SECONDS
             extracted_chars = 0
-            from app.monthly_report_vendor_passages import block_spans, MAX_VENDOR_BLOCK_SPANS
+            from app.monthly_report_vendor_passages import block_spans, MAX_VENDOR_BLOCK_SPANS, passage_notice
             for number, page in enumerate(pdf, 1):
                 native = page.get_text().strip()
+                needs_ocr, review_notice = ocr._page_visual_decision(page, native_text=native)
                 reading = pdf_reader.read_page(
                     page, number, native_text=native,
-                    needs_ocr=ocr._page_needs_ocr(page, native_text=native),
+                    needs_ocr=needs_ocr,
                     may_ocr=ocr_attempts < pdf_reader.MAX_LOCAL_OCR_PAGES,
                     deadline=ocr_deadline,
                 )
                 ocr_attempts += int(reading.attempted_ocr)
-                if reading.needs_vision:
+                if reading.needs_vision or review_notice:
+                    # Keep an image-backed page unreviewed even if it appears
+                    # blank, has a searchable overlay or was read by local OCR:
+                    # none of these is human proof.
                     needs_vision.append(number)
                 if reading.notice:
                     notices.append(reading.notice)
+                if review_notice:
+                    notices.append(f"Page {number}: {review_notice}.")
                 text = reading.text
                 page_texts.append(text)
                 pdf_ocr_spans.extend(reading.ocr_spans)
@@ -723,7 +743,10 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
                 if not span_budget_exceeded:
                     # Native paragraph proofs are invalid for OCR-augmented or
                     # reordered text unless geometry still tiles exactly.
-                    spans = block_spans(page, text, number)
+                    geometry_uncertain = set()
+                    spans = block_spans(page, text, number, ambiguous_pages=geometry_uncertain)
+                    if geometry_uncertain:
+                        notices.append(passage_notice(number, reason="geometry"))
                     if len(pdf_text_blocks) + len(spans) > MAX_VENDOR_BLOCK_SPANS:
                         # No partial-page certainty after exhausting metadata capacity.
                         # Raw original/page text and ordinary review remain available.
@@ -789,8 +812,8 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
     source = suggest_facts(source, profile)
     content = SourceContent(source, tables, tuple(image_items), tuple(pdf_ocr_spans))
     library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1,
-        "native_action_policy": 1, "vendor_passage_policy": 7,
-        **({"pdf_reader_policy": 1} if suffix == ".pdf" else {}),
+        "native_action_policy": 1, "vendor_passage_policy": 8,
+        **({"pdf_scan_policy": 1, "pdf_reader_policy": 1} if suffix == ".pdf" else {}),
         **({"xlsx_currency_policy": 1} if suffix == ".xlsx" else {}),
         **({"csv_unicode_policy": 1} if unicode_csv else {}),
         **({"csv_dialect_policy": 1} if suffix == ".csv" else {}), **asdict(content)}))
@@ -844,7 +867,11 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
             # source identity, citations, or completed historical snapshots.
             existing_source = sources[digest].source
             try:
-                source_bytes(profile, existing_source)
+                # A repeat upload already supplies the same SHA-addressed
+                # bytes. UI duplicate checks need only the verified original
+                # revision; actual consumers still read/hash the full source.
+                from app.monthly_report_source_revision import verified_source_revision
+                verified_source_revision(profile, existing_source)
             except (ValueError, OSError):
                 try:
                     library._atomic_write(_path(profile, digest, existing_source.suffix), raw)
@@ -915,7 +942,7 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
     return tuple(sources.values()), tuple(messages)
 
 
-def page_image(profile: ReportProfile, content: SourceContent, number: int, *, preview: bool = False):
+def page_image(profile: ReportProfile, content: SourceContent, number: int, *, preview: bool = False, _pdf_image=None):
     source = content.source
     if number < 1 or number > len(source.page_texts):
         raise ValueError("Source page does not exist.")
@@ -951,16 +978,20 @@ def page_image(profile: ReportProfile, content: SourceContent, number: int, *, p
             # source is decoded and an atomic fresh derivative is published
             # only after it has been prepared successfully.
             pass
-    raw = source_bytes(profile, source) if source.suffix != ".docx" else b""
+    raw = source_bytes(profile, source) if source.suffix != ".docx" and _pdf_image is None else b""
     if source.suffix == ".pdf":
-        with fitz.open(stream=raw, filetype="pdf") as pdf:
-            page = pdf[number-1]
-            dpi = 96 if preview else 150
-            width, height = page.rect.width * dpi / 72, page.rect.height * dpi / 72
-            if width <= 0 or height <= 0 or width * height > ocr._MAX_PIXELS_PER_FRAME:
-                raise ValueError("This PDF page is too large to rasterize safely.")
-            png = page.get_pixmap(dpi=dpi, alpha=False).tobytes("png")
-        result = normalize_report_image(png, ".png", line_art=True, dpi=dpi)
+        if _pdf_image is not None:
+            # Only the internal verified process-worker path supplies this.
+            result = _pdf_image
+        else:
+            with fitz.open(stream=raw, filetype="pdf") as pdf:
+                page = pdf[number-1]
+                dpi = 96 if preview else 150
+                width, height = page.rect.width * dpi / 72, page.rect.height * dpi / 72
+                if width <= 0 or height <= 0 or width * height > ocr._MAX_PIXELS_PER_FRAME:
+                    raise ValueError("This PDF page is too large to rasterize safely.")
+                png = page.get_pixmap(dpi=dpi, alpha=False).tobytes("png")
+            result = normalize_report_image(png, ".png", line_art=True, dpi=dpi)
     elif source.suffix in ocr.SUPPORTED_IMAGE_SUFFIXES:
         result = normalize_report_image(raw, source.suffix, dpi=96 if preview else 200,
                                         **({"frame_index": number - 1} if source.suffix == ".mpo" else {}))
@@ -995,10 +1026,53 @@ def image_numbers(content: SourceContent) -> tuple[int, ...]:
     return ()
 
 
+
+def _prepared_page_images(profile, planned):
+    """Keep the canonical page order and content-addressed cache writer in parent.
+
+    The process path is exclusive to a *large*, uncached, single-PDF range.
+    Never move two-page PreviewStore paints, source identity or human review
+    policy into a worker. Do not hold a cache or report-library lock in children.
+    """
+    from app.monthly_report_parallel_pages import MIN_PDF_BYTES, RASTER_SLOT, eligible, parallel_pages
+
+    for _, records in groupby(planned, key=lambda item: item[0].source.id):
+        items = tuple(records)
+        content = items[0][0]
+        source = content.source
+        if source.suffix == ".pdf":
+            path = _path(profile, source.sha256, source.suffix)
+            prepared = path.parent / "prepared" / source.sha256
+            cold = sum(not (prepared / f"{number}-print.json").is_file()
+                       for _, _, number in items)
+            if (path.stat().st_size >= MIN_PDF_BYTES and eligible(cold)
+                    and RASTER_SLOT.acquire(blocking=False)):
+                try:
+                    # Authenticate the exact original before dispatch; each
+                    # process revalidates it before opening its own PDF.
+                    source_bytes(profile, source)
+                    rasters = parallel_pages(
+                        path, source.sha256, (number for _, _, number in items),
+                        dpi=150, max_pixels=ocr._MAX_PIXELS_PER_FRAME,
+                        max_source_bytes=file_size_limit(source.suffix))
+                    with closing(rasters):
+                        for (record_content, slot, number), (returned, image) in zip(
+                                items, rasters, strict=True):
+                            if returned != number:
+                                raise ValueError("Prepared PDF page order changed.")
+                            yield record_content, slot, number, page_image(
+                                profile, record_content, number, _pdf_image=image)
+                finally:
+                    RASTER_SLOT.release()
+                continue
+        for record_content, slot, number in items:
+            yield record_content, slot, number, page_image(profile, record_content, number)
+
+
 def prepare_pages(profile: ReportProfile, contents: tuple[SourceContent, ...],
                   destinations: tuple[tuple[str, str], ...], *,
                   only_pages: frozenset[tuple[str, int]] | None = None) -> tuple[ResolvedBlock, ...]:
-    """Prepare serially into content-addressed storage, with an aggregate limit.
+    """Prepare into content-addressed storage, with an aggregate limit.
 
     An optional subset restricts which pages are actually inserted without
     changing the canonical source fingerprint used in provenance references.
@@ -1031,15 +1105,16 @@ def prepare_pages(profile: ReportProfile, contents: tuple[SourceContent, ...],
         if not page_allowed(content.source, number, profile=profile, destination=slot):
             raise ValueError(f"Check page {number} of {content.source.filename} before including it. Prices, legal-only and blank/signature-only pages cannot be included.")
     grouped, total = {}, 0
-    for content, slot, number in planned:
-        normalized = page_image(profile, content, number)
-        total += len(normalized.data)
-        if total > 60 * 1024 * 1024:
-            raise ValueError("Prepared images exceed 60 MB. Reduce the selected pages or image dimensions.")
-        ref = library.asset_reference(normalized.data, normalized.extension)
-        library._atomic_write(library._profile_path(profile.contract, profile.key) / "assets" / ref, normalized.data)
-        caption = dict(content.source.captions).get(number, f"{content.source.filename} · page/item {number}")
-        grouped.setdefault(slot, []).append((ref, caption, source_reference(content.source, number)))
+    # Explicit closing propagates aborted/stale requests into worker teardown.
+    with closing(_prepared_page_images(profile, planned)) as prepared:
+        for content, slot, number, normalized in prepared:
+            total += len(normalized.data)
+            if total > 60 * 1024 * 1024:
+                raise ValueError("Prepared images exceed 60 MB. Reduce the selected pages or image dimensions.")
+            ref = library.asset_reference(normalized.data, normalized.extension)
+            library._atomic_write(library._profile_path(profile.contract, profile.key) / "assets" / ref, normalized.data)
+            caption = dict(content.source.captions).get(number, f"{content.source.filename} · page/item {number}")
+            grouped.setdefault(slot, []).append((ref, caption, source_reference(content.source, number)))
     from app.monthly_report_asset_instances import new_asset_instance, with_asset_instances
     blocks = tuple(with_asset_instances(ResolvedBlock(slot, "This month", asset_hashes=tuple(v[0] for v in values),
                                asset_captions=tuple(v[1] for v in values), references=tuple(v[2] for v in values),
