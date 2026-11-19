@@ -39,7 +39,11 @@ def synthetic_pdf():
         rotated.insert_image(fitz.Rect(20, 20, 590, 780), stream=scan)
         rotated.set_rotation(90)
         vector = document.new_page()
+        # Main treats one or two shapes as a separator, not a drawing: give
+        # this text-free vector page enough artwork to need a visual read.
         vector.draw_rect(fitz.Rect(50, 50, 550, 500), color=(0, 0, 0))
+        vector.draw_line(fitz.Point(50, 520), fitz.Point(550, 520), color=(0, 0, 0))
+        vector.draw_circle(fitz.Point(300, 600), 40, color=(0, 0, 0))
         columns = document.new_page(width=620, height=700)
         columns.insert_text((36, 100), "Actions: Inspected tag 555-013-4431 but it")
         columns.insert_text((336, 100), "Recommendations: Schedule maintenance.")
