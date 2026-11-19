@@ -1,8 +1,10 @@
 """Make proven native divider background photographs monochrome in derivatives.
 
-Only standalone, full-page JPEG DrawingML pictures in a previously recognized
-native divider are eligible. Other artwork, alternate representations, and
-original source assets are deliberately left alone.
+Only standalone, full-page JPEG or fully opaque PNG DrawingML photographs in
+a previously recognized native divider are eligible. PNGs with alpha or indexed
+transparency, other artwork, alternate representations, and original assets
+are deliberately left alone. Source pages, logos and report photos are not
+converted without their own independently approved monochrome design rule.
 """
 from io import BytesIO
 
@@ -100,16 +102,31 @@ def monochrome_divider_photos(document, roots):
             blip = blips[0]
             rid = blip.get(R + 'embed')
             rel = document.part.rels.get(rid)
-            if rel is None or rel.is_external or rel.target_part.content_type != 'image/jpeg':
+            if rel is None or rel.is_external:
+                continue
+            # A native background photograph may be PNG as well as JPEG. Never
+            # infer that an arbitrary attached page/logo should be desaturated.
+            image_format = {'image/jpeg': 'JPEG', 'image/png': 'PNG'}.get(rel.target_part.content_type)
+            if image_format is None:
                 continue
             try:
-                with open_image(BytesIO(rel.target_part.blob), formats=("JPEG",)) as source:
-                    if (source.format != 'JPEG' or source.width * source.height > _MAX_PIXELS_PER_FRAME
+                with open_image(BytesIO(rel.target_part.blob), formats=(image_format,)) as source:
+                    if (source.format != image_format or source.width * source.height > _MAX_PIXELS_PER_FRAME
                             or min(source.size) < 800 or source.getexif().get(274, 1) != 1):
                         continue
+                    if image_format == 'PNG':
+                        # Preserve brand logos, hidden RGB and partially transparent
+                        # layers; a white compositing guess could erase intentional art.
+                        if (source.mode not in ('RGB', 'L', 'RGBA', 'LA')
+                                or source.info.get('transparency') is not None
+                                or ('A' in source.getbands()
+                                    and source.getchannel('A').getextrema() != (255, 255))):
+                            continue
                     if _may_include_flattened_brand(source):
                         continue
-                    image = ImageOps.grayscale(source).convert('RGB')
+                    # A true single-channel PNG avoids retaining non-neutral
+                    # color channels in the Word derivative and resulting PDF.
+                    image = ImageOps.grayscale(source)
                     output = BytesIO()
                     image.save(output, 'PNG')
             except (OSError, ValueError, Image.DecompressionBombError, UnidentifiedImageError):
