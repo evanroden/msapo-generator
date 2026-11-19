@@ -275,7 +275,11 @@ def test_ordered_report_validation_save_and_reopen_preserve_both_sections(monkey
 def test_training_matrix_stays_visible_with_infrequent_forms_collapsed(training):
     app, *_ = training
     labels = {expander.label for expander in app.expander}
-    assert {"Add requirement", "Add completed training"} <= labels
+    assert {"Yearly training requirements", "Add completed training"} <= labels
+    assert "Add requirement" not in labels  # One secondary disclosure, not nested expanders.
+    assert next(e for e in app.expander if e.label == "Yearly training requirements").proto.expanded is False
+    assert next(e for e in app.expander if e.label == "Add completed training").proto.expanded is True
+    assert widget(app, "button", "Add requirement") is not None
     assert "Remove training entries" not in labels
     assert widget(app, "text_input", "Training topic") is not None
     assert widget(app, "text_input", "Hours (optional)") is not None
