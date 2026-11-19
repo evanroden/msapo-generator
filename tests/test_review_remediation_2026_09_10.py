@@ -13,7 +13,7 @@ import anthropic
 import httpx
 import pymupdf as fitz
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 from dotenv import dotenv_values
 from streamlit.testing.v1 import AppTest
 
@@ -191,7 +191,12 @@ def test_mixed_pdf_ocr_preserves_page_order(monkeypatch):
     with fitz.open() as pdf:
         pdf.new_page().insert_text((30, 40), "Native cover with sufficient text.")
         p = pdf.new_page()
-        p.insert_image(p.rect, stream=picture())
+        # A scan has visible ink; a uniformly white image is not sent to OCR.
+        scan = Image.new("RGB", (120, 220), "white")
+        ImageDraw.Draw(scan).rectangle((10, 20, 110, 60), fill="black")
+        data = BytesIO()
+        scan.save(data, format="PNG")
+        p.insert_image(p.rect, stream=data.getvalue())
         pdf.new_page().insert_text((30, 40), "Native final page with sufficient text.")
         payload = pdf.tobytes()
     counts = []

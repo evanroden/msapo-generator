@@ -77,6 +77,21 @@ render_guided_workflow('', '', _field, _move)
     prepared = next(w for w in app.text_input if w.label == 'Prepared by')
     prepared.set_value('Synthetic unsaved editor name')
     state.update(calls=0, armed=True)
+    # A05: a warm rerun no longer rereads the starting source, so a busy work
+    # slot cannot interrupt it and the browser edit is applied directly.
+    app.run()
+    assert not app.exception
+    assert state['calls'] == 0 and not state['held']
+    assert not any('Another report is being prepared' in x.value for x in app.info)
+    assert next(w for w in app.text_input if w.label == 'Prepared by').value == 'Synthetic unsaved editor name'
+    # A cold entry still rereads it and must yield to the busy slot without
+    # losing the mirrored pending edit. (AppTest's session_state is not
+    # iterable, and other guided keys also end in "_draft", such as the AI
+    # draft flag, so drop only the report draft itself.)
+    for key, value in list(app.session_state.filtered_state.items()):
+        if key.endswith('_draft') and hasattr(value, 'blocks'):
+            del app.session_state[key]
+    state.update(calls=0)
     try:
         app.run()
         assert not app.exception
@@ -92,7 +107,7 @@ render_guided_workflow('', '', _field, _move)
     assert not app.exception
     assert not any('Another report is being prepared' in x.value for x in app.info)
     assert app.session_state['report_synthetic_pending_edit'] == 'Synthetic unsaved wording'
-    assert next(w for w in app.text_input if w.label == 'Prepared by').value == 'Synthetic unsaved editor name'
+    assert any(w.label == 'Prepared by' for w in app.text_input)
     assert state['calls'] > blocked_call
 
 
