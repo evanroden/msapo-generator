@@ -209,6 +209,7 @@ def test_actual_pdf_export_preserves_first_middle_last_and_page_aspect(
     import hashlib
     import json
     import os
+    import re
     from pathlib import Path
 
     from app import pdf_converter
@@ -249,7 +250,10 @@ def test_actual_pdf_export_preserves_first_middle_last_and_page_aspect(
         texts = [page.get_text() for page in result]
         for number in (1, count // 2, count):
             caption = f"synthetic-mbcx-{count}.pdf · page/item {number}"
-            occurrences = [i for i, text in enumerate(texts) if caption in text]
+            # Match the complete page number: page/item 1 must not also
+            # match page/item 10, 11, ... 19 in exported PDF text.
+            occurrences = [i for i, text in enumerate(texts)
+                           if re.search(re.escape(caption) + r"(?!\d)", text)]
             assert len(occurrences) == 1, (caption, occurrences)
             position = occurrences[0]
             positions.append(position)
