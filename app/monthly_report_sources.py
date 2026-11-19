@@ -22,12 +22,14 @@ import re
 from xml.etree.ElementTree import ParseError as XMLParseError
 from zipfile import BadZipFile
 import zlib
+from time import perf_counter
 
 import pymupdf as fitz
 from lxml.etree import XMLSyntaxError
 from openpyxl import load_workbook
 
 from app import monthly_report_library as library, monthly_report_import as docx_import, ocr
+from app.monthly_latency_spans import measure_span, record_span
 from app.monthly_report_docx import ReportImage, normalize_report_image
 from app.monthly_report_import import inspect_docx, read_import_image
 from app.monthly_report_model import ReportProfile, ReportSource, ResolvedBlock
@@ -683,6 +685,7 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
         page_texts, needs_vision, tables, image_items, notices = [], [], (), [], []
         pdf_text_blocks = []
         span_budget_exceeded = False
+        extraction_started = perf_counter()
         if suffix == ".pdf":
             with fitz.open(stream=raw, filetype="pdf") as pdf:
                 if pdf.is_encrypted and not pdf.authenticate(""):
@@ -763,6 +766,7 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
             text, attachments, extra = _email(raw) if suffix == ".eml" else _msg(raw)
             page_texts = [text]
             notices.extend(extra)
+        record_span("source_extraction", perf_counter() - extraction_started)
         if sum(map(len, page_texts)) > ocr._MAX_EXTRACTED_CHARS:
             raise ValueError(f"Source text exceeds {ocr._MAX_EXTRACTED_CHARS:,} characters; split the input before reading.")
         source = ReportSource(digest, filename, digest, suffix, page_texts=tuple(page_texts),
@@ -770,7 +774,8 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
                               selected_pages=tuple(range(1, len(page_texts)+1)), needs_vision=tuple(needs_vision), notices=tuple(notices))
         if suffix not in (".csv", ".xlsx"):
             source = replace(source, selected_pages=suggested_pages(source))
-        source = suggest_facts(source, profile)
+        with measure_span("source_mapping"):
+            source = suggest_facts(source, profile)
         content = SourceContent(source, tables, tuple(image_items))
         library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1,
             "native_action_policy": 1, "vendor_passage_policy": 8,

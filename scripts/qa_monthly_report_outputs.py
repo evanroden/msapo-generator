@@ -11,6 +11,9 @@ import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import perf_counter, process_time
+import resource
+
+from app.monthly_latency_spans import capture_spans
 
 import pymupdf as fitz
 
@@ -29,7 +32,10 @@ def main() -> None:
     output.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(prefix="enfra-synthetic-ci-") as tmp:
         draft = approved_synthetic_draft(_SyntheticEnvironment(), Path(tmp))
-        result = generate_report(draft, acknowledged_fingerprint=draft.fingerprint)
+        wall_start, cpu_start = perf_counter(), process_time()
+        with capture_spans() as spans:
+            result = generate_report(draft, acknowledged_fingerprint=draft.fingerprint)
+        export_seconds, export_cpu = perf_counter() - wall_start, process_time() - cpu_start
         if not result.docx or not result.pdf:
             raise RuntimeError("Both actual synthetic report formats are required: " + str(result.pdf_error))
         files = {}
@@ -49,6 +55,14 @@ def main() -> None:
             "scope": "invented work order and price-redacted proposal tables only",
             "expected_work_orders": {"total": 3, "completed": 2, "open": 1, "closure": "66.7%"},
             "files": files,
+            "performance": {
+                "boundary": "single uncapped CI synthetic final report generation, not browser/production latency",
+                "total_wall_seconds": round(export_seconds, 4),
+                "python_cpu_seconds": round(export_cpu, 4),
+                "peak_python_rss_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024,
+                "critical_path_spans": list(spans),
+                "exact_build_sha": os.environ.get("MSAPO_SHA") or os.environ.get("GITHUB_SHA") or "unreported",
+            },
             "note": "Inspect every page before use. Does not certify Microsoft Word or original-client layout."
         }
         (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
@@ -95,7 +109,6 @@ def main() -> None:
             })
         assert {key: sha256(value).hexdigest() for key, value in assets.items()} == asset_hashes
         try:
-            import resource
             maxrss_mib = round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 2)
         except (ImportError, AttributeError):
             maxrss_mib = None
