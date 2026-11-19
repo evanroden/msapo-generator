@@ -82,11 +82,17 @@ class SourceRow:
     row_number: int
     columns: tuple[str, ...]
     cells: tuple[str, ...]
+    # Optional native Word provenance. Legacy CSV/PDF and saved receipts retain
+    # their existing keys; inspected DOCX rows use physical body-item/row IDs.
+    native_item_id: str = ""
+    native_row_number: int = 0
 
     @property
     def key(self):
-        return sha256(json.dumps((self.source_sha256, self.table_number, self.row_number),
-                                 separators=(",", ":")).encode()).hexdigest()[:32]
+        identity = ((self.source_sha256, self.table_number, self.native_item_id,
+                     self.native_row_number) if self.native_item_id else
+                    (self.source_sha256, self.table_number, self.row_number))
+        return sha256(json.dumps(identity, separators=(",", ":")).encode()).hexdigest()[:32]
 
 
 @dataclass(frozen=True)
@@ -131,7 +137,15 @@ class WorkOrderReview:
 
     @property
     def revision(self):
-        return sha256(json.dumps(asdict(self), sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        data = asdict(self)
+        # Schema-1 receipts written before native DOCX provenance must retain
+        # their exact digest. Empty optional fields are not a data migration.
+        for row in data["rows"]:
+            native = row["origin"]
+            if not native["native_item_id"] and native["native_row_number"] == 0:
+                native.pop("native_item_id")
+                native.pop("native_row_number")
+        return sha256(json.dumps(data, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
     @property
     def needs_review(self):
@@ -149,18 +163,38 @@ class WorkOrderReview:
 
     def review_table(self):
         # For a read-only or explicitly reviewed edit UI. No automatic publish.
-        rows = tuple((str(row.origin.row_number), row.work_order, row.site,
+        rows = tuple((str(row.origin.native_row_number or row.origin.row_number),
+                      row.work_order, row.site,
                       row.work_date, row.completed_date, row.status,
                       row.work_type, row.trade, "; ".join(row.issues))
                      for row in self.rows)
         return ReportTable(REVIEW_COLUMNS, rows, self.source_reference)
 
 
+def source_header_positions(columns, aliases):
+    """Count parser-renamed duplicate headings as distinct physical candidates.
+
+    A repeated field is stored as e.g. Status / Status (2) to keep the table
+    editable. The second physical field cannot disappear from auto-detection.
+    """
+    names = tuple(_name(value) for value in columns)
+    found = []
+    for index, title in enumerate(columns):
+        if names[index] in aliases:
+            found.append(index)
+            continue
+        match = re.fullmatch(r"(.+?) \((\d+)\)", str(title))
+        if (match and int(match.group(2)) >= 2
+                and _name(match.group(1)) in aliases
+                and _name(match.group(1)) in names[:index]):
+            found.append(index)
+    return tuple(found)
+
+
 def suggest_mapping(columns):
-    values = tuple(_name(v) for v in columns)
     picks, ambiguous = {}, []
     for name in FIELDS:
-        positions = [n for n, title in enumerate(values) if title in ALIASES[name]]
+        positions = source_header_positions(columns, ALIASES[name])
         picks[name] = positions[0] if len(positions) == 1 else None
         if len(positions) > 1:
             ambiguous.append(name)
@@ -382,7 +416,8 @@ def restore_review(record):
                 origin["source_id"], origin["source_sha256"],
                 origin["source_fingerprint"], origin["filename"],
                 origin["table_number"], origin["row_number"],
-                tuple(origin["columns"]), tuple(origin["cells"]))
+                tuple(origin["columns"]), tuple(origin["cells"]),
+                origin.get("native_item_id", ""), origin.get("native_row_number", 0))
             rows.append(WorkOrderRow(
                 restored_origin, **{key: source_row[key] for key in FIELDS},
                 issues=tuple(source_row["issues"]),
@@ -411,6 +446,11 @@ def restore_review(record):
                 or row.origin.source_fingerprint != review.source_fingerprint
                 or row.origin.table_number != review.table_number
                 or row.origin.columns != review.original_columns
+                or (type(row.origin.native_item_id) is not str
+                    or type(row.origin.native_row_number) is not int
+                    or (bool(row.origin.native_item_id) != bool(row.origin.native_row_number))
+                    or row.origin.native_row_number < 0
+                    or row.origin.native_row_number > 20_000)
                 or not 1 <= row.origin.row_number <= len(review.original_rows)
                 or row.origin.cells != review.original_rows[row.origin.row_number - 1]
                     + ("",) * (len(review.original_columns)

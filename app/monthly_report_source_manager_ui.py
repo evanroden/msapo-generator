@@ -47,6 +47,75 @@ def _statuses(draft, blocks, prefix):
         pending=_pending_source_selection(prefix))
 
 
+def _render_saved_source_reuse(draft, prefix, field, *, visible):
+    """One saved-original action next to the native Add source files control."""
+    # The manager stays mounted while closed to preserve native form buffers.
+    # Do not deserialize historical report snapshots on a hidden rerun.
+    if not visible:
+        return draft
+    from app.monthly_report_saved_source_reuse import saved_source_choices, reuse_saved_source
+    from app.monthly_report_source_details import source_date
+    evidence_key = prefix + "_evidence"
+    contents = tuple(st.session_state.get(evidence_key, ()))
+    existing = {identity for source in draft.sources
+                for identity in (source.id, source.sha256)}
+    existing.update(identity for content in contents
+                    for identity in (content.source.id, content.source.sha256))
+    try:
+        choices = saved_source_choices(draft.profile, exclude_ids=existing)
+    except (ValueError, OSError) as exc:
+        # One damaged old snapshot must not take down the current report or
+        # block uploading a fresh file. Never treat it as an empty catalog.
+        st.warning("Saved-source catalog needs review; current report and original files were kept. " + str(exc))
+        return draft
+    st.markdown("**Already uploaded**")
+    if not choices:
+        st.caption("No other saved files for this exact contract and site selection.")
+        return draft
+    st.caption("Choose a saved original instead of uploading it again. Its saved source details and page decisions are retained.")
+    options = {choice.period.key + ":" + choice.source.sha256: choice for choice in choices}
+    choice_key = field(prefix + "_source_reuse_choice", next(iter(options)))
+    # If a saved report changed since the selector was displayed, do not
+    # replace the old click target with whichever file now sorts first.
+    stale_selection = st.session_state[choice_key] not in options
+    if stale_selection:
+        st.session_state[choice_key] = next(iter(options))
+        st.warning("The saved-file list changed. Review the current selection before reusing it.")
+    selected = st.selectbox("Saved source", tuple(options), key=choice_key,
+                            format_func=lambda identity: options[identity].label)
+    if st.button("Reuse saved source", key=prefix + "_reuse_saved_source",
+                 disabled=stale_selection):
+        choice = options[selected]
+        try:
+            content = reuse_saved_source(draft.profile, choice)
+        except (ValueError, OSError, RuntimeError) as exc:
+            st.warning(str(exc))
+        else:
+            if content.source.id not in {item.source.id for item in contents}:
+                st.session_state[evidence_key] = (*contents, content)
+            if content.source.id not in {source.id for source in draft.sources}:
+                draft = replace(draft, sources=(*draft.sources, content.source))
+            st.session_state[prefix + "_evidence_selected"] = content.source.id
+            st.session_state[prefix + "_source_active_selected"] = content.source.id
+            st.session_state[prefix + "_period_editor_refresh"] = True
+            st.session_state[prefix + "_reuse_origin"] = (
+                content.source.id, choice.period.key)
+            st.success("Saved original reused without a new upload. Review its existing file details below.")
+            when = source_date(content.source.service_date)
+            if (choice.period != draft.period or when is None
+                    or not draft.period.start <= when <= draft.period.end):
+                st.warning("This file was saved for " + choice.period.label +
+                           ". Confirm or correct its source date and site before including it in "
+                           + draft.period.label + ". Prior report approval does not approve this month.")
+    origin = st.session_state.get(prefix + "_reuse_origin")
+    if origin and origin[1] != draft.period.key:
+        source = next((item for item in draft.sources if item.id == origin[0]), None)
+        when = source_date(source.service_date) if source is not None else None
+        if source is not None and (when is None or not draft.period.start <= when <= draft.period.end):
+            st.caption("Earlier-month source retained: correct its date/site in the existing File to review controls.")
+    return draft
+
+
 def open_source_review(prefix, source_id, target, page=None):
     """Native navigation callback; no source or report content changes."""
     from uuid import uuid4
@@ -55,6 +124,29 @@ def open_source_review(prefix, source_id, target, page=None):
     if type(page) is int and page > 0:
         st.session_state[prefix + "_evidence_" + source_id + "_page"] = page
     st.session_state[prefix + "_source_review_context"] = source_id
+
+
+def _resident_source_forms(prefix, available, requested, selected, opened, needed=()):
+    """Mount only visited source forms, never drop an unsubmitted native form.
+
+    Streamlit form fields are sent to Python only on Submit. Simply caching
+    their defaults cannot recover a user's browser-only, unsubmitted date/site
+    edits. Keep every *visited* form mounted, even when hidden or Done, in
+    first-visit order so earlier delta paths do not move during source switches.
+    A source that needs a date/site correction (``needed``) keeps its one
+    canonical resolver from a cold render, as before lazy mounting: resumed
+    reports and source warnings correct it there. Other unvisited files
+    require no metadata widgets. Drop forms for removed IDs.
+    """
+    key = prefix + "_source_resident_forms"
+    available_ids = set(available)
+    resident = [identity for identity in st.session_state.get(key, ())
+                if identity in available_ids]
+    for identity in (*((selected, requested) if opened else ()), *needed):
+        if identity in available_ids and identity not in resident:
+            resident.append(identity)
+    st.session_state[key] = tuple(resident)
+    return tuple(resident)
 
 
 def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, keep_missing, *,
@@ -98,6 +190,13 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
               key=prefix + "_source_manager_" + str(opened),
               on_click=_open_manager if not opened else _close_manager,
               args=(manager_key, selection_key, "") if not opened else (manager_key,))
+    from app.monthly_report_coverage_ui import render_coverage
+    draft = render_coverage(draft, st.session_state.get(prefix + "_evidence", ()),
+                            prefix, blocks)
+    # Operator-only, read-only ledger. Keep source acceptance/generation unchanged.
+    from app.monthly_report_source_manifest_ui import render_source_manifest_audit
+    render_source_manifest_audit(replace(draft, blocks=tuple(blocks.values())),
+        st.session_state.get(prefix + "_evidence", ()), prefix)
     panel_key = prefix + "_source_manager_panel"
     # Keep child keys and delta paths stable. Native form buffers are not sent
     # by an unrelated file-selection click and cannot be reconstructed in Python.
@@ -120,6 +219,7 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
         else:
             sources, additions = draft.sources, {}
         draft = replace(draft, sources=keep_missing(prefix, sources))
+        draft = _render_saved_source_reuse(draft, prefix, field, visible=opened)
         if additions:
             from app.monthly_report_guided import merge_blocks, _advance_rich_text_receipt
             for key, block in additions.items():
@@ -141,6 +241,31 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
                 st.session_state[selection_key] = ids[0]
             requested = st.selectbox("File to review", ids,
                 format_func=lambda identity: ordered[identity].filename, key=selection_key)
+            # Every retained file has its own actionable card, but all edits
+            # continue through the one mounted native form and page workspace.
+            # The Edit callback changes only the existing file selector; the
+            # canonical selected source is switched after the former source's
+            # delivered controls have been processed below.
+            from app.monthly_report_source_card_summary import source_card_evidence
+            current = replace(draft, blocks=tuple(blocks.values()))
+            cards = {item.source_id: item for item in _statuses(current, blocks, prefix)}
+            for identity in ids:
+                item = cards.get(identity)
+                if item is None:
+                    continue
+                source = ordered[identity]
+                evidence = source_card_evidence(source, item, current)
+                card_key = prefix + "_source_card_" + sha256(identity.encode()).hexdigest()[:16]
+                with st.container(key=card_key, border=True):
+                    st.text(source.filename)
+                    st.caption("Type: " + evidence.source_type + " · Site evidence: " +
+                               evidence.site + " · Month evidence: " + evidence.month)
+                    st.caption("Destination: " + evidence.destination)
+                    st.caption("Contribution: " + evidence.contribution)
+                    if evidence.warning:
+                        st.warning(evidence.warning)
+                    st.button("Edit", key=card_key + "_edit", on_click=_open_manager,
+                              args=(manager_key, selection_key, identity))
             selected = st.session_state.setdefault(active_key, requested)
             if selected not in ordered:
                 selected = requested
@@ -148,8 +273,18 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
             current = replace(draft, blocks=tuple(blocks.values()))
             included = used_source_ids(current)
             corrected = {}
-            for source in ordered.values():
-                source = _current_source_detail(source, contents)
+            # Lightweight anchor shells stay at their original source positions
+            # so cold source-warning links and later browser delta paths remain
+            # valid. Only a visited source installs date/site/native form widgets.
+            current_sources = {source_id: _current_source_detail(ordered[source_id], contents)
+                               for source_id in ids}
+            problems = {source_id: detail_problems(source, draft.profile, draft.period,
+                                                   in_report=source_id in included, draft=current)
+                        for source_id, source in current_sources.items()}
+            residents = set(_resident_source_forms(prefix, ids, requested, selected, opened,
+                                                   needed=tuple(i for i in ids if problems[i])))
+            for source_id in ids:
+                source = current_sources[source_id]
                 owner_key = prefix + "_managed_source_" + source.id
                 st.markdown('<style>.st-key-' + owner_key + '{display:' +
                             ("block" if source.id == selected else "none") + ';}</style>',
@@ -158,6 +293,17 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
                     st.markdown('<a class="enfra-source-review-return" data-source-id="' +
                                 escape(source.id, quote=True) + '" href="#report-review" hidden>Return to review</a>',
                                 unsafe_allow_html=True)
+                    if source.id not in residents:
+                        # The existing native warning/navigation adapter expects
+                        # source-details-ID (and date/site aliases) before its
+                        # first click, even when the manager is closed. Its
+                        # content is an anchor-only shell, *not* a hidden form.
+                        p = prefix + "_evidence_" + source.id + "_source_details"
+                        anchor = "source-details-" + escape(source.id, quote=True)
+                        with st.container(key="source_detail_editor_" + p):
+                            st.markdown("".join('<span id="' + anchor + suffix + '"></span>'
+                                for suffix in ("", "--site", "--date")), unsafe_allow_html=True)
+                        continue
                     def source_preview(source_id=source.id):
                         if not opened or selected != source_id or st.session_state.get(prefix + "_source_review_context") != source_id:
                             return
@@ -174,8 +320,7 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
                         source, draft.profile, prefix + "_evidence_" + source.id, field,
                         artwork_keys=artwork_scope_keys(current, source.id), manager_owner=True,
                         source_preview=source_preview,
-                        compact_problems=detail_problems(source, draft.profile, draft.period,
-                            in_report=source.id in included, draft=current))
+                        compact_problems=problems[source.id])
                     _remember_delivered_source_edit(prefix, source, corrected[source.id])
                     from app.monthly_report_source_detail_navigation import render_marker
                     from app.monthly_report_guided import _rich_text_scope
@@ -195,9 +340,9 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
             selected_status = next((item for item in _statuses(draft, blocks, prefix)
                                     if item.source_id == selected), None)
             if selected_status and not _pending_source_selection(prefix):
-                if selected_status.needs_correction:
-                    st.caption(selected_status.reason)
-                elif selected_status.summary:
+                # The card owns the single visible correction warning. Preserve
+                # the accepted-file summary without a permanent Needs Review.
+                if not selected_status.needs_correction and selected_status.summary:
                     st.caption(selected_status.filename + " · " + selected_status.summary)
         else:
             selected = requested = None
