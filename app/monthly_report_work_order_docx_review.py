@@ -237,7 +237,7 @@ def _one_table(content: SourceContent, item: ImportItem, source_item: int,
             # promoted to a completed work-order fact. Keep its full native
             # cells and row number available for explicit inspection.
             unmatched.append(WordUnmatchedRow(number, row,
-                "Single-cell category, facility band or incomplete work-order row needs review."))
+                "Single-cell category, facility band or unlinked continuation needs review."))
             continue
         if identity is None or not row[identity].strip():
             unmatched.append(WordUnmatchedRow(number, row,

@@ -191,7 +191,10 @@ def test_native_review_correction_survives_saved_report_and_real_word_pdf(tmp_pa
     draft, content = draft_source(original, "a45-export.docx", profile)
     from app.monthly_report_source_scope import correct_scope
     content = replace(content, source=correct_scope(content.source, profile, ("north", "south")))
-    draft = replace(draft, sources=(content.source,))
+    # This fixture validates Activity export only. Newer native export gates
+    # require every other included section's required blocks to be resolved.
+    draft = replace(draft, sources=(content.source,),
+        sections=tuple(section for section in draft.sections if section.key == "activity"))
     draft, bundle = stored(draft, content)
     row_review = flow.restored_group(bundle, bundle["groups"][0])
     assert [r.origin.native_row_number for r in row_review.rows] == [3, 4]
