@@ -1325,8 +1325,32 @@ def _current_source_detail(source, contents):
     return source
 
 
+def _monthly_step_markup(draft, prefix):
+    """Presentation only: reuse source review's existing resolved-state receipts."""
+    from app.monthly_report_source_manager_ui import _statuses, _pending_source_selection
+    from app.monthly_report_step_spine import monthly_step_spine, monthly_step_states
+
+    statuses = _statuses(draft, {block.key: block for block in draft.blocks}, prefix)
+    package = st.session_state.get(prefix + "_package")
+    generated = bool(package and package.fingerprint == draft.fingerprint and package.docx)
+    sources_ready = generated or (
+        not st.session_state.get(prefix + "_batch_files_open", not statuses)
+        and not _pending_source_selection(prefix)
+        and all(item.resolved for item in statuses)
+    )
+    sections_ready = generated or bool(monthly_entries_by_section(draft))
+    return monthly_step_spine(monthly_step_states(
+        report_ready=True, sources_ready=sources_ready,
+        sections_ready=sections_ready, generated=generated,
+    ), section_count=len(draft.sections))
+
+
 @recover_render_busy
 def render_guided_workflow(browser_token, browser_timezone, field, move):
+    from app.monthly_report_step_spine import monthly_step_spine, monthly_step_states
+    # Stable first-screen slot: later updates never move the native editors.
+    step_spine = st.empty()
+    step_spine.markdown(monthly_step_spine(monthly_step_states()), unsafe_allow_html=True)
     st.session_state["_monthly_source_detail_anchors"] = set()
     st.session_state["_monthly_source_detail_forms"] = {}
     st.session_state["_monthly_source_details_managed"] = True
@@ -1526,6 +1550,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             recovery_ack_error = exc
     from app.monthly_report_setup import normalize_mbcx
     draft, removed_prices = client_table_draft(complete_guided_sections(normalize_mbcx(refresh_profile_identity(st.session_state[draft_key], profile))))
+    step_spine.markdown(_monthly_step_markup(draft, prefix), unsafe_allow_html=True)
     if removed_prices:
         st.info("Price columns were left out of this working report: " + ", ".join(removed_prices) + ". The saved original remains available. Check the remaining wording and images for prices before download.")
     # The native preparer renderer owns the unique in-page anchor and
@@ -1673,6 +1698,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     from app.monthly_report_correction_ui import consume_photo_caption
     consume_photo_caption(prefix,replace(draft,blocks=tuple(blocks.values())),_rich_text_scope(prefix))
     with workspace("monthly", prefix, navigation_key="monthly_report_navigation", landing=landing):
+        st.markdown('<span id="monthly-step-sections" class="po-step-anchor" aria-hidden="true"></span>',
+                    unsafe_allow_html=True)
         with st.container(key="monthly_report_navigation"):
             st.markdown('<span class="epc-section-navigation">'
                         '<button type="button" class="epc-section-back" disabled>Back</button>'
@@ -2263,4 +2290,6 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     if source_detail_notice:st.warning(source_detail_notice)
     from app.monthly_report_correction_ui import finish_photo_caption
     finish_photo_caption(prefix)
+    step_spine.markdown(_monthly_step_markup(st.session_state[draft_key], prefix),
+                        unsafe_allow_html=True)
     _refresh_period_editors_after_commit(prefix)

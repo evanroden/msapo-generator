@@ -182,6 +182,8 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
             and not all(previous.values()) and resolution and all(resolution.values())):
         st.session_state[manager_key] = False
     opened = bool(st.session_state[manager_key])
+    st.markdown('<span id="monthly-step-sources" class="po-step-anchor" aria-hidden="true"></span>',
+                unsafe_allow_html=True)
     with st.container(key=prefix + "_source_file_status"):
         status_line = _source_status_caption(states, pending)
         if status_line:
