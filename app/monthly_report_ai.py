@@ -659,7 +659,6 @@ def normalize_facts(value, source, pages, profile, period, vendors=()):
             )
         if clean_text(quote) != quote:
             raise ValueError("A fact's evidence quote contains contact details. No facts were accepted.")
-        verify_claim_qualifiers(text, quote)
         # A price-free summary can still cite a priced quote that would be
         # persisted and transmitted in later model drafting requests.
         if contains_price(quote):
@@ -671,6 +670,8 @@ def normalize_facts(value, source, pages, profile, period, vendors=()):
             raise ValueError(
                 "A suggested fact included pricing or unsupported numbers. No facts were accepted."
             )
+        # Preserve established pricing/number errors before checking A55 qualifiers.
+        verify_claim_qualifiers(text, quote)
         flags = []
         when = str(item.get("date") or "")
         if when:
