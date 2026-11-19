@@ -171,11 +171,30 @@ class WorkOrderReview:
         return ReportTable(REVIEW_COLUMNS, rows, self.source_reference)
 
 
+def source_header_positions(columns, aliases):
+    """Count parser-renamed duplicate headings as distinct physical candidates.
+
+    A repeated field is stored as e.g. Status / Status (2) to keep the table
+    editable. The second physical field cannot disappear from auto-detection.
+    """
+    names = tuple(_name(value) for value in columns)
+    found = []
+    for index, title in enumerate(columns):
+        if names[index] in aliases:
+            found.append(index)
+            continue
+        match = re.fullmatch(r"(.+?) \((\d+)\)", str(title))
+        if (match and int(match.group(2)) >= 2
+                and _name(match.group(1)) in aliases
+                and _name(match.group(1)) in names[:index]):
+            found.append(index)
+    return tuple(found)
+
+
 def suggest_mapping(columns):
-    values = tuple(_name(v) for v in columns)
     picks, ambiguous = {}, []
     for name in FIELDS:
-        positions = [n for n, title in enumerate(values) if title in ALIASES[name]]
+        positions = source_header_positions(columns, ALIASES[name])
         picks[name] = positions[0] if len(positions) == 1 else None
         if len(positions) > 1:
             ambiguous.append(name)

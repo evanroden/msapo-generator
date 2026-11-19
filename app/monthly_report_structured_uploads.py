@@ -407,7 +407,13 @@ def _spreadsheet_has_site_scope_column(content):
 
 
 def _activity_reader_notice(content):
-    from app.monthly_report_work_order_csv import is_work_order_source
+    from app.monthly_report_work_order_csv import (
+        is_work_order_source, requires_work_order_column_mapping,
+    )
+    if requires_work_order_column_mapping(content):
+        return (content.source.filename + ": duplicate physical or headerless work-order, status, date "
+                "or facility columns need explicit column-position mapping before using these records. "
+                "The original and unrelated sources are retained; this file is not auto-read into Activity.")
     if is_work_order_source(content):
         return (content.source.filename + ": work-order records use Review counted work-order rows "
                 "and Add totals to summary; this file is not sent to the Activity reader.")
@@ -473,9 +479,13 @@ def _ambiguous_csv_activity_columns(content):
         bases = tuple(re.sub(r"(?: \((?:[2-9]|[1-9][0-9]+)\))+$", "", title)
                       for title in table.columns)
         names = tuple(re.sub(r"[^a-z0-9]", "", title.casefold()) for title in bases)
-        if not any(name in _CSV_ACTIVITY_COLUMNS["work"] for name in names):
+        if not any(name in (_CSV_ACTIVITY_COLUMNS["work"] | {"work"}) for name in names):
             continue  # An unknown schema keeps its existing generic route.
         for field, aliases in _CSV_ACTIVITY_COLUMNS.items():
+            if field == "work":
+                # "Work" alone is too generic to auto-import; competing
+                # physical Work headings do need an explicit review gate.
+                aliases = aliases | {"work"}
             positions = tuple(index for index, name in enumerate(names) if name in aliases)
             if (len(positions) > 1 or
                     any(bases[index] != table.columns[index] for index in positions)):
@@ -740,9 +750,11 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
     references = list(existing.references)
     if destination == "activity_summary":
         paragraphs = []
-        from app.monthly_report_work_order_csv import is_work_order_source
+        from app.monthly_report_work_order_csv import (
+            is_work_order_source, requires_work_order_column_mapping,
+        )
         for content in contents:
-            if is_work_order_source(content):
+            if is_work_order_source(content) or requires_work_order_column_mapping(content):
                 # CMMS/counting sources use their own reviewed metrics path.
                 continue
             if _spreadsheet_has_site_scope_column(content) or _txt_site_activity_table(content):

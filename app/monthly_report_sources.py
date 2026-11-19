@@ -381,7 +381,7 @@ def _cell(value) -> str:
     return str(value)
 
 
-def _table(name, records, *, strict_columns=False) -> SourceTable:
+def _table(name, records, *, strict_columns=False, csv_headerless=False) -> SourceTable:
     rows, cells = [], 0
     for record in records:
         row = tuple(_cell(v) for v in record)
@@ -404,6 +404,13 @@ def _table(name, records, *, strict_columns=False) -> SourceTable:
     if not rows:
         raise ValueError("Spreadsheet has no nonempty rows.")
     width = max(map(len, rows))
+    if csv_headerless and _csv_first_row_is_data(rows[0]):
+        # A definite first data record is not a heading. Keep its *original*
+        # physical cells, including blanks, duplicated values and leading 0s.
+        # Generic headings require explicit physical-position mapping before
+        # a work-order fact can enter the report.
+        return SourceTable(name, tuple(f"Column {i + 1}" for i in range(width)),
+                           tuple(row + ("",) * (width - len(row)) for row in rows))
     columns = []
     for i in range(width):
         value = rows[0][i] if i < len(rows[0]) else ""
@@ -414,6 +421,44 @@ def _table(name, records, *, strict_columns=False) -> SourceTable:
             count += 1
         columns.append(title)
     return SourceTable(name, tuple(columns), tuple(r + ("",) * (width - len(r)) for r in rows[1:]))
+
+
+_CSV_DATA_STATES = {
+    "open", "pending", "inprogress", "notstarted", "unresolved",
+    "awaitingparts", "completed", "complete", "closed", "finished", "done",
+}
+_CSV_HEADER_LABELS = {
+    "workorder", "workorderid", "workordernumber", "wonumber", "wo",
+    "ticketnumber", "status", "currentstatus", "workorderstatus",
+    "date", "workdate", "servicedate", "receiveddate", "facility", "site",
+    "location", "building", "hospital",
+}
+_CSV_DATA_DATE = re.compile(
+    r"(?:19|20)\d{2}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?"
+    r"|\d{1,2}[/-]\d{1,2}[/-]\d{4}"
+)
+_CSV_ID_VALUE = re.compile(r"(?:[A-Za-z]{1,12}[-_:/ ]*)?\d{1,18}(?:[-_:/]\d{1,18})?")
+
+
+def _csv_first_row_is_data(row) -> bool:
+    """Only promote strongly identified headerless CMMS records.
+
+    An arbitrary unlabeled table cannot be guessed safely; it retains the
+    existing header interpretation. A date with either a recognized work-order
+    state or a position-one order identifier can preserve the first record as
+    data; neither condition is permission to choose field mappings or a site.
+    """
+    if len(row) < 3:
+        return False
+    words = tuple(re.sub(r"[^a-z0-9]", "", str(cell).casefold()) for cell in row)
+    if any(word in _CSV_HEADER_LABELS for word in words):
+        return False
+    values = tuple(str(cell).strip() for cell in row)
+    # Unknown/deferred status is precisely the sort of value that must stay
+    # visible for correction, not disappear as a mistaken heading.
+    return (any(_CSV_DATA_DATE.fullmatch(value) for value in values)
+            and (any(word in _CSV_DATA_STATES for word in words)
+                 or bool(_CSV_ID_VALUE.fullmatch(values[0]))))
 
 
 def _csv_unicode_encoding(raw: bytes) -> str | None:
@@ -445,7 +490,7 @@ def _csv_table(text: str) -> SourceTable:
             table = _table("CSV", csv.reader(
                 StringIO(text, newline=""), delimiter=delimiter,
                 quotechar='"', doublequote=True, strict=True,
-            ), strict_columns=True)
+            ), strict_columns=True, csv_headerless=True)
         except csv.Error:
             malformed = True
             continue
@@ -561,7 +606,7 @@ def _cached_extraction(data, digest, suffix):
             raise ValueError("Invalid source extraction cache sequence.")
         return value
 
-    for name in ("client_page_policy", "native_action_policy", "vendor_passage_policy", "csv_dialect_policy"):
+    for name in ("client_page_policy", "native_action_policy", "vendor_passage_policy", "csv_dialect_policy", "csv_headerless_policy"):
         if type(data.get(name, 0)) is not int or data.get(name, 0) < 0:
             raise ValueError("Invalid source extraction cache policy.")
     record = data["source"]
@@ -660,8 +705,14 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
             old_csv_one_column = (suffix == ".csv" and content is not None
                                   and data.get("csv_dialect_policy") != 1
                                   and any(len(table.columns) == 1 for table in content.tables))
+            # Older multi-column caches may have consumed a headerless first row.
+            # Rebuild only that disposable view; keep correct legacy caches warm.
+            old_csv_headerless = (suffix == ".csv" and content is not None
+                                  and data.get("csv_headerless_policy") != 1
+                                  and any(_csv_first_row_is_data(table.columns)
+                                          for table in content.tables))
             # Keep signed-Unicode migration independent of the delimiter policy.
-            if (content is not None and not old_csv_one_column
+            if (content is not None and not old_csv_one_column and not old_csv_headerless
                     and (not unicode_csv or data.get("csv_unicode_policy") == 1)
                     and (suffix != ".xlsx" or (type(data.get("xlsx_currency_policy")) is int
                                               and data["xlsx_currency_policy"] == 1))
@@ -782,7 +833,7 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
             **({"pdf_scan_policy": 1} if suffix == ".pdf" else {}),
             **({"xlsx_currency_policy": 1} if suffix == ".xlsx" else {}),
             **({"csv_unicode_policy": 1} if unicode_csv else {}),
-            **({"csv_dialect_policy": 1} if suffix == ".csv" else {}), **asdict(content)}))
+            **({"csv_dialect_policy": 1, "csv_headerless_policy": 1} if suffix == ".csv" else {}), **asdict(content)}))
         return content, attachments
 
 
