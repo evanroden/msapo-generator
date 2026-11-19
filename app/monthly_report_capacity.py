@@ -337,7 +337,7 @@ def inspect_capacity(profile, filename, raw) -> CapacityInspection:
         source = ReportSource(workbook.sha256, Path(filename).name, workbook.sha256, ".xlsx",
                               page_texts=tuple("\n".join("\t".join(row) for row in _table_records(t)) for t in native_tables),
                               notices=(*workbook.notices,
-                                       *(("Hidden thermal worksheets excluded from automatic first-fill: "
+                                       *(("Hidden thermal worksheets were excluded from automatic first-fill: "
                                           + ", ".join(hidden) + ". Unhide and re-upload only those you intend to review.",)
                                          if hidden else ()),
                                        *((f"{len(missing)} capacity formula cells without trusted cached results "
