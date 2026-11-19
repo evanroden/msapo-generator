@@ -6,6 +6,7 @@ from contextlib import contextmanager
 
 from app import pdf_converter
 from app.monthly_report_library import _root
+from app.monthly_report_latency_trace import span
 
 _SLOT = threading.Lock()
 _CONVERSION_LOCAL = threading.local()
@@ -17,33 +18,22 @@ class RenderBusy(pdf_converter.PDFConversionError):
 
 @contextmanager
 def conversion_slot(*, wait_seconds=10):
-    """Preview callers fail promptly; foreground work has a bounded queue wait."""
+    """Reentrant conversion gate, with an opt-in cgroup-bounded second lane."""
     if getattr(_CONVERSION_LOCAL, 'active', False):
         yield
         return
-    deadline = time.monotonic() + max(0, min(float(wait_seconds), 130))
-    if not _SLOT.acquire(timeout=max(0, deadline - time.monotonic())):
-        raise RenderBusy("Another report is rendering. Please try again shortly.")
+    from app.office_conversion_admission import OfficeLaneBusy, conversion_lane
+    from app import office_process
+    from contextlib import ExitStack
     try:
-        folder = _root() / "render-jobs"
-        folder.mkdir(parents=True, exist_ok=True)
-        with (folder / ".conversion-lock").open("a+b") as lock:
-            if os.name == "nt":
-                import msvcrt
-                lock.write(b"0"); lock.flush()
-            else:
-                import fcntl
-            while True:
-                try:
-                    if os.name == "nt":
-                        lock.seek(0); msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
-                    else:
-                        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break
-                except (BlockingIOError, OSError):
-                    if time.monotonic() >= deadline:
-                        raise RenderBusy("Another report is rendering. Please try again shortly.") from None
-                    time.sleep(min(.05, max(0, deadline - time.monotonic())))
+        with ExitStack() as stack:
+            # Waiting for a conversion lane is queue time, not conversion time.
+            with span("job_queue"):
+                lane, parallel = stack.enter_context(conversion_lane(
+                    wait_seconds=wait_seconds, serial_lock=_SLOT,
+                    folder=_root() / 'render-jobs', memory_headroom=memory_headroom))
+            office_process._OFFICE_MARKER_LOCAL.slot = lane
+            office_process._OFFICE_MARKER_LOCAL.serial = not parallel
             try:
                 from app.office_process import OfficeCleanupPending, require_idle
                 try:
@@ -51,26 +41,17 @@ def conversion_slot(*, wait_seconds=10):
                 except OfficeCleanupPending as exc:
                     raise RenderBusy(str(exc)) from exc
                 _CONVERSION_LOCAL.active = True
-                # python-docx package/relationship cycles can otherwise retain
-                # decoded media while the office process starts allocating.
                 import gc
                 gc.collect()
-                # The prior native DOCX / Pillow allocations are no longer
-                # reachable at this point, but glibc may retain their freed
-                # arenas. Return those pages before launching LibreOffice in
-                # a memory-capped *preview* lease. This never changes the
-                # source assets, assembled DOCX, render guard or host limit.
                 if preview_memory_guard() is not None:
                     _reclaim_preview_heap()
                 yield
             finally:
                 _CONVERSION_LOCAL.active = False
-                if os.name == "nt":
-                    lock.seek(0); msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
-                else:
-                    fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
-    finally:
-        _SLOT.release()
+                del office_process._OFFICE_MARKER_LOCAL.slot
+                del office_process._OFFICE_MARKER_LOCAL.serial
+    except OfficeLaneBusy as exc:
+        raise RenderBusy(str(exc)) from exc
 
 
 def _reclaim_preview_heap():
@@ -93,9 +74,10 @@ def _reclaim_preview_heap():
 
 def convert_to_pdf(path, *, wait_seconds=10, lossless_images=False):
     with conversion_slot(wait_seconds=wait_seconds):
-        if lossless_images is not False:
-            return pdf_converter.convert_to_pdf(path, lossless_images=lossless_images)
-        return pdf_converter.convert_to_pdf(path)
+        with span("conversion"):
+            if lossless_images is not False:
+                return pdf_converter.convert_to_pdf(path, lossless_images=lossless_images)
+            return pdf_converter.convert_to_pdf(path)
 
 
 # Assembly can hold decoded pictures and an entire OOXML package. Serialize that
@@ -245,32 +227,33 @@ def work_slot(*, preview=False, review=False, wait_seconds=130):
     if getattr(_WORK_LOCAL, 'active', False):
         yield
         return
-    acquired = False
-    if preview:
-        headroom = memory_headroom()
-        if headroom is not None and headroom < PREVIEW_HEADROOM_BYTES:
-            raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
-        if review:
-            acquired = _wait_for_review_slot(wait_seconds)
+    with span("job_queue"):
+        acquired = False
+        if preview:
+            headroom = memory_headroom()
+            if headroom is not None and headroom < PREVIEW_HEADROOM_BYTES:
+                raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
+            if review:
+                acquired = _wait_for_review_slot(wait_seconds)
+            else:
+                with _PRIORITY_LOCK:
+                    if _FOREGROUND_WAITING or _FOREGROUND_ACTIVE or _REVIEW_WAITING:
+                        raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
+                    acquired = _WORK_SLOT.acquire(blocking=False)
         else:
             with _PRIORITY_LOCK:
-                if _FOREGROUND_WAITING or _FOREGROUND_ACTIVE or _REVIEW_WAITING:
-                    raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
-                acquired = _WORK_SLOT.acquire(blocking=False)
-    else:
-        with _PRIORITY_LOCK:
-            _FOREGROUND_WAITING += 1
-        try:
-            acquired = _WORK_SLOT.acquire(timeout=max(0, min(float(wait_seconds), 130)))
-        finally:
-            with _PRIORITY_LOCK:
-                _FOREGROUND_WAITING -= 1
-                if acquired:
-                    # Transition waiting -> running atomically for Review
-                    # and automatic-preview priority checks.
-                    _FOREGROUND_ACTIVE += 1
-    if not acquired:
-        raise RenderBusy('Another report is being prepared. Your saved work is unchanged; retry generation shortly.')
+                _FOREGROUND_WAITING += 1
+            try:
+                acquired = _WORK_SLOT.acquire(timeout=max(0, min(float(wait_seconds), 130)))
+            finally:
+                with _PRIORITY_LOCK:
+                    _FOREGROUND_WAITING -= 1
+                    if acquired:
+                        # Transition waiting -> running atomically for Review
+                        # and automatic-preview priority checks.
+                        _FOREGROUND_ACTIVE += 1
+        if not acquired:
+            raise RenderBusy('Another report is being prepared. Your saved work is unchanged; retry generation shortly.')
     # Admission is fail-closed only on explicitly opted-in high-resource hosts.
     # Check before allocating another DOCX/Pillow package, counting admissions
     # under one lock so two contenders cannot both spend the same headroom.
