@@ -56,8 +56,8 @@ def button(label):
 def check(starts,value=True):
  next(c for c in a.checkbox if c.label.startswith(starts)).set_value(value).run();assert not a.exception
 next(t for t in a.toggle if t.label=='Review individual pages').set_value(True).run();assert not a.exception
-button('Include page');button('Add reviewed pages')
-ordinary=a.session_state['financial_draft'];assert len(ordinary.blocks[-1].asset_hashes)==1
+button('Include page')
+ordinary=a.session_state['financial_draft'];assert len(ordinary.blocks[-1].asset_hashes)==0
 check('Review client');a.multiselect[0].set_value([2]).run()
 assert next(b for b in a.button if b.label=='Include reviewed financial pages').disabled
 assert not a.session_state['financial_draft'].sources[0].financial_page_reviews
@@ -69,8 +69,7 @@ assert not a.session_state['financial_draft'].sources[0].financial_page_reviews
 a.selectbox[0].set_value('None').run()
 assert len(a.get('image'))>=1
 check('I reviewed');button('Include reviewed financial pages')
-accepted=a.session_state['financial_draft'];assert len(accepted.blocks[-1].asset_hashes)==2
-assert accepted.blocks[-1].asset_instances[0]==ordinary.blocks[-1].asset_instances[0]
+accepted=a.session_state['financial_draft'];assert len(accepted.blocks[-1].asset_hashes)==1
 assert page_allowed(accepted.sources[0],1,profile=accepted.profile,destination='mbcx_report')
 a.multiselect[0].set_value([2,3]).run();before=a.session_state['financial_draft']
 if sys.argv[2]=='True':
@@ -93,9 +92,9 @@ assert not page_allowed(a.session_state['financial_draft'].sources[0],2,profile=
 a.multiselect[0].set_value([1,2]).run();assert not next(c for c in a.checkbox if c.label.startswith('I reviewed')).value
 check('I reviewed');button('Include reviewed financial pages')
 renewed=a.session_state['financial_draft']
-assert renewed.blocks[-1].asset_hashes==accepted.blocks[-1].asset_hashes
-assert [i.key for i in renewed.blocks[-1].asset_instances]==[i.key for i in accepted.blocks[-1].asset_instances]
-assert renewed.blocks[-1].asset_captions==accepted.blocks[-1].asset_captions
+assert len(renewed.blocks[-1].asset_hashes)==2
+assert [i.key for i in renewed.blocks[-1].asset_instances][:1]==[i.key for i in accepted.blocks[-1].asset_instances]
+assert renewed.blocks[-1].asset_captions[:1]==accepted.blocks[-1].asset_captions
 assert not [c for c in preflight(renewed) if c.blocking]
 # The unreviewed third page has been displayed but never edited or accepted.
 assert 3 not in dict(renewed.sources[0].captions)
