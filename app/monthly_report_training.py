@@ -141,6 +141,27 @@ def _requirement_columns(groups):
     return tuple(columns.values())
 
 
+def _prior_site_requirement_columns(stored, site_key, year):
+    """Resolve the site's own annual schema, never another facility's union.
+
+    A new year inherits only that site's most recent earlier requirement
+    names. Completion states themselves are *not* inherited across years.
+    """
+    entry = _year_sites(stored, year).get(site_key)
+    if entry is None and year is not None:
+        entry = _year_sites(stored, None).get(site_key)
+        for value in sorted(stored.get("years", {})):
+            earlier = matrix_year(YEAR_MATRIX_PREFIX + value)
+            if earlier >= year:
+                continue
+            entry = _year_sites(stored, earlier).get(site_key, entry)
+    if entry is None:
+        return ()
+    if not isinstance(entry, dict) or not isinstance(entry.get("columns"), list):
+        raise ValueError("Saved annual training needs review; existing records were preserved.")
+    return tuple(entry["columns"])
+
+
 def save_training(profile, table, *, expected_revision, actor):
     """Only update selected sites, with immutable versions and stale-write checks."""
     validate_matrix(table)
@@ -157,9 +178,31 @@ def save_training(profile, table, *, expected_revision, actor):
         if current["revision"] != expected_revision:
             raise library.RevisionConflict("Training was updated elsewhere. Reload the saved training before applying your changes.")
         saved_sites = dict(_year_sites(current, year))
+        prior_columns = {
+            key: _prior_site_requirement_columns(current, key, year)
+            for key in sites.values()
+        }
+        # The combined editor displays a union. An unrelated site's course
+        # appears as "Not recorded" here, but that display placeholder does
+        # not enroll this site's staff in the other site's requirement.
+        known = {
+            _requirement_key(column)
+            for columns in prior_columns.values() for column in columns
+        }
         for title, key in sites.items():
-            saved_sites[key] = {"columns": list(table.columns[2:]),
-                                "rows": [[row[0], *row[2:]] for row in table.rows if row[1] == title]}
+            site_rows = [row for row in table.rows if row[1] == title]
+            own = {_requirement_key(column) for column in prior_columns[key]}
+            selected = [
+                (index, column) for index, column in enumerate(table.columns[2:], 2)
+                if (_requirement_key(column) in own
+                    or _requirement_key(column) not in known
+                    or any(row[index] != "Not recorded" for row in site_rows))
+            ]
+            saved_sites[key] = {
+                "columns": [column for _, column in selected],
+                "rows": [[row[0], *(row[index] for index, _ in selected)]
+                         for row in site_rows],
+            }
         value = {**current, "revision": current["revision"] + 1,
                  "actor": actor, "updated_at": library._now()}
         if year is None:
