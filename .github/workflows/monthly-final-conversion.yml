@@ -1,0 +1,56 @@
+name: Monthly final PDF conversion reuse (A35)
+
+on:
+  pull_request:
+    paths:
+      - 'app/monthly_report_docx.py'
+      - 'app/monthly_report_guided.py'
+      - 'app/monthly_report_final_conversion_cache.py'
+      - 'tests/test_monthly_report_final_conversion_cache.py'
+      - 'scripts/qa_a35_final_conversion.py'
+      - '.github/workflows/monthly-final-conversion.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'app/monthly_report_final_conversion_cache.py'
+      - 'scripts/qa_a35_final_conversion.py'
+      - '.github/workflows/monthly-final-conversion.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  bounded-libreoffice:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build exact production image
+        run: docker build --build-arg APP_GIT_COMMIT="${{ github.event.pull_request.head.sha || github.sha }}" -t a35-monthly-final .
+      - name: Compare no-owner, cold, warm, Activity and logo under 512 MiB / half CPU
+        timeout-minutes: 15
+        run: |
+          docker run --name a35-monthly-final-test --memory=512m --memory-swap=512m --cpus=0.5 \
+            -e ANTHROPIC_API_KEY=test-key-not-used \
+            -e A35_BENCHMARK_OUTPUT=/tmp/a35-final-conversion.json \
+            --entrypoint python a35-monthly-final -m scripts.qa_a35_final_conversion
+          test "$(docker inspect --format='{{.State.OOMKilled}}' a35-monthly-final-test)" = false
+      - name: Collect bounded workload and container evidence
+        if: always()
+        run: |
+          mkdir -p test-artifacts/a35-final
+          docker cp a35-monthly-final-test:/tmp/a35-final-conversion.json test-artifacts/a35-final/benchmark.json || true
+          docker logs a35-monthly-final-test > test-artifacts/a35-final/container.log 2>&1 || true
+          docker inspect a35-monthly-final-test > test-artifacts/a35-final/container-inspect.json || true
+          docker rm -f a35-monthly-final-test || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: a35-final-conversion-512m-halfcpu
+          path: test-artifacts/a35-final/
+          if-no-files-found: warn
+          retention-days: 14

@@ -47,6 +47,75 @@ def _statuses(draft, blocks, prefix):
         pending=_pending_source_selection(prefix))
 
 
+def _render_saved_source_reuse(draft, prefix, field, *, visible):
+    """One saved-original action next to the native Add source files control."""
+    # The manager stays mounted while closed to preserve native form buffers.
+    # Do not deserialize historical report snapshots on a hidden rerun.
+    if not visible:
+        return draft
+    from app.monthly_report_saved_source_reuse import saved_source_choices, reuse_saved_source
+    from app.monthly_report_source_details import source_date
+    evidence_key = prefix + "_evidence"
+    contents = tuple(st.session_state.get(evidence_key, ()))
+    existing = {identity for source in draft.sources
+                for identity in (source.id, source.sha256)}
+    existing.update(identity for content in contents
+                    for identity in (content.source.id, content.source.sha256))
+    try:
+        choices = saved_source_choices(draft.profile, exclude_ids=existing)
+    except (ValueError, OSError) as exc:
+        # One damaged old snapshot must not take down the current report or
+        # block uploading a fresh file. Never treat it as an empty catalog.
+        st.warning("Saved-source catalog needs review; current report and original files were kept. " + str(exc))
+        return draft
+    st.markdown("**Already uploaded**")
+    if not choices:
+        st.caption("No other saved files for this exact contract and site selection.")
+        return draft
+    st.caption("Choose a saved original instead of uploading it again. Its saved source details and page decisions are retained.")
+    options = {choice.period.key + ":" + choice.source.sha256: choice for choice in choices}
+    choice_key = field(prefix + "_source_reuse_choice", next(iter(options)))
+    # If a saved report changed since the selector was displayed, do not
+    # replace the old click target with whichever file now sorts first.
+    stale_selection = st.session_state[choice_key] not in options
+    if stale_selection:
+        st.session_state[choice_key] = next(iter(options))
+        st.warning("The saved-file list changed. Review the current selection before reusing it.")
+    selected = st.selectbox("Saved source", tuple(options), key=choice_key,
+                            format_func=lambda identity: options[identity].label)
+    if st.button("Reuse saved source", key=prefix + "_reuse_saved_source",
+                 disabled=stale_selection):
+        choice = options[selected]
+        try:
+            content = reuse_saved_source(draft.profile, choice)
+        except (ValueError, OSError, RuntimeError) as exc:
+            st.warning(str(exc))
+        else:
+            if content.source.id not in {item.source.id for item in contents}:
+                st.session_state[evidence_key] = (*contents, content)
+            if content.source.id not in {source.id for source in draft.sources}:
+                draft = replace(draft, sources=(*draft.sources, content.source))
+            st.session_state[prefix + "_evidence_selected"] = content.source.id
+            st.session_state[prefix + "_source_active_selected"] = content.source.id
+            st.session_state[prefix + "_period_editor_refresh"] = True
+            st.session_state[prefix + "_reuse_origin"] = (
+                content.source.id, choice.period.key)
+            st.success("Saved original reused without a new upload. Review its existing file details below.")
+            when = source_date(content.source.service_date)
+            if (choice.period != draft.period or when is None
+                    or not draft.period.start <= when <= draft.period.end):
+                st.warning("This file was saved for " + choice.period.label +
+                           ". Confirm or correct its source date and site before including it in "
+                           + draft.period.label + ". Prior report approval does not approve this month.")
+    origin = st.session_state.get(prefix + "_reuse_origin")
+    if origin and origin[1] != draft.period.key:
+        source = next((item for item in draft.sources if item.id == origin[0]), None)
+        when = source_date(source.service_date) if source is not None else None
+        if source is not None and (when is None or not draft.period.start <= when <= draft.period.end):
+            st.caption("Earlier-month source retained: correct its date/site in the existing File to review controls.")
+    return draft
+
+
 def open_source_review(prefix, source_id, target, page=None):
     """Native navigation callback; no source or report content changes."""
     from uuid import uuid4
@@ -150,6 +219,7 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
         else:
             sources, additions = draft.sources, {}
         draft = replace(draft, sources=keep_missing(prefix, sources))
+        draft = _render_saved_source_reuse(draft, prefix, field, visible=opened)
         if additions:
             from app.monthly_report_guided import merge_blocks, _advance_rich_text_receipt
             for key, block in additions.items():
