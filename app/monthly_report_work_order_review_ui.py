@@ -152,7 +152,8 @@ def render_reviewed_rows(draft, blocks, prefix, content):
     if record:
         for note in (record.questions if kind == "workorders" else record.notes):
             st.warning(note)
-        if content.source.suffix in (".csv", ".xlsx"):
+        if (content.source.suffix in (".csv", ".xlsx")
+                or (kind == "workorders" and content.source.suffix == ".docx")):
             unresolved = tuple(LABELS[name] for name in fields
                 if name in record.mapping.ambiguous
                 or (name in ("work_order", "site", "work_date", "status")
@@ -175,7 +176,7 @@ def render_reviewed_rows(draft, blocks, prefix, content):
                         st.selectbox(LABELS[name] + " column", options, index=options.index(current),
                             format_func=lambda n: "Not mapped" if n is None else f"{n + 1}: {record.original_columns[n]}", key=widget)
                         pairs.append((name, widget))
-                    if kind == "workorders":
+                    if kind == "workorders" and content.source.suffix in (".csv", ".xlsx"):
                         widget = local + "_date_order"
                         orders = ("", "MDY", "DMY")
                         st.selectbox("Numeric date order", orders, index=orders.index(group.get("date_order", "")),
@@ -187,11 +188,11 @@ def render_reviewed_rows(draft, blocks, prefix, content):
                     st.form_submit_button("Apply source mapping", on_click=_queue,
                         args=(request_key, {**base, "action": "mapping", "group": index}, pairs))
         if record.rows:
-            st.dataframe([{"Source row": row.origin.row_number,
+            st.dataframe([{"Source row": row.origin.native_row_number or row.origin.row_number,
                 **{LABELS[n]: getattr(row, n) for n in fields},
                 "Review needed": "; ".join(row.issues), "Omitted": row.excluded} for row in record.rows], hide_index=True)
             selected = st.selectbox("Row to correct", range(len(record.rows)),
-                format_func=lambda n: f"Source row {record.rows[n].origin.row_number} · {getattr(record.rows[n], fields[0]) or 'Missing ID'}",
+                format_func=lambda n: f"Source row {record.rows[n].origin.native_row_number or record.rows[n].origin.row_number} · {getattr(record.rows[n], fields[0]) or 'Missing ID'}",
                 key=local + "_row")
             row = record.rows[selected]
             st.caption("Original cells: " + " | ".join(row.origin.cells))

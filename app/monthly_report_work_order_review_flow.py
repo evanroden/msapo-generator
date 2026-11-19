@@ -296,15 +296,35 @@ def change_row(bundle, group_index, row_key, changes, *, excluded=None):
 
 
 def remap_group(draft, content, bundle, index, choices, date_order=""):
-    if content.source.suffix not in (".csv", ".xlsx"):
+    native_word = (content.source.suffix == ".docx"
+                   and bundle["kind"] == "workorders")
+    if content.source.suffix not in (".csv", ".xlsx") and not native_word:
         raise ValueError("Native PDF/Word layouts retain their inspected schema. Correct individual rows or use a spreadsheet export.")
+    if native_word and date_order:
+        raise ValueError("Native Word numeric dates need row correction; do not infer their date order.")
     value = json.loads(encoded(bundle))
     original = restored_group(value, value["groups"][index])
     if value["kind"] == "workorders":
         from app.monthly_report_work_order_csv_review import mapped_columns
         mapping = mapped_columns(original.original_columns, choices)
-        reviewed = review_spreadsheet(content, draft.profile, draft.period, mapping=mapping,
-            numeric_date_order=date_order, table_number=original.table_number).workorders
+        if native_word:
+            # A deliberate mapping changes only this inspected Word table.
+            # It cannot flatten other tables or silently replace saved edits.
+            from app.monthly_report_work_order_docx_review import review_docx_workorders
+            result = review_docx_workorders(draft.profile, content, draft.period,
+                mapping_by_item={original.table_number: mapping})
+            selected = next((table for table in result.tables
+                if table.source_item == original.table_number), None)
+            if selected is None or selected.review is None:
+                raise ValueError("The Word source table is no longer reviewable.")
+            reviewed = selected.review
+            value["groups"][index]["notes"] = list(selected.notices)
+            value["groups"][index]["unmatched"] = [
+                f"Word row {row.word_row}: {row.reason} — {' | '.join(row.cells)}"
+                for row in selected.unmatched]
+        else:
+            reviewed = review_spreadsheet(content, draft.profile, draft.period, mapping=mapping,
+                numeric_date_order=date_order, table_number=original.table_number).workorders
         record = review_record(reviewed)
     else:
         mapping = suggest_call_mapping(original.original_columns, choices)

@@ -62,11 +62,13 @@ def _exercise(browser_type, engine):
             page = context.new_page()
             page.on("pageerror", lambda error: errors.append(str(error)))
             try:
+                navigation_started = time.perf_counter()
                 page.goto(URL, wait_until="domcontentloaded")
-                # The metric starts at the actual press, not Streamlit bootstrap
-                # after the health endpoint comes up on a capped server.
+                # Include initial app bootstrap separately from the press-to-image
+                # measurement; neither is a physical-device/production sample.
                 load_button = page.get_by_role("button", name="Load known-value report", exact=True)
                 expect(load_button).to_be_visible(timeout=90000)
+                first_interactive_seconds = time.perf_counter() - navigation_started
                 start = time.perf_counter()
                 start_ns = time.monotonic_ns()
                 load_button.click()
@@ -146,6 +148,7 @@ def _exercise(browser_type, engine):
                 assert field.input_value() == revised, "Manual edit was lost."
                 assert not external and not errors, {"external": external, "pageerrors": errors}
                 records.append({"index": sequence + 1, "cache_path": "cold",
+                                 "navigation_to_first_interactive_seconds": round(first_interactive_seconds, 4),
                                  "source_kind": "pdf",
                                  "browser_stage_receipt": {
                                      "clock": "monotonic_ns",
@@ -178,6 +181,8 @@ def main():
     OUT.mkdir(parents=True, exist_ok=True)
     evidence = {"fixture": "real isolated Monthly QA native app", "upload_bytes_transport": "localhost Playwright",
                 "backend_resources": "CI-host runner; not the 512MiB/0.5CPU Docker resource job",
+                "upload_metric_boundary": "file-picker selection through gallery navigation and first decoded thumbnail; does NOT isolate transfer bytes",
+                "section_metric_boundary": "button press through decoded first image, including Streamlit rerun",
                 "browser_device": "headless desktop engine; not actual mobile Safari or Render",
                 "commit": os.environ.get("GITHUB_SHA") or os.environ.get("MSAPO_SHA") or "unreported",
                 "engines": {}}
