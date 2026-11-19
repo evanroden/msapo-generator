@@ -109,6 +109,7 @@ from app.receipt_analyzer import (
 from app.receipt_jobs import start_receipt
 from app.api_retry import OPERATION_BUDGET_SECONDS
 from app.ui_highlight import highlight_needed_fields
+from app.upload_validation import RECEIPT_NEXT_STEP, receipt_upload_problem
 from app.workspace_layout import workspace, workspace_section, workspace_columns
 from app.reference_preview import discard_reference_scope, discard_reference_entry, render_reference
 
@@ -263,7 +264,7 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
         uploader_nonce = int(st.session_state.get("expense_uploader_nonce", 0) or 0)
         uploads = st.file_uploader(
             "Upload one image or PDF per receipt",
-            type=_RECEIPT_TYPES,
+            type=None,
             accept_multiple_files=True,
             max_upload_size=_MAX_RECEIPT_BYTES // (1024 * 1024),
             key=f"expense_receipt_uploader_{uploader_nonce}",
@@ -273,10 +274,21 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
             ),
         )
         mirrored_uploads = list(st.session_state.get("expense_receipt_files", []) or [])
-        current_uploads = [
-            (upload.name, upload.getvalue(), upload.type or "application/octet-stream")
-            for upload in (uploads or [])
-        ]
+        current_uploads = []
+        for upload in uploads or []:
+            payload = upload.getvalue()
+            rejection = receipt_upload_problem(upload.name, payload)
+            if rejection:
+                st.error(rejection)
+            elif len(payload) > _MAX_RECEIPT_BYTES:
+                st.error(
+                    f"{upload.name} is larger than the 15 MB receipt limit. "
+                    + RECEIPT_NEXT_STEP
+                )
+            else:
+                current_uploads.append(
+                    (upload.name, payload, upload.type or "application/octet-stream")
+                )
         uploader_seen_key = f"expense_receipt_uploader_seen_{uploader_nonce}"
         previous_uploader_ids = st.session_state.get(uploader_seen_key, ())
         new_uploads = _new_receipt_uploads(previous_uploader_ids, current_uploads)
