@@ -112,8 +112,19 @@ def _column_text(page, native: str) -> tuple[str, bool]:
         return native, False
     if max(box.y0 for box, _ in left) < min(box.y0 for box, _ in right) or max(box.y0 for box, _ in right) < min(box.y0 for box, _ in left):
         return native, False
-    reading = "\n".join(value for column in (left, right)
-                        for box, value in sorted(column, key=lambda item: (item[0].y0, item[0].x0)))
+    # Lines wholly above the band both columns share (a header) come first and
+    # lines wholly below it (a footer) come last, whichever side they sit on.
+    band_top = max(min(box.y0 for box, _ in left), min(box.y0 for box, _ in right))
+    band_bottom = min(max(box.y1 for box, _ in left), max(box.y1 for box, _ in right))
+    before = [item for item in lines if item[0].y1 <= band_top]
+    after = [item for item in lines if item[0].y0 >= band_bottom and item not in before]
+    edges = before + after
+    by_position = lambda item: (item[0].y0, item[0].x0)
+    reading = "\n".join(value for group in (
+        sorted(before, key=by_position),
+        sorted((item for item in left if item not in edges), key=by_position),
+        sorted((item for item in right if item not in edges), key=by_position),
+        sorted(after, key=by_position)) for box, value in group)
     # Refuse to fabricate source words when native and geometric reading differ.
     if sorted(reading.split()) != sorted(native.split()):
         return native, True
