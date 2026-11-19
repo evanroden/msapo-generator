@@ -55,20 +55,24 @@ def _memory_limit():
 
 def _cpu_capacity():
     """Use cgroup quota rather than host os.cpu_count on limited containers."""
+    quota_cpu = None
     try:
         quota, period = Path("/sys/fs/cgroup/cpu.max").read_text().split()
         if quota != "max":
-            return int(quota) / int(period)
+            quota_cpu = int(quota) / int(period)
     except (OSError, ValueError, ZeroDivisionError):
         pass
-    quota = _read_int("/sys/fs/cgroup/cpu/cpu.cfs_quota_us")
-    period = _read_int("/sys/fs/cgroup/cpu/cpu.cfs_period_us")
-    if quota is not None and quota > 0 and period and period > 0:
-        return quota / period
+    if quota_cpu is None:
+        quota = _read_int("/sys/fs/cgroup/cpu/cpu.cfs_quota_us")
+        period = _read_int("/sys/fs/cgroup/cpu/cpu.cfs_period_us")
+        if quota is not None and quota > 0 and period and period > 0:
+            quota_cpu = quota / period
+    if quota_cpu is None:
+        return None  # Host affinity alone does not establish a finite CPU quota.
     try:
-        return len(os.sched_getaffinity(0))
+        return min(quota_cpu, len(os.sched_getaffinity(0)))
     except (AttributeError, OSError):
-        return os.cpu_count() or 1
+        return quota_cpu
 
 
 def parallel_enabled():
@@ -76,7 +80,7 @@ def parallel_enabled():
     return (os.getenv("MSAPO_RENDER_PARALLEL") == "1" and
             os.name == "posix" and sys.platform == "linux" and
             (_memory_limit() or 0) >= PARALLEL_MIN_MEMORY and
-            _cpu_capacity() >= 2)
+            (_cpu_capacity() or 0) >= 2)
 
 
 def snapshot():
@@ -90,11 +94,10 @@ def _slot_path(kind, index):
     from app.monthly_report_library import _root
     folder = _root() / "render-jobs"
     folder.mkdir(parents=True, exist_ok=True)
-    # Slot zero preserves the existing cross-process lock identity.
-    if kind == "conversion":
-        name = ".conversion-lock" if index == 0 else f".conversion-lock-{index}"
-    else:
-        name = f".resource-{kind}-{index}.lock"
+    # A01's Office admission exclusively owns .conversion-lock[-1].
+    # Reserve memory with a distinct lock to avoid self-deadlock when the
+    # same thread subsequently obtains A01's authoritative conversion lane.
+    name = f".resource-{kind}-{index}.lock"
     return folder / name
 
 
