@@ -88,7 +88,7 @@ def _reply(usage=None):
 def test_provider_cache_marks_long_claude_request_and_records_mock_usage(monkeypatch):
     seen = []
     class Client:
-        def __init__(self, **kw):
+        def __init__(self, api_key, **kw):
             self.messages = self
             assert kw["max_retries"] == 0
         def __enter__(self): return self
@@ -112,7 +112,7 @@ def test_provider_cache_marks_long_claude_request_and_records_mock_usage(monkeyp
 def test_short_and_unrecognized_model_request_remain_uncached(monkeypatch):
     seen = []
     class Client:
-        def __init__(self, **kw): self.messages = self
+        def __init__(self, api_key, **kw): self.messages = self
         def __enter__(self): return self
         def __exit__(self, *args): pass
         def create(self, **kw):
@@ -130,7 +130,7 @@ def test_short_and_unrecognized_model_request_remain_uncached(monkeypatch):
 def test_unsupported_provider_cache_falls_back_and_stays_disabled(monkeypatch):
     seen = []
     class Client:
-        def __init__(self, **kw): self.messages = self
+        def __init__(self, api_key, **kw): self.messages = self
         def __enter__(self): return self
         def __exit__(self, *args): pass
         def create(self, **kw):
@@ -157,7 +157,7 @@ def test_unsupported_provider_cache_falls_back_and_stays_disabled(monkeypatch):
 def test_unrelated_400_never_triggers_noncached_retry(monkeypatch):
     seen = []
     class Client:
-        def __init__(self, **kw): self.messages = self
+        def __init__(self, api_key, **kw): self.messages = self
         def __enter__(self): return self
         def __exit__(self, *args): pass
         def create(self, **kw):
@@ -170,7 +170,7 @@ def test_unrelated_400_never_triggers_noncached_retry(monkeypatch):
     monkeypatch.setattr(ai, "ANTHROPIC_API_KEY", "test-key-not-used")
     monkeypatch.setattr(ai, "ANTHROPIC_MODEL", "claude-sonnet-4-6")
     monkeypatch.setattr(ai, "make_client", Client)
-    with pytest.raises(anthropic.BadRequestError):
+    with pytest.raises(ai.ReaderNetworkError):
         ai.request_json([{"type": "text", "text": "Synthetic evidence " * 900}])
     assert len(seen) == 1
 
@@ -195,7 +195,7 @@ def test_disk_cache_is_scoped_to_source_and_period(tmp_path, monkeypatch):
 def test_foundry_capability_cache_and_endpoint_isolation(monkeypatch):
     seen = []
     class Client:
-        def __init__(self, **kw): self.messages = self
+        def __init__(self, api_key, **kw): self.messages = self
         def __enter__(self): return self
         def __exit__(self, *args): pass
         def create(self, **kw):
