@@ -11,6 +11,7 @@ from dataclasses import replace
 from decimal import Decimal
 from hashlib import sha256
 from io import BytesIO
+import tempfile
 from urllib.parse import parse_qs, urlsplit
 
 import pymupdf as fitz
@@ -135,6 +136,9 @@ def test_monthly_po_expense_monthly_preserves_identity_and_corrected_workbook(
     # is tested only with an explicitly confirmed synthetic signature.
     confirmed = replace(details, employee_signature_confirmed=True)
     assert validate_expense_report(confirmed, list(items), mileage) == []
+    # openpyxl writes each worksheet through a named temporary file, and the
+    # isolation gate allows writes only under its own temporary root.
+    monkeypatch.setattr(tempfile, "tempdir", str(gate["root"]))
     workbook_bytes = build_expense_workbook(
         confirmed, list(items), mileage_items=mileage
     )
