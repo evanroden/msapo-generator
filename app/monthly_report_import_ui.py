@@ -106,6 +106,7 @@ def render_import(state: library.LibraryState, field, browser_timezone: str = ""
         if staged is None:
             return
         _, path, inspection = staged
+        st.caption("Reviewing the last successfully read DOCX.")
         st.success(f"DOCX accepted for review · {path.stat().st_size:,} bytes · SHA-256 {inspection.sha256[:16]}…")
         document_key = prefix + "_" + inspection.sha256[:16]
         mappings = st.session_state.setdefault(prefix + "_mappings", {})
