@@ -61,6 +61,8 @@ def test_switching_sources_captures_old_caption_and_keeps_each_form_identity(mon
     draft = current_draft(app)
     first, second = draft.sources
     first_date = next(item for item in app.date_input if first.id in item.key)
+    # The second file has no date or site yet, so it keeps its canonical resolver
+    # mounted without a visit (A30 defers only forms that need nothing).
     second_date = next(item for item in app.date_input if second.id in item.key)
     ids = first_date.id, second_date.id
     first_date.set_value(date(2026, 9, 27))
