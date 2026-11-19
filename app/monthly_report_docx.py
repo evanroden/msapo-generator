@@ -869,10 +869,12 @@ def _generate_verified_report(draft, *, acknowledged_fingerprint, asset_loader, 
     docx = sanitize_package_media(docx)
     pdf, error = _convert_report_pdf(draft, docx)
     from app.monthly_report_contents_review import contents_notice_for
-    from app.monthly_report_contents_pagination import synchronize
+    from app.monthly_report_contents_pagination import ensure_pdf_page_links, synchronize
     notice = contents_notice_for(draft.profile)
     if generated_contents:
-        updated, generated_notice = synchronize(docx, pdf, included_sections(draft.sections))
+        selected = included_sections(draft.sections)
+        pdf = ensure_pdf_page_links(pdf, selected)
+        updated, generated_notice = synchronize(docx, pdf, selected)
         if generated_notice is not None:
             docx, notice = canonical_docx(updated), generated_notice
     return ReportPackage(docx, pdf, report_filename(draft, "docx"), report_filename(draft, "pdf"), draft.fingerprint, error,
@@ -919,9 +921,11 @@ def _retry_verified_report_pdf(draft, package, operation):
     if package.pdf:
         return package
     pdf, error = _convert_report_pdf(draft, package.docx)
-    from app.monthly_report_contents_pagination import synchronize
+    from app.monthly_report_contents_pagination import ensure_pdf_page_links, synchronize
     if package.generated_contents:
-        docx, notice = synchronize(package.docx, pdf, included_sections(draft.sections))
+        selected = included_sections(draft.sections)
+        pdf = ensure_pdf_page_links(pdf, selected)
+        docx, notice = synchronize(package.docx, pdf, selected)
         if notice is not None:
             return replace(package, docx=canonical_docx(docx), pdf=pdf, pdf_error=error, contents_notice=notice)
     return replace(package, pdf=pdf, pdf_error=error)
