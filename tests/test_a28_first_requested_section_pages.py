@@ -46,7 +46,7 @@ def test_first_selected_page_not_page_zero_or_full_inventory(monkeypatch, count)
             "owner": "a28-owner", "wanted": {"activity": "revision-new"},
             "cache": {"activity": {"fingerprint": "revision-new", "ticket": ticket}},
             "queue": {}, "running": None, "last_good": {},
-            "visible": {"activity": True}, "page_requests": {},
+            "requests": {}, "visible": {"activity": True}, "page_requests": {},
         }
         decoded = []
         original_pixmap = fitz.Page.get_pixmap
@@ -93,7 +93,7 @@ def test_old_revision_viewport_never_drives_new_ticket(monkeypatch, count):
             "owner": "a28-owner", "wanted": {"activity": "new"},
             "cache": {"activity": {"fingerprint": "new", "ticket": new_ticket}},
             "queue": {}, "running": None, "last_good": {},
-            "visible": {"activity": True},
+            "requests": {}, "visible": {"activity": True},
             "page_requests": {"activity": {
                 "generation": "old", "ticket_key": old_ticket.key,
                 "visible": True, "pages": (0,), "dpi": 96,

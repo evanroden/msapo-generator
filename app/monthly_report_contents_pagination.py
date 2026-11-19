@@ -92,19 +92,32 @@ def synchronize(docx, pdf, sections):
                 links = [node for node in root.iter(qn("w:hyperlink")) if node.get(qn("w:anchor")) == anchor]
                 if len(matches) != 1 or len(targets) != 1 or len(links) != 1:
                     return docx, UNAVAILABLE
-                fields[f"{section.number}. {section.title}"] = matches[0]
+                title = f"{section.number}. {section.title}"
+                linked_title = " ".join("".join(text.text or "" for text in links[0].iter(qn("w:t"))).split())
+                target_title = " ".join("".join(text.text or "" for text in targets[0].getparent().iter(qn("w:t"))).split())
+                if linked_title != title or target_title != title:
+                    return docx, UNAVAILABLE
+                fields[title] = matches[0]
             if len(fields) != len(generated):
                 return docx, UNAVAILABLE
             with fitz.open(stream=pdf, filetype="pdf") as rendered:
                 outlines = rendered.get_toc()
+                # An outline/link pair can agree on an obsolete page even when
+                # the actual section heading moved after an attachment change.
+                if [entry[1] for entry in outlines if entry[0] == 1] != list(fields):
+                    return docx, UNAVAILABLE
                 pages = {}
                 for title in fields:
                     destinations = [entry[2] for entry in outlines if entry[1] == title]
                     if len(destinations) != 1 or not 1 <= destinations[0] <= len(rendered):
                         return docx, UNAVAILABLE
+                    physical_text = " ".join(rendered[destinations[0] - 1].get_text(sort=True).split())
+                    if title not in physical_text:
+                        return docx, UNAVAILABLE
                     pages[title] = destinations[0]
                 found = set()
-                for page in rendered:
+                visual_order = []
+                for page_index, page in enumerate(rendered):
                     links = [link for link in page.get_links() if link.get("kind") == fitz.LINK_GOTO]
                     for link in links:
                         label = _text(page, link["from"])
@@ -123,7 +136,8 @@ def synchronize(docx, pdf, sections):
                         if len(page_fields) != 1:
                             return docx, UNAVAILABLE
                         found.add(title)
-                if found != set(fields):
+                        visual_order.append((page_index, center, title))
+                if found != set(fields) or [item[2] for item in sorted(visual_order)] != list(fields):
                     return docx, UNAVAILABLE
             for title, field in fields.items():
                 texts = list(field.iter(qn("w:t")))
@@ -167,3 +181,77 @@ def only_generated_cache_changed(before, after):
                     and etree.tostring(roots[0], method="c14n") == etree.tostring(roots[1], method="c14n"))
     except (OSError, ValueError, BadZipFile, KeyError, etree.XMLSyntaxError):
         return False
+
+
+def ensure_pdf_page_links(pdf, sections):
+    """Repair only missing PDF number links when the destination is independently proven.
+
+    LibreOffice can render the correct PAGEREF number while omitting its \h
+    link. The physical section heading, outline, linked contents title and
+    already-printed number must all agree. Do not rewrite a PDF's visible
+    number, infer a destination, or touch pinned native report contents.
+    """
+    if not pdf or not sections:
+        return pdf
+    try:
+        with fitz.open(stream=pdf, filetype="pdf") as rendered:
+            expected = [f"{section.number}. {section.title}" for section in sections]
+            outlines = [entry for entry in rendered.get_toc() if entry[0] == 1]
+            if [entry[1] for entry in outlines] != expected:
+                return pdf
+            title_links = {title: [] for title in expected}
+            for page_index, page in enumerate(rendered):
+                for link in page.get_links():
+                    if link.get("kind") != fitz.LINK_GOTO:
+                        continue
+                    title = _text(page, link["from"])
+                    if title in title_links:
+                        title_links[title].append((page_index, link))
+            if any(len(title_links[title]) != 1 for title in expected):
+                return pdf
+            visible_order = sorted(
+                (page_index, (link["from"].y0 + link["from"].y1) / 2, title)
+                for title in expected for page_index, link in title_links[title]
+            )
+            if [title for _, _, title in visible_order] != expected:
+                return pdf
+            additions = []
+            for title, (_, _, number) in zip(expected, outlines):
+                if not 1 <= number <= len(rendered):
+                    return pdf
+                if title not in " ".join(rendered[number - 1].get_text(sort=True).split()):
+                    return pdf
+                if len(title_links[title]) != 1:
+                    return pdf
+                page_index, title_link = title_links[title][0]
+                if title_link.get("page") != number - 1:
+                    return pdf
+                page = rendered[page_index]
+                title_rectangle = title_link["from"]
+                title_mid = (title_rectangle.y0 + title_rectangle.y1) / 2
+                candidates = [rectangle for rectangle in page.search_for(str(number))
+                              if rectangle.x0 > title_rectangle.x1 + 1
+                              and abs((rectangle.y0 + rectangle.y1) / 2 - title_mid) < 3
+                              and _text(page, rectangle) == str(number)]
+                if len(candidates) != 1:
+                    return pdf
+                rectangle = candidates[0]
+                # Never place a valid link over an existing wrong/foreign link.
+                occupied = [link for link in page.get_links()
+                            if link["from"].intersects(rectangle)
+                            and (link["from"] & rectangle).get_area() >= .5 * rectangle.get_area()]
+                if occupied:
+                    if (len(occupied) != 1 or occupied[0].get("kind") != fitz.LINK_GOTO
+                            or occupied[0].get("page") != number - 1):
+                        return pdf
+                    continue
+                additions.append((page_index, rectangle, number - 1,
+                                  title_link.get("to") or fitz.Point(72, 72)))
+            for page_index, rectangle, target_index, target_position in additions:
+                rendered[page_index].insert_link({
+                    "kind": fitz.LINK_GOTO, "from": rectangle,
+                    "page": target_index, "to": target_position,
+                })
+            return rendered.tobytes() if additions else pdf
+    except (ValueError, RuntimeError, fitz.FileDataError):
+        return pdf
