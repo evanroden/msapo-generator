@@ -102,7 +102,8 @@ def prepare_fixtures(directory):
 
 def worker(root, scenario, fixtures):
     sys.path.insert(0, str(Path(root).resolve()))
-    from PIL import Image
+    from app.image_open import open_image
+    from app.monthly_report_media_privacy import clear_transparent_png_rgb
     from app.monthly_report_docx import normalize_report_image
     from app.monthly_report_preview_images import write_preview_docx
 
@@ -135,7 +136,7 @@ def worker(root, scenario, fixtures):
                 if len(parts) != 8 or len(set(map(_hash, parts))) != 1:
                     raise AssertionError("duplicate photos not preserved")
                 for data in parts:
-                    with Image.open(BytesIO(data)) as image:
+                    with open_image(BytesIO(data), formats=("JPEG", "PNG")) as image:
                         shapes.append(image.size)
                     result_hashes.append(_hash(data))
         else:
@@ -145,15 +146,19 @@ def worker(root, scenario, fixtures):
                 result = normalize_report_image(raw, suffix,
                     line_art=scenario == "line_art",
                     preserve_transparency=scenario == "transparency")
-                with Image.open(BytesIO(result.data)) as image:
+                # Normalized assets keep their prior digest. Privacy applies to
+                # the disposable exported rendition, not stored normalization.
+                exported = (clear_transparent_png_rgb(result.data)
+                            if scenario == "transparency" else result.data)
+                with open_image(BytesIO(exported), formats=("JPEG", "PNG")) as image:
                     if image.size != (result.width, result.height):
                         raise AssertionError("incorrect reported geometry")
                     if scenario == "transparency" and image.getpixel((0, 0)) != (0, 0, 0, 0):
                         hidden_rgb_leak = True
-                if b"A25_SYNTHETIC_METADATA_CANARY" in result.data:
+                if b"A25_SYNTHETIC_METADATA_CANARY" in exported:
                     author_metadata_leak = True
                 shapes.append((result.width, result.height))
-                result_hashes.append(_hash(result.data))
+                result_hashes.append(_hash(exported))
         if [_hash(data) for data in inputs] != input_hashes:
             raise AssertionError("original modified")
         end_cpu = resource.getrusage(resource.RUSAGE_SELF)

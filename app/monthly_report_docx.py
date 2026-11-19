@@ -124,11 +124,8 @@ def normalize_report_image(raw: bytes, suffix: str, *, line_art: bool = False,
         else:
             rgba = oriented.convert("RGBA")
             if preserve_transparency:
-                # Transparent logo pixels may encode invisible private artwork.
-                # Clear only alpha-zero RGB in this derivative, not the source.
-                hidden = rgba.getchannel("A").point([255] + [0] * 255)
-                if hidden.getbbox():
-                    rgba.paste((0, 0, 0, 0), mask=hidden)
+                # Stored normalization keeps the historical saved-asset digest.
+                # Only the disposable export derivative clears hidden RGB.
                 normalized = rgba
             else:
                 normalized = Image.new("RGB", rgba.size, "white")

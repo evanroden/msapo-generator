@@ -13,8 +13,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: a25-image-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   capped-image-control:
@@ -33,7 +33,7 @@ jobs:
       - name: Compare real base and PR code under 512 MiB / 0.5 CPU
         timeout-minutes: 25
         run: |
-          mkdir -p results
+          mkdir -p results/baseline-output
           # Build each source image once. Both workers consume byte-identical,
           # read-only fixtures instead of timing synthetic source generation.
           docker run --name msapo-a25-fixture --memory=512m --memory-swap=512m --cpus=0.5 \
@@ -41,7 +41,7 @@ jobs:
             scripts/qa_monthly_image_memory_a25.py --prepare-fixtures --fixtures /results/fixtures
           for stage in baseline candidate; do
             docker run --name "msapo-a25-$stage" --memory=512m --memory-swap=512m --cpus=0.5 \
-              -v "$PWD/baseline:/baseline:ro" -v "$PWD/results:/results" \
+              -v "$PWD/baseline:/baseline:ro" -v "$PWD/results/baseline-output:/baseline/output" -v "$PWD/results:/results" \
               --entrypoint python msapo-a25-image scripts/qa_monthly_image_memory_a25.py \
               --code-root "$(test "$stage" = candidate && echo /app || echo /baseline)" \
               --fixtures /results/fixtures --output "/results/$stage.json"
