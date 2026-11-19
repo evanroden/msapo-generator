@@ -46,6 +46,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import streamlit as st
+from app.field_help import field_with_help
 
 from app.service_closed import close_if_moved
 
@@ -1648,7 +1649,7 @@ def _render_asset_control(
     def commit_large_picker_selection() -> None:
         st.session_state[asset_state_key] = st.session_state[picker_key]
 
-    raw_asset = st.selectbox(
+    raw_asset = field_with_help(st.selectbox, 
         "Specific asset *",
         options,
         format_func=lambda uid: (
@@ -1660,10 +1661,7 @@ def _render_asset_control(
         ),
         key=picker_key if large_picker else asset_state_key,
         on_change=commit_large_picker_selection if large_picker else None,
-        help=(
-            "The tool suggests the asset from the quote and selected site. "
-            "Choose a different one only if the suggestion is wrong."
-        ),
+        help="Choose the asset associated with this work, or select no asset when none applies. The choice is included in the request.",
     )
     if large_picker:
         raw_asset = st.session_state[asset_state_key]
@@ -1702,8 +1700,8 @@ def _render_footer(workflow: str = PURCHASE_WORKFLOW) -> None:
     with st.expander("About"):
         st.caption("Running code: " + (commit if commit else "build identifier unavailable"))
         if workflow == PURCHASE_WORKFLOW:
-            st.button("Load synthetic quote", key="load_synthetic_test",
-                      help="Replace this browser's current quote with the built-in synthetic example. No request is sent.",
+            field_with_help(st.button, "Load synthetic quote", key="load_synthetic_test",
+                      help="Load a built-in example to explore quote review. This replaces the current browser draft without submitting a request.",
                       on_click=_load_synthetic_quote_from_about)
             from app.owner_contacts_ui import render_owner_contacts
             render_owner_contacts()
@@ -2530,14 +2528,11 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
         # because the document template would otherwise read the untouched
         # analysis text and discard every correction, on the exact page contract
         # administration signs.
-        scope_value = st.text_area(
+        scope_value = field_with_help(st.text_area, 
             "Scope of Work",
             key=scope_key,
             height=160,
-            help=(
-                "Edit the tool's draft when the quote was interpreted "
-                "incorrectly. This exact text is used in the supporting PDF."
-            ),
+            help="Review and correct the proposed work description. This text is copied into the supporting document.",
         ).strip()
         inclusion_column, exclusion_column = st.columns(2)
         with inclusion_column:
@@ -2609,12 +2604,12 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
         )
 
     with corrections:
-        request_type = st.selectbox(
+        request_type = field_with_help(st.selectbox, 
             "What kind of request is this? *",
             tuple(REQUEST_TYPE_LABELS),
             format_func=lambda value: REQUEST_TYPE_LABELS[value],
             key=request_type_key,
-            help="The tool guesses this from the quote. Change it only if needed.",
+            help="Select whether this is a new order or a change to an existing order. This choice determines which details are required.",
         )
 
     if request_type == "CHANGE ORDER":
@@ -2652,29 +2647,22 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
                 else job_suggestion or JOB_NUMBER_PLACEHOLDER
             )
         with questions if needs.job_number else corrections:
-            st.selectbox(
+            field_with_help(st.selectbox, 
                 "Job number *",
                 selectable_job_options,
                 key=job_key,
-                help=(
-                    "The choices match Smartsheet exactly. Unity choices are "
-                    "for Unity Health System in Arkansas; Rochester-area "
-                    "Unity hospitals use RRH job numbers."
-                ),
+                help="Select the job number for the chosen contract and site. It routes the request to the appropriate job.",
             )
     else:
         job_key = ""
 
     with questions if route_uncertain else corrections:
-        purchase_route = st.selectbox(
+        purchase_route = field_with_help(st.selectbox, 
             "How will this work or purchase be handled? *",
             PURCHASE_ROUTES,
             format_func=lambda route: PURCHASE_ROUTE_LABELS[route],
             key=route_key,
-            help=(
-                "Labor and rentals take priority. Equipment applies only to "
-                "complete Group A equipment purchases."
-            ),
+            help="Choose whether the work involves labor, rentals, or equipment. The selection sets the initial accounting fields.",
         )
         if route_uncertain:
             st.caption(
@@ -2695,13 +2683,10 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
         )
 
     with questions if needs.total else corrections:
-        total_value = st.text_input(
+        total_value = field_with_help(st.text_input, 
             "PO/CO amount — final total including every fee and tax *",
             key=total_key,
-            help=(
-                "Use the final amount payable, including sales tax, freight, "
-                "delivery, surcharges, and any other quoted fees."
-            ),
+            help="Enter the final total including applicable taxes, delivery, and fees. This is the total entered on the request.",
         ).strip()
 
     price_issues = pricing_problems(
@@ -2713,13 +2698,13 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
     # block the completed package with no way to repair it. Keep the controls
     # visible when they need attention, otherwise with the optional corrections.
     with questions if price_issues else corrections:
-        subtotal_value = st.text_input(
+        subtotal_value = field_with_help(st.text_input, 
             "Subtotal after discounts (optional)", key=subtotal_key,
-            help="Correct the quoted net subtotal. Leave blank only if not stated.",
+            help="Enter the quoted subtotal after discounts when one is stated. It helps reconcile the final total.",
         ).strip()
-        tax_value = st.text_input(
+        tax_value = field_with_help(st.text_input, 
             "Sales tax (optional)", key=tax_key,
-            help="Enter the quoted sales tax, including zero. Leave blank only if not stated.",
+            help="Enter the tax amount shown on the quote, including zero when stated. Leave blank when no tax amount is provided.",
         ).strip()
 
     with questions if needs.vendor else corrections:
@@ -2729,10 +2714,10 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
         st.text_input("Vendor representative name *", key=contact_key)
 
     with questions if needs.contact_email else corrections:
-        st.text_input(
+        field_with_help(st.text_input, 
             "Vendor representative email *",
             key=email_key,
-            help="Enter the representative's complete email address.",
+            help="Enter the representative's complete email address. It identifies who can answer questions about the quote.",
         )
 
     if remembered_contact_active:
@@ -2772,14 +2757,11 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
                 browser_token, contract
             )
         with questions:
-            requester_value = st.text_input(
+            requester_value = field_with_help(st.text_input, 
                 "Your name (Requester / Asset Manager) *",
                 key=requester_key,
                 placeholder="Enter your name once",
-                help=(
-                    "After a successful package, this browser remembers the most "
-                    "recent name for this ENFRA account."
-                ),
+                help="Enter the name of the person submitting this request. This browser can reuse the name on future requests.",
             ).strip()
 
     # Emitted AFTER the fields render, because the requester's value is not
@@ -2823,17 +2805,17 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
     # Toggling off does NOT hide existing text. Silently concealing content the
     # operator wrote is the failure this whole change is about; they clear the
     # box to remove the note.
-    reveal_note = st.toggle(
+    reveal_note = field_with_help(st.toggle, 
         "Add Additional Information",
         key=f"show_optional_{token}",
-        help="Use this only when the Smartsheet reviewer needs an extra note.",
+        help="Turn this on when the reviewer needs an extra explanation. Leave it off if the other fields are sufficient.",
     )
     if reveal_note or instructions_value:
-        st.text_area(
+        field_with_help(st.text_area, 
             "Additional information (optional)",
             key=instructions_key,
             placeholder="Only enter something the Smartsheet reviewer needs",
-            help="Only add a note the Smartsheet reviewer needs to see.",
+            help="Enter details the reviewer needs that are not captured elsewhere. This note is included with the request.",
         )
 
     with corrections:
@@ -2877,29 +2859,21 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
     )
 
     with corrections:
-        st.selectbox(
+        field_with_help(st.selectbox, 
             "Object Account",
             OBJECT_ACCOUNT_OPTIONS,
             key=f"object_account_{token}",
             on_change=_remember_po_coding_choice,
             args=(token, "object_account"),
-            help=(
-                "Defaults from how the work is handled. Change it when the "
-                "funding or contract vehicle needs a different account, such as "
-                "5490-OTHER for ISDC-funded work."
-            ),
+            help="Select the accounting category that applies to this request. Change the suggested value if the coding differs.",
         )
-        st.selectbox(
+        field_with_help(st.selectbox, 
             "Agreement Type for PO",
             AGREEMENT_TYPE_OPTIONS,
             key=f"agreement_type_{token}",
             on_change=_remember_po_coding_choice,
             args=(token, "agreement_type"),
-            help=(
-                "Defaults from how the work is handled. Change it when the "
-                "contract vehicle differs -- for example CSAPO (CONSTRUCTION) "
-                "under a CSA rather than an MSA."
-            ),
+            help="Select the agreement category authorizing this purchase. Change the suggested value when another agreement applies.",
         )
 
     object_account_value = str(st.session_state.get(f"object_account_{token}", "") or "")
