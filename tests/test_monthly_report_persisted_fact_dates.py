@@ -174,7 +174,7 @@ st.session_state['legacy_date_draft'] = replace(draft, blocks=tuple(blocks.value
     assert not app.exception and len(requests) == 1 and not reservations
     # A52 admits a paid page through the per-page atomic receipt, not through
     # the legacy whole-selection reserve_call hook.
-    budget_path = (library._profile_path(profile.contract, profile.key)
+    budget_path = (library._profile_path(draft.profile.contract, draft.profile.key)
                    / 'ai' / 'budgets' / (draft.period.key + '.json'))
     assert library._read(budget_path)['calls'] == 1
     assert app.session_state['legacy_date_draft'].sources[0].facts == (fact,)
