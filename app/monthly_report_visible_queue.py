@@ -74,7 +74,7 @@ class VisibleFirstQueue:
             self._condition.notify_all()
 
     def acquire(self, lock, *, preview=False, review=False, wait_seconds=0,
-                owner=None, revision=None, is_current=None):
+                owner=None, revision=None, is_current=None, can_admit=None):
         """Wait a finite interval; acquire the caller's existing exclusive lock.
 
         The lock remains owned by the caller until release(). A failed or
@@ -105,7 +105,8 @@ class VisibleFirstQueue:
                             current = False  # Unknown owner state cannot publish output.
                         if not current:
                             raise ObsoletePreview('This preview is no longer current. Your edits are still here.')
-                    if self._head() is request and lock.acquire(blocking=False):
+                    if (self._head() is request and (can_admit is None or can_admit())
+                            and lock.acquire(blocking=False)):
                         self._waiting.remove(request)
                         self._preview_burst = (min(MAX_PREVIEW_BURST, self._preview_burst + 1)
                                                if preview else 0)

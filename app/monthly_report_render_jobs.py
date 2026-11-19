@@ -245,11 +245,20 @@ def work_slot(*, preview=False, review=False, wait_seconds=130,
                 _REVIEW_WAITING += 1
             elif not preview:
                 _FOREGROUND_WAITING += 1
+        def compatible_preview_turn():
+            # Main's A34 review priority must not overlap an active export,
+            # even when an opted-in host has an available parallel slot.
+            with _PRIORITY_LOCK:
+                if review:
+                    return _FOREGROUND_ACTIVE == 0
+                return not (_FOREGROUND_WAITING or _FOREGROUND_ACTIVE or _REVIEW_WAITING)
+
         try:
             try:
                 QUEUE.acquire(_WORK_SLOT, preview=preview, review=review, wait_seconds=timeout,
                               owner=owner, revision=revision,
-                              is_current=is_current if preview else None)
+                              is_current=is_current if preview else None,
+                              can_admit=compatible_preview_turn if preview and (review or owner is None) else None)
                 acquired = True
             except QueueBusy as exc:
                 raise RenderBusy(str(exc)) from exc
