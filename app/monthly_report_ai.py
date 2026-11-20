@@ -434,7 +434,7 @@ def request_json(content, *, response_kind=None, validator=None, usage_stats=Non
                         _UNSUPPORTED_PROMPT_CACHES.add(identity)
                     # Retry this chunk unmarked within the same deadline.
                     # Main's validation, repair and network error gates remain.
-                    options["messages"][0]["content"] = prompt
+                    options["messages"] = [{"role": "user", "content": prompt}]
                     message = request_with_retry(
                         lambda timeout: client.messages.create(timeout=timeout, **options),
                         until=until,

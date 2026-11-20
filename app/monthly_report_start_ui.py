@@ -149,13 +149,18 @@ def identity_summary(profile):
     return name + scope + sites
 
 
-def select_sites(contract, profiles, remembered, field, completed=None, *, render_details_action=None):
+def select_sites(contract, profiles, remembered, field, completed=None, *, render_details_action=None,
+                 suggested_sites=(), source_digest=""):
     options = site_choices(contract, profiles)
     prefix = "report_sites_" + _key(contract)
     if completed:
         st.session_state[prefix + "_new_site"] = ""
     seed = next((p for p in profiles if p.key == (completed or remembered)), None)
     selected = []
+    suggested = set(suggested_sites) if not seed else set()
+    # A changed uploaded source must not inherit a prior file's site checkbox
+    # choices. Users can still correct each suggestion before it is saved.
+    source_suffix = "_source_" + source_digest[:16] if source_digest and not seed else ""
     # Native width="stretch" expands the Streamlit row, but NOT its associated
     # clickable <label> (observed 968px row vs 236px label in both engines).
     # Extend that SAME semantic label, not a second click handler or duplicated
@@ -179,7 +184,8 @@ def select_sites(contract, profiles, remembered, field, completed=None, *, rende
         </style>
         """)
         for f in options:
-            key = field(prefix + "_" + f.key, bool(seed and f.key in membership_key(seed.facilities)))
+            key = field(prefix + "_" + f.key + source_suffix,
+                        bool((seed and f.key in membership_key(seed.facilities)) or f.key in suggested))
             if completed:
                 st.session_state[key] = bool(seed and f.key in membership_key(seed.facilities))
             detail = "Include this site in the report." + (" Also known as: " + "; ".join(f.aliases) if f.aliases else "")
@@ -240,9 +246,12 @@ def select_sites(contract, profiles, remembered, field, completed=None, *, rende
     return candidate, existing
 
 
-def starting_choice(profile, profiles, period, prepared, field):
+def starting_choice(profile, profiles, period, prepared, field, *,
+                    entry_upload=None, entry_stage=None, entry_active=False):
     from app.monthly_report_section_ui import render_section_setup
-    if render_section_setup(profile.contract, period, prepared, field, identity=profile):
+    if render_section_setup(profile.contract, period, prepared, field, identity=profile,
+                            entry_upload=entry_upload, entry_stage=entry_stage,
+                            entry_active=entry_active):
         return
     available = recommended_designs(profile, profiles, period)
     choices = (["Use another report from this contract"] if available else []) + ["Use the general ENFRA monthly report template"]
