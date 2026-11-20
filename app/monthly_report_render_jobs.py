@@ -73,6 +73,14 @@ def _reclaim_preview_heap():
     trim(0)
 
 
+def _reclaimed_headroom():
+    """Collect garbage, return freed heap to the OS, then measure headroom again."""
+    import gc
+    gc.collect()
+    _reclaim_preview_heap()
+    return memory_headroom()
+
+
 def convert_to_pdf(path, *, wait_seconds=10, lossless_images=False):
     with conversion_slot(wait_seconds=wait_seconds):
         # Do not count thread/process-lock admission as office execution.
@@ -234,6 +242,13 @@ def work_slot(*, preview=False, review=False, wait_seconds=130):
         acquired = False
         if preview:
             headroom = memory_headroom()
+            if headroom is not None and headroom < PREVIEW_HEADROOM_BYTES:
+                # Freed Python/glibc heap stays charged to the cgroup until it
+                # is trimmed, and the trim otherwise runs only inside an
+                # admitted conversion. Without this, memory freed by earlier
+                # sessions keeps every later preview refused. Reclaim once and
+                # measure again; the cgroup measure stays authoritative.
+                headroom = _reclaimed_headroom()
             if headroom is not None and headroom < PREVIEW_HEADROOM_BYTES:
                 record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
                 raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
