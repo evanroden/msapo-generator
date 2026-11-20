@@ -48,6 +48,8 @@ from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 
 import streamlit as st
+
+from app.status_copy import safe_status_detail
 from app.field_help import field_with_help
 import streamlit.components.v1 as components
 
@@ -277,10 +279,10 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
             payload = upload.getvalue()
             rejection = receipt_upload_problem(upload.name, payload)
             if rejection:
-                st.error(rejection)
+                st.error("Upload a PDF or photo for the receipt. " + safe_status_detail(rejection))
             elif len(payload) > _MAX_RECEIPT_BYTES:
                 st.error(
-                    f"{upload.name} is larger than the 15 MB receipt limit. "
+                    f"Reduce {safe_status_detail(upload.name)} below the 15 MB receipt limit. "
                     + RECEIPT_NEXT_STEP
                 )
             else:
@@ -316,7 +318,7 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
             if upload_sources:
                 st.session_state["expense_restored_without_uploader"] = True
                 st.caption(
-                    "Your in-progress receipts were restored. Add more files above, "
+                    "Review the restored receipts. Add more files above, "
                     "remove one beside its preview, or clear the entire report."
                 )
         unique_uploads, stored_duplicate_names = _unique_receipts(upload_sources or [])
@@ -330,8 +332,8 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
         _clear_removed_receipts(active_ids)
         if duplicate_names:
             st.warning(
-                "Duplicate receipt files were ignored: "
-                + ", ".join(duplicate_names)
+                "Use the existing receipt entries. Duplicate receipt files were ignored: "
+                + safe_status_detail(", ".join(duplicate_names))
                 + "."
             )
         if upload_sources:
@@ -350,8 +352,7 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
         total_upload_bytes = sum(len(data) for _, _, data in unique_uploads)
         if total_upload_bytes > _MAX_REPORT_UPLOAD_BYTES:
             st.error(
-                "These receipts total more than 60 MB. Remove or resize the largest "
-                "files before continuing."
+                "Remove or resize the largest receipts before continuing; the files total more than 60 MB."
             )
             for receipt_id, filename, payload in unique_uploads:
                 if st.button(
@@ -373,14 +374,13 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
 
         if unique_uploads:
             st.caption(
-                f"{len(unique_uploads)} unique receipt"
-                f"{'s' if len(unique_uploads) != 1 else ''} ready for review. "
+                f"Review {len(unique_uploads)} unique receipt"
+                f"{'s' if len(unique_uploads) != 1 else ''}. "
                 "Original uploads remain unchanged; compact copies are used only in the workbook."
             )
         else:
             st.caption(
-                "No receipt is required for mileage-only reimbursement. You can add "
-                "business mileage below or upload receipts now."
+                "Add business mileage below or upload receipts now; mileage-only reimbursement does not require a receipt."
             )
 
         st.markdown(
@@ -409,14 +409,14 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
         # post-render-write reason given in this function's docstring.
         _seed_profile(browser_token, account, browser_timezone)
         for problem in director_config_problems(accounts):
-            st.warning(problem)
+            st.warning("Review the account-director setup before generating this expense report.")
         _account_token_for_note = hashlib.sha256(account.encode("utf-8")).hexdigest()[:10]
         if account_director(account) is None and not str(
             st.session_state.get(f"expense_approver_name_{_account_token_for_note}", "") or ""
         ).strip():
             st.caption(
-                "No director is set up for this account yet -- enter the ENFRA "
-                "director over this contract below (not the contract administrator)."
+                "Enter the ENFRA director over this contract below, not the contract "
+                "administrator; no director is set up for this account yet."
             )
         # Every step-2 widget key is namespaced by this digest so switching accounts
         # gives a fresh, independently remembered set of details rather than
@@ -514,8 +514,7 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
         with _details_panel:
             if not _outstanding_details:
                 st.caption(
-                    "Every detail below stays editable. Open this panel to change "
-                    "anything the tool filled for you."
+                    "Open this panel to review or change any detail the tool filled for you."
                 )
             detail_columns = st.columns(2)
             with detail_columns[0]:
@@ -538,9 +537,8 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
                 ).strip()
                 if name_guess and employee_name == name_guess:
                     st.warning(
-                        "Guessed from a name printed on your receipts -- low confidence. "
-                        "Check this is YOUR name exactly as it should appear on the "
-                        "report, and correct it if not."
+                        "Check and correct the Employee name before continuing; it was guessed "
+                        "from a printed receipt name with low confidence."
                     )
                 employee_number = field_with_help(st.text_input, 
                     "Employee number *",
@@ -553,7 +551,7 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
                     employee_name
                 ):
                     st.caption(
-                        "Employee number recalled from this employee's last confirmed report."
+                        "Confirm the Employee number recalled from this employee's last confirmed report."
                     )
                 employee_home_bu = _employee_home_business_unit(account)
                 home_bu_display_key = f"expense_employee_home_bu_display_{account_token}"
@@ -643,7 +641,7 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
                 if st.session_state.get(approver_recall_key) == _approver_identity_key(
                     approver_name, approver_email
                 ):
-                    st.caption("Director email recalled from this account's confirmed history.")
+                    st.caption("Confirm the director email recalled from this account's confirmed history.")
                 configured_director = account_director(account)
                 if configured_director is not None and (
                     approver_name.casefold(), approver_email.casefold()
@@ -651,7 +649,7 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
                     configured_director[0].casefold(),
                     configured_director[1].casefold(),
                 ):
-                    st.caption("This account's director, from the tool's routing setup.")
+                    st.caption("Confirm this account's director from the routing setup.")
 
             manager_columns = st.columns(2)
             with manager_columns[0]:
@@ -695,7 +693,7 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
                     )
                 )
                 st.caption(
-                    f"Receipt coding starts with 695400022 · {service_year:02d}AMA · 5490. "
+                    f"Review receipt coding: 695400022 · {service_year:02d}AMA · 5490. "
                     "Each receipt can be changed independently."
                 )
         # Computed outside the panel because it feeds BOTH the receipt lines and the
@@ -735,8 +733,8 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
             unsafe_allow_html=True,
         )
         st.caption(
-            "Every required value stays with the receipt or mileage entry it belongs "
-            "to. Job number, Account / Cost Type, and Cost Code are prefilled but editable."
+            "Review each receipt or mileage entry separately. Job number, Account / Cost Type, "
+            "and Cost Code are prefilled but editable."
         )
         items: list[ExpenseItem] = []
         for index, (receipt_id, filename, file_bytes) in enumerate(unique_uploads, 1):
@@ -770,7 +768,7 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
                         amount = f'${reimbursement:,.2f}' if reimbursement is not None else 'Enter a valid date and miles'
                         st.write(f'{trip.destination or "Destination needed"} · {trip.transaction_date or "Date needed"} · {amount}')
                         if trip.purpose:
-                            st.caption(trip.purpose)
+                            st.caption("Review trip purpose: " + safe_status_detail(trip.purpose))
                 else:
                     st.caption('Add business mileage to review trips and reimbursement here.')
 
@@ -783,7 +781,7 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
         review_warnings = expense_report_warnings(details, items, mileage_items)
         if review_warnings:
             st.warning(
-                "Review before sending: "
+                "Check these details before sending: "
                 + "; ".join(warning.rstrip(". ") for warning in review_warnings)
                 + "."
             )
@@ -798,10 +796,10 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
             unsafe_allow_html=True,
         )
         st.caption(
-            "The Excel file contains the completed official form and, when receipts "
-            "are present, a printable RECEIPTS worksheet. The PDF places the form "
-            "first and each receipt after it. Windows Outlook receives that PDF in "
-            "the draft; web and iPad mail routes provide a prefilled email and an "
+            "Review the Excel form and PDF before sending. Excel includes the official form "
+            "and, when receipts are present, a printable RECEIPTS worksheet. The PDF "
+            "places the form first and each receipt after it. Windows Outlook attaches "
+            "the PDF to the draft; web and iPad routes provide a prefilled email and "
             "attachment reminder. Nothing is sent automatically."
         )
 
@@ -810,7 +808,7 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
             try:
                 signature_preview = employee_signature_png(employee_name)
             except ExpenseReportError as exc:
-                st.error(str(exc))
+                st.error("Check the Employee name before confirming the signature preview.")
             else:
                 confirmation_key = f"expense_signature_confirmed_{account_token}"
                 confirmed_name_key = f"expense_signature_confirmed_name_{account_token}"
@@ -829,7 +827,7 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
                 signature_columns = st.columns([1, 2])
                 with signature_columns[0]:
                     st.image(signature_preview, width=320)
-                    st.caption(f"Printed name: {employee_name}")
+                    st.caption(f"Confirm the printed name: {safe_status_detail(employee_name)}")
                 with signature_columns[1]:
                     signature_confirmed = st.checkbox(
                         "I confirm this generated signature represents me and will "
@@ -845,7 +843,7 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
         problems = validate_expense_report(details, items, mileage_items, content_digests=_content_digests())
         if problems:
             st.warning(
-                "Before generating: "
+                "Complete these details before generating: "
                 + "; ".join(problem.rstrip(". ") for problem in problems)
                 + "."
             )
@@ -859,7 +857,7 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
         generated_signature = str(st.session_state.get("expense_generated_signature", ""))
         if generated_signature and generated_signature != signature:
             st.warning(
-                "A report detail changed. Generate again to refresh the files and email draft."
+                "Generate again to refresh the files and email draft after your change."
             )
 
         if st.button(
@@ -936,13 +934,13 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
 
         generation_error = str(st.session_state.get("expense_generation_error", "") or "")
         if generation_error:
-            st.error(f"The expense package could not be generated: {generation_error}")
+            st.error("Check the required report details, then generate the expense package again. No package was created.")
         email_error = str(st.session_state.get("expense_email_error", "") or "")
         if email_error:
             st.error(
-                "The attached-PDF Outlook draft could not be created: "
-                f"{email_error} The iPhone/iPad share option can still pass the "
-                "generated PDF directly to Mail or Outlook."
+                "Use the iPhone/iPad share option to pass the generated PDF to Mail "
+                "or Outlook, or generate the report again. The attached-PDF Outlook "
+                "draft could not be created."
             )
 
         # Both halves of this gate are required. The isinstance check survives a
@@ -1038,8 +1036,8 @@ def _receipt_reading_progress() -> None:
     unread = _unread_receipts(receipts)
     if unread:
         st.caption(
-            f"Reading {len(unread)} remaining receipt(s). "
-            "You can enter or correct report details while automatic reading continues."
+            f"Enter or correct report details while {len(unread)} remaining receipt(s) "
+            "are being read automatically, or stop reading below."
         )
         if st.button("Stop automatic reading; enter details manually"):
             jobs = st.session_state.get("expense_analysis_jobs", {})
@@ -1123,20 +1121,20 @@ def _render_receipt(
             st.rerun()
         if automatic_error:
             st.warning(
-                "The tool could not read this receipt automatically. The fields "
-                "below are still required and can be completed manually."
+                "Enter the required receipt fields below, or try reading this receipt again; "
+                "automatic reading was unsuccessful."
             )
             if st.button("Try reading this receipt again", key=f"retry_receipt_{token}"):
                 st.session_state.pop(error_key, None)
                 st.session_state.pop(f"expense_receipt_analysis_{receipt_id}", None)
                 st.rerun()
         elif analysis.confidence in {"low", "medium"}:
-            st.warning(f"Automatic reading confidence: {analysis.confidence}. Verify every value.")
+            st.warning(f"Verify every receipt value; automatic reading confidence is {analysis.confidence}.")
         if analysis.review_notes:
             for note in analysis.review_notes:
-                st.caption(f"Review: {note}")
+                st.caption("Check this receipt: " + safe_status_detail(note))
         for charge_note in _receipt_charge_notes(analysis):
-            st.caption(charge_note)
+            st.caption("Review charges: " + safe_status_detail(charge_note))
         merchant = field_with_help(st.text_input, 
             "Merchant",
             key=merchant_key,
@@ -1204,8 +1202,8 @@ def _render_receipt(
                 st.markdown(f"**Reimbursement line {line_index}**")
             if line_index == 1 and analysis.receipt_type and analysis.suggested_description:
                 st.caption(
-                    f"Suggested description ({analysis.receipt_type}): "
-                    f"{analysis.suggested_description}"
+                    f"Check the suggested description ({safe_status_detail(analysis.receipt_type)}): "
+                    f"{safe_status_detail(analysis.suggested_description)}"
                 )
             description = field_with_help(st.text_input, 
                 "Description / business purpose *",
@@ -1220,7 +1218,7 @@ def _render_receipt(
             if line_index == 1:
                 suggestion = _receipt_section_suggestion(analysis)
                 if suggestion:
-                    st.caption(suggestion)
+                    st.caption("Review the suggested expense section: " + safe_status_detail(suggestion))
                 if (
                     suggestion
                     and st.session_state.get(line_section_key) != analysis.expense_section_guess
@@ -1281,10 +1279,10 @@ def _render_receipt(
                 help="Confirm that all entered reimbursement amounts are in approved U.S. dollars. Convert foreign-currency charges before confirming.")
             if approved and valid_amounts:
                 items = [replace(item, usd_review_fingerprint=review) for item, review in zip(items, reviews)]
-                st.caption(f"{analysis.currency} receipt reviewed with the entered U.S.-dollar amounts.")
+                st.caption(f"Use the approved U.S.-dollar amounts entered for this {analysis.currency} receipt.")
             else:
-                st.error(f"Receipt currency appears to be {analysis.currency}. Enter the approved U.S.-dollar "
-                         "amount on each reimbursement line, then confirm the amounts above.")
+                st.error(f"Enter approved U.S.-dollar amounts on each reimbursement line and confirm them above. "
+                         f"The receipt currency appears to be {analysis.currency}.")
 
     for line_index, item in enumerate(items, 1):
         receipt_problems = _receipt_visible_problems(index, item)
@@ -1295,7 +1293,7 @@ def _render_receipt(
                 else f"Receipt {index}"
             )
             st.warning(
-                f"Needed for {line_label}: "
+                f"Complete the details for {line_label}: "
                 + "; ".join(receipt_problems)
                 + "."
             )
@@ -1315,9 +1313,9 @@ def _render_receipt(
         and analyzed_total is not None and reviewed_total > analyzed_total
     ):
         st.warning(
+            f"Verify the receipt and split-line amounts before generating. "
             f"The split lines total ${reviewed_total:,.2f}, which exceeds the "
-            f"tool-read receipt total of ${analyzed_total:,.2f}. Verify the "
-            "receipt and line amounts before generating."
+            f"tool-read receipt total of ${analyzed_total:,.2f}."
         )
     return items
 
@@ -1589,8 +1587,8 @@ def _render_detected_receipt_items(
         return
     st.markdown("**Select the reimbursable receipt items**")
     st.caption(
-        "All detected purchased items start selected. Uncheck personal or other "
-        "nonreimbursable items; the reimbursable amount below recalculates."
+        "Uncheck personal or other nonreimbursable items; all detected purchases "
+        "start selected, and the reimbursable amount below recalculates."
     )
     for index, checkbox_key in _detected_item_entries(token, analysis):
         item = analysis.line_items[index]
@@ -1602,9 +1600,9 @@ def _render_detected_receipt_items(
 
     if not selected_indices:
         st.warning(
-            "No detected receipt items are selected. Select a reimbursable item, "
-            "or enter a corrected description and amount manually if the reader "
-            "missed the applicable purchase. Otherwise remove this receipt."
+            "Select a reimbursable item or enter a corrected description and amount "
+            "if a purchase was missed. Otherwise remove this receipt; no detected "
+            "items are currently selected."
         )
         return
     selected_count = len(selected_indices)
@@ -1617,13 +1615,13 @@ def _render_detected_receipt_items(
     )
     if current_amount and current_amount != calculated_amount:
         st.caption(
-            f"Selected {selected_count} of {len(analysis.line_items)} items; "
+            f"Review the selection: Selected {selected_count} of {len(analysis.line_items)} items; "
             f"calculated amount ${calculated_amount}. Your edited amount is "
             f"preserved until the selection changes.{allocation_note}"
         )
     else:
         st.caption(
-            f"Selected {selected_count} of {len(analysis.line_items)} items; "
+            f"Review the selection: Selected {selected_count} of {len(analysis.line_items)} items; "
             f"reimbursable amount ${calculated_amount}.{allocation_note}"
         )
 
@@ -1777,13 +1775,13 @@ def _render_mileage_entries(
             st.error("Enter the travel date to calculate mileage reimbursement.")
         elif rate is None:
             st.error(
-                f"The IRS business-mileage rate for {travel_date:%Y-%m-%d} "
-                "has not been configured yet."
+                f"Enter a travel date with an available IRS business-mileage rate; "
+                f"no rate is configured for {travel_date:%Y-%m-%d}."
             )
         else:
             reimbursement = (parse_mileage(miles) or 0) * rate
             st.caption(
-                f"IRS business rate: ${rate} per mile · "
+                f"Review the IRS business rate: ${rate} per mile · "
                 f"Calculated reimbursement: ${reimbursement:,.2f}"
             )
         allocation = _render_job_allocation_fields(
@@ -1801,7 +1799,7 @@ def _render_mileage_entries(
         )
         visible = _mileage_visible_problems(index, entry)
         if visible:
-            st.warning("Needed for this mileage entry: " + "; ".join(visible) + ".")
+            st.warning("Complete this mileage entry: " + "; ".join(visible) + ".")
         entries.append(entry)
     return entries
 
@@ -2350,7 +2348,7 @@ def _render_generated_package(
     is why the early-return branch below still renders a download.
     """
     st.success(
-        "The expense report is ready. Review the files before sending them for approval."
+        "Review the completed expense report files before sending them for approval."
     )
     # PDF-less degradation. The renderer is the one dependency that fails for
     # environmental reasons (LibreOffice timeout on a receipt-heavy workbook, an
@@ -2360,7 +2358,7 @@ def _render_generated_package(
     # carry the PDF.
     if not package.pdf_bytes:
         if package.pdf_error:
-            st.warning(package.pdf_error)
+            st.warning("Download the completed Excel report; the PDF could not be created. Export the workbook to PDF before sending.")
         with st.expander("Other file and email options", expanded=False):
             st.download_button(
                 "Download completed Excel report",
@@ -2376,15 +2374,15 @@ def _render_generated_package(
 
     size_warning = email_attachment_size_warning(package)
     if size_warning:
-        st.warning(size_warning)
+        st.warning("Check the PDF attachment size before emailing: " + safe_status_detail(size_warning))
 
     subject, body = _expense_email_subject_and_body(details, package)
     cc = _approval_cc(details)
     cc_email = cc[1] if cc else ""
     routing_caption, routing_warning = _approval_routing_note(details)
     if routing_warning:
-        st.warning(routing_warning)
-    st.caption(routing_caption)
+        st.warning("Check the approval email recipients: " + safe_status_detail(routing_warning))
+    st.caption("Review the approval email recipients: " + safe_status_detail(routing_caption))
     preferred_destination = _preferred_email_destination(
         _request_user_agent(),
         _request_platform_hint(),
@@ -2427,19 +2425,19 @@ def _render_generated_package(
             )
             if destination == _EMAIL_OUTLOOK_WEB:
                 st.caption(
-                    "The combined PDF is already attached. If the draft does not "
-                    "open automatically, drag the downloaded .eml onto Outlook "
-                    "on the web's reading pane, then review and send."
+                    "Review and send the draft; the combined PDF is already attached. If it does "
+                    "not open automatically, drag the downloaded email draft file "
+                    "onto Outlook on the web's reading pane."
                 )
             else:
                 st.caption(
-                    "The combined PDF is already attached. If the browser saves "
-                    "the draft, open that .eml file once to continue in Outlook."
+                    "Open the saved email draft in Outlook if the browser downloads it; "
+                    "the combined PDF is already attached."
                 )
         else:
             st.warning(
-                "The Outlook draft is unavailable. Generate the report again, or "
-                "use the iPhone/iPad share option if you are on that device."
+                "Generate the report again or use the iPhone/iPad share option; "
+                "the Outlook draft is unavailable."
             )
     else:
         _render_ios_mail_share(
@@ -2472,8 +2470,8 @@ def _render_generated_package(
                 width="stretch",
             )
         st.caption(
-            "Excel is optional and is not attached to the approval email. If you "
-            "edit it, export the edited workbook to PDF and send that PDF instead."
+            "Export the edited Excel workbook to PDF and send that PDF instead if you "
+            "make changes. Excel is optional and is not attached to the approval email."
         )
         st.link_button(
             "Open a new email without attachments ↗",

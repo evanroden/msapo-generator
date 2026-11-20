@@ -46,6 +46,8 @@ from decimal import Decimal
 from pathlib import Path
 
 import streamlit as st
+
+from app.status_copy import safe_status_detail
 from app.field_help import field_with_help
 
 from app.service_closed import close_if_moved
@@ -1360,12 +1362,12 @@ def _render_analysis_retry(signature: str) -> None:
     state onto the new failure.
     """
     st.error(
-        "The quote could not be analyzed. Try again, or switch to Paste text "
-        "if the uploaded file has an unusual layout."
+        "Try analyzing the quote again, or choose Paste text if the uploaded "
+        "file has an unusual layout."
     )
     details = st.session_state.get("analysis_error_message", "")
     if details:
-        st.caption(f"Analysis detail: {details}")
+        st.caption("Try Paste text if this quote still cannot be analyzed.")
     st.button(
         "Try analyzing this quote again",
         key=f"retry_analysis_{signature[:12]}",
@@ -1597,7 +1599,7 @@ def _render_asset_control(
     uids = [asset["uid"] for asset in site_assets]
     if not uids:
         st.caption(
-            "No asset registry is configured for this site; Asset ID will be blank."
+            "Choose No asset applies if needed; no asset registry is configured for this site, so Asset ID will be blank."
         )
         return ASSET_NONE
     asset_state_key = f"asset_{token}_{contract}_{site}"
@@ -1623,11 +1625,11 @@ def _render_asset_control(
             if uid in uids and uid not in options:
                 options.append(uid)
         if search_text.strip() and not matches:
-            st.caption("No matching assets. Try another tag, UID, or description.")
+            st.caption("Try another tag, UID, or description; no assets matched.")
         elif search_text.strip() and len(matches) == ASSET_SEARCH_LIMIT:
-            st.caption("Showing the first 25 matches. Type more to narrow the results.")
+            st.caption("Type more to narrow the results; only the first 25 matches are shown.")
         elif not search_text.strip():
-            st.caption("Type to search the registry. Up to 25 matches appear at a time.")
+            st.caption("Type to search the asset registry; up to 25 matches appear at a time.")
     else:
         options = (
             [ASSET_PLACEHOLDER, *resolved_options]
@@ -1676,10 +1678,10 @@ def _render_asset_control(
         raw_asset = st.session_state[asset_state_key]
     full_asset_id = normalize_asset_id(raw_asset)
     if full_asset_id:
-        st.caption(f"Full Asset ID sent to Smartsheet: **{full_asset_id}**")
+        st.caption("Confirm the selected Asset ID before opening Smartsheet.")
     elif analysis.asset_reference:
         st.caption(
-            f"Quote clue: {analysis.asset_reference}. No unique site asset was found."
+            "Choose the matching asset or No asset applies; no unique site asset matched the quote."
         )
     return raw_asset
 
@@ -1707,7 +1709,7 @@ def _render_footer(workflow: str = PURCHASE_WORKFLOW) -> None:
     )
     commit = runtime_commit()
     with st.expander("About"):
-        st.caption("Running code: " + (commit if commit else "build identifier unavailable"))
+        st.caption("Use the current app version for this request.")
         if workflow == PURCHASE_WORKFLOW:
             field_with_help(st.button, "Load synthetic quote", key="load_synthetic_test",
                       help="Load a built-in example to explore quote review. This replaces the current browser draft without submitting a request.",
@@ -1968,7 +1970,7 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
     uploaded = None
 
     if input_mode == UPLOAD_MODE:
-        st.caption("Accepted: PDF, Word (.docx), photos and .txt files; or choose Paste text.")
+        st.caption("Upload a PDF, Word (.docx), photo, or .txt quote, or choose Paste text.")
         uploaded = st.file_uploader(
             "Upload quote",
             type=None,
@@ -1988,7 +1990,7 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
             from io import BytesIO
             uploaded = BytesIO(st.session_state.get("uploaded_file_bytes", b""))
             uploaded.name = st.session_state.get("uploaded_file_name", "quote.txt")
-            st.caption(f"Retained quote: {uploaded.name}")
+            st.caption(f"Review the retained quote: {safe_status_detail(uploaded.name)}")
             st.button("Remove retained quote", on_click=_clear_quote_upload)
         if uploaded is not None:
             file_bytes = uploaded.getvalue()
@@ -2001,7 +2003,7 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
                 ):
                     st.session_state.pop(key, None)
                 st.session_state["po_upload_available"] = False
-                st.error(rejection)
+                st.error("Upload a supported quote or paste its text. " + safe_status_detail(rejection))
                 _render_footer()
                 return
             st.session_state["po_upload_available"] = True
@@ -2045,7 +2047,7 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
                         st.session_state.pop("extraction_error_hash", None)
                         st.session_state.pop("extraction_error_message", None)
             if st.session_state.get("extraction_error_hash") == file_hash:
-                st.error("The quote could not be read. " + QUOTE_NEXT_STEP)
+                st.error("Try reading this quote again or paste its text. " + QUOTE_NEXT_STEP)
                 st.button(
                     "Try reading this file again",
                     key=f"retry_extract_{file_hash[:12]}",
@@ -2094,7 +2096,7 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
     length_problem = quote_length_problem(quote_text)
     if length_problem:
         clear_active_analysis(st.session_state)
-        st.error(length_problem)
+        st.error("Check the quote length before continuing. " + safe_status_detail(length_problem))
         _render_footer()
         return
 
@@ -2527,8 +2529,8 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
         type="compact",
     ):
         st.caption(
-            "The tool selected everything below for the supporting PDF. "
-            "Only change an item if the quote was interpreted incorrectly."
+            "Review the selected items for the supporting PDF. "
+            "Change an item only if the quote was interpreted incorrectly."
         )
         # Reassigns scope_value from the widget, and everything downstream --
         # the PDF signature and the rendered document -- uses the reassigned
@@ -2570,8 +2572,8 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
                     final_exclusions.append(text_value)
         if any(is_ai for _, is_ai in unified_inclusions + unified_exclusions):
             st.caption(
-                "Items marked Suggested were inferred by the tool rather than "
-                "stated in the quote."
+                "Review items marked Suggested; the tool inferred them rather than "
+                "reading them directly from the quote."
             )
 
     st.markdown('<span id="po-step-details" class="po-step-anchor" aria-hidden="true"></span>',
@@ -2603,7 +2605,7 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
     )
     with corrections:
         st.caption(
-            "This panel contains only values the tool filled or defaulted. "
+            "Review or change the values filled or defaulted by the tool. "
             "Unresolved questions stay visible above it."
         )
 
@@ -2675,9 +2677,8 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
         )
         if route_uncertain:
             st.caption(
-                "This one drives Object Account and Agreement Type, and the "
-                "quote did not read clearly either way. Confirm it before "
-                "generating."
+                "Confirm how the purchase is handled before generating; this choice "
+                "sets Object Account and Agreement Type because the quote was unclear."
             )
 
     with questions if needs.asset else corrections:
@@ -2731,7 +2732,7 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
 
     if remembered_contact_active:
         st.caption(
-            "Vendor representative filled from prior requests for this vendor "
+            "Confirm the vendor representative filled from prior requests for this vendor "
             "on this account."
         )
 
@@ -2829,8 +2830,8 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
 
     with corrections:
         st.caption(
-            "Request Completed, PO #, and Work Order # stay blank. Dispatch to "
-            "Service Center is NA. Original PO Number is sent only for a change order."
+            "Leave Request Completed, PO #, and Work Order # blank. Dispatch to "
+            "Service Center is NA; include Original PO Number only for a change order."
         )
 
     classification = None
@@ -2975,7 +2976,7 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
             problem.rstrip(". ") for problem in dict.fromkeys(draft_problems)
         ]
         st.warning(
-            "Before generating: " + "; ".join(concise_problems) + "."
+            "Complete these details before generating: " + "; ".join(concise_problems) + "."
         )
 
     # Routing is resolved a second time, from the mirror rather than from the
@@ -3009,8 +3010,7 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
         st.session_state.pop("scope_pdf_signature", None)
         st.session_state.pop("scope_pdf_generated_on", None)
         st.warning(
-            "A PDF-bearing detail changed. Generate the package again before "
-            "opening Smartsheet."
+            "Generate the package again before opening Smartsheet; a detail in the PDF changed."
         )
 
     # Give legacy in-session PDFs a date once, rather than changing their
@@ -3038,8 +3038,8 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
         unsafe_allow_html=True,
     )
     st.caption(
-        "One button creates the MSAPO form PDF, keeps the "
-        "unchanged quote, and prepares the prefilled Smartsheet link."
+        "Generate both files and the Smartsheet link with one button; the original "
+        "quote stays unchanged and the MSAPO form PDF is created."
     )
     # ONE action produces everything: the PDF, the retained quote, and the
     # prefilled link. There is no separate submit, no email route, and no
@@ -3085,9 +3085,8 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
                     )
         except Exception as exc:
             st.error(
-                f"The MSAPO form PDF could not be generated: {exc} "
-                "Nothing was submitted. Use the button again, and if it keeps "
-                "failing report this message."
+                "Use the Generate button again to create the MSAPO form PDF. "
+                "The package could not be created, and nothing was submitted."
             )
         else:
             st.session_state["scope_pdf_bytes"] = scope_pdf
@@ -3152,7 +3151,7 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
         render_inline_smartsheet_handoff(context)
     elif generated_context:
         st.warning(
-            "A detail changed. Use the button again to refresh both files and the link."
+            "Use the Generate button again to refresh both files and the link after your change."
         )
 
     step_spine.markdown(
@@ -3182,7 +3181,7 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
             render_reference(key="purchase_msapo", owner_scope=identity,
                              title="Generated MSAPO", raw=current_pdf, filename="MSAPO.pdf")
         else:
-            st.caption("The generated MSAPO preview appears after you create the package.")
+            st.caption("Create the package to see the generated MSAPO preview.")
     presentation.close()
     _render_footer()
 
