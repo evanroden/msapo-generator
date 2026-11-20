@@ -177,11 +177,13 @@ def _memory_status():
                 unlimited = True
                 continue
             used = int((folder / used_name).read_text().strip())
-            used = max(0, used - _reclaimable_cache(folder, cache_key))
         except (OSError, ValueError):
             unavailable = True
             continue
         if 0 < limit < 1 << 60 and used >= 0:
+            # A broken (negative) usage counter stays unavailable above; only
+            # a valid one has its reclaimable cache taken off.
+            used = max(0, used - _reclaimable_cache(folder, cache_key))
             return 'finite', max(0, limit - used)
         unavailable = True
     return ('unavailable' if unavailable else 'unlimited' if unlimited else 'unsupported'), None
