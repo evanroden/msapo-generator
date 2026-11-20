@@ -127,15 +127,40 @@ _REVIEW_WAITING = 0
 PREVIEW_HEADROOM_BYTES = 160 * 1024 * 1024
 
 
+# cgroup v2, then v1: folder, limit file, usage file, reclaimable-cache key.
+_CGROUP_MEMORY = (
+    ('/sys/fs/cgroup', 'memory.max', 'memory.current', 'inactive_file'),
+    ('/sys/fs/cgroup/memory', 'memory.limit_in_bytes', 'memory.usage_in_bytes', 'total_inactive_file'),
+)
+
+
+def _reclaimable_cache(folder, key):
+    """Inactive file cache the kernel drops before it would OOM this cgroup.
+
+    memory.current/usage_in_bytes also count page cache, such as LibreOffice's
+    libraries after a conversion. Counting that cache as used can make a
+    512 MiB container look short of the preview budget long after the work
+    ended, because nothing forces the kernel to reclaim it, so a section
+    preview stays "Updating" after an edit. Unreadable stats count as zero,
+    which keeps the older, stricter measure.
+    """
+    try:
+        for line in (folder / 'memory.stat').read_text().splitlines():
+            name, _, value = line.partition(' ')
+            if name == key:
+                return max(0, int(value))
+    except (OSError, ValueError):
+        pass
+    return 0
+
+
 def _memory_status():
     """Distinguish absent/unlimited cgroups from a broken finite counter."""
     from pathlib import Path
     unavailable = False
     unlimited = False
-    for folder, limit_name, used_name in (
-        (Path('/sys/fs/cgroup'), 'memory.max', 'memory.current'),
-        (Path('/sys/fs/cgroup/memory'), 'memory.limit_in_bytes', 'memory.usage_in_bytes'),
-    ):
+    for folder, limit_name, used_name, cache_key in _CGROUP_MEMORY:
+        folder = Path(folder)
         try:
             raw_limit = (folder / limit_name).read_text().strip()
         except FileNotFoundError:
@@ -152,6 +177,7 @@ def _memory_status():
                 unlimited = True
                 continue
             used = int((folder / used_name).read_text().strip())
+            used = max(0, used - _reclaimable_cache(folder, cache_key))
         except (OSError, ValueError):
             unavailable = True
             continue
