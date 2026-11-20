@@ -370,8 +370,17 @@ __WORKFLOW_SHELL_CSS__
     }
     .st-key-workflow_mode button[role="radio"][aria-checked="true"] {
         background: var(--enfra-ocean) !important;
-        box-shadow: inset 0 -4px 0 var(--enfra-yellow) !important;
         color: #FFFFFF !important;
+    }
+    /* All three routes share a single selected-tab underline. */
+    .st-key-workflow_mode button[role="radio"][aria-checked="true"],
+    [data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
+        box-shadow: inset 0 -4px 0 var(--enfra-yellow) !important;
+    }
+    /* Streamlit's Enter-only hint is misleading: text fields also commit
+       when focus moves away, on every workflow. Keep field labels/help visible. */
+    [data-testid="InputInstructions"] {
+        display: none !important;
     }
     .st-key-workflow_mode button[role="radio"] p,
     .st-key-workflow_mode button[role="radio"] span {

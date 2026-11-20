@@ -142,8 +142,10 @@ def test_legacy_source_fingerprint_remains_identical_to_previous_schema():
     historical = asdict(source)
     historical["facts"][0].pop("source_sha256")
     historical["facts"][0].pop("page_sha256")
+    # Fields the schema gained later (A43 attachment identity among them) are
+    # absent from the previous schema; empty values must not change the digest.
     for key in ("scope_review", "pdf_text_blocks", "financial_source_review",
-                "financial_page_reviews"):
+                "financial_page_reviews", "attachment_parent_sha256", "attachment_index"):
         historical.pop(key, None)
     assert source.fingerprint == hashlib.sha256(
         json.dumps(historical, sort_keys=True, ensure_ascii=False).encode()

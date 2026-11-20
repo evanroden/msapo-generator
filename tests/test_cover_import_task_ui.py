@@ -106,7 +106,10 @@ def test_one_continue_commits_photo_retires_staging_and_reloads_durable_choice(m
 
 def test_failed_import_keeps_source_choice_and_retry_then_explicit_reopen(monkeypatch, tmp_path):
     app, source, incoming = stage_source(monkeypatch, tmp_path)
-    stage_key = next(key for key in app.session_state.filtered_state if key.endswith("_stage"))
+    # The first-use entry upload keeps its own "report_entry_stage" until the
+    # report is saved; this test follows the section-setup stage.
+    stage_key = next(key for key in app.session_state.filtered_state
+                     if key.endswith("_stage") and key != "report_entry_stage")
     staged_path = app.session_state[stage_key][1]
     before = source.read_bytes()
     real_save = library.save_report_setup

@@ -427,6 +427,21 @@ def _queue_fact_approval(prefix, identity):
     st.session_state[prefix + "_pending_fact_approval"] = identity
 
 
+def _date_repair(prior, fact, current):
+    """The saved fact with only the re-read date (and its flags) applied.
+
+    Facts saved before exact-source binding (A55) have empty source and page
+    digests. A fresh read of the same original fills them, so they may be
+    adopted with the date, but only when the read is bound to this original;
+    an already bound fact keeps its digests and must match them exactly.
+    """
+    provenance = {}
+    if (not prior.source_sha256 and not prior.page_sha256
+            and fact.source_sha256 == current.sha256):
+        provenance = {"source_sha256": fact.source_sha256, "page_sha256": fact.page_sha256}
+    return replace(prior, date=fact.date, flags=fact.flags, **provenance)
+
+
 def _apply_pending_fact_approval(draft, prefix):
     """A native click approves only the exact currently available proposal."""
     expected = st.session_state.pop(prefix + "_pending_fact_approval", None)
@@ -457,7 +472,7 @@ def _apply_pending_fact_approval(draft, prefix):
             # human-edited field or replacing an already supported date.
             prior.date and fact.date and prior.date != fact.date
             and not prior.flags
-            and replace(prior, date=fact.date, flags=fact.flags) == fact
+            and _date_repair(prior, fact, current) == fact
             and ai.fact_date_problems((prior,), (current,))
             and not ai.fact_date_problems((fact,), (current,))
         ):

@@ -235,6 +235,10 @@ def test_continue_with_draft_acknowledges_revision_without_shared_save(monkeypat
     app.run()
     assert widget(app, "button", "Continue with my draft").disabled
     widget(app, "checkbox", "I compared the saved version and want to save my draft as the next version").check().run()
+    # The other editor also changed Prepared by. A stale whole-copy
+    # acknowledgment is no longer authority to discard that shared value.
+    for choice in [item for item in app.radio if item.label.startswith("Resolve ")]:
+        choice.set_value("Use this page value").run()
     widget(app, "button", "Continue with my draft").click().run()
     assert not app.exception
     assert library.load_snapshot(RRH_CONTRACT, "synthetic-guided", PERIOD) == newer

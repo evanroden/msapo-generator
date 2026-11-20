@@ -1062,6 +1062,75 @@ def test_workflow_browser_titles_follow_active_mode_and_new_session_route():
     assert _browser_workflow_title(PURCHASE_WORKFLOW, "purchase", "isolated") == pages[MONTHLY_REPORT_WORKFLOW]
     assert _browser_workflow_title(PURCHASE_WORKFLOW, "monthly", "isolated") == pages[PURCHASE_WORKFLOW]
 
+def test_native_enter_hint_is_hidden_and_all_workflow_tabs_share_one_underline():
+    from app.web_ui import CUSTOM_CSS
+
+    assert '[data-testid="InputInstructions"] {' in CUSTOM_CSS
+    hint_style = CUSTOM_CSS.split('[data-testid="InputInstructions"] {', 1)[1].split("}", 1)[0]
+    assert "display: none !important;" in hint_style
+
+    shared_rule = CUSTOM_CSS.split(
+        "/* All three routes share a single selected-tab underline. */", 1
+    )[1].split("}", 1)[0]
+    assert '.st-key-workflow_mode button[role="radio"][aria-checked="true"]' in shared_rule
+    assert '[data-testid="stTabs"] button[role="tab"][aria-selected="true"]' in shared_rule
+    assert "box-shadow: inset 0 -4px 0 var(--enfra-yellow) !important;" in shared_rule
+
+
+def test_text_widgets_in_each_workflow_keep_values_after_rerun(monkeypatch, tmp_path):
+    """Server-side edit persistence is a prerequisite for the native blur behavior."""
+    _configure_smartsheet(monkeypatch)
+    app = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
+    app.button[0].click().run()
+    purchase_field = next(
+        field for field in app.text_input if field.label == "Your name (Requester / Asset Manager) *"
+    )
+    purchase_field.set_value("Synthetic Requester").run()
+    assert next(
+        field for field in app.text_input if field.label == "Your name (Requester / Asset Manager) *"
+    ).value == "Synthetic Requester"
+
+    app.segmented_control[0].set_value("Expense reimbursement").run()
+    expense_field = next(
+        field for field in app.text_input if field.label == "Employee name *"
+    )
+    expense_field.set_value("Synthetic Employee").run()
+    assert next(
+        field for field in app.text_input if field.label == "Employee name *"
+    ).value == "Synthetic Employee"
+
+    # Reuse the existing isolated monthly-report fixture rather than writing
+    # into shared report history.
+    from tests.test_monthly_report_ui import monthly
+
+    report = monthly(monkeypatch, tmp_path)
+    author = next(field for field in report.text_input if field.label == "Prepared by")
+    author.set_value("Synthetic Preparer").run()
+    assert next(
+        field for field in report.text_input if field.label == "Prepared by"
+    ).value == "Synthetic Preparer"
+    assert not report.exception
+
+def test_expense_receipt_mirror_keeps_source_names_without_numeric_prefixes(monkeypatch):
+    """Re-selecting identical bytes preserves the first filename verbatim."""
+    import hashlib
+
+    monkeypatch.setattr(
+        expense_ui, "_receipt_digest",
+        lambda payload: hashlib.sha256(payload).hexdigest(),
+    )
+    samples = [
+        ("receipt-fuel.png", b"synthetic receipt A", "image/png"),
+        ("receipt-parking.png", b"synthetic receipt B", "image/png"),
+    ]
+    merged, duplicate_names = expense_ui._merge_receipt_sources(samples, samples)
+    assert merged == samples
+    assert duplicate_names == ["receipt-fuel.png", "receipt-parking.png"]
+
+    # The PO source is likewise retained using UploadedFile.name; neither path
+    # prepends a sequence number. Live browser upload testing is separate.
+    source = inspect.getsource(web_ui._render_purchase_workflow)
+    assert 'st.session_state["uploaded_file_name"] = uploaded.name' in source
 
 
 def _synthetic_word_quote():
