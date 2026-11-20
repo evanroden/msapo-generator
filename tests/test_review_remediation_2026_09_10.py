@@ -519,7 +519,8 @@ def test_receipt_section_suggestion_respects_explicit_choice(
     app.file_uploader[0].upload("receipt.png", picture(), "image/png").run()
 
     def section():
-        return next(w for w in app.selectbox if w.label == "Expense section *")
+        # U07 deliberately uses a one-tap segmented choice, not a selectbox.
+        return next(w for w in app.segmented_control if w.label == "Expense section *")
 
     if arrival == "pending_with_override":
         section().set_value("entertainment").run()

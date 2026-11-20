@@ -136,6 +136,8 @@ def mapped_rows(content, destination, table_columns=None):
         return ()
     rows = []
     for table in native_tables(content):
+        if table.hidden:
+            continue  # Hidden workbook data remains reviewable, never automatic.
         excluded = (set(ambiguous_price_columns(table.columns, table.rows)) |
                     set(proposal_price_columns(table.columns, table.rows)
                         if destination == "proposals" else table_price_columns(table.columns, table.rows)))
@@ -337,7 +339,10 @@ def _activity_identity(line, source, event_date):
     try:
         dated = date.fromisoformat(event_date).isoformat() if event_date else ""
     except ValueError:
-        dated = ""
+        # A valid printed slash date has no knowable locale here. Keep its
+        # exact spelling instead of silently interpreting or discarding it.
+        from app.monthly_report_vendor_passages import _valid_metadata_date
+        dated = event_date if _valid_metadata_date(event_date) else ""
     if dated and dated not in line:
         parts.append(dated)
     vendor = source.vendor.strip()
@@ -394,6 +399,84 @@ def _non_table_activity_identity(source):
                    vendor="" if len(vendors) > 1 else source.vendor)
 
 
+_VENDOR_SITE_LABEL = re.compile(
+    r"(?im)^[ \t]*(?:site|facility|building|client|customer|location)\s*[:=]\s*(\S[^\r\n]*)")
+_VENDOR_DATE_LABEL = re.compile(
+    r"(?im)^[ \t]*(?:(?:service|report|completed|inspection|work)\s+)?date\s*[:=]\s*(\S[^\r\n]*)")
+
+
+def _vendor_source_review_reason(source):
+    """Keep unlinked statuses and ambiguous PDF date/site scope in review.
+
+    Non-table vendor documents do not provide a verified row/status mapping.
+    Never promote their work sentence while leaving a separate qualification
+    or a conflicting site/date header behind. Nothing changes the original.
+    """
+    if source.classification != "Vendor service" or source.suffix not in {
+            ".pdf", ".docx", ".txt", ".eml", ".msg"}:
+        return ""
+    from app.monthly_report_vendor_passages import _STATUS, _valid_metadata_date
+    sites = set()
+    for text in source.page_texts:
+        if _STATUS.search(text):
+            return "a separate work status may qualify a technical passage"
+        if source.suffix != ".pdf":
+            # TXT/Word already retain their own event and site preflight rules;
+            # distinct TXT event dates are not a file-wide conflict.
+            continue
+        for match in _DOC_DATE_TOKEN.finditer(text):
+            # Serial numbers may contain date-shaped fragments. Only a
+            # standalone calendar token may force a date review.
+            before = text[match.start() - 1] if match.start() else ""
+            after = text[match.end()] if match.end() < len(text) else ""
+            if ((before and before in "-_") or (after and after in "-_")
+                    or before.isalnum() or after.isalnum()):
+                continue
+            if not _valid_metadata_date(match.group(0)):
+                return "an impossible printed date needs review"
+        dates = [match.group(1).strip() for match in _VENDOR_DATE_LABEL.finditer(text)]
+        if any(not _valid_metadata_date(value) for value in dates) or len(set(dates)) > 1:
+            return "conflicting or invalid printed dates need review"
+        sites.update(" ".join(match.group(1).casefold().split())
+                     for match in _VENDOR_SITE_LABEL.finditer(text))
+    if source.suffix == ".pdf" and len(sites) > 1:
+        return "different site headers need explicit source-to-site mapping"
+    return ""
+
+
+def _vendor_page_identity(source, page, fallback, *, has_date_labels=False,
+                          has_vendor_labels=False):
+    """Attribute one vendor paragraph only to labels printed on its own page.
+
+    If a multipage document contains page-specific labels, another page does
+    not inherit the first vendor/date. A one-page corrected source and sources
+    without printed page labels retain their existing reviewed source identity.
+    """
+    if source.classification != "Vendor service" or source.suffix not in {
+            ".pdf", ".docx"}:
+        return fallback
+    pages = source.page_texts
+    here = pages[page - 1]
+    dates = [m.group(1).strip() for m in _VENDOR_DATE_LABEL.finditer(here)]
+    vendors = [m.group(1).strip() for m in _DOC_VENDOR_LABEL.finditer(here)]
+    # The original extraction chooses a U.S. interpretation for a slash date.
+    # A deliberate correction on a single-page source must not be replaced by
+    # that guess or by the unreviewed printed value.
+    corrected_date = bool(
+        len(pages) == 1 and dates and source.service_date
+        and sources._date(dates[0]) and sources._date(dates[0]) != source.service_date)
+    corrected_vendor = bool(
+        len(pages) == 1 and vendors and source.vendor
+        and source.vendor.casefold() != vendors[0].casefold())
+    return replace(
+        fallback,
+        service_date=(fallback.service_date if corrected_date else
+                      dates[0] if dates else "" if has_date_labels else fallback.service_date),
+        vendor=(fallback.vendor if corrected_vendor else
+                vendors[0] if vendors else "" if has_vendor_labels else fallback.vendor),
+    )
+
+
 def _spreadsheet_has_site_scope_column(content):
     """A row-specific site/client needs target mapping before auto-Activity."""
     site_tokens = {"facility", "site", "client", "customer",
@@ -408,6 +491,14 @@ def _spreadsheet_has_site_scope_column(content):
 
 
 def _activity_reader_notice(content):
+    if content.source.suffix == ".xlsx" and any(
+            table.hidden or table.missing_formula_cache_count for table in content.tables):
+        return (content.source.filename + ": hidden worksheets or missing formula cached results "
+                "require explicit workbook review. This source is not auto-read into Activity.")
+    if reason := _vendor_source_review_reason(content.source):
+        return (content.source.filename + ": " + reason + ". The unchanged vendor source "
+                "needs page and status review before including verified Activity; "
+                "this file is not sent to the Activity reader.")
     from app.monthly_report_work_order_csv import (
         is_work_order_source, requires_work_order_column_mapping,
     )
@@ -755,8 +846,15 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
             is_work_order_source, requires_work_order_column_mapping,
         )
         for content in contents:
+            if content.source.suffix == ".xlsx" and any(
+                    table.hidden or table.missing_formula_cache_count for table in content.tables):
+                continue  # Untrusted or hidden workbook facts need explicit review.
             if is_work_order_source(content) or requires_work_order_column_mapping(content):
                 # CMMS/counting sources use their own reviewed metrics path.
+                continue
+            if _vendor_source_review_reason(content.source):
+                # A page-local line cannot override another page's site/date or
+                # an unlinked status field. The original stays for source review.
                 continue
             if _spreadsheet_has_site_scope_column(content) or _txt_site_activity_table(content):
                 # Row-specific sites need the same review as the reader route.
@@ -771,6 +869,10 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
                     references.append(sources.source_reference(content.source, number))
                 continue
             output_identity = _non_table_activity_identity(content.source)
+            printed_page_dates = any(_VENDOR_DATE_LABEL.search(text)
+                                     for text in content.source.page_texts)
+            printed_page_vendors = any(_DOC_VENDOR_LABEL.search(text)
+                                       for text in content.source.page_texts)
             from app.monthly_report_vendor_passages import read_vendor_document
             passage_pages = read_vendor_document(content.source)
             for number, text in _activity_source_pages(content):
@@ -811,8 +913,12 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
                     if _date_only_source_label(line):
                         continue
                     if useful_activity(line) and not contains_price(line):
-                        dated = header_date if tagged_txt else output_identity.service_date
-                        grounded = _activity_identity(line, output_identity, dated)
+                        identity = _vendor_page_identity(
+                            content.source, number, output_identity,
+                            has_date_labels=printed_page_dates,
+                            has_vendor_labels=printed_page_vendors)
+                        dated = header_date if tagged_txt else identity.service_date
+                        grounded = _activity_identity(line, identity, dated)
                         if not contains_price(grounded):
                             paragraphs.append(grounded)
                             references.append(reference)
