@@ -265,6 +265,38 @@ def _relations(archive: ZipFile, part: str) -> dict[str, tuple[str, str]]:
     return result
 
 
+def _controlled_children(parent, target):
+    """Direct Word table/row/cell children, including simple SDT containers.
+
+    Do not descend arbitrarily: nested tables are different source objects.
+    A content control contributes its own direct children in document order.
+    """
+    result = []
+    for child in parent:
+        if child.tag == target:
+            result.append(child)
+        elif child.tag == W + "sdt":
+            content = child.find(W + "sdtContent")
+            if content is not None:
+                result.extend(_controlled_children(content, target))
+    return result
+
+
+def _controlled_table(element):
+    """Recognize only one complete table inside a top-level content control."""
+    if element.tag == W + "tbl":
+        return element
+    if element.tag != W + "sdt":
+        return None
+    content = element.find(W + "sdtContent")
+    if content is None:
+        return None
+    children = [child for child in content if child.tag in (W + "p", W + "tbl", W + "sdt")]
+    if len(children) != 1:
+        return None
+    return _controlled_table(children[0])
+
+
 def _visible(element):
     from app.monthly_report_revision_view import current_view
     try:
@@ -580,9 +612,11 @@ def _service_call_title_band(element, rows, section):
     if any(value not in ("cost", "unitprice", "amount") for value in headers[5:]):
         return False
     width = len(headers)
-    native_rows = element.findall(W + "tr")
-    title_cells = native_rows[0].findall(W + "tc")
-    header_cells = native_rows[1].findall(W + "tc")
+    native_rows = _controlled_children(element, W + "tr")
+    if len(native_rows) < 2:
+        return False
+    title_cells = _controlled_children(native_rows[0], W + "tc")
+    header_cells = _controlled_children(native_rows[1], W + "tc")
     if len(title_cells) != 1 or len(header_cells) != width:
         return False
     span = title_cells[0].find(f"{W}tcPr/{W}gridSpan")
@@ -726,10 +760,11 @@ def inspect_docx(path: Path) -> DocxInspection:
                             if part.startswith(("word/header", "word/footer")):
                                 _remove_page_field_results(element, page_fields)
                             text = _text(element)
+                            table_element = _controlled_table(element)
                             # Some Word producers emit text frames without the
                             # DrawingML/VML wrappers inventoried below. Their labels
                             # are layout evidence, not ordinary narrative or headings.
-                            standalone_frame = (element.tag != W + "tbl"
+                            standalone_frame = (table_element is None
                                 and any(node.tag == W + "txbxContent" for node in element.iter())
                                 and not any(node.tag in (V + "group", V + "shape", V + "rect")
                                     or (node.tag == A + "graphicData"
@@ -757,7 +792,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                             if standalone_frame:
                                 heading_fragments = []
                                 heading_positions = []
-                            if part == "word/document.xml" and element.tag != W + "tbl" and not standalone_frame:
+                            if part == "word/document.xml" and table_element is None and not standalone_frame:
                                 if "tableofcontents" in re.sub(r"[^a-z]", "", text.casefold()):
                                     toc_section, section, heading_fragments = word_section, "", []
                                     heading_positions = []
@@ -822,7 +857,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 for kind in ("footnote", "endnote"):
                                     for reference in element.iter(W + kind + "Reference"):
                                         note_owners[(kind, reference.get(W + "id", ""))] = (section, content_slot)
-                            picture_table = element.tag == W + "tbl" and section == "activity" and content_slot == "improvements" and any(
+                            picture_table = table_element is not None and section == "activity" and content_slot == "improvements" and any(
                                 node.tag in (A + "blip", V + "imagedata") for node in element.iter())
                             parents = {child: parent for parent in element.iter() for child in parent}
                             try:
@@ -844,7 +879,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 background_positions.append((position, word_section))
                                 if mint_divider_background(element, text):
                                     mint_background_positions.add((position, word_section))
-                            if element.tag == W + "tbl":
+                            if table_element is not None:
                                 from app.monthly_report_docx_tables import native_grid
                                 # Word allows full data tables nested inside cells. The
                                 # parent is a layout container, not a flattened child
@@ -852,7 +887,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 # as its own stable, independently editable occurrence.
                                 table_ids = {}
                                 child_counts = defaultdict(int)
-                                for native_table in element.iter(W + "tbl"):
+                                for native_table in table_element.iter(W + "tbl"):
                                     ancestor = parents.get(native_table)
                                     while ancestor is not None and ancestor.tag != W + "tbl":
                                         ancestor = parents.get(ancestor)
@@ -861,7 +896,9 @@ def inspect_docx(path: Path) -> DocxInspection:
                                         child_counts[parent_id] += 1
                                     nested_id = (f"{parent_id}-nested-{child_counts[parent_id]:03d}"
                                                  if parent_id else None)
-                                    grid = native_grid(native_table, text_of=_text, error_type=ImportError)
+                                    # Rows and cells may sit inside simple content controls.
+                                    grid = native_grid(native_table, text_of=_text, error_type=ImportError,
+                                                       children=_controlled_children)
                                     direct_text = _text(native_table, exclude=set(grid.descendants))
                                     # Graphics inside a child do not silently make
                                     # the parent editable, or vice versa.
@@ -883,7 +920,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                                             drawing_labels=drawing_labels if native_table is element else (),
                                             note="Word table contains text boxes or unsupported drawings and needs manual layout review. "
                                                  "Retain its source page or add a reviewed replacement; extracted text does not preserve the layout.")
-                                    elif grid.rows and (native_table is not element or not picture_table):
+                                    elif grid.rows and (native_table is not table_element or not picture_table):
                                         title_band = _service_call_title_band(native_table, grid.rows, section)
                                         width = len(grid.rows[0])
                                         recorded = add("table", part, position, item_id=nested_id,
@@ -904,6 +941,10 @@ def inspect_docx(path: Path) -> DocxInspection:
                                         # It has no nested grid that can disappear here.
                                         continue
                                     table_ids[native_table] = recorded
+                            elif element.tag == W + "sdt" and any(node.tag == W + "tbl" for node in element.iter()):
+                                add("unsupported", part, position, text=text,
+                                    note="Word content control contains mixed or multiple table blocks. "
+                                         "Keep the native source for review; do not flatten its cells into prose.")
                             elif standalone_frame:
                                 note = ("Word text frame needs manual layout review. Preserve and review its complete page "
                                         "or add a reviewed replacement; extracted labels do not preserve the layout.")

@@ -1,0 +1,50 @@
+name: Field help pointer, keyboard and touch
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/field-help.yml'
+      - 'scripts/qa_field_help.py'
+      - 'app/field_help.py'
+      - 'app/web_ui.py'
+      - 'app/expense_ui.py'
+      - 'pages/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  field-help:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            requirements.lock
+            requirements-dev.lock
+      - name: Install app and browser dependencies
+        run: |
+          python -m pip install -r requirements-dev.lock
+          python -m pip install playwright==1.58.0
+          python -m playwright install --with-deps chromium webkit
+      - name: Check sources and browsers with synthetic data
+        run: |
+          python -m compileall -q app/field_help.py app/web_ui.py app/expense_ui.py scripts/qa_field_help.py
+          python scripts/qa_field_help.py
+      - name: Preserve synthetic DOM and interaction evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: field-help-synthetic
+          path: test-artifacts/field-help/
+          if-no-files-found: warn
+          retention-days: 7

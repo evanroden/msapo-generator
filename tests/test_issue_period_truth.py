@@ -128,9 +128,12 @@ def test_resolved_drops_but_report_only_clear_keeps_unresolved_history():
     prior = clear_issues(original())
     assert not prior.follow_ups[0].included
     current = new_month_draft(prior, JANUARY)
-    assert current.follow_ups[0].included and current.follow_ups[0].status == 'updated'
-    assert period_problem(current)
-    omitted = clear_issues(current)
+    assert not current.follow_ups[0].included and current.follow_ups[0].status == 'updated'
+    assert not period_problem(current)
+    # A later explicit inclusion still requires a new-period update review.
+    included = replace(current, follow_ups=(replace(current.follow_ups[0], included=True),))
+    assert period_problem(included)
+    omitted = clear_issues(included)
     assert not period_problem(omitted)
     assert omitted.follow_ups[0].update == OLD_UPDATE
 

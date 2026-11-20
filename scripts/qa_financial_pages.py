@@ -286,10 +286,11 @@ def exercise(engine,name,source,base,scenario):
         assert not initial['sources'][0]['financial_grants'] and not initial['assets']
         page.keyboard.press('Escape')
         act(lambda:select_individual_pages(page))
-        # Existing nonfinancial route: real Include then ordinary Add reviewed pages.
+        # The first explicit page decision is retained; a partly reviewed
+        # technical PDF cannot be appended with a redundant Add action.
         act(lambda:page.get_by_role('button',name='Include page',exact=True).click())
-        act(lambda:page.get_by_role('button',name='Add reviewed pages',exact=True).click())
-        ordinary=receipt(page);assert len(ordinary['assets'])==1
+        ordinary=receipt(page);assert not ordinary['assets']
+        assert page.get_by_role('button',name='Add reviewed pages',exact=True).count()==0
         assert ordinary['sources'][0]['allowed']==[1]
         check(OPEN);pages([2])
         include=page.get_by_role('button',name=INCLUDE,exact=True)
@@ -303,9 +304,9 @@ def exercise(engine,name,source,base,scenario):
         select('Synthetic failure injection','None')
         expect(page.get_by_test_id('stImage').first).to_be_visible()
         check(VISUAL);act(include.click)
-        accepted=receipt(page);assert len(accepted['assets'])==2
-        assert accepted['assets'][0]==ordinary['assets'][0]
-        assert accepted['occurrences'][0]==ordinary['occurrences'][0]
+        accepted=receipt(page);assert len(accepted['assets'])==1
+        # Financial consent adds its own reviewed page; the unfinished
+        # ordinary technical review must not silently append page 1.
         assert accepted['sources'][0]['financial_grants']==[2]
         assert accepted['sources'][0]['allowed']==[1,2]
         # Existing page2 + new page3 must reject as one batch, retaining all state.
@@ -334,7 +335,9 @@ def exercise(engine,name,source,base,scenario):
         check(OPEN);pages([1,2]);expect(page.get_by_role('checkbox',name=VISUAL,exact=True)).not_to_be_checked()
         check(VISUAL);act(include.click);renewed=receipt(page)
         assert renewed['sources'][0]['allowed']==[1,2]
-        for key in ('assets','occurrences','captions'):assert renewed[key]==accepted[key],key
+        assert len(renewed['assets'])==2
+        for key in ('assets','occurrences','captions'):
+            assert renewed[key][:1]==accepted[key][:1],key
         act(lambda:page.get_by_role('button',name='Save synthetic draft',exact=True).click())
         saved=receipt(page);assert saved['saved']==saved['fingerprint']
         page.reload();reopened=receipt(page)
