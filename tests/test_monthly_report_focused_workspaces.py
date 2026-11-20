@@ -216,7 +216,7 @@ def test_live_previews_receive_each_section_and_current_edits(monkeypatch, tmp_p
     assert any(item.label.startswith("Include ") and item.label.endswith(" in this report") for item in app.checkbox)
     # The first-use upload above the site choices (A12) is separate; the
     # editor itself keeps exactly one Starting report picker.
-    assert sum(item.label == "Starting report" and item.key != "report_entry_upload"
+    assert sum(item.label == "Starting report" and not item.key.startswith("report_entry_upload")
                for item in app.get("file_uploader")) == 1
     previews.clear()
     next(item for item in app.text_area if item.label == "Activity summary").set_value("Synthetic current repair.").run()

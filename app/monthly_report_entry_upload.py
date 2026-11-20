@@ -18,6 +18,15 @@ from app.monthly_report_starting_errors import starting_docx_failure_notice
 
 ENTRY_STAGE = "report_entry_stage"
 ENTRY_COMMITTED = "report_entry_committed_digest"
+ENTRY_EPOCH = "report_entry_upload_epoch"
+ENTRY_UPLOAD_KEY = "report_entry_upload"
+
+
+def entry_upload_key():
+    """The first-use picker's key; removal rotates it, since Streamlit cannot
+    assign an empty value to a file uploader."""
+    epoch = st.session_state.get(ENTRY_EPOCH, 0)
+    return ENTRY_UPLOAD_KEY + (f"_v{epoch}" if epoch else "")
 
 
 def inferred_contracts(inspection, contracts):
@@ -42,6 +51,17 @@ def _retire_stage(stage):
         stage[0].cleanup()
 
 
+def remove_entry_upload():
+    """Retire the first-use upload: its stage, every review pointing at that
+    stage, its temporary bytes and the picker itself. Saved reports are never
+    touched."""
+    prior = st.session_state.pop(ENTRY_STAGE, None)
+    st.session_state[ENTRY_EPOCH] = st.session_state.get(ENTRY_EPOCH, 0) + 1
+    for key in (ENTRY_COMMITTED, "report_entry_failed_digest", "report_entry_failed_notice"):
+        st.session_state.pop(key, None)
+    _retire_stage(prior)
+
+
 def render_first_upload(field, contracts):
     """Return (widget file, staged original, uniquely inferred contract).
 
@@ -52,7 +72,7 @@ def render_first_upload(field, contracts):
     st.subheader("Start with a report")
     st.caption("Upload last month's Word report or a partly finished report for this month. The source stays unchanged.")
     upload = st.file_uploader("Starting report", type=["docx"],
-        key="report_entry_upload", **starting_upload_options())
+        key=entry_upload_key(), **starting_upload_options())
     prior = st.session_state.get(ENTRY_STAGE)
     if upload is None:
         _retire_stage(prior)

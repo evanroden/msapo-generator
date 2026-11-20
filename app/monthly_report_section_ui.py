@@ -823,6 +823,16 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
         # Streamlit file uploaders cannot be assigned an empty widget value.
         # Rotate only the unsaved picker identity; never touch saved reports.
         prior = st.session_state.pop(prefix + "_stage", None)
+        from app.monthly_report_entry_upload import ENTRY_STAGE, remove_entry_upload
+        if prior is not None and st.session_state.get(ENTRY_STAGE) is prior:
+            # A file from the first-use upload: retire that picker and every
+            # review sharing its stage before its bytes go, or the next run
+            # would reinstall a review of a deleted original.
+            try:
+                remove_entry_upload()
+            except OSError:
+                st.session_state[prefix + "_removed_cleanup_warning"] = True
+            prior = None
         st.session_state[upload_epoch_key] = st.session_state.get(upload_epoch_key, 0) + 1
         for suffix in ("_uploaded_filename", "_failed_digest", "_failed_notice",
                        "_committed_upload_digest", "_image_replacements"):

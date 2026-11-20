@@ -126,3 +126,49 @@ st.session_state["chosen_sites"] = tuple(f.key for f in candidate.facilities) if
     app.run()
     assert not app.exception
     assert app.session_state["chosen_sites"] == ("west",)
+
+
+def test_removing_a_first_use_file_retires_its_picker_and_every_review(monkeypatch):
+    raw = b"synthetic-remove-me"
+    keys, cleaned = [], []
+
+    def uploader(*args, **kwargs):
+        keys.append(kwargs["key"])
+        # A rotated key is a fresh, empty picker.
+        return _upload(raw) if kwargs["key"] == entry.ENTRY_UPLOAD_KEY else None
+
+    monkeypatch.setattr(entry.st, "file_uploader", uploader)
+    monkeypatch.setattr(entry, "inferred_contracts", lambda inspection, contracts: ("Synthetic",))
+    monkeypatch.setattr(entry, "_stage", lambda upload: (
+        SimpleNamespace(cleanup=lambda: cleaned.append(raw)), None,
+        SimpleNamespace(sha256=hashlib.sha256(raw).hexdigest(), title_candidates=("Synthetic East",))))
+    app = AppTest.from_string("""
+import streamlit as st
+from app.monthly_report_entry_upload import render_first_upload, remove_entry_upload, ENTRY_STAGE
+
+def field(key, default):
+    st.session_state.setdefault(key, default)
+    return key
+
+if st.session_state.pop("synthetic_remove", False):
+    remove_entry_upload()
+upload, stage, contracts = render_first_upload(field, ("Synthetic",))
+if stage is not None:
+    # Two proposed site selections reviewed the same staged original.
+    st.session_state["report_setup_a_stage"] = stage
+    st.session_state["report_setup_b_stage"] = stage
+st.session_state["synthetic_result"] = (upload is not None, stage is not None)
+""", default_timeout=20)
+    app.run()
+    assert not app.exception and app.session_state["synthetic_result"] == (True, True)
+    app.session_state["synthetic_remove"] = True
+    app.run()
+    assert not app.exception
+    assert cleaned == [raw]
+    assert app.session_state["synthetic_result"] == (False, False)
+    assert keys[-1] == entry.ENTRY_UPLOAD_KEY + "_v1"
+    assert entry.ENTRY_STAGE not in app.session_state
+    assert "report_setup_a_stage" not in app.session_state
+    assert "report_setup_b_stage" not in app.session_state
+    app.run()
+    assert cleaned == [raw] and app.session_state["synthetic_result"] == (False, False)
