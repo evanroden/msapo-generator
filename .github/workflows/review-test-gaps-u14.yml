@@ -1,0 +1,57 @@
+name: Review U14 native and keyboard coverage
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/review-test-gaps-u14.yml'
+      - 'scripts/qa_review_keyboard_u14.py'
+      - 'tests/test_review_test_gaps_u14.py'
+      - 'tests/fixtures/workspaces/po_app.py'
+      - 'tests/fixtures/workspaces/expense_app.py'
+      - 'app/expense_ui.py'
+      - 'app/expense_report.py'
+      - 'app/web_ui.py'
+      - 'app/po_context.py'
+      - 'app/document_generator.py'
+      - 'app/monthly_report_capacity.py'
+      - 'app/monthly_report_import.py'
+      - 'app/monthly_report_import_ui.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  synthetic-u14:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install native PDF conversion
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y libreoffice-calc libreoffice-writer
+      - name: Install locked project tests and Playwright
+        run: |
+          python -m pip install -r requirements-dev.lock
+          python -m pip install playwright==1.58.0
+          python -m playwright install --with-deps chromium webkit
+      - name: Assert synthetic artifact bytes, ten formats and persisted capacity boundaries
+        run: python -m pytest -q tests/test_review_test_gaps_u14.py
+      - name: Complete native PO and expense forms using keyboard-only Chromium
+        run: python scripts/qa_review_keyboard_u14.py
+      - name: Preserve isolated synthetic evidence on failure and success
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-u14-synthetic-evidence
+          path: test-artifacts/review-keyboard-u14/
+          retention-days: 7
+          if-no-files-found: warn
