@@ -399,19 +399,20 @@ test('late hidden response retains only the current decoded page during a visibl
     const render=vm.runInNewContext('('+source.replace('export default function','function')+')',context);
     const invoke=(pages,generation='current')=>render({parentElement:root,data:{generation,viewScope:'one|activity',
         pages,sizes:[[612,792],[612,792],[612,792]],ready:true},setStateValue:()=>{}});
-    invoke([{index:0,image:'first'},{index:1,image:'second'}]);
+  const media=n=>'/media/'+n.repeat(32)+'.jpg';
+    invoke([{index:0,url:media('a')},{index:1,url:media('b')}]);
     panel._previewState.page=1;panel._previewState.visible=true;
     const selected=panel.querySelector('figure[data-index="1"]').querySelector('img');
     invoke([]); // Server applied the outgoing compact/hidden request.
     assert.equal(panel.querySelectorAll('img').length,1);
     assert.equal(panel.querySelector('img'),selected,'same decoded page survives the late empty response');
-    invoke([{index:2,image:'next'}]);
+    invoke([{index:2,url:media('c')}]);
     assert.equal(panel.querySelectorAll('img').length,2,'one retained selected page fits the two-image bound');
-    invoke([{index:0,image:'new-first'},{index:2,image:'new-next'}]);
+    invoke([{index:0,url:media('d')},{index:2,url:media('e')}]);
     assert.equal(panel.querySelectorAll('img').length,2,'two supplied pages evict any third retained page');
-    invoke([{index:1,image:'second'}]);panel._previewState.visible=false;invoke([]);
+    invoke([{index:1,url:media('b')}]);panel._previewState.visible=false;invoke([]);
     assert.equal(panel.querySelectorAll('img').length,0,'an actually hidden surface still releases its images');
-    panel._previewState.visible=true;invoke([{index:1,image:'second'}]);invoke([],'new-content');
+    panel._previewState.visible=true;invoke([{index:1,url:media('b')}]);invoke([],'new-content');
     assert.equal(panel.querySelectorAll('img').length,0,'new report content cannot inherit old imagery');
     panel._previewCleanup();
 });
@@ -701,4 +702,41 @@ test('cold section preview starts at meaningful content once and preserves subse
     cleanup=invoke({generation:'edited-again',sizes:[[612,792],[612,792]],initialPage:1,ready:true});
     assert.equal(panel._previewState.page,0,'the initial hint never overrides an existing reading choice');
     cleanup();
+});
+
+
+test('scoped JPEG URL is stable, malformed paths are rejected, and stale media errors cannot hijack a new ticket',()=>{
+    const {root,panel}=dom(), timers=new Map();
+    const document=new Element();document.createElement=tag=>new Element(tag);
+    class Observer {constructor(callback){this.callback=callback;}observe(){}disconnect(){}}
+    const context={window:{devicePixelRatio:1},document,Map,JSON,Array,Number,Math,String,
+        IntersectionObserver:Observer,ResizeObserver:Observer,MutationObserver:Observer,
+        setTimeout:callback=>{const id=timers.size+1;timers.set(id,callback);return id;},
+        clearTimeout:id=>timers.delete(id)};
+    const source=fs.readFileSync('app/monthly_report_preview_view.py','utf8').split('JS = r"""\n')[1].split('\n"""')[0];
+    const render=vm.runInNewContext('('+source.replace('export default function','function')+')',context);
+    const media=n=>'/media/'+n.repeat(32)+'.jpg';
+    const input=(revision,url)=>({parentElement:root,
+        data:{viewScope:'owner|site|month',generation:revision,title:'Synthetic',
+              sizes:[[612,792]],ready:true,stale:false,status:'Current',pages:[{index:0,url}]},
+        setStateValue:()=>{}});
+    const old=render(input('revision-a',media('a')));
+    const first=panel.querySelector('img');
+    assert.equal(first.getAttribute('src'),media('a'));
+    assert.equal(first.loading,'eager');
+    assert.equal(first.decoding,'async');
+    const staleError=first.onerror;
+    const current=render(input('revision-b',media('b')));
+    assert.equal(panel.querySelector('img').getAttribute('src'),media('b'));
+    staleError(); // The request was retired after a newer response mounted.
+    assert.equal(panel.querySelector('img').getAttribute('src'),media('b'));
+    assert.equal(panel.querySelector('[data-action="retry-request"]').hidden,true);
+    panel.querySelector('img').onerror();
+    assert.equal(panel.querySelector('img'),null,'failed media must not cover the page placeholder');
+    assert.equal(panel.querySelector('[data-action="retry-request"]').hidden,false);
+    const malformed=render(input('revision-c','https://external.invalid/secret.jpg'));
+    assert.equal(panel.querySelector('img'),null,'untrusted/nonlocal URL is never displayed');
+    assert.equal(panel.querySelector('[data-action="retry-request"]').hidden,true,
+        'a new ticket clears an obsolete media failure');
+    old();current();malformed();
 });

@@ -6,7 +6,8 @@ from typing import NamedTuple
 from app import monthly_report_sources as sources
 from app.monthly_report_content_policy import (
     _CURRENCIES, _CURRENCY_SYMBOLS, ambiguous_price_columns, contains_price,
-    page_status, price_column, table_price_columns, proposal_price_columns,
+    contains_private_contact, page_allowed, page_status, price_column,
+    table_price_columns, proposal_price_columns, technical_source_text,
 )
 from app.monthly_report_model import ResolvedBlock
 from app.monthly_report_pre_model_routing import choose_reader_pages, classify_page
@@ -605,7 +606,7 @@ _ACTIVITY_PHONE = re.compile(
 _ACTIVITY_INTERNATIONAL_PHONE = re.compile(
     r"(?<!\w)(?:\+|00)[1-9](?:[ .()-]*\d){6,14}(?!\w)")
 _ACTIVITY_ID_LABEL = re.compile(
-    r"(?i)\b(?:asset|serial|model|tag|identifier|part|work order|job)"
+    r"(?i)\b(?:asset(?:\s+serial)?|serial|model|tag|identifier|part|work order|job)"
     r"(?:\s+(?:number|no\.?|id))?\s*[:#]?\s*"
     r"(?:[A-Za-z][A-Za-z0-9/_-]{0,63}[-_/])?$")
 _ACTIVITY_PHONE_LABEL = re.compile(
@@ -771,8 +772,20 @@ def _activity_source_pages(content):
     """
     if content.source.suffix not in {".csv", ".xlsx"} or not content.tables:
         for number, text in enumerate(content.source.page_texts, 1):
+            if (content.source.suffix == ".txt" and contains_price(text)
+                    and not any(_EVENT_START.match(line) for line in text.splitlines())):
+                # An untagged priced TXT has no independently scoped event
+                # boundary. Preserve the existing whole-source review hold.
+                yield number, ""
+                continue
             view = _docx_invoice_activity_view(text) if content.source.suffix == ".docx" else None
-            yield number, text if view is None else view.text
+            text = text if view is None else view.text
+            # A priced page remains ineligible as unchanged source artwork,
+            # but independently safe source-authored lines may still become
+            # cited technical Activity. This changes no source or review.
+            if contains_price(text) or contains_private_contact(text):
+                text = technical_source_text(text)
+            yield number, text
         return
     for number, table in enumerate(content.tables, 1):
         # The spreadsheet extractor has already selected the column headings.
@@ -818,7 +831,9 @@ def _csv_activity_entries(content):
         for row in table.rows:
             def cell(index):
                 return str(row[index]).strip() if index is not None and index < len(row) else ""
-            narrative = _activity_text(cell(action))
+            action_text = cell(action)
+            narrative = _activity_text(technical_source_text(action_text)
+                                       if contains_price(action_text) else action_text)
             if _date_only_source_label(narrative) or not useful_activity(narrative) or contains_price(narrative):
                 continue
             if contains_price(cell(status)):
@@ -905,11 +920,38 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
                 if not tagged_txt and not useful_activity(text):
                     continue
                 # Preserve qualifiers, dates and tense: this is grounded extractive writing.
-                activity_lines = (tuple((p.text, "") for p in passage_pages[number][0])
-                                  if number in passage_pages else
-                                  _activity_lines(text, content.source.suffix, with_dates=True))
+                if number in passage_pages:
+                    confirmed, pending = passage_pages[number]
+                    activity_lines = tuple((p.text, "") for p in confirmed)
+                    if (not activity_lines and pending
+                            and content.source.classification == "Vendor service"
+                            and (contains_price(content.source.page_texts[number - 1])
+                                 or contains_private_contact(content.source.page_texts[number - 1]))):
+                        # Vendor span parser correctly holds mixed original pages
+                        # with unknown fields. Permit a narrow, price/contact-
+                        # only recovery when the remaining labelled work has no
+                        # unknown fields and no omitted completion/status qualifier.
+                        from app.monthly_report_vendor_passages import unsupported_fields, _STATUS
+                        raw_page = content.source.page_texts[number - 1]
+                        # A removed contact field can also carry a negative
+                        # operational qualifier. Never turn pending vendor
+                        # evidence into a completed action by dropping it.
+                        negative_qualifier = re.search(
+                            r"(?i)\b(?:not\s+(?:operational|completed?|done|working)|"
+                            r"did\s+not|could\s+not|failed|cancelled|incomplete|"
+                            r"pending|unresolved)\b", raw_page)
+                        if (not unsupported_fields(text)
+                                and not _STATUS.search(raw_page)
+                                and not negative_qualifier):
+                            activity_lines = _activity_lines(
+                                text, content.source.suffix, with_dates=True)
+                else:
+                    activity_lines = _activity_lines(
+                        text, content.source.suffix, with_dates=True)
                 for line, header_date in activity_lines:
                     line = _activity_text(line)
+                    if contains_price(line) or contains_private_contact(line):
+                        line = technical_source_text(line)
                     if _date_only_source_label(line):
                         continue
                     if useful_activity(line) and not contains_price(line):
@@ -977,6 +1019,10 @@ def reader_request(profile, contents, destination, page_refs=None, table_columns
         accepted_pages=accepted_pages,
         native_mapped=_native_reader_page_pairs(contents, destination, table_columns)))
     selected = set(page_refs) & eligible if page_refs is not None else eligible
+    if not selected:
+        # Every page was excluded by policy or already mapped natively. There
+        # is no model request to make, and no readable evidence was admitted.
+        return []
     count = len(selected)
     if count > 20 or sum(len(t) for c in contents for n, t in enumerate(c.source.page_texts, 1) if (c.source.id, n) in selected) > 60000:
         raise ValueError("Upload up to 20 pages at a time for automatic section reading.")
@@ -999,8 +1045,17 @@ def reader_request(profile, contents, destination, page_refs=None, table_columns
         for number, text in enumerate(source.page_texts, 1):
             if (source.id, number) not in selected:
                 continue
-            payload.append({"type": "text", "text": f"SOURCE {source.id} PAGE {number}\n{text}"})
-            if number in image_numbers and (destination == "activity_summary" or number in source.needs_vision):
+            safe_text = technical_source_text(text)
+            if safe_text:
+                payload.append({"type": "text", "text": f"SOURCE {source.id} PAGE {number}\n{safe_text}"})
+            # Unchanged raster pages may contain prices or personal details
+            # that native extraction never saw. Text-only sanitation does
+            # not permit sending those image bytes to an external model.
+            # An existing fingerprint-bound human page review is required.
+            if (number in image_numbers
+                    and (destination == "activity_summary" or number in source.needs_vision)
+                    and page_allowed(source, number)
+                    and not contains_private_contact(text)):
                 image = sources.page_image(profile, content, number)
                 try:
                     reserve_bulk_image(profile, source.sha256, image.data)
@@ -1009,6 +1064,10 @@ def reader_request(profile, contents, destination, page_refs=None, table_columns
                     continue
                 payload.append({"type": "text", "text": f"VISUALLY CHECKED SOURCE {source.id} PAGE {number}"})
                 payload.extend(image_blocks_for_vision(image.data, "." + image.extension))
+    if contents and not any(
+            part.get("type") == "image" or part.get("text", "").startswith("SOURCE ")
+            for part in payload[1:]):
+        raise ValueError("No policy-permitted readable source content. Review the original locally; no private page was sent.")
     return payload
 
 
