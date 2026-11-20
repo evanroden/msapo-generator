@@ -92,20 +92,20 @@ def snapshot():
 
 
 def _lock_folder():
-        """Container-wide directory for resource-admission locks.
-        
-            Report storage stays namespaced: isolated QA points _root() at its own
-                directory, so a live heavy lease and an isolated QA heavy lease used to
-                    get independent slot/budget locks against the same cgroup and could
-                        double-book the same headroom. Lock files hold no report data, only
-                            flocks, so one shared directory is safe. MSAPO_RESOURCE_LOCK_DIR
-                                overrides it for tests and operators.
-                                    """
-        override = (os.environ.get("MSAPO_RESOURCE_LOCK_DIR") or "").strip()
-        folder = Path(override) if override else Path(tempfile.gettempdir()) / "msapo-render-jobs"
-        folder.mkdir(parents=True, exist_ok=True)
-        return folder
-    
+    """Container-wide directory for resource-admission locks.
+
+    Report storage stays namespaced: isolated QA points _root() at its own
+    directory, so a live heavy lease and an isolated QA heavy lease used to
+    get independent slot/budget locks against the same cgroup and could
+    double-book the same headroom. Lock files hold no report data, only
+    flocks, so one shared directory is safe. MSAPO_RESOURCE_LOCK_DIR
+    overrides it for tests and operators.
+    """
+    override = (os.environ.get("MSAPO_RESOURCE_LOCK_DIR") or "").strip()
+    folder = Path(override) if override else Path(tempfile.gettempdir()) / "msapo-render-jobs"
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
 
 def _slot_path(kind, index):
     folder = _lock_folder()
@@ -156,8 +156,8 @@ def _try_admit_budgeted(kind, headroom):
     slot acquisition; the lane locks retain reservations until release.
     """
     import fcntl
-        folder = _lock_folder()
-with (folder / ".resource-budget.lock").open("a+b") as budget:
+    folder = _lock_folder()
+    with (folder / ".resource-budget.lock").open("a+b") as budget:
         try:
             fcntl.flock(budget.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except (BlockingIOError, OSError):
@@ -166,20 +166,20 @@ with (folder / ".resource-budget.lock").open("a+b") as budget:
             # Account for *every* class, including conversions nested in a
             # heavy worker and native allocations not yet reflected by RSS.
             counts = {name: _locked_count(name) for name in CAPACITIES}
-                        reserved = sum(counts[name] * ESTIMATED_PEAK[name] for name in CAPACITIES)
-                        free = headroom() if headroom is not None else None
-                        if kind == "conversion" and counts["heavy"] > counts["conversion"]:
-                                            # A conversion runs inside an already admitted heavy lease,
-                                            # whose peak covers the conversion's peak: transfer that
-                                            # reservation instead of charging a second full peak, or two
-                                            # admitted heavies could both wait for a conversion neither
-                                            # can get. A conversion without a heavy lease still charges
-                                            # its own peak.
-                                            needed = reserved + RESERVE_BYTES
-                        else:
-                                            needed = reserved + ESTIMATED_PEAK[kind] + RESERVE_BYTES
-                                        if free is None or free < needed:
-                                            return None
+            reserved = sum(counts[name] * ESTIMATED_PEAK[name] for name in CAPACITIES)
+            free = headroom() if headroom is not None else None
+            if kind == "conversion" and counts["heavy"] > counts["conversion"]:
+                # A conversion runs inside an already admitted heavy lease,
+                # whose peak covers the conversion's peak: transfer that
+                # reservation instead of charging a second full peak, or two
+                # admitted heavies could both wait for a conversion neither
+                # can get. A conversion without a heavy lease still charges
+                # its own peak.
+                needed = reserved + RESERVE_BYTES
+            else:
+                needed = reserved + ESTIMATED_PEAK[kind] + RESERVE_BYTES
+            if free is None or free < needed:
+                return None
             return _try_slot(kind)
         finally:
             fcntl.flock(budget.fileno(), fcntl.LOCK_UN)
