@@ -1087,16 +1087,20 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
             # The button identifies the displayed REPORT/source proposal, not
             # the candidate textarea bytes. A corrected textarea value delivered
             # with the click is validated and accepted in that same action.
+            # A native manual input can arrive in the same event as Accept/Replace.
+            # Render both actions disabled while that newer input is pending.
+            pending_manual = _pending_rich_text_edit(prefix, existing) if existing else None
+            manual_pending = pending_manual is not None or _linked_input_pending(prefix, existing)
             token = ai.digest((receipt, editing,
                                existing.fingerprint if existing else None,
                                tuple((s.id, s.fingerprint) for s in sources)))
             st.button("Accept edited suggestion" if editing else "Accept suggestion",
-                      disabled=not valid, key=prefix + "_ai_accept_" + token,
+                      disabled=not valid or manual_pending, key=prefix + "_ai_accept_" + token,
                       on_click=_queue_suggestion_choice,
                       args=(prefix, "add", token))
             if editing:
                 st.button("Replace current wording with edited suggestion",
-                          disabled=not valid, key=prefix + "_ai_replace_" + token,
+                          disabled=not valid or manual_pending, key=prefix + "_ai_replace_" + token,
                           on_click=_queue_suggestion_choice,
                           args=(prefix, "replace", token))
             pending = st.session_state.pop(prefix + "_ai_pending_choice", None)
