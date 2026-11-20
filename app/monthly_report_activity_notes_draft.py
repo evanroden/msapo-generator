@@ -17,7 +17,7 @@ from zipfile import BadZipFile, ZipFile
 import streamlit as st
 
 from app import monthly_report_ai as ai
-from app.monthly_report_content_policy import contains_price
+from app.monthly_report_content_policy import contains_price, contains_private_contact, technical_source_text
 from app.receipt_jobs import start_receipt
 
 MAX_NOTE_BYTES = 4 * 1024 * 1024
@@ -114,9 +114,17 @@ def safe_notes(raw: str) -> tuple[str, tuple[str, ...]]:
         line = line.strip()
         if not line:
             continue
-        if contains_price(line):
-            notices.append("Lines containing pricing were excluded from the draft input.")
-            continue
+        if contains_price(line) or re.search(
+                r"(?i)\b(?:contact|phone|telephone|mobile|fax|e-?mail|email)\s*[:=]", line):
+            # A separately labelled contact/price span can be held without
+            # losing its technical sibling. Inline personal names still go
+            # through the existing targeted [person omitted] substitution:
+            # discarding their entire action would lose the verified work.
+            safe = technical_source_text(line)
+            notices.append("Pricing or contact spans were excluded from the draft input.")
+            if not safe:
+                continue
+            line = safe
         if _UNTRUSTED_INSTRUCTION.search(line):
             notices.append("Instruction-like text was excluded from the draft input.")
             continue

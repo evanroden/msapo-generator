@@ -1135,9 +1135,8 @@ def _render_receipt(
         if analysis.review_notes:
             for note in analysis.review_notes:
                 st.caption(f"Review: {note}")
-        if analysis.tax_amount:
-            currency_prefix = f"{analysis.currency} " if _foreign_receipt(analysis) else "$"
-            st.caption(f"Tax printed on receipt: {currency_prefix}{analysis.tax_amount}")
+        for charge_note in _receipt_charge_notes(analysis):
+            st.caption(charge_note)
         merchant = field_with_help(st.text_input, 
             "Merchant",
             key=merchant_key,
@@ -1161,6 +1160,9 @@ def _render_receipt(
             calculated_amount=calculated_item_amount,
             amount_key=amount_key,
         )
+        if _tax_split_amounts(analysis) is not None:
+            if st.button("Split out tax", key=f"expense_tax_split_{token}"):
+                _apply_receipt_tax_split(token, analysis)
         split_receipt = field_with_help(st.toggle, 
             "Split this receipt into multiple reimbursement lines",
             key=f"expense_split_{token}",
@@ -1200,6 +1202,11 @@ def _render_receipt(
             line_contact_key = f"expense_contact_{line_token}"
             if line_count > 1:
                 st.markdown(f"**Reimbursement line {line_index}**")
+            if line_index == 1 and analysis.receipt_type and analysis.suggested_description:
+                st.caption(
+                    f"Suggested description ({analysis.receipt_type}): "
+                    f"{analysis.suggested_description}"
+                )
             description = field_with_help(st.text_input, 
                 "Description / business purpose *",
                 key=line_description_key,
@@ -1210,10 +1217,26 @@ def _render_receipt(
                 key=line_amount_key,
                 help="Enter the business-reimbursable portion for this line, including relevant tax or tip. Correct the detected amount if needed.",
             ).strip()
-            section = field_with_help(st.selectbox, 
+            if line_index == 1:
+                suggestion = _receipt_section_suggestion(analysis)
+                if suggestion:
+                    st.caption(suggestion)
+                if (
+                    suggestion
+                    and st.session_state.get(line_section_key) != analysis.expense_section_guess
+                    and st.button(
+                        f"Use suggested {_SECTION_LABELS[analysis.expense_section_guess]} section",
+                        key=f"expense_accept_section_{token}",
+                    )
+                ):
+                    st.session_state[line_section_key] = analysis.expense_section_guess
+                    _mark_receipt_section_edited(line_token)
+            section = field_with_help(st.segmented_control, 
                 "Expense section *",
                 tuple(_SECTION_LABELS),
                 format_func=lambda value: _SECTION_LABELS[value],
+                selection_mode="single",
+                required=True,
                 key=line_section_key,
                 on_change=_mark_receipt_section_edited,
                 args=(line_token,),
@@ -1373,6 +1396,114 @@ def _selected_receipt_item_amount(
 def _foreign_receipt(analysis: ReceiptAnalysis) -> bool:
     """Known non-USD values cannot be treated as reimbursement dollars."""
     return bool(analysis.currency and analysis.currency != "USD")
+
+
+def _receipt_charge_notes(analysis: ReceiptAnalysis) -> tuple[str, ...]:
+    """Read-only reconciliation of detected prices to the charged total.
+
+    Missing purchased-item rows are NOT treated as a zero-dollar receipt.
+    The displayed remainder is never silently added to a reimbursement line;
+    the reviewed charged total remains the source of that line's prefill.
+    """
+    prefix = f"{analysis.currency} " if _foreign_receipt(analysis) else "$"
+    notes: list[str] = []
+    items_total = sum(
+        (parse_expense_amount(item.amount) or Decimal("0") for item in analysis.line_items),
+        Decimal("0"),
+    )
+    if analysis.line_items:
+        notes.append(f"Detected items: {prefix}{items_total:,.2f}")
+    tax = parse_expense_amount(analysis.tax_amount) or Decimal("0")
+    tip = parse_expense_amount(analysis.tip_amount) or Decimal("0")
+    service = parse_expense_amount(analysis.service_charge) or Decimal("0")
+    if tax:
+        notes.append(f"Tax printed on receipt: {prefix}{tax:,.2f}")
+    if tip:
+        notes.append(f"Includes a {prefix}{tip:,.2f} tip")
+    if service:
+        notes.append(f"Includes a {prefix}{service:,.2f} service charge")
+    total = parse_expense_amount(analysis.total_amount)
+    if total is not None:
+        difference = total - items_total - tax - tip - service
+        if difference > 0:
+            notes.append(f"Not itemised: {prefix}{difference:,.2f}")
+        elif difference < 0:
+            notes.append(
+                f"Check receipt amounts: listed charges exceed the final total "
+                f"by {prefix}{-difference:,.2f}"
+            )
+        notes.append(f"Final charged total: {prefix}{total:,.2f}")
+    return tuple(notes)
+
+
+def _receipt_section_suggestion(analysis: ReceiptAnalysis) -> str:
+    """Keep recognised purchase types separate from the two official sections."""
+    if not analysis.receipt_type and analysis.expense_section_guess != EXPENSE_SECTION_ENTERTAINMENT:
+        return ""
+    section = _SECTION_LABELS.get(analysis.expense_section_guess, "Miscellaneous")
+    suggestion = f"Suggested: {analysis.receipt_type or 'Receipt'} · {section}"
+    if analysis.expense_section_guess == EXPENSE_SECTION_ENTERTAINMENT:
+        if analysis.expense_section_reason:
+            suggestion += f" — {analysis.expense_section_reason}"
+        else:
+            suggestion += " — verify the entertainment purpose and contact"
+    return suggestion
+
+
+def _tax_split_amounts(analysis: ReceiptAnalysis) -> tuple[Decimal, Decimal] | None:
+    """Return exact before-tax and tax amounts, never an invented conversion."""
+    if _foreign_receipt(analysis):
+        return None
+    total = parse_expense_amount(analysis.total_amount)
+    tax = parse_expense_amount(analysis.tax_amount)
+    if total is None or tax is None or tax >= total:
+        return None
+    return total - tax, tax
+
+
+def _apply_receipt_tax_split(token: str, analysis: ReceiptAnalysis) -> bool:
+    """One click fills the existing two-line split with exact, editable amounts.
+
+    Reuses the first line's reviewed section and JDE coding on the new tax line;
+    the standard model, validation and over-allocation check remain unchanged.
+    """
+    amounts = _tax_split_amounts(analysis)
+    if amounts is None:
+        return False
+    before_tax, tax = amounts
+    first_description = str(
+        st.session_state.get(f"expense_description_{token}", "") or ""
+    ).strip()
+    st.session_state[f"expense_split_{token}"] = True
+    st.session_state[f"expense_split_count_{token}"] = 2
+    st.session_state[f"expense_amount_{token}"] = f"{before_tax:.2f}"
+    st.session_state[f"expense_description_{token}"] = (
+        f"{first_description} (before tax)" if first_description
+        else "Purchases before tax"
+    )[:240]
+    second = f"{token}_line_2"
+    st.session_state[f"expense_amount_{second}"] = f"{tax:.2f}"
+    st.session_state[f"expense_description_{second}"] = (
+        f"Sales tax on {first_description}" if first_description else "Sales tax"
+    )[:240]
+    st.session_state[f"expense_section_{second}"] = st.session_state.get(
+        f"expense_section_{token}", EXPENSE_SECTION_MISC
+    )
+    st.session_state[f"expense_contact_{second}"] = st.session_state.get(
+        f"expense_contact_{token}", ""
+    )
+    st.session_state[f"expense_section_edited_{second}"] = True
+    first_prefix = f"expense_receipt_allocation_{token}"
+    second_prefix = f"expense_receipt_allocation_{second}"
+    for suffix in (
+        "job_number", "account_cost_type", "cost_code",
+        "prior_default_job_number", "prior_default_account_cost_type",
+        "prior_default_cost_code",
+    ):
+        source = f"{first_prefix}_{suffix}"
+        if source in st.session_state:
+            st.session_state[f"{second_prefix}_{suffix}"] = st.session_state[source]
+    return True
 
 
 def _sync_detected_item_amount(

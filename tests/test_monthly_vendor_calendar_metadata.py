@@ -68,9 +68,20 @@ def test_valid_pdf_report_date_does_not_block_genuine_action(
     monkeypatch, tmp_path,
 ):
     action = "Actions: Inspected the synthetic valve."
+    content, raw = fixture(monkeypatch, tmp_path, [action])
+    # The fixture already prints one valid Report date: 2026-10-16.
+    assert "Report date: 2026-10-16" in content.source.page_texts[0]
+    assert content.source.actions == action
+    assert action in native_update((content,), "activity_summary").text
+    assert sources.source_bytes(synthetic_profiles()[0], content.source) == raw
+
+
+def test_conflicting_valid_pdf_report_dates_require_review(monkeypatch, tmp_path):
+    action = "Actions: Inspected the synthetic valve."
     content, raw = fixture(monkeypatch, tmp_path, [
         "Report date: 2024-02-29", action,
     ])
-    assert content.source.actions == action
-    assert action in native_update((content,), "activity_summary").text
+    # The fixture also prints 2026-10-16: both dates are valid but conflict.
+    assert action == content.source.actions
+    assert action not in native_update((content,), "activity_summary").text
     assert sources.source_bytes(synthetic_profiles()[0], content.source) == raw

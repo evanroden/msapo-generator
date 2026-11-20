@@ -183,6 +183,9 @@ st.session_state['legacy_date_draft'] = replace(draft, blocks=tuple(blocks.value
     accepted = app.session_state['legacy_date_draft']
     assert accepted.sources[0].facts[0].id == fact.id
     assert accepted.sources[0].facts[0].date == '2026-09-17'
+    # The re-read also binds the legacy fact to this exact original (A55).
+    assert accepted.sources[0].facts[0].source_sha256 == old_source.sha256
+    assert accepted.sources[0].facts[0].page_sha256
     assert not accepted.blocks[0].reviewed
     assert accepted.blocks[0].ai_paragraphs[0].text == old_block.ai_paragraphs[0].text
 
