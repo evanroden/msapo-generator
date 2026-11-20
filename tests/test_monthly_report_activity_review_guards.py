@@ -82,7 +82,13 @@ def test_separate_price_line_does_not_absorb_adjacent_unpunctuated_tagged_work(m
 def test_full_page_pricing_guard_is_unchanged_for_unstructured_pdf(monkeypatch, tmp_path):
     _, content = ingest(monkeypatch, tmp_path, 'synthetic-pricing-page.pdf',
                         pdf_bytes('Inspected pump bearings\nFee $500'))
-    assert not structured.native_update((content,), 'activity_summary').text
+    from app.monthly_report_content_policy import page_status
+    # A57 permits cited price-free native wording, never the original priced
+    # page as client artwork (whose full-page classification stays "pricing").
+    assert page_status(content.source.page_texts[0])[0] == "pricing"
+    activity = structured.native_update((content,), 'activity_summary')
+    assert 'Inspected pump bearings' in activity.text
+    assert '$500' not in activity.text
 
 
 def test_real_wrapped_negative_and_nonmoney_cost_wording_remain_grounded(monkeypatch, tmp_path):

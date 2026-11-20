@@ -22,15 +22,78 @@ def admin_url(kind="directory"):
     return report_url() + "&" + urlencode({"monthly_admin": kind})
 
 
+# The native Streamlit opener is outside stSidebar. Removing the collapsed
+# container prevents a transparent 300px sidebar from intercepting touches.
+# Keep this style-only st.html independent of the editor layout.
+MOBILE_SIDEBAR_CSS = """<style>
+[data-testid="stSidebar"][aria-expanded="false"] {
+    display: none !important;
+    pointer-events: none !important;
+}
+</style>"""
+
+
+# st.html can execute a trusted same-document script without a Components v2
+# blob/module or an extra one-pixel editor row. Reuse Streamlit's actual native
+# collapse button; opening the sidebar later remains an explicit user action.
+MOBILE_SIDEBAR_SCRIPT = r"""<script>
+(() => {
+    if (window.__epcMobileSidebar) return;
+    const media = window.matchMedia('(max-width: 1024px)');
+    const state = window.__epcMobileSidebar = {
+        narrow: media.matches, pending: media.matches, frame: null
+    };
+    const collapseIfNeeded = () => {
+        state.frame = null;
+        if (!state.pending || !media.matches
+            || !document.querySelector('.epc-workspace')) return;
+        const sidebar = document.querySelector('[data-testid="stSidebar"]');
+        if (!sidebar || !sidebar.hasAttribute('aria-expanded')) return;
+        if (sidebar.getAttribute('aria-expanded') === 'false') {
+            state.pending = false;
+            return;
+        }
+        const button = sidebar.querySelector(
+            '[data-testid="stSidebarCollapseButton"] button');
+        if (!button) return;
+        state.pending = false;
+        button.click();
+    };
+    const schedule = () => {
+        if (state.pending && state.frame === null)
+            state.frame = requestAnimationFrame(collapseIfNeeded);
+    };
+    const resized = () => {
+        const narrow = media.matches;
+        if (narrow && !state.narrow) state.pending = true;
+        if (!narrow) state.pending = false;
+        state.narrow = narrow;
+        schedule();
+    };
+    new MutationObserver(schedule).observe(document.body, {
+        subtree: true, childList: true, attributes: true,
+        attributeFilter: ['aria-expanded']
+    });
+    media.addEventListener('change', resized);
+    window.addEventListener('resize', resized);
+    schedule();
+})();
+</script>"""
+
+
 def render_administration_links():
-    """Open another tab without submitting or replacing the report editor."""
-    with st.sidebar.expander("Administration", expanded=False):
-        st.caption("Opens separately; your report tab stays available.")
-        for kind, label in (("directory", "Contract and site directory"),
-                            ("logos", "Shared contract logos"),
-                            ("storage", "Storage maintenance"),
-                            ("master", "Master design administration")):
-            st.link_button(label, admin_url(kind), on_click="ignore")
+    """Keep the native administration disclosure available when the sidebar opens."""
+    st.html(MOBILE_SIDEBAR_CSS)
+    with st.sidebar:
+        # A script-only element inside the sidebar does not move the editor.
+        st.html(MOBILE_SIDEBAR_SCRIPT, unsafe_allow_javascript=True)
+        with st.expander("Administration", expanded=False):
+            st.caption("Opens separately; your report tab stays available.")
+            for kind, label in (("directory", "Contract and site directory"),
+                                ("logos", "Shared contract logos"),
+                                ("storage", "Storage maintenance"),
+                                ("master", "Master design administration")):
+                st.link_button(label, admin_url(kind), on_click="ignore")
 
 
 def render_administration(kind, field, *, mode):

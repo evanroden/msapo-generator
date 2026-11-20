@@ -34,7 +34,8 @@ def accept():
         for block in draft.blocks))
 
 
-def synthetic_renderer(draft, loader):
+def synthetic_renderer(draft, loader, *, ticket_only=False):
+    # Same signature as preview_report: Review asks for a ticket-only preview.
     if st.session_state.get("a62_fail"):
         raise ValueError("Synthetic Review conversion temporarily unavailable.")
     text = next((block.text for block in draft.blocks if block.key == "demo_training"), "")
