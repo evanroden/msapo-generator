@@ -8,6 +8,7 @@ from app import monthly_report_work_order_review_flow as flow
 from app.monthly_report_work_order_coverage import (
     month_window, restore_decision, summarize_coverage,
 )
+from app.monthly_report_work_order_counts import count_reviewed_work_orders
 
 LABELS = {"work_order": "Work-order ID", "work_date": "Work date", "completed_date": "Completion date",
           "status": "Recorded status", "site": "Site", "work_type": "PM / Non-PM", "trade": "Trade",
@@ -191,6 +192,24 @@ def render_reviewed_rows(draft, blocks, prefix, content):
             st.dataframe([{"Source row": row.origin.native_row_number or row.origin.row_number,
                 **{LABELS[n]: getattr(row, n) for n in fields},
                 "Review needed": "; ".join(row.issues), "Omitted": row.excluded} for row in record.rows], hide_index=True)
+            if kind == "workorders":
+                evidence = count_reviewed_work_orders(record, approved_revision=record.revision,
+                    period=draft.period, selected_sites=tuple(s.key for s in draft.profile.facilities))
+                withheld = [item for item in evidence.dispositions
+                            if item.disposition in ("needs_review", "excluded")]
+                st.caption(f"Row-derived candidate total: {evidence.overall.total}. "
+                           f"{len(withheld)} rows withheld pending review or deliberate exclusion. "
+                           "These are not published counts or proof of complete CMMS coverage.")
+                if withheld:
+                    by_key = {row.key: row for row in record.rows}
+                    st.dataframe([{"Source row": by_key[item.row_key].origin.row_number,
+                        "Work order": by_key[item.row_key].work_order,
+                        "Site": by_key[item.row_key].site,
+                        "Work date": by_key[item.row_key].work_date,
+                        "Count effect": "Withheld (not in totals)",
+                        "Action": "Confirm exclusion or correct row" if item.disposition == "excluded"
+                                  else "; ".join(item.reasons)}
+                        for item in withheld], hide_index=True)
             selected = st.selectbox("Row to correct", range(len(record.rows)),
                 format_func=lambda n: f"Source row {record.rows[n].origin.native_row_number or record.rows[n].origin.row_number} · {getattr(record.rows[n], fields[0]) or 'Missing ID'}",
                 key=local + "_row")

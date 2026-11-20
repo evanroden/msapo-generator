@@ -69,6 +69,10 @@ def test_read_draft_review_preserves_existing_work_and_invalidates(
     assert not button(app, "Accept suggestion").disabled
     button(app, "Accept suggestion").click().run()
     assert not app.exception
+    # A saved source-linked AI claim exposes its quotation and original hash
+    # in the existing native linked-wording correction UI.
+    assert any("original SHA-256" in c.value and "Inspected the synthetic pump." in c.value
+               for c in app.caption)
     key = next(
         k
         for k, v in app.session_state.filtered_state.items()
