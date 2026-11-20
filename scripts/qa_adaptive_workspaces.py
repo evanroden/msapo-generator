@@ -95,9 +95,25 @@ def scroll_preview_to_page(preview, index):
 def loaded_page(preview,index,name):
     image=preview.locator(f'figure[data-index="{index}"] img')
     expect(image).to_be_visible(timeout=30000)
-    expect(image).to_have_attribute('src',re.compile(r'^data:image/jpeg;base64,'))
+    expect(image).to_have_attribute('src',re.compile(r'^/(?:[A-Za-z0-9_-]+/)*media/[a-f0-9]{32}\.jpe?g$'))
     expect(image).to_have_js_property('complete',True)
     check(name+' selected page image loaded',image.evaluate('(node)=>node.naturalWidth>0 && node.naturalHeight>0'),{'page':index+1})
+    # Browser decode, not a Python-ready raster or DOM placeholder. The
+    # ready-to-decoded clock comparison is valid only on this same-host CI
+    # fixture; physical Safari/remote service timing is a separate gate.
+    timings=image.evaluate("""async node => {
+        await node.decode();
+        const ready=Number(node.dataset.serverReadyEpochMs || 0);
+        const decoded=Number(node.dataset.decodedAtEpochMs || 0);
+        return {src_length:(node.getAttribute('src') || '').length,
+                server_ready_epoch_ms:ready || null,
+                decoded_epoch_ms:decoded || null,
+                ready_to_decoded_ms:ready && decoded ? decoded-ready : null,
+                natural_width:node.naturalWidth,natural_height:node.naturalHeight};
+    }""")
+    REPORT.setdefault('image_decode_samples',{}).setdefault(name,[]).append(
+        {'page':index+1,**timings})
+
 
 
 def exercise(browser_type, name):

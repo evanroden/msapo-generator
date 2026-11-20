@@ -309,13 +309,20 @@ def inspect_capacity(profile, filename, raw) -> CapacityInspection:
         # The sparse SAX directory reader bounds XML tokens before allocating
         # them; openpyxl's object graph is unnecessary for capacity cells.
         workbook = directory.inspect_workbook(raw, number_formats=True)
+        if len(workbook.sheets) > sources.MAX_WORKSHEETS:
+            raise ValueError(f"Workbook exceeds {sources.MAX_WORKSHEETS:,} worksheets; upload the required sheets separately.")
         native_tables = []
         # Directory's bounded XLSX inspector marks hidden/veryHidden sheets.
         # Such sheets may contain stale or unrelated values; they must not
         # silently become first-fill capacity facts merely because they exist
         # in the package. Keep original bytes/provenance for a deliberate
         # corrected upload, but only visible sheets enter automatic candidates.
-        hidden_count = sum(sheet.hidden for sheet in workbook.sheets)
+        hidden = [sheet.name for sheet in workbook.sheets if sheet.hidden]
+        # The sparse reader retains formula flags and original coordinates,
+        # including cells with no cached result. A blank formula is not zero.
+        missing = [(sheet.name, f"{directory.column_name(cell.column)}{cell.row}")
+                   for sheet in workbook.sheets for cell in sheet.cells
+                   if cell.formula and not cell.value]
         for sheet in workbook.sheets:
             if sheet.hidden or not sheet.cells:
                 continue
@@ -330,8 +337,13 @@ def inspect_capacity(profile, filename, raw) -> CapacityInspection:
         source = ReportSource(workbook.sha256, Path(filename).name, workbook.sha256, ".xlsx",
                               page_texts=tuple("\n".join("\t".join(row) for row in _table_records(t)) for t in native_tables),
                               notices=(*workbook.notices,
-                                       *(("Hidden thermal worksheets were excluded from automatic first-fill; "
-                                          "unhide and re-upload only those you intend to review.",) if hidden_count else ()),
+                                       *(("Hidden thermal worksheets were excluded from automatic first-fill: "
+                                          + ", ".join(hidden) + ". Unhide and re-upload only those you intend to review.",)
+                                         if hidden else ()),
+                                       *((f"{len(missing)} capacity formula cells without trusted cached results "
+                                          f"({', '.join(f'{name}!{cell}' for name, cell in missing[:16])}); "
+                                          "recalculate and save the source workbook before accepting these cells.",)
+                                         if missing else ()),
                                        "Workbook values use stored results; formulas are not executed."))
         content = SourceContent(source, tuple(native_tables))
         from app.monthly_report_sources import _path

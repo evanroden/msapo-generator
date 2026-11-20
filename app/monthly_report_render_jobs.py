@@ -85,7 +85,9 @@ def convert_to_pdf(path, *, wait_seconds=10, lossless_images=False):
 # Assembly can hold decoded pictures and an entire OOXML package. Serialize that
 # phase separately from the backend lock: a metafile helper may itself convert a
 # document, so holding the conversion lock around assembly would deadlock it.
-from app.monthly_preview_memory_budget import preview_worker_budget, required_free_bytes
+from app.monthly_preview_memory_budget import (
+    FREE_MEMORY_RESERVE_BYTES, PREVIEW_JOB_ESTIMATE_BYTES, preview_worker_budget, required_free_bytes,
+)
 
 
 class _ParallelWorkSlots:
@@ -125,6 +127,13 @@ _FOREGROUND_WAITING = 0
 _FOREGROUND_ACTIVE = 0
 _REVIEW_WAITING = 0
 PREVIEW_HEADROOM_BYTES = 160 * 1024 * 1024
+# Free memory a background conversion must leave while it runs. Admission
+# still needs PREVIEW_HEADROOM_BYTES before anything starts. Once admitted,
+# the conversion's own LibreOffice process uses part of that room, so
+# demanding the full 160 MiB throughout made every preview admitted with
+# less than about 190 MiB free stop itself, requeue and stop again for as
+# long as memory stayed there: the preview never finished.
+PREVIEW_RUNNING_FLOOR_BYTES = 64 * 1024 * 1024
 
 
 def _memory_status():
@@ -172,7 +181,14 @@ class _PreviewMemoryGuard:
         self.owner = threading.get_ident()
         self.finite = headroom is not None
 
-    def __call__(self):
+    def __call__(self, *, running=False):
+        """Refuse or stop this preview under memory pressure.
+
+        running=True is for the lease's own child process: once it has been
+        launched, only a fall below PREVIEW_RUNNING_FLOOR_BYTES (plus the
+        estimate of any other running job) stops it. Before launch the full
+        admission headroom applies.
+        """
         if (threading.get_ident() != self.owner or not getattr(_WORK_LOCAL, 'active', False)
                 or getattr(_WORK_LOCAL, 'preview_guard', None) is not self):
             raise RenderBusy('The preview work lease is no longer current. Your edits are still here.')
@@ -183,10 +199,15 @@ class _PreviewMemoryGuard:
                 raise RenderBusy('Preview memory could not be checked. Your edits are still here.')
         if headroom is not None:
             self.finite = True
-            required = PREVIEW_HEADROOM_BYTES
+            required = PREVIEW_RUNNING_FLOOR_BYTES if running else PREVIEW_HEADROOM_BYTES
             if _WORK_CAPACITY > 1:
                 with _ADMISSION_LOCK:
                     required = required_free_bytes(max(0, _ACTIVE_WORK - 1))
+                if running:
+                    # This job is already using its own estimate; keep the
+                    # floor plus the estimates of the other running jobs.
+                    required -= (PREVIEW_JOB_ESTIMATE_BYTES + FREE_MEMORY_RESERVE_BYTES
+                                 - PREVIEW_RUNNING_FLOOR_BYTES)
             if headroom < required:
                 raise RenderBusy('Preview is queued while the service is busy. Your edits are still here. Retry shortly.')
 
