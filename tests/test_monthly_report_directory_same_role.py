@@ -148,10 +148,19 @@ def test_complementary_incoming_rows_save_one_person_with_both_sources_and_reimp
         assert directory.load_directory("Synthetic Contract") == saved
 
 
-def test_unnamed_incoming_contacts_are_not_assumed_to_be_the_same_person():
-    sheets = _sheets(B9="", **{**SECOND, "B13": ""})
+@pytest.mark.parametrize(("missing_name", "expected_name", "expected_phone", "coordinate"), [
+    ("B9", "Synthetic Second Executive", "202-555-0102", "B10"),
+    ("B13", "Synthetic Executive", "202-555-0100", "B14"),
+])
+def test_unnamed_incoming_contacts_are_not_assumed_to_be_the_same_person(
+        missing_name, expected_name, expected_phone, coordinate):
+    # Keep one named peer so the contract is valid; anonymous detail is not
+    # imported as another person or attached to that same-role peer.
+    sheets = _sheets(**{**SECOND, missing_name: ""})
     plan, result = import_and_save(resaved(0, sheets))
     assert not plan.entries[0].conflicts and result.saved == ("Synthetic Contract",)
     saved = directory.load_directory("Synthetic Contract")
     assert [(c.name, c.phone) for c in saved.contract_contacts] == [
-        ("", "202-555-0100"), ("", "202-555-0102")]
+        (expected_name, expected_phone)]
+    assert any(ex.worksheet == "Active Contracts" and ex.column == coordinate
+               for ex in plan.exclusions)

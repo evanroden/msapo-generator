@@ -118,10 +118,10 @@ def count_reviewed_work_orders(review: WorkOrderReview, *, approved_revision: st
     # Site order has no bearing on evidence/cache identity.
     selected_sites = tuple(sorted(selected_sites))
     dispositions, accepted = [], []
-    identity_counts: dict[tuple[str, str], int] = {}
+    identity_counts: dict[tuple[str, str, str], int] = {}
     for row in review.rows:
         if row.work_order:
-            identity = (row.site, row.work_order.casefold())
+            identity = (row.site, row.work_date, row.work_order.casefold())
             identity_counts[identity] = identity_counts.get(identity, 0) + 1
     for row in review.rows:
         reasons = list(dict.fromkeys((*review.questions, *row.issues)))
@@ -137,7 +137,7 @@ def count_reviewed_work_orders(review: WorkOrderReview, *, approved_revision: st
             reasons.append("Work date is unresolved or outside the selected reporting month")
         if row.site not in allowed:
             reasons.append("Site needs review")
-        if identity_counts.get((row.site, row.work_order.casefold()), 0) > 1:
+        if identity_counts.get((row.site, row.work_date, row.work_order.casefold()), 0) > 1:
             reasons.append("Duplicate site/work-order identity needs review")
         if row.excluded:
             disposition = "excluded"
@@ -158,10 +158,14 @@ def count_reviewed_work_orders(review: WorkOrderReview, *, approved_revision: st
                   for key in selected_sites)
     trade_groups = ()
     if include_trades:
-        labels, members = {}, {}
+        labels, members, aliases = {}, {}, {}
         for row in rows:
             key, label = _trade(row)
-            labels[key] = label
+            # Trade capitalization/spacing is not a distinct discipline.
+            # Keep the first reviewed spelling as the display/key contract.
+            canonical = re.sub(r"\s+", " ", key).casefold()
+            key = aliases.setdefault(canonical, key)
+            labels.setdefault(key, label)
             members.setdefault(key, []).append(row)
         trade_groups = tuple(_group(key, labels[key], tuple(members[key]))
                              for key in sorted(labels))
