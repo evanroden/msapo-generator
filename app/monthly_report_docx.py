@@ -108,25 +108,28 @@ def normalize_report_image(raw: bytes, suffix: str, *, line_art: bool = False,
             check_cover_headroom(len(raw), pixels=image.width * image.height, image_format=image.format,
                                  coefficient_bytes=header.coefficient_bytes if header else 0)
         target = (round(frame[0] * dpi), round(frame[1] * dpi))
-        if cover_photo:
-            # Decode bounds were checked on the ORIGINAL dimensions. Reduce
-            # before EXIF's copy/transpose so a 40 MP input does not create a
-            # second full-resolution raster. Account for rotated frame axes.
-            orientation = image.getexif().get(274, 1)
-            source_target = target[::-1] if orientation in (5, 6, 7, 8) else target
-            # thumbnail computes final geometry before its own JPEG draft,
-            # avoiding rounding drift from changing source dimensions first.
-            image.thumbnail(source_target, Image.Resampling.LANCZOS)
-            oriented = ImageOps.exif_transpose(image)
+        # All print paths must reduce BEFORE EXIF's transpose/copy. Cover
+        # photos already did this; previously non-cover photos and PNG artwork
+        # could allocate another 15M-pixel raster at the source dimensions.
+        # Account for rotation so geometry stays identical after transposing.
+        orientation = image.getexif().get(274, 1)
+        source_target = target[::-1] if orientation in (5, 6, 7, 8) else target
+        # Pillow's thumbnail applies JPEG draft decoding where available.
+        image.thumbnail(source_target, Image.Resampling.LANCZOS)
+        oriented = ImageOps.exif_transpose(image)
+        if not preserve_transparency and oriented.mode == "RGB":
+            # RGB photographs need neither a full RGBA copy nor an all-opaque
+            # alpha mask. Print quality/pixels remain unchanged.
+            normalized = oriented
         else:
-            oriented = ImageOps.exif_transpose(image)
-            oriented.thumbnail(target, Image.Resampling.LANCZOS)
-        rgba = oriented.convert("RGBA")
-        if preserve_transparency:
-            normalized = rgba
-        else:
-            normalized = Image.new("RGB", rgba.size, "white")
-            normalized.paste(rgba, mask=rgba.getchannel("A"))
+            rgba = oriented.convert("RGBA")
+            if preserve_transparency:
+                # Stored normalization keeps the historical saved-asset digest.
+                # Only the disposable export derivative clears hidden RGB.
+                normalized = rgba
+            else:
+                normalized = Image.new("RGB", rgba.size, "white")
+                normalized.paste(rgba, mask=rgba.getchannel("A"))
         output = BytesIO()
         lossless = line_art or preserve_transparency
         normalized.save(output, format="PNG" if lossless else "JPEG",

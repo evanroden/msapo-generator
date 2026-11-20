@@ -405,16 +405,10 @@ def exercise(page, name, qa):
         baseline = initial["working"]["unrelated_sha256"]
         record("before-upload", initial)
         upload(page, raw)
-        expect(water.get_by_role("button", name="Include page", exact=True)).to_be_enabled()
-        water.get_by_role("button", name="Include page", exact=True).click()
-        expect(water.get_by_role("combobox", name="Page to review", exact=True)).to_have_value(re.compile(r"^Page 2(?: ·|$)"))
-        state = wait_pages(page, [], reviewed=[1])
-        unchanged(state)
-        record("desktop-first-page-reviewed", state)
-        water.get_by_role("button", name="Include page", exact=True).click()
         state = wait_pages(page, [1, 2], pending=[])
         unchanged(state)
         assert len(state["working"]["sources"]) == 1
+        record("desktop-auto-included", state)
         expect(water.get_by_role("button", name="Add reviewed pages", exact=True)).to_have_count(0)
         expect(water.get_by_role("button", name="View or change pictures", exact=True)).to_have_count(0)
         current_water_preview(page, qa)
@@ -428,17 +422,19 @@ def exercise(page, name, qa):
         water.get_by_role("button", name="Close report pages", exact=True).click()
         state = wait_pages(page, [1, 2], pending=[0])
         assert state["working"]["pages"][0]["caption_sha256"] == sha256(b"").hexdigest()
-        expect(caption).to_have_value("")
+        # A70: closing returns the screened attachments to their compact view;
+        # the changed page stays pending until it is reviewed again.
+        expect(water.get_by_role("combobox", name="Page to review", exact=True)).to_have_count(0)
         unchanged(state)
         record("desktop-clear-caption-with-done", state)
-        # Closing does not approve changed wording. Use the normal page review
-        # before continuing the existing caption/Tab, ordering and omission task.
+        # Closing does not approve changed wording. Reopen the page task and use
+        # the normal page review before continuing the caption/Tab, ordering and
+        # omission task; the task stays open for that next edit.
+        water.get_by_role("button", name="Report pages", exact=True).click()
+        choose_page(page, 1)
+        expect(caption).to_have_value("")
         water.get_by_role("button", name="Include page", exact=True).click()
         wait_pages(page, [1, 2], pending=[])
-        # Done closed editing; completing the outstanding review now returns
-        # to the normal summary. Open the real editor for the next edit.
-        expect(water.get_by_role("combobox", name="Page to review", exact=True)).to_have_count(0)
-        water.get_by_role("button", name="Report pages", exact=True).click()
         choose_page(page, 1)
         caption.fill(CAPTION)
         caption.press("Tab")

@@ -266,6 +266,7 @@ def test_one_retry_owner_makes_three_http_attempts(monkeypatch, read):
             request=request,
         )
 
+    monkeypatch.setattr(api_retry.random, "uniform", lambda *_: 1.0)
     monkeypatch.setattr(api_retry.time, "sleep", sleeps.append)
     with anthropic.Anthropic(
         api_key="synthetic",
@@ -518,7 +519,8 @@ def test_receipt_section_suggestion_respects_explicit_choice(
     app.file_uploader[0].upload("receipt.png", picture(), "image/png").run()
 
     def section():
-        return next(w for w in app.selectbox if w.label == "Expense section *")
+        # U07 deliberately uses a one-tap segmented choice, not a selectbox.
+        return next(w for w in app.segmented_control if w.label == "Expense section *")
 
     if arrival == "pending_with_override":
         section().set_value("entertainment").run()
@@ -557,6 +559,7 @@ def test_quote_api_transient_statuses_have_bounded_retries(
             request=request,
         )
 
+    monkeypatch.setattr(api_retry.random, "uniform", lambda *_: 1.0)
     monkeypatch.setattr(api_retry.time, "sleep", sleeps.append)
     with anthropic.Anthropic(
         api_key="synthetic",
