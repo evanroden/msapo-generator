@@ -151,3 +151,22 @@ def test_missing_and_malformed_inputs_do_not_invent_routes():
     src = content("SERVICE REPORT\nInspected.", selected=(2,))
     with pytest.raises(ValueError, match="Selected source page"):
         route_pages((src,), profile)
+
+
+def test_reviewed_mbcx_financial_page_routes_only_to_mbcx(monkeypatch, tmp_path):
+    """Codex review on #959: a priced ENFRA MBCx page with a valid financial-page
+    review stays admissible for the MBCx section and nowhere else."""
+    from tests.test_monthly_report_mbcx_financial_pages import reviewed, setup
+    from app.monthly_report_auto_page_routing import route_pages
+    from app.monthly_report_model import ReportPeriod
+
+    profile, content, _ = setup(monkeypatch, tmp_path)
+    period = ReportPeriod(2026, 9)
+    unreviewed, = route_pages((content,), profile, period=period)
+    assert unreviewed.action == "blocked"
+    approved = reviewed(profile, content)
+    route, = route_pages((approved,), profile, period=period)
+    assert (route.destination, route.action) == ("mbcx_report", "ready")
+    moved, = route_pages((approved,), profile, period=period,
+                         overrides={approved.source.id: "water_reports"})
+    assert (moved.destination, moved.action) == (None, "blocked")

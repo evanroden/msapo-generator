@@ -13,6 +13,7 @@ import re
 from app.monthly_report_content_policy import (
     contains_price, page_allowed, page_fingerprint, page_status,
 )
+from app.monthly_report_mbcx_financial_pages import has_financial_page_review
 from app.monthly_report_source_scope import reviewed_scope
 
 
@@ -122,6 +123,9 @@ def _valid_period(source, period):
     return (observed.year, observed.month) == (period.year, period.month)
 
 
+BLOCKED_PAGE = "Client output excludes priced, legal-only, blank or signature-only pages."
+
+
 def route_pages(contents, profile=None, *, period=None, overrides=None, owned=None):
     """Choose one destination for each source image/PDF page or a named exception.
 
@@ -177,8 +181,13 @@ def route_pages(contents, profile=None, *, period=None, overrides=None, owned=No
             # Even auto-unselected unsafe pages are named. The adjacent
             # technical page remains independently eligible for inclusion.
             kind, _ = page_status(text, unreadable=number in source.needs_vision)
-            if kind in {"pricing", "legal", "blank", "signature"} or contains_price(dict(source.captions).get(number, "")):
-                result.append(PageRoute(*base, None, "blocked", "Client output excludes priced, legal-only, blank or signature-only pages."))
+            # A priced ENFRA MBCx page with its own financial-page review is
+            # decided by the destination-aware policy below (MBCx only), not
+            # by this generic pricing veto. Captions and other kinds still veto.
+            financial = kind == "pricing" and has_financial_page_review(source, number)
+            if ((kind in {"pricing", "legal", "blank", "signature"} and not financial)
+                    or contains_price(dict(source.captions).get(number, ""))):
+                result.append(PageRoute(*base, None, "blocked", BLOCKED_PAGE))
                 continue
             if number not in source.selected_pages:
                 result.append(PageRoute(*base, None, "excluded", "Not selected for this report."))
@@ -199,8 +208,12 @@ def route_pages(contents, profile=None, *, period=None, overrides=None, owned=No
                                         "Use the corresponding structured report editor; this source page is retained."))
                 continue
             if not page_allowed(source, number, profile=profile, destination=destination):
-                result.append(PageRoute(*base, destination, "review",
-                                        "Confirm this page and caption before inclusion."))
+                if financial:
+                    # Reviewed financial pages belong only in the MBCx section.
+                    result.append(PageRoute(*base, None, "blocked", BLOCKED_PAGE))
+                else:
+                    result.append(PageRoute(*base, destination, "review",
+                                            "Confirm this page and caption before inclusion."))
                 continue
             result.append(PageRoute(*base, destination, "ready"))
     return tuple(result)
