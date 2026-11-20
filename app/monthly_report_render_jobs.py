@@ -5,6 +5,7 @@ import time
 from contextlib import contextmanager
 
 from app import pdf_converter
+from app.monthly_latency_spans import measure_span, record_span
 from app.monthly_report_library import _root
 from app.monthly_report_latency_trace import span
 
@@ -74,7 +75,8 @@ def _reclaim_preview_heap():
 
 def convert_to_pdf(path, *, wait_seconds=10, lossless_images=False):
     with conversion_slot(wait_seconds=wait_seconds):
-        with span("conversion"):
+        # Do not count thread/process-lock admission as office execution.
+        with span("conversion"), measure_span("office_execution"):
             if lossless_images is not False:
                 return pdf_converter.convert_to_pdf(path, lossless_images=lossless_images)
             return pdf_converter.convert_to_pdf(path)
@@ -227,17 +229,20 @@ def work_slot(*, preview=False, review=False, wait_seconds=130):
     if getattr(_WORK_LOCAL, 'active', False):
         yield
         return
+    queue_started = time.monotonic()
     with span("job_queue"):
         acquired = False
         if preview:
             headroom = memory_headroom()
             if headroom is not None and headroom < PREVIEW_HEADROOM_BYTES:
+                record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
                 raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
             if review:
                 acquired = _wait_for_review_slot(wait_seconds)
             else:
                 with _PRIORITY_LOCK:
                     if _FOREGROUND_WAITING or _FOREGROUND_ACTIVE or _REVIEW_WAITING:
+                        record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
                         raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
                     acquired = _WORK_SLOT.acquire(blocking=False)
         else:
@@ -253,6 +258,7 @@ def work_slot(*, preview=False, review=False, wait_seconds=130):
                         # and automatic-preview priority checks.
                         _FOREGROUND_ACTIVE += 1
         if not acquired:
+            record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
             raise RenderBusy('Another report is being prepared. Your saved work is unchanged; retry generation shortly.')
     # Admission is fail-closed only on explicitly opted-in high-resource hosts.
     # Check before allocating another DOCX/Pillow package, counting admissions
@@ -268,20 +274,27 @@ def work_slot(*, preview=False, review=False, wait_seconds=130):
                 available = memory_headroom()
                 if preview:
                     if available is None or available < required_free_bytes(_ACTIVE_WORK):
+                        record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
                         raise RenderBusy(
                             'Additional preview work is queued while memory is busy. '
                             'Your edits are still here. Retry shortly.')
                 elif _ACTIVE_WORK:
                     required = (512 + 768 * (_ACTIVE_WORK + 1)) * 1024 * 1024
                     if available is None or available < required:
+                        record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
                         raise RenderBusy('Additional report work is queued while memory is busy. Your saved work is unchanged.')
                 _ACTIVE_WORK += 1
                 reserved = True
         _WORK_LOCAL.active = True
         _WORK_LOCAL.preview_guard = _PreviewMemoryGuard(headroom) if preview else None
         try:
-            if preview:
-                _WORK_LOCAL.preview_guard()
+            try:
+                if preview:
+                    _WORK_LOCAL.preview_guard()
+            except RenderBusy:
+                record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
+                raise
+            record_span("work_queue", time.monotonic() - queue_started)
             yield
         finally:
             _WORK_LOCAL.preview_guard = None

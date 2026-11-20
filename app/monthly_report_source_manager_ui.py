@@ -21,6 +21,9 @@ def _pending_source_selection(prefix):
     return bool(st.session_state.get(evidence + "_pending_acceptance")
                 or st.session_state.get(evidence + "_accepted_failure")
                 or any(value for key, value in st.session_state.items()
+                       if key.startswith(evidence + "_")
+                       and key.endswith("_failed_original"))
+                or any(value for key, value in st.session_state.items()
                        if key.startswith(evidence + "_structured_")
                        and key.endswith(("_job", "_pending"))))
 
@@ -178,7 +181,8 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
     # An explicit native open (including a warning link) takes precedence,
     # even when resolution changed in the same render. The request is consumed
     # once so later independent acceptance can still close the workspace.
-    if (not open_requested and isinstance(previous, dict) and previous.keys() == resolution.keys()
+    if (not open_requested and not pending and isinstance(previous, dict)
+            and previous.keys() == resolution.keys()
             and not all(previous.values()) and resolution and all(resolution.values())):
         st.session_state[manager_key] = False
     opened = bool(st.session_state[manager_key])
