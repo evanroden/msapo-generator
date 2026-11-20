@@ -286,7 +286,11 @@ def _clear_report_widgets():
             del st.session_state[key]
 
 
-def render(browser_token: str, browser_timezone: str, field, move, live_storage_root):
+def render(browser_token: str, browser_timezone: str, field, move, live_storage_root, *,
+           qa_details_expanded: bool = False):
+    """QA fixture page. The hosted QA route keeps diagnostics collapsed; the
+    synthetic browser fixture opens them, because its journeys read those
+    receipts after every rerun and a rebuilt expander closes again."""
     if testing.scope() is None:
         raise ValueError("Testing controls require a server-side isolated context.")
     st.warning("ISOLATED SYNTHETIC TESTING — not a client report. No live report, contact, capacity, logo or design records are accessible here.")
@@ -548,7 +552,7 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
     # Exactly one QA-only disclosure owns all fingerprints, action receipts,
     # revision captions and callback traces. Production never calls this route.
     with diagnostics_surface.container():
-        with st.expander("QA details", expanded=False):
+        with st.expander("QA details", expanded=qa_details_expanded):
             from hashlib import sha256
             _render_reset_readiness(live_storage_root)
             st.caption(f"QA fixture state: {kind} · generation {current_generation[:12]} · "
