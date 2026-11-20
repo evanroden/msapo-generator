@@ -788,7 +788,7 @@ def _source_view_admission(function):
                   if 'contract' in values and 'period' in values else None)
         if prefix:
             st.session_state.pop(prefix + '_active_section_review', None)
-        staged = st.session_state.get(prefix + '_stage') if prefix else None
+        staged = values.get('entry_stage') or (st.session_state.get(prefix + '_stage') if prefix else None)
         from app.monthly_report_source_view_runtime import import_candidate
         needs_view = staged is not None and import_candidate(staged[2])
         from app import monthly_report_render_jobs as jobs
@@ -806,7 +806,8 @@ def _source_view_admission(function):
 
 @_source_view_admission
 def render_section_setup(contract, period, prepared, field, *, state=None, identity=None,
-                         working_draft=None, working_assets=(), working_revision=None, source_view=None):
+                         working_draft=None, working_assets=(), working_revision=None, source_view=None,
+                         entry_upload=None, entry_stage=None, entry_active=False):
     prefix = "report_setup_" + _signature((contract, state.profile.key if state else identity.key if identity else "new", period.key))
     # An existing report is already editable. Keep its replacement uploader
     # optional, but always render the uploader in the same widget container
@@ -822,6 +823,16 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
         # Streamlit file uploaders cannot be assigned an empty widget value.
         # Rotate only the unsaved picker identity; never touch saved reports.
         prior = st.session_state.pop(prefix + "_stage", None)
+        from app.monthly_report_entry_upload import ENTRY_STAGE, remove_entry_upload
+        if prior is not None and st.session_state.get(ENTRY_STAGE) is prior:
+            # A file from the first-use upload: retire that picker and every
+            # review sharing its stage before its bytes go, or the next run
+            # would reinstall a review of a deleted original.
+            try:
+                remove_entry_upload()
+            except OSError:
+                st.session_state[prefix + "_removed_cleanup_warning"] = True
+            prior = None
         st.session_state[upload_epoch_key] = st.session_state.get(upload_epoch_key, 0) + 1
         for suffix in ("_uploaded_filename", "_failed_digest", "_failed_notice",
                        "_committed_upload_digest", "_image_replacements"):
@@ -845,23 +856,48 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             st.session_state.pop(prefix + "_image_replacements", None)
             st.rerun()
 
-    # The picker stays in the same native parent across every rerun. Before
-    # selection it is open and needs no extra click; after inspection the
-    # loaded file, preview and actions occupy this one bordered card.
-    with st.container(border=True):
-        if not optional_import:
-            st.subheader("Start with a report")
-        loaded_card_slot = st.empty()
-        with st.expander("Use a different starting report" if optional_import else
-                         "Choose or replace a Word report",
-                         expanded=(bool(st.session_state.get(prefix + "_failed_digest"))
-                                   if optional_import else
-                                   not bool(st.session_state.get(prefix + "_stage")))):
-            st.caption("Upload an earlier or unfinished Word report. Its original is unchanged.")
-            upload = st.file_uploader("Starting report", type=["docx"],
-                                      key=upload_key, **starting_upload_options())
-            if optional_import:
-                _open_saved_original()
+    # A keyed slot keeps the setup below at fixed positions when the entry
+    # upload stops applying between runs (see render_guided_workflow).
+    # A site that already has saved work keeps its secondary import, unless a
+    # file is waiting in the first-use upload above the site choices.
+    entry_active = entry_active and (entry_upload is not None or entry_stage is not None
+                                     or not state)
+    with st.container(key=prefix + "_starting_upload_slot"):
+        if entry_active:
+            # The first-use drop zone is mounted above contract/site selection.
+            # Consume its *same* validated bytes; never show a duplicate picker.
+            if entry_stage is not None:
+                st.session_state[prefix + "_stage"] = entry_stage
+            upload = entry_upload
+            loaded_card_slot = st.empty()
+            if state:
+                with st.expander("Original-file recovery (optional)"):
+                    _open_saved_original()
+        else:
+            # The picker stays in the same native parent across every rerun. Before
+            # selection it is open and needs no extra click; after inspection the
+            # loaded file, preview and actions occupy this one bordered card.
+            with st.container(border=True):
+                if not optional_import:
+                    st.subheader("Start with a report")
+                loaded_card_slot = st.empty()
+                with st.expander("Use a different starting report" if optional_import else
+                                 "Choose or replace a Word report",
+                                 expanded=(bool(st.session_state.get(prefix + "_failed_digest"))
+                                           if optional_import else
+                                           not bool(st.session_state.get(prefix + "_stage")))):
+                    st.caption("Upload an earlier or unfinished Word report. Its original is unchanged.")
+                    upload = st.file_uploader("Starting report", type=["docx"],
+                                              key=upload_key, **starting_upload_options())
+                    if optional_import:
+                        _open_saved_original()
+    if (entry_active and upload is not None
+            and st.session_state.get("report_entry_failed_digest") ==
+            hashlib.sha256(upload.getvalue()).hexdigest()):
+        # The first uploader has already reported its vetted parser failure.
+        # Do not read the same bad source again or allow an old staged review
+        # to masquerade as the file currently selected.
+        return True
     # File selection is the Analyze action. The exact content hash, never
     # its reusable filename or a widget rerun, determines whether a new
     # source must be inspected. An error leaves the existing staged draft
@@ -1657,6 +1693,17 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                 # Failures retain the original staged source and every choice.
                 if st.session_state.get(prefix + "_stage") is staged:
                     st.session_state.pop(prefix + "_stage", None)
+                    if st.session_state.get("report_entry_stage") is staged:
+                        st.session_state.pop("report_entry_stage", None)
+                        st.session_state["report_entry_committed_digest"] = inspection.sha256
+                        # This one temporary original can have been reviewed
+                        # against more than one proposed site selection. Never
+                        # leave a second review pointing to cleaned-up bytes.
+                        for review_key in tuple(st.session_state):
+                            if (review_key.startswith("report_setup_")
+                                    and review_key.endswith("_stage")
+                                    and st.session_state[review_key] is staged):
+                                st.session_state.pop(review_key, None)
                     st.session_state.pop(original_token_key, None)
                     if staged[0]:
                         st.session_state[prefix + "_committed_upload_digest"] = inspection.sha256

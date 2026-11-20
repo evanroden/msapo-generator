@@ -93,6 +93,10 @@ def _use_newer(prefix, newer):
     st.session_state[prefix + "_active_sequence"] = newer.revision
     st.session_state[prefix + "_active_generation"] = newer.generation
     st.session_state[prefix + "_active_updated_at"] = newer.updated_at
+    from app.monthly_report_conflict_merge import MergeBase
+    st.session_state[prefix + "_active_base"] = MergeBase(newer.draft)
+    st.session_state[prefix + "_active_base_revision"] = newer.revision
+    st.session_state[prefix + "_active_base_generation"] = newer.generation
     st.session_state[prefix + "_directory_defaults_attempted"] = True
 
 
@@ -219,6 +223,9 @@ def render_browser_conflict(draft, token, prefix, assets, base_revision):
             image_key=prefix + "_browser_comparison_images_" + identity,
             saved_asset_loader=lambda ref: recovered_assets.get(ref) or library.read_asset(contract, selected, ref),
             working_asset_loader=lambda ref: assets.get(ref) or library.read_asset(contract, selected, ref))
+        if same_sites:
+            from app.monthly_report_active_merge_ui import render_merge_choice
+            render_merge_choice(draft, newer, token, prefix, assets, profile, identity)
         st.caption("Keeping this page replaces the newer recovery copy. Using the newer copy replaces this page's edits. "
                    "Completed report versions and original files stay unchanged.")
     else:

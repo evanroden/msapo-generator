@@ -42,8 +42,12 @@ def test_water_correction_opens_matching_page_beside_the_existing_form(monkeypat
         return [stream] if label == "Water-treatment files" else result
     monkeypatch.setattr(st, "file_uploader", selected)
     app.run()
-    include = _button(app, "Include page")
-    include.click().run()
+    # A70: both clear native-text pages attach on upload; the page task
+    # reopens them for captions and corrections.
+    assert any("Included 2 native-text Water pages automatically" in x.value for x in app.caption)
+    app.run()
+    _button(app, "Report pages").click().run()
+    next(w for w in app.selectbox if w.label == "Page to review").set_value(2).run()
     assert next(w for w in app.selectbox if w.label == "Page to review").value == 2
     source, = app.session_state[prefix + "_draft"].sources
     date_field, = [w for w in app.date_input if w.label == "Source date"]
@@ -117,8 +121,9 @@ def test_compact_water_keeps_replacement_inside_its_report_pages_task(monkeypatc
         return [stream] if label == "Water-treatment files" else result
     monkeypatch.setattr(st, "file_uploader", selected)
     app.run()
-    _button(app, "Include page").click().run()
-    _button(app, "Include page").click().run()
+    # A70: both clear native-text pages attach on upload instead of two
+    # Include page decisions; the report pages task stays closed.
+    assert any("Included 2 native-text Water pages automatically" in x.value for x in app.caption)
     app.run()
     assert not app.exception
     action_style = ".st-key-" + prefix + "_edit_water_reports_page_replacement_actions{display:"

@@ -85,7 +85,8 @@ def default_slot(section):
 
 
 def table_without_prices(item):
-    rows = item.rows[item.table_header_row:]
+    from app.monthly_report_word_table_bands import typed_data_rows
+    rows = typed_data_rows(item, item.table_header_row)
     if not rows:
         return None, ()
     if getattr(item, "section", "") == "activity":
