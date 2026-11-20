@@ -541,6 +541,33 @@ def extract_text_from_image(file_bytes: bytes, suffix: str) -> str:
     return _ocr_request(content)
 
 
+def extract_text_from_docx(file_bytes: bytes) -> str:
+    """Read Word paragraphs and table cells in document order, without editing it."""
+    from docx import Document
+    from docx.oxml.table import CT_Tbl
+    from docx.oxml.text.paragraph import CT_P
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    document = Document(BytesIO(file_bytes))
+    parts: list[str] = []
+    for child in document.element.body.iterchildren():
+        if isinstance(child, CT_P):
+            value = Paragraph(child, document).text.strip()
+            if value:
+                parts.append(value)
+        elif isinstance(child, CT_Tbl):
+            for row in Table(child, document).rows:
+                for cell in row.cells:
+                    value = cell.text.strip()
+                    if value:
+                        parts.append(value)
+    text = "\n".join(parts)
+    if len(text) > _MAX_EXTRACTED_CHARS:
+        raise ValueError("This Word quote has too much text. Paste a shorter quote.")
+    return text
+
+
 def extract_text(file_bytes: bytes, filename: str) -> str:
     """Detect the uploaded file type and extract its text."""
     suffix = Path(filename).suffix.lower()
@@ -550,6 +577,9 @@ def extract_text(file_bytes: bytes, filename: str) -> str:
 
     if suffix == ".pdf":
         return extract_text_from_pdf(file_bytes)
+
+    if suffix == ".docx":
+        return extract_text_from_docx(file_bytes)
 
     if suffix in SUPPORTED_IMAGE_SUFFIXES:
         return extract_text_from_image(file_bytes, suffix)

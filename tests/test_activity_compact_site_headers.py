@@ -115,7 +115,14 @@ def test_old_reader_results_and_requests_exclude_only_blocked_source(suffix):
     assert result.text == SAFE and not pages
     assert result.references == (sources.source_reference(safe.source, 1),)
     request = str(structured.reader_request(PROFILE, (blocked, safe), "activity_summary"))
-    assert blocked.source.id not in request and safe.source.id in request
+    assert blocked.source.id not in request
+    if suffix == ".csv":
+        # Fully native-mapped CSV pages must not spend an external reader call.
+        assert safe.source.id not in request
+        assert structured.reader_batches(PROFILE, (blocked, safe), "activity_summary") == ()
+    else:
+        # XLSX Activity pages have no complete native CSV mapping.
+        assert safe.source.id in request
     with pytest.raises(ValueError, match="site-specific"):
         structured.reader_update((blocked,), "activity_summary", {"items": payload["items"][:1]})
 

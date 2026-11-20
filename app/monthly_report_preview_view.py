@@ -50,7 +50,7 @@ export default function(component) {
     // rerender. Reconcile with the server's applied view on every invocation.
     // Reading position remains client state; only this bounded request retries.
     const ack = data.acknowledgedViewport;
-    const applied = ack ? JSON.stringify({visible:ack.visible,pages:ack.pages,dpi:ack.dpi,generation:ack.generation}) : null;
+    const applied = ack ? JSON.stringify({visible:ack.visible,pages:ack.pages,dpi:ack.dpi,generation:ack.generation,ticketKey:ack.ticketKey || null}) : null;
     if (applied) state.sent = applied;
     const host = parentElement.host || parentElement;
     const app = host.closest('[data-testid="stApp"]');
@@ -251,6 +251,20 @@ export default function(component) {
     // Only reading position is retained; no report text goes into browser storage.
     const views = window.__enfraPreviewViews || (window.__enfraPreviewViews = new Map());
     const viewKey = data.viewScope;
+    if (data.focusOnOpen) {
+        // Finished files open directly at their pages, without a disclosure
+        // click or a new toolbar. A byte change creates a new viewScope.
+        // This is a visual scroll only: never take keyboard focus from edits.
+        const opened = window.__enfraFinishedPdfOpened ||
+            (window.__enfraFinishedPdfOpened = new Map());
+        if (!opened.has(viewKey)) {
+            opened.set(viewKey, true);
+            while (opened.size > 32) opened.delete(opened.keys().next().value);
+            requestAnimationFrame(() => {
+                if (active && panel.isConnected) panel.scrollIntoView({block:'start', behavior:'auto'});
+            });
+        }
+    }
     if (state.scope !== viewKey) {
         const retained = views.get(viewKey);
         Object.assign(state, retained || {page:0,offset:0}, {
@@ -435,7 +449,7 @@ export default function(component) {
         remember();
         const pixels = Math.max(1, scroll.clientWidth) * Math.min(window.devicePixelRatio || 1, 2);
         const dpi = pixels > 1100 ? 150 : pixels > 850 ? 120 : 96;
-        const value = {visible:visibleNow(), pages:pagesKnown && shown.length ? shown : [state.page], dpi, generation:data.generation};
+        const value = {visible:visibleNow(), pages:pagesKnown && shown.length ? shown : [state.page], dpi, generation:data.generation, ticketKey:data.ticketKey || null};
         const serialized = JSON.stringify(value);
         if (state.requestSignature !== serialized || serialized === applied) {
             state.requestSignature=serialized; state.requestAttempts=0; state.requestFailed=false;
@@ -564,7 +578,7 @@ def _preview_component(_runtime):
     return st.components.v2.component('report_preview_surface', html=HTML, css=CSS, js=JS)
 
 
-def render_view(*, key, generation, title, ticket=None, images=(), status='', stale=False, on_change, view_scope=None, pending=False, on_poll=None, acknowledged_viewport=None):
+def render_view(*, key, generation, title, ticket=None, images=(), status='', stale=False, on_change, view_scope=None, pending=False, on_poll=None, acknowledged_viewport=None, focus_on_open=False):
     view = _preview_component(Runtime.instance())
     applied = acknowledged_viewport or {'visible': False, 'pages': (0,), 'dpi': 96}
     scope = str(view_scope or key)
@@ -585,12 +599,14 @@ def render_view(*, key, generation, title, ticket=None, images=(), status='', st
     with st.container(key='epc_preview_slot_' + key):
         return view(key=key, data={
             'generation': generation, 'title': title, 'viewScope': scope, 'ready': ticket is not None and not stale, 'stale': bool(stale),
+            'focusOnOpen': bool(focus_on_open),
             'sizes': ticket.sizes if ticket else (), 'status': status, 'pending': bool(pending),
             'initialPage': ticket.initial_page if ticket else 0,
             'ticketKey': ticket.key if ticket else None,
             'readyEpochMs': int(time() * 1000) if delivered else None,
             'acknowledgedViewport': {'visible': bool(applied['visible']), 'pages': list(applied['pages']),
-                                     'dpi': applied['dpi'], 'generation': generation},
+                                     'dpi': applied['dpi'], 'generation': generation,
+                                     'ticketKey': ticket.key if ticket else None},
             'pages': delivered,
         }, default={'viewport': None, 'poll': None}, on_viewport_change=on_change,
             on_poll_change=on_poll or (lambda: None), height='content')
