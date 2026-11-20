@@ -41,7 +41,7 @@ export default function(component) {
     // rerender. Reconcile with the server's applied view on every invocation.
     // Reading position remains client state; only this bounded request retries.
     const ack = data.acknowledgedViewport;
-    const applied = ack ? JSON.stringify({visible:ack.visible,pages:ack.pages,dpi:ack.dpi,generation:ack.generation}) : null;
+    const applied = ack ? JSON.stringify({visible:ack.visible,pages:ack.pages,dpi:ack.dpi,generation:ack.generation,ticketKey:ack.ticketKey || null}) : null;
     if (applied) state.sent = applied;
     const host = parentElement.host || parentElement;
     const app = host.closest('[data-testid="stApp"]');
@@ -404,7 +404,7 @@ export default function(component) {
         remember();
         const pixels = Math.max(1, scroll.clientWidth) * Math.min(window.devicePixelRatio || 1, 2);
         const dpi = pixels > 1100 ? 150 : pixels > 850 ? 120 : 96;
-        const value = {visible:visibleNow(), pages:pagesKnown && shown.length ? shown : [state.page], dpi, generation:data.generation};
+        const value = {visible:visibleNow(), pages:pagesKnown && shown.length ? shown : [state.page], dpi, generation:data.generation, ticketKey:data.ticketKey || null};
         const serialized = JSON.stringify(value);
         if (state.requestSignature !== serialized || serialized === applied) {
             state.requestSignature=serialized; state.requestAttempts=0; state.requestFailed=false;
@@ -545,8 +545,10 @@ def render_view(*, key, generation, title, ticket=None, images=(), status='', st
             'focusOnOpen': bool(focus_on_open),
             'sizes': ticket.sizes if ticket else (), 'status': status, 'pending': bool(pending),
             'initialPage': ticket.initial_page if ticket else 0,
+            'ticketKey': ticket.key if ticket else None,
             'acknowledgedViewport': {'visible': bool(applied['visible']), 'pages': list(applied['pages']),
-                                     'dpi': applied['dpi'], 'generation': generation},
+                                     'dpi': applied['dpi'], 'generation': generation,
+                                     'ticketKey': ticket.key if ticket else None},
             'pages': [{'index': index, 'image': b64encode(raw).decode('ascii')} for index, raw in images],
         }, default={'viewport': None, 'poll': None}, on_viewport_change=on_change,
             on_poll_change=on_poll or (lambda: None), height='content')

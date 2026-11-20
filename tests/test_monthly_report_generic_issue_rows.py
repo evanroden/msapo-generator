@@ -378,7 +378,8 @@ def test_starting_upload_edit_omit_save_reopen_reimport_and_two_rollovers(tmp_pa
     later = new_month_draft(following, ReportPeriod(2027, 1))
     for draft in (following, later):
         assert tuple(item.key for item in items(draft)) == original_keys
-        assert all(item.included for item in items(draft))
+        assert [item.included for item in items(draft)] == [
+            item.included for item in items(saved.draft)]
         assert [item.text for item in items(draft)] == [item.text for item in items(saved.draft)]
     assert library.load_snapshot(profile.contract, profile.key, PERIOD) == saved
     assert path.read_bytes() == original

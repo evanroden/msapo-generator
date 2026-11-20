@@ -225,7 +225,7 @@ def test_conflicting_sources_exclude_ambiguous_identity_and_keep_other_site():
     result = count((
         review("first", (Row("a", "n", "WO-1", "2026-12-09", "", "Open", "Non-PM"),)),
         review("second", (
-            Row("b", "n", "wo-1", "2026-12-10", "", "Closed", "Non-PM"),
+            Row("b", "n", "wo-1", "2026-12-09", "", "Closed", "Non-PM"),
             Row("c", "s", "WO-1", "2026-12-09", "", "Open", "Non-PM"),
         )),
     ), coverage=coverage, coverage_approvals=approvals)

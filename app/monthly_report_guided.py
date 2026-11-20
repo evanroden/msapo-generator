@@ -1096,12 +1096,10 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
             draft = replace(draft, sources=_keep_missing_sources(prefix, sources))
         if additions:
             draft, blocks = _apply_prepared(draft, blocks, additions, incoming_specs, prefix)
-            if local_destination == "water_reports":
-                # A completed page-review receipt is consumed only after the
-                # additions are present in the current draft. This prevents
-                # an intentionally removed page from silently reappearing.
-                from app.monthly_report_upload_ui import acknowledge_autoincluded_water_pages
-                acknowledge_autoincluded_water_pages(prefix, blocks)
+            from app.monthly_report_upload_ui import acknowledge_autoincluded_pages
+            # Consume a page-review receipt only after its exact approved
+            # images have been merged into this draft. No editor rerun here.
+            acknowledge_autoincluded_pages(prefix, blocks, local_destination)
     if section.key == "activity":
         from app.monthly_report_source_manager_ui import render_guided_source_manager
         # Vendor originals use this existing page-by-page manager. A second
