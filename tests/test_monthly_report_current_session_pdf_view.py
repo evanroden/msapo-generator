@@ -47,8 +47,10 @@ def test_exact_current_package_renders_existing_pdf_bytes_only(rendered):
     assert shown["key"] == "finished_report_pdf"
     assert shown["raw"] is current.pdf and shown["filename"] == "final.pdf"
     assert shown["owner_scope"] == output_ui._final_pdf_scope("monthly", "session-A")
-    assert sha256(current.pdf).hexdigest() in rendered.captions[0]
-    assert sha256(current.docx).hexdigest() in rendered.captions[0]
+    # U09 deliberately stopped showing opaque byte hashes to users; the
+    # exact bytes are still the ones shown (raw is current.pdf, above).
+    assert not any(sha256(current.pdf).hexdigest() in caption or sha256(current.docx).hexdigest() in caption
+                   for caption in rendered.captions)
     assert shown["focus_on_open"] is True
 
 
