@@ -255,11 +255,14 @@ def _issues(row, sites, period_key):
 
 
 def _mark_duplicates(rows):
-    """Duplicate site/WO records stay visible but cannot be counted as facts."""
+    """Ambiguous same-site, same-date IDs stay visible but never become totals.
+
+    A reused ID on a different work date is not proof of the same event.
+    """
     groups = {}
     for number, row in enumerate(rows):
         if row.work_order:
-            groups.setdefault((row.site, row.work_order.casefold()), []).append(number)
+            groups.setdefault((row.site, row.work_date, row.work_order.casefold()), []).append(number)
     collisions = {index for positions in groups.values() if len(positions) > 1
                   for index in positions}
     return tuple(replace(row, issues=tuple(v for v in row.issues
