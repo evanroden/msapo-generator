@@ -22,6 +22,7 @@ from PIL import Image, UnidentifiedImageError
 from lxml import etree
 
 from app.image_open import open_image, image_formats_for_suffix
+from app.monthly_report_shape_labels import DrawingLabel, collect_drawing_labels
 from app.monthly_report_xml_parser import parse_xml_stream
 from app.monthly_report_docx import normalize_report_image
 from app.monthly_report_model import (
@@ -122,9 +123,16 @@ class ImportItem:
     # Original rows stay intact for source identity and native geometry checks.
     # Only a proved full-width service-call title may precede the real header.
     table_header_row: int = 0
+    # Native (row, physical cell, grid column, span, vertical merge) pointers.
+    # Metadata is inspection-only; no source row is deleted or rewritten.
+    table_cell_refs: tuple[tuple[int, int, int, int, str], ...] = ()
+    table_row_roles: tuple[str, ...] = ()
+    table_row_groups: tuple[int, ...] = ()
     # Relationship identity is stable within the original source part and
     # must not be replaced with a guessed image/shape role.
     relationship_id: str = ""
+    # Review evidence only, never editable geometry.
+    drawing_labels: tuple[DrawingLabel, ...] = ()
 
     @property
     def label(self) -> str:
@@ -260,6 +268,38 @@ def _relations(archive: ZipFile, part: str) -> dict[str, tuple[str, str]]:
         target = "" if rel.get("TargetMode", "").lower() == "external" else _resolve(part, rel.get("Target", ""))
         result[identity] = (target, rel.get("Type", ""))
     return result
+
+
+def _controlled_children(parent, target):
+    """Direct Word table/row/cell children, including simple SDT containers.
+
+    Do not descend arbitrarily: nested tables are different source objects.
+    A content control contributes its own direct children in document order.
+    """
+    result = []
+    for child in parent:
+        if child.tag == target:
+            result.append(child)
+        elif child.tag == W + "sdt":
+            content = child.find(W + "sdtContent")
+            if content is not None:
+                result.extend(_controlled_children(content, target))
+    return result
+
+
+def _controlled_table(element):
+    """Recognize only one complete table inside a top-level content control."""
+    if element.tag == W + "tbl":
+        return element
+    if element.tag != W + "sdt":
+        return None
+    content = element.find(W + "sdtContent")
+    if content is None:
+        return None
+    children = [child for child in content if child.tag in (W + "p", W + "tbl", W + "sdt")]
+    if len(children) != 1:
+        return None
+    return _controlled_table(children[0])
 
 
 def _visible(element):
@@ -577,9 +617,11 @@ def _service_call_title_band(element, rows, section):
     if any(value not in ("cost", "unitprice", "amount") for value in headers[5:]):
         return False
     width = len(headers)
-    native_rows = element.findall(W + "tr")
-    title_cells = native_rows[0].findall(W + "tc")
-    header_cells = native_rows[1].findall(W + "tc")
+    native_rows = _controlled_children(element, W + "tr")
+    if len(native_rows) < 2:
+        return False
+    title_cells = _controlled_children(native_rows[0], W + "tc")
+    header_cells = _controlled_children(native_rows[1], W + "tc")
     if len(title_cells) != 1 or len(header_cells) != width:
         return False
     span = title_cells[0].find(f"{W}tcPr/{W}gridSpan")
@@ -723,10 +765,11 @@ def inspect_docx(path: Path) -> DocxInspection:
                             if part.startswith(("word/header", "word/footer")):
                                 _remove_page_field_results(element, page_fields)
                             text = _text(element)
+                            table_element = _controlled_table(element)
                             # Some Word producers emit text frames without the
                             # DrawingML/VML wrappers inventoried below. Their labels
                             # are layout evidence, not ordinary narrative or headings.
-                            standalone_frame = (element.tag != W + "tbl"
+                            standalone_frame = (table_element is None
                                 and any(node.tag == W + "txbxContent" for node in element.iter())
                                 and not any(node.tag in (V + "group", V + "shape", V + "rect")
                                     or (node.tag == A + "graphicData"
@@ -754,7 +797,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                             if standalone_frame:
                                 heading_fragments = []
                                 heading_positions = []
-                            if part == "word/document.xml" and element.tag != W + "tbl" and not standalone_frame:
+                            if part == "word/document.xml" and table_element is None and not standalone_frame:
                                 if "tableofcontents" in re.sub(r"[^a-z]", "", text.casefold()):
                                     toc_section, section, heading_fragments = word_section, "", []
                                     heading_positions = []
@@ -819,16 +862,29 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 for kind in ("footnote", "endnote"):
                                     for reference in element.iter(W + kind + "Reference"):
                                         note_owners[(kind, reference.get(W + "id", ""))] = (section, content_slot)
-                            picture_table = element.tag == W + "tbl" and section == "activity" and content_slot == "improvements" and any(
+                            picture_table = table_element is not None and section == "activity" and content_slot == "improvements" and any(
                                 node.tag in (A + "blip", V + "imagedata") for node in element.iter())
                             parents = {child: parent for parent in element.iter() for child in parent}
+                            try:
+                                drawing_labels = collect_drawing_labels(
+                                    element, part=part, position=position, word_section=word_section
+                                ) if (has_native_frame or any(
+                                    node.tag in (A + "t", V + "group", W + "object")
+                                    or (node.tag == A + "graphicData"
+                                        and not node.get("uri", "").endswith("/picture"))
+                                    for node in element.iter())) else ()
+                            except ValueError as exc:
+                                raise ImportError(str(exc)) from exc
+                            # Source labels do not establish native drawing editability.
+                            drawing_text = "\n".join(label.text for label in drawing_labels
+                                                     if label.source == "drawing_text")
                             from app.monthly_report_native_design import mint_divider_background
                             if (part == "word/document.xml" and _is_native_divider_background(element, text)
                                     and (alternatives_equivalent or not mint_divider_background(element, text))):
                                 background_positions.append((position, word_section))
                                 if mint_divider_background(element, text):
                                     mint_background_positions.add((position, word_section))
-                            if element.tag == W + "tbl":
+                            if table_element is not None:
                                 from app.monthly_report_docx_tables import native_grid
                                 # Word allows full data tables nested inside cells. The
                                 # parent is a layout container, not a flattened child
@@ -836,7 +892,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 # as its own stable, independently editable occurrence.
                                 table_ids = {}
                                 child_counts = defaultdict(int)
-                                for native_table in element.iter(W + "tbl"):
+                                for native_table in table_element.iter(W + "tbl"):
                                     ancestor = parents.get(native_table)
                                     while ancestor is not None and ancestor.tag != W + "tbl":
                                         ancestor = parents.get(ancestor)
@@ -845,7 +901,9 @@ def inspect_docx(path: Path) -> DocxInspection:
                                         child_counts[parent_id] += 1
                                     nested_id = (f"{parent_id}-nested-{child_counts[parent_id]:03d}"
                                                  if parent_id else None)
-                                    grid = native_grid(native_table, text_of=_text, error_type=ImportError)
+                                    # Rows and cells may sit inside simple content controls.
+                                    grid = native_grid(native_table, text_of=_text, error_type=ImportError,
+                                                       children=_controlled_children)
                                     direct_text = _text(native_table, exclude=set(grid.descendants))
                                     # Graphics inside a child do not silently make
                                     # the parent editable, or vice versa.
@@ -864,13 +922,24 @@ def inspect_docx(path: Path) -> DocxInspection:
                                     elif complex_table:
                                         recorded = add("unsupported", part, position,
                                             item_id=nested_id, text=direct_text,
+                                            drawing_labels=drawing_labels if native_table is element else (),
                                             note="Word table contains text boxes or unsupported drawings and needs manual layout review. "
                                                  "Retain its source page or add a reviewed replacement; extracted text does not preserve the layout.")
-                                    elif grid.rows and (native_table is not element or not picture_table):
-                                        title_band = _service_call_title_band(native_table, grid.rows, section)
-                                        width = len(grid.rows[0])
+                                    elif grid.rows and (native_table is not table_element or not picture_table):
+                                        from app.monthly_report_word_table_bands import word_table_geometry
+                                        try:
+                                            geometry = word_table_geometry(native_table, grid.rows)
+                                        except ValueError as exc:
+                                            raise ImportError("Table is too wide or malformed to review safely.") from exc
+                                        # The physical grid also counts gridAfter and tblGrid columns.
+                                        width = max(len(grid.rows[0]), geometry.width)
+                                        rows = tuple(row + ("",) * (width - len(row)) for row in grid.rows)
+                                        title_band = _service_call_title_band(native_table, rows, section)
                                         recorded = add("table", part, position, item_id=nested_id,
-                                            rows=grid.rows, table_header_row=1 if title_band else 0,
+                                            rows=rows, table_header_row=1 if title_band else 0,
+                                            table_cell_refs=geometry.cell_refs,
+                                            table_row_roles=geometry.row_roles,
+                                            table_row_groups=geometry.row_groups,
                                             suggested_slot=content_slot or _suggest("table", direct_text, section),
                                             merged_title_rows=tuple(index for index, count in grid.full_width_bands
                                                                     if width >= 2 and count == width),
@@ -879,7 +948,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                                                   "Merged cells retain text in the first column of their span. Confirm headers and columns."))
                                         if title_band:
                                             add("text", part, position, item_id=recorded + "-title",
-                                                text=grid.rows[0][0], suggested_slot="service_calls",
+                                                text=rows[0][0], suggested_slot="service_calls",
                                                 note="Native table title")
                                     else:
                                         # A picture-only Word table was already exposed
@@ -887,13 +956,18 @@ def inspect_docx(path: Path) -> DocxInspection:
                                         # It has no nested grid that can disappear here.
                                         continue
                                     table_ids[native_table] = recorded
+                            elif element.tag == W + "sdt" and any(node.tag == W + "tbl" for node in element.iter()):
+                                add("unsupported", part, position, text=text,
+                                    note="Word content control contains mixed or multiple table blocks. "
+                                         "Keep the native source for review; do not flatten its cells into prose.")
                             elif standalone_frame:
                                 note = ("Word text frame needs manual layout review. Preserve and review its complete page "
                                         "or add a reviewed replacement; extracted labels do not preserve the layout.")
                                 if part == "word/document.xml" and word_section <= 2 and section in ("", "cover"):
                                     note += " " + _cover_unreadable_object_note(
                                         element, word_section=word_section, position=position)
-                                add("unsupported", part, position, text=text, note=note)
+                                add("unsupported", part, position, text=text, note=note,
+                                    drawing_labels=drawing_labels)
                             elif text:
                                 # A floating Word textbox has separate layout/review
                                 # ownership. Do not also offer its words as ordinary
@@ -986,8 +1060,20 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 chart_ids, chart_labels, chart_notices = chart_relationship_evidence(
                                     archive, graphics, relations, names)
                             legacy_groups = element.findall(".//" + V + "group")
-                            legacy_text = any(node.find(".//" + W + "txbxContent") is not None for node in element.iter() if node.tag in (V + "shape", V + "rect"))
-                            if graphics or legacy_groups or legacy_text:
+                            legacy_shapes = [node for node in element.iter()
+                                if node.tag in (V + "shape", V + "rect", V + "roundrect", V + "oval", V + "line")
+                                and node.find(".//" + V + "imagedata") is None]
+                            legacy_text = any(node.find(".//" + W + "txbxContent") is not None
+                                              for node in legacy_shapes)
+                            # A standalone Word text-frame blocker already owns its
+                            # text-bearing VML wrapper. Inventory any sibling unlabeled
+                            # shape separately, without double-counting that textbox.
+                            remaining_legacy_shapes = [
+                                node for node in legacy_shapes
+                                if not (standalone_frame
+                                        and node.find(".//" + W + "txbxContent") is not None)
+                            ]
+                            if graphics or legacy_groups or remaining_legacy_shapes:
                                 from app.monthly_report_smartart import closed_smartart_text
                                 smartart = closed_smartart_text(archive, graphics, relations) if section == "organization" and not legacy_groups and not legacy_text else None
                                 if smartart is not None:
@@ -1005,6 +1091,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                                         native_role = ""
                                     note = native_role or ("Alternate Word representations contain different or unsupported content. Review and replace this exact drawing; every original representation is retained." if divergent_native else
                                               "Unmapped native SmartArt: complete local text-only drawing could not be established." if diagram else
+                                              "Unlabelled VML artwork: source shape is retained for layout review, not treated as empty text." if legacy_shapes and not drawing_labels and not text else
                                               "Native divider artwork" if detected and detected != "unmatched" else
                                               "Native Word drawing: preserve and review its complete page layout, or add a replacement picture. Nothing is executed during inspection.")
                                     # Recognized divider artwork is matched by exact note
@@ -1019,10 +1106,16 @@ def inspect_docx(path: Path) -> DocxInspection:
                                     if chart_notices:
                                         note += " " + " ".join(chart_notices)
                                     add("native_layout" if native_role else "unsupported", part, position,
-                                        text="\n".join(t for t in (text, *chart_labels) if t),
-                                        relationship_id=";".join(chart_ids), note=note)
+                                        text="\n".join(t for t in (text, drawing_text, *chart_labels) if t),
+                                        relationship_id=";".join(chart_ids), note=note,
+                                        drawing_labels=drawing_labels)
                             if element.find(".//" + W + "altChunk") is not None or element.tag == W + "altChunk":
                                 add("unsupported", part, position, note="Embedded document content was not executed. Review it in the original.")
+                            if element.find(".//" + W + "object") is not None or element.tag == W + "object":
+                                add("unsupported", part, position, text=drawing_text,
+                                    note="Embedded or unsupported Word object was not interpreted or executed. "
+                                         "Review the exact source region in the original; supply an explicit safe replacement.",
+                                    drawing_labels=drawing_labels)
                             if part == "word/document.xml":
                                 if cover_open and not page_break:
                                     for item in items[first_item:]:
@@ -1209,7 +1302,8 @@ def _map_items(path, inspection, mappings, *, source_view=None, _operation=None)
                 raise ImportError("Invalid imported table column mapping.")
             header_row = item.table_header_row if mapping.first_row_header else 0
             labels = item.rows[header_row] if mapping.first_row_header else tuple(f"Column {i+1}" for i in range(width))
-            rows = item.rows[header_row + 1:] if mapping.first_row_header else item.rows
+            from app.monthly_report_word_table_bands import typed_data_rows
+            rows = typed_data_rows(item, header_row + 1 if mapping.first_row_header else 0)
             # Reconstruct only a fully recognized, geometry-proved vendor list.
             # Explicit user column selections remain authoritative.
             if mapping.slot == "subcontractor_matrix" and mapping.first_row_header and not mapping.columns:

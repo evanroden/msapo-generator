@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from app.monthly_report_model import ReportFollowUp, STOCK_TEXTS, followup_record
 from app.monthly_report_sources import source_reference
-from app.monthly_report_content_policy import table_price_columns
+from app.monthly_report_content_policy import table_price_columns, proposal_price_columns
 
 PROPOSAL_STATUSES = ("pending", "approved", "declined", "on_hold", "not_confirmed")
 ISSUE_STATUSES = ("ongoing", "updated", "resolved")
@@ -553,16 +553,22 @@ def seed_followups(draft):
         return tuple(dict.fromkeys(ref for ref in references if page_identity(ref) is not None))
 
     draft = canonical_issues(draft)
+    # An explicitly left-out proposal is a durable source-identity tombstone:
+    # never recreate it on repeat import or a later month. Keep the authored
+    # status and evidence available for deliberate re-inclusion in the editor.
     result = [
         replace(
             normalize_proposal(item),
             carried_from=(item.carried_from or draft.period.key) if item.category == "issue" else draft.period.key,
-            included=True, reviewed_fingerprint="", update_period=_carried_update_period(item, draft.period)
+            # Rollover never re-includes a deliberate omission. An unsupported
+            # resolution must remain visible, with its evidence gate intact.
+            included=(item.included if item.category != "issue" or item.status != "resolved" else True),
+            reviewed_fingerprint="", update_period=_carried_update_period(item, draft.period)
         )
         for item in draft.follow_ups
         if (item.category == "issue" and item.text.strip()
             and (item.status != "resolved" or problems(item, draft)))
-        or (item.category != "issue" and item.included)
+        or (item.category != "issue" and (item.included or item.category == "proposal"))
     ]
     keys = {item.key for item in result}
     represented = Counter((item.category, item.text.strip(), item.status) for item in result)
@@ -593,7 +599,8 @@ def seed_followups(draft):
         for columns, rows, table_references in tables:
             width = max((len(row) for row in rows), default=len(columns))
             columns = (*columns, *(f"Detail {n+1}" for n in range(len(columns), width)))
-            prices = table_price_columns(columns, rows)
+            prices = (proposal_price_columns(columns, rows) if category == "proposal"
+                      else table_price_columns(columns, rows))
             for row in rows:
                 if category == "proposal":
                     entries.append((*_proposal_table_details(columns, row, prices), table_references))

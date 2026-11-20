@@ -16,20 +16,25 @@ class NativeGrid:
     descendants: tuple
 
 
-def native_grid(element, *, text_of, error_type):
+def native_grid(element, *, text_of, error_type, children=None):
     """Read direct grid text and all child tables, preserving merged-cell spans.
 
     The table's native geometry remains in the original. Word vertical merges
     are not silently guessed into repeated values; empty continuation cells
-    remain explicit and must be confirmed by the editor.
+    remain explicit and must be confirmed by the editor. ``children(parent, tag)``
+    lists a parent's direct rows or cells; the importer passes one that also
+    looks inside simple content controls.
     """
+    if children is None:
+        def children(parent, tag):
+            return parent.findall(tag)
     descendants = tuple(node for node in element.iter(W + "tbl") if node is not element)
     rows, full_width_bands = [], []
-    for row in element.findall(W + "tr"):
+    for row in children(element, W + "tr"):
         cells = []
         before = row.find(f"{W}trPr/{W}gridBefore")
         cells.extend([""] * min(100, int(before.get(W + "val", "0"))) if before is not None else [])
-        row_cells = row.findall(W + "tc")
+        row_cells = children(row, W + "tc")
         if len(row_cells) == 1 and before is None:
             merged = row_cells[0].find(f"{W}tcPr/{W}gridSpan")
             if merged is not None:

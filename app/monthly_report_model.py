@@ -278,6 +278,10 @@ class EvidenceFact:
     tags: tuple[str, ...] = ()
     status: str = ""
     flags: tuple[str, ...] = ()
+    # Populated by newly read AI facts; empty values preserve saved human/legacy
+    # records without manufacturing evidence from missing original files.
+    source_sha256: str = ""
+    page_sha256: str = ""
 
 
 @dataclass(frozen=True)
@@ -322,6 +326,10 @@ class ReportSource:
     pdf_text_blocks: tuple[tuple[int, int, int, str], ...] = ()
     financial_source_review: SourceFinancialReview | None = None
     financial_page_reviews: tuple[ReviewedFinancialPage, ...] = ()
+    # Message envelope identity and 1-based direct-attachment position. Neither
+    # changes the child original digest nor implies an approved work event.
+    attachment_parent_sha256: str = ""
+    attachment_index: int = 0
 
     @property
     def fingerprint(self) -> str:
@@ -406,6 +414,20 @@ class ReportSnapshot:
 
 def _digest(value: object) -> str:
     record = asdict(value)
+    # Empty optional fact anchors must not rewrite historical fingerprints,
+    # including the digest of an unchanged report and its review receipts.
+    def retain_legacy_fact_identity(source_record):
+        for fact in source_record.get("facts", ()):
+            if not fact.get("source_sha256"):
+                fact.pop("source_sha256", None)
+            if not fact.get("page_sha256"):
+                fact.pop("page_sha256", None)
+
+    if isinstance(value, ReportSource):
+        retain_legacy_fact_identity(record)
+    if isinstance(value, ReportDraft):
+        for source in record["sources"]:
+            retain_legacy_fact_identity(source)
     # Adding optional scope evidence must not invalidate unchanged historical
     # source/page/report fingerprints merely because the schema acquired it.
     if isinstance(value, ReportSource) and not value.scope_review:
@@ -413,7 +435,8 @@ def _digest(value: object) -> str:
     if isinstance(value, ReportSource) and not value.pdf_text_blocks:
         record.pop("pdf_text_blocks", None)
     if isinstance(value, ReportSource):
-        for field in ("financial_source_review", "financial_page_reviews"):
+        for field in ("financial_source_review", "financial_page_reviews",
+                      "attachment_parent_sha256", "attachment_index"):
             if not record.get(field):
                 record.pop(field, None)
     if isinstance(value, ReportDraft):
@@ -439,6 +462,11 @@ def _digest(value: object) -> str:
                 source.pop("pdf_text_blocks", None)
             if not source.get("scope_review"):
                 source.pop("scope_review", None)
+            # Absent provenance must leave historical draft fingerprints intact.
+            if not source.get("attachment_parent_sha256"):
+                source.pop("attachment_parent_sha256", None)
+            if not source.get("attachment_index"):
+                source.pop("attachment_index", None)
         for item in record["follow_ups"]:
             if not item.get("update_period"):
                 item.pop("update_period", None)

@@ -5,7 +5,9 @@ import time
 from contextlib import contextmanager
 
 from app import pdf_converter
+from app.monthly_latency_spans import measure_span, record_span
 from app.monthly_report_library import _root
+from app.monthly_report_latency_trace import span
 
 _SLOT = threading.Lock()
 _CONVERSION_LOCAL = threading.local()
@@ -23,10 +25,14 @@ def conversion_slot(*, wait_seconds=10):
         return
     from app.office_conversion_admission import OfficeLaneBusy, conversion_lane
     from app import office_process
+    from contextlib import ExitStack
     try:
-        with conversion_lane(wait_seconds=wait_seconds, serial_lock=_SLOT,
-                             folder=_root() / 'render-jobs',
-                             memory_headroom=memory_headroom) as (lane, parallel):
+        with ExitStack() as stack:
+            # Waiting for a conversion lane is queue time, not conversion time.
+            with span("job_queue"):
+                lane, parallel = stack.enter_context(conversion_lane(
+                    wait_seconds=wait_seconds, serial_lock=_SLOT,
+                    folder=_root() / 'render-jobs', memory_headroom=memory_headroom))
             office_process._OFFICE_MARKER_LOCAL.slot = lane
             office_process._OFFICE_MARKER_LOCAL.serial = not parallel
             try:
@@ -69,15 +75,19 @@ def _reclaim_preview_heap():
 
 def convert_to_pdf(path, *, wait_seconds=10, lossless_images=False):
     with conversion_slot(wait_seconds=wait_seconds):
-        if lossless_images is not False:
-            return pdf_converter.convert_to_pdf(path, lossless_images=lossless_images)
-        return pdf_converter.convert_to_pdf(path)
+        # Do not count thread/process-lock admission as office execution.
+        with span("conversion"), measure_span("office_execution"):
+            if lossless_images is not False:
+                return pdf_converter.convert_to_pdf(path, lossless_images=lossless_images)
+            return pdf_converter.convert_to_pdf(path)
 
 
 # Assembly can hold decoded pictures and an entire OOXML package. Serialize that
 # phase separately from the backend lock: a metafile helper may itself convert a
 # document, so holding the conversion lock around assembly would deadlock it.
-from app.monthly_preview_memory_budget import preview_worker_budget, required_free_bytes
+from app.monthly_preview_memory_budget import (
+    FREE_MEMORY_RESERVE_BYTES, PREVIEW_JOB_ESTIMATE_BYTES, preview_worker_budget, required_free_bytes,
+)
 
 
 class _ParallelWorkSlots:
@@ -117,6 +127,13 @@ _FOREGROUND_WAITING = 0
 _FOREGROUND_ACTIVE = 0
 _REVIEW_WAITING = 0
 PREVIEW_HEADROOM_BYTES = 160 * 1024 * 1024
+# Free memory a background conversion must leave while it runs. Admission
+# still needs PREVIEW_HEADROOM_BYTES before anything starts. Once admitted,
+# the conversion's own LibreOffice process uses part of that room, so
+# demanding the full 160 MiB throughout made every preview admitted with
+# less than about 190 MiB free stop itself, requeue and stop again for as
+# long as memory stayed there: the preview never finished.
+PREVIEW_RUNNING_FLOOR_BYTES = 64 * 1024 * 1024
 
 
 def _memory_status():
@@ -164,7 +181,14 @@ class _PreviewMemoryGuard:
         self.owner = threading.get_ident()
         self.finite = headroom is not None
 
-    def __call__(self):
+    def __call__(self, *, running=False):
+        """Refuse or stop this preview under memory pressure.
+
+        running=True is for the lease's own child process: once it has been
+        launched, only a fall below PREVIEW_RUNNING_FLOOR_BYTES (plus the
+        estimate of any other running job) stops it. Before launch the full
+        admission headroom applies.
+        """
         if (threading.get_ident() != self.owner or not getattr(_WORK_LOCAL, 'active', False)
                 or getattr(_WORK_LOCAL, 'preview_guard', None) is not self):
             raise RenderBusy('The preview work lease is no longer current. Your edits are still here.')
@@ -175,10 +199,15 @@ class _PreviewMemoryGuard:
                 raise RenderBusy('Preview memory could not be checked. Your edits are still here.')
         if headroom is not None:
             self.finite = True
-            required = PREVIEW_HEADROOM_BYTES
+            required = PREVIEW_RUNNING_FLOOR_BYTES if running else PREVIEW_HEADROOM_BYTES
             if _WORK_CAPACITY > 1:
                 with _ADMISSION_LOCK:
                     required = required_free_bytes(max(0, _ACTIVE_WORK - 1))
+                if running:
+                    # This job is already using its own estimate; keep the
+                    # floor plus the estimates of the other running jobs.
+                    required -= (PREVIEW_JOB_ESTIMATE_BYTES + FREE_MEMORY_RESERVE_BYTES
+                                 - PREVIEW_RUNNING_FLOOR_BYTES)
             if headroom < required:
                 raise RenderBusy('Preview is queued while the service is busy. Your edits are still here. Retry shortly.')
 
@@ -221,32 +250,37 @@ def work_slot(*, preview=False, review=False, wait_seconds=130):
     if getattr(_WORK_LOCAL, 'active', False):
         yield
         return
-    acquired = False
-    if preview:
-        headroom = memory_headroom()
-        if headroom is not None and headroom < PREVIEW_HEADROOM_BYTES:
-            raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
-        if review:
-            acquired = _wait_for_review_slot(wait_seconds)
+    queue_started = time.monotonic()
+    with span("job_queue"):
+        acquired = False
+        if preview:
+            headroom = memory_headroom()
+            if headroom is not None and headroom < PREVIEW_HEADROOM_BYTES:
+                record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
+                raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
+            if review:
+                acquired = _wait_for_review_slot(wait_seconds)
+            else:
+                with _PRIORITY_LOCK:
+                    if _FOREGROUND_WAITING or _FOREGROUND_ACTIVE or _REVIEW_WAITING:
+                        record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
+                        raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
+                    acquired = _WORK_SLOT.acquire(blocking=False)
         else:
             with _PRIORITY_LOCK:
-                if _FOREGROUND_WAITING or _FOREGROUND_ACTIVE or _REVIEW_WAITING:
-                    raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
-                acquired = _WORK_SLOT.acquire(blocking=False)
-    else:
-        with _PRIORITY_LOCK:
-            _FOREGROUND_WAITING += 1
-        try:
-            acquired = _WORK_SLOT.acquire(timeout=max(0, min(float(wait_seconds), 130)))
-        finally:
-            with _PRIORITY_LOCK:
-                _FOREGROUND_WAITING -= 1
-                if acquired:
-                    # Transition waiting -> running atomically for Review
-                    # and automatic-preview priority checks.
-                    _FOREGROUND_ACTIVE += 1
-    if not acquired:
-        raise RenderBusy('Another report is being prepared. Your saved work is unchanged; retry generation shortly.')
+                _FOREGROUND_WAITING += 1
+            try:
+                acquired = _WORK_SLOT.acquire(timeout=max(0, min(float(wait_seconds), 130)))
+            finally:
+                with _PRIORITY_LOCK:
+                    _FOREGROUND_WAITING -= 1
+                    if acquired:
+                        # Transition waiting -> running atomically for Review
+                        # and automatic-preview priority checks.
+                        _FOREGROUND_ACTIVE += 1
+        if not acquired:
+            record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
+            raise RenderBusy('Another report is being prepared. Your saved work is unchanged; retry generation shortly.')
     # Admission is fail-closed only on explicitly opted-in high-resource hosts.
     # Check before allocating another DOCX/Pillow package, counting admissions
     # under one lock so two contenders cannot both spend the same headroom.
@@ -261,20 +295,27 @@ def work_slot(*, preview=False, review=False, wait_seconds=130):
                 available = memory_headroom()
                 if preview:
                     if available is None or available < required_free_bytes(_ACTIVE_WORK):
+                        record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
                         raise RenderBusy(
                             'Additional preview work is queued while memory is busy. '
                             'Your edits are still here. Retry shortly.')
                 elif _ACTIVE_WORK:
                     required = (512 + 768 * (_ACTIVE_WORK + 1)) * 1024 * 1024
                     if available is None or available < required:
+                        record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
                         raise RenderBusy('Additional report work is queued while memory is busy. Your saved work is unchanged.')
                 _ACTIVE_WORK += 1
                 reserved = True
         _WORK_LOCAL.active = True
         _WORK_LOCAL.preview_guard = _PreviewMemoryGuard(headroom) if preview else None
         try:
-            if preview:
-                _WORK_LOCAL.preview_guard()
+            try:
+                if preview:
+                    _WORK_LOCAL.preview_guard()
+            except RenderBusy:
+                record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
+                raise
+            record_span("work_queue", time.monotonic() - queue_started)
             yield
         finally:
             _WORK_LOCAL.preview_guard = None

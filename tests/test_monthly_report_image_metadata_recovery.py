@@ -164,7 +164,7 @@ def test_bad_image_attachment_does_not_abandon_email_or_other_direct_attachments
     contents, notices = sources.ingest_batch(profile, (("service.eml", raw),))
     assert tuple(item.source.filename for item in contents) == ("service.eml", "first.txt", "last.txt")
     assert tuple(sources.source_bytes(profile, item.source) for item in contents) == (raw, FIRST, LAST)
-    assert len(notices) == 1 and "Not read: bad-metadata.png." in notices[0] and RECOVERY in notices[0]
+    assert len(notices) == 1 and "Not read: bad-metadata.png (attachment 2 of service.eml)." in notices[0] and RECOVERY in notices[0]
 
 
 def test_later_product_syntax_error_is_not_disguised_as_a_bad_image(profile, monkeypatch):

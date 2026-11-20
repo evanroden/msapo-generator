@@ -1,9 +1,11 @@
 """A scrollable preview that requests only visible pages, without remote scripts."""
-from base64 import b64encode
 from functools import lru_cache
+from time import time
 
 import streamlit as st
 from streamlit.runtime import Runtime
+
+from app.monthly_report_picture_group import _media_url
 
 
 CSS = """
@@ -37,11 +39,18 @@ export default function(component) {
     const scroll = panel.querySelector('.report-preview-scroll');
     const status = panel.querySelector('.report-preview-status');
     const state = panel._previewState || (panel._previewState = {visible:false, sent:'', page:0});
+    const mediaIdentity = String(data.generation) + ':' + String(data.ticketKey || '');
+    if (state.mediaIdentity !== mediaIdentity) {
+        state.mediaIdentity = mediaIdentity;
+        state.requestFailed = false;
+        state.requestAttempts = 0;
+        state.sent = '';
+    }
     // A browser send is not proof that its callback survived a competing
     // rerender. Reconcile with the server's applied view on every invocation.
     // Reading position remains client state; only this bounded request retries.
     const ack = data.acknowledgedViewport;
-    const applied = ack ? JSON.stringify({visible:ack.visible,pages:ack.pages,dpi:ack.dpi,generation:ack.generation}) : null;
+    const applied = ack ? JSON.stringify({visible:ack.visible,pages:ack.pages,dpi:ack.dpi,generation:ack.generation,ticketKey:ack.ticketKey || null}) : null;
     if (applied) state.sent = applied;
     const host = parentElement.host || parentElement;
     const app = host.closest('[data-testid="stApp"]');
@@ -242,6 +251,20 @@ export default function(component) {
     // Only reading position is retained; no report text goes into browser storage.
     const views = window.__enfraPreviewViews || (window.__enfraPreviewViews = new Map());
     const viewKey = data.viewScope;
+    if (data.focusOnOpen) {
+        // Finished files open directly at their pages, without a disclosure
+        // click or a new toolbar. A byte change creates a new viewScope.
+        // This is a visual scroll only: never take keyboard focus from edits.
+        const opened = window.__enfraFinishedPdfOpened ||
+            (window.__enfraFinishedPdfOpened = new Map());
+        if (!opened.has(viewKey)) {
+            opened.set(viewKey, true);
+            while (opened.size > 32) opened.delete(opened.keys().next().value);
+            requestAnimationFrame(() => {
+                if (active && panel.isConnected) panel.scrollIntoView({block:'start', behavior:'auto'});
+            });
+        }
+    }
     if (state.scope !== viewKey) {
         const retained = views.get(viewKey);
         Object.assign(state, retained || {page:0,offset:0}, {
@@ -305,8 +328,44 @@ export default function(component) {
             image.alt = data.title + ' — page ' + (index + 1);
             page.append(image);
         }
-        const src = 'data:image/jpeg;base64,' + wanted.image;
+        // The server sends a bounded, native session-scoped media URL, not
+        // an entire JPEG in every v2 component update. The URL is stable
+        // while an unchanged ticket/page is still rendered by this session.
+        const src = wanted.url;
+        if (typeof src !== 'string' || !/^\/(?:[A-Za-z0-9_-]+\/)*media\/[a-f0-9]{32}\.jpe?g$/.test(src)) {
+            if (image) image.remove();
+            return;
+        }
+        image.loading = 'eager';
+        image.decoding = 'async';
+        image.onload = () => {
+            // Server registration and actual DOM decode are separate events.
+            // Headless same-host browser probes read these measurements; cross-
+            // host clocks must be calibrated before interpreting this delta.
+            if (!active || image.parentElement !== page || image.getAttribute('src') !== src) return;
+            const ready = Number(data.readyEpochMs);
+            if (!Number.isFinite(ready) || ready <= 0) return;
+            image.decode().then(() => {
+                if (!active || image.parentElement !== page || image.getAttribute('src') !== src ||
+                        !image.complete || image.naturalWidth <= 0) return;
+                const now = Date.now();
+                image.dataset.serverReadyEpochMs = String(ready);
+                image.dataset.decodedAtEpochMs = String(now);
+                image.dataset.readyToDecodedMs = String(now - ready);
+            }).catch(() => image.onerror?.());
+        };
+        image.onerror = () => {
+            // A retired/failed read must not leave a broken image or mutate
+            // a newer generation's DOM. Keep its page placeholder and offer
+            // the existing bounded explicit Retry path instead.
+            if (!active || image.parentElement !== page || image.getAttribute('src') !== src) return;
+            image.remove();
+            state.requestFailed = true;
+            status.textContent = 'Preview image could not load — retry.';
+            retryRequest.hidden = false;
+        };
         if (image.getAttribute('src') !== src) image.setAttribute('src', src);
+        else if (image.complete && image.naturalWidth > 0) image.onload();
     });
     function sizePages() {
         if (!active) return;
@@ -390,7 +449,7 @@ export default function(component) {
         remember();
         const pixels = Math.max(1, scroll.clientWidth) * Math.min(window.devicePixelRatio || 1, 2);
         const dpi = pixels > 1100 ? 150 : pixels > 850 ? 120 : 96;
-        const value = {visible:visibleNow(), pages:pagesKnown && shown.length ? shown : [state.page], dpi, generation:data.generation};
+        const value = {visible:visibleNow(), pages:pagesKnown && shown.length ? shown : [state.page], dpi, generation:data.generation, ticketKey:data.ticketKey || null};
         const serialized = JSON.stringify(value);
         if (state.requestSignature !== serialized || serialized === applied) {
             state.requestSignature=serialized; state.requestAttempts=0; state.requestFailed=false;
@@ -519,19 +578,35 @@ def _preview_component(_runtime):
     return st.components.v2.component('report_preview_surface', html=HTML, css=CSS, js=JS)
 
 
-def render_view(*, key, generation, title, ticket=None, images=(), status='', stale=False, on_change, view_scope=None, pending=False, on_poll=None, acknowledged_viewport=None):
+def render_view(*, key, generation, title, ticket=None, images=(), status='', stale=False, on_change, view_scope=None, pending=False, on_poll=None, acknowledged_viewport=None, focus_on_open=False):
     view = _preview_component(Runtime.instance())
     applied = acknowledged_viewport or {'visible': False, 'pages': (0,), 'dpi': 96}
+    scope = str(view_scope or key)
+    # STORE has already validated the owner's opaque ticket and bounded the
+    # requested raster pages. A stale ticket's last-good pages stay delivered
+    # (labelled not ready) so they remain inspectable after a failed rerender,
+    # as before scoped URLs. Re-register every visible page on each rerender
+    # so Streamlit's native session media refs survive normal fragment/full
+    # renders. A ticket UUID and view scope bind the media coordinate to the
+    # current report/source identity; URL payloads contain no raw JPEG/base64.
+    delivered = [{'index': index,
+                  'url': _media_url(raw, 'image/jpeg',
+                                    f'report-preview:{scope}:{ticket.key}:{index}')}
+                 for index, raw in images] if ticket is not None else []
     # The native container arrives before the asynchronous browser component.
     # Reserve the same viewport-sized space during that gap, including reloads,
     # so a short section cannot grow underneath a pointer aimed at the next one.
     with st.container(key='epc_preview_slot_' + key):
         return view(key=key, data={
-            'generation': generation, 'title': title, 'viewScope': str(view_scope or key), 'ready': ticket is not None and not stale, 'stale': bool(stale),
+            'generation': generation, 'title': title, 'viewScope': scope, 'ready': ticket is not None and not stale, 'stale': bool(stale),
+            'focusOnOpen': bool(focus_on_open),
             'sizes': ticket.sizes if ticket else (), 'status': status, 'pending': bool(pending),
             'initialPage': ticket.initial_page if ticket else 0,
+            'ticketKey': ticket.key if ticket else None,
+            'readyEpochMs': int(time() * 1000) if delivered else None,
             'acknowledgedViewport': {'visible': bool(applied['visible']), 'pages': list(applied['pages']),
-                                     'dpi': applied['dpi'], 'generation': generation},
-            'pages': [{'index': index, 'image': b64encode(raw).decode('ascii')} for index, raw in images],
+                                     'dpi': applied['dpi'], 'generation': generation,
+                                     'ticketKey': ticket.key if ticket else None},
+            'pages': delivered,
         }, default={'viewport': None, 'poll': None}, on_viewport_change=on_change,
             on_poll_change=on_poll or (lambda: None), height='content')

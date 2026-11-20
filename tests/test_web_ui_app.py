@@ -1061,3 +1061,189 @@ def test_workflow_browser_titles_follow_active_mode_and_new_session_route():
     assert _browser_workflow_title("stale value", "monthly") == pages[MONTHLY_REPORT_WORKFLOW]
     assert _browser_workflow_title(PURCHASE_WORKFLOW, "purchase", "isolated") == pages[MONTHLY_REPORT_WORKFLOW]
     assert _browser_workflow_title(PURCHASE_WORKFLOW, "monthly", "isolated") == pages[PURCHASE_WORKFLOW]
+
+def test_native_enter_hint_is_hidden_and_all_workflow_tabs_share_one_underline():
+    from app.web_ui import CUSTOM_CSS
+
+    assert '[data-testid="InputInstructions"] {' in CUSTOM_CSS
+    hint_style = CUSTOM_CSS.split('[data-testid="InputInstructions"] {', 1)[1].split("}", 1)[0]
+    assert "display: none !important;" in hint_style
+
+    shared_rule = CUSTOM_CSS.split(
+        "/* All three routes share a single selected-tab underline. */", 1
+    )[1].split("}", 1)[0]
+    assert '.st-key-workflow_mode button[role="radio"][aria-checked="true"]' in shared_rule
+    assert '[data-testid="stTabs"] button[role="tab"][aria-selected="true"]' in shared_rule
+    assert "box-shadow: inset 0 -4px 0 var(--enfra-yellow) !important;" in shared_rule
+
+
+def test_text_widgets_in_each_workflow_keep_values_after_rerun(monkeypatch, tmp_path):
+    """Server-side edit persistence is a prerequisite for the native blur behavior."""
+    _configure_smartsheet(monkeypatch)
+    app = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
+    app.button[0].click().run()
+    purchase_field = next(
+        field for field in app.text_input if field.label == "Your name (Requester / Asset Manager) *"
+    )
+    purchase_field.set_value("Synthetic Requester").run()
+    assert next(
+        field for field in app.text_input if field.label == "Your name (Requester / Asset Manager) *"
+    ).value == "Synthetic Requester"
+
+    app.segmented_control[0].set_value("Expense reimbursement").run()
+    expense_field = next(
+        field for field in app.text_input if field.label == "Employee name *"
+    )
+    expense_field.set_value("Synthetic Employee").run()
+    assert next(
+        field for field in app.text_input if field.label == "Employee name *"
+    ).value == "Synthetic Employee"
+
+    # Reuse the existing isolated monthly-report fixture rather than writing
+    # into shared report history.
+    from tests.test_monthly_report_ui import monthly
+
+    report = monthly(monkeypatch, tmp_path)
+    author = next(field for field in report.text_input if field.label == "Prepared by")
+    author.set_value("Synthetic Preparer").run()
+    assert next(
+        field for field in report.text_input if field.label == "Prepared by"
+    ).value == "Synthetic Preparer"
+    assert not report.exception
+
+def test_expense_receipt_mirror_keeps_source_names_without_numeric_prefixes(monkeypatch):
+    """Re-selecting identical bytes preserves the first filename verbatim."""
+    import hashlib
+
+    monkeypatch.setattr(
+        expense_ui, "_receipt_digest",
+        lambda payload: hashlib.sha256(payload).hexdigest(),
+    )
+    samples = [
+        ("receipt-fuel.png", b"synthetic receipt A", "image/png"),
+        ("receipt-parking.png", b"synthetic receipt B", "image/png"),
+    ]
+    merged, duplicate_names = expense_ui._merge_receipt_sources(samples, samples)
+    assert merged == samples
+    assert duplicate_names == ["receipt-fuel.png", "receipt-parking.png"]
+
+    # The PO source is likewise retained using UploadedFile.name; neither path
+    # prepends a sequence number. Live browser upload testing is separate.
+    source = inspect.getsource(web_ui._render_purchase_workflow)
+    assert 'st.session_state["uploaded_file_name"] = uploaded.name' in source
+
+
+def _synthetic_word_quote():
+    from docx import Document
+
+    document = Document()
+    document.add_paragraph("Synthetic repair work quote for test equipment.")
+    table = document.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "Scope"
+    table.cell(0, 1).text = "Replace the synthetic valve."
+    table.cell(1, 0).text = "Job"
+    table.cell(1, 1).text = "TEST-100"
+    document.add_paragraph("End of synthetic quote.")
+    buffer = BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def test_unsupported_quote_upload_shows_action_without_mime(monkeypatch):
+    _configure_smartsheet(monkeypatch)
+    app = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
+    assert not app.exception
+    app.file_uploader[0].upload(
+        "quote.xlsx", b"PK\x03\x04pretend spreadsheet",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ).run()
+    assert not app.exception
+    messages = [item.value for collection in (app.error, app.caption, app.warning)
+                for item in collection]
+    assert any("Excel files can't be read here" in str(value) for value in messages)
+    assert any("paste its text" in str(value) for value in messages)
+    assert not any("application/" in str(value) for value in messages)
+    assert not any(item.label == "Generate both files and Smartsheet link"
+                   and not item.disabled for item in app.button)
+
+
+def test_docx_quote_is_analyzed_in_order_and_original_is_attached(monkeypatch):
+    from app.ocr import extract_text_from_docx
+    from app.po_context import _active_quote_attachment
+    from app.smartsheet import preflight_attachments
+
+    _configure_smartsheet(monkeypatch)
+    source = _synthetic_word_quote()
+    captured = []
+
+    def fake_analyzer(text):
+        captured.append(text)
+        return QuoteAnalysis(
+            vendor_name="Synthetic Supplier",
+            scope_of_work="Replace the synthetic valve.",
+            project_description="Test equipment repair.",
+            purchase_route_guess="materials_purchase",
+            request_type_guess="PO",
+            tax_status="unclear",
+        )
+
+    monkeypatch.setattr(web_ui, "analyze_quote", fake_analyzer)
+    app = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
+    app.file_uploader[0].upload(
+        "synthetic-quote.docx", source,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ).run()
+    assert not app.exception
+    expected = extract_text_from_docx(source)
+    assert captured == [expected]
+    assert expected.index("Synthetic repair") < expected.index("Scope")
+    assert expected.index("Scope") < expected.index("Replace the synthetic valve.")
+    assert expected.index("Job") < expected.index("TEST-100")
+    assert expected.index("TEST-100") < expected.index("End of synthetic")
+    quote_state = {
+        key: app.session_state[key]
+        for key in (
+            "quote_source", "uploaded_file_bytes", "uploaded_file_name",
+            "extracted_text", "extract_hash",
+        )
+    }
+    attachment, problems = _active_quote_attachment(
+        quote_state, app.session_state["quote_text"]
+    )
+    assert problems == []
+    assert attachment == ("synthetic-quote.docx", source)
+    assert not preflight_attachments((attachment, ("Scope.pdf", b"%PDF-1.7\nsynthetic")))
+    assert app.session_state["uploaded_file_bytes"] == source
+
+
+def test_quote_upload_invalid_word_and_size_have_plain_steps():
+    from app.smartsheet import MAX_ATTACHMENT_BYTES
+    from app.upload_validation import quote_upload_problem
+
+    old_word = quote_upload_problem("old.doc", b"\xd0\xcf\x11\xe0")
+    bad_word = quote_upload_problem("bad.docx", b"PK\x03\x04not-a-zip")
+    large = quote_upload_problem("too-big.pdf", b"%PDF-1.7" + b"x" * MAX_ATTACHMENT_BYTES)
+    assert ".doc files can't be read here" in old_word
+    assert "unreadable or protected" in bad_word
+    assert "30 MB attachment limit" in large
+    assert all("paste its text" in text for text in (old_word, bad_word, large))
+    assert all("application/" not in text for text in (old_word, bad_word, large))
+
+
+def test_expense_docx_receipt_shows_plain_instructions(monkeypatch, tmp_path):
+    _configure_smartsheet(monkeypatch)
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    app = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
+    app.segmented_control[0].set_value("Expense reimbursement").run()
+    app.file_uploader[0].upload(
+        "receipt.docx", _synthetic_word_quote(),
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ).run()
+    assert not app.exception
+    messages = [item.value for collection in (app.error, app.caption, app.warning)
+                for item in collection]
+    assert any("Word documents cannot be used as receipts" in str(value)
+               for value in messages)
+    assert any("PDF or photo" in str(value) for value in messages)
+    assert not any("application/" in str(value) for value in messages)
+
