@@ -6,7 +6,7 @@ import json
 
 import streamlit as st
 
-from app import monthly_report_ai as ai, monthly_report_library as library
+from app import monthly_report_ai as ai, monthly_report_ai_items as items, monthly_report_library as library
 from app import monthly_report_ai_coverage as coverage
 from app.monthly_report_model import BlockSpec, EvidenceFact, ReportSource, ResolvedBlock
 from app.monthly_report_prompts import copilot_prompt, parse_copilot
@@ -83,6 +83,128 @@ def copilot_source(text, profile, period):
     return replace(source, facts=tuple(facts)), unmatched, len(lines) - len(facts)
 
 
+@st.fragment(run_every=1)
+def _reading_progress(prefix):
+    # Only mounted while a job exists; completion advances the page queue
+    # without requiring another click. The UI thread remains the sole writer.
+    job = st.session_state.get(prefix + "_ai_job")
+    if job is not None and job["future"].done():
+        st.rerun()
+
+
+def _page_scope(draft):
+    return (draft.profile.contract, draft.profile.key, draft.period.key,
+            st.session_state.get("_monthly_qa_generation", ""))
+
+
+def _merge_page_facts(prefix, source, facts):
+    """Keep older proposals and human-accepted facts; never replace by ID."""
+    key = prefix + "_ai_facts"
+    proposed = st.session_state.get(key)
+    merged = {}
+    if proposed and proposed[:2] == (source.id, source.fingerprint):
+        merged = {fact.id: fact for fact in proposed[2]}
+    for fact in facts:
+        merged.setdefault(fact.id, fact)
+    st.session_state[key] = (source.id, source.fingerprint, tuple(merged.values()))
+
+
+def _queue_page_reads(draft, prefix, source, pages, *, failed_only=False):
+    """Resolve cached successful siblings without another model request."""
+    if prefix + "_ai_job" in st.session_state:
+        return
+    waiting = []
+    for page in dict.fromkeys(pages):
+        try:
+            key, _ = ai.extraction_request(source, (page,))
+            saved = ai.cached(draft.profile, "extraction", key)
+            if saved is not None:
+                facts = ai.normalize_facts(saved, source, (page,), draft.profile,
+                                           draft.period, ai.vendor_names(draft))
+                _merge_page_facts(prefix, source, facts)
+            elif not failed_only or items.status(draft.profile, draft.period, key) == "failed":
+                waiting.append(page)
+        except ValueError as exc:
+            # One empty/invalid source page cannot prevent independent pages
+            # from being read. Report the exact skipped page to the operator.
+            st.warning(f"Page {page}: {exc}")
+    st.session_state[prefix + "_ai_page_batch"] = {
+        "scope": _page_scope(draft), "source_id": source.id,
+        "source_fingerprint": source.fingerprint, "waiting": waiting,
+    }
+    _advance_page_reads(draft, prefix)
+
+
+def _advance_page_reads(draft, prefix):
+    """Start at most one pending page; a completed sibling is never resubmitted."""
+    batch_key = prefix + "_ai_page_batch"
+    batch = st.session_state.get(batch_key)
+    if not batch or prefix + "_ai_job" in st.session_state:
+        return
+    contents = st.session_state.get(prefix + "_evidence", ())
+    current = next((c.source for c in contents
+                    if c.source.id == batch["source_id"]), None)
+    if (batch["scope"] != _page_scope(draft) or not current
+            or current.fingerprint != batch["source_fingerprint"]):
+        st.session_state.pop(batch_key, None)
+        return
+    while batch["waiting"]:
+        page = batch["waiting"][0]
+        try:
+            key, content = ai.extraction_request(current, (page,))
+            saved = ai.cached(draft.profile, "extraction", key)
+            if saved is not None:
+                facts = ai.normalize_facts(saved, current, (page,), draft.profile,
+                                           draft.period, ai.vendor_names(draft))
+                _merge_page_facts(prefix, current, facts)
+                batch["waiting"].pop(0)
+                continue
+            job = {
+                "kind": "extraction", "page_job": True, "key": key,
+                "source_id": current.id, "source_fingerprint": current.fingerprint,
+                "pages": (page,), "scope": batch["scope"],
+                "profile": draft.profile, "period": draft.period,
+            }
+
+            def prepare():
+                state, token = items.claim(draft.profile, draft.period, key)
+                if state != "claimed":
+                    raise ValueError(
+                        "This page is already cached or being read in another session. "
+                        "Recheck its results before requesting it again."
+                    )
+                job["token"] = token
+                return content
+
+            if items.status(draft.profile, draft.period, key) == "pending":
+                # Another session owns this page. Do not hold its siblings
+                # hostage or submit the same paid work twice.
+                batch["waiting"].pop(0)
+                continue
+            batch["waiting"].pop(0)  # Never auto-retry a failed page.
+            started = _start(prefix, draft, job, prepare)
+            if not started:
+                latest = items.status(draft.profile, draft.period, key)
+                if latest == "pending":
+                    continue  # The other session won the claim race.
+                if latest == "accepted":
+                    saved = ai.cached(draft.profile, "extraction", key)
+                    if saved is not None:
+                        facts = ai.normalize_facts(saved, current, (page,),
+                                                   draft.profile, draft.period,
+                                                   ai.vendor_names(draft))
+                        _merge_page_facts(prefix, current, facts)
+                    continue
+                batch["waiting"].insert(0, page)  # Capacity was full.
+                return
+            return
+        except ValueError as exc:
+            # Invalid content is local to its page. Other pages remain queued.
+            st.warning(str(exc))
+            batch["waiting"].pop(0)
+    st.session_state.pop(batch_key, None)
+
+
 def _finish_job(draft, prefix):
     key = prefix + "_ai_job"
     job = st.session_state.get(key)
@@ -101,7 +223,8 @@ def _finish_job(draft, prefix):
             (c.source for c in contents if c.source.id == job.get("source_id")), None
         )
         if job["kind"] == "extraction":
-            if not current or current.fingerprint != job["source_fingerprint"]:
+            if (not current or current.fingerprint != job["source_fingerprint"]
+                    or (job.get("page_job") and job["scope"] != _page_scope(draft))):
                 raise ValueError(
                     "Source details changed while reading. Start again to read the current version."
                 )
@@ -113,12 +236,16 @@ def _finish_job(draft, prefix):
                 draft.period,
                 ai.vendor_names(draft),
             )
-            ai.save_cache(draft.profile, "extraction", job["key"], result)
-            st.session_state[prefix + "_ai_facts"] = (
-                current.id,
-                current.fingerprint,
-                facts,
-            )
+            if job.get("page_job"):
+                if not items.accept(draft.profile, draft.period, job["key"],
+                                    job.get("token"), result):
+                    raise ValueError("A newer page reading took precedence. Existing facts were preserved.")
+                _merge_page_facts(prefix, current, facts)
+            else:
+                ai.save_cache(draft.profile, "extraction", job["key"], result)
+                st.session_state[prefix + "_ai_facts"] = (
+                    current.id, current.fingerprint, facts,
+                )
         elif job["kind"] == "coverage":
             if not current or current.fingerprint != job["source_fingerprint"]:
                 raise ValueError("The source changed while reading. Earlier suggestions were not applied.")
@@ -197,6 +324,12 @@ def _finish_job(draft, prefix):
                 "Image text read. Compare it with the preview before including the page or its facts."
             )
     except Exception as exc:
+        if job.get("page_job") and job.get("token"):
+            try:
+                items.fail(job["profile"], job["period"], job["key"], job["token"])
+            except (OSError, ValueError):
+                # A QA reset may have retired the original namespace.
+                pass
         st.warning(
             "Reading was not applied. "
             + (
@@ -214,11 +347,13 @@ def _start(prefix, draft, job, prepare, read=ai.request_json):
         future = start_receipt(prepare, read)
         if future is None:
             st.info("The document reader is busy. Try again shortly.")
-        else:
-            st.session_state[prefix + "_ai_job"] = {**job, "future": future}
-            st.rerun()
+            return False
+        st.session_state[prefix + "_ai_job"] = {**job, "future": future}
+        st.rerun()
+        return True
     except ValueError as exc:
         st.warning(str(exc))
+        return False
 
 
 def _approval_scope(draft, prefix):
@@ -256,7 +391,22 @@ def _apply_pending_fact_approval(draft, prefix):
     # chunk; it is not permission to remove previously accepted facts from
     # this source. Deterministic fact IDs make unchanged reacceptance idempotent.
     facts = {fact.id: fact for fact in current.facts}
-    facts.update((fact.id, fact) for fact in proposed[2])
+    for fact in proposed[2]:
+        prior = facts.get(fact.id)
+        if prior is None:
+            facts[fact.id] = fact
+        elif (
+            # Explicitly re-reading can repair a *provably unsupported* saved
+            # date on the same immutable quote, without changing any other
+            # human-edited field or replacing an already supported date.
+            prior.date and fact.date and prior.date != fact.date
+            and not prior.flags
+            and replace(prior, date=fact.date, flags=fact.flags) == fact
+            and ai.fact_date_problems((prior,), (current,))
+            and not ai.fact_date_problems((fact,), (current,))
+        ):
+            facts[fact.id] = fact
+        # Otherwise keep the accepted fact, including human corrections.
     updated = replace(current, facts=tuple(facts.values()))
     st.session_state[prefix + "_evidence"] = tuple(
         replace(content, source=updated) if content.source.id == current.id else content
@@ -357,7 +507,11 @@ def edit_linked_paragraphs(draft, blocks, prefix, field, allowed_keys=None):
                         st.caption("This saved fact is unavailable. Choose current evidence or explicitly remove its link.")
                         continue
                     source, fact = facts[identity]
-                    st.caption(f"{source.filename}, page {fact.page}: {fact.quote}")
+                    st.caption(
+                        f"{ai.clean_text(source.filename)}, page {fact.page} · "
+                        f"original SHA-256 {fact.source_sha256 or source.sha256}: "
+                        + ai.fact_quote_for_display(fact.quote)
+                    )
                 paragraphs.append(
                     replace(
                         paragraph, text=ai.clean_text(text), fact_ids=tuple(selected)
@@ -402,8 +556,11 @@ def edit_linked_paragraphs(draft, blocks, prefix, field, allowed_keys=None):
 def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_container=None):
     """Return updated draft/blocks; caller still owns snapshot confirmation."""
     _finish_job(draft, prefix)
+    _advance_page_reads(draft, prefix)
     _apply_pending_fact_approval(draft, prefix)
     busy = prefix + "_ai_job" in st.session_state
+    if busy:
+        _reading_progress(prefix)
     evidence_key = prefix + "_evidence"
     contents = st.session_state.get(evidence_key, ())
     draft = replace(draft, sources=tuple(content.source for content in contents))
@@ -529,48 +686,33 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                             coverage.run,
                         )
                     else:
-                        key, content = ai.extraction_request(source, pages)
-                        saved = ai.cached(draft.profile, "extraction", key)
-                        if saved is not None:
-                            facts = ai.normalize_facts(
-                                saved,
-                                source,
-                                pages,
-                                draft.profile,
-                                draft.period,
-                                ai.vendor_names(draft),
-                            )
-                            st.session_state[prefix + "_ai_facts"] = (
-                                source.id,
-                                source.fingerprint,
-                                facts,
-                            )
-                        else:
-
-                            def prepare():
-                                ai.reserve_call(draft.profile, draft.period)
-                                return content
-
-                            _start(
-                                prefix,
-                                draft,
-                                {
-                                    "kind": "extraction",
-                                    "key": key,
-                                    "source_id": source.id,
-                                    "source_fingerprint": source.fingerprint,
-                                    "pages": pages,
-                                },
-                                prepare,
-                                read=lambda chunk: ai.request_json(
-                                    chunk,
-                                    response_kind="facts",
-                                    validator=lambda value: ai.normalize_facts(
-                                        value, source, tuple(pages), draft.profile,
-                                        draft.period, ai.vendor_names(draft),
-                                    ),
-                                ),
-                            )
+                        _queue_page_reads(draft, prefix, source, pages)
+                except ValueError as exc:
+                    st.warning(str(exc))
+            # Each source/page is an independent content-hash receipt. Cached
+            # reads are not human-approved until Use these facts is clicked.
+            states = {}
+            for page in pages:
+                try:
+                    key, _ = ai.extraction_request(source, (page,))
+                    states[page] = items.status(draft.profile, draft.period, key)
+                except ValueError:
+                    states[page] = "unread"
+            if states:
+                st.caption(
+                    "Page reading: "
+                    + ", ".join(f"{sum(v == status for v in states.values())} {status}"
+                                for status in ("accepted", "pending", "failed", "unread"))
+                    + ". Accepted readings still need your fact review."
+                )
+            failed_pages = [page for page, status in states.items() if status == "failed"]
+            if failed_pages and st.button(
+                "Retry failed pages only",
+                key=prefix + "_ai_retry_failed",
+                disabled=busy,
+            ):
+                try:
+                    _queue_page_reads(draft, prefix, source, failed_pages, failed_only=True)
                 except ValueError as exc:
                     st.warning(str(exc))
             image_pages = [n for n in source.needs_vision if n in pages]
@@ -649,6 +791,10 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                     st.write(f"{len(proposed[2])} facts found")
                     for fact in proposed[2]:
                         st.write(f"Page {fact.page} · {fact.text}")
+                        st.caption(
+                            f"Original SHA-256 {fact.source_sha256 or source.sha256} · "
+                            f"Exact quote: {ai.fact_quote_for_display(fact.quote)}"
+                        )
                         if fact.flags:
                             st.warning("; ".join(fact.flags))
                     st.caption("These facts support suggested wording. Original pages keep their own inclusion decisions.")
@@ -799,6 +945,7 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                 "Nothing below replaces your report until you choose Add or Replace."
             )
             facts = {f.id: f for s in sources for f in s.facts}
+            fact_sources = {f.id: s for s in sources for f in s.facts}
             paragraphs, ready = [], True
             for n, paragraph in enumerate(suggestion.ai_paragraphs):
                 text = st.text_area(
@@ -810,7 +957,9 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                     height=90,
                 )
                 evidence = "\n".join(
-                    f"Page {facts[i].page}: {facts[i].quote}"
+                    f"{ai.clean_text(fact_sources[i].filename)}, page {facts[i].page} · "
+                    f"original SHA-256 {facts[i].source_sha256 or fact_sources[i].sha256}: "
+                    + ai.fact_quote_for_display(facts[i].quote)
                     for i in paragraph.fact_ids
                     if i in facts
                 )
