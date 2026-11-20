@@ -110,3 +110,30 @@ def source_review_epoch(inspection, target, period, sites, relation, source_view
         previous = (scope, uuid4().hex)
         st.session_state[key] = previous
     return previous[1]
+
+
+
+def choose_source_report_month(inspection, target, period, prefix, field, *, source_view=None):
+    """Resolve conflicting *cover report titles* once, bound to source and target.
+
+    Returns (source_month, needs_choice). No decision is requested for a single
+    unambiguous title or an undated cover. General body dates do not vote.
+    """
+    from app.monthly_report_start_import import cover_report_periods
+    from app.monthly_report_model import ReportPeriod
+
+    candidates = cover_report_periods(inspection)
+    if len(candidates) <= 1:
+        return None, False
+    scope = (*correction_scope(inspection, target, period, source_view), candidates)
+    p = prefix + "_source_month_" + hashlib.sha256(repr(scope).encode()).hexdigest()[:20]
+    st.warning("The uploaded cover names more than one reporting month. Choose which month this source report represents; the original and extracted work remain available.")
+    options = [None, *candidates]
+    selection = st.selectbox(
+        "Reporting month shown by the uploaded source cover",
+        options, index=0,
+        format_func=lambda value: "Choose source reporting month" if value is None
+            else ReportPeriod(*value).label,
+        key=field(p + "_choice", None),
+    )
+    return selection, selection is None

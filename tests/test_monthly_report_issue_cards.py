@@ -66,7 +66,8 @@ def test_clear_list_survives_repeat_import_but_unresolved_items_return_next_mont
     assert not any(item.included for item in replay.follow_ups)
     assert all(item.status == "ongoing" for item in replay.follow_ups)
     next_month = new_month_draft(replay, ReportPeriod(2026, 10))
-    assert all(item.included for item in next_month.follow_ups)
+    # Clear list retains history without silently republishing omitted issues.
+    assert not any(item.included for item in next_month.follow_ups)
     assert [item.key for item in next_month.follow_ups] == [item.key for item in replay.follow_ups]
     assert not any(problems(item, next_month) for item in next_month.follow_ups)
 

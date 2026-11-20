@@ -123,9 +123,11 @@ def test_safe_sibling_and_native_rows_survive_old_mixed_reader_results():
     assert result == block and not pages
     assert result.references == (sources.source_reference(bad.source, 1), sources.source_reference(sibling.source, 1))
     request = repr(structured.reader_request(PROFILE, (bad, sibling), "activity_summary"))
-    assert bad.source.id not in request and sibling.source.id in request
+    # The priced-status CSV is blocked; its fully native-mapped safe sibling
+    # also must not be sent for redundant external reading.
+    assert bad.source.id not in request and sibling.source.id not in request
     batches = structured.reader_batches(PROFILE, (bad, sibling), "activity_summary")
-    assert bad.source.id not in repr(batches) and sibling.source.id in repr(batches)
+    assert batches == ()
 
 
 def test_sole_unsafe_reader_result_requires_review_without_reintroducing_action():
