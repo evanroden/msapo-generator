@@ -6,7 +6,8 @@ from typing import NamedTuple
 from app import monthly_report_sources as sources
 from app.monthly_report_content_policy import (
     _CURRENCIES, _CURRENCY_SYMBOLS, ambiguous_price_columns, contains_price,
-    page_status, price_column, table_price_columns, proposal_price_columns,
+    contains_private_contact, page_allowed, page_status, price_column,
+    table_price_columns, proposal_price_columns, technical_source_text,
 )
 from app.monthly_report_model import ResolvedBlock
 from app.monthly_report_pre_model_routing import choose_reader_pages, classify_page
@@ -339,7 +340,10 @@ def _activity_identity(line, source, event_date):
     try:
         dated = date.fromisoformat(event_date).isoformat() if event_date else ""
     except ValueError:
-        dated = ""
+        # A valid printed slash date has no knowable locale here. Keep its
+        # exact spelling instead of silently interpreting or discarding it.
+        from app.monthly_report_vendor_passages import _valid_metadata_date
+        dated = event_date if _valid_metadata_date(event_date) else ""
     if dated and dated not in line:
         parts.append(dated)
     vendor = source.vendor.strip()
@@ -396,6 +400,84 @@ def _non_table_activity_identity(source):
                    vendor="" if len(vendors) > 1 else source.vendor)
 
 
+_VENDOR_SITE_LABEL = re.compile(
+    r"(?im)^[ \t]*(?:site|facility|building|client|customer|location)\s*[:=]\s*(\S[^\r\n]*)")
+_VENDOR_DATE_LABEL = re.compile(
+    r"(?im)^[ \t]*(?:(?:service|report|completed|inspection|work)\s+)?date\s*[:=]\s*(\S[^\r\n]*)")
+
+
+def _vendor_source_review_reason(source):
+    """Keep unlinked statuses and ambiguous PDF date/site scope in review.
+
+    Non-table vendor documents do not provide a verified row/status mapping.
+    Never promote their work sentence while leaving a separate qualification
+    or a conflicting site/date header behind. Nothing changes the original.
+    """
+    if source.classification != "Vendor service" or source.suffix not in {
+            ".pdf", ".docx", ".txt", ".eml", ".msg"}:
+        return ""
+    from app.monthly_report_vendor_passages import _STATUS, _valid_metadata_date
+    sites = set()
+    for text in source.page_texts:
+        if _STATUS.search(text):
+            return "a separate work status may qualify a technical passage"
+        if source.suffix != ".pdf":
+            # TXT/Word already retain their own event and site preflight rules;
+            # distinct TXT event dates are not a file-wide conflict.
+            continue
+        for match in _DOC_DATE_TOKEN.finditer(text):
+            # Serial numbers may contain date-shaped fragments. Only a
+            # standalone calendar token may force a date review.
+            before = text[match.start() - 1] if match.start() else ""
+            after = text[match.end()] if match.end() < len(text) else ""
+            if ((before and before in "-_") or (after and after in "-_")
+                    or before.isalnum() or after.isalnum()):
+                continue
+            if not _valid_metadata_date(match.group(0)):
+                return "an impossible printed date needs review"
+        dates = [match.group(1).strip() for match in _VENDOR_DATE_LABEL.finditer(text)]
+        if any(not _valid_metadata_date(value) for value in dates) or len(set(dates)) > 1:
+            return "conflicting or invalid printed dates need review"
+        sites.update(" ".join(match.group(1).casefold().split())
+                     for match in _VENDOR_SITE_LABEL.finditer(text))
+    if source.suffix == ".pdf" and len(sites) > 1:
+        return "different site headers need explicit source-to-site mapping"
+    return ""
+
+
+def _vendor_page_identity(source, page, fallback, *, has_date_labels=False,
+                          has_vendor_labels=False):
+    """Attribute one vendor paragraph only to labels printed on its own page.
+
+    If a multipage document contains page-specific labels, another page does
+    not inherit the first vendor/date. A one-page corrected source and sources
+    without printed page labels retain their existing reviewed source identity.
+    """
+    if source.classification != "Vendor service" or source.suffix not in {
+            ".pdf", ".docx"}:
+        return fallback
+    pages = source.page_texts
+    here = pages[page - 1]
+    dates = [m.group(1).strip() for m in _VENDOR_DATE_LABEL.finditer(here)]
+    vendors = [m.group(1).strip() for m in _DOC_VENDOR_LABEL.finditer(here)]
+    # The original extraction chooses a U.S. interpretation for a slash date.
+    # A deliberate correction on a single-page source must not be replaced by
+    # that guess or by the unreviewed printed value.
+    corrected_date = bool(
+        len(pages) == 1 and dates and source.service_date
+        and sources._date(dates[0]) and sources._date(dates[0]) != source.service_date)
+    corrected_vendor = bool(
+        len(pages) == 1 and vendors and source.vendor
+        and source.vendor.casefold() != vendors[0].casefold())
+    return replace(
+        fallback,
+        service_date=(fallback.service_date if corrected_date else
+                      dates[0] if dates else "" if has_date_labels else fallback.service_date),
+        vendor=(fallback.vendor if corrected_vendor else
+                vendors[0] if vendors else "" if has_vendor_labels else fallback.vendor),
+    )
+
+
 def _spreadsheet_has_site_scope_column(content):
     """A row-specific site/client needs target mapping before auto-Activity."""
     site_tokens = {"facility", "site", "client", "customer",
@@ -414,6 +496,10 @@ def _activity_reader_notice(content):
             table.hidden or table.missing_formula_cache_count for table in content.tables):
         return (content.source.filename + ": hidden worksheets or missing formula cached results "
                 "require explicit workbook review. This source is not auto-read into Activity.")
+    if reason := _vendor_source_review_reason(content.source):
+        return (content.source.filename + ": " + reason + ". The unchanged vendor source "
+                "needs page and status review before including verified Activity; "
+                "this file is not sent to the Activity reader.")
     from app.monthly_report_work_order_csv import (
         is_work_order_source, requires_work_order_column_mapping,
     )
@@ -520,7 +606,7 @@ _ACTIVITY_PHONE = re.compile(
 _ACTIVITY_INTERNATIONAL_PHONE = re.compile(
     r"(?<!\w)(?:\+|00)[1-9](?:[ .()-]*\d){6,14}(?!\w)")
 _ACTIVITY_ID_LABEL = re.compile(
-    r"(?i)\b(?:asset|serial|model|tag|identifier|part|work order|job)"
+    r"(?i)\b(?:asset(?:\s+serial)?|serial|model|tag|identifier|part|work order|job)"
     r"(?:\s+(?:number|no\.?|id))?\s*[:#]?\s*"
     r"(?:[A-Za-z][A-Za-z0-9/_-]{0,63}[-_/])?$")
 _ACTIVITY_PHONE_LABEL = re.compile(
@@ -686,8 +772,20 @@ def _activity_source_pages(content):
     """
     if content.source.suffix not in {".csv", ".xlsx"} or not content.tables:
         for number, text in enumerate(content.source.page_texts, 1):
+            if (content.source.suffix == ".txt" and contains_price(text)
+                    and not any(_EVENT_START.match(line) for line in text.splitlines())):
+                # An untagged priced TXT has no independently scoped event
+                # boundary. Preserve the existing whole-source review hold.
+                yield number, ""
+                continue
             view = _docx_invoice_activity_view(text) if content.source.suffix == ".docx" else None
-            yield number, text if view is None else view.text
+            text = text if view is None else view.text
+            # A priced page remains ineligible as unchanged source artwork,
+            # but independently safe source-authored lines may still become
+            # cited technical Activity. This changes no source or review.
+            if contains_price(text) or contains_private_contact(text):
+                text = technical_source_text(text)
+            yield number, text
         return
     for number, table in enumerate(content.tables, 1):
         # The spreadsheet extractor has already selected the column headings.
@@ -733,7 +831,9 @@ def _csv_activity_entries(content):
         for row in table.rows:
             def cell(index):
                 return str(row[index]).strip() if index is not None and index < len(row) else ""
-            narrative = _activity_text(cell(action))
+            action_text = cell(action)
+            narrative = _activity_text(technical_source_text(action_text)
+                                       if contains_price(action_text) else action_text)
             if _date_only_source_label(narrative) or not useful_activity(narrative) or contains_price(narrative):
                 continue
             if contains_price(cell(status)):
@@ -767,6 +867,10 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
             if is_work_order_source(content) or requires_work_order_column_mapping(content):
                 # CMMS/counting sources use their own reviewed metrics path.
                 continue
+            if _vendor_source_review_reason(content.source):
+                # A page-local line cannot override another page's site/date or
+                # an unlinked status field. The original stays for source review.
+                continue
             if _spreadsheet_has_site_scope_column(content) or _txt_site_activity_table(content):
                 # Row-specific sites need the same review as the reader route.
                 continue
@@ -780,6 +884,10 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
                     references.append(sources.source_reference(content.source, number))
                 continue
             output_identity = _non_table_activity_identity(content.source)
+            printed_page_dates = any(_VENDOR_DATE_LABEL.search(text)
+                                     for text in content.source.page_texts)
+            printed_page_vendors = any(_DOC_VENDOR_LABEL.search(text)
+                                       for text in content.source.page_texts)
             from app.monthly_report_vendor_passages import read_vendor_document
             passage_pages = read_vendor_document(content.source)
             for number, text in _activity_source_pages(content):
@@ -812,16 +920,47 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
                 if not tagged_txt and not useful_activity(text):
                     continue
                 # Preserve qualifiers, dates and tense: this is grounded extractive writing.
-                activity_lines = (tuple((p.text, "") for p in passage_pages[number][0])
-                                  if number in passage_pages else
-                                  _activity_lines(text, content.source.suffix, with_dates=True))
+                if number in passage_pages:
+                    confirmed, pending = passage_pages[number]
+                    activity_lines = tuple((p.text, "") for p in confirmed)
+                    if (not activity_lines and pending
+                            and content.source.classification == "Vendor service"
+                            and (contains_price(content.source.page_texts[number - 1])
+                                 or contains_private_contact(content.source.page_texts[number - 1]))):
+                        # Vendor span parser correctly holds mixed original pages
+                        # with unknown fields. Permit a narrow, price/contact-
+                        # only recovery when the remaining labelled work has no
+                        # unknown fields and no omitted completion/status qualifier.
+                        from app.monthly_report_vendor_passages import unsupported_fields, _STATUS
+                        raw_page = content.source.page_texts[number - 1]
+                        # A removed contact field can also carry a negative
+                        # operational qualifier. Never turn pending vendor
+                        # evidence into a completed action by dropping it.
+                        negative_qualifier = re.search(
+                            r"(?i)\b(?:not\s+(?:operational|completed?|done|working)|"
+                            r"did\s+not|could\s+not|failed|cancelled|incomplete|"
+                            r"pending|unresolved)\b", raw_page)
+                        if (not unsupported_fields(text)
+                                and not _STATUS.search(raw_page)
+                                and not negative_qualifier):
+                            activity_lines = _activity_lines(
+                                text, content.source.suffix, with_dates=True)
+                else:
+                    activity_lines = _activity_lines(
+                        text, content.source.suffix, with_dates=True)
                 for line, header_date in activity_lines:
                     line = _activity_text(line)
+                    if contains_price(line) or contains_private_contact(line):
+                        line = technical_source_text(line)
                     if _date_only_source_label(line):
                         continue
                     if useful_activity(line) and not contains_price(line):
-                        dated = header_date if tagged_txt else output_identity.service_date
-                        grounded = _activity_identity(line, output_identity, dated)
+                        identity = _vendor_page_identity(
+                            content.source, number, output_identity,
+                            has_date_labels=printed_page_dates,
+                            has_vendor_labels=printed_page_vendors)
+                        dated = header_date if tagged_txt else identity.service_date
+                        grounded = _activity_identity(line, identity, dated)
                         if not contains_price(grounded):
                             paragraphs.append(grounded)
                             references.append(reference)
@@ -880,6 +1019,10 @@ def reader_request(profile, contents, destination, page_refs=None, table_columns
         accepted_pages=accepted_pages,
         native_mapped=_native_reader_page_pairs(contents, destination, table_columns)))
     selected = set(page_refs) & eligible if page_refs is not None else eligible
+    if not selected:
+        # Every page was excluded by policy or already mapped natively. There
+        # is no model request to make, and no readable evidence was admitted.
+        return []
     count = len(selected)
     if count > 20 or sum(len(t) for c in contents for n, t in enumerate(c.source.page_texts, 1) if (c.source.id, n) in selected) > 60000:
         raise ValueError("Upload up to 20 pages at a time for automatic section reading.")
@@ -904,11 +1047,20 @@ def reader_request(profile, contents, destination, page_refs=None, table_columns
         for number, text in enumerate(source.page_texts, 1):
             if (source.id, number) not in selected:
                 continue
-            payload.append({"type": "text", "text": f"SOURCE {source.id} PAGE {number}\n{text}"})
+            safe_text = technical_source_text(text)
+            if safe_text:
+                payload.append({"type": "text", "text": f"SOURCE {source.id} PAGE {number}\n{safe_text}"})
             if number in source.needs_vision and number not in image_numbers:
                 payload.append({"type": "text", "text": "Visual reading unavailable for this scanned page. Keep it for manual review."})
                 continue
-            if number in image_numbers and (destination == "activity_summary" or number in source.needs_vision):
+            # Unchanged raster pages may contain prices or personal details
+            # that native extraction never saw. Text-only sanitation does
+            # not permit sending those image bytes to an external model.
+            # An existing fingerprint-bound human page review is required.
+            if (number in image_numbers
+                    and (destination == "activity_summary" or number in source.needs_vision)
+                    and page_allowed(source, number)
+                    and not contains_private_contact(text)):
                 try:
                     image = sources.page_image(profile, content, number)
                     reserve_bulk_image(profile, source.sha256, image.data)
@@ -918,6 +1070,10 @@ def reader_request(profile, contents, destination, page_refs=None, table_columns
                     continue
                 payload.append({"type": "text", "text": f"VISUALLY CHECKED SOURCE {source.id} PAGE {number}"})
                 payload.extend(blocks)
+    if contents and not any(
+            part.get("type") == "image" or part.get("text", "").startswith("SOURCE ")
+            for part in payload[1:]):
+        raise ValueError("No policy-permitted readable source content. Review the original locally; no private page was sent.")
     return payload
 
 

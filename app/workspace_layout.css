@@ -29,6 +29,9 @@
 .epc-workspace[data-epc-mode="book"] .epc-workspace-row {grid-template-columns:minmax(0,var(--epc-editor-width)) minmax(0,var(--epc-reference-width)); column-gap:var(--epc-column-gap) !important;}
 .epc-workspace[data-epc-mode="compact"] .epc-workspace-row {grid-template-columns:minmax(0,1fr);}
 .epc-workspace[data-epc-mode="compact"] .epc-workspace-reference {position:relative; top:auto;}
+/* Opening a compact preview scrolls it to the top of the scroller. Stop below the fixed header and
+   sticky section navigation (--epc-preview-top), or "Back to editing" sits under them and a tap misses it. */
+.epc-workspace[data-epc-mode="compact"] [class*="st-key-epc_reference_"] {scroll-margin-top:var(--epc-preview-top,7.5rem);}
 .epc-workspace[data-epc-mode="compact"] .epc-workspace-pair:not([data-epc-preview-open="true"]) .epc-reference-column {display:none;}
 .epc-workspace[data-epc-mode="tabletop"], .epc-workspace[data-epc-confined="true"] {position:fixed; z-index:14; left:var(--epc-editor-left); top:var(--epc-editor-top); width:var(--epc-editor-width); height:var(--epc-editor-height); overflow:auto; overscroll-behavior-y:contain; background:var(--background-color,#fff); padding:.5rem; box-sizing:border-box;}
 .epc-workspace[data-epc-mode="tabletop"] .epc-workspace-row {grid-template-columns:minmax(0,1fr); gap:0 !important;}
