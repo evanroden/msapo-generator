@@ -65,9 +65,9 @@ def exercise(browser, engine, width, method):
         record["phase"] = "real known-value fixture and completed initial mount"
         page.goto(URL, wait_until="domcontentloaded")
         page.get_by_role("button", name="Load known-value report", exact=True).click()
-              # QA captions live inside the collapsed "QA details" disclosure.
-              from scripts import qa_monthly_live as live
-              live.open_qa_details(page)
+        # QA captions live inside the collapsed "QA details" disclosure.
+        from scripts import qa_monthly_live as live
+        live.open_qa_details(page)
         expect(page.get_by_text(re.compile(r"^QA fixture state: known-value prefill"))).to_be_visible(timeout=90000)
         field = page.get_by_role("textbox", name="Prepared by", exact=True)
         activity = page.get_by_role("textbox", name="Activity summary", exact=True)
