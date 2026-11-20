@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
 
 import pymupdf
 from playwright.sync_api import expect
+from scripts import qa_monthly_live as live
 
 WATER = ".st-key-epc_pair_monthly_water"
 CAPTION = "Synthetic conductivity check; follow-up remains pending."
@@ -569,6 +570,8 @@ def browser_task(browser_type, name):
     try:
         page.goto(qa.URL, wait_until="domcontentloaded")
         page.get_by_role("button", name="Load known-value report", exact=True).click()
+        # QA captions live inside the collapsed "QA details" disclosure.
+        live.open_qa_details(page)
         expect(page.get_by_text(re.compile(r"^QA fixture state: known-value prefill"))).to_be_visible(timeout=90000)
         expect(page.get_by_role("textbox", name="Activity summary", exact=True)).to_be_visible(timeout=45000)
         expected = exercise(page, name, qa)
