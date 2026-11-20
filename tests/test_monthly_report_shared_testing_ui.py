@@ -343,3 +343,61 @@ def test_target_drift_requires_explicit_restore_without_refilling_report_content
         ui._seed_target(profile, period, force=True)  # Explicit Restore fixture target action.
         assert ui._target_matches(profile, period)
         assert state["report_manual_text"] == "Keep my exact wording"
+
+
+def test_monthly_overview_step_spine_tracks_shared_isolated_editor(sample, monkeypatch):
+    """The four overall links do not replace the existing section navigation."""
+    import re
+    from app.monthly_report_step_spine import (
+        MONTHLY_STEPS, monthly_step_spine, monthly_step_states,
+    )
+
+    assert monthly_step_states() == ("current", "pending", "pending", "pending")
+    assert monthly_step_states(report_ready=True) == (
+        "complete", "current", "pending", "pending")
+    assert monthly_step_states(report_ready=True, sources_ready=True) == (
+        "complete", "complete", "current", "pending")
+    assert monthly_step_states(report_ready=True, sources_ready=True,
+                               sections_ready=True) == (
+        "complete", "complete", "complete", "current")
+    assert monthly_step_states(report_ready=True, sources_ready=True,
+                               sections_ready=True, generated=True) == ("complete",) * 4
+    assert 'aria-current="step"' not in monthly_step_spine(("complete",) * 4)
+    assert monthly_step_states(report_ready=False, generated=True)[-1] == "pending"
+
+    def no_external(*_args, **_kwargs):
+        pytest.fail("Isolated monthly overview must not use an external reader.")
+
+    monkeypatch.setattr(requests.sessions.Session, "request", no_external)
+    root, _library, receipt, _original = sample
+    app = AppTest.from_string(_script(root, TOKEN_A), default_timeout=30).run()
+    app.button(key="_shared_fixture_start_" + receipt.fixture_id
+               + "_" + receipt.original_sha256[:16]).click().run()
+
+    def spine():
+        markup = [element.value for element in app.markdown
+                  if 'aria-label="Monthly report steps"' in element.value]
+        assert len(markup) == 1
+        return markup[0], tuple(re.findall(
+            r'data-state="(complete|current|pending)"', markup[0]))
+
+    start_markup, start_states = spine()
+    assert start_states == ("current", "pending", "pending", "pending")
+    assert start_markup.count('class="step-num"') == 4
+    for anchor, _title, _summary in MONTHLY_STEPS:
+        assert f'href="#{anchor}"' in start_markup
+
+    next(item for item in app.text_input if item.label == "Your name").input(
+        "Synthetic Reviewer").run()
+    next(item for item in app.button
+         if item.label == "Continue to this month’s updates").click().run()
+    assert not app.exception and not app.error
+    markup, states = spine()
+    assert states[0] == "complete"
+    assert states.count("current") == 1
+    assert markup.count('class="step-num"') == 4
+    assert "report sections; use the section pager below." in markup
+    assert sum('class="epc-section-navigation"' in element.value
+               for element in app.markdown) == 1
+    for anchor in ("monthly-step-sections", "monthly-step-sources"):
+        assert any(f'id="{anchor}"' in element.value for element in app.markdown)

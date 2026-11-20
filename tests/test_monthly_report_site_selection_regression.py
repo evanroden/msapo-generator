@@ -55,7 +55,9 @@ def test_normal_catalog_single_combined_uncheck_all_and_reentry(monkeypatch, tmp
     assert not app.exception
     assert not _selected(app)
     assert any(item.value == "Select at least one site to continue." for item in app.info)
-    assert not any(item.label == "Starting report" for item in app.get("file_uploader"))
+    # Only A12's first-use upload, which sits above the site choices, remains.
+    assert not any(item.label == "Starting report" and not item.key.startswith("report_entry_upload")
+                   for item in app.get("file_uploader"))
     app.run()
     assert not _selected(app)
     _box(app, first).check().run()

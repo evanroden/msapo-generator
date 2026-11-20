@@ -80,14 +80,24 @@ def test_old_fact_action_cannot_approve_a_new_proposal(monkeypatch, tmp_path, ch
     assert app.session_state['writing_ai_facts'][2] == revised
 
 
+def _writing_scope(app):
+    from app.monthly_report_guided import _signature
+    return _signature(('writing', app.session_state['writing_rich_text_epoch'],
+                       app.session_state.filtered_state.get('_monthly_qa_generation', '')))
+
+
 def checked_suggestion(app, source, facts):
+    from app.monthly_report_ai_suggestion_action import capture
     source = replace(source, facts=facts)
     app.session_state['writing_evidence'] = (SourceContent(source),)
-    app.session_state['writing_ai_suggestion'] = ai.normalize_draft(
+    suggested = ai.normalize_draft(
         {'paragraphs': [{'text': facts[0].text, 'fact_ids': [facts[0].id]}]},
         'activity_summary', facts, (source,))
+    app.session_state['writing_ai_suggestion'] = suggested
+    draft = replace(app.session_state['returned_draft'], sources=(source,))
+    app.session_state['writing_ai_suggestion_receipt'] = capture(
+        draft, app.session_state['current_block'], suggested, _writing_scope(app))
     app.run()
-    next(item for item in app.checkbox if item.label == 'I checked paragraph 1 against its source').check().run()
     assert not app.exception
     return source
 
@@ -141,63 +151,108 @@ def test_old_fact_action_cannot_cross_reset_or_source_selection(monkeypatch, tmp
     assert all(not content.source.facts for content in app.session_state['writing_evidence'])
 
 
-def test_late_draft_result_keeps_newer_manual_wording_until_explicit_add(monkeypatch, tmp_path):
+def test_late_draft_result_never_overwrites_new_manual_wording(monkeypatch, tmp_path):
+    from app.monthly_report_ai_suggestion_action import request_receipt
     app, source, facts = component(monkeypatch, tmp_path)
     approve_action(app).click().run()
     source = app.session_state['writing_evidence'][0].source
-    current = replace(app.session_state['current_block'], text='Newer manual report wording.')
+    before = app.session_state['current_block']
+    request = request_receipt(
+        replace(app.session_state['returned_draft'], sources=(source,)),
+        before, 'activity_summary', _writing_scope(app))
+    current = replace(before, text='Newer manual report wording.')
     app.session_state['current_block'] = current
     future = Future()
     future.set_result({'paragraphs': [{'text': facts[0].text, 'fact_ids': [facts[0].id]}]})
     app.session_state['writing_ai_job'] = {
         'kind': 'draft', 'future': future, 'block': 'activity_summary', 'facts': facts,
         'key': 'd' * 64, 'source_fingerprints': (source.fingerprint,),
+        'suggestion_request': request,
     }
     app.run()
     assert not app.exception and app.session_state['current_block'] == current
-    next(item for item in app.checkbox if item.label == 'I checked paragraph 1 against its source').check().run()
-    next(item for item in app.button if item.label == 'Use checked wording in this report').click().run()
-    assert not app.exception
-    assert app.session_state['current_block'].text.startswith(current.text)
-    assert facts[0].text in app.session_state['current_block'].text
+    assert next(item for item in app.button if item.label == 'Accept suggestion').disabled
+    assert any('section changed' in warning.value for warning in app.warning)
+    assert 'writing_ai_suggestion' in app.session_state
 
 
 def test_old_replace_action_cannot_overwrite_a_newer_manual_block(monkeypatch, tmp_path):
     app, source, facts = component(monkeypatch, tmp_path)
     checked_suggestion(app, source, facts)
-    next(item for item in app.radio if item.label == 'Use the checked suggestion').set_value('Replace existing wording').run()
-    old_action = next(item for item in app.button if item.label == 'Use checked wording in this report')
+    next(item for item in app.button if item.label == 'Edit suggestion').click().run()
+    old_action = next(item for item in app.button if item.label == 'Replace current wording with edited suggestion')
     current = replace(app.session_state['current_block'], text='New manual edit after the prior comparison.')
     app.session_state['current_block'] = current
     old_action.click().run()
     assert not app.exception and app.session_state['current_block'] == current
     assert 'writing_ai_suggestion' in app.session_state
-    # A new explicit click after the current wording is displayed may replace it.
-    next(item for item in app.button if item.label == 'Use checked wording in this report').click().run()
-    assert not app.exception and app.session_state['current_block'].text == '- ' + facts[0].text
+    assert any('section changed' in warning.value for warning in app.warning)
 
 
-def test_pending_native_manual_submission_wins_over_old_replace_action(monkeypatch, tmp_path):
+def test_pending_native_manual_submission_wins_over_replace(monkeypatch, tmp_path):
     app, source, facts = component(monkeypatch, tmp_path, native=True)
     checked_suggestion(app, source, facts)
-    next(item for item in app.radio if item.label == 'Use the checked suggestion').set_value('Replace existing wording').run()
-    action = next(item for item in app.button if item.label == 'Use checked wording in this report')
-    # Deliver the native text change and the prior action in the same request.
-    # Production callback receipts arrive before drafting, whose UI precedes
-    # the canonical Activity editor in the ordered workspace.
+    next(item for item in app.button if item.label == 'Edit suggestion').click().run()
+    action = next(item for item in app.button if item.label == 'Replace current wording with edited suggestion')
     next(item for item in app.text_area if item.label == 'Activity summary').set_value('Pending newer manual wording.')
     action.click().run()
     assert not app.exception
     assert app.session_state['current_block'].text == 'Pending newer manual wording.'
-    assert next(item for item in app.text_area if item.label == 'Activity summary').value == 'Pending newer manual wording.'
     assert 'writing_ai_suggestion' in app.session_state
-    assert any('Pending newer manual wording.' in item.value for item in app.text)
-    # The current comparison/action stays usable after the normal commit;
-    # there is no extra edit, synthetic blur, or other rescue gesture.
-    fresh = next(item for item in app.button if item.label == 'Use checked wording in this report')
-    assert not fresh.disabled
-    fresh.click().run()
-    assert not app.exception and app.session_state['current_block'].text == '- ' + facts[0].text
+    assert any('newer manual edit' in warning.value for warning in app.warning)
+    assert next(item for item in app.button if item.label == 'Replace current wording with edited suggestion').disabled
+
+
+def test_first_click_accept_keeps_manual_text_and_persists_displayed_suggestion(monkeypatch, tmp_path):
+    app, source, facts = component(monkeypatch, tmp_path)
+    checked_suggestion(app, source, facts)
+    assert not any(item.label.startswith('I checked paragraph') for item in app.checkbox)
+    assert not any(item.label == 'Suggested paragraph 1' for item in app.text_area)
+    next(item for item in app.button if item.label == 'Accept suggestion').click().run()
+    assert not app.exception
+    updated = app.session_state['current_block']
+    assert updated.text == 'Manual current wording.\n- Inspected the synthetic pump.'
+    assert updated.reviewed and updated.ai_paragraphs[0].text == facts[0].text
+    assert 'writing_ai_suggestion' not in app.session_state
+    assert app.session_state['returned_draft'].sources[0].id == source.id
+
+
+def test_edit_and_single_accept_saves_exact_native_candidate(monkeypatch, tmp_path):
+    app, source, facts = component(monkeypatch, tmp_path)
+    checked_suggestion(app, source, facts)
+    next(item for item in app.button if item.label == 'Edit suggestion').click().run()
+    revised = 'Inspected synthetic pump.'
+    next(item for item in app.text_area if item.label == 'Suggested paragraph 1').set_value(revised).run()
+    next(item for item in app.button if item.label == 'Accept edited suggestion').click().run()
+    assert not app.exception
+    assert app.session_state['current_block'].text == 'Manual current wording.\n- ' + revised
+    assert app.session_state['current_block'].ai_paragraphs[0].text == revised
+
+
+def test_dismissed_candidate_edit_does_not_resurrect_on_same_suggestion(monkeypatch, tmp_path):
+    app, source, facts = component(monkeypatch, tmp_path)
+    checked_suggestion(app, source, facts)
+    next(item for item in app.button if item.label == 'Edit suggestion').click().run()
+    next(item for item in app.text_area if item.label == 'Suggested paragraph 1').set_value('Abandoned manual candidate.').run()
+    next(item for item in app.button if item.label == 'Dismiss suggestion').click().run()
+    assert not app.exception
+    assert app.session_state['current_block'].text == 'Manual current wording.'
+    checked_suggestion(app, source, facts)
+    next(item for item in app.button if item.label == 'Edit suggestion').click().run()
+    assert next(item for item in app.text_area if item.label == 'Suggested paragraph 1').value == facts[0].text
+
+
+def test_suggestions_in_two_sessions_do_not_share_edits(monkeypatch, tmp_path):
+    app1, source, facts = component(monkeypatch, tmp_path)
+    app2, _, _ = component(monkeypatch, tmp_path)
+    checked_suggestion(app1, source, facts)
+    checked_suggestion(app2, source, facts)
+    next(item for item in app1.button if item.label == 'Accept suggestion').click().run()
+    assert app1.session_state['current_block'].text.endswith(facts[0].text)
+    assert app2.session_state['current_block'].text == 'Manual current wording.'
+    next(item for item in app2.button if item.label == 'Dismiss suggestion').click().run()
+    assert app2.session_state['current_block'].text == 'Manual current wording.'
+    assert 'writing_ai_suggestion' not in app2.session_state
 
 
 @pytest.mark.parametrize('wording', ['Inspected 1 synthetic pump.', 'Inspected one synthetic pump.'])
@@ -205,9 +260,10 @@ def test_a_page_label_does_not_support_a_number_in_the_suggestion(monkeypatch, t
     """The evidence caption says "Page 1:", but that page number supports nothing."""
     app, source, facts = component(monkeypatch, tmp_path)
     checked_suggestion(app, source, facts)
+    next(item for item in app.button if item.label == 'Edit suggestion').click().run()
     next(item for item in app.text_area if item.label == 'Suggested paragraph 1').set_value(wording).run()
     assert not app.exception
-    assert any(item.value.startswith('Unsupported number') for item in app.warning)
-    assert next(item for item in app.button if item.label == 'Use checked wording in this report').disabled
+    assert any('unsupported numerical' in item.value.lower() for item in app.warning)
+    assert next(item for item in app.button if item.label == 'Accept edited suggestion').disabled
     next(item for item in app.text_area if item.label == 'Suggested paragraph 1').set_value(facts[0].text).run()
     assert not any(item.value.startswith('Unsupported number') for item in app.warning)

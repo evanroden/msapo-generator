@@ -21,14 +21,17 @@ def _path(root, target, path=()):
     return None
 
 
-def _water_source():
+def _water_source(*, dated=True):
+    """dated=False leaves out the service date, so A70's automatic inclusion
+    declines the PDF and its pages go through the manual page review."""
     with fitz.open() as document:
         for number in (1, 2):
             page = document.new_page()
             page.insert_text((45, 65), "TEST ONLY - ALL RECORDS INVENTED")
             page.insert_text((45, 110), "Water treatment")
             page.insert_text((45, 140), "Facility: Demo North")
-            page.insert_text((45, 170), "Service date: 2026-09-17")
+            if dated:
+                page.insert_text((45, 170), "Service date: 2026-09-17")
             page.insert_text((45, 200), f"Synthetic water page {number}: conductivity inspected.")
         return document.tobytes()
 
@@ -40,7 +43,7 @@ def test_first_source_review_keeps_native_page_selector_path(monkeypatch, tmp_pa
     assert not app.session_state[prefix + "_draft"].sources
     import streamlit as st
     uploader = st.file_uploader
-    original = _water_source()
+    original = _water_source(dated=False)
     stream = BytesIO(original)
     stream.name = "Synthetic water treatment.pdf"
     def uploaded(label, *args, **kwargs):

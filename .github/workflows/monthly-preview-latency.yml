@@ -95,6 +95,8 @@ jobs:
           for part in sources native; do
             docker cp "msapo-491-uncapped-$part:/tmp/monthly-preview-latency/backend-$part.json" \
               "test-artifacts/monthly-preview-latency/backend-uncapped-$part.json" || true
+            docker cp "msapo-491-uncapped-$part:/tmp/monthly-preview-latency/backend-$part.txt" \
+              "test-artifacts/monthly-preview-latency/backend-uncapped-$part.txt" || true
             docker logs "msapo-491-uncapped-$part" > "test-artifacts/monthly-preview-latency/$part-uncapped.log" 2>&1 || true
             docker inspect "msapo-491-uncapped-$part" > "test-artifacts/monthly-preview-latency/$part-uncapped-inspect.json" || true
           done

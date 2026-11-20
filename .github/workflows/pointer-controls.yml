@@ -1,0 +1,68 @@
+name: Purchase and expense visible pointer controls
+
+on:
+  pull_request:
+    paths:
+      - 'app/expense_ui.py'
+      - 'app/web_ui.py'
+      - 'app/workflow_shell.css'
+      - 'scripts/qa_pointer_controls.py'
+      - '.github/workflows/pointer-controls.yml'
+      - 'tests/fixtures/workspaces/expense_app.py'
+      - 'tests/fixtures/workspaces/po_app.py'
+      - 'requirements*.lock'
+  push:
+    branches: [main]
+    paths:
+      - 'app/expense_ui.py'
+      - 'app/web_ui.py'
+      - 'app/workflow_shell.css'
+      - 'scripts/qa_pointer_controls.py'
+      - '.github/workflows/pointer-controls.yml'
+      - 'tests/fixtures/workspaces/expense_app.py'
+      - 'tests/fixtures/workspaces/po_app.py'
+      - 'requirements*.lock'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  visible-pointer-controls:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - name: Install locked application, LibreOffice and real browser engines
+        timeout-minutes: 20
+        run: |
+          sudo python3 scripts/ci_ubuntu_mirror_priority.py
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-calc fonts-dejavu-core fonts-crosextra-carlito fonts-crosextra-caladea
+          python -m pip install -r requirements-dev.lock
+          python -m pip install playwright==1.58.0
+          python scripts/patch_streamlit_frontend.py
+          python scripts/patch_streamlit_date_input.py
+          python -m playwright install --with-deps chromium webkit
+      - name: Targeted expense and purchase-order regression suite
+        timeout-minutes: 8
+        run: python -m pytest -q tests/test_expense_disclosure.py tests/test_expense_draft_state.py tests/test_web_ui_app.py
+      - name: Mouse box and label, WebKit touchscreen at phone and iPad widths
+        timeout-minutes: 15
+        run: python scripts/qa_pointer_controls.py
+      - name: Preserve synthetic control crops, first failure and pointer geometry
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visible-pointer-controls
+          path: test-artifacts/pointer-controls/
+          retention-days: 7
+          if-no-files-found: warn
