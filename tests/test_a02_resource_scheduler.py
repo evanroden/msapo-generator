@@ -21,10 +21,9 @@ from app import office_process
 @pytest.fixture
 def parallel(monkeypatch, tmp_path):
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "runtime"))
-        # Admission locks are container-wide by design; keep this test's locks
-        # hermetic while still proving live and isolated namespaces share them.
-        monkeypatch.setenv("MSAPO_RESOURCE_LOCK_DIR", str(tmp_path / "locks"))
-
+    # Admission locks are container-wide by design; keep this test's locks
+    # hermetic while still proving live and isolated namespaces share them.
+    monkeypatch.setenv("MSAPO_RESOURCE_LOCK_DIR", str(tmp_path / "locks"))
     monkeypatch.setenv("MSAPO_RENDER_PARALLEL", "1")
     monkeypatch.setattr(scheduler, "_memory_limit", lambda: 4 * 1024**3)
     monkeypatch.setattr(scheduler, "_cpu_capacity", lambda: 4)
@@ -172,9 +171,11 @@ def test_both_conversion_lanes_have_disjoint_marker_names(parallel):
     held = Event()
     finished = Event()
     observed = set()
+    entered = []
     def conversion(label):
         with jobs.conversion_slot(wait_seconds=2):
             observed.add(office_process._marker().name)
+            entered.append(label)
             held.set()
             assert finished.wait(4)
             return label
@@ -182,7 +183,11 @@ def test_both_conversion_lanes_have_disjoint_marker_names(parallel):
         a = pool.submit(conversion, "a")
         assert held.wait(2)
         b = pool.submit(conversion, "b")
-        _eventually(lambda: scheduler.snapshot()["running"]["conversion"] == 2)
+        # The scheduler counts a conversion lease before its Office lane is
+        # taken; wait until both are inside their lanes, or "a" can finish
+        # first and "b" would then reuse lane 0.
+        _eventually(lambda: scheduler.snapshot()["running"]["conversion"] == 2
+                    and len(entered) == 2)
         finished.set()
         assert {a.result(timeout=3), b.result(timeout=3)} == {"a", "b"}
     assert observed == {".active-office.json", ".active-office-1.json"}
@@ -346,10 +351,10 @@ except s.AdmissionUnavailable:
     assert attempt() == "acquired", "budget must be reusable after release"
 
 
-def test_resource_lock_folder_ignores_report_namespace(monkeypatch, tmp_path):    
-        """Review regression: admission locks must not follow the isolated QA root."""
-        monkeypatch.delenv("MSAPO_RESOURCE_LOCK_DIR", raising=False)
-        monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "live"))
+def test_resource_lock_folder_ignores_report_namespace(monkeypatch, tmp_path):
+    """Review regression: admission locks must not follow the isolated QA root."""
+    monkeypatch.delenv("MSAPO_RESOURCE_LOCK_DIR", raising=False)
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "live"))
     live_folder = scheduler._lock_folder()
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "isolated"))
     assert scheduler._lock_folder() == live_folder
@@ -357,45 +362,46 @@ def test_resource_lock_folder_ignores_report_namespace(monkeypatch, tmp_path):
 
 
 def test_heavy_lease_in_one_namespace_blocks_another_namespace(parallel, tmp_path):
-        """Review regression: an isolated QA heavy lease shares the live budget locks.
+    """Review regression: an isolated QA heavy lease shares the live budget locks.
 
-            The two processes use different report namespaces (EPC_DATA_DIR) but the
-                same cgroup headroom; the second heavy must still be denied at 800 MiB.
-                    """
-        import subprocess
-        import sys
-        code = """from app import monthly_report_resource_scheduler as s
-    s._memory_limit = lambda: 4 * 1024**3
-    s._cpu_capacity = lambda: 4
-    try:
-        with s.lease('heavy', priority='visible', wait_seconds=.12,
-                     headroom=lambda: 800 * s.MIB):
-            print('acquired')
-    except s.AdmissionUnavailable:
-        print('denied-overcommit')
+    The two processes use different report namespaces (EPC_DATA_DIR) but the
+    same cgroup headroom; the second heavy must still be denied at 800 MiB.
     """
-        env = os.environ.copy()
-        env["EPC_DATA_DIR"] = str(tmp_path / "other-namespace")
-        def attempt():
-                    run = subprocess.run([sys.executable, "-c", code],
-                                                                      capture_output=True, text=True, timeout=8, env=env)
-                    assert run.returncode == 0, run.stderr[:1000]
-                    return run.stdout.strip()
-                with scheduler.lease("heavy", priority="export", wait_seconds=.2,
-                                                              headroom=lambda: 800 * scheduler.MIB):
-                                                                          assert attempt() == "denied-overcommit"
-                                                                      assert attempt() == "acquired", "budget must be reusable after release"
+    import subprocess
+    import sys
+    code = """from app import monthly_report_resource_scheduler as s
+s._memory_limit = lambda: 4 * 1024**3
+s._cpu_capacity = lambda: 4
+try:
+    with s.lease('heavy', priority='visible', wait_seconds=.12,
+                 headroom=lambda: 800 * s.MIB):
+        print('acquired')
+except s.AdmissionUnavailable:
+    print('denied-overcommit')
+"""
+    env = os.environ.copy()
+    env["EPC_DATA_DIR"] = str(tmp_path / "other-namespace")
+
+    def attempt():
+        run = subprocess.run([sys.executable, "-c", code],
+                             capture_output=True, text=True, timeout=8, env=env)
+        assert run.returncode == 0, run.stderr[:1000]
+        return run.stdout.strip()
+    with scheduler.lease("heavy", priority="export", wait_seconds=.2,
+                         headroom=lambda: 800 * scheduler.MIB):
+        assert attempt() == "denied-overcommit"
+    assert attempt() == "acquired", "budget must be reusable after release"
 
 
 def test_two_heavies_at_1400mib_headroom_convert_in_turn(parallel):
-        """Codex review: two heavies admitted at 1,400 MiB must not deadlock on conversion.
+    """Codex review: two heavies admitted at 1,400 MiB must not deadlock on conversion.
 
-            At 1,400 MiB both heavies are admitted (512 + 512 + 160), yet neither
-                conversion fits a second full peak (1,024 + 320 + 160). Each conversion
-                    runs inside its heavy lease's reservation, so the conversions run one at
-                        a time instead of both timing out. Both heavies are held before either
-                            conversion is requested.
-                                """
+    At 1,400 MiB both heavies are admitted (512 + 512 + 160), yet neither
+    conversion fits a second full peak (1,024 + 320 + 160). Each conversion
+    runs inside its heavy lease's reservation, so the conversions run one at
+    a time instead of both timing out. Both heavies are held before either
+    conversion is requested.
+    """
     from threading import Barrier, Lock
     headroom = lambda: 1400 * scheduler.MIB
     both_heavy = Barrier(2)
@@ -403,20 +409,20 @@ def test_two_heavies_at_1400mib_headroom_convert_in_turn(parallel):
     guard = Lock()
 
     def convert():
-                with scheduler.lease("heavy", priority="export", wait_seconds=5, headroom=headroom):
-                                both_heavy.wait(timeout=5)
-                                with scheduler.lease("conversion", priority="export", wait_seconds=10, headroom=headroom):
-                                                    with guard:
-                                                                            state["current"] += 1
-                                                                            state["peak"] = max(state["peak"], state["current"])
-                                                                        time.sleep(0.3)
-                                                    with guard:
-                                                                            state["current"] -= 1
+        with scheduler.lease("heavy", priority="export", wait_seconds=5, headroom=headroom):
+            both_heavy.wait(timeout=5)
+            with scheduler.lease("conversion", priority="export", wait_seconds=10, headroom=headroom):
+                with guard:
+                    state["current"] += 1
+                    state["peak"] = max(state["peak"], state["current"])
+                time.sleep(0.3)
+                with guard:
+                    state["current"] -= 1
 
-                                        with ThreadPoolExecutor(max_workers=2) as pool:
-                                                    results = [pool.submit(convert) for _ in range(2)]
-                                                    for task in results:
-                                                                    task.result(timeout=15)
-                                                            assert state["peak"] == 1, "conversions must serialize on 1,400 MiB headroom"
-                                                assert scheduler.snapshot()["running"]["heavy"] == 0
-                        assert scheduler.snapshot()["running"]["conversion"] == 0
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = [pool.submit(convert) for _ in range(2)]
+        for task in results:
+            task.result(timeout=15)
+    assert state["peak"] == 1, "conversions must serialize on 1,400 MiB headroom"
+    assert scheduler.snapshot()["running"]["heavy"] == 0
+    assert scheduler.snapshot()["running"]["conversion"] == 0
