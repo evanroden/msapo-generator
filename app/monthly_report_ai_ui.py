@@ -479,6 +479,12 @@ def _apply_pending_fact_approval(draft, prefix):
             facts[fact.id] = fact
         # Otherwise keep the accepted fact, including human corrections.
     updated = replace(current, facts=tuple(facts.values()))
+    # Only native acceptance may record a receipt for later-month replay.
+    from app.monthly_report_ai_replay import record_acceptance
+    try:
+        record_acceptance(draft.profile, current, proposed[2])
+    except (OSError, ValueError) as exc:
+        st.warning("Fact replay was not saved; current reviewed facts are retained. " + str(exc))
     st.session_state[prefix + "_evidence"] = tuple(
         replace(content, source=updated) if content.source.id == current.id else content
         for content in contents)
@@ -637,6 +643,36 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
         _reading_progress(prefix)
     evidence_key = prefix + "_evidence"
     contents = st.session_state.get(evidence_key, ())
+    from app.monthly_report_ai_replay import ReviewedReplay, replay_reviewed_facts
+    replay_seen_key = prefix + "_accepted_replay_seen"
+    seen = set(st.session_state.get(replay_seen_key, ()))
+    replayed = {}
+    enriched = []
+    for content in contents:
+        source = content.source
+        token = ai.digest((draft.profile.contract, draft.profile.key, draft.period.key,
+                           tuple(f.key for f in draft.profile.facilities),
+                           source.id, source.sha256, source.scope_review, source.page_texts))
+        receipt_key = prefix + "_accepted_replay_" + token
+        if token not in seen:
+            try:
+                past = replay_reviewed_facts(draft, source)
+            except (OSError, ValueError) as exc:
+                st.warning("Prior extraction could not be verified and was not reused: " + str(exc))
+                past = ReviewedReplay()
+            st.session_state[receipt_key] = past
+            seen.add(token)
+            if past.reusable:
+                facts = {fact.id: fact for fact in source.facts}
+                facts.update((fact.id, fact) for fact in past.reusable)
+                source = replace(source, facts=tuple(facts.values()))
+                content = replace(content, source=source)
+        replayed[source.id] = st.session_state.get(receipt_key, ReviewedReplay())
+        enriched.append(content)
+    st.session_state[replay_seen_key] = tuple(seen)
+    if tuple(enriched) != tuple(contents):
+        contents = tuple(enriched)
+        st.session_state[evidence_key] = contents
     draft = replace(draft, sources=tuple(content.source for content in contents))
     targets = [key for key in LABELS if allowed_keys is None or key in allowed_keys]
     if not targets:
@@ -711,6 +747,15 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                 key=prefix + "_ai_source",
             )
             source = by_id[chosen].source
+            past = replayed.get(source.id, ReviewedReplay())
+            if past.reusable:
+                st.caption(f"{len(past.reusable)} verified recommendations reused from "
+                           f"{past.from_period}; corrected text remains editable.")
+            if past.historical:
+                st.caption(f"{len(past.historical)} accepted facts from {past.from_period} "
+                           "remain historical, not work completed in this report month.")
+                for fact in past.historical:
+                    st.write(f"Earlier month · Page {fact.page} · {fact.text}")
             all_pending = st.session_state.get(prefix + "_ai_all_proposals", {})
             if (chosen in all_pending
                     and all_pending[chosen][0] == source.fingerprint):
@@ -729,39 +774,51 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
             )
             from app.monthly_report_ai_correction_ui import render_fact_page_context
             render_fact_page_context(prefix,replace(draft,blocks=tuple(blocks.values())),source,by_id[chosen])
+            reviewed_pages = {fact.page for fact in (*past.reusable, *past.historical)}
+            already_reviewed = bool(pages and set(pages) <= reviewed_pages)
+            if already_reviewed:
+                st.caption("These pages have accepted source-linked facts. Use the earlier "
+                           "review without a model request, or explicitly read again.")
+            read_again = (st.button("Re-read pages for additional facts (uses document reader)",
+                                    key=prefix + "_ai_reread", disabled=busy)
+                          if already_reviewed else False)
             if st.button(
                 "Find work, findings and follow-ups",
                 key=prefix + "_ai_extract",
                 disabled=busy or not pages,
-            ):
+            ) or read_again:
                 try:
-                    if source.facility and source.facility.casefold() not in names:
-                        raise ValueError("This file is assigned to another site. Correct its source scope before sending it to the reader.")
-                    needs_coverage = (
-                        len(pages) > 20
-                        or sum(len(source.page_texts[n - 1]) for n in pages) > ai.MAX_EVIDENCE_CHARS
-                        or any(n in source.needs_vision for n in pages)
-                    )
-                    if needs_coverage:
-                        planned = coverage.plan(source, pages)
-
-                        def prepare():
-                            return coverage.prepare_run(
-                                planned, by_id[chosen], draft.profile, draft.period)
-
-                        _start(
-                            prefix, draft,
-                            {
-                                "kind": "coverage",
-                                "source_id": source.id,
-                                "source_fingerprint": source.fingerprint,
-                                "plan": planned,
-                            },
-                            prepare,
-                            coverage.run,
-                        )
+                    if already_reviewed and not read_again:
+                        st.info("Prior reviewed facts are displayed above. No paid extraction "
+                                "request was made; earlier work remains historical.")
                     else:
-                        _queue_page_reads(draft, prefix, source, pages)
+                        if source.facility and source.facility.casefold() not in names:
+                            raise ValueError("This file is assigned to another site. Correct its source scope before sending it to the reader.")
+                        needs_coverage = (
+                            len(pages) > 20
+                            or sum(len(source.page_texts[n - 1]) for n in pages) > ai.MAX_EVIDENCE_CHARS
+                            or any(n in source.needs_vision for n in pages)
+                        )
+                        if needs_coverage:
+                            planned = coverage.plan(source, pages)
+
+                            def prepare():
+                                return coverage.prepare_run(
+                                    planned, by_id[chosen], draft.profile, draft.period)
+
+                            _start(
+                                prefix, draft,
+                                {
+                                    "kind": "coverage",
+                                    "source_id": source.id,
+                                    "source_fingerprint": source.fingerprint,
+                                    "plan": planned,
+                                },
+                                prepare,
+                                coverage.run,
+                            )
+                        else:
+                            _queue_page_reads(draft, prefix, source, pages)
                 except ValueError as exc:
                     st.warning(str(exc))
             # Each source/page is an independent content-hash receipt. Cached
