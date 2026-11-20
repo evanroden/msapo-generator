@@ -89,9 +89,13 @@ class ReceiptAnalysis:
     transaction_date: date | None = None
     total_amount: str = ""
     tax_amount: str = ""
+    tip_amount: str = ""
+    service_charge: str = ""
     currency: str = ""
     suggested_description: str = ""
+    receipt_type: str = ""
     expense_section_guess: str = EXPENSE_SECTION_MISC
+    expense_section_reason: str = ""
     confidence: str = "low"
     review_notes: list[str] = field(default_factory=list)
     line_items: tuple[ReceiptLineItem, ...] = field(default_factory=tuple)
@@ -176,9 +180,15 @@ Extract or make a careful best-supported guess for:
   due and before any later reimbursement; digits and decimal point only, or null
 - tax_amount: separately printed sales-tax amount, digits and decimal point
   only, or null
+- tip_amount: only an actual tip/gratuity included in the final charged total,
+  digits and decimal point only, or null. Never use a suggested tip.
+- service_charge: separately printed service charge actually paid and included
+  in the final total, or null. Do not repeat a charge already recorded as tip.
 - currency: ISO currency code when supported by the receipt, otherwise null
 - suggested_description: a short editable description of what was purchased.
   Use the receipt's items/category and merchant. Do not invent a business reason.
+- receipt_type: classify the purchase as "Lodging", "Meal", "Parking", "Fuel",
+  or "Other". This is a review suggestion, NOT an expense-report section.
 - line_items: every individually priced purchased item you can read, in printed
   order, as objects with description and amount. Amount is that item's extended
   line amount after quantity, digits and decimal point only. Do not include
@@ -192,6 +202,8 @@ Extract or make a careful best-supported guess for:
   such person is named
 - expense_section_guess: "entertainment" only when the receipt itself supports
   customer/guest/business entertainment; otherwise "miscellaneous"
+- expense_section_reason: when suggesting entertainment, briefly identify the
+  evidence printed on the receipt; otherwise null. Do not invent an attendee.
 - confidence: "high", "medium", or "low"
 - review_notes: short list of ambiguity warnings, including multiple possible
   totals, illegible fields, refunds/credits, foreign currency, or missing date
@@ -207,13 +219,17 @@ Return exactly these keys:
   "transaction_date": "YYYY-MM-DD or null",
   "total_amount": "decimal string or null",
   "tax_amount": "decimal string or null",
+  "tip_amount": "decimal string or null",
+  "service_charge": "decimal string or null",
   "currency": "three-letter code or null",
   "suggested_description": "string or null",
+  "receipt_type": "Lodging | Meal | Parking | Fuel | Other",
   "line_items": [
     {"description": "purchased item", "amount": "decimal string"}
   ],
   "customer_name": "string or null",
   "expense_section_guess": "miscellaneous | entertainment",
+  "expense_section_reason": "string or null",
   "confidence": "high | medium | low",
   "review_notes": ["string", "..."]
 }
@@ -352,6 +368,8 @@ def normalize_receipt_response(raw: str) -> ReceiptAnalysis:
     if not total:
         notes.append("Confirm the final amount paid.")
     tax = _amount_string(source.get("tax_amount"))
+    tip = _amount_string(source.get("tip_amount"))
+    service_charge = _amount_string(source.get("service_charge"))
 
     currency = _optional_string(source.get("currency")).upper()
     if currency and not re.fullmatch(r"[A-Z]{3}", currency):
@@ -376,6 +394,18 @@ def normalize_receipt_response(raw: str) -> ReceiptAnalysis:
 
     merchant = _optional_string(source.get("merchant_name"))[:160]
     description = _optional_string(source.get("suggested_description"))[:240]
+    raw_type = _optional_string(source.get("receipt_type")).casefold()
+    receipt_type = {
+        "lodging": "Lodging",
+        "meal": "Meal",
+        "parking": "Parking",
+        "fuel": "Fuel",
+        "other": "Other",
+    }.get(raw_type, "Other" if raw_type else "")
+    section_reason = (
+        _optional_string(source.get("expense_section_reason"))[:240]
+        if section == EXPENSE_SECTION_ENTERTAINMENT else ""
+    )
     if not description and merchant:
         description = merchant
     line_items = _line_items(source.get("line_items"), notes)
@@ -415,9 +445,13 @@ def normalize_receipt_response(raw: str) -> ReceiptAnalysis:
         transaction_date=transaction_date,
         total_amount=total,
         tax_amount=tax,
+        tip_amount=tip,
+        service_charge=service_charge,
         currency=currency,
         suggested_description=description,
+        receipt_type=receipt_type,
         expense_section_guess=section,
+        expense_section_reason=section_reason,
         confidence=confidence,
         review_notes=list(dict.fromkeys(notes)),
         line_items=line_items,

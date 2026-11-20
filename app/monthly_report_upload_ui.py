@@ -967,7 +967,11 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, peri
     image_pages = sources.image_numbers(content)
     existing = included_pages(blocks)
     included_here = tuple(n for n in image_pages if (source.id, n) in existing)
-    compact = (auto_include and included_here and not _undecided_pages(content, source)
+    native_auto_screen = any(
+        notice.startswith("Automatic native-text screen included eligible Water pages")
+        for notice in source.notices)
+    compact = (auto_include and included_here
+               and (not _undecided_pages(content, source) or native_auto_screen)
                and all(page_allowed(source, n) for n in included_here)
                and not st.session_state.get(p + "_edit_page_reviews", False))
     from app.monthly_report_source_details import detail_problems
@@ -1000,9 +1004,12 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, peri
         # or immediately when a changed/new source page needs attention.
         included_here = tuple(n for n in image_pages if (source.id, n) in existing)
         expanded_key = p + "_edit_page_reviews"
-        if (included_here and not undecided
+        if (included_here and (not undecided or native_auto_screen)
                 and all(page_allowed(source, n) for n in included_here)):
             if not st.session_state.get(expanded_key, False):
+                if undecided:
+                    st.caption(f"{len(undecided)} page(s) need separate review or exclusion; "
+                               "the screened technical attachments are already in this report.")
                 if st.button(
                     "Report pages", key=p + "_open_page_reviews",
                     help="Review, caption, reorder or leave out pages here. Saved originals are unchanged.",
@@ -1150,6 +1157,7 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
     local_key = key + "_section_" + destination
     contents = st.session_state.setdefault(key, ())
     bindings = dict(st.session_state.setdefault(key + "_section_routes", {}))
+    fresh_ids = ()
     from app.monthly_report_page_controls import retained_page_section_omission
     if (destination in AUTO_INCLUDE_PAGE_DESTINATIONS
             and retained_page_section_omission(blocks.get(destination))
@@ -1210,6 +1218,7 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
             with st.spinner("Reading files and checking duplicates…"):
                 contents, messages = sources.ingest_batch(profile, picked, contents)
             messages = list(messages)
+            fresh_ids = tuple(c.source.id for c in contents if c.source.id not in before)
             for content in contents:
                 if content.source.id not in before:
                     bindings[content.source.id] = destination
@@ -1264,6 +1273,69 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
             _omitted_water_recovery(contents, blocks, local_key, prefix)
         return tuple(c.source for c in contents), {}, {}
     if destination == "water_reports":
+        # A new, native-text Water PDF is the section's one-action path. Never
+        # replay this for an existing source, even after a report-only removal.
+        # The normal page manager remains available for visual exceptions.
+        from app.monthly_report_section_uploads import automatic_water_upload, source_route
+        from app.monthly_report_setup import merge_blocks
+        exceptions_key = local_key + "_automatic_exceptions"
+        if fresh_ids:
+            all_exceptions, combined, shadow = [], {}, dict(blocks)
+            refreshed = {c.source.id: c for c in contents}
+            water_is_open = sections is None or any(
+                s.key == "water" and s.included for s in sections)
+            for item in scoped:
+                source = item.source
+                if source.id not in fresh_ids or source.suffix != ".pdf":
+                    continue
+                if not water_is_open:
+                    all_exceptions.append(f"{source.filename}: Water treatment is excluded from this report.")
+                    continue
+                from app.monthly_report_section_uploads import included_pages
+                if (any(identity == source.id for identity, _ in included_pages(blocks))
+                        or any(source_route(ref) == ("water_reports", source.id, source.sha256)
+                               for block in blocks.values() for ref in block.references)):
+                    # The saved routing receipt can outlive a deliberately
+                    # omitted last page; absence of an image is not consent.
+                    continue
+                plan = automatic_water_upload(profile, period, item, shadow)
+                all_exceptions.extend(f"{source.filename}: {reason}" for reason in plan.exceptions)
+                if not plan.pages:
+                    continue
+                pairs = frozenset((source.id, page) for page in plan.pages)
+                try:
+                    prepared = prepare_section_pages(
+                        profile, (plan.content,), destination, shadow, assets, only_pages=pairs)
+                except (ValueError, OSError) as exc:
+                    all_exceptions.append(
+                        f"{source.filename}: Could not include screened pages: {exc}")
+                    continue
+                refreshed[source.id] = plan.content
+                for slot, block in prepared.items():
+                    combined[slot] = merge_blocks(combined.get(slot), block)
+                    shadow[slot] = merge_blocks(shadow.get(slot), block)
+            contents = tuple(refreshed[c.source.id] for c in contents)
+            st.session_state[key] = contents
+            st.session_state[exceptions_key] = tuple(all_exceptions)
+            if combined:
+                included_count = len(combined["water_reports"].asset_hashes)
+                notice = (f"Included {included_count} native-text Water pages automatically. "
+                          "Open Report pages to review captions or remove an attachment.")
+                st.caption(notice)
+                for warning in all_exceptions:
+                    st.warning(warning)
+                # The caller commits these pages; then one rerun shows them in
+                # the page manager (file name and Report pages) with this notice.
+                st.session_state[local_key + "_automatic_included"] = notice
+                st.session_state[prefix + "_period_editor_refresh"] = True
+                return tuple(c.source for c in contents), combined, {}
+        included_notice = st.session_state.pop(local_key + "_automatic_included", None)
+        if included_notice:
+            st.caption(included_notice)
+        for notice in st.session_state.get(exceptions_key, ()):
+            st.warning(notice)
+        st.caption("Clear native-text Water pages attach on upload. "
+                   "Priced, scanned and visually uncertain pages stay out for review.")
         included = (len(blocks["water_reports"].asset_hashes)
                     if "water_reports" in blocks and blocks["water_reports"].source != "Omit" else 0)
         st.markdown(f"**Report pages ({included})**")
