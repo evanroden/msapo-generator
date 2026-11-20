@@ -123,6 +123,11 @@ class ImportItem:
     # Original rows stay intact for source identity and native geometry checks.
     # Only a proved full-width service-call title may precede the real header.
     table_header_row: int = 0
+    # Native (row, physical cell, grid column, span, vertical merge) pointers.
+    # Metadata is inspection-only; no source row is deleted or rewritten.
+    table_cell_refs: tuple[tuple[int, int, int, int, str], ...] = ()
+    table_row_roles: tuple[str, ...] = ()
+    table_row_groups: tuple[int, ...] = ()
     # Relationship identity is stable within the original source part and
     # must not be replaced with a guessed image/shape role.
     relationship_id: str = ""
@@ -921,10 +926,20 @@ def inspect_docx(path: Path) -> DocxInspection:
                                             note="Word table contains text boxes or unsupported drawings and needs manual layout review. "
                                                  "Retain its source page or add a reviewed replacement; extracted text does not preserve the layout.")
                                     elif grid.rows and (native_table is not table_element or not picture_table):
-                                        title_band = _service_call_title_band(native_table, grid.rows, section)
-                                        width = len(grid.rows[0])
+                                        from app.monthly_report_word_table_bands import word_table_geometry
+                                        try:
+                                            geometry = word_table_geometry(native_table, grid.rows)
+                                        except ValueError as exc:
+                                            raise ImportError("Table is too wide or malformed to review safely.") from exc
+                                        # The physical grid also counts gridAfter and tblGrid columns.
+                                        width = max(len(grid.rows[0]), geometry.width)
+                                        rows = tuple(row + ("",) * (width - len(row)) for row in grid.rows)
+                                        title_band = _service_call_title_band(native_table, rows, section)
                                         recorded = add("table", part, position, item_id=nested_id,
-                                            rows=grid.rows, table_header_row=1 if title_band else 0,
+                                            rows=rows, table_header_row=1 if title_band else 0,
+                                            table_cell_refs=geometry.cell_refs,
+                                            table_row_roles=geometry.row_roles,
+                                            table_row_groups=geometry.row_groups,
                                             suggested_slot=content_slot or _suggest("table", direct_text, section),
                                             merged_title_rows=tuple(index for index, count in grid.full_width_bands
                                                                     if width >= 2 and count == width),
@@ -933,7 +948,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                                                   "Merged cells retain text in the first column of their span. Confirm headers and columns."))
                                         if title_band:
                                             add("text", part, position, item_id=recorded + "-title",
-                                                text=grid.rows[0][0], suggested_slot="service_calls",
+                                                text=rows[0][0], suggested_slot="service_calls",
                                                 note="Native table title")
                                     else:
                                         # A picture-only Word table was already exposed
@@ -1287,7 +1302,8 @@ def _map_items(path, inspection, mappings, *, source_view=None, _operation=None)
                 raise ImportError("Invalid imported table column mapping.")
             header_row = item.table_header_row if mapping.first_row_header else 0
             labels = item.rows[header_row] if mapping.first_row_header else tuple(f"Column {i+1}" for i in range(width))
-            rows = item.rows[header_row + 1:] if mapping.first_row_header else item.rows
+            from app.monthly_report_word_table_bands import typed_data_rows
+            rows = typed_data_rows(item, header_row + 1 if mapping.first_row_header else 0)
             # Reconstruct only a fully recognized, geometry-proved vendor list.
             # Explicit user column selections remain authoritative.
             if mapping.slot == "subcontractor_matrix" and mapping.first_row_header and not mapping.columns:
