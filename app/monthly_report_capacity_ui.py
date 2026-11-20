@@ -188,6 +188,32 @@ def render_capacity(draft, block, prefix, field, *, show_scope=True):
         st.session_state[prefix + "_capacity_context"] = context
     state = capacity.load_capacity(profile.contract)
     scope_slot = st.container() if show_scope else None
+    # A saved blank report or an older unedited shared pin can adopt the
+    # currently approved rows without a second upload. This updates ONLY this
+    # report's working block; the contract standing revision is never written.
+    # can_refresh_capacity rejects omitted blocks and manual overrides.
+    approved = capacity.capacity_block(profile, state) if state is not None else None
+    if approved is None:
+        st.caption("No approved reusable thermal capacity for these sites. "
+                   "Enter report-only values or upload a capacity source below.")
+    elif approved == block:
+        # Do not reload historical revisions on every no-op editor rerun.
+        st.caption("Approved thermal capacity is already in this report. "
+                   "Its source and units are kept; report-only edits do not change shared data.")
+    elif capacity.can_refresh_capacity(profile, block):
+        action = ("Use latest approved capacity in this report" if _has_values(block)
+                  else "Use approved capacity in this report")
+        st.caption("Approved thermal capacity is available for these sites. "
+                   "Reuse it once, or upload a corrected source below.")
+        if st.button(action, key=(prefix + "_capacity_use_approved_" + str(state.revision)
+                                  + "_" + approved.fingerprint[:12])):
+            blocks = tuple(approved if b.key == "thermal_capacity" else b for b in draft.blocks)
+            if not any(b.key == "thermal_capacity" for b in draft.blocks):
+                blocks += (approved,)
+            draft, block = replace(draft, blocks=blocks), approved
+    else:
+        st.caption("This report has its own capacity values. Approved shared "
+                   "capacity remains unchanged unless you explicitly correct its source.")
     # Keep the file action visible even when capacity rows already exist. A
     # previously saved grid must not hide the route for this month’s source.
     st.caption("Edit this report’s capacity values in the table above, or upload a thermal capacity file below. Existing reusable-site values change only after an explicit correction.")

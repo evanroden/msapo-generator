@@ -82,12 +82,12 @@ def test_purchase_warning_and_highlight_clear_after_a_required_value_is_refilled
     vendor = next(field for field in app.text_input if field.label == "Vendor name *")
     vendor.set_value("").run()
     assert "st-key-po_needs_you" in _emitted_css(app)
-    assert any("Needed from you" in block.value for block in app.markdown)
+    assert any('class="needs-banner"' in block.value for block in app.markdown)
 
     vendor = next(field for field in app.text_input if field.label == "Vendor name *")
     vendor.set_value("Synthetic Vendor").run()
     assert "st-key-po_needs_you" not in _emitted_css(app)
-    assert not any("Needed from you" in block.value for block in app.markdown)
+    assert not any('class="needs-banner"' in block.value for block in app.markdown)
 
 
 def test_expense_highlights_each_missing_detail_until_it_is_filled():

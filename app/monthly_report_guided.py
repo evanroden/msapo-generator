@@ -1096,12 +1096,10 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
             draft = replace(draft, sources=_keep_missing_sources(prefix, sources))
         if additions:
             draft, blocks = _apply_prepared(draft, blocks, additions, incoming_specs, prefix)
-            if local_destination == "water_reports":
-                # A completed page-review receipt is consumed only after the
-                # additions are present in the current draft. This prevents
-                # an intentionally removed page from silently reappearing.
-                from app.monthly_report_upload_ui import acknowledge_autoincluded_water_pages
-                acknowledge_autoincluded_water_pages(prefix, blocks)
+            from app.monthly_report_upload_ui import acknowledge_autoincluded_pages
+            # Consume a page-review receipt only after its exact approved
+            # images have been merged into this draft. No editor rerun here.
+            acknowledge_autoincluded_pages(prefix, blocks, local_destination)
     if section.key == "activity":
         from app.monthly_report_source_manager_ui import render_guided_source_manager
         # Vendor originals use this existing page-by-page manager. A second
@@ -1678,8 +1676,11 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         with st.container(key="monthly_report_navigation"):
             st.markdown('<span class="epc-section-navigation">'
                         '<button type="button" class="epc-section-back" disabled>Back</button>'
+                        '<span class="epc-navigation-attention" role="status" aria-live="polite" hidden></span>'
                         '<span class="epc-section-progress" role="status" aria-live="polite">Cover</span>'
                         '<button type="button" class="epc-section-next" disabled>Next</button></span>', unsafe_allow_html=True)
+        from app.monthly_report_section_inclusion import render_section_preferences
+        section_choices = render_section_preferences(draft, prefix, field)
         with workspace_section("monthly_cover", "Cover"):
             editor_column, preview_column = workspace_columns("monthly_cover")
             with editor_column:
@@ -1720,7 +1721,6 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     render_section_preview(proposed_draft, "cover", proposed_assets, prefix, deferred=True)
         from app.monthly_report_section_help import editor_section_title
         from app.monthly_report_model import included_sections
-        section_choices = {}
         for section in draft.sections:
             title = editor_section_title(section) or section.key.replace("_", " ").capitalize()
             with workspace_section("monthly_" + section.key, title):
@@ -1736,8 +1736,6 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     if section != before:
                         draft = replace(draft, sections=tuple(
                             section if item is before else item for item in draft.sections))
-                from app.monthly_report_section_inclusion import render_section_inclusion
-                section_choices[section.key] = render_section_inclusion(draft, section, prefix, field)
                 numbered = next((s for s in included_sections(draft.sections) if s.key == section.key), None)
                 heading = f"{numbered.number}. {title}" if numbered else title
                 st.subheader(heading, anchor="report-section-" + section.key,
@@ -1995,6 +1993,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             if any(size and size.high > 15 * 1024 * 1024
                    for size in (sizes_forecast.word, sizes_forecast.pdf)):
                 st.caption("This range crosses the 15 MB target; only the finished files confirm their size.")
+        # Read-only preflight receipt; no draft or workflow changes.
+        st.markdown('<span class="epc-review-attention-source" data-count="' +
+                    str(len(checks)) + '" aria-hidden="true"></span>', unsafe_allow_html=True)
         if checks:
             count = len(checks)
             st.markdown(f"**{count} {'item needs' if count == 1 else 'items need'} attention**")
@@ -2115,7 +2116,17 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             st.session_state.pop(empty_confirmation_key, None)
             try:
                 with st.spinner("Preparing the Word and PDF downloads…"):
-                    package = generate_report(draft, acknowledged_fingerprint=draft.fingerprint, asset_loader=loader)
+                    # Never share completed conversion bytes between visitors or
+                    # report incarnations. Include unsaved image bytes in the
+                    # scope even when their reference labels have not changed.
+                    from hashlib import sha256
+                    asset_versions = tuple(sorted((ref, sha256(raw).digest())
+                                                  for ref, raw in assets.items()))
+                    from app import monthly_report_final_conversion_cache as final_cache
+                    report_identity = (draft.profile.contract, draft.profile.key, draft.period.key)
+                    with final_cache.owner_scope(browser_token, report_identity, asset_versions):
+                        package = generate_report(
+                            draft, acknowledged_fingerprint=draft.fingerprint, asset_loader=loader)
             except ValueError as exc:
                 st.error(str(exc))
                 st.caption("Your edits and saved versions are unchanged. Retry generation when the service is ready.")
@@ -2146,6 +2157,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 save_status.shared_saved(saved.revision)
             except (ValueError, OSError) as exc:
                 record_shared_save(prefix, package, error=str(exc))
+        if package is None:
+            from app.monthly_report_output_ui import outdated_output_status
+            outdated_output_status(prefix, _rich_text_scope(prefix), draft)
         if package:
             from app.monthly_report_output_ui import render_output_status, record_shared_save, package_identity, queue_retry, matches_retry
             needs_shared_save = render_output_status(package, draft, snapshot, prefix)

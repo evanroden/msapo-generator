@@ -30,6 +30,20 @@ def issue_key(text):
     return "follow-" + _digest(("issue", text))[:20]
 
 
+def _register_original_identity(draft, reference):
+    """Bind a row to immutable uploaded bytes, not edited source metadata."""
+    for source in draft.sources:
+        prefix = source.id + ":"
+        if not reference.startswith(prefix):
+            continue
+        page, separator, stamp = reference[len(prefix):].partition(":")
+        if (separator and page.isdecimal() and len(stamp) == 64
+                and all(char in "0123456789abcdef" for char in stamp)
+                and source.sha256):
+            return f"original:{source.id}:{source.sha256}:{page}"
+    return reference
+
+
 def canonical_issues(draft):
     """Migrate legacy issue prose/rows once without mutating a saved snapshot.
 
@@ -57,15 +71,32 @@ def canonical_issues(draft):
     tables += [(table.columns, table.rows, table.reference) for table in block.extra_tables]
     # Accepted table rows have a source-row identity separate from their
     # editable text. Reimporting that source must not recreate a changed card.
-    candidates = [(text, block.references, None, "ongoing", "", "", "") for text in texts]
+    candidates = [(text, block.references, None, "ongoing", "", "", "", ()) for text in texts]
     row_occurrences = {}
+    source_offsets, seen_source_tables = {}, set()
     for columns, rows, reference in tables:
+        # Equal text and an unverified/shared reference do not prove the same
+        # physical table: keep all occurrences unless tied to a known upload.
+        source_key = _register_original_identity(draft, reference) if reference else ""
+        source_table = (source_key, tuple(columns), tuple(tuple(row) for row in rows))
+        if reference and source_key != reference and source_table in seen_source_tables:
+            continue
+        if reference:
+            seen_source_tables.add(source_table)
+        row_offset = source_offsets.get(source_key, 0) if reference else 0
+        if reference:
+            source_offsets[source_key] = row_offset + len(rows)
         from app.monthly_report_issue_register import mapped_issue_register
-        mapped = mapped_issue_register(columns, rows, reference)
+        mapped = mapped_issue_register(columns, rows, reference,
+                                       row_offset=row_offset, source_key=source_key)
         if mapped is not None:
             for record in mapped:
-                candidates.append((record.text, (*block.references, *((reference,) if reference else ())),
-                                   record.key, record.status, record.update, record.legacy_text, reference))
+                # A table with its own source/page never inherits citations
+                # from unrelated issue pages already on the containing block.
+                row_refs = (reference,) if reference else block.references
+                candidates.append((record.text, row_refs,
+                                   record.key, record.status, record.update, record.legacy_text,
+                                   reference, (record.legacy_key, record.generic_key)))
             continue
         width = max((len(row) for row in rows), default=len(columns))
         columns = (*columns, *(f"Detail {n + 1}" for n in range(len(columns), width)))
@@ -81,13 +112,14 @@ def canonical_issues(draft):
                 occurrence = row_occurrences.get(identity, 0)
                 row_occurrences[identity] = occurrence + 1
                 row_key = "follow-" + _digest((identity, occurrence))[:20]
-                candidates.append((text, (*block.references, *((reference,) if reference else ())),
-                                   row_key, "ongoing", "", text, reference))
+                row_refs = (reference,) if reference else block.references
+                candidates.append((text, row_refs,
+                                   row_key, "ongoing", "", text, reference, ()))
     items = list(draft.follow_ups)
     keys = {item.key for item in items if item.category == "issue"}
     seen = {item.text.strip() for item in items if item.category == "issue"}
     statements = []
-    for text, references, row_key, status, update, legacy_text, table_reference in candidates:
+    for text, references, row_key, status, update, legacy_text, table_reference, legacy_keys in candidates:
         if _no_equipment_issues(text):
             if _REMOVED_STATEMENT + _digest(text) not in block.references:
                 statements.append(text)
@@ -99,7 +131,7 @@ def canonical_issues(draft):
         if key in keys or (row_key is None and text.strip() in seen):
             continue
         if row_key and any(
-            item.category == "issue" and item.key == issue_key(legacy_text)
+            item.category == "issue" and item.key in (issue_key(legacy_text), *legacy_keys)
             and (not table_reference or not item.references or table_reference in item.references)
             for item in legacy_items
         ):

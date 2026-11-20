@@ -149,6 +149,8 @@ def publish(draft, bundle, *, expected_revision, expected_block, group_index,
     from app.monthly_report_row_review_receipts import decoded
 
     flow._validate(draft, bundle)
+    if bundle.get("published"):
+        raise ValueError("This source already supplies a published work-order list and totals. Remove those source-linked tables before publishing its annual grid.")
     as_of = config.operator_today() if as_of is None else as_of
     if type(as_of) is not date:
         raise ValueError("Choose a valid review date for source coverage.")
@@ -190,6 +192,16 @@ def publish(draft, bundle, *, expected_revision, expected_block, group_index,
             _, other_tables = validate_receipt(other["grid_receipt"])
             if {t.reference for t in other_tables} & {f.reference for f in frame_set}:
                 raise ValueError("Another saved source owns these grids. Review its published values before replacing them.")
+        if (other.get("scope") == bundle["scope"] and other.get("published")
+                and {t["reference"] for t in other["published"]}
+                    & {t.reference for t in current.extra_tables}):
+            incoming = {(row.site, row.work_date, row.work_order.casefold())
+                        for row in review.rows if not row.excluded and not row.issues}
+            prior = {(row.site, row.work_date, row.work_order.casefold())
+                for item in other["groups"] if item["record"] and not item["omitted"]
+                for row in flow.restored_group(other, item).rows if not row.excluded and not row.issues}
+            if incoming & prior:
+                raise ValueError("Another source already publishes these work orders in its detailed list. Compare or omit overlapping source rows before applying the annual grid.")
     prior = bundle.get("grid_receipt")
     if prior:
         base, last = validate_receipt(prior)
