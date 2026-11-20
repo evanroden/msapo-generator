@@ -55,6 +55,26 @@ def circle_geometry(path, roles, *, absent_roles=()):
     return observed
 
 
+def wait_decoded(page, image, timeout=20):
+    """Wait for real pixels on whichever <img> the locator now resolves to.
+
+    WebKit can report a just-swapped image as complete before its new source
+    has decoded (naturalWidth 0; main e1a33f67, playwright-webkit/wide-tall).
+    The preview lives in a component's shadow root, so poll through the
+    locator rather than document.querySelector. A zero size never passes.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            if image.evaluate('node => node.complete && node.naturalWidth > 0 && node.naturalHeight > 0'):
+                return
+        except Exception:  # replaced between resolve and evaluate; resolve again
+            pass
+        if time.monotonic() >= deadline:
+            raise AssertionError('Cover preview image never decoded to a non-zero size.')
+        page.wait_for_timeout(100)
+
+
 def exercise(engine, name, mode, base):
     from playwright.sync_api import expect
     out = OUT / (name + '-' + mode); out.mkdir(parents=True, exist_ok=True)
@@ -85,7 +105,7 @@ def exercise(engine, name, mode, base):
         image = cover.locator('.report-preview img').first
         expect(image).to_be_visible()
         expect(image).to_have_js_property('complete', True, timeout=20000)
-        assert image.evaluate('node => node.naturalWidth > 0 && node.naturalHeight > 0')
+        wait_decoded(page, image)
         first = receipt(page)
         assert first['mode'] == mode and first['photo_present'] == (mode != 'absent-photo')
         assert not first['saved_report'] and not first['imported_report']
@@ -104,6 +124,7 @@ def exercise(engine, name, mode, base):
         expect(cover.locator('.report-preview-status')).to_have_text(re.compile(r'^Current · [1-9]\d* pages?$'), timeout=120000)
         expect(image).to_be_visible()
         expect(image).to_have_js_property('complete', True, timeout=20000)
+        wait_decoded(page, image)
         assert receipt(page) == first
         after = storage_state(base, token)
         for group in ('history','assets','standing'):
