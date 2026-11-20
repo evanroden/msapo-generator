@@ -192,7 +192,9 @@ Path(sys.argv[2]).write_text('finished-without-preemption')
         sampled.append(rss)
         # Controlled budget derives from REAL child allocation, not a claimed
         # local cgroup. Baseline never consults it after launching the process.
-        return jobs.PREVIEW_HEADROOM_BYTES + 24*MIB - rss
+        # A launched child is stopped once free memory falls below the
+        # running floor (the full admission headroom applies before launch).
+        return jobs.PREVIEW_RUNNING_FLOOR_BYTES + 24*MIB - rss
     monkeypatch.setattr(jobs, 'memory_headroom', headroom)
     cleanup = office._stop; order = []
     def stop(process):

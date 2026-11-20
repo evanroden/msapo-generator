@@ -158,7 +158,7 @@ def run_office(command: Sequence[str], *, timeout: float = 120) -> subprocess.Co
                 # pressure. The finally block owns group cleanup before the
                 # existing RenderBusy can reach the last-good/requeue UI.
                 while True:
-                    guard()
+                    guard(running=True)
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         raise subprocess.TimeoutExpired(command, timeout)
@@ -166,7 +166,9 @@ def run_office(command: Sequence[str], *, timeout: float = 120) -> subprocess.Co
                         process.wait(timeout=min(.05, remaining))
                     except subprocess.TimeoutExpired:
                         continue
-                    guard()  # Never quietly accept lost counters at completion.
+                    # Never quietly accept lost counters at completion; the
+                    # finished child's memory is judged like a running one's.
+                    guard(running=True)
                     break
         finally:
             # If cleanup cannot finish, leave the marker. Other processes check
