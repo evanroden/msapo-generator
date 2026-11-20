@@ -305,7 +305,7 @@ def _email(raw: bytes) -> tuple[str, tuple[tuple[str, bytes], ...], tuple[str, .
     text = body.get_content() if body else ""
     if body and body.get_content_type() == "text/html":
         text = _plain_html(text)
-    headers = "\n".join(f"{'Message date' if key == 'Date' else key}: {message.get(key, '')}" for key in ("Subject", "Date", "From"))
+    headers = "\n".join(f"{'Message date' if key == 'Date' else key}: {message.get(key, '')}" for key in ("Subject", "Date"))
     attachments, notices = [], []
     def direct_parts(part):
         # walk() descends through message/rfc822 attachments even when its
@@ -325,7 +325,16 @@ def _email(raw: bytes) -> tuple[str, tuple[tuple[str, bytes], ...], tuple[str, .
         if filename:
             if len(attachments) >= MAX_SOURCES:
                 raise ValueError("Too many email attachments; split this message before processing.")
-            payload = item.get_payload(decode=True) or b""
+            try:
+                payload = item.get_payload(decode=True) or b""
+            except (ValueError, OSError, LookupError, UnicodeError):
+                # Keep one placeholder in the queue so the next attachment
+                # retains its exact ordinal and gets processed independently.
+                payload = b""
+                notices.append(f"Email attachment {len(attachments) + 1} could not be decoded; save that item separately.")
+            if item.defects:
+                payload = b""
+                notices.append(f"Email attachment {len(attachments) + 1} has invalid MIME encoding; save that item separately.")
             attachments.append((Path(filename.replace("\\", "/")).name, payload))
     return headers + "\n\n" + str(text), tuple(attachments), tuple(notices)
 
@@ -355,18 +364,29 @@ def _msg(raw: bytes) -> tuple[str, tuple[tuple[str, bytes], ...], tuple[str, ...
                 text = _plain_html(html.decode("utf-8", errors="replace"))
             else:
                 notices.append("MSG has no readable plain/HTML body. Review the original or paste its text; compressed RTF is not executed.")
-        text = "Subject: " + string([], "0037") + "\nSender: " + string([], "0C1A") + "\n\n" + text
+        text = "Subject: " + string([], "0037") + "\n\n" + text
         attachments = []
         folders = sorted({p[0] for p in paths if p[0].startswith("__attach_version1.0_")})
-        for folder in folders:
+        for index, folder in enumerate(folders, 1):
             if len(attachments) >= MAX_SOURCES:
                 raise ValueError("Too many MSG attachments; split this message before processing.")
-            payload = read([folder, "__substg1.0_37010102"])
-            filename = string([folder], "3707") or string([folder], "3704")
+            filename = ""
+            try:
+                filename = string([folder], "3707") or string([folder], "3704")
+                payload = read([folder, "__substg1.0_37010102"])
+            except (ValueError, OSError, LookupError, UnicodeError):
+                # One defective attachment property must not discard the
+                # envelope or any preceding/following valid siblings.
+                notices.append(f"MSG attachment {index} could not be read; save that item separately from the original.")
+                attachments.append((Path(filename.replace("\\", "/")).name if filename else
+                                    f"unreadable-attachment-{index}.msg", b""))
+                continue
             if payload and filename:
                 attachments.append((Path(filename.replace("\\", "/")).name, payload))
             else:
-                notices.append("An embedded MSG object could not be read as a file attachment; review it in the original.")
+                notices.append(f"MSG attachment {index} has no readable file data or name; review it in the original.")
+                attachments.append((Path(filename.replace("\\", "/")).name if filename else
+                                    f"unreadable-attachment-{index}.msg", b""))
         return text, tuple(attachments), tuple(notices)
 
 
@@ -620,6 +640,10 @@ def _cached_extraction(data, digest, suffix):
         # The current serializer already validates this optional typed record.
         # It is neither text nor a sequence; legacy caches may omit it.
         if name == "financial_source_review":
+            continue
+        if name == "attachment_index":
+            if type(value) is not int or value < 0:
+                raise ValueError("Invalid attachment position in source cache.")
             continue
         if isinstance(value, tuple):
             sequence(record.get(name, []))
@@ -908,12 +932,16 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
             label = Path(item.source.filename.replace("\\", "/")).name
             messages.append(f"Saved source unavailable: {label}. Replace it before generating dependent content.")
     text_size = sum(len(t) for c in existing for t in c.source.page_texts)
-    queue = [(name, raw, 0) for name, raw in files]
+    queue = [(name, raw, 0, "", 0) for name, raw in files]
     while queue:
-        filename, raw, depth = queue.pop(0)
+        filename, raw, depth, parent_digest, attachment_index = queue.pop(0)
         filename = Path(filename.replace("\\", "/")).name
         digest = raw.sha256 if isinstance(raw, StagedUpload) else hashlib.sha256(raw).hexdigest()
         size = raw.size if isinstance(raw, StagedUpload) else len(raw)
+        parent = sources.get(parent_digest) if parent_digest else None
+        parent_label = parent.source.filename if parent else parent_digest[:12]
+        label = (f"{filename} (attachment {attachment_index} of {parent_label})"
+                 if parent_digest else filename)
         if digest in sources:
             # Re-uploading the identical accepted original can repair a missing
             # or corrupted stored copy without changing the report's reviewed
@@ -938,25 +966,25 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
                         library._atomic_write(_path(profile, digest, existing_source.suffix), raw)
                         source_bytes(profile, existing_source)
                 except (ValueError, OSError):
-                    messages.append(f"Could not restore saved source: {filename}. The report still needs a valid copy.")
+                    messages.append(f"Could not restore saved source: {label}. The report still needs a valid copy.")
                     continue
-                messages.append(f"Saved source restored: {filename}. Prior reviews and report history are unchanged.")
+                messages.append(f"Saved source restored: {label}. Prior reviews and report history are unchanged.")
                 # Replace the size already counted for a damaged copy. Missing
                 # originals contribute zero until their successful restoration.
                 sizes += size - counted_sizes.get(digest, 0)
                 counted_sizes[digest] = size
             else:
-                messages.append(f"Duplicate skipped: {filename}")
+                messages.append(f"Duplicate skipped: {label}")
             continue
         if len(sources) >= MAX_SOURCES:
-            messages.append(f"Not read: {filename}. Report limit is {MAX_SOURCES:,} source files including attachments. Remove unused sources before adding more.")
+            messages.append(f"Not read: {label}. Report limit is {MAX_SOURCES:,} source files including attachments. Remove unused sources before adding more.")
             continue
         if sizes + size > MAX_REPORT_BYTES:
-            messages.append(f"Not read: {filename}. Report limit is {byte_limit_label(MAX_REPORT_BYTES)} of source files including attachments. Remove unused sources or use a smaller copy.")
+            messages.append(f"Not read: {label}. Report limit is {byte_limit_label(MAX_REPORT_BYTES)} of source files including attachments. Remove unused sources or use a smaller copy.")
             continue
         suffix = Path(filename).suffix.casefold()
         if suffix not in SUPPORTED or depth > 1:
-            messages.append(f"Not read: {filename}. Unsupported or nested attachment; retained in the original email.")
+            messages.append(f"Not read: {label}. Unsupported or nested attachment; retained in the original email.")
             continue
         path = _path(profile, digest, suffix)
         already_present = path.exists()
@@ -991,18 +1019,23 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
                 reason = "The PDF is damaged or is not a valid PDF. Export a fresh copy and upload it again."
             else:
                 reason = str(exc)[:300]
-            messages.append(f"Not read: {filename}. {reason}")
+            messages.append(f"Not read: {label}. {reason}")
             continue
         except BaseException:
             # An unexpected fault is still raised (never hidden as a file
             # failure), but the upload it rejected must not stay on disk.
             _discard_rejected(path, cache, digest, already_present, existing_cache)
             raise
+        if parent_digest:
+            content = replace(content, source=replace(
+                content.source, attachment_parent_sha256=parent_digest,
+                attachment_index=attachment_index))
         sources[digest] = content
         sizes += size
         counted_sizes[digest] = size
         text_size += added
-        queue.extend((name, data, depth+1) for name, data in attachments)
+        queue.extend((name, data, depth + 1, digest, index)
+                     for index, (name, data) in enumerate(attachments, 1))
     return tuple(sources.values()), tuple(messages)
 
 

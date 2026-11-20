@@ -23,6 +23,10 @@ from app.api_retry import (
 from app.ai_client import ai_available, make_client
 from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
 from app.monthly_report_content_policy import contains_price
+from app.monthly_report_fact_provenance import (
+    anchored_fact_problem, page_digest, verify_claim_qualifiers,
+    verify_draft_outcomes,
+)
 from app.monthly_report_model import EvidenceFact, DraftParagraph, ResolvedBlock
 from app.monthly_report_prompts import EXTRACT_PROMPT, DRAFT_PROMPT, PROMPT_VERSION
 from app.monthly_report_sources import source_reference
@@ -54,6 +58,16 @@ def clean_text(text):
         "[contact omitted]",
         text,
     ).strip()
+
+
+def fact_quote_for_display(quote):
+    """A current correction may expose technical evidence, never priced/PII text."""
+    if contains_price(quote) or re.search(
+        r"\b(?:bank|routing|account|card)\s*(?:number|no\.?|#|:)?\s*\d{5,}\b",
+        str(quote), re.IGNORECASE,
+    ):
+        return "[payment or pricing evidence withheld]"
+    return clean_text(quote)
 
 
 _SMALL_NUMBERS = {word: value for value, word in enumerate((
@@ -464,7 +478,7 @@ def extraction_request(source, pages):
             "type": "text",
             "text": EXTRACT_PROMPT
             + "\n"
-            + json.dumps({"source_id": source.id, "pages": evidence}),
+            + json.dumps({"source_id": source.id, "source_sha256": source.sha256, "pages": evidence}),
         }
     ]
 
@@ -603,6 +617,11 @@ def normalize_facts(value, source, pages, profile, period, vendors=()):
                 "A fact cited a page that was not read. No facts were accepted."
             )
         page = item["page"]
+        # The model may echo source identity; it cannot redirect a fact to
+        # another uploaded original, even when the prose happens to match.
+        if (("source_id" in item and item["source_id"] != source.id)
+                or ("source_sha256" in item and item["source_sha256"] != source.sha256)):
+            raise ValueError("A fact cited the wrong source identity or SHA-256. No facts were accepted.")
         for field, bound in (
             ("text", 2000),
             ("quote", 4000),
@@ -632,11 +651,14 @@ def normalize_facts(value, source, pages, profile, period, vendors=()):
             raise ValueError(
                 "A fact was incomplete or exceeded its bounds. No facts were accepted."
             )
-        native = " ".join(source.page_texts[page - 1].split()).casefold()
-        if not _quote_on_source_token_boundaries(native, quote):
+        page_text = source.page_texts[page - 1]
+        native = " ".join(page_text.split()).casefold()  # Date/tag lookup; not quote evidence.
+        if not _quote_on_source_token_boundaries(page_text, quote) or quote not in page_text:
             raise ValueError(
                 "A fact's evidence quote was not found on its page. Review the source manually."
             )
+        if clean_text(quote) != quote:
+            raise ValueError("A fact's evidence quote contains contact details. No facts were accepted.")
         # A price-free summary can still cite a priced quote that would be
         # persisted and transmitted in later model drafting requests.
         if contains_price(quote):
@@ -648,6 +670,8 @@ def normalize_facts(value, source, pages, profile, period, vendors=()):
             raise ValueError(
                 "A suggested fact included pricing or unsupported numbers. No facts were accepted."
             )
+        # Preserve established pricing/number errors before checking A55 qualifiers.
+        verify_claim_qualifiers(text, quote)
         flags = []
         when = str(item.get("date") or "")
         if when:
@@ -700,13 +724,15 @@ def normalize_facts(value, source, pages, profile, period, vendors=()):
                 page,
                 kind,
                 text,
-                clean_text(quote),
+                quote,
                 when,
                 site,
                 vendor,
                 tags,
                 status,
                 tuple(flags),
+                source_sha256=source.sha256,
+                page_sha256=page_digest(page_text),
             )
         )
     return tuple(dict((f.id, f) for f in result).values())
@@ -749,6 +775,10 @@ def drafting_request(block_key, sources, period, vendors=(), tags=(), instructio
         raise ValueError(
             "No extracted facts for this section yet. Read sources or add Copilot notes first."
         )
+    by_source = {s.id: s for s in sources}
+    for fact in facts:
+        if problem := anchored_fact_problem(fact, by_source.get(fact.source_id)):
+            raise ValueError(problem + " Read current evidence before drafting.")
     if problems := _unverified_fact_dates(facts, sources):
         raise ValueError(problems[0])
     payload = {
@@ -800,6 +830,9 @@ def normalize_draft(value, key, facts, sources):
             for f in cited
         ):
             raise ValueError("A draft cited a missing source or page.")
+        for fact in cited:
+            if problem := anchored_fact_problem(fact, source_map[fact.source_id]):
+                raise ValueError(problem + " Read the current source page again.")
         if problems := _unverified_fact_dates(cited, sources):
             raise ValueError(problems[0])
         # A previously cached completion cannot bypass the quote guard.
@@ -819,6 +852,7 @@ def normalize_draft(value, key, facts, sources):
             raise ValueError(
                 "A draft included prices or invalid text. Your narrative was preserved."
             )
+        verify_draft_outcomes(text, cited)
         flags = list(dict.fromkeys(flag for f in cited for flag in f.flags))
         if numbers(text) - fact_numbers(cited):
             flags.append("Unsupported number: edit this paragraph against its evidence")
@@ -838,6 +872,14 @@ def normalize_draft(value, key, facts, sources):
 
 
 def reviewed_block(block, sources):
+    facts = {fact.id: (source, fact) for source in sources for fact in source.facts}
+    for paragraph in block.ai_paragraphs:
+        for identity in paragraph.fact_ids:
+            if identity not in facts:
+                raise ValueError("A cited fact is missing. Restore or explicitly remove its link.")
+            source, fact = facts[identity]
+            if problem := anchored_fact_problem(fact, source):
+                raise ValueError(problem + " Read the source again before review.")
     if problems := block_date_problems(block, sources):
         raise ValueError(problems[0])
     if (
@@ -880,15 +922,10 @@ def refresh_evidence(block, sources):
             source, fact = facts[identity]
             if not 1 <= fact.page <= len(source.page_texts):
                 raise ValueError("A cited page is missing.")
-            native = " ".join(
-                clean_text(source.page_texts[fact.page - 1]).split()
-            ).casefold()
-            if (
-                not fact.quote.strip()
-                or " ".join(fact.quote.split()).casefold() not in native
-            ):
+            if problem := anchored_fact_problem(fact, source):
                 raise ValueError(
-                    "A supporting quote changed. Read the source again before reviewing this paragraph."
+                    "A supporting quote changed: " + problem
+                    + " Read the source again before reviewing this paragraph."
                 )
             cited.append((source, fact))
         if not cited:

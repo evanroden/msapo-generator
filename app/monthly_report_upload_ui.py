@@ -339,6 +339,14 @@ def _cmms(content, profile, period, prefix, field):
     return (signature, result[1]) if result else (signature, None)
 
 
+_READ_RESULTS = ("accepted", "restored", "duplicate")
+
+
+def _selection_identity(upload):
+    """Cheap identity of the chooser's current files, without reading their bytes."""
+    return tuple((u.name, u.size, getattr(u, "file_id", "")) for u in (upload or ()))
+
+
 def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, field, *, retain_accepted=False,
                    attached_blocks=None, included_source_ids=(), show_intake=True, selected_source_id=None,
                    visible=True, scope_draft=None, shown_source_page=None, section_page_owners=()):
@@ -393,7 +401,27 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
             # The next user rerun remounts the uploader. Do not force a
             # mid-render rerun: other editors in this same Streamlit delivery
             # must first consume their pending human changes.
-            st.session_state[generation_key] = generation + 1
+            # A file that was not read keeps the uploader mounted instead, so
+            # the per-file retry below can reread its unchanged bytes (A65).
+            if any(result not in _READ_RESULTS for _, result, _ in receipts):
+                st.session_state[key + "_attempted_selection"] = _selection_identity(upload)
+            else:
+                st.session_state.pop(key + "_attempted_selection", None)
+                st.session_state[generation_key] = generation + 1
+        if upload and st.session_state.get(key + "_attempted_selection") == _selection_identity(upload):
+            from app.monthly_report_source_recovery_ui import render_failed_file_retries
+            picked = tuple((u.name, u.getvalue()) for u in upload)
+            retried = render_failed_file_retries(profile, period,
+                st.session_state.get(prefix + "_revision", 0), key, picked, contents,
+                messages=st.session_state.get(key + "_messages", ()))
+            if retried is not None:
+                contents, messages, _ = retried
+                st.session_state[key] = contents
+                st.session_state[key + "_messages"] = messages
+                # The retried file's receipt is replaced by the retry's own notices.
+                st.session_state[key + "_upload_receipts"] = tuple(
+                    receipt for receipt in st.session_state.get(key + "_upload_receipts", ())
+                    if receipt[1] in _READ_RESULTS or receipt[2] in messages)
     for filename, result, message in st.session_state.get(key + "_upload_receipts", ()):
         if result == "accepted":
             st.success(message)
@@ -1190,13 +1218,19 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
             st.session_state[local_key + "_read"] = signature
         elif not picked:
             st.session_state.pop(local_key + "_read", None)
-        accepted = {content.source.sha256 for content in contents}
-        unread = tuple(name for name, raw in picked
-                       if hashlib.sha256(raw).hexdigest() not in accepted)
-        if unread:
-            st.caption("Retry unread files or replace them above. Existing report content is kept.")
-            st.button("Retry unread files", key=local_key + "_retry_upload_" + signature,
-                      on_click=_retry_section_upload, args=(local_key, signature))
+        from app.monthly_report_source_recovery_ui import render_failed_file_retries
+        retried = render_failed_file_retries(profile, period,
+            st.session_state.get(prefix + "_revision", 0), local_key, picked, contents,
+            messages=st.session_state.get(local_key + "_messages", ()))
+        if retried is not None:
+            old_ids = {content.source.id for content in contents}
+            contents, messages, _ = retried
+            for content in contents:
+                if content.source.id not in old_ids:
+                    bindings[content.source.id] = destination
+            st.session_state[key] = contents
+            st.session_state[key + "_section_routes"] = bindings
+            st.session_state[local_key + "_messages"] = tuple(messages)
         owners = source_destinations(contents, bindings, blocks)
         unassigned = [c for c in contents if not owners[c.source.id]]
         if unassigned:
@@ -1754,11 +1788,22 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
         contents = tuple(updated)
         st.session_state[evidence_key] = contents
 
-    complete_finished_job()
+    # Settle delivered uploader bytes before checking an asynchronous result:
+    # an old completed read must never apply in the same render that replaces
+    # its source with different bytes.
     if picked and st.session_state.get(local_key + "_read") != signature:
         contents, messages = sources.ingest_batch(profile, picked, contents)
         st.session_state[evidence_key] = contents
         st.session_state[local_key + "_messages"] = messages
+    from app.monthly_report_source_recovery_ui import render_failed_file_retries
+    retried = render_failed_file_retries(profile, period,
+        st.session_state.get(prefix + "_revision", 0), local_key, picked, contents,
+            messages=st.session_state.get(local_key + "_messages", ()))
+    if retried is not None:
+        contents, messages, _ = retried
+        st.session_state[evidence_key] = contents
+        st.session_state[local_key + "_messages"] = tuple(messages)
+    complete_finished_job()
     # Remember a real empty selection, too. Remove does not clear the browser's
     # uploader; only clearing/reselecting may re-ingest those unchanged bytes.
     st.session_state[local_key + "_read"] = signature
