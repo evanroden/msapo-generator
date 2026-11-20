@@ -78,7 +78,9 @@ def test_accepting_a_partial_contact_update_keeps_omitted_details(scope, field, 
     raw, first = prepared()
     save(first, raw)
     before = saved().contract_contacts[0] if scope == "contract" else saved().sites[0].contacts[0]
-    partial = {"B9": "", "B10": "", "B11": "", cell: value}
+    # A detail-only cell is not a contact identity; retain the known name to
+    # test a partial update while leaving the other details omitted.
+    partial = {"B9": before.name, "B10": "", "B11": "", cell: value}
     raw, plan = prepared(
         ("Active Contracts", summary(**(partial if scope == "contract" else {}))),
         ("Synthetic Contract Sites", detail(**(partial if scope == "site" else {}))))

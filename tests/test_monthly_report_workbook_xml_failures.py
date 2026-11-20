@@ -109,7 +109,10 @@ def test_lazy_xml_failure_closes_the_actual_workbook_archive(profile, monkeypatc
         return workbook
     monkeypatch.setattr(sources, "load_workbook", load)
     sources.ingest_batch(profile, (("lazy.xlsx", broken_xml("xl/worksheets/sheet1.xml", lazy=True)),))
-    assert len(loaded) == 1 and loaded[0]._archive.fp is None
+    # A42 reads both cached results and formula definitions; both read-only
+    # archives must close even when worksheet XML fails during iteration.
+    assert len(loaded) == 2
+    assert all(workbook._archive.fp is None for workbook in loaded)
 
 
 @pytest.mark.parametrize("manual", ["  Keep this authored monthly note.\n\nDo not replace it.\n", ""])

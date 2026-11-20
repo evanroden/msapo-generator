@@ -74,7 +74,7 @@ def test_standard_cmms_aliases_are_one_pass_with_original_cells(name, raw):
 def test_case_variant_and_repeated_physical_header_need_explicit_id_selection():
     raw = (b"WO ID,WO ID,Site Label,Service When,Current State,Repair Type,Notes\n"
            b"WO-A,ALT-1,North,2026-09-08,Closed,PM,0\n"
-           b"wo-a,ALT-2,North,2026-09-09,Open,Corrective,\n")
+           b"wo-a,ALT-2,North,2026-09-08,Open,Corrective,\n")
     source = imported("a46-duplicate.csv", raw)
     assert source.tables[0].columns[:2] == ("WO ID", "WO ID (2)")
     initial = review_csv(source, PROFILE, PERIOD)
