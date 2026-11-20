@@ -1331,6 +1331,27 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     st.session_state["_monthly_source_detail_forms"] = {}
     st.session_state["_monthly_source_details_managed"] = True
     last_contract, last_profile = remembered_report_preferences(browser_token)
+    # First-use intake belongs ahead of the account and site forms. Returning
+    # editors retain their optional replace-report control inside the editor.
+    from app.monthly_report_entry_upload import render_first_upload, ENTRY_STAGE
+    from app.monthly_report_directory_ui import contract_choices
+    entry_active = not bool(last_profile) or bool(st.session_state.get(ENTRY_STAGE))
+    entry_upload = entry_stage = None
+    inferred_accounts = ()
+    # One keyed slot on every run, filled only while the entry upload applies.
+    # It can stop applying between runs with no click (this browser's report
+    # preferences are remembered shortly after a report starts). Without a
+    # fixed slot everything below would move up, and Streamlit would briefly
+    # show the old and new copies of the editor together.
+    with st.container(key="monthly_entry_upload_slot"):
+        if entry_active:
+            entry_upload, entry_stage, inferred_accounts = render_first_upload(field, contract_choices())
+            if len(inferred_accounts) == 1 and not last_contract:
+                contract_key = field("report_contract", "")
+                if not st.session_state.get(contract_key) and not st.session_state.get("report_change_contract"):
+                    st.session_state[contract_key] = inferred_accounts[0]
+            elif len(inferred_accounts) == 1 and last_contract and last_contract != inferred_accounts[0]:
+                st.warning("The uploaded cover suggests a different contract. Use Change contract if this report belongs to that account; site identity must still be reviewed.")
     recovery_available = active_work.enabled(browser_token)
     with st.expander("Help"):
         st.write("1. Choose sites and month.\n2. Update the sections below; sections without a new update can stay blank.\n3. Review source pages that need attention, then create and download Word/PDF.")
@@ -1353,7 +1374,15 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     completed_setup = st.session_state.pop("report_setup_done", None)
     remembered = last_profile if last_contract == contract else ""
     returning = any(p.key == remembered for p in profiles) and not completed_setup
-    initial_sites_open = st.session_state.setdefault("report_sites_initially_open_" + _signature(contract), not returning)
+    suggested_sites = ()
+    if entry_stage:
+        from app.monthly_report_start_ui import site_choices
+        from app.monthly_report_start_import import source_sites
+        suggested_sites = tuple(s.key for s in source_sites(
+            entry_stage[2], site_choices(contract, profiles)))
+    initial_sites_open = st.session_state.setdefault(
+        "report_sites_initially_open_" + _signature(contract),
+        not returning and not bool(suggested_sites))
     # Always use the same container/label. Remembering this report after its
     # first acknowledged edit must not move existing native editors.
     st.markdown('<span id="report-profile-details"></span>', unsafe_allow_html=True)
@@ -1361,7 +1390,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     with site_box:
         candidate, existing = select_sites(contract, profiles, remembered, field, completed_setup,
             render_details_action=lambda candidate, existing: _render_report_details_action(
-                candidate, existing, period, browser_token))
+                candidate, existing, period, browser_token),
+            suggested_sites=suggested_sites,
+            source_digest=entry_stage[2].sha256 if entry_stage else "")
     # Caption wrapping must not change the space above the next site press.
     # Keep one native keyed container after the chooser, before either early
     # return, with all identity text in normal document flow (no nested scroll).
@@ -1370,7 +1401,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     if not candidate:
         return
     if not existing:
-        starting_choice(candidate, profiles, period, "", field)
+        starting_choice(candidate, profiles, period, "", field,
+                        entry_upload=entry_upload, entry_stage=entry_stage,
+                        entry_active=entry_active)
         return
     selected = existing.key
     state = library.load_profile(contract, selected)
@@ -1691,7 +1724,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 from app.monthly_report_section_ui import render_section_setup
                 source_pending = render_section_setup(contract, period, prepared, field, state=state,
                                      working_draft=replace(draft, blocks=tuple(blocks.values())),
-                                     working_assets=tuple(assets.items()), working_revision=st.session_state[prefix + "_revision"])
+                                     working_assets=tuple(assets.items()), working_revision=st.session_state[prefix + "_revision"],
+                                     entry_upload=entry_upload, entry_stage=entry_stage,
+                                     entry_active=entry_active)
                 if not source_pending:
                     from app.monthly_report_cover_ui import render_cover_photograph
                     blocks = render_cover_photograph(
