@@ -8,6 +8,7 @@ it never publishes imported rows, changes a master, or flattens a drawing.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from typing import Mapping
 from io import BytesIO
 from zipfile import ZipFile, BadZipFile
 
@@ -20,7 +21,7 @@ from app.monthly_report_import import DocxInspection, ImportItem, inspect_docx
 from app.monthly_report_model import ReportPeriod, ReportProfile, ReportTable
 from app.monthly_report_sources import SourceContent, SourceTable, source_reference
 from app.monthly_report_work_order_normalized import (
-    WorkOrderReview, normalize_table, suggest_mapping,
+    ColumnMapping, WorkOrderReview, normalize_table, suggest_mapping,
 )
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -153,8 +154,12 @@ def _find_header(raw_rows, native_rows):
             mapping = suggest_mapping(row)
         except ValueError:
             continue
-        if all(getattr(mapping, name) is not None
-               for name in ("work_order", "work_date", "status")):
+        # Duplicate native date headings are legitimate work-order evidence,
+        # but cannot select a work/completion date without manual mapping.
+        # Keep the table reviewable instead of misclassifying it as unrelated.
+        if (mapping.work_order is not None and mapping.status is not None
+                and (mapping.work_date is not None
+                     or "work_date" in mapping.ambiguous)):
             recognized.append((i, row))
     if not recognized:
         return None, False
@@ -164,7 +169,8 @@ def _find_header(raw_rows, native_rows):
 
 
 def _one_table(content: SourceContent, item: ImportItem, source_item: int,
-               native: list, profile: ReportProfile, period: ReportPeriod):
+               native: list, profile: ReportProfile, period: ReportPeriod,
+               mapping_override: ColumnMapping | None = None):
     original = tuple(item.rows)
     reference = source_reference(content.source, source_item)
     base = dict(
@@ -223,8 +229,16 @@ def _one_table(content: SourceContent, item: ImportItem, source_item: int,
         if tuple(v.strip().casefold() for v in row) == tuple(
                 v.strip().casefold() for v in columns):
             continue  # Repeated header in a native continuation table.
-        mapping = suggest_mapping(columns)
+        mapping = mapping_override if mapping_override is not None else suggest_mapping(columns)
         identity = mapping.work_order
+        populated = [index for index, cell in enumerate(row) if cell.strip()]
+        if len(populated) == 1:
+            # A category/facility band, or an incomplete record, cannot be
+            # promoted to a completed work-order fact. Keep its full native
+            # cells and row number available for explicit inspection.
+            unmatched.append(WordUnmatchedRow(number, row,
+                "Single-cell category, facility band or unlinked continuation needs review."))
+            continue
         if identity is None or not row[identity].strip():
             unmatched.append(WordUnmatchedRow(number, row,
                 "Missing work-order identity or unlinked continuation text."))
@@ -249,13 +263,15 @@ def _one_table(content: SourceContent, item: ImportItem, source_item: int,
             "client-facing rows before approval. Original remains retained.")
     normalized = normalize_table(
         SourceContent(content.source, (SourceTable(item.id, columns, tuple(candidates)),)),
-        1, profile, period)
+        1, profile, period, mapping=mapping_override)
     # The canonical source row key now names this exact DOCX item index,
     # rather than another table's index in the temporary adapter view.
     normalized = replace(
         normalized, table_number=source_item, source_reference=reference,
-        rows=tuple(replace(row, origin=replace(row.origin, table_number=source_item))
-                   for row in normalized.rows))
+        rows=tuple(replace(row, origin=replace(
+            row.origin, table_number=source_item, native_item_id=item.id,
+            native_row_number=source_rows[index]))
+            for index, row in enumerate(normalized.rows)))
     return WordTableReview(
         **base, status="records", header_word_row=header_index + 1,
         title_bands=tuple(preamble), original_row_numbers=tuple(source_rows),
@@ -276,11 +292,18 @@ def _cross_table_duplicates(tables):
 
 
 def review_docx_workorders(profile: ReportProfile, content: SourceContent,
-                           period: ReportPeriod) -> DocxWorkOrderReview:
+                           period: ReportPeriod, *,
+                           mapping_by_item: Mapping[int, ColumnMapping] | None = None
+                           ) -> DocxWorkOrderReview:
     """Only positive Activity work-order tables; no guessed cross-site routing."""
     source = content.source
     if source.suffix != ".docx":
         raise ValueError("Choose a saved Word source for native work-order review.")
+    if mapping_by_item is not None and (
+            not isinstance(mapping_by_item, Mapping)
+            or any(type(key) is not int or not isinstance(value, ColumnMapping)
+                   for key, value in mapping_by_item.items())):
+        raise ValueError("Choose native Word source items and reviewed column mappings.")
     raw = sources.source_bytes(profile, source)
     from app.monthly_report_import import ImportError as WordImportError
     try:
@@ -302,7 +325,10 @@ def review_docx_workorders(profile: ReportProfile, content: SourceContent,
                 item.section == "activity" and item.suggested_slot == "work_orders"):
             ignored.append(item.id)
             continue
-        tables.append(_one_table(content, item, number, native, profile, period))
+        tables.append(_one_table(content, item, number, native, profile, period,
+                                 mapping_by_item.get(number) if mapping_by_item else None))
+    if mapping_by_item and set(mapping_by_item) - {t.source_item for t in tables}:
+        raise ValueError("The selected native Word source table is missing or out of scope.")
     return DocxWorkOrderReview(
         source.id, source.sha256, source.fingerprint, source.filename,
         tuple(tables), tuple(ignored), inspection.notices,
