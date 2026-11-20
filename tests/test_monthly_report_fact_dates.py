@@ -114,7 +114,6 @@ def test_visible_fact_review_and_saved_evidence_keep_verified_date_state(monkeyp
     section = SectionSpec('activity', '2', 'Monthly Activity Summary', (BlockSpec('activity_summary', 'rich_text'),))
     draft = ReportDraft(profile, PERIOD, 'Synthetic Reviewer', (section,), (), sources=(content.source,))
     requests, reservations = [], []
-    monkeypatch.setattr(ai, 'cached', lambda *args, **kwargs: None)
     monkeypatch.setattr(ai, 'reserve_call', lambda *args: reservations.append(args))
     def controlled_reader(prepare, read):
         requests.append(prepare())
@@ -129,7 +128,12 @@ def test_visible_fact_review_and_saved_evidence_keep_verified_date_state(monkeyp
     app.run()
     assert not app.exception and not requests and not reservations
     next(button for button in app.button if button.label == 'Find work, findings and follow-ups').click().run()
-    assert not app.exception and len(requests) == len(reservations) == 1
+    assert not app.exception and len(requests) == 1 and not reservations
+    # A52 admits a paid page through the per-page atomic receipt, not through
+    # the legacy whole-selection reserve_call hook.
+    budget_path = (library._profile_path(profile.contract, profile.key)
+                   / 'ai' / 'budgets' / (PERIOD.key + '.json'))
+    assert library._read(budget_path)['calls'] == 1
     assert any(DATE_FLAG in message.value for message in app.warning) == (not expected)
     next(button for button in app.button if button.label == 'Use these facts').click().run()
     assert not app.exception
