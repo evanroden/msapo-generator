@@ -34,6 +34,10 @@ jobs:
         timeout-minutes: 25
         run: |
           mkdir -p results/baseline-output
+          # The output mount sits inside the read-only /baseline mount, so its
+          # mountpoint must already exist in the checkout; Docker cannot create
+          # it in a read-only bind ("mkdirat ... read-only file system").
+          mkdir -p baseline/output
           # Build each source image once. Both workers consume byte-identical,
           # read-only fixtures instead of timing synthetic source generation.
           docker run --name msapo-a25-fixture --memory=512m --memory-swap=512m --cpus=0.5 \
