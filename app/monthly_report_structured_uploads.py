@@ -922,6 +922,10 @@ def reader_request(profile, contents, destination, page_refs=None, table_columns
         accepted_pages=accepted_pages,
         native_mapped=_native_reader_page_pairs(contents, destination, table_columns)))
     selected = set(page_refs) & eligible if page_refs is not None else eligible
+    if not selected:
+        # Every page was excluded by policy or already mapped natively. There
+        # is no model request to make, and no readable evidence was admitted.
+        return []
     count = len(selected)
     if count > 20 or sum(len(t) for c in contents for n, t in enumerate(c.source.page_texts, 1) if (c.source.id, n) in selected) > 60000:
         raise ValueError("Upload up to 20 pages at a time for automatic section reading.")

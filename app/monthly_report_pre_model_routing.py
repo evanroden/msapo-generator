@@ -97,6 +97,10 @@ def classify_page(content, number: int) -> PageRole:
     value = source.page_texts[number - 1]
     found = set()
     for line in (line.strip() for line in value.splitlines()[:6]):
+        # A price field is not a Proposal/Quote section heading. Assigning
+        # the whole mixed page to Proposals would discard independent work.
+        if re.match(r"^(?:proposal|quotation|quote)\s+(?:amount|total|price|cost|fees?|budget)\s*[:=]", line, re.I):
+            continue
         if 0 < len(line) <= 150:
             found.update(destination for destination, pattern in _HEADINGS if pattern.match(line))
     # Strong per-page headings override broad file-level classification.
