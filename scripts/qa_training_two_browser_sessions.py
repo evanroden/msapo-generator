@@ -33,6 +33,7 @@ import pymupdf
 from playwright.sync_api import expect, sync_playwright, TimeoutError
 
 from scripts import qa_training_two_browser as base
+from scripts import qa_monthly_live as live
 
 OUT = base.ROOT / "test-artifacts" / "training-two-browser" / "event-row"
 ORIGINAL = "Synthetic safety refresher"
@@ -192,6 +193,8 @@ def journey():
         try:
             a.goto(base.URL, wait_until="domcontentloaded")
             a.get_by_role("button", name="Load known-value report", exact=True).click()
+            # QA captions live inside the collapsed "QA details" disclosure.
+            live.open_qa_details(a)
             expect(a.get_by_text(re.compile(r"^QA fixture state: known-value prefill"))).to_be_visible(timeout=45000)
             base.open_training(a)
             b.goto(base.URL, wait_until="domcontentloaded")
