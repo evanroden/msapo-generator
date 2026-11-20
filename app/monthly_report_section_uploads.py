@@ -85,6 +85,110 @@ def pending_pages(contents, destination, blocks):
 
 
 
+@dataclass(frozen=True)
+class AutomaticWaterUpload:
+    """One native-text PDF admission decision; not a human visual approval."""
+
+    content: sources.SourceContent
+    pages: tuple[int, ...]
+    exceptions: tuple[str, ...]
+
+
+def automatic_water_upload(profile, period, content, blocks):
+    """Screen a *new* Water PDF locally, preserving every original page.
+
+    This path deliberately refuses scanned/image-bearing pages because native
+    text cannot establish whether a picture contains prices or signatures.
+    It does not run OCR/AI, reclassify a file, or revive deliberately removed
+    pages. The caller prepares only the returned source/page identities.
+    """
+    from app.monthly_report_content_policy import (
+        contains_price, page_fingerprint, page_status,
+    )
+    from app.monthly_report_source_details import facility_choice, source_date
+    from app.monthly_report_source_scope import reviewed_scope
+    from app.monthly_report_model import ReportPeriod
+
+    source = content.source
+    if not isinstance(period, ReportPeriod) or source.suffix != ".pdf":
+        return AutomaticWaterUpload(content, (), ("Use a Water-treatment PDF for automatic page inclusion.",))
+    if source.classification != "Water treatment":
+        return AutomaticWaterUpload(content, (), (
+            "The file type is not confirmed as Water treatment; use page review to select its destination.",))
+    if blocks.get("water_reports") is not None and blocks["water_reports"].source == "Omit":
+        return AutomaticWaterUpload(content, (), ("Water treatment is left out of this report; its retained pages were not changed.",))
+    when = source_date(source.service_date)
+    site = facility_choice(source, profile)
+    allowed_sites = {facility.key for facility in profile.facilities}
+    if (when is None or (when.year, when.month) != (period.year, period.month)
+            or site not in allowed_sites
+            or source.scope_review and reviewed_scope(source, profile) is None):
+        return AutomaticWaterUpload(content, (), (
+            "Confirm the PDF's exact source date and site for this report before including its pages.",))
+
+    from app.monthly_report_sources import source_bytes
+    import pymupdf as fitz
+    try:
+        original = source_bytes(profile, source)
+        pdf = fitz.open(stream=original, filetype="pdf")
+    except (OSError, ValueError, RuntimeError) as exc:
+        return AutomaticWaterUpload(content, (), ("Unable to inspect the saved PDF: " + str(exc),))
+    permitted, exceptions = [], []
+    try:
+        if pdf.page_count != len(source.page_texts):
+            return AutomaticWaterUpload(content, (), (
+                "The saved PDF page count changed; re-upload it before selecting report pages.",))
+        owned = included_pages(blocks)
+        exact_names = {" ".join(name.casefold().split()) for facility in profile.facilities
+                       for name in (facility.key, facility.title, *facility.aliases)}
+        for number, page in enumerate(pdf, 1):
+            text = source.page_texts[number - 1]
+            label = f"Page {number}: "
+            if (source.id, number) in owned:
+                continue
+            if dict(source.client_page_exclusions).get(number) == page_fingerprint(source, number):
+                continue
+            kind, reason = page_status(text, unreadable=number in source.needs_vision)
+            caption = dict(source.captions).get(
+                number, f"{source.filename} · page/item {number}")
+            if kind != "technical" or contains_price(caption):
+                exceptions.append(label + ("Caption may contain pricing." if contains_price(caption) else reason))
+                continue
+            if number not in source.selected_pages:
+                exceptions.append(label + "Not selected for this report.")
+                continue
+            # Explicit per-page facility/date labels win over a first-page
+            # file-level suggestion. Unknown/foreign labels are not auto-routed.
+            sites = re.findall(r"(?im)^[ \t]*(?:facility|site|building)[ \t]*[:=][ \t]*([^\r\n]{1,160})", text)
+            if any(" ".join(value.casefold().split()) not in exact_names for value in sites):
+                exceptions.append(label + "Site does not match the report; review this page.")
+                continue
+            dates = re.findall(r"(?im)^[ \t]*(?:date|service date|report date|completed date)[ \t]*[:=][ \t]*([^\r\n]{1,120})", text)
+            from app.monthly_report_sources import _date
+            if any(not _date(value) or _date(value)[:7] != period.key for value in dates):
+                exceptions.append(label + "Date does not match the report month; review this page.")
+                continue
+            # Images, scanned overlays, annotations and interactive form fields
+            # can conceal pricing that native text extraction cannot see.
+            if (page.get_image_info() or next(page.annots() or (), None) is not None
+                    or next(page.widgets() or (), None) is not None):
+                exceptions.append(label + "Image or annotation needs visual review; not automatically included.")
+                continue
+            permitted.append(number)
+    finally:
+        pdf.close()
+    if not permitted:
+        return AutomaticWaterUpload(content, (), tuple(exceptions))
+    reviews = dict(source.client_page_reviews)
+    for number in permitted:
+        reviews[number] = page_fingerprint(source, number)
+    notice = ("Automatic native-text screen included eligible Water pages; "
+              "it did not visually approve image content. Review the attached pages before final export.")
+    updated = replace(source, client_page_reviews=tuple(sorted(reviews.items())),
+                      notices=tuple(dict.fromkeys((*source.notices, notice))))
+    return AutomaticWaterUpload(replace(content, source=updated), tuple(permitted), tuple(exceptions))
+
+
 MAX_PREPARED_IMAGE_BYTES = 60 * 1024 * 1024
 
 

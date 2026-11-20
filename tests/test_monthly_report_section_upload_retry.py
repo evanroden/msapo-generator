@@ -34,7 +34,7 @@ def test_retry_recovers_failed_file_and_keeps_sibling_and_manual_content(monkeyp
     app.run()
     assert not app.exception
     sibling, = app.session_state["test_sources"]
-    retry = next(b for b in app.button if b.label == "Retry unread files")
+    retry = next(b for b in app.button if b.label == "Retry failed file · retry.pdf")
     assert any("retry.pdf" in w.value for w in app.warning)
     app.run()
     assert attempts == ["good.pdf", "retry.pdf"]
@@ -47,7 +47,7 @@ def test_retry_recovers_failed_file_and_keeps_sibling_and_manual_content(monkeyp
             for source in app.session_state["test_sources"]] == [u.getvalue() for u in uploads]
     assert app.session_state["test_blocks"] == {manual.key: manual}
     assert not app.session_state["test_additions"]
-    assert not any(b.label == "Retry unread files" for b in app.button)
+    assert not any(b.label == "Retry failed file · retry.pdf" for b in app.button)
     assert not any("Not read:" in w.value for w in app.warning)
     app.run()
     assert attempts == ["good.pdf", "retry.pdf", "retry.pdf"]
@@ -60,12 +60,12 @@ def test_failed_selection_can_be_replaced_without_retrying_old_bytes(monkeypatch
                         uploads if label == "Service report files" else [])
     app = AppTest.from_string(APP, default_timeout=20).run()
     assert not app.exception
-    assert any(b.label == "Retry unread files" for b in app.button)
+    assert any(b.label == "Retry failed file · bad.pdf" for b in app.button)
     uploads[:] = [_file("replacement.pdf", pdf_bytes(1))]
     app.run()
     assert not app.exception
     assert [s.filename for s in app.session_state["test_sources"]] == ["replacement.pdf"]
-    assert not any(b.label == "Retry unread files" for b in app.button)
+    assert not any(b.label == "Retry failed file · bad.pdf" for b in app.button)
     assert not app.session_state["test_additions"]
 
 
@@ -90,7 +90,7 @@ def test_repeated_failure_requires_deliberate_retry_and_clear_removes_action(mon
         return original(*args, **kwargs)
     monkeypatch.setattr(sources, "ingest_batch", ingest)
     app = AppTest.from_string(APP, default_timeout=20).run()
-    next(b for b in app.button if b.label == "Retry unread files").click().run()
+    next(b for b in app.button if b.label == "Retry failed file · bad.pdf").click().run()
     assert not app.exception
     assert len(calls) == 2
     app.run()
@@ -98,5 +98,5 @@ def test_repeated_failure_requires_deliberate_retry_and_clear_removes_action(mon
     assert not app.session_state["test_sources"]
     uploads.clear()
     app.run()
-    assert not any(b.label == "Retry unread files" for b in app.button)
+    assert not any(b.label == "Retry failed file · bad.pdf" for b in app.button)
     assert len(calls) == 2
