@@ -11,6 +11,7 @@ import itertools
 import os
 from pathlib import Path
 import sys
+import tempfile
 import threading
 import time
 
@@ -90,10 +91,24 @@ def snapshot():
                 "running": dict(_RUNNING), "parallel": parallel_enabled()}
 
 
+def _lock_folder():
+        """Container-wide directory for resource-admission locks.
+        
+            Report storage stays namespaced: isolated QA points _root() at its own
+                directory, so a live heavy lease and an isolated QA heavy lease used to
+                    get independent slot/budget locks against the same cgroup and could
+                        double-book the same headroom. Lock files hold no report data, only
+                            flocks, so one shared directory is safe. MSAPO_RESOURCE_LOCK_DIR
+                                overrides it for tests and operators.
+                                    """
+        override = (os.environ.get("MSAPO_RESOURCE_LOCK_DIR") or "").strip()
+        folder = Path(override) if override else Path(tempfile.gettempdir()) / "msapo-render-jobs"
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder
+    
+
 def _slot_path(kind, index):
-    from app.monthly_report_library import _root
-    folder = _root() / "render-jobs"
-    folder.mkdir(parents=True, exist_ok=True)
+    folder = _lock_folder()
     # A01's Office admission exclusively owns .conversion-lock[-1].
     # Reserve memory with a distinct lock to avoid self-deadlock when the
     # same thread subsequently obtains A01's authoritative conversion lane.
@@ -141,10 +156,8 @@ def _try_admit_budgeted(kind, headroom):
     slot acquisition; the lane locks retain reservations until release.
     """
     import fcntl
-    from app.monthly_report_library import _root
-    folder = _root() / "render-jobs"
-    folder.mkdir(parents=True, exist_ok=True)
-    with (folder / ".resource-budget.lock").open("a+b") as budget:
+        folder = _lock_folder()
+with (folder / ".resource-budget.lock").open("a+b") as budget:
         try:
             fcntl.flock(budget.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except (BlockingIOError, OSError):
@@ -152,11 +165,21 @@ def _try_admit_budgeted(kind, headroom):
         try:
             # Account for *every* class, including conversions nested in a
             # heavy worker and native allocations not yet reflected by RSS.
-            reserved = sum(_locked_count(k) * ESTIMATED_PEAK[k]
-                           for k in CAPACITIES)
-            free = headroom() if headroom is not None else None
-            if free is None or free < reserved + ESTIMATED_PEAK[kind] + RESERVE_BYTES:
-                return None
+            counts = {name: _locked_count(name) for name in CAPACITIES}
+                        reserved = sum(counts[name] * ESTIMATED_PEAK[name] for name in CAPACITIES)
+                        free = headroom() if headroom is not None else None
+                        if kind == "conversion" and counts["heavy"] > counts["conversion"]:
+                                            # A conversion runs inside an already admitted heavy lease,
+                                            # whose peak covers the conversion's peak: transfer that
+                                            # reservation instead of charging a second full peak, or two
+                                            # admitted heavies could both wait for a conversion neither
+                                            # can get. A conversion without a heavy lease still charges
+                                            # its own peak.
+                                            needed = reserved + RESERVE_BYTES
+                        else:
+                                            needed = reserved + ESTIMATED_PEAK[kind] + RESERVE_BYTES
+                                        if free is None or free < needed:
+                                            return None
             return _try_slot(kind)
         finally:
             fcntl.flock(budget.fileno(), fcntl.LOCK_UN)
