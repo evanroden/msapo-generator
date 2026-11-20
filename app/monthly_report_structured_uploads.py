@@ -1103,9 +1103,9 @@ def _payload_pages(payload):
     pages, checked, unavailable = [], [], []
     last = None
     for block in payload:
-        if not isinstance(block, dict) or not isinstance(block.get("text", ""), str):
+        text = block.get("text") if isinstance(block, dict) else None
+        if not isinstance(text, str):
             continue
-        text = block["text"]
         match = _SOURCE_MARKER.match(text)
         if match:
             last = (match[1], int(match[2]))

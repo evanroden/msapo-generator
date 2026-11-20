@@ -293,7 +293,8 @@ def test_partial_chunk_success_retries_only_failed_pages_and_keeps_manual_draft(
                   upload(b"Inspected pump B; replacement pending.", "b.txt")]
     attempted = []
 
-    def batches(profile, contents, destination, *, table_columns=None, page_refs=None):
+    def batches(profile, contents, destination, *, table_columns=None, page_refs=None,
+                period=None, corrections=None, accepted_pages=()):
         allowed = set(page_refs) if page_refs is not None else None
         payloads = []
         for content in contents:

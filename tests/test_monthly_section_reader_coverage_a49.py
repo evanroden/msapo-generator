@@ -239,3 +239,26 @@ def test_page_plan_keeps_main_routing_filter_for_non_activity_sources():
     chunks, skipped, eligible = reader.reader_page_plan((content,), "activity_summary")
     assert not chunks and not skipped and not eligible
     assert reader.reader_batches(None, (content,), "activity_summary") == ()
+
+def test_image_content_block_without_text_preserves_page_receipt(monkeypatch):
+    """Vision blocks have no text field and must not abort paid PDF reading."""
+    content = source(1)
+    payload = [
+        {"type": "text", "text": f"SOURCE {SOURCE_ID} PAGE 1\n{content.source.page_texts[0]}"},
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                      "data": "synthetic"}},
+    ]
+    calls = []
+
+    def fake_read(value):
+        calls.append(value)
+        return model_payload(value)
+
+    monkeypatch.setattr(ai, "request_json", fake_read)
+    value = reader.read_batches((payload,))
+    assert calls == [payload]
+    assert value["coverage"][0]["status"] == "processed"
+    block, _, processed, failed, skipped = reader.reader_coverage_update(
+        (content,), "activity_summary", value)
+    assert processed == ((SOURCE_ID, 1),) and not failed and not skipped
+    assert "not repaired" in block.text
