@@ -116,7 +116,8 @@ def purchase_keyboard(browser, url):
         tab_to(page, generate)
         page.keyboard.press("Enter")
         expect(page.get_by_text("Synthetic generation count: 1", exact=True)).to_be_visible(timeout=150000)
-        expect(page.get_by_role("link", name=re.compile("Open Smartsheet in a new tab"))).to_have_count(1)
+        # CI renders the handoff more slowly than the default 5 s expect timeout.
+        expect(page.get_by_role("link", name=re.compile("Open Smartsheet in a new tab"))).to_have_count(1, timeout=45000)
         assert page.get_by_role("button", name=re.compile(r"^Download ")).count() == 2
         assert not errors and not external, (errors, external)
         page.screenshot(path=str(OUT / "po-keyboard-generated.png"), full_page=True)
@@ -156,7 +157,14 @@ def expense_keyboard(browser, url):
 
 
 def receipt_limit(browser, url):
-    """Check 15 MiB - 1 accepted and 15 MiB + 1 refused by native uploader."""
+    """Check the native 15 MB receipt uploader limit at its exact byte boundary.
+
+    Streamlit's browser check counts a megabyte as 1024 * 1024 bytes only on
+    Windows (navigator.platform) and as 1,000,000 bytes elsewhere, so the
+    boundary is 15,728,640 bytes on Windows and 15,000,000 bytes on macOS,
+    iOS, Android and Linux. The app's own server-side cap (15 MiB) is never
+    smaller, so the browser's limit is the one a person meets.
+    """
     page, errors, external = new_page(browser, 8529)
     try:
         page.goto(url, wait_until="domcontentloaded")
@@ -165,19 +173,24 @@ def receipt_limit(browser, url):
         with fitz.open() as document:
             document.new_page().insert_text((60, 60), "Synthetic receipt byte boundary")
             pdf = document.tobytes()
+        unit = 1024 if page.evaluate("() => /^Win/i.test(navigator.platform)") else 1000
+        limit = 15 * unit * unit
+        RESULTS.setdefault("receipt_limit_bytes", limit)
         for delta, accepted in ((-1, True), (1, False)):
-            payload = pdf + (b" " * ((15 * MIB + delta) - len(pdf)))
+            payload = pdf + (b" " * ((limit + delta) - len(pdf)))
             uploader.set_input_files({"name": f"synthetic-{abs(delta)}-{'under' if accepted else 'over'}.pdf",
                                       "mimeType": "application/pdf", "buffer": payload})
             if accepted:
                 expect(page.get_by_text(re.compile(r"3 unique receipts ready for review"))).to_be_visible(timeout=90000)
-                record("Receipt: 15 MiB minus one byte accepted in actual browser uploader")
+                record(f"Receipt: native limit minus one byte ({limit - 1:,} bytes) accepted in actual browser uploader")
             else:
                 # The native error is produced by Streamlit before the app receives bytes.
-                error = page.get_by_text(re.compile(r"(?i)(exceeds|too large|maximum|file size).*(15|mb|mib)|(15|mb|mib).*(exceeds|too large|maximum|file size)"))
+                # Streamlit's message, e.g. "File must be 15.0MB or smaller." (no inline
+                # (?i): Playwright passes the pattern to JavaScript, which rejects it).
+                error = page.get_by_text(re.compile(r"File must be 15(\.0)?\s*MB or smaller", re.IGNORECASE))
                 expect(error.first).to_be_visible(timeout=45000)
                 expect(page.get_by_text(re.compile(r"3 unique receipts ready for review"))).to_be_visible()
-                record("Receipt: 15 MiB plus one byte rejected with visible native size error")
+                record(f"Receipt: native limit plus one byte ({limit + 1:,} bytes) rejected with visible native size error")
             page.screenshot(path=str(OUT / ("receipt-under-limit.png" if accepted else "receipt-over-limit.png")), full_page=False)
         assert not errors and not external, (errors, external)
     finally:

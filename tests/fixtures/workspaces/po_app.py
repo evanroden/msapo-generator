@@ -78,7 +78,9 @@ def generated(**kwargs):
         text = "\n".join(page.get_text() for page in result)
         page_count = len(result)
     marker = kwargs["scope"].splitlines()[0]
-    if "MSAPO" not in text or marker not in text:
+    # PDF text extraction breaks a long scope line where the PDF wraps it, so
+    # compare with whitespace normalized; the words and their order must match.
+    if "MSAPO" not in text or " ".join(marker.split()) not in " ".join(text.split()):
         raise RuntimeError("The actual MSAPO PDF lost its template or reviewed synthetic scope")
     evidence = root / "evidence"
     evidence.mkdir(exist_ok=True)
