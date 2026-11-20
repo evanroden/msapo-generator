@@ -322,6 +322,10 @@ class ReportSource:
     pdf_text_blocks: tuple[tuple[int, int, int, str], ...] = ()
     financial_source_review: SourceFinancialReview | None = None
     financial_page_reviews: tuple[ReviewedFinancialPage, ...] = ()
+    # Message envelope identity and 1-based direct-attachment position. Neither
+    # changes the child original digest nor implies an approved work event.
+    attachment_parent_sha256: str = ""
+    attachment_index: int = 0
 
     @property
     def fingerprint(self) -> str:
@@ -413,7 +417,8 @@ def _digest(value: object) -> str:
     if isinstance(value, ReportSource) and not value.pdf_text_blocks:
         record.pop("pdf_text_blocks", None)
     if isinstance(value, ReportSource):
-        for field in ("financial_source_review", "financial_page_reviews"):
+        for field in ("financial_source_review", "financial_page_reviews",
+                      "attachment_parent_sha256", "attachment_index"):
             if not record.get(field):
                 record.pop(field, None)
     if isinstance(value, ReportDraft):
@@ -439,6 +444,11 @@ def _digest(value: object) -> str:
                 source.pop("pdf_text_blocks", None)
             if not source.get("scope_review"):
                 source.pop("scope_review", None)
+            # Absent provenance must leave historical draft fingerprints intact.
+            if not source.get("attachment_parent_sha256"):
+                source.pop("attachment_parent_sha256", None)
+            if not source.get("attachment_index"):
+                source.pop("attachment_index", None)
         for item in record["follow_ups"]:
             if not item.get("update_period"):
                 item.pop("update_period", None)

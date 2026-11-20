@@ -117,6 +117,8 @@ def test_absent_scope_record_preserves_legacy_source_and_report_fingerprints(sam
     source_record.pop("pdf_text_blocks")  # Absent in the historical schema too.
     source_record.pop("financial_source_review")
     source_record.pop("financial_page_reviews")
+    assert source_record.pop("attachment_parent_sha256") == ""
+    assert source_record.pop("attachment_index") == 0
     draft_record = asdict(draft)
     draft_record.pop("cover_recovery_request")  # Private intent did not exist in old reports.
     draft_record.pop("source_row_reviews", None)
@@ -134,6 +136,8 @@ def test_absent_scope_record_preserves_legacy_source_and_report_fingerprints(sam
         source.pop("pdf_text_blocks")
         source.pop("financial_source_review")
         source.pop("financial_page_reviews")
+        assert source.pop("attachment_parent_sha256") == ""
+        assert source.pop("attachment_index") == 0
     assert draft.sources[0].fingerprint == old_hash(source_record)
     assert draft.fingerprint == old_hash(draft_record)
     # Independently evaluated on immutable #635 tree3ef4dd54, before adding

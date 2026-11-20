@@ -105,6 +105,8 @@ def test_legacy_fingerprints_and_serialization(monkeypatch,tmp_path):
     # Reconstruct the historical schema, not current asdict with new defaults.
     assert old.pop('financial_source_review') is None
     assert old.pop('financial_page_reviews') == ()
+    assert old.pop('attachment_parent_sha256') == ''
+    assert old.pop('attachment_index') == 0
     # Independently reproduced on pre-financial/recovery tree780690056a9f.
     assert s.fingerprint == '02c3e5d6abfd9d9eb6e64f68b675ed06c3d3e87a9c33c81caf6840a6f6fdcffe'
     assert s.fingerprint == sha256(json.dumps(old,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
@@ -202,6 +204,8 @@ def test_legacy_draft_fingerprint_and_saved_source_stay_unchanged(monkeypatch,tm
         source.pop('pdf_text_blocks'); source.pop('scope_review')
         assert source.pop('financial_source_review') is None
         assert source.pop('financial_page_reviews') == ()
+        assert source.pop('attachment_parent_sha256') == ''
+        assert source.pop('attachment_index') == 0
     for block in old['blocks']:
         block.pop('asset_instances')
         assert block.pop('cover_original') is None
