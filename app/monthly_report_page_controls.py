@@ -49,16 +49,23 @@ def included_page_caption(block, source, number):
             and index < len(block.asset_captions) else "")
 
 
-def retained_water_omission(block):
-    """An empty optional slot is addable; an omitted writer's work is retained.
+def retained_page_section_omission(block):
+    """A reviewed new page must not revive a deliberately omitted section.
 
-    Keep even empty custom table schemas and caption metadata conservatively.
-    A new explicitly reviewed page must not replace those report decisions.
-    This distinction belongs to Water intake, not generic Starting replay.
+    An empty optional page slot can receive a newly reviewed PDF. Existing
+    writer text, schema, pictures, or captions require the section's own
+    explicit re-inclusion action instead of an automatic page merge.
     """
-    return (block is not None and block.key == "water_reports" and block.source == "Omit"
+    return (block is not None
+            and block.key in {"water_reports", "mbcx_report", "utility_analysis"}
+            and block.source == "Omit"
             and bool(block.asset_hashes or block.text.strip() or block.rows or block.extra_tables
                      or block.ai_paragraphs or block.org_nodes or any(c.strip() for c in block.asset_captions)))
+
+
+def retained_water_omission(block):
+    """Compatibility for the existing Water-only re-inclusion editor."""
+    return block is not None and block.key == "water_reports" and retained_page_section_omission(block)
 
 
 def omitted_section_request(block, contents, *, scope=""):

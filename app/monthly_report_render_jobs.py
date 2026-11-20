@@ -5,6 +5,7 @@ import time
 from contextlib import contextmanager
 
 from app import pdf_converter
+from app.monthly_latency_spans import measure_span, record_span
 from app.monthly_report_library import _root
 from app.monthly_report_latency_trace import span
 
@@ -74,7 +75,8 @@ def _reclaim_preview_heap():
 
 def convert_to_pdf(path, *, wait_seconds=10, lossless_images=False):
     with conversion_slot(wait_seconds=wait_seconds):
-        with span("conversion"):
+        # Do not count thread/process-lock admission as office execution.
+        with span("conversion"), measure_span("office_execution"):
             if lossless_images is not False:
                 return pdf_converter.convert_to_pdf(path, lossless_images=lossless_images)
             return pdf_converter.convert_to_pdf(path)
@@ -225,10 +227,12 @@ def work_slot(*, preview=False, review=False, wait_seconds=130,
     global _FOREGROUND_WAITING, _FOREGROUND_ACTIVE, _REVIEW_WAITING
     headroom = None
     acquired = False
+    queue_started = time.monotonic()
     with span("job_queue"):
         if preview:
             headroom = memory_headroom()
             if headroom is not None and headroom < PREVIEW_HEADROOM_BYTES:
+                record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
                 raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
             timeout = max(0, min(float(wait_seconds),
                                  10 if review else AUTO_PREVIEW_WAIT_SECONDS if owner is not None else 0))
@@ -237,6 +241,7 @@ def work_slot(*, preview=False, review=False, wait_seconds=130,
                 # while foreground exports or deliberate Review are active.
                 with _PRIORITY_LOCK:
                     if _FOREGROUND_WAITING or _FOREGROUND_ACTIVE or _REVIEW_WAITING:
+                        record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
                         raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
         else:
             timeout = max(0, min(float(wait_seconds), 130))
@@ -261,6 +266,7 @@ def work_slot(*, preview=False, review=False, wait_seconds=130,
                               can_admit=compatible_preview_turn if preview and (review or owner is None) else None)
                 acquired = True
             except QueueBusy as exc:
+                record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
                 raise RenderBusy(str(exc)) from exc
         finally:
             with _PRIORITY_LOCK:
@@ -273,6 +279,9 @@ def work_slot(*, preview=False, review=False, wait_seconds=130,
 
     # Preserve main's A34 finite-cgroup parallel admission budget exactly.
     # The queue only changes who waits; it cannot bypass memory reservations.
+    # Previews use the measured A34 budget and fail closed even for the first
+    # preview. Foreground work keeps the A19 rule: the first job always
+    # retains the single-worker fallback, and later jobs need the A19 margin.
     global _ACTIVE_WORK
     reserved = False
     try:
@@ -281,27 +290,34 @@ def work_slot(*, preview=False, review=False, wait_seconds=130,
                 available = memory_headroom()
                 if preview:
                     if available is None or available < required_free_bytes(_ACTIVE_WORK):
+                        record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
                         raise RenderBusy(
                             'Additional preview work is queued while memory is busy. '
                             'Your edits are still here. Retry shortly.')
                 elif _ACTIVE_WORK:
                     required = (512 + 768 * (_ACTIVE_WORK + 1)) * 1024 * 1024
                     if available is None or available < required:
+                        record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
                         raise RenderBusy('Additional report work is queued while memory is busy. Your saved work is unchanged.')
                 _ACTIVE_WORK += 1
                 reserved = True
         _WORK_LOCAL.active = True
         _WORK_LOCAL.preview_guard = _PreviewMemoryGuard(headroom) if preview else None
         try:
-            if preview:
-                _WORK_LOCAL.preview_guard()
-                if is_current is not None:
-                    try:
-                        current = bool(is_current())
-                    except Exception:
-                        current = False
-                    if not current:
-                        raise RenderBusy('The preview request is obsolete. Your edits are still here.')
+            try:
+                if preview:
+                    _WORK_LOCAL.preview_guard()
+                    if is_current is not None:
+                        try:
+                            current = bool(is_current())
+                        except Exception:
+                            current = False
+                        if not current:
+                            raise RenderBusy('The preview request is obsolete. Your edits are still here.')
+            except RenderBusy:
+                record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
+                raise
+            record_span("work_queue", time.monotonic() - queue_started)
             yield
         finally:
             _WORK_LOCAL.preview_guard = None
