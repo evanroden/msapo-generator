@@ -202,6 +202,81 @@ sample. No scheduling or cache-policy optimization is justified merely by
 adding this trace. Real client documents, a served production writer, physical
 Safari and authentic DOCX/PDF report acceptance are outside this harness.
 
+## A01 extension — critical-path receipts (17 November 2026)
+
+Baseline SHA: `f0af99567223aea3375f60e671450048be2bf0a0`.
+The baseline has cold/warm backend phases and real synthetic native-browser
+timings, but does **not** export per-request process/thread queue waits,
+numeric-only office execution spans, 256-row CSV/XLSX timing distributions, or
+initial navigation-to-interactive time. This is the deterministic
+**missing-measurement baseline**, not a fabricated slow production run.
+
+The A01 instrumentation is passive and context-local: it records only a
+fixed phase name, milliseconds and outcome within an explicit benchmark
+capture. No filenames, content, source/site identifiers, API inputs or paid
+reader calls are included. Non-benchmark users have no emitted spans.
+Work-admission, intra-process office locks and cross-process file locks are
+separate. Nested office calls do not double-count lock waits; a rejected
+request records `busy`. The native fixture records physical assembly,
+office lock/convert and first-two-page raster per run.
+
+For PRs changing the harness, CI runs the **same exact production Dockerfile
+and requirements.lock** in three isolated phases: uncapped backend, 512 MiB /
+0.5 CPU backend, and browser headless Chromium/WebKit against both uncapped
+runner and a capped server. Raw JSON, Docker inspect settings, RSS/peak,
+cgroup OOM events, CPU usage and browser samples are artifacts. Do not compare
+uncapped and capped data from different head SHAs. Each cold ingest uses a
+fresh synthetic namespace; warm re-ingest uses the same immutable original.
+CSV/XLSX contain exactly 256 invented work-order rows. Text/tables are
+deliberately **not** assigned a raster thumbnail. The mixed case ingests
+PDF/DOCX/CSV/XLSX and validates duplicate SHA identity and rejected
+empty/unsupported/malformed inputs. DOCX sources contain 1/4/8 photographs
+**and** small tables. Backend concurrency covers two distinct source
+namespace owners, not two simultaneous LibreOffice conversions.
+
+Benchmark commands on the exact checkout, run both resource modes:
+
+```sh
+docker build --build-arg APP_GIT_COMMIT="$(git rev-parse HEAD)" -t msapo-a01 .
+for part in sources native; do
+  docker run --rm -e ANTHROPIC_API_KEY=test-key-not-used \
+    --entrypoint python msapo-a01 scripts/qa_monthly_preview_latency_e2e.py --part "$part"
+  docker run --rm --memory=512m --memory-swap=512m --cpus=0.5 \
+    -e RESOURCE_REQUIRE_512_MB=1 -e RESOURCE_REQUIRE_HALF_CPU=1 \
+    -e ANTHROPIC_API_KEY=test-key-not-used \
+    --entrypoint python msapo-a01 scripts/qa_monthly_preview_latency_e2e.py --part "$part"
+done
+docker run --rm --entrypoint python msapo-a01 scripts/benchmark_monthly_preview_cache.py --output /tmp/raster.json
+```
+
+Read each JSON's `environment.commit`, `samples.*.samples_ms`,
+`native_section.runs.*.samples.*.critical_path_spans` and cgroup fields.
+The standalone raster benchmark now reports raw samples and omits p95 for
+under 20 samples. The browser `navigation_to_first_interactive_seconds`
+is separate from press-to-decoded-preview and upload-selection-to-thumbnail
+elapsed. Its upload clock **includes** UI clicks and localhost transport and
+cannot isolate pure transfer from processing. Neither backend phases nor
+headless-browser readings constitute a live Render measurement.
+
+### Five critical-path hypotheses and proposed targets, NOT measured results
+
+| Ordered probe | What to quantify | Proposed improvement goal | Would added CPU/RAM help? |
+|---|---|---|---|
+| 1. Cold native assembly | `native_assembly` and conversion-independent package SHA | Reduce cold native assembly median at least 30% with equal package parts and scope | CPU/RAM may help large picture processing; reuse will not help a changed revision |
+| 2. Writer execution | `office_execution` less `office_*_queue`; generated PDF SHA/pages | Reduce median conversion/execution at least 25% | CPU helps CPU-bound conversion; RAM helps only if currently memory-limited |
+| 3. Admission and wait | `work_queue` and `office_thread_queue`/`office_process_queue` (busy rate) | Reduce waiting without increasing OOMs; maintain finite queue and correct priority | Larger resources alone cannot remove serialized file locks |
+| 4. Cold PDF/DOCX extraction | cold ingest and thumbnails, separately for 2/24/96 PDF and 1/4/8 DOCX | Reduce cold PDF-24 and DOCX-4 median at least 20% | CPU can help OCR/pixel decoding; no paid AI is invoked in CI |
+| 5. First decoded browser image | navigation→interactive, press→image, upload→image, edit→current | Cut synthetic first-use/interaction median at least 25% without stale paint | Network transfer, Streamlit rerun, navigation and browser decode may dominate regardless of server CPU |
+
+These are optimization *hypotheses and candidate targets*, not measured
+before/after improvements or owner-approved SLAs. Actual ranking requires
+the new exact-head JSON samples. Exports, saved/reloaded state, real AI
+response wall time, source mapping versus extraction microspans, cross-site
+month acceptance, physical-device first paint and live production speed
+are **not** individually measured by this addition. Their absence must
+remain visible when routing A02–A05/A19; never infer acceptance from this
+harness.
+
 ## A89 — Render versus Azure attribution without cutover (17 November 2026)
 
 This comparison is a **read-only assessment**, not a hosting change. Repository

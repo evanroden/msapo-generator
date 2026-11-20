@@ -124,6 +124,11 @@ def source_manager_status(draft, contents, *, unavailable=(), pending=False):
                 destinations.add(destination)
 
         def result(reason="", *, needs_correction=True, resolved=None, summary=summary):
+            if source.attachment_parent_sha256 and source.attachment_index > 0:
+                parents = current.get(source.attachment_parent_sha256, ())
+                parent_label = (parents[0].filename if len(parents) == 1 else
+                                "source " + source.attachment_parent_sha256[:12])
+                summary = f"Attachment {source.attachment_index} of {parent_label} · {summary}"
             return SourceManagerStatus(source.id, source.filename, not reason if resolved is None else resolved, reason,
                                        len(attached), tuple(sorted(destinations)),
                                        bool(reason) and needs_correction, summary)
