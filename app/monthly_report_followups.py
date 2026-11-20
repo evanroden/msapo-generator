@@ -560,7 +560,9 @@ def seed_followups(draft):
         replace(
             normalize_proposal(item),
             carried_from=(item.carried_from or draft.period.key) if item.category == "issue" else draft.period.key,
-            included=item.included if item.category == "proposal" else True,
+            # Rollover never re-includes a deliberate omission. An unsupported
+            # resolution must remain visible, with its evidence gate intact.
+            included=(item.included if item.category != "issue" or item.status != "resolved" else True),
             reviewed_fingerprint="", update_period=_carried_update_period(item, draft.period)
         )
         for item in draft.follow_ups

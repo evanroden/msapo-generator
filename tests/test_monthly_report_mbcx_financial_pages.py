@@ -200,7 +200,7 @@ def test_malformed_saved_review_is_rejected(monkeypatch,tmp_path,field,value):
 def test_legacy_empty_financial_fields_preserve_source_fingerprint(monkeypatch,tmp_path):
     import hashlib,json
     p,c,_=setup(monkeypatch,tmp_path);record=asdict(c.source)
-    for field in ('financial_source_review','financial_page_reviews','scope_review','pdf_text_blocks'):
+    for field in ('financial_source_review','financial_page_reviews','scope_review','pdf_text_blocks','attachment_parent_sha256','attachment_index'):
         if not record.get(field):record.pop(field,None)
     # Existing model's digest uses compact JSON only through its established helper.
     from app.monthly_report_model import _digest
