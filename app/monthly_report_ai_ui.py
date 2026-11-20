@@ -357,7 +357,11 @@ def edit_linked_paragraphs(draft, blocks, prefix, field, allowed_keys=None):
                         st.caption("This saved fact is unavailable. Choose current evidence or explicitly remove its link.")
                         continue
                     source, fact = facts[identity]
-                    st.caption(f"{source.filename}, page {fact.page}: {fact.quote}")
+                    st.caption(
+                        f"{ai.clean_text(source.filename)}, page {fact.page} · "
+                        f"original SHA-256 {fact.source_sha256 or source.sha256}: "
+                        + ai.fact_quote_for_display(fact.quote)
+                    )
                 paragraphs.append(
                     replace(
                         paragraph, text=ai.clean_text(text), fact_ids=tuple(selected)
@@ -649,6 +653,10 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                     st.write(f"{len(proposed[2])} facts found")
                     for fact in proposed[2]:
                         st.write(f"Page {fact.page} · {fact.text}")
+                        st.caption(
+                            f"Original SHA-256 {fact.source_sha256 or source.sha256} · "
+                            f"Exact quote: {ai.fact_quote_for_display(fact.quote)}"
+                        )
                         if fact.flags:
                             st.warning("; ".join(fact.flags))
                     st.caption("These facts support suggested wording. Original pages keep their own inclusion decisions.")
@@ -799,6 +807,7 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                 "Nothing below replaces your report until you choose Add or Replace."
             )
             facts = {f.id: f for s in sources for f in s.facts}
+            fact_sources = {f.id: s for s in sources for f in s.facts}
             paragraphs, ready = [], True
             for n, paragraph in enumerate(suggestion.ai_paragraphs):
                 text = st.text_area(
@@ -810,7 +819,9 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                     height=90,
                 )
                 evidence = "\n".join(
-                    f"Page {facts[i].page}: {facts[i].quote}"
+                    f"{ai.clean_text(fact_sources[i].filename)}, page {facts[i].page} · "
+                    f"original SHA-256 {facts[i].source_sha256 or fact_sources[i].sha256}: "
+                    + ai.fact_quote_for_display(facts[i].quote)
                     for i in paragraph.fact_ids
                     if i in facts
                 )

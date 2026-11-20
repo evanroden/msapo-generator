@@ -278,6 +278,10 @@ class EvidenceFact:
     tags: tuple[str, ...] = ()
     status: str = ""
     flags: tuple[str, ...] = ()
+    # Populated by newly read AI facts; empty values preserve saved human/legacy
+    # records without manufacturing evidence from missing original files.
+    source_sha256: str = ""
+    page_sha256: str = ""
 
 
 @dataclass(frozen=True)
@@ -410,6 +414,20 @@ class ReportSnapshot:
 
 def _digest(value: object) -> str:
     record = asdict(value)
+    # Empty optional fact anchors must not rewrite historical fingerprints,
+    # including the digest of an unchanged report and its review receipts.
+    def retain_legacy_fact_identity(source_record):
+        for fact in source_record.get("facts", ()):
+            if not fact.get("source_sha256"):
+                fact.pop("source_sha256", None)
+            if not fact.get("page_sha256"):
+                fact.pop("page_sha256", None)
+
+    if isinstance(value, ReportSource):
+        retain_legacy_fact_identity(record)
+    if isinstance(value, ReportDraft):
+        for source in record["sources"]:
+            retain_legacy_fact_identity(source)
     # Adding optional scope evidence must not invalidate unchanged historical
     # source/page/report fingerprints merely because the schema acquired it.
     if isinstance(value, ReportSource) and not value.scope_review:
