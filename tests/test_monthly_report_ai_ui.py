@@ -58,19 +58,16 @@ def test_read_draft_review_preserves_existing_work_and_invalidates(
     assert any(x.label == "Help write this summary" for x in app.expander)
     button(app, "Suggest wording / redraft").click().run()
     assert not app.exception
-    assert button(app, "Use checked wording in this report").disabled
+    assert not button(app, "Accept suggestion").disabled
     initial = next(w.value for w in app.text_area if w.label == "Activity summary")
-    button(app, "Dismiss suggestion — keep my current wording").click().run()
+    button(app, "Dismiss suggestion").click().run()
     assert not app.exception
     assert next(w.value for w in app.text_area if w.label == "Activity summary") == initial
-    assert not any(b.label == "Use checked wording in this report" for b in app.button)
+    assert not any(b.label == "Accept suggestion" for b in app.button)
     button(app, "Suggest wording / redraft").click().run()
     assert not app.exception
-    assert button(app, "Use checked wording in this report").disabled
-    next(
-        w for w in app.checkbox if w.label == "I checked paragraph 1 against its source"
-    ).check().run()
-    button(app, "Use checked wording in this report").click().run()
+    assert not button(app, "Accept suggestion").disabled
+    button(app, "Accept suggestion").click().run()
     assert not app.exception
     # A saved source-linked AI claim exposes its quotation and original hash
     # in the existing native linked-wording correction UI.

@@ -18,8 +18,8 @@ from pathlib import Path
 SITE_ORIGIN = "https://msapo-generator.onrender.com"
 SITE_TITLE = "Process Control"
 SITE_DESCRIPTION = (
-    "Prepare purchase-order requests and employee expense reports with guided "
-    "review, generated files, and approval handoffs."
+    "Prepare monthly site reports, purchase-order requests and employee expense "
+    "reports with guided review, generated files, and approval handoffs."
 )
 ICON_NAME = "process-control-icon-v1.png"
 PREVIEW_NAME = "process-control-preview-v1.png"

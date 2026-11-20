@@ -311,6 +311,13 @@ def _render_capacity_source(draft, block, prefix, field, context, state):
     inspection = st.session_state.get(prefix + "_capacity_inspection")
     if inspection is None or prefix + "_capacity_job" in st.session_state:
         return draft, block
+    # Show unresolved native cells even if another page also needs reading;
+    # the early-return reader branch must not hide this safety information.
+    for notice in inspection.notices:
+        if "without trusted cached results" in notice:
+            st.warning(notice)
+        else:
+            st.caption(notice)
     if not inspection.tables or inspection.pending_pages:
         from app.monthly_report_testing import scope
         st.info("Some capacity pages need reading. Your existing report and saved capacity have been kept. You can also enter values in this report's table below.")
@@ -330,8 +337,6 @@ def _render_capacity_source(draft, block, prefix, field, context, state):
     st.caption("Leave unknown capacity values blank or NR; never treat them as zero.")
     if inspection.used_reader:
         st.caption("Check every value and unit against the file. Unreadable cells must be corrected before saving.")
-    for notice in inspection.notices:
-        st.caption(notice)
     with st.expander("View original capacity file", expanded=False):
         source = inspection.content.source
         if source.suffix in capacity.SUPPORTED - {".csv", ".xlsx", ".txt", ".docx"} or inspection.content.image_items:
@@ -381,7 +386,13 @@ def _render_capacity_source(draft, block, prefix, field, context, state):
     unverified_image = inspection.used_reader and any(
         table.page in inspection.content.source.needs_vision for table in tables)
     first_fill = capacity.first_fill_tables(state, tables)
-    if first_fill and not unresolved and actor and not unverified_image:
+    # A formula without a trustworthy saved result may be corrected in the
+    # editor, but the unreviewed import must not become shared standing data.
+    unresolved_formula = any("capacity formula cells without trusted cached results" in notice
+                             for notice in inspection.notices)
+    if unresolved_formula:
+        st.info("Check the named formula cells against the original and correct their values before applying reusable capacity.")
+    if first_fill and not unresolved and actor and not unverified_image and not unresolved_formula:
         # The same reviewed values pass the existing atomic version/provenance
         # validator, without a routine "Save to contract" decision.
         try:
