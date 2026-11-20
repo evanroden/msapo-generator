@@ -343,8 +343,16 @@ _READ_RESULTS = ("accepted", "restored", "duplicate")
 
 
 def _selection_identity(upload):
-    """Cheap identity of the chooser's current files, without reading their bytes."""
-    return tuple((u.name, u.size, getattr(u, "file_id", "")) for u in (upload or ()))
+    """Cheap identity of the chooser's current files, without copying their bytes."""
+    def size(item):
+        value = getattr(item, "size", None)
+        if value is None:
+            try:
+                value = item.getbuffer().nbytes
+            except (AttributeError, ValueError):
+                value = None
+        return value
+    return tuple((item.name, size(item), getattr(item, "file_id", "")) for item in (upload or ()))
 
 
 def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, field, *, retain_accepted=False,
