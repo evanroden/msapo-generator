@@ -430,7 +430,8 @@ def render_generation_block_actions(draft, *, conflict, checks, warnings_ok):
         return
     # Long preflight lists scroll independently so the Generate action remains
     # alongside them at narrow widths; every reason is still available.
-    with st.container(height=180 if len(actions) > 3 else None, border=False):
+    # Streamlit 1.61 rejects height=None; "content" is its default height.
+    with st.container(height=180 if len(actions) > 3 else "content", border=False):
         for message, target, label in actions:
             st.caption(f"Before generating: {message} [{label}]({target})")
 
