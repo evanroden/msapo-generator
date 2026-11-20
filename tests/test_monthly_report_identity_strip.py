@@ -71,7 +71,9 @@ def test_identity_strip_keeps_one_native_container_from_zero_sites_through_resel
         assert order[id(chooser)] < order[id(nodes[0])]
         assert all(node is not nodes[0] for node in chooser)
         for item in app.get('file_uploader'):
-            if item.label == 'Starting report':
+            # A12 mounts the first-use entry upload above contract and site
+            # selection on purpose; only the section-setup picker follows.
+            if item.label == 'Starting report' and not item.key.startswith('report_entry_upload'):
                 assert order[id(nodes[0])] < order[id(item)]
         return nodes[0].proto.id
 

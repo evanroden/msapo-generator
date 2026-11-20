@@ -126,7 +126,7 @@ def test_unchanged_repeat_click_keeps_one_ticket_and_one_render(monkeypatch, tmp
         store.close()
 
 
-def test_new_edit_retire_old_ticket_before_any_current_claim(monkeypatch, tmp_path):
+def test_new_edit_keeps_last_good_visibly_outdated_until_refreshed(monkeypatch, tmp_path):
     app, store = setup(monkeypatch, tmp_path)
     try:
         monkeypatch.setattr(review_ui, 'preview_report', synthetic_preview)
@@ -138,13 +138,17 @@ def test_new_edit_retire_old_ticket_before_any_current_claim(monkeypatch, tmp_pa
         app.session_state['draft'] = revised
         app.run()
         assert not app.exception
-        assert not preview_state(app)
-        assert not store.available(owner(app), before['ticket'])
+        assert preview_state(app) == before
+        assert store.available(owner(app), before['ticket'])
         assert any('report changed' in c.value.lower() for c in app.caption)
+        assert any('Older draft' in c.value and 'latest changes not shown' in c.value
+                   for c in app.caption)
+        assert not any('Current draft · page' in c.value for c in app.caption)
         assert not any('Draft page' in c.value for c in app.caption)
         click_preview(app)
         assert preview_state(app)['fingerprint'] == preview_fingerprint(revised)
         assert preview_state(app)['ticket'] != before['ticket']
+        assert not store.available(owner(app), before['ticket'])
         assert app.session_state['draft'] == revised
     finally:
         store.close()
