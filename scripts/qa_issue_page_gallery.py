@@ -61,7 +61,7 @@ def choose(page, control, value, record):
 
 
 
-def open_gallery(issue):
+def open_gallery(issue, rounds=10):
     evidence = issue.get_by_text("Evidence", exact=True)
     evidence_details = evidence.locator("xpath=ancestor::details[1]")
     if evidence_details.get_attribute("open") is None:
@@ -70,24 +70,26 @@ def open_gallery(issue):
         expect(evidence_details).to_have_attribute("open", "")
     summary = issue.get_by_text("Choose supporting pages by preview", exact=True)
     details = summary.locator("xpath=ancestor::details[1]")
-    if details.get_attribute("open") is None:
-        # The gallery sits ~1000px below the issues-pair top, so the pair
-        # scroll alone leaves it below the fold; a rerun shifting layout
-        # can then starve Playwright's own scroll-into-view for 30s (the
-        # A88 WebKit failure, viewport found at Proposals). Center the
-        # summary and confirm it is in view, centering it again if a later
-        # rerun moved the page (a single check without re-centering failed
-        # once the page moved to Training Summary), then click the native
-        # control -- no force-click.
-        for _ in range(10):
+    combobox = issue.get_by_role("combobox", name="Source file to inspect", exact=True)
+    # A rerun after the source manager closes can shift the layout or move the
+    # page: WebKit has landed on Training Summary and on Proposals with the
+    # gallery still closed. Each round centers the summary, confirms it is in
+    # view, clicks the native control only while the gallery is closed (never
+    # a force-click), and gives the gallery a few seconds to appear.
+    for _ in range(rounds):
+        if details.get_attribute("open") is None:
             summary.evaluate("node => node.scrollIntoView({block: 'center'})")
             try:
                 expect(summary).to_be_in_viewport(timeout=1500)
-                break
             except AssertionError:
                 continue
-        summary.click()
-    expect(issue.get_by_role("combobox", name="Source file to inspect", exact=True)).to_be_visible()
+            summary.click()
+        try:
+            expect(combobox).to_be_visible(timeout=3000)
+            return
+        except AssertionError:
+            continue
+    expect(combobox).to_be_visible()
 
 
 def checkbox(issue, filename, number):

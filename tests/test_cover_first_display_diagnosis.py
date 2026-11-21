@@ -43,7 +43,11 @@ def test_first_automatic_source_photo_reaches_ready_without_business_click(monke
 
     monkeypatch.setattr(ui, "_PREVIEW_WORKER", Worker())
 
-    def convert(draft, section, loader):
+    def convert(draft, section, loader, *, owner=None, revision=None, is_current=None):
+        # A24 passes owner/revision proof to the renderer; this synthetic
+        # converter must implement the updated keyword-only API as well.
+        assert owner is not None and revision is not None
+        assert callable(is_current) and is_current()
         assert section == "cover", "Only the visible cover may start work"
         photo = next(block for block in draft.blocks if block.key == "cover_photo")
         raw = loader(photo.asset_hashes[0]) if photo.asset_hashes and photo.source != "Omit" else None

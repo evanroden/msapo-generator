@@ -30,6 +30,8 @@ import mimetypes
 
 import streamlit as st
 
+from app.status_copy import safe_status_detail
+
 from app.po_context import POContext
 from app.smartsheet import (
     SmartsheetConfigurationError,
@@ -68,7 +70,8 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
     try:
         config = load_config()
     except SmartsheetConfigurationError as exc:
-        st.error(f"Smartsheet configuration error: {exc}")
+        st.error("Check the Smartsheet form setup before continuing; the link could not be prepared: "
+                 + safe_status_detail(exc))
         return
 
     fields = dict(context.fields)
@@ -108,11 +111,11 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
     # important when the package is blocked, not less -- a missing vendor is
     # often the very thing being reported below. Only the colour changes.
     if blockers:
-        st.markdown(summary)
+        st.markdown(safe_status_detail(summary))
     else:
-        st.success(summary)
+        st.success("Review both files and the prefilled form before submitting. " + safe_status_detail(summary))
     st.caption(
-        f"Object Account: {fields.get('object_account') or '—'} · "
+        f"Review Object Account: {fields.get('object_account') or '—'} · "
         f"Agreement Type: {fields.get('agreement_type') or '—'} · "
         f"Asset ID: {fields.get('asset_id') or 'No asset'}"
     )
@@ -120,7 +123,7 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
     if blockers:
         st.warning(
             "Fix these items above, then generate the package again:\n\n- "
-            + "\n- ".join(blockers)
+            + safe_status_detail("\n- ".join(blockers))
         )
         return
 
@@ -132,7 +135,7 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
     # mislabel a file or raise an IndexError mid-render. Purchasing rejects a
     # submission that is missing either file, so blocking here is correct.
     if len(renamed_files) != 2:
-        st.error("The package must contain exactly the original quote and one scope PDF.")
+        st.error("Generate both required files again; the package must contain exactly the original quote and one MSAPO form PDF.")
         return
     columns = st.columns(2, gap="small")
     for index, (label, filename, data) in enumerate(renamed_files):
@@ -151,15 +154,15 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
         # The filename is repeated as a caption because the button label shows
         # only the kind ("Quote · PDF"); on a phone the operator has to match
         # what landed in Files against what the form asks for.
-        columns[index].caption(filename)
+        columns[index].caption("Check the downloaded filename: " + safe_status_detail(filename))
     st.warning(
         "Keep both files. Near the end of the Smartsheet form, upload the original quote "
         "and the MSAPO form PDF."
     )
     st.caption(
-        "Windows Chrome/Edge: save both files, open the Downloads folder in "
+        "Save both files. On Windows Chrome/Edge, open the Downloads folder in "
         "File Explorer, select both, and drag them together onto Smartsheet's "
-        "attachment box. iPhone/iPad: choose both files from Files."
+        "attachment box. On iPhone/iPad, choose both files from Files."
     )
 
     st.markdown("##### 2. Open the prefilled Smartsheet form")
@@ -169,13 +172,13 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
     # are discarded, and nothing reports an error. Signing back in and reusing
     # the same button fixes it. Phrases here are asserted by the entrypoint test.
     st.caption(
-        "Smartsheet needs to have been opened or signed into within the last few hours. "
+        "Open or sign into Smartsheet within the last few hours before using the link. "
         "The button opens a new browser tab; on iPhone or iPad, iOS may "
         "hand the same link to the signed-in Smartsheet app. If the values do "
         "not appear, sign back in, return here, and use the same button again."
     )
     if not manual_enabled(config):
-        st.error("The Smartsheet form link is not configured.")
+        st.error("Configure the Smartsheet form link before continuing.")
         return
 
     # The FORM's required list, not the API's. The two are configured separately
@@ -188,13 +191,14 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
         )
         return
     if not prefill_enabled(config):
-        st.error("Automatic Smartsheet prefilling is not enabled.")
+        st.error("Enable automatic Smartsheet prefilling before continuing.")
         return
 
     try:
         prefilled = build_prefilled_form_url(fields, config)
     except SmartsheetConfigurationError as exc:
-        st.error(f"Could not build the prefilled Smartsheet link: {exc}")
+        st.error("Check the Smartsheet form setup and generate again; the prefilled link could not be "
+                 "prepared: " + safe_status_detail(exc))
         return
     # A SECOND required-value check, and not redundant with the one above. That
     # one asks "is the value present?"; this one asks "did it actually survive
@@ -204,7 +208,7 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
     # blank looks identical to a working one until purchasing rejects the row.
     if prefilled.missing_required:
         st.error(
-            "The Smartsheet link could not include every required value: "
+            "Complete or correct these required values before generating the Smartsheet link: "
             + ", ".join(prefilled.missing_required)
             + ". The form link has been withheld."
         )
@@ -212,12 +216,12 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
 
     rows = handoff_rows(fields, config)
     if not rows:
-        st.error("No populated fields are available for the Smartsheet link.")
+        st.error("Complete the required fields above before generating the Smartsheet link.")
         return
 
     if prefilled.skipped:
         st.warning(
-            "The prefilled link omitted these optional values: "
+            "Enter these optional values manually in Smartsheet: "
             + ", ".join(prefilled.skipped)
             + ". Add them manually in Smartsheet using the values below."
         )
@@ -227,7 +231,7 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
     # opening it never submits anything -- an operator who believes otherwise
     # closes the tab and the request never reaches purchasing.
     st.caption(
-        "The link fills the form but does not submit it or attach the two files."
+        "Submit the form and attach both files yourself; the link fills the form but does not submit it or attach the two files."
     )
 
     # Collapsed by default and deliberately labelled as troubleshooting. Showing

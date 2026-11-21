@@ -32,7 +32,11 @@ def test_exact_site_photo_first_preview_without_upload_or_rescue_click(monkeypat
             return future
     monkeypatch.setattr(ui, '_PREVIEW_WORKER', Worker())
 
-    def convert(draft, section, loader):
+    def convert(draft, section, loader, *, owner=None, revision=None, is_current=None):
+        # A24 passes owner/revision proof to the renderer; this synthetic
+        # converter must implement the updated keyword-only API as well.
+        assert owner is not None and revision is not None
+        assert callable(is_current) and is_current()
         assert section == 'cover'
         photo = _cover(draft)
         raw = loader(photo.asset_hashes[0])

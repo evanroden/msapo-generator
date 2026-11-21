@@ -175,6 +175,11 @@ def test_output_and_live_preview_use_same_pinned_master(tmp_path, monkeypatch):
         calls.append((current, source, kwargs))
         return b"native-template"
     monkeypatch.setattr(monthly_report_native_layout, "build_native_docx", build)
+    # This checks which master the builder receives. Contents reconciliation of
+    # real packages is covered in test_monthly_report_contents_pagination.py.
+    from app import monthly_report_imported_contents
+    monkeypatch.setattr(monthly_report_imported_contents, "prepare_imported_contents",
+                        lambda source, raw, sections: raw)
     assert _build_docx(draft) == b"native-template"
     assert section_preview_docx(draft, "cover") == b"native-template"
     assert calls[0][1] == calls[1][1]

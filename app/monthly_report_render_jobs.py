@@ -217,73 +217,89 @@ def preview_memory_guard():
     return getattr(_WORK_LOCAL, 'preview_guard', None) if getattr(_WORK_LOCAL, 'active', False) else None
 
 
-def _wait_for_review_slot(wait_seconds):
-    """Reserve a short Review turn; final exports keep first claim.
+AUTO_PREVIEW_WAIT_SECONDS = 2.0
 
-    Automatic section previews must yield while this deliberate request waits.
-    Never stop an existing job, and never hold the priority lock while waiting.
-    """
-    global _REVIEW_WAITING
-    deadline = time.monotonic() + max(0, min(float(wait_seconds), 10))
-    with _PRIORITY_LOCK:
-        _REVIEW_WAITING += 1
-    try:
-        while True:
-            with _PRIORITY_LOCK:
-                if not _FOREGROUND_WAITING and not _FOREGROUND_ACTIVE and _WORK_SLOT.acquire(blocking=False):
-                    return True
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return False
-            time.sleep(min(.05, remaining))
-    finally:
-        with _PRIORITY_LOCK:
-            _REVIEW_WAITING -= 1
+
+def queue_state():
+    """Report waiting counts; a pending preview is not a finished ticket."""
+    from app.monthly_report_visible_queue import QUEUE
+    return QUEUE.snapshot()
+
+
+def cancel_queued_preview(owner):
+    """Cancel only queued preview requests belonging to a hidden/revised pane."""
+    from app.monthly_report_visible_queue import QUEUE
+    QUEUE.cancel_owner(owner)
 
 
 @contextmanager
-def work_slot(*, preview=False, review=False, wait_seconds=130):
-    """Admit one heavy job: final export, deliberate Review, automatic preview."""
+def work_slot(*, preview=False, review=False, wait_seconds=130,
+              owner=None, revision=None, is_current=None):
+    """Bounded visible-first admission while preserving current memory limits."""
     if review and not preview:
         raise ValueError("Review priority requires the preview memory guard.")
-    global _FOREGROUND_WAITING, _FOREGROUND_ACTIVE
+    if not preview and (owner is not None or revision is not None or is_current is not None):
+        raise ValueError("Revision cancellation applies only to previews.")
     if getattr(_WORK_LOCAL, 'active', False):
         yield
         return
+
+    from app.monthly_report_visible_queue import QUEUE, QueueBusy
+    global _FOREGROUND_WAITING, _FOREGROUND_ACTIVE, _REVIEW_WAITING
+    headroom = None
+    acquired = False
     queue_started = time.monotonic()
     with span("job_queue"):
-        acquired = False
         if preview:
             headroom = memory_headroom()
             if headroom is not None and headroom < PREVIEW_HEADROOM_BYTES:
                 record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
                 raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
-            if review:
-                acquired = _wait_for_review_slot(wait_seconds)
-            else:
+            timeout = max(0, min(float(wait_seconds),
+                                 10 if review else AUTO_PREVIEW_WAIT_SECONDS if owner is not None else 0))
+            if not review and owner is None:
+                # Retain main's fail-fast rule for unowned automatic previews
+                # while foreground exports or deliberate Review are active.
                 with _PRIORITY_LOCK:
                     if _FOREGROUND_WAITING or _FOREGROUND_ACTIVE or _REVIEW_WAITING:
                         record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
                         raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
-                    acquired = _WORK_SLOT.acquire(blocking=False)
         else:
-            with _PRIORITY_LOCK:
+            timeout = max(0, min(float(wait_seconds), 130))
+        with _PRIORITY_LOCK:
+            if review:
+                _REVIEW_WAITING += 1
+            elif not preview:
                 _FOREGROUND_WAITING += 1
+        def compatible_preview_turn():
+            # Main's A34 review priority must not overlap an active export,
+            # even when an opted-in host has an available parallel slot.
+            with _PRIORITY_LOCK:
+                if review:
+                    return _FOREGROUND_ACTIVE == 0
+                return not (_FOREGROUND_WAITING or _FOREGROUND_ACTIVE or _REVIEW_WAITING)
+
+        try:
             try:
-                acquired = _WORK_SLOT.acquire(timeout=max(0, min(float(wait_seconds), 130)))
-            finally:
-                with _PRIORITY_LOCK:
+                QUEUE.acquire(_WORK_SLOT, preview=preview, review=review, wait_seconds=timeout,
+                              owner=owner, revision=revision,
+                              is_current=is_current if preview else None,
+                              can_admit=compatible_preview_turn if preview and (review or owner is None) else None)
+                acquired = True
+            except QueueBusy as exc:
+                record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
+                raise RenderBusy(str(exc)) from exc
+        finally:
+            with _PRIORITY_LOCK:
+                if review:
+                    _REVIEW_WAITING -= 1
+                elif not preview:
                     _FOREGROUND_WAITING -= 1
                     if acquired:
-                        # Transition waiting -> running atomically for Review
-                        # and automatic-preview priority checks.
                         _FOREGROUND_ACTIVE += 1
-        if not acquired:
-            record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
-            raise RenderBusy('Another report is being prepared. Your saved work is unchanged; retry generation shortly.')
-    # Admission is fail-closed only on explicitly opted-in high-resource hosts.
-    # Check before allocating another DOCX/Pillow package, counting admissions
-    # under one lock so two contenders cannot both spend the same headroom.
+
+    # Preserve main's A34 finite-cgroup parallel admission budget exactly.
+    # The queue only changes who waits; it cannot bypass memory reservations.
     # Previews use the measured A34 budget and fail closed even for the first
     # preview. Foreground work keeps the A19 rule: the first job always
     # retains the single-worker fallback, and later jobs need the A19 margin.
@@ -312,6 +328,13 @@ def work_slot(*, preview=False, review=False, wait_seconds=130):
             try:
                 if preview:
                     _WORK_LOCAL.preview_guard()
+                    if is_current is not None:
+                        try:
+                            current = bool(is_current())
+                        except Exception:
+                            current = False
+                        if not current:
+                            raise RenderBusy('The preview request is obsolete. Your edits are still here.')
             except RenderBusy:
                 record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
                 raise
@@ -327,4 +350,4 @@ def work_slot(*, preview=False, review=False, wait_seconds=130):
         if not preview:
             with _PRIORITY_LOCK:
                 _FOREGROUND_ACTIVE -= 1
-        _WORK_SLOT.release()
+        QUEUE.release(_WORK_SLOT)
