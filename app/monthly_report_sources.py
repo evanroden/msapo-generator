@@ -36,6 +36,7 @@ from app.monthly_report_docx import ReportImage, normalize_report_image
 from app.monthly_report_import import inspect_docx, read_import_image
 from app.monthly_report_model import ReportProfile, ReportSource, ResolvedBlock
 from app.monthly_report_upload_limits import byte_limit_label, source_size_error
+from app.monthly_report_streamed_upload import StagedUpload
 from app.monthly_report_latency_trace import mark, span, traced
 
 
@@ -760,7 +761,7 @@ def _same_source_bytes(path, raw):
     return matches
 
 
-def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceContent, tuple[tuple[str, bytes], ...]]:
+def ingest(profile: ReportProfile, filename: str, raw: bytes | StagedUpload, *, max_new_text: int | None = None) -> tuple[SourceContent, tuple[tuple[str, bytes], ...]]:
     """Cache local extraction. Caller enforces aggregate count/byte/text budgets."""
     mark("upload_received")
     from app.monthly_report_content_policy import suggested_pages
@@ -768,15 +769,20 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
     suffix = Path(filename).suffix.casefold()
     if suffix not in SUPPORTED:
         raise ValueError("Unsupported file type. Choose PDF, DOCX, XLSX, CSV, EML, MSG, TXT or a supported image.")
-    if not raw:
+    staged = raw if isinstance(raw, StagedUpload) else None
+    size = staged.size if staged is not None else len(raw)
+    if not size:
         raise ValueError("This source file is empty. Choose a nonempty copy.")
     limit = file_size_limit(suffix)
-    if len(raw) > limit:
+    if size > limit:
         raise ValueError(source_size_error(suffix, limit))
     with span("hash_cache_lookup"):
-        digest = hashlib.sha256(raw).hexdigest()
+        digest = staged.sha256 if staged is not None else hashlib.sha256(raw).hexdigest()
         path, cache = _path(profile, digest, suffix), _path(profile, digest, ".json")
         attachments = ()
+        # CSV policy requires bytes; warm cached non-CSV sources do not.
+        if staged is not None:
+            raw = staged.path.read_bytes() if suffix == ".csv" else None
         unicode_csv = suffix == ".csv" and _csv_unicode_encoding(raw) is not None
         rebuild_cache = False
         if cache.exists() and path.exists() and suffix not in (".eml", ".msg"):
@@ -822,8 +828,14 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
                 return replace(content, source=replace(source, filename=filename)), ()
             rebuild_cache = True
     with span("parse"):
-        if not rebuild_cache or not _same_source_bytes(path, raw):
+        if staged is None and (not rebuild_cache or not _same_source_bytes(path, raw)):
             library._atomic_write(path, raw)
+        # Native DOCX reads the stage; other parsers get one buffer after admission.
+        if staged is not None and suffix != ".docx" and raw is None:
+            with staged.path.open("rb") as stream:
+                raw = stream.read(limit + 1)
+            if len(raw) != size:
+                raise ValueError("The staged source changed while it was being read.")
         page_texts, needs_vision, tables, image_items, notices = [], [], (), [], []
         pdf_text_blocks = []
         pdf_ocr_spans = []
@@ -921,7 +933,7 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
                     notices.append(f"{missing_count} formula cells without trusted cached results "
                                    f"({examples}); recalculate and save the source workbook before accepting these cells.")
         elif suffix == ".docx":
-            inspected = inspect_docx(path)
+            inspected = inspect_docx(staged.path if staged is not None else path)
             for number, item in enumerate(inspected.items, 1):
                 page_texts.append(item.text or "\n".join("\t".join(r) for r in item.rows))
                 if item.kind == "unsupported":
@@ -940,8 +952,11 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
             page_texts = [text]
             notices.extend(extra)
         record_span("source_extraction", perf_counter() - extraction_started)
-        if sum(map(len, page_texts)) > ocr._MAX_EXTRACTED_CHARS:
+        extracted_chars = sum(map(len, page_texts))
+        if extracted_chars > ocr._MAX_EXTRACTED_CHARS:
             raise ValueError(f"Source text exceeds {ocr._MAX_EXTRACTED_CHARS:,} characters; split the input before reading.")
+        if max_new_text is not None and extracted_chars > max_new_text:
+            raise ValueError(f"Total extracted text exceeds {MAX_REPORT_TEXT:,} characters. Remove unused sources or split the report.")
         source = ReportSource(digest, filename, digest, suffix, page_texts=tuple(page_texts),
                               pdf_text_blocks=tuple(pdf_text_blocks),
                               selected_pages=tuple(range(1, len(page_texts)+1)), needs_vision=tuple(needs_vision), notices=tuple(notices))
@@ -950,6 +965,10 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
         with measure_span("source_mapping"):
             source = suggest_facts(source, profile)
         content = SourceContent(source, tables, tuple(image_items), tuple(pdf_ocr_spans))
+        if staged is not None:
+            # Publish only after extraction and aggregate-text validation.
+            from app.monthly_report_streamed_upload import publish_staged_original
+            publish_staged_original(path, staged)
         library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1,
             "native_action_policy": 1, "vendor_passage_policy": 8,
             **({"pdf_scan_policy": 1, "pdf_reader_policy": 1} if suffix == ".pdf" else {}),
@@ -957,6 +976,22 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
             **({"csv_unicode_policy": 1} if unicode_csv else {}),
             **({"csv_dialect_policy": 1, "csv_headerless_policy": 1} if suffix == ".csv" else {}), **asdict(content)}))
         return content, attachments
+
+
+
+def _file_sha256(path: Path) -> str:
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def _verified_original(profile, source) -> None:
+    """Verify a saved duplicate without an upload-sized allocation."""
+    path = _path(profile, source.sha256, source.suffix)
+    library._qa_path_guard(path)
+    if path.is_symlink() or path.stat().st_size > file_size_limit(source.suffix):
+        raise ValueError("Saved source failed integrity verification.")
+    if _file_sha256(path) != source.sha256:
+        raise ValueError("Saved source failed integrity verification.")
 
 
 def _discard_rejected(path, cache, digest, already_present, existing_cache):
@@ -969,7 +1004,7 @@ def _discard_rejected(path, cache, digest, already_present, existing_cache):
     if not already_present:
         try:
             if path.is_file() and not path.is_symlink() and (
-                    hashlib.sha256(path.read_bytes()).hexdigest() == digest):
+                    _file_sha256(path) == digest):
                 path.unlink()
         except OSError:
             pass
@@ -999,11 +1034,12 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
     while queue:
         filename, raw, depth, parent_digest, attachment_index = queue.pop(0)
         filename = Path(filename.replace("\\", "/")).name
+        digest = raw.sha256 if isinstance(raw, StagedUpload) else hashlib.sha256(raw).hexdigest()
+        size = raw.size if isinstance(raw, StagedUpload) else len(raw)
         parent = sources.get(parent_digest) if parent_digest else None
         parent_label = parent.source.filename if parent else parent_digest[:12]
         label = (f"{filename} (attachment {attachment_index} of {parent_label})"
                  if parent_digest else filename)
-        digest = hashlib.sha256(raw).hexdigest()
         if digest in sources:
             # Re-uploading the identical accepted original can repair a missing
             # or corrupted stored copy without changing the report's reviewed
@@ -1013,27 +1049,35 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
                 # A repeat upload already supplies the same SHA-addressed
                 # bytes. UI duplicate checks need only the verified original
                 # revision; actual consumers still read/hash the full source.
-                from app.monthly_report_source_revision import verified_source_revision
-                verified_source_revision(profile, existing_source)
+                if isinstance(raw, StagedUpload):
+                    _verified_original(profile, existing_source)
+                else:
+                    from app.monthly_report_source_revision import verified_source_revision
+                    verified_source_revision(profile, existing_source)
             except (ValueError, OSError):
                 try:
-                    library._atomic_write(_path(profile, digest, existing_source.suffix), raw)
-                    source_bytes(profile, existing_source)
+                    if isinstance(raw, StagedUpload):
+                        from app.monthly_report_streamed_upload import publish_staged_original
+                        publish_staged_original(_path(profile, digest, existing_source.suffix), raw)
+                        _verified_original(profile, existing_source)
+                    else:
+                        library._atomic_write(_path(profile, digest, existing_source.suffix), raw)
+                        source_bytes(profile, existing_source)
                 except (ValueError, OSError):
                     messages.append(f"Could not restore saved source: {label}. The report still needs a valid copy.")
                     continue
                 messages.append(f"Saved source restored: {label}. Prior reviews and report history are unchanged.")
                 # Replace the size already counted for a damaged copy. Missing
                 # originals contribute zero until their successful restoration.
-                sizes += len(raw) - counted_sizes.get(digest, 0)
-                counted_sizes[digest] = len(raw)
+                sizes += size - counted_sizes.get(digest, 0)
+                counted_sizes[digest] = size
             else:
                 messages.append(f"Duplicate skipped: {label}")
             continue
         if len(sources) >= MAX_SOURCES:
             messages.append(f"Not read: {label}. Report limit is {MAX_SOURCES:,} source files including attachments. Remove unused sources before adding more.")
             continue
-        if sizes + len(raw) > MAX_REPORT_BYTES:
+        if sizes + size > MAX_REPORT_BYTES:
             messages.append(f"Not read: {label}. Report limit is {byte_limit_label(MAX_REPORT_BYTES)} of source files including attachments. Remove unused sources or use a smaller copy.")
             continue
         suffix = Path(filename).suffix.casefold()
@@ -1045,7 +1089,10 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
         cache = _path(profile, digest, ".json")
         existing_cache = cache.exists()
         try:
-            content, attachments = ingest(profile, filename, raw)
+            if isinstance(raw, StagedUpload):
+                content, attachments = ingest(profile, filename, raw, max_new_text=MAX_REPORT_TEXT - text_size)
+            else:
+                content, attachments = ingest(profile, filename, raw)
             added = sum(map(len, content.source.page_texts))
             if text_size + added > MAX_REPORT_TEXT:
                 raise ValueError(f"Total extracted text exceeds {MAX_REPORT_TEXT:,} characters. Remove unused sources or split the report.")
@@ -1082,8 +1129,8 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
                 content.source, attachment_parent_sha256=parent_digest,
                 attachment_index=attachment_index))
         sources[digest] = content
-        sizes += len(raw)
-        counted_sizes[digest] = len(raw)
+        sizes += size
+        counted_sizes[digest] = size
         text_size += added
         queue.extend((name, data, depth + 1, digest, index)
                      for index, (name, data) in enumerate(attachments, 1))
