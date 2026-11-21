@@ -34,7 +34,9 @@ from app.receipt_analyzer import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-WARNING = "Guessed from a name printed on your receipts"
+# U11 wording (action first): "Check and correct the Employee name before
+# continuing; it was guessed from a printed receipt name with low confidence."
+WARNING = "it was guessed from a printed receipt name with low confidence"
 
 
 @pytest.mark.parametrize(

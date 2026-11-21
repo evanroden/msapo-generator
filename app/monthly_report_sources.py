@@ -19,6 +19,7 @@ import csv
 import hashlib
 from pathlib import Path
 import re
+import time
 from xml.etree.ElementTree import ParseError as XMLParseError
 from zipfile import BadZipFile
 import zlib
@@ -29,6 +30,7 @@ from lxml.etree import XMLSyntaxError
 from openpyxl import load_workbook
 
 from app import monthly_report_library as library, monthly_report_import as docx_import, ocr
+from app import monthly_report_pdf_reader as pdf_reader
 from app.monthly_latency_spans import measure_span, record_span
 from app.monthly_report_docx import ReportImage, normalize_report_image
 from app.monthly_report_import import inspect_docx, read_import_image
@@ -76,6 +78,9 @@ class SourceContent:
     tables: tuple[SourceTable, ...] = ()
     # DOCX raster images correspond to item indices, not invented page numbers.
     image_items: tuple[tuple[int, str], ...] = ()
+    # Disposable OCR evidence: (page, start, end, confidence, unrotated-page bbox).
+    # This is retained in the source extraction cache, not human report edits.
+    ocr_spans: tuple[tuple[int, int, int, float, tuple[float, float, float, float]], ...] = ()
 
 
 def _path(profile: ReportProfile, digest: str, suffix: str) -> Path:
@@ -554,6 +559,39 @@ def _csv_table(text: str) -> SourceTable:
     return single_column
 
 
+def _cached_empty_formula_strings(raw: bytes, worksheet_path: str | None) -> frozenset[str]:
+    """Return formula cells whose saved result is an explicit empty string.
+
+    Excel and LibreOffice store ``=IF(A2="","",A2)`` with ``t="str"`` and an
+    empty ``<v>``. openpyxl's data-only view returns None both for that cell
+    and for a formula with no saved result, so only the stored XML separates a
+    trusted cached blank from a missing result. Nothing is evaluated here. An
+    unknown worksheet part returns nothing: every such cell stays untrusted.
+    """
+    from zipfile import ZipFile
+
+    from openpyxl.xml.constants import SHEET_MAIN_NS
+    from openpyxl.xml.functions import iterparse
+    cell_tag, formula_tag, value_tag, row_tag = (
+        f"{{{SHEET_MAIN_NS}}}{name}" for name in ("c", "f", "v", "row"))
+    found = set()
+    with ZipFile(BytesIO(raw)) as archive:
+        if not worksheet_path or worksheet_path not in archive.namelist():
+            return frozenset()
+        with archive.open(worksheet_path) as part:
+            for _event, element in iterparse(part):
+                if element.tag == cell_tag:
+                    stored = element.find(value_tag)
+                    if (element.get("t") == "str" and element.get("r")
+                            and element.find(formula_tag) is not None
+                            and stored is not None and not stored.text):
+                        found.add(element.get("r").upper())
+                    element.clear()
+                elif element.tag == row_tag:
+                    element.clear()
+    return frozenset(found)
+
+
 def _spreadsheet(raw: bytes, suffix: str) -> tuple[SourceTable, ...]:
     if suffix == ".csv":
         encoding = _csv_unicode_encoding(raw)
@@ -608,14 +646,22 @@ def _spreadsheet(raw: bytes, suffix: str) -> tuple[SourceTable, ...]:
                 raise ValueError("Worksheet dimensions exceed the review budget.")
             if total + (sheet.max_row or 0) * (sheet.max_column or 0) > MAX_TABLE_CELLS:
                 raise ValueError("Workbook cells exceed the total review budget.")
-            missing, missing_count = [], 0
+            missing, missing_count, cached_empty = [], 0, None
 
             def records():
-                nonlocal missing_count
+                nonlocal missing_count, cached_empty
                 for row, formula_row in zip(sheet.iter_rows(), formula_sheet.iter_rows()):
                     converted = []
                     for cell, original in zip(row, formula_row):
                         value = cell.value
+                        if original.data_type == "f" and value is None and cell.data_type == "str":
+                            # The data-only view also returns None for a saved
+                            # empty-string result; only the stored XML differs.
+                            if cached_empty is None:
+                                cached_empty = _cached_empty_formula_strings(
+                                    raw, getattr(sheet, "_worksheet_path", None))
+                            if original.coordinate in cached_empty:
+                                value = ""
                         if original.data_type == "f" and (value is None or cell.data_type == "e"):
                             missing_count += 1
                             if len(missing) < 16:
@@ -717,7 +763,23 @@ def _cached_extraction(data, digest, suffix):
     if any(not isinstance(pair, list) or len(pair) != 2 or type(pair[0]) is not int
            or not 1 <= pair[0] <= len(source.page_texts) or not isinstance(pair[1], str) for pair in images):
         raise ValueError("Invalid source extraction cache image.")
-    return SourceContent(source, tuple(tables), tuple(tuple(pair) for pair in images))
+    spans = sequence(data.get("ocr_spans", []))
+    validated_spans = []
+    for entry in spans:
+        if (not isinstance(entry, list) or len(entry) != 5
+                or type(entry[0]) is not int or not 1 <= entry[0] <= len(source.page_texts)
+                or type(entry[1]) is not int or type(entry[2]) is not int
+                or not 0 <= entry[1] < entry[2] <= len(source.page_texts[entry[0] - 1])
+                or not isinstance(entry[3], (float, int)) or isinstance(entry[3], bool)
+                or not 0 <= entry[3] <= 100 or not isinstance(entry[4], list)
+                or len(entry[4]) != 4 or any(not isinstance(v, (float, int))
+                                             or isinstance(v, bool) for v in entry[4])
+                or not 0 <= entry[4][0] < entry[4][2]
+                or not 0 <= entry[4][1] < entry[4][3]):
+            raise ValueError("Invalid PDF OCR extraction cache span.")
+        validated_spans.append((entry[0], entry[1], entry[2], float(entry[3]), tuple(entry[4])))
+    return SourceContent(source, tuple(tables), tuple(tuple(pair) for pair in images),
+                         tuple(validated_spans))
 
 
 def _same_source_bytes(path, raw):
@@ -779,14 +841,23 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
                                   and data.get("csv_headerless_policy") != 1
                                   and any(_csv_first_row_is_data(table.columns)
                                           for table in content.tables))
+            # Provenance policy 1 also counted a saved empty-string formula
+            # result as missing. Rebuild only caches that recorded missing
+            # results; every other workbook cache stays warm.
+            old_xlsx_missing = (suffix == ".xlsx" and content is not None
+                                and data.get("xlsx_provenance_policy") == 1
+                                and any(table.missing_formula_cache_count for table in content.tables))
             # Keep signed-Unicode migration independent of the delimiter policy.
             if (content is not None and not old_csv_one_column and not old_csv_headerless
+                    and not old_xlsx_missing
                     and (not unicode_csv or data.get("csv_unicode_policy") == 1)
                     and (suffix != ".xlsx" or (type(data.get("xlsx_currency_policy")) is int
                                               and data["xlsx_currency_policy"] == 1
-                                               and data.get("xlsx_provenance_policy") == 1))
+                                               and type(data.get("xlsx_provenance_policy")) is int
+                                               and data["xlsx_provenance_policy"] in (1, 2)))
                     and (suffix != ".pdf" or (data.get("vendor_passage_policy", 0) >= 8
-                                               and data.get("pdf_scan_policy", 0) >= 1))):
+                                               and data.get("pdf_scan_policy", 0) >= 1
+                                               and data.get("pdf_reader_policy") == 1))):
                 source = content.source
                 if data.get("client_page_policy", 0) < 1 and suffix not in (".csv", ".xlsx"):
                     source = replace(source, selected_pages=suggested_pages(source))
@@ -804,6 +875,7 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
             library._atomic_write(path, raw)
         page_texts, needs_vision, tables, image_items, notices = [], [], (), [], []
         pdf_text_blocks = []
+        pdf_ocr_spans = []
         span_budget_exceeded = False
         extraction_started = perf_counter()
         if suffix == ".pdf":
@@ -812,21 +884,41 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
                     raise ValueError("PDF needs a password. Upload an unlocked copy.")
                 if len(pdf) > MAX_PAGES:
                     raise ValueError(f"PDF exceeds {MAX_PAGES:,} pages; select a smaller document range.")
+                ocr_attempts = 0
+                ocr_deadline = time.monotonic() + pdf_reader.MAX_LOCAL_OCR_SECONDS
+                extracted_chars = 0
+                from app.monthly_report_vendor_passages import block_spans, MAX_VENDOR_BLOCK_SPANS, passage_notice
                 for number, page in enumerate(pdf, 1):
-                    text = page.get_text().strip()
-                    needs_ocr, review_notice = ocr._page_visual_decision(
-                        page, native_text=text,
+                    native = page.get_text().strip()
+                    needs_ocr, review_notice = ocr._page_visual_decision(page, native_text=native)
+                    reading = pdf_reader.read_page(
+                        page, number, native_text=native,
+                        needs_ocr=needs_ocr,
+                        may_ocr=ocr_attempts < pdf_reader.MAX_LOCAL_OCR_PAGES,
+                        deadline=ocr_deadline,
                     )
-                    if review_notice:
-                        # Keep an image-backed source unreviewed even if it appears
-                        # blank or has a searchable overlay; neither is human proof.
+                    ocr_attempts += int(reading.attempted_ocr)
+                    if reading.needs_vision or review_notice:
+                        # Keep an image-backed page unreviewed even if it appears
+                        # blank, has a searchable overlay or was read by local OCR:
+                        # none of these is human proof.
                         needs_vision.append(number)
+                    if reading.notice:
+                        notices.append(reading.notice)
+                    if review_notice:
                         notices.append(f"Page {number}: {review_notice}.")
+                    text = reading.text
                     page_texts.append(text)
-                    if sum(map(len, page_texts)) > ocr._MAX_EXTRACTED_CHARS:
-                        raise ValueError(f"PDF text exceeds {ocr._MAX_EXTRACTED_CHARS:,} characters; select a smaller document range.")
-                    from app.monthly_report_vendor_passages import block_spans, MAX_VENDOR_BLOCK_SPANS, passage_notice
+                    pdf_ocr_spans.extend(reading.ocr_spans)
+                    extracted_chars += len(text)
+                    if extracted_chars > ocr._MAX_EXTRACTED_CHARS:
+                        raise ValueError(
+                            f"PDF text exceeds {ocr._MAX_EXTRACTED_CHARS:,} characters; "
+                            "keep within the text limit while retaining up to 500 pages."
+                        )
                     if not span_budget_exceeded:
+                        # Native paragraph proofs are invalid for OCR-augmented or
+                        # reordered text unless geometry still tiles exactly.
                         geometry_uncertain = set()
                         spans = block_spans(page, text, number, ambiguous_pages=geometry_uncertain)
                         if geometry_uncertain:
@@ -906,11 +998,11 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
             source = replace(source, selected_pages=suggested_pages(source))
         with measure_span("source_mapping"):
             source = suggest_facts(source, profile)
-        content = SourceContent(source, tables, tuple(image_items))
+        content = SourceContent(source, tables, tuple(image_items), tuple(pdf_ocr_spans))
         library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1,
             "native_action_policy": 1, "vendor_passage_policy": 8,
-            **({"pdf_scan_policy": 1} if suffix == ".pdf" else {}),
-            **({"xlsx_currency_policy": 1, "xlsx_provenance_policy": 1} if suffix == ".xlsx" else {}),
+            **({"pdf_scan_policy": 1, "pdf_reader_policy": 1} if suffix == ".pdf" else {}),
+            **({"xlsx_currency_policy": 1, "xlsx_provenance_policy": 2} if suffix == ".xlsx" else {}),
             **({"csv_unicode_policy": 1} if unicode_csv else {}),
             **({"csv_dialect_policy": 1, "csv_headerless_policy": 1} if suffix == ".csv" else {}), **asdict(content)}))
         return content, attachments
