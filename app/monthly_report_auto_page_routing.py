@@ -219,14 +219,17 @@ def route_pages(contents, profile=None, *, period=None, overrides=None, owned=No
     return tuple(result)
 
 
-def batch_destinations(choices, section_page_owners=()):
-    """Pages to prepare as new additions: ready or review pages with a destination.
+def batch_destinations(choices, section_page_owners=(), omitted=()):
+    """Pages to prepare in this batch.
 
-    A retained page already belongs to a report block, including a block whose
-    section was deliberately left out. Preparing it again would merge it as an
-    addition, and an omitted block then takes the incoming copy and its section
-    is switched back on. Retained pages stay exactly where they are.
+    Ready and review pages are new additions. A retained page already belongs
+    to a report block, and preparing it again re-merges the same page. That is
+    harmless for an included block, but a block whose section was deliberately
+    left out takes the incoming copy in the merge and its section is switched
+    back on. Retained pages of omitted blocks therefore stay where they are.
     """
     return [(choice.source_id, choice.destination, choice.page) for choice in choices
-            if choice.action in {"ready", "review"} and choice.destination
+            if choice.destination
+            and (choice.action in {"ready", "review"}
+                 or (choice.action == "retained" and choice.destination not in omitted))
             and not (choice.source_id in section_page_owners and choice.destination == "water_reports")]

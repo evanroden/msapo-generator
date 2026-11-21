@@ -697,9 +697,10 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
     by_source = defaultdict(list)
     for choice in choices:
         by_source[choice.source_id].append(choice)
-    # Retained pages already belong to the report (even in an omitted
-    # section); only new additions are prepared and merged.
-    destinations.extend(batch_destinations(choices, section_page_owners))
+    # A retained page of a deliberately omitted section is never prepared
+    # again: merging it would switch that section back on.
+    omitted = {name for name, block in (attached_blocks or {}).items() if block.source == "Omit"}
+    destinations.extend(batch_destinations(choices, section_page_owners, omitted))
     for filename, identity, _ in route_controls:
         decisions = by_source[identity]
         grouped = defaultdict(list)
