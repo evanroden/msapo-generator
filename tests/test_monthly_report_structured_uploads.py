@@ -96,7 +96,9 @@ def test_reader_chunks_large_report_without_changing_page_identity(monkeypatch):
     from app import monthly_report_structured_uploads as uploads
     source = content('Inspected motor.')
     source = replace(source, source=replace(source.source, page_texts=('Inspected motor.',) * 45))
-    monkeypatch.setattr(uploads, 'reader_request', lambda profile, contents, destination, refs: refs)
+    monkeypatch.setattr(uploads, 'reader_request', lambda profile, contents, destination, refs,
+                        table_columns=None, *, period=None, corrections=None,
+                        accepted_pages=(): refs)
     chunks = uploads.reader_batches(None, (source,), 'activity_summary')
     assert list(map(len, chunks)) == [20, 20, 5]
     assert [page for chunk in chunks for _, page in chunk] == list(range(1, 46))

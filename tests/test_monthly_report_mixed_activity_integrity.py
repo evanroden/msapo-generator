@@ -158,7 +158,9 @@ def test_guided_mixed_upload_is_processed_and_reading_cannot_retry_an_unrouted_c
             if 'SOURCE ' + identity + ' PAGE 1' in texts:
                 items.append({'source': identity, 'page': 1, 'row': [],
                     'text': SAFE_WORK if name.endswith('.pdf') else 'Replaced reserve pump coupling'})
-        return {'items': items}
+        return {'items': items, 'pages': [
+            {'source': item['source'], 'page': item['page'], 'result': 'read'}
+            for item in items]}
     monkeypatch.setattr(ai, 'request_json', request_json)
     def finish(prepare, worker):
         future = Future()
