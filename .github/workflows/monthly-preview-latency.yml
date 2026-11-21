@@ -16,6 +16,9 @@ on:
       - 'tests/test_monthly_report_review_ticket_first_pages.py'
       - 'tests/test_monthly_report_section_assembly_cache.py'
       - 'scripts/qa_monthly_preview_browser_latency.py'
+      - 'scripts/qa_monthly_preview_a88_compare.py'
+      - 'scripts/qa_monthly_report_resources.py'
+      - 'tests/test_monthly_preview_a88_compare.py'
       - 'tests/test_monthly_preview_latency_lifecycle.py'
       - 'tests/test_monthly_latency_stage_receipt.py'
       - 'app/monthly_report_latency_trace.py'
@@ -49,9 +52,11 @@ concurrency:
 jobs:
   capped-backend:
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 65
     steps:
       - uses: actions/checkout@v4
+      - name: Validate benchmark receipt contract
+        run: python -m unittest discover -s tests -p 'test_monthly_preview_a88_compare.py' -v
       - name: Build exactly this code in the production runtime
         run: docker build --build-arg APP_GIT_COMMIT="${{ github.event.pull_request.head.sha || github.sha }}" -t msapo-491-latency .
       - name: Collect cold/warm and uncached/reused synthetic timing samples
@@ -61,9 +66,21 @@ jobs:
             docker run --name "msapo-491-latency-$part" --memory=512m --memory-swap=512m --cpus=0.5 \
               --env RESOURCE_REQUIRE_512_MB=1 \
               --env RESOURCE_REQUIRE_HALF_CPU=1 \
+              --env QA_A88_DETERMINISTIC=1 \
               --env ANTHROPIC_API_KEY=test-key-not-used \
               --entrypoint python msapo-491-latency scripts/qa_monthly_host_deterministic.py --part "$part"
             test "$(docker inspect --format='{{.State.OOMKilled}}' "msapo-491-latency-$part")" = false
+          done
+      - name: Repeat identical image with larger 1024 MiB and 1 CPU limits
+        timeout-minutes: 22
+        run: |
+          for part in sources native; do
+            name="msapo-491-latency-larger-$part"
+            docker run --name "$name" --memory=1024m --memory-swap=1024m --cpus=1.0 \
+              --env QA_A88_DETERMINISTIC=1 \
+              --env ANTHROPIC_API_KEY=test-key-not-used \
+              --entrypoint python msapo-491-latency scripts/qa_monthly_preview_latency_e2e.py --part "$part"
+            test "$(docker inspect --format='{{.State.OOMKilled}}' "$name")" = false
           done
       - name: Copy collected measurements even when a later check fails
         if: always()
@@ -74,6 +91,17 @@ jobs:
             docker logs "msapo-491-latency-$part" > "test-artifacts/monthly-preview-latency/$part-container.log" 2>&1 || true
             docker inspect "msapo-491-latency-$part" > "test-artifacts/monthly-preview-latency/$part-inspect.json" || true
           done
+          for capacity in capped larger; do
+            mkdir -p "test-artifacts/monthly-preview-latency/$capacity"
+            for part in sources native; do
+              if [ "$capacity" = capped ]; then name="msapo-491-latency-$part"; else name="msapo-491-latency-larger-$part"; fi
+              docker cp "$name:/tmp/monthly-preview-latency/." "test-artifacts/monthly-preview-latency/$capacity/" || true
+              docker logs "$name" > "test-artifacts/monthly-preview-latency/$capacity/$part-container.log" 2>&1 || true
+              docker inspect "$name" > "test-artifacts/monthly-preview-latency/$capacity/$part-inspect.json" || true
+            done
+          done
+      - name: Compare same fixture and image across caps without fabricated p95
+        run: python scripts/qa_monthly_preview_a88_compare.py --kind backend --root test-artifacts/monthly-preview-latency
       - name: Upload timing and OOM diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -84,7 +112,7 @@ jobs:
           retention-days: 14
       - name: Remove disposable benchmark container
         if: always()
-        run: docker rm --force msapo-491-latency-sources msapo-491-latency-native || true
+        run: docker rm --force msapo-491-latency-sources msapo-491-latency-native msapo-491-latency-larger-sources msapo-491-latency-larger-native || true
 
   uncapped-backend:
     runs-on: ubuntu-24.04
@@ -127,7 +155,7 @@ jobs:
 
   native-browser:
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 65
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -191,6 +219,40 @@ jobs:
           QA491_EXTERNAL_SERVER=1 python scripts/qa_monthly_preview_browser_latency.py
           cp test-artifacts/monthly-preview-latency/browser.json test-artifacts/monthly-preview-latency/browser-capped.json
           test "$(docker inspect --format='{{.State.OOMKilled}}' msapo-491-browser)" = false
+      - name: Measure same image native browser with 1024MiB and 1 CPU
+        timeout-minutes: 12
+        env:
+          MSAPO_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          qa_root="$(mktemp -d -t qa491-larger-XXXXXXXX)"
+          printf 'synthetic-monthly-dom-v1' > "$qa_root/monthly-dom-synthetic-only.marker"
+          mkdir -p test-artifacts/monthly-preview-latency
+          cleanup() {
+            docker logs msapo-491-browser > test-artifacts/monthly-preview-latency/larger-streamlit.log 2>&1 || true
+            docker inspect msapo-491-browser > test-artifacts/monthly-preview-latency/larger-container.json || true
+            docker exec msapo-491-browser sh -c 'cat /sys/fs/cgroup/memory.peak; cat /sys/fs/cgroup/memory.events; cat /sys/fs/cgroup/cpu.stat' > test-artifacts/monthly-preview-latency/larger-resource-stats.txt 2>&1 || true
+            docker rm -f msapo-491-browser || true
+            rm -rf "$qa_root" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          docker run -d --name msapo-491-browser --memory=1024m --memory-swap=1024m --cpus=1.0 \
+            --env EPC_DATA_DIR=/tmp/qa491 --env EPC_MONTHLY_DOM_FIXTURE=1 \
+            --env SMARTSHEET_API_MODE=disabled --env ANTHROPIC_API_KEY='' \
+            -v "$qa_root:/tmp/qa491" -v "$GITHUB_WORKSPACE/tests:/app/tests:ro" \
+            -p 127.0.0.1:8534:8501 --entrypoint python msapo-491-browser \
+            -m streamlit run tests/fixtures/workspaces/monthly_app.py \
+            --server.address 0.0.0.0 --server.port 8501 --server.headless true --browser.gatherUsageStats false
+          healthy=0
+          for attempt in $(seq 1 120); do
+            if curl -fsS http://127.0.0.1:8534/_stcore/health >/dev/null; then healthy=1; break; fi
+            sleep 0.5
+          done
+          test "$healthy" = 1
+          QA491_EXTERNAL_SERVER=1 QA491_BACKEND_RESOURCES="Docker production image 1024 MiB RAM, 1 CPU" python scripts/qa_monthly_preview_browser_latency.py
+          cp test-artifacts/monthly-preview-latency/browser.json test-artifacts/monthly-preview-latency/browser-larger.json
+          test "$(docker inspect --format='{{.State.OOMKilled}}' msapo-491-browser)" = false
+      - name: Verify first decoded images and compare native browser timings
+        run: python scripts/qa_monthly_preview_a88_compare.py --kind browser --root test-artifacts/monthly-preview-latency
       - name: Retain timing, Streamlit logs and first-failure screenshots
         if: always()
         uses: actions/upload-artifact@v4

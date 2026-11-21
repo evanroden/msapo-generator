@@ -241,6 +241,12 @@ def browser_task(browser_type, name):
         # must restore the exact selected associations, without test injection.
         page.reload(wait_until="domcontentloaded")
         issue = page.locator(ISSUES)
+        # The reload re-renders the whole app; the issues pair (and its
+        # multiselect) does not exist until that render lands, ~5s on a
+        # slow host. Asserting tags immediately races that render and
+        # reports the restored selections as lost. Wait for the control.
+        expect(issue.get_by_test_id("stMultiSelect").filter(
+            has_text="Supporting source pages")).to_have_count(1, timeout=45000)
         assert_tags(issue, expected)
         qa.scroll_pair(page, ISSUES)
         open_gallery(issue)

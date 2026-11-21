@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 import platform
 import resource
+import random
 import statistics
 import sys
 import tempfile
@@ -63,7 +64,7 @@ def _docx(pictures):
     document.add_heading("SYNTHETIC ONLY - MONTHLY EVIDENCE", 1)
     document.add_paragraph("Invented content. Not an approved report.")
     for number in range(pictures):
-        photo = Image.effect_noise((720, 480), 12).convert("RGB")
+        photo = Image.frombytes("L", (720, 480), random.Random(8800 + number).randbytes(720 * 480)).convert("RGB")
         photo.paste((40 + number * 15, 80, 120), (20, 20, 160, 125))
         if pictures >= 8:
             resized = photo.resize((1400, 940))
@@ -265,23 +266,46 @@ def _source_cases():
 
 
 def _concurrent():
-    raw = _pdf(24, "two-concurrent-visitors")
-    barrier = Barrier(2)
-    def visitor(index):
-        profile = _profile(f"qa491-concurrent-{index}")
-        barrier.wait(timeout=20)
-        start = perf_counter()
-        content, _ = sources.ingest(profile, "shared-name.pdf", raw)
-        image = _image(profile, content)
-        return {"owner": profile.key, "elapsed_seconds": round(perf_counter() - start, 4),
-                "source_sha256": content.source.sha256, "thumbnail": image}
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        futures = [executor.submit(visitor, index) for index in (1, 2)]
-        values = [future.result(timeout=90) for future in futures]
-    assert values[0]["thumbnail"] == values[1]["thumbnail"]
-    assert values[0]["owner"] != values[1]["owner"]
-    return values
+    """Three cold/warm, genuinely overlapping two-visitor source requests per PDF size."""
+    cases = {}
+    for pages in (24, 96):
+        raw = _pdf(pages, f"concurrent-{pages}")
+        batches = []
+        for repetition in range(3):
+            barrier = Barrier(2)
 
+            def visitor(index):
+                profile = _profile(f"qa491-concurrent-{pages}-{repetition}-{index}")
+                barrier.wait(timeout=20)
+                started = perf_counter()
+                content, extras = sources.ingest(profile, "shared-name.pdf", raw)
+                cold = _image(profile, content)
+                cold_elapsed = perf_counter() - started
+                warm_started = perf_counter()
+                reused, warm_extras = sources.ingest(profile, "shared-name.pdf", raw)
+                warm = _image(profile, reused)
+                warm_elapsed = perf_counter() - warm_started
+                assert not extras and not warm_extras
+                assert cold == warm and content.source.sha256 == reused.source.sha256
+                return {"owner": profile.key, "source_sha256": content.source.sha256,
+                        "cold_seconds": round(cold_elapsed, 5),
+                        "warm_seconds": round(warm_elapsed, 5), "thumbnail": cold}
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                futures = [executor.submit(visitor, index) for index in (1, 2)]
+                values = [future.result(timeout=150) for future in futures]
+            assert values[0]["thumbnail"] == values[1]["thumbnail"]
+            assert values[0]["source_sha256"] == values[1]["source_sha256"]
+            assert values[0]["owner"] != values[1]["owner"]
+            batches.append(values)
+        cases[f"pdf-{pages}-page"] = {
+            "runs": batches, "source_sha256": sha256(raw).hexdigest(),
+            "cold": _summary([v["cold_seconds"] for batch in batches for v in batch]),
+            "warm": _summary([v["warm_seconds"] for batch in batches for v in batch]),
+            "concurrency": "two overlapping ingestion requests per run; six samples",
+            "queue_wait_ms": None,  # No source-ingestion admission queue instrumentation.
+        }
+    return cases
 
 def _replacement():
     profile = _profile("qa491-replacement")
@@ -385,6 +409,62 @@ def _section_preview():
             )
             result["output_equivalence"] = controls[0]
             result["store_budgets"] = store.stats()
+            # Stress the existing *nonblocking* preview admission, not a fake
+            # harness semaphore. Record busy responses and sequential retries:
+            # a refusal is not a successful queued image.
+            from app.monthly_report_render_jobs import RenderBusy
+            competing = []
+            def visitor(owner, barrier):
+                barrier.wait(timeout=20)
+                requested = perf_counter()
+                with owner_scope(owner, versions):
+                    try:
+                        preview = preview_section(draft, "activity", assets.__getitem__)
+                    except RenderBusy as exc:
+                        return {"owner": owner, "status": "busy", "reason": str(exc),
+                                "first_response_seconds": round(perf_counter() - requested, 5),
+                                "queue_wait_seconds": None}
+                    ticket = store.put(owner, preview)
+                    images = store.pages(owner, ticket, (0, 1))
+                    geometry = {"pages": ticket.pages,
+                                "sizes": tuple((round(w, 2), round(h, 2)) for w, h in ticket.sizes),
+                                "rasters": tuple(sha256(data).hexdigest() for _, data in images)}
+                    assert geometry == controls[0], "Concurrent preview geometry/pixels changed"
+                    store.discard(owner, ticket)
+                    return {"owner": owner, "status": "decoded",
+                            "first_response_seconds": round(perf_counter() - requested, 5),
+                            "queue_wait_seconds": 0.0, "geometry": geometry}
+
+            for iteration in range(3):
+                barrier = Barrier(2)
+                owners = (f"qa491-race-{iteration}-one", f"qa491-race-{iteration}-two")
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    futures = [executor.submit(visitor, owner, barrier) for owner in owners]
+                    pair = [future.result(timeout=150) for future in futures]
+                for row in pair:
+                    if row["status"] == "busy":
+                        # The app returns RenderBusy without entering a queue.
+                        # A fresh retry is a new request, not attributed queue wait.
+                        retry_at = perf_counter()
+                        with owner_scope(row["owner"], versions):
+                            try:
+                                preview = preview_section(draft, "activity", assets.__getitem__)
+                                ticket = store.put(row["owner"], preview)
+                                images = store.pages(row["owner"], ticket, (0, 1))
+                                assert tuple(sha256(data).hexdigest() for _, data in images) == controls[0]["rasters"]
+                                store.discard(row["owner"], ticket)
+                                row["retry_status"] = "decoded"
+                            except RenderBusy as exc:
+                                row["retry_status"] = "busy"
+                                row["retry_reason"] = str(exc)
+                        row["retry_seconds"] = round(perf_counter() - retry_at, 5)
+                competing.append(pair)
+                gc.collect()
+            result["two_visitor_native"] = {
+                "runs": competing, "source_sha256": result["source_sha256"],
+                "fixture": "eight native 4800x3200 source photos and ten physical tables",
+                "queue_definition": "Automatic preview admission is nonblocking; busy is a refusal, not queue time.",
+            }
         finally:
             native.build_native_docx = native_original
             assembly_cache.clear()

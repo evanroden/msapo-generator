@@ -29,7 +29,7 @@ def _mark_column_customization(key):
     st.session_state[key] = True
 
 
-def _stage(upload):
+def _stage(upload, *, on_progress=None):
     # A session-owned TemporaryDirectory is cleaned when discarded. It never
     # becomes a library asset, and live UploadedFile objects are not mirrored.
     if upload.size > MAX_DOCX_BYTES:
@@ -47,6 +47,8 @@ def _stage(upload):
                 if size > MAX_DOCX_BYTES:
                     raise ValueError(docx_size_error(MAX_DOCX_BYTES))
                 output.write(chunk)
+                if on_progress is not None:
+                    on_progress(size)
         return temporary, path, inspect_docx(path)
     except Exception:
         temporary.cleanup()
@@ -73,8 +75,16 @@ def render_import(state: library.LibraryState, field, browser_timezone: str = ""
             try:
                 # Inspection can fail after the upload is accepted. Keep the
                 # prior source and its review usable until this one is ready.
-                with st.spinner("Reading document structure and content…"):
-                    staged = _stage(upload)
+                with st.status("Reading and inspecting DOCX…", expanded=True) as status:
+                    progress_label = st.empty()
+                    progress_bar = st.progress(0.0)
+
+                    def on_progress(size):
+                        progress_label.caption(f"Staging DOCX: {size:,} bytes read")
+                        progress_bar.progress(min(1.0, size / max(1, upload.size)))
+
+                    staged = _stage(upload, on_progress=on_progress)
+                    status.update(label="DOCX inspected and ready for mapping.", state="complete")
             except (ValueError, OSError) as exc:
                 st.error(str(exc))
                 if st.session_state.get(stage_key) is not None:
@@ -97,6 +107,7 @@ def render_import(state: library.LibraryState, field, browser_timezone: str = ""
             return
         _, path, inspection = staged
         st.caption("Reviewing the last successfully read DOCX.")
+        st.success(f"DOCX accepted for review · {path.stat().st_size:,} bytes · SHA-256 {inspection.sha256[:16]}…")
         document_key = prefix + "_" + inspection.sha256[:16]
         mappings = st.session_state.setdefault(prefix + "_mappings", {})
         st.caption(f"{len(inspection.items)} items · {inspection.word_sections} Word sections. Word section counts do not determine report membership or layout.")
