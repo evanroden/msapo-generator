@@ -140,6 +140,25 @@ def _period_matches(source, period) -> bool:
     return (observed.year, observed.month) == (period.year, period.month)
 
 
+def hidden_worksheet_pages(contents):
+    """Hidden workbook sheets need explicit row review, so no reader admits them.
+
+    Spreadsheet tables map one-to-one to extracted pages. If that pairing is
+    ever missing, every page of a workbook with a hidden sheet stays out.
+    """
+    hidden = set()
+    for content in contents:
+        source = content.source
+        if not any(table.hidden for table in content.tables):
+            continue
+        if len(content.tables) == len(source.page_texts):
+            hidden.update((source.id, number)
+                          for number, table in enumerate(content.tables, 1) if table.hidden)
+        else:
+            hidden.update((source.id, number) for number in range(1, len(source.page_texts) + 1))
+    return frozenset(hidden)
+
+
 def choose_reader_pages(profile, contents, destination, *, period=None, corrections=None,
                         accepted_pages=(), native_mapped=()):
     """Return exact eligible (source id, page) pairs without modifying evidence.
@@ -147,13 +166,15 @@ def choose_reader_pages(profile, contents, destination, *, period=None, correcti
     Corrections are source/id/page/immutable SHA scoped and can only select one
     of the page's observed candidate roles. One mixed page requires one choice,
     not multiple independent classification/drop-down prompts. Native mapped
-    table pages and report-accepted pages are omitted from model input only.
+    table pages, hidden worksheet pages and report-accepted pages are omitted
+    from model input only; the originals stay available for explicit review.
     """
     if destination not in _READER_DESTINATIONS:
         raise ValueError("Unknown reader destination.")
     corrections = corrections or {}
     accepted = set(accepted_pages)
     native = set(native_mapped)
+    hidden = hidden_worksheet_pages(contents)
     seen, result = {}, []
     for content in contents:
         source = content.source
@@ -167,7 +188,8 @@ def choose_reader_pages(profile, contents, destination, *, period=None, correcti
             continue
         for number, text in enumerate(source.page_texts, 1):
             identity = (source.id, number)
-            if identity in accepted or identity in native or not _site_matches(source, text, profile):
+            if (identity in accepted or identity in native or identity in hidden
+                    or not _site_matches(source, text, profile)):
                 continue
             role = classify_page(content, number)
             choice = corrections.get((source.id, number, source.sha256))

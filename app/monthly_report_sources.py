@@ -559,6 +559,39 @@ def _csv_table(text: str) -> SourceTable:
     return single_column
 
 
+def _cached_empty_formula_strings(raw: bytes, worksheet_path: str | None) -> frozenset[str]:
+    """Return formula cells whose saved result is an explicit empty string.
+
+    Excel and LibreOffice store ``=IF(A2="","",A2)`` with ``t="str"`` and an
+    empty ``<v>``. openpyxl's data-only view returns None both for that cell
+    and for a formula with no saved result, so only the stored XML separates a
+    trusted cached blank from a missing result. Nothing is evaluated here. An
+    unknown worksheet part returns nothing: every such cell stays untrusted.
+    """
+    from zipfile import ZipFile
+
+    from openpyxl.xml.constants import SHEET_MAIN_NS
+    from openpyxl.xml.functions import iterparse
+    cell_tag, formula_tag, value_tag, row_tag = (
+        f"{{{SHEET_MAIN_NS}}}{name}" for name in ("c", "f", "v", "row"))
+    found = set()
+    with ZipFile(BytesIO(raw)) as archive:
+        if not worksheet_path or worksheet_path not in archive.namelist():
+            return frozenset()
+        with archive.open(worksheet_path) as part:
+            for _event, element in iterparse(part):
+                if element.tag == cell_tag:
+                    stored = element.find(value_tag)
+                    if (element.get("t") == "str" and element.get("r")
+                            and element.find(formula_tag) is not None
+                            and stored is not None and not stored.text):
+                        found.add(element.get("r").upper())
+                    element.clear()
+                elif element.tag == row_tag:
+                    element.clear()
+    return frozenset(found)
+
+
 def _spreadsheet(raw: bytes, suffix: str) -> tuple[SourceTable, ...]:
     if suffix == ".csv":
         encoding = _csv_unicode_encoding(raw)
@@ -613,14 +646,22 @@ def _spreadsheet(raw: bytes, suffix: str) -> tuple[SourceTable, ...]:
                 raise ValueError("Worksheet dimensions exceed the review budget.")
             if total + (sheet.max_row or 0) * (sheet.max_column or 0) > MAX_TABLE_CELLS:
                 raise ValueError("Workbook cells exceed the total review budget.")
-            missing, missing_count = [], 0
+            missing, missing_count, cached_empty = [], 0, None
 
             def records():
-                nonlocal missing_count
+                nonlocal missing_count, cached_empty
                 for row, formula_row in zip(sheet.iter_rows(), formula_sheet.iter_rows()):
                     converted = []
                     for cell, original in zip(row, formula_row):
                         value = cell.value
+                        if original.data_type == "f" and value is None and cell.data_type == "str":
+                            # The data-only view also returns None for a saved
+                            # empty-string result; only the stored XML differs.
+                            if cached_empty is None:
+                                cached_empty = _cached_empty_formula_strings(
+                                    raw, getattr(sheet, "_worksheet_path", None))
+                            if original.coordinate in cached_empty:
+                                value = ""
                         if original.data_type == "f" and (value is None or cell.data_type == "e"):
                             missing_count += 1
                             if len(missing) < 16:
@@ -800,12 +841,20 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
                                   and data.get("csv_headerless_policy") != 1
                                   and any(_csv_first_row_is_data(table.columns)
                                           for table in content.tables))
+            # Provenance policy 1 also counted a saved empty-string formula
+            # result as missing. Rebuild only caches that recorded missing
+            # results; every other workbook cache stays warm.
+            old_xlsx_missing = (suffix == ".xlsx" and content is not None
+                                and data.get("xlsx_provenance_policy") == 1
+                                and any(table.missing_formula_cache_count for table in content.tables))
             # Keep signed-Unicode migration independent of the delimiter policy.
             if (content is not None and not old_csv_one_column and not old_csv_headerless
+                    and not old_xlsx_missing
                     and (not unicode_csv or data.get("csv_unicode_policy") == 1)
                     and (suffix != ".xlsx" or (type(data.get("xlsx_currency_policy")) is int
                                               and data["xlsx_currency_policy"] == 1
-                                               and data.get("xlsx_provenance_policy") == 1))
+                                               and type(data.get("xlsx_provenance_policy")) is int
+                                               and data["xlsx_provenance_policy"] in (1, 2)))
                     and (suffix != ".pdf" or (data.get("vendor_passage_policy", 0) >= 8
                                                and data.get("pdf_scan_policy", 0) >= 1
                                                and data.get("pdf_reader_policy") == 1))):
@@ -953,7 +1002,7 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
         library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1,
             "native_action_policy": 1, "vendor_passage_policy": 8,
             **({"pdf_scan_policy": 1, "pdf_reader_policy": 1} if suffix == ".pdf" else {}),
-            **({"xlsx_currency_policy": 1, "xlsx_provenance_policy": 1} if suffix == ".xlsx" else {}),
+            **({"xlsx_currency_policy": 1, "xlsx_provenance_policy": 2} if suffix == ".xlsx" else {}),
             **({"csv_unicode_policy": 1} if unicode_csv else {}),
             **({"csv_dialect_policy": 1, "csv_headerless_policy": 1} if suffix == ".csv" else {}), **asdict(content)}))
         return content, attachments

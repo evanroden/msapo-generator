@@ -231,8 +231,10 @@ def prepare_bundle(draft, content, *, kind="workorders", mapping=None, date_orde
         for number, table in enumerate(content.tables, 1):
             result = review_spreadsheet(content, draft.profile, draft.period, mapping=mapping,
                                 numeric_date_order=date_order, table_number=number)
-            value["groups"].append(_group(table.name or source.filename,
-                review_record(result.workorders)))
+            label = (table.name or source.filename) + (" [hidden worksheet]" if table.hidden else "")
+            if table.missing_formula_cache_count:
+                label += f" [{table.missing_formula_cache_count} formula results missing]"
+            value["groups"].append(_group(label, review_record(result.workorders)))
     elif kind == "workorders" and source.suffix == ".pdf":
         from app.monthly_report_work_order_pdf_review import review_pdf_workorders
         result = review_pdf_workorders(draft.profile, content, draft.period)
@@ -255,8 +257,10 @@ def prepare_bundle(draft, content, *, kind="workorders", mapping=None, date_orde
         for number, table in enumerate(content.tables, 1):
             result = review_service_calls(content, draft.profile, draft.period,
                                           table_number=number, mapping=mapping)
-            value["groups"].append(_group(table.name or source.filename,
-                                          service_call_review_record(result)))
+            label = (table.name or source.filename) + (" [hidden worksheet]" if table.hidden else "")
+            if table.missing_formula_cache_count:
+                label += f" [{table.missing_formula_cache_count} formula results missing]"
+            value["groups"].append(_group(label, service_call_review_record(result)))
     elif kind == "maintenance" and source.suffix == ".docx":
         from app.monthly_report_service_call_word import review_word_maintenance
         result = review_word_maintenance(draft.profile, content, draft.period)
