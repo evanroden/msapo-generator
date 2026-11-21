@@ -63,11 +63,29 @@ def choose(page, control, value, record):
 
 def open_gallery(issue):
     evidence = issue.get_by_text("Evidence", exact=True)
-    if evidence.locator("xpath=ancestor::details[1]").get_attribute("open") is None:
+    evidence_details = evidence.locator("xpath=ancestor::details[1]")
+    if evidence_details.get_attribute("open") is None:
         evidence.click()
+        # Let the expansion (and its rerun) land before measuring position.
+        expect(evidence_details).to_have_attribute("open", "")
     summary = issue.get_by_text("Choose supporting pages by preview", exact=True)
     details = summary.locator("xpath=ancestor::details[1]")
     if details.get_attribute("open") is None:
+        # The gallery sits ~1000px below the issues-pair top, so the pair
+        # scroll alone leaves it below the fold; a rerun shifting layout
+        # can then starve Playwright's own scroll-into-view for 30s (the
+        # A88 WebKit failure, viewport found at Proposals). Center the
+        # summary and confirm it is in view, centering it again if a later
+        # rerun moved the page (a single check without re-centering failed
+        # once the page moved to Training Summary), then click the native
+        # control -- no force-click.
+        for _ in range(10):
+            summary.evaluate("node => node.scrollIntoView({block: 'center'})")
+            try:
+                expect(summary).to_be_in_viewport(timeout=1500)
+                break
+            except AssertionError:
+                continue
         summary.click()
     expect(issue.get_by_role("combobox", name="Source file to inspect", exact=True)).to_be_visible()
 
@@ -218,6 +236,12 @@ def browser_task(browser_type, name):
         # must restore the exact selected associations, without test injection.
         page.reload(wait_until="domcontentloaded")
         issue = page.locator(ISSUES)
+        # The reload re-renders the whole app; the issues pair (and its
+        # multiselect) does not exist until that render lands, ~5s on a
+        # slow host. Asserting tags immediately races that render and
+        # reports the restored selections as lost. Wait for the control.
+        expect(issue.get_by_test_id("stMultiSelect").filter(
+            has_text="Supporting source pages")).to_have_count(1, timeout=45000)
         assert_tags(issue, expected)
         qa.scroll_pair(page, ISSUES)
         open_gallery(issue)

@@ -277,6 +277,56 @@ are **not** individually measured by this addition. Their absence must
 remain visible when routing A02–A05/A19; never infer acceptance from this
 harness.
 
+## A88 same-image resource matrix (synthetic-only, pending exact-head CI)
+
+The baseline on main `9f84d829288dca14abb911a86c1c373f63254c34` had
+a 512-MiB/0.5-CPU backend measurement, a separate **uncapped host Python**
+browser reference, and one concurrent 24-page source intake. Thus a same-image
+512-MiB versus larger Docker comparison, 96-page concurrency, and actual decoded
+browser pixel-byte hashes could not be recovered from its receipts. This is a
+measurement/regression gap; it is not proof of a previously slow production
+server or a safe hosting change.
+
+The A88 workflow builds **one** production Docker image at its exact PR head and
+runs the existing 2/24/96-page source and 1/4/8-photo DOCX cold/warm controls
+plus eight-source-photo/ten-native-table section previews with *two resource
+caps*: 512 MiB/0.5 CPU and 1024 MiB/1 CPU. Each part is an independent
+container/process; all generated sources and clients are synthetic. Both photo
+builders use a fixed-seed texture in the A88 experiment, leaving the preexisting
+resource test's stochastic image path unchanged. Three two-visitor 24-page and
+96-page cold/warm races, three native section assembly controls and three
+two-visitor native-preview admission races run inside each backend cap.
+The native race reports admitted image, explicit RenderBusy, and sequential
+retry separately. It does not fabricate a queue wait for a **nonblocking**
+automatic-preview admission. Source ingestion has no measured application queue,
+so its queue-wait field is null, not zero.
+
+The browser job separately repeats the same genuine Streamlit synthetic QA
+fixture in Chromium/WebKit with three new browser sessions per engine/cap.
+It records load-press to first decoded image, upload-to-requested decoded
+thumbnail, edit-to-current decoded image, element geometry, image URL hash,
+**decoded PNG screenshot hash**, edit preservation, and native preview revision
+identity. The uncapped host Python run remains a reference only and is not one
+of the two same-image capped samples. These are headless CI browsers, not
+physical Safari, a deployed render service, or real-source acceptance.
+
+The comparator `scripts/qa_monthly_preview_a88_compare.py` fails if resource
+limits or cgroup OOM evidence are wrong, raw sample counts are insufficient,
+small samples claim p95, synthetic source SHA differs between caps, or native
+raster hashes/page geometry differ between caps. It records min/median/max and
+all source receipt values; it makes **no** throughput gain claim before real
+paired numbers are published. For source concurrency, each visitor supplies
+one observation per repetition (six measurements); these are not six
+independent server cold starts. Native preview contention is labeled admission
+plus retry, never a measured queuing distribution.
+
+Re-run the `Monthly preview latency evidence` workflow at the PR head; consult
+the `monthly-preview-latency-capped` and
+`monthly-preview-latency-browser` artifacts for the two resource subdirectories,
+the `a88-backend-comparison.json` and `a88-browser-comparison.json`, and
+cgroup inspect/logs. No renderer, scheduling, client data, source retention,
+production resources or hosting billing plan are changed by this experiment.
+
 ## A89 — Render versus Azure attribution without cutover (17 November 2026)
 
 This comparison is a **read-only assessment**, not a hosting change. Repository
