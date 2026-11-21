@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts.workspace_browser_observations import CLIENT_INIT, CLIENT_SNAPSHOT
 from scripts.monthly_sequential_navigation import navigate_sections, section_order
+from scripts import qa_monthly_live as live
 OUT = ROOT / "test-artifacts" / "monthly-adaptive"
 URL = "http://127.0.0.1:8520"
 ACTIVITY = ".st-key-epc_pair_monthly_activity"
@@ -653,6 +654,8 @@ def exercise(browser_type, name):
     try:
         page.goto(URL, wait_until="domcontentloaded")
         page.get_by_role("button", name="Load known-value report", exact=True).click()
+        # QA captions live inside the collapsed "QA details" disclosure.
+        live.open_qa_details(page)
         expect(page.get_by_text(re.compile(r"^QA fixture state: known-value prefill"))).to_be_visible(timeout=90000)
         page.get_by_role("textbox", name="Activity summary", exact=True).wait_for(timeout=60000)
         page.wait_for_selector(".epc-workspace-row", timeout=30000)

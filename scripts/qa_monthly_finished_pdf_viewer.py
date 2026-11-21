@@ -109,9 +109,9 @@ def check_engine(engine, name, width):
         pdf_a = download_current(page)
         word_a = download_current(page, "Download DOCX")
         dpi_a = assert_download_matches_view(pdf_a, image_a, "SYNTHETIC FINISHED PDF ALPHA")
-        identity_a = page.get_by_text("Exact PDF SHA-256:", exact=False).first.inner_text()
-        assert sha256(pdf_a).hexdigest() in identity_a
-        assert sha256(word_a).hexdigest() in identity_a
+        # The client UI does not expose opaque byte hashes; the downloaded
+        # artifact and the exact rendered page remain byte-verified here.
+        assert page.get_by_text("Exact PDF SHA-256:", exact=False).count() == 0
         details["artifacts"]["A"] = {"pdf_sha256": sha256(pdf_a).hexdigest(),
                                       "docx_sha256": sha256(word_a).hexdigest(),
                                       "visible_jpeg_sha256": sha256(image_a).hexdigest(),
@@ -162,9 +162,7 @@ def check_engine(engine, name, width):
         assert sha256(pdf_b).digest() != sha256(pdf_a).digest(), "Replacement kept PDF A bytes."
         assert image_a != image_b, "New package did not replace the visible page raster."
         dpi_b = assert_download_matches_view(pdf_b, image_b, "SYNTHETIC FINISHED PDF BRAVO")
-        identity_b = page.get_by_text("Exact PDF SHA-256:", exact=False).first.inner_text()
-        assert sha256(pdf_b).hexdigest() in identity_b and sha256(word_b).hexdigest() in identity_b
-        assert sha256(pdf_a).hexdigest() not in identity_b
+        assert page.get_by_text("Exact PDF SHA-256:", exact=False).count() == 0
         details["artifacts"]["B"] = {"pdf_sha256": sha256(pdf_b).hexdigest(),
                                       "docx_sha256": sha256(word_b).hexdigest(),
                                       "visible_jpeg_sha256": sha256(image_b).hexdigest(),

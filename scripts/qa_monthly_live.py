@@ -122,11 +122,22 @@ def state_diagnostics(page, action: str, error: Exception) -> None:
     screenshot(page, "not-ready-" + action)
 
 
+def open_qa_details(page, *, timeout=45000):
+    """Browser diagnostics intentionally opt into the collapsed QA disclosure."""
+    label = page.get_by_text("QA details", exact=True).first
+    label.wait_for(timeout=timeout)
+    status = page.get_by_text(re.compile(r"^QA fixture state: ")).first
+    if not status.is_visible():
+        label.click()
+        status.wait_for(timeout=timeout)
+
+
 def await_fixture_state(page, mode: str, *, previous_generation: str | None = None,
                         timeout: int = 45000) -> dict:
     """Wait for a committed, generation-bound state, not an always-visible button."""
     if mode not in ("empty", "known-value prefill", "original-source replay"):
         raise ValueError("Invalid fixture state.")
+    open_qa_details(page, timeout=timeout)
     locator = page.get_by_text(re.compile(r"^QA fixture state: ")).first
     different = ("(?!" + re.escape(previous_generation) + r"\b)"
                  if previous_generation else "")
@@ -341,6 +352,9 @@ def open_until_matching(page):
 
 def request_qa_generation(page, stage):
     """Require a new action receipt for the visible report, then its completion."""
+    # QA captions live inside the collapsed "QA details" disclosure; the
+    # generation receipt wait below needs it open, including after a reload.
+    open_qa_details(page)
     state_text = page.get_by_text(re.compile(r"^QA fixture state: ")).first.text_content() or ""
     state = STATE.fullmatch(state_text)
     if state is None:
@@ -700,6 +714,9 @@ def main():
             observed = ""
             try:
                 expect(editor).to_have_value(edited, timeout=60000)
+                # A reload collapses the "QA details" disclosure; reopen it
+                # before waiting for the durable receipt inside it.
+                open_qa_details(page)
                 page.get_by_text(receipt, exact=True).wait_for(timeout=60000)
                 observed = editor.input_value()
                 restored = observed == edited
@@ -727,6 +744,9 @@ def main():
                 editor = page.get_by_role("textbox", name="Activity summary", exact=True).first
                 try:
                     expect(editor).to_have_value(wording, timeout=60000)
+                    # A reload collapses the "QA details" disclosure; reopen it
+                    # before waiting for the durable receipt inside it.
+                    open_qa_details(page)
                     page.get_by_text(durable, exact=True).wait_for(timeout=60000)
                 except (BrowserTimeout, AssertionError) as exc:
                     state_diagnostics(page, "activity-" + step, exc)

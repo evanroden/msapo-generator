@@ -152,9 +152,6 @@ def render_current_session_pdf_preview(package, draft, prefix: str, *, session_s
     identity = final_pdf_artifact_identity(package)
     with st.container(key=prefix + "_finished_pdf_view"):
         st.markdown("**Final PDF · current draft**")
-        if identity:
-            st.caption("Exact PDF SHA-256: `" + identity[2] + "` · Paired Word SHA-256: `"
-                       + identity[1] + "`")
         st.caption("This session's generated PDF only; shared history stores the draft, not PDF bytes. "
                    "PDF inspection does not certify native Word layout.")
         if (identity is None or not package.pdf.startswith(b"%PDF-")

@@ -218,3 +218,29 @@ def test_generation_context_rejects_other_revision_identity_and_reset():
     assert testing_ui._generation_matches(request, draft, saved, "current")
     for changed in ({"generation": "old"}, {"revision": 3}, {"identity": ("other", "site", "2026-09")}, {"fingerprint": "old"}):
         assert not testing_ui._generation_matches({**request, **changed}, draft, saved, "current")
+
+
+def test_qa_diagnostics_are_collected_in_one_closed_disclosure(monkeypatch, tmp_path):
+    app = visit(monkeypatch, tmp_path)
+    next(b for b in app.button if b.label == "Load known-value report").click().run()
+    assert not app.exception
+    details = [exp for exp in app.expander if exp.label == "QA details"]
+    assert len(details) == 1
+    assert details[0].proto.expanded is False
+    # AppTest also exposes elements belonging to collapsed expanders: this
+    # verifies the traces still exist for isolated QA troubleshooting.
+    assert any(c.value.startswith("QA fixture state:") for c in app.caption)
+    assert any(c.value.startswith("QA working report SHA256:") for c in app.caption)
+
+
+def test_rejected_qa_action_shows_plain_reason_near_qa_button(monkeypatch, tmp_path):
+    from app import monthly_report_docx as output
+    app = visit(monkeypatch, tmp_path)
+    next(b for b in app.button if b.label == "Replay synthetic source files").click().run()
+    def reject(*args, **kwargs):
+        raise ValueError("Review and confirm the cover photograph before export.")
+    monkeypatch.setattr(output, "generate_report", reject)
+    next(b for b in app.button if b.label == "Generate QA Word and PDF").click().run()
+    assert not app.exception
+    assert any("Before generating: Review and confirm the cover photograph" in e.value for e in app.error)
+    assert any(c.value.startswith("QA generation action rejected") for c in app.caption)
