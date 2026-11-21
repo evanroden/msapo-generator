@@ -392,7 +392,6 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
     saved = library.load_snapshot(fixture.CONTRACT, fixture.profile().key, fixture.PERIOD)
     current_generation = testing.generation()
     kind = ("original-source replay" if saved.draft.sources else "known-value prefill") if saved else "empty"
-    diagnostics_surface = st.empty()
     working = None
     active = None
     if saved:
@@ -551,46 +550,48 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
 
     # Exactly one QA-only disclosure owns all fingerprints, action receipts,
     # revision captions and callback traces. Production never calls this route.
-    with diagnostics_surface.container():
-        with st.expander("QA details", expanded=qa_details_expanded):
-            from hashlib import sha256
-            _render_reset_readiness(live_storage_root)
-            st.caption(f"QA fixture state: {kind} · generation {current_generation[:12]} · "
-                       f"revision {saved.revision if saved else 0}")
-            receipt = st.session_state.get("monthly_qa_fixture_receipt")
-            if (saved and receipt and receipt["generation"] == current_generation
-                    and receipt["revision"] == saved.revision
-                    and receipt["mode"] == ("replay" if saved.draft.sources else "prefill")):
-                st.caption(f"QA fixture action accepted and committed: {receipt['mode']} · "
-                           f"action {receipt['id'][:12]} · revision {saved.revision} · "
-                           f"received {receipt['accepted_at']} · committed {receipt['committed_at']}")
-            reset_receipt = st.session_state.get("_monthly_qa_reset_receipt")
-            if (not saved and reset_receipt
-                    and reset_receipt["prior_generation"] != current_generation):
-                st.caption(f"QA reset acknowledged: empty fixture · generation {current_generation[:12]} · "
-                           f"action {reset_receipt['id'][:12]} · received {reset_receipt['accepted_at']}")
-            _render_generation_receipt(current_generation)
-            if working is not None:
-                activity_text = next((block.text for block in working.blocks
-                                      if block.key == "activity_summary"), "")
-                st.caption("QA working report SHA256: " + working.fingerprint)
-                st.caption("QA working Activity SHA256: " +
-                           sha256(activity_text.encode("utf-8")).hexdigest())
-                for index, callback in enumerate(st.session_state.get("monthly_qa_activity_callbacks", ())):
-                    st.caption(f"QA Activity callback {index + 1}: widget {callback['widget']} · "
-                               f"scope {callback['scope']} · baseline {callback['baseline']} · "
-                               f"before {callback['before']} · after {callback['after']}")
-                state = st.session_state.get("monthly_qa_comparison")
-                if state and state.get("fingerprint") == working.fingerprint:
-                    if state.get("id"):
-                        st.caption(f"QA comparison completed: {state['mode']} · "
-                                   f"{state['matched']}/{len(state['checks'])} · "
-                                   f"action {state['id'][:12]} · at {state['at']}")
-                    for name, passed in state["checks"].items():
-                        st.write(("PASS — " if passed else "CHECK — ") + name)
-            if active:
-                st.caption("QA durable report SHA256: " + active.draft.fingerprint)
-                activity = next((b.text for b in active.draft.blocks
-                                 if b.key == "activity_summary"), "")
-                st.caption("QA durable Activity SHA256: " +
-                           sha256(activity.encode("utf-8")).hexdigest())
+    # It renders after the editor, below it: filled late into a placeholder
+    # above the editor, its changing height moved the page under WebKit, which
+    # has no scroll anchoring, and sent sections and toolbar out of view.
+    with st.expander("QA details", expanded=qa_details_expanded):
+        from hashlib import sha256
+        _render_reset_readiness(live_storage_root)
+        st.caption(f"QA fixture state: {kind} · generation {current_generation[:12]} · "
+                   f"revision {saved.revision if saved else 0}")
+        receipt = st.session_state.get("monthly_qa_fixture_receipt")
+        if (saved and receipt and receipt["generation"] == current_generation
+                and receipt["revision"] == saved.revision
+                and receipt["mode"] == ("replay" if saved.draft.sources else "prefill")):
+            st.caption(f"QA fixture action accepted and committed: {receipt['mode']} · "
+                       f"action {receipt['id'][:12]} · revision {saved.revision} · "
+                       f"received {receipt['accepted_at']} · committed {receipt['committed_at']}")
+        reset_receipt = st.session_state.get("_monthly_qa_reset_receipt")
+        if (not saved and reset_receipt
+                and reset_receipt["prior_generation"] != current_generation):
+            st.caption(f"QA reset acknowledged: empty fixture · generation {current_generation[:12]} · "
+                       f"action {reset_receipt['id'][:12]} · received {reset_receipt['accepted_at']}")
+        _render_generation_receipt(current_generation)
+        if working is not None:
+            activity_text = next((block.text for block in working.blocks
+                                  if block.key == "activity_summary"), "")
+            st.caption("QA working report SHA256: " + working.fingerprint)
+            st.caption("QA working Activity SHA256: " +
+                       sha256(activity_text.encode("utf-8")).hexdigest())
+            for index, callback in enumerate(st.session_state.get("monthly_qa_activity_callbacks", ())):
+                st.caption(f"QA Activity callback {index + 1}: widget {callback['widget']} · "
+                           f"scope {callback['scope']} · baseline {callback['baseline']} · "
+                           f"before {callback['before']} · after {callback['after']}")
+            state = st.session_state.get("monthly_qa_comparison")
+            if state and state.get("fingerprint") == working.fingerprint:
+                if state.get("id"):
+                    st.caption(f"QA comparison completed: {state['mode']} · "
+                               f"{state['matched']}/{len(state['checks'])} · "
+                               f"action {state['id'][:12]} · at {state['at']}")
+                for name, passed in state["checks"].items():
+                    st.write(("PASS — " if passed else "CHECK — ") + name)
+        if active:
+            st.caption("QA durable report SHA256: " + active.draft.fingerprint)
+            activity = next((b.text for b in active.draft.blocks
+                             if b.key == "activity_summary"), "")
+            st.caption("QA durable Activity SHA256: " +
+                       sha256(activity.encode("utf-8")).hexdigest())
