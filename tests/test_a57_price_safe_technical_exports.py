@@ -208,23 +208,47 @@ def test_actual_saved_word_and_pdf_contain_technical_siblings_only(monkeypatch, 
 
 
 
+def _ocr_tsv(lines):
+    """Tesseract TSV for whole synthetic lines, one word per row."""
+    rows = ["\t".join(("level", "page_num", "block_num", "par_num", "line_num", "word_num",
+                        "left", "top", "width", "height", "conf", "text"))]
+    for line_number, line in enumerate(lines, 1):
+        for word_number, word in enumerate(line.split(), 1):
+            rows.append("\t".join(str(value) for value in (
+                5, 1, 1, 1, line_number, word_number, 20 + 60 * word_number, 30 * line_number,
+                50, 20, 92, word)))
+    return "\n".join(rows) + "\n"
+
+
+@pytest.mark.parametrize("ocr", ["unavailable", "reads the page"])
 def test_raster_only_proposal_canary_has_no_automatic_technical_or_image_route(
-        monkeypatch, tmp_path):
-    """Image pixels may have prices that text extractors cannot verify."""
+        monkeypatch, tmp_path, ocr):
+    """Image pixels may have prices that text extractors cannot verify.
+
+    Production installs local OCR (tesseract) and CI does not, so both are
+    pinned here. Lines that OCR reads stay unverified review text: the price
+    stays out and the technical line never becomes automatic Activity.
+    """
     from hashlib import sha256
     import pymupdf as fitz
 
+    from app import monthly_report_pdf_reader as reader
     from app import monthly_report_sources as sources
     from app.monthly_report_content_policy import page_allowed, suggested_pages
     from app.monthly_report_model import synthetic_profiles
 
+    lines = ("SYNTHETIC PROPOSAL - quoted amount $75,900", "Inspected pump P-TEST-42 at 128 psi.")
+    which = reader.shutil.which  # The shared module: answer only for tesseract.
+    tesseract = None if ocr == "unavailable" else "/usr/bin/tesseract"
+    monkeypatch.setattr(reader.shutil, "which",
+                        lambda name, *a, **k: tesseract if name == "tesseract" else which(name, *a, **k))
+    if ocr != "unavailable":
+        monkeypatch.setattr(reader, "_ocr_image", lambda data, *, timeout: _ocr_tsv(lines))
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "data"))
     profile = synthetic_profiles()[0]
     with fitz.open() as drawing:
         page = drawing.new_page()
-        page.insert_text((50, 70),
-                         "SYNTHETIC PROPOSAL - quoted amount $75,900\n"
-                         "Inspected pump P-TEST-42 at 128 psi.", fontsize=11)
+        page.insert_text((50, 70), "\n".join(lines), fontsize=11)
         image = page.get_pixmap().tobytes("png")
     with fitz.open() as scanned:
         page = scanned.new_page()
@@ -232,7 +256,14 @@ def test_raster_only_proposal_canary_has_no_automatic_technical_or_image_route(
         raw = scanned.tobytes()
     content, attachments = sources.ingest(profile, "synthetic-raster-priced-proposal.pdf", raw)
     assert not attachments
-    assert content.source.page_texts and all(not p.strip() for p in content.source.page_texts)
+    if ocr == "unavailable":
+        assert content.source.page_texts and all(not p.strip() for p in content.source.page_texts)
+    else:
+        # OCR text is kept for the reviewer, with each line's exact range.
+        assert list(content.source.page_texts) == ["\n".join(lines)]
+        assert [(span[0], content.source.page_texts[0][span[1]:span[2]])
+                for span in content.ocr_spans] == [(1, line) for line in lines]
+    assert 1 in content.source.needs_vision
     assert not suggested_pages(content.source)
     assert not page_allowed(content.source, 1)
     block = structured.native_update((content,), "activity_summary")

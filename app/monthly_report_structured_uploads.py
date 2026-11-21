@@ -765,15 +765,37 @@ def _docx_invoice_activity_view(text):
     return _InvoiceActivityView("\n".join(projected_lines))
 
 
+def _without_local_ocr(content, number, text):
+    """Return a page's text without the lines that local OCR added to it.
+
+    Local OCR (#970) appends unverified lines to a PDF page's text and records
+    each line's character range in ``content.ocr_spans``. That text stays in
+    the source for review and for the reviewer-started reader, but it never
+    approves automatic Activity: only the page's native text continues here.
+    """
+    spans = sorted((start, end) for page, start, end, *_ in getattr(content, "ocr_spans", ()) or ()
+                   if page == number)
+    if not spans:
+        return text
+    kept, cursor = [], 0
+    for start, end in spans:
+        kept.append(text[cursor:max(cursor, start)])
+        cursor = max(cursor, end)
+    kept.append(text[cursor:])
+    return "".join(kept).rstrip()
+
+
 def _activity_source_pages(content):
     """Keep spreadsheet column meaning while preparing native Activity text.
 
     A flattened bare amount loses its financial heading. Filter each table
     before prose selection, retaining nonprice cells and original page numbers.
     Original source text, tables, fingerprints and stored bytes stay intact.
+    Text that local OCR read from a page image never becomes Activity here.
     """
     if content.source.suffix not in {".csv", ".xlsx"} or not content.tables:
         for number, text in enumerate(content.source.page_texts, 1):
+            text = _without_local_ocr(content, number, text)
             if (content.source.suffix == ".txt" and contains_price(text)
                     and not any(_EVENT_START.match(line) for line in text.splitlines())):
                 # An untagged priced TXT has no independently scoped event
