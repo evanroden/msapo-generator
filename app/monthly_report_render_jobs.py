@@ -406,7 +406,9 @@ def _parallel_conversion_slot(*, wait_seconds):
                 if own_heavy:
                     stack.enter_context(lease('heavy', priority=priority,
                                               wait_seconds=wait_seconds, headroom=memory_headroom))
-                stack.enter_context(lease('conversion', priority=priority,
+                # Always inside a heavy lease: the one above or the Monthly
+                # assembly's, which this thread already holds.
+                stack.enter_context(lease('conversion', priority=priority, nested=True,
                                           wait_seconds=wait_seconds, headroom=memory_headroom,
                                           is_current=getattr(_PREVIEW_REQUEST_LOCAL, 'is_current', None)
                                           if preview_memory_guard() else None))

@@ -148,7 +148,7 @@ def _locked_count(kind):
     return total
 
 
-def _try_admit_budgeted(kind, headroom):
+def _try_admit_budgeted(kind, headroom, *, nested=False):
     """Atomically check cross-process reservations and claim a lane.
 
     Checking only process-local counters permits two workers to spend the same
@@ -168,14 +168,18 @@ def _try_admit_budgeted(kind, headroom):
             counts = {name: _locked_count(name) for name in CAPACITIES}
             reserved = sum(counts[name] * ESTIMATED_PEAK[name] for name in CAPACITIES)
             free = headroom() if headroom is not None else None
-            if kind == "conversion" and counts["heavy"] > counts["conversion"]:
-                # A conversion runs inside an already admitted heavy lease,
-                # whose peak covers the conversion's peak: transfer that
-                # reservation instead of charging a second full peak, or two
-                # admitted heavies could both wait for a conversion neither
-                # can get. A conversion without a heavy lease still charges
-                # its own peak.
-                needed = reserved + RESERVE_BYTES
+            if kind == "conversion" and nested and counts["heavy"]:
+                # This conversion runs inside a heavy lease the same thread
+                # already holds, and that lease reserved a peak (512 MiB) that
+                # covers the conversion's (320 MiB). Live headroom already
+                # reflects what every admitted job has consumed, so charging
+                # their full reservations again counts that memory twice: one
+                # admitted job could block its own conversion after assembly,
+                # or two admitted jobs could each wait for the other (review
+                # findings on #966). Require only this conversion's own peak
+                # plus the safety reserve to be free now. A conversion that is
+                # not nested still charges every reservation plus its peak.
+                needed = ESTIMATED_PEAK["conversion"] + RESERVE_BYTES
             else:
                 needed = reserved + ESTIMATED_PEAK[kind] + RESERVE_BYTES
             if free is None or free < needed:
@@ -187,12 +191,13 @@ def _try_admit_budgeted(kind, headroom):
 
 @contextmanager
 def lease(kind, *, priority="visible", wait_seconds=0, headroom=None,
-          is_current=None):
+          is_current=None, nested=False):
     """FIFO within priority; timeout/cancel safely removes only its own ticket.
 
     File locks bound each class across app processes. The cgroup limit, live
     free memory and already reserved heavy slots must all permit admission.
     A cancelled queued request cannot run; started work is never cancelled.
+    nested=True marks a conversion inside a heavy lease this thread holds.
     """
     if kind not in CAPACITIES or priority not in PRIORITIES:
         raise ValueError("Unknown resource class or priority")
@@ -209,7 +214,7 @@ def lease(kind, *, priority="visible", wait_seconds=0, headroom=None,
                     raise AdmissionUnavailable("The queued preview was superseded; edits are unchanged.")
                 if (ticket == min((t for t in _WAITING if t[2] == kind),
                                   default=ticket)):
-                    acquired = _try_admit_budgeted(kind, headroom)
+                    acquired = _try_admit_budgeted(kind, headroom, nested=nested)
                 if acquired is not None:
                     _RUNNING[kind] += 1
                     break

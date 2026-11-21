@@ -393,36 +393,70 @@ except s.AdmissionUnavailable:
     assert attempt() == "acquired", "budget must be reusable after release"
 
 
-def test_two_heavies_at_1400mib_headroom_convert_in_turn(parallel):
+def test_two_heavies_at_1400mib_headroom_both_reach_conversion(parallel):
     """Codex review: two heavies admitted at 1,400 MiB must not deadlock on conversion.
 
-    At 1,400 MiB both heavies are admitted (512 + 512 + 160), yet neither
-    conversion fits a second full peak (1,024 + 320 + 160). Each conversion
-    runs inside its heavy lease's reservation, so the conversions run one at
-    a time instead of both timing out. Both heavies are held before either
-    conversion is requested.
+    At 1,400 MiB both heavies are admitted (512 + 512 + 160). Each conversion
+    runs inside its own heavy lease, whose reservation covers it, so neither
+    waits for the other's reservation to be released: both convert promptly.
     """
-    from threading import Barrier, Lock
+    from threading import Barrier
     headroom = lambda: 1400 * scheduler.MIB
     both_heavy = Barrier(2)
-    state = {"current": 0, "peak": 0}
-    guard = Lock()
+    converted = []
 
     def convert():
         with scheduler.lease("heavy", priority="export", wait_seconds=5, headroom=headroom):
             both_heavy.wait(timeout=5)
-            with scheduler.lease("conversion", priority="export", wait_seconds=10, headroom=headroom):
-                with guard:
-                    state["current"] += 1
-                    state["peak"] = max(state["peak"], state["current"])
-                time.sleep(0.3)
-                with guard:
-                    state["current"] -= 1
+            with scheduler.lease("conversion", priority="export", wait_seconds=2,
+                                 headroom=headroom, nested=True):
+                converted.append(True)
 
+    started = time.monotonic()
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = [pool.submit(convert) for _ in range(2)]
         for task in results:
             task.result(timeout=15)
-    assert state["peak"] == 1, "conversions must serialize on 1,400 MiB headroom"
+    assert len(converted) == 2
+    assert time.monotonic() - started < 2, "neither conversion waited for the other heavy"
     assert scheduler.snapshot()["running"]["heavy"] == 0
     assert scheduler.snapshot()["running"]["conversion"] == 0
+
+
+def test_admitted_heavy_reaches_conversion_after_assembly_uses_memory(parallel):
+    """Codex review: a heavy admitted at 800 MiB must not block its own conversion.
+
+    Assembly then uses 200 MiB, leaving 600 MiB live. The conversion's 320 MiB
+    plus the 160 MiB reserve fit; charging the heavy's full 512 MiB again on
+    top of the memory it already used would deny it.
+    """
+    free = {"bytes": 800 * scheduler.MIB}
+    headroom = lambda: free["bytes"]
+    with scheduler.lease("heavy", priority="export", wait_seconds=0, headroom=headroom):
+        free["bytes"] = 600 * scheduler.MIB
+        with scheduler.lease("conversion", priority="export", wait_seconds=0,
+                             headroom=headroom, nested=True):
+            assert scheduler.snapshot()["running"]["conversion"] == 1
+    assert scheduler.snapshot()["running"] == {k: 0 for k in scheduler.CAPACITIES}
+
+
+def test_nested_conversion_still_fails_closed_without_live_memory(parallel):
+    free = {"bytes": 800 * scheduler.MIB}
+    headroom = lambda: free["bytes"]
+    with scheduler.lease("heavy", priority="export", wait_seconds=0, headroom=headroom):
+        free["bytes"] = 400 * scheduler.MIB  # below 320 + 160
+        with pytest.raises(scheduler.AdmissionUnavailable, match="memory is constrained"):
+            with scheduler.lease("conversion", priority="export", wait_seconds=0,
+                                 headroom=headroom, nested=True):
+                raise AssertionError("conversion must not start without its own peak free")
+    assert scheduler.snapshot()["running"] == {k: 0 for k in scheduler.CAPACITIES}
+
+
+def test_conversion_outside_a_heavy_lease_still_charges_every_reservation(parallel):
+    headroom = lambda: 800 * scheduler.MIB
+    with scheduler.lease("heavy", priority="export", wait_seconds=0, headroom=headroom):
+        # 512 reserved + 320 + 160 exceeds 800: only a nested conversion may
+        # borrow the heavy reservation.
+        with pytest.raises(scheduler.AdmissionUnavailable):
+            with scheduler.lease("conversion", priority="export", wait_seconds=0, headroom=headroom):
+                raise AssertionError("an unrelated conversion cannot spend another job's reservation")
