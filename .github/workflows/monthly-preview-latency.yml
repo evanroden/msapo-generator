@@ -24,6 +24,13 @@ on:
       - 'app/monthly_report_latency_trace.py'
       - 'app/monthly_report_sources.py'
       - 'app/monthly_report_render_jobs.py'
+      # The journey also opens the issue gallery and the section preview pane;
+      # #990 changed both without this check running (20 Nov).
+      - 'app/monthly_report_preview_view.py'
+      - 'app/monthly_report_section_preview_ui.py'
+      - 'app/monthly_report_issue_page_gallery.py'
+      - 'app/monthly_report_source_preview.py'
+      - 'app/monthly_report_picture_group.py'
       - 'docs/MONTHLY_PREVIEW_LATENCY_E2E.md'
       - '.github/workflows/monthly-preview-latency.yml'
   push:
