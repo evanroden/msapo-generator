@@ -9,7 +9,7 @@ import hashlib
 import streamlit as st
 
 from app import monthly_report_sources as sources
-from app.monthly_report_source_preview import source_thumbnail_bytes
+from app.monthly_report_source_preview import source_thumbnail_uri
 
 
 PAGE_SIZE = 4
@@ -132,13 +132,13 @@ def render_page_gallery(draft, options, selected, p, widget_key, identity, field
                           identity, registration["token"]),
                 )
                 picture = None
-                picture_bytes = None
+                picture_uri = None
                 if source.suffix in PREVIEWABLE and original_available:
                     try:
                         picture = sources.page_image(
                             draft.profile, sources.SourceContent(source), number,
                             preview=True)
-                        picture_bytes = source_thumbnail_bytes(picture)
+                        picture_uri = source_thumbnail_uri(picture)
                     except (ValueError, OSError, IndexError, RuntimeError):
                         picture = None
                         st.warning("Preview unavailable for " + label +
@@ -152,7 +152,7 @@ def render_page_gallery(draft, options, selected, p, widget_key, identity, field
                     st.caption("No raster thumbnail for " + label +
                                ". Inspect the original in Manage source files.")
                 if picture is not None:
-                    st.image(picture_bytes, width=160,
+                    st.image(picture_uri, width=160,
                              caption=label + (" · Selected" if reference in selected else " · Not selected"))
                 if st.button("Preview " + label, key=p + "_gallery_show_" + _key(reference)):
                     st.session_state[preview_key] = reference
@@ -162,7 +162,7 @@ def render_page_gallery(draft, options, selected, p, widget_key, identity, field
                 if picture is None:
                     st.caption("Large preview unavailable. Reopen Manage source files; selection is unchanged.")
                     continue
-                st.image(picture_bytes, width="stretch",
+                st.image(picture_uri, width="stretch",
                          caption=label + " · Preview only; use fullscreen to examine small details.")
                 st.caption(label + " · Preview only; original and issue links are unchanged.")
 
