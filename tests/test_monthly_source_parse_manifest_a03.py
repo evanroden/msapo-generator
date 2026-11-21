@@ -360,3 +360,52 @@ def test_rejected_batch_upload_does_not_leave_unapproved_parse_text(profile, mon
     assert not sources._path(profile, digest, ".json").with_name(
         digest + ".parse-stage.json").exists()
     assert sources.source_bytes(profile, accepted.source) == CSV
+
+
+def test_resumed_checkpoint_uses_this_uploads_filename(profile, monkeypatch):
+    """A checkpoint from an interrupted upload never carries its old name forward."""
+    original_facts = sources.suggest_facts
+    with monkeypatch.context() as patch:
+        patch.setattr(sources, "suggest_facts",
+                      lambda *_: (_ for _ in ()).throw(RuntimeError("synthetic interruption")))
+        with pytest.raises(RuntimeError, match="synthetic interruption"):
+            sources.ingest(profile, "first-name.csv", CSV)
+    seen = []
+
+    def facts(record, current_profile):
+        seen.append(record.filename)
+        return original_facts(record, current_profile)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(sources, "_spreadsheet", lambda *_: pytest.fail("completed stage parsed again"))
+        patch.setattr(sources, "suggest_facts", facts)
+        content, _ = sources.ingest(profile, "second-name.csv", CSV)
+    assert seen == ["second-name.csv"]
+    assert content.source.filename == "second-name.csv"
+    assert library._read(cache_for(profile, content))["source"]["filename"] == "second-name.csv"
+
+
+def test_interrupted_stage_is_invalidated_when_an_extraction_policy_changes(profile, monkeypatch):
+    """Checkpoints carry the same policy markers as the published cache."""
+    from app import monthly_source_parse_manifest as parse
+    with monkeypatch.context() as patch:
+        patch.setattr(sources, "suggest_facts",
+                      lambda *_: (_ for _ in ()).throw(RuntimeError("interrupted")))
+        with pytest.raises(RuntimeError, match="interrupted"):
+            sources.ingest(profile, "stage.csv", CSV)
+    digest = sha256(CSV).hexdigest()
+    stage = sources._path(profile, digest, ".json").with_name(digest + ".parse-stage.json")
+    record = library._read(stage)
+    assert record["extraction_policies"]["csv_headerless_policy"] == 1
+    # The same checkpoint as an earlier release would have written it.
+    record["extraction_policies"]["csv_headerless_policy"] = 0
+    record["payload_sha256"] = parse._digest({k: v for k, v in record.items() if k != "payload_sha256"})
+    library._atomic_write(stage, library._json(record))
+    count = []
+    original = sources._spreadsheet
+    with monkeypatch.context() as patch:
+        patch.setattr(sources, "_spreadsheet", lambda *args: (count.append(True), original(*args))[1])
+        content, _ = sources.ingest(profile, "stage.csv", CSV)
+    assert count == [True]
+    assert library._read(cache_for(profile, content))["csv_headerless_policy"] == 1
+    assert not stage.exists()

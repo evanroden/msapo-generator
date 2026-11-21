@@ -69,11 +69,17 @@ def valid(manifest, content, source_size: int) -> bool:
         return False
 
 
-def stage_record(content) -> dict:
-    """Completed expensive parse, before suggested facts, in a bounded JSON file."""
+def stage_record(content, *, policies=None) -> dict:
+    """Completed expensive parse, before suggested facts, in a bounded JSON file.
+
+    ``policies`` are the caller's current extraction-policy markers (the same
+    ones its published cache records). A checkpoint written under any other
+    markers is never replayed.
+    """
     from dataclasses import asdict
     record = {"schema": 1, "stage_policy": STAGE_POLICY_VERSION,
               "parser_policy": PARSER_POLICY_VERSION,
+              "extraction_policies": dict(policies or {}),
               "source_sha256": content.source.sha256,
               "source_suffix": content.source.suffix,
               "source": asdict(content.source),
@@ -83,13 +89,14 @@ def stage_record(content) -> dict:
     return record
 
 
-def stage_valid(record, digest: str, suffix: str) -> bool:
+def stage_valid(record, digest: str, suffix: str, *, policies=None) -> bool:
     if not isinstance(record, dict):
         return False
     if (type(record.get("stage_policy")) is not int
             or record["stage_policy"] != STAGE_POLICY_VERSION
             or type(record.get("parser_policy")) is not int
             or record["parser_policy"] != PARSER_POLICY_VERSION
+            or record.get("extraction_policies") != dict(policies or {})
             or record.get("source_sha256") != digest
             or record.get("source_suffix") != suffix):
         return False

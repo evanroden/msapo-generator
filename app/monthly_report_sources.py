@@ -868,7 +868,7 @@ def _ingest_locked(profile: ReportProfile, filename: str, raw: bytes,
             library._qa_path_guard(stage)
             try:
                 record = library._read(stage)
-                if not parse_manifest.stage_valid(record, digest, suffix):
+                if not parse_manifest.stage_valid(record, digest, suffix, policies=policies):
                     raise ValueError("Stale or corrupt source parse stage.")
                 staged = _cached_extraction(record, digest, suffix)
             except (ValueError, TypeError, LookupError, AttributeError):
@@ -880,7 +880,10 @@ def _ingest_locked(profile: ReportProfile, filename: str, raw: bytes,
         extraction_started = perf_counter()
         if staged is not None:
             parse_manifest.qa_stage("parse", cache_started, "stage_hit")
-            source, tables, image_items = staged.source, staged.tables, list(staged.image_items)
+            # The checkpoint keeps the interrupted upload's filename. This
+            # upload's name drives suggestions and the published cache.
+            source = replace(staged.source, filename=filename)
+            tables, image_items = staged.tables, list(staged.image_items)
         elif suffix == ".pdf":
             with fitz.open(stream=raw, filetype="pdf") as pdf:
                 if pdf.is_encrypted and not pdf.authenticate(""):
@@ -982,7 +985,8 @@ def _ingest_locked(profile: ReportProfile, filename: str, raw: bytes,
                 # The source is already stored and the expensive decode completed.
                 # An interrupted publication leaves only a disposable checkpoint.
                 parsed = SourceContent(source, tables, tuple(image_items))
-                library._atomic_write(stage, library._json(parse_manifest.stage_record(parsed)))
+                library._atomic_write(stage, library._json(
+                    parse_manifest.stage_record(parsed, policies=policies)))
             parse_manifest.qa_stage("parse", extraction_started, "complete")
         if suffix not in (".csv", ".xlsx"):
             source = replace(source, selected_pages=suggested_pages(source))
