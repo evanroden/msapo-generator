@@ -1,0 +1,133 @@
+name: Monthly Scorecards repeat
+
+on:
+  pull_request:
+    paths:
+      - 'app/workspace_navigation.js'
+      - 'app/monthly_report_guided.py'
+      - 'app/workspace_layout*'
+      - 'scripts/qa_scorecards_repeat.py'
+      - 'scripts/qa_warning_routes.py'
+      - 'scripts/monthly_sequential_navigation.py'
+      - 'scripts/workspace_warning_routes.py'
+      - 'tests/workspace_navigation_test.cjs'
+      - 'tests/fixtures/workspaces/monthly_app.py'
+      - '.github/workflows/monthly-scorecards-repeat.yml'
+      - 'requirements*.lock'
+  push:
+    branches: [main]
+    paths:
+      - 'app/workspace_navigation.js'
+      - 'app/monthly_report_guided.py'
+      - 'app/workspace_layout*'
+      - 'scripts/qa_scorecards_repeat.py'
+      - 'scripts/qa_warning_routes.py'
+      - 'scripts/monthly_sequential_navigation.py'
+      - 'scripts/workspace_warning_routes.py'
+      - 'tests/workspace_navigation_test.cjs'
+      - 'tests/fixtures/workspaces/monthly_app.py'
+      - '.github/workflows/monthly-scorecards-repeat.yml'
+      - 'requirements*.lock'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  scorecards-repeat:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - name: Install locked app and native browsers
+        timeout-minutes: 20
+        run: |
+          sudo python3 scripts/ci_ubuntu_mirror_priority.py
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-calc fonts-liberation
+          python -m pip install -r requirements-dev.lock playwright==1.58.0
+          python scripts/patch_streamlit_frontend.py
+          python scripts/patch_streamlit_date_input.py
+          python -m playwright install --with-deps chromium webkit
+      - name: Navigation contracts
+        timeout-minutes: 10
+        run: |
+          python -m py_compile scripts/qa_scorecards_repeat.py
+          python -m pytest -q tests/test_monthly_report_*navigation*.py tests/test_warning_routes_fixture.py
+          node --test tests/workspace_navigation_test.cjs tests/source_review_navigation_test.cjs tests/workspace_geometry_test.cjs tests/picture_correction_navigation_test.cjs tests/page_navigation_request_test.cjs
+      - name: Native Scorecards repeat with pre-change comparison on W01
+        timeout-minutes: 25
+        run: |
+          mkdir -p test-artifacts/scorecards-repeat
+          trap 'git restore -- app/workspace_navigation.js' EXIT
+          # The QA-only controller logs rejection/acceptance without changing
+          # ownership, events, scheduling, timeouts or browser assertions.
+          instrument() {
+            python - <<'PY'
+          from pathlib import Path
+          p = Path('app/workspace_navigation.js')
+          s = p.read_text()
+          guard = 'if (!sameControls() || !sameNodes(established,nodes) || !control || control.disabled || index < 0 || !target) return;'
+          assert s.count(guard) == 1
+          s = s.replace(guard, guard[:-7] + """{
+              console.debug('W01 step ignored '+JSON.stringify({owns:owns(),readyOwners:readyOwners(),
+                  sameControls:Boolean(sameControls()),ownedNodes:Boolean(nodes),sameNodes:sameNodes(established,nodes),
+                  disabled:control?.disabled,index,target:target?.id}));
+              return;
+          }""")
+          pending = '{cancelIntent();return null;}'
+          assert s.count(pending) == 1
+          s = s.replace(pending, """{
+              console.debug('W01 intent cancelled '+JSON.stringify({lease:intent.owner===lease,identity:intent.identity===identity,
+                  origin:intent.origin===state.navigationActive,controls:sameControls(),back:intent.back===backButton,
+                  next:intent.next===nextButton,input:intent.input===(state.navigationInputSerial||0),
+                  request:state.navigationRequest===intent.target,nodes:sameNodes(intent.nodes,ownedNodes())}));
+              cancelIntent();return null;
+          }""")
+          accepted = 'state.navigationRequest = target.id;'
+          assert s.count(accepted) == 1
+          s = s.replace(accepted, accepted + chr(10) + "            console.debug('W01 step accepted '+state.navigationActive+' -> '+target.id);")
+          wait = 'if (intent && !readyIntent(intent)) request = null;'
+          assert s.count(wait) == 1
+          s = s.replace(wait, """if (intent && !readyIntent(intent)) {
+              console.debug('W01 intent waiting '+JSON.stringify({readyOwners:readyOwners(),
+                  origin:fresh(intent.nodes.find(item=>item.id===intent.origin)),
+                  target:fresh(intent.nodes.find(item=>item.id===intent.target))}));
+              request=null;
+          }""")
+          p.write_text(s)
+          PY
+          }
+          if [[ "$GITHUB_HEAD_REF" == "fix/w01-scorecards-next-race-20261121" ]]; then
+            git show e38fbbc75f638501ce6a40dc3f25e1a9eca1c297:app/workspace_navigation.js > app/workspace_navigation.js
+            if node --test --test-name-pattern='W01 same section marker refresh' tests/workspace_navigation_test.cjs > test-artifacts/scorecards-repeat/before-node.txt 2>&1; then
+              cat test-artifacts/scorecards-repeat/before-node.txt
+              echo 'Expected the pre-change marker race to fail'
+              exit 1
+            fi
+            cat test-artifacts/scorecards-repeat/before-node.txt
+            grep -Fx '# fail 3' test-artifacts/scorecards-repeat/before-node.txt
+            instrument
+            python scripts/qa_scorecards_repeat.py --repeat 20 --output test-artifacts/scorecards-repeat/before.json || echo 'Pre-change browser failures retained; see before.json'
+            git restore -- app/workspace_navigation.js
+          fi
+          instrument
+          python scripts/qa_scorecards_repeat.py --repeat 20 --output test-artifacts/scorecards-repeat/after.json
+      - name: Retain synthetic repeat evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monthly-scorecards-repeat
+          path: test-artifacts/scorecards-repeat/
+          retention-days: 7
+          if-no-files-found: warn

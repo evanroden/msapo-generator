@@ -346,14 +346,13 @@ test('blur plus one Enter survives all-stale and partial-fresh content and execu
     h.cleanup();
 });
 
-for(const kind of ['origin-replaced','target-replaced','marker-replaced','order','duplicate','disconnected','report','toolbar','child-control','stale-control','foreign-owner','pointer','key','wheel'])
+for(const kind of ['origin-replaced','target-replaced','order','duplicate','disconnected','report','toolbar','child-control','stale-control','foreign-owner','pointer','key','wheel'])
 test(`pending sequential intent cancels ${kind} invalidation without late jump`,async()=>{
     const {h,markers,origin,target}=await pendingSequentialIntent();
     if(kind==='origin-replaced'||kind==='target-replaced') {
         const marker=kind==='origin-replaced'?origin:target;const pair=marker.parentElement;
         pair.isConnected=false;const replacement=h.element('DIV',pair.className);h.root.append(replacement);replacement.append(marker);
     }
-    if(kind==='marker-replaced') {const replacement=h.element();replacement.dataset.epcPair=target.dataset.epcPair;target.parentElement.append(replacement);target.remove();}
     if(kind==='order') {const a=h.root.children.indexOf(origin.parentElement),b=h.root.children.indexOf(target.parentElement);[h.root.children[a],h.root.children[b]]=[h.root.children[b],h.root.children[a]];h.deliver({type:'childList',target:h.root});}
     if(kind==='duplicate') {const duplicate=h.element();duplicate.dataset.epcPair=target.dataset.epcPair;target.parentElement.append(duplicate);}
     if(kind==='disconnected')target.parentElement.isConnected=false;
@@ -368,6 +367,23 @@ test(`pending sequential intent cancels ${kind} invalidation without late jump`,
     markers.forEach(marker=>marker.dataset.stale='false');await h.drain();
     assert.equal(h.state.navigationIntent,null);assert.equal(h.state.navigationRequest,null);
     assert.notEqual(h.state.navigationActive,'monthly_scorecards');assert.notEqual(h.active(),target.parentElement);
+    h.cleanup();
+});
+
+// W01: a pair marker is streamed metadata. A refreshed marker naming the same
+// section in the same connected container is not an invalidation, so the one
+// accepted Next lands once instead of silently staying put. Container, order,
+// duplicate and report changes above still cancel.
+test('pending sequential intent survives a same-section marker refresh and lands once',async()=>{
+    const {h,markers,target}=await pendingSequentialIntent();
+    const pair=target.parentElement;
+    const replacement=h.element();replacement.dataset.epcPair=target.dataset.epcPair;pair.append(replacement);target.remove();
+    markers.forEach(marker=>marker.dataset.stale='false');replacement.dataset.stale='false';await h.drain();
+    assert.equal(h.state.navigationIntent,null);assert.equal(h.state.navigationRequest,null);
+    assert.equal(h.state.navigationActive,'monthly_scorecards');assert.equal(h.active(),pair);assert.equal(pair.focusCount,1);
+    const after=h.counts();await h.drain();
+    assert.equal(h.state.navigationActive,'monthly_scorecards','one activation is never replayed');
+    assert.equal(pair.focusCount,1);assert.deepEqual(h.counts(),after);
     h.cleanup();
 });
 

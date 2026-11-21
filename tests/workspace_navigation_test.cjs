@@ -57,6 +57,7 @@ function harness(mode='wide', sequential=false) {
     return {attention,correct(href,options={}){let prevented=false; const link={getAttribute:()=>href,classList:{contains:value=>(options.classes||[]).includes(value)}};
         clickHandler({button:0,target:{closest:()=>link},preventDefault(){prevented=true},...options});
         measure();return prevented;},state,root,scrollport,select,reviewButton,backButton,nextButton,progress,field,pairs,review,app,document,measure,choose,nav,label,controller:()=>controller,
+        replaceMarker(index){const item=pairs[index];const prior=markers.get(item);prior.isConnected=false;markers.delete(item);},
         land:request=>context.ENFRAWorkspaceNavigation.land(state,request),
         cancelLanding:()=>context.ENFRAWorkspaceNavigation.cancelLanding(state),
         input:event=>context.ENFRAWorkspaceNavigation.noteInput(state,event),
@@ -895,5 +896,36 @@ test('A13 preflight marker without DOM closest preserves exact section navigatio
     h.nextButton.onclick();h.measure();
     assert.equal(h.progress.textContent,'3 of 6 · Short section');
     assert.equal(h.counts().nativeEvents,0);
+    h.dispose();
+});
+
+for (const timing of ['before click','after click','during handoff']) test(`W01 same section marker refresh ${timing} preserves one Next`,()=>{
+    const h=harness('wide',true);
+    assert.equal(h.nextButton.disabled,false);
+    if(timing==='before click')h.replaceMarker(1);
+    h.nextButton.onclick();
+    if(timing!=='before click')h.replaceMarker(1);
+    if(timing==='during handoff'){
+        assert.equal(h.handoff(),true,'marker metadata is not a replaced pair owner');
+        h.resume(()=>{});
+    }
+    h.measure();
+    assert.equal(h.progress.dataset.section,'monthly_activity');
+    assert.equal(h.state.navigationIntent,null);
+    assert.equal(h.counts().scheduled,1);
+    h.measure();
+    assert.equal(h.progress.dataset.section,'monthly_activity','one activation is never replayed');
+    h.backButton.onclick();h.measure();
+    assert.equal(h.progress.dataset.section,'monthly_cover');
+    h.dispose();
+});
+
+test('W01 a genuinely replaced section owner cannot inherit an accepted Next',()=>{
+    const h=harness('wide',true);
+    h.nextButton.onclick();
+    h.pairs[1].pair={...h.pairs[1].pair};
+    h.measure();
+    assert.equal(h.state.navigationIntent,null);
+    assert.equal(h.progress.dataset.section,'monthly_cover');
     h.dispose();
 });
