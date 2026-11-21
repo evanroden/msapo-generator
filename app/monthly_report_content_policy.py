@@ -479,12 +479,9 @@ def page_fingerprint(source, page):
 
 
 def page_allowed(source, page, *, profile=None, destination=None, output_captions=()):
-    from app.monthly_report_mbcx_financial_pages import financial_page_allowed, has_financial_page_review
-    if has_financial_page_review(source, page):
-        # A stale financial review cannot fall back to old generic image approval.
-        return financial_page_allowed(source, page, profile, destination, output_captions=output_captions)
-    status, _ = page_status(source.page_texts[page - 1], unreadable=page in source.needs_vision)
-    return status not in ("pricing", "legal", "blank", "signature") and not contains_price(dict(source.captions).get(page, "")) and dict(source.client_page_reviews).get(page) == page_fingerprint(source, page)
+    from app.monthly_report_financial_policy import financial_output_gate
+    return financial_output_gate(source=source, page=page, profile=profile,
+                                 destination=destination, output_captions=output_captions).allowed
 
 
 def suggested_pages(source):
