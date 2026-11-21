@@ -138,11 +138,11 @@ def test_managed_intake_retry_only_failed_file_after_unrelated_manual_edit(scope
     ]
     original_ingest = sources.ingest
     attempts = []
-    def flaky(profile_, name, raw):
+    def flaky(profile_, name, raw, **kwargs):
         attempts.append(name)
         if name == "recover.pdf" and attempts.count(name) == 1:
             raise OSError("synthetic transient read error")
-        return original_ingest(profile_, name, raw)
+        return original_ingest(profile_, name, raw, **kwargs)
     monkeypatch.setattr(sources, "ingest", flaky)
     monkeypatch.setattr(ui.st, "file_uploader", lambda label, *args, **kwargs:
                         uploads if label == "Add source files" else None)

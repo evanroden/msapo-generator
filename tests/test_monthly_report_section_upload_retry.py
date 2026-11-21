@@ -22,11 +22,11 @@ def test_retry_recovers_failed_file_and_keeps_sibling_and_manual_content(monkeyp
                         uploads if label == "Service report files" else [])
     original = sources.ingest
     attempts = []
-    def ingest(profile, filename, raw):
+    def ingest(profile, filename, raw, **kwargs):
         attempts.append(filename)
         if filename == "retry.pdf" and attempts.count(filename) == 1:
             raise OSError("Synthetic transient reader failure")
-        return original(profile, filename, raw)
+        return original(profile, filename, raw, **kwargs)
     monkeypatch.setattr(sources, "ingest", ingest)
     app = AppTest.from_string(APP, default_timeout=20)
     manual = ResolvedBlock("equipment_issues", "This month", text="Keep this manual issue.")
