@@ -261,9 +261,12 @@ def section_preview_fingerprint(draft, section_key):
     Source-view evidence is rechecked *before* each cache lookup: a manifest,
     original or receipt replacement must never hit a stale preview fingerprint.
     """
-    from app.monthly_report_source_view_runtime import cache_identity
+    from app.monthly_report_source_view_runtime import cache_identity, source_revision_identity
     scope, section = _section_scope(draft, section_key)
     source_identity = cache_identity(draft)
+    # Ordered (id, filename, SHA-256) tuples: an immutable part of the key, so a
+    # same-name replacement upload never hits a stale memoized fingerprint.
+    source_revisions = source_revision_identity(scope) if scope.sources else ()
     # Only improvements' document/photo classification reads ReportSources.
     # Other sections must not hash or retain unrelated source-page contents.
     page_sources = scope.sources if any(block.key == "improvements" for block in scope.blocks) else ()
@@ -272,6 +275,7 @@ def section_preview_fingerprint(draft, section_key):
         page_sources, scope.follow_ups, draft.address_line if section else "",
         draft.prepared_by if section is None else "",
         draft.synthetic if section is None else False, source_identity,
+        source_revisions,
     )
     try:
         return _cached_section_fingerprint(*key)
@@ -285,7 +289,7 @@ def section_preview_fingerprint(draft, section_key):
 @lru_cache(maxsize=32)
 def _cached_section_fingerprint(profile, period_key, section_key, section, blocks,
                                 page_sources, follow_ups, address, prepared_by,
-                                synthetic, source_identity):
+                                synthetic, source_identity, source_revisions):
     """Keep at most 32 immutable section revisions; never cache rendered output.
 
     All inputs are frozen model values or strings. The cache only avoids a
@@ -317,6 +321,11 @@ def _cached_section_fingerprint(profile, period_key, section_key, section, block
     }
     from app.monthly_report_designs import fingerprint
     value["native_layout"] = fingerprint(profile)
+    # Replacing one immutable source with new bytes under the same filename
+    # must invalidate page images and the "Current" label. A page selection
+    # alone can have unchanged references/geometry after that replacement.
+    if source_revisions:
+        value["source_revisions"] = source_revisions
     if source_identity:
         value["source_view"] = source_identity
     if section is None:
