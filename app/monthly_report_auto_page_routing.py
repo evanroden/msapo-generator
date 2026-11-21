@@ -217,3 +217,16 @@ def route_pages(contents, profile=None, *, period=None, overrides=None, owned=No
                 continue
             result.append(PageRoute(*base, destination, "ready"))
     return tuple(result)
+
+
+def batch_destinations(choices, section_page_owners=()):
+    """Pages to prepare as new additions: ready or review pages with a destination.
+
+    A retained page already belongs to a report block, including a block whose
+    section was deliberately left out. Preparing it again would merge it as an
+    addition, and an omitted block then takes the incoming copy and its section
+    is switched back on. Retained pages stay exactly where they are.
+    """
+    return [(choice.source_id, choice.destination, choice.page) for choice in choices
+            if choice.action in {"ready", "review"} and choice.destination
+            and not (choice.source_id in section_page_owners and choice.destination == "water_reports")]

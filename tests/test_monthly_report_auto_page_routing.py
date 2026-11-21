@@ -170,3 +170,52 @@ def test_reviewed_mbcx_financial_page_routes_only_to_mbcx(monkeypatch, tmp_path)
     moved, = route_pages((approved,), profile, period=period,
                          overrides={approved.source.id: "water_reports"})
     assert (moved.destination, moved.action) == (None, "blocked")
+
+
+def _two_page_pdf(*texts):
+    with pymupdf.open() as pdf:
+        for text in texts:
+            page = pdf.new_page()
+            page.insert_text((50, 50), text)
+        return pdf.tobytes()
+
+
+def test_retained_page_of_omitted_section_is_not_prepared_again(monkeypatch, tmp_path):
+    # Review finding on #959: a page owned by a deliberately omitted section was
+    # prepared again with every new addition, and merging it switched the
+    # section back on. Only the new page may be added.
+    from streamlit.testing.v1 import AppTest
+    from app import monthly_report_sources as sources
+    from app.monthly_report_model import ReportPeriod
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    profile = synthetic_profiles()[0]
+    raw = _two_page_pdf("UTILITY ANALYSIS. Energy use 120 kWh.", "SERVICE REPORT. Pump inspected.")
+    ingested, _ = sources.ingest(profile, "synthetic-mixed-retained.pdf", raw)
+    source = replace(ingested.source, classification="Reference only", service_date="2026-09-02",
+                     facility=profile.facilities[0].key, captions=(), selected_pages=(1, 2))
+    source = replace(source, client_page_reviews=tuple(
+        (n, page_fingerprint(source, n)) for n in (1, 2)))
+    content_ = replace(ingested, source=source)
+    block, = sources.prepare_pages(profile, (content_,), ((source.id, "utility_analysis", 1),))
+    omitted = replace(block, source="Omit")
+    app = AppTest.from_string('''
+import streamlit as st
+from app.monthly_report_upload_ui import render_uploads
+from app.monthly_report_ui import _field
+st.session_state['returned'] = render_uploads(
+    st.session_state['profile'], st.session_state['period'], 'retained_test', _field,
+    attached_blocks=st.session_state['blocks'])
+''', default_timeout=30)
+    app.session_state["profile"] = profile
+    app.session_state["period"] = ReportPeriod(2026, 9)
+    app.session_state["retained_test_evidence"] = (content_,)
+    app.session_state["blocks"] = {omitted.key: omitted}
+    app.run()
+    assert not app.exception
+    add = next(b for b in app.button if b.label == "Add selected pages and tables to report")
+    assert not add.disabled
+    add.click().run()
+    assert not app.exception
+    _, additions, _ = app.session_state["returned"]
+    assert "utility_analysis" not in additions
+    assert set(additions) == {"improvements"}

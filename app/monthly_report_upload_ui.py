@@ -622,7 +622,7 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
     # Keep the existing optional, source-level override. Without an explicit
     # override the *individual page heading* may route a mixed PDF to more than
     # one section; review, omissions and actual existing ownership still win.
-    from app.monthly_report_auto_page_routing import route_pages
+    from app.monthly_report_auto_page_routing import batch_destinations, route_pages
     from app.monthly_report_section_uploads import included_pages
     from collections import defaultdict
     destinations = []
@@ -697,9 +697,9 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
     by_source = defaultdict(list)
     for choice in choices:
         by_source[choice.source_id].append(choice)
-        if (choice.action in {"ready", "review", "retained"} and choice.destination
-                and not (choice.source_id in section_page_owners and choice.destination == "water_reports")):
-            destinations.append((choice.source_id, choice.destination, choice.page))
+    # Retained pages already belong to the report (even in an omitted
+    # section); only new additions are prepared and merged.
+    destinations.extend(batch_destinations(choices, section_page_owners))
     for filename, identity, _ in route_controls:
         decisions = by_source[identity]
         grouped = defaultdict(list)
