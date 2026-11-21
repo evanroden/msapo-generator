@@ -326,3 +326,111 @@ the `monthly-preview-latency-capped` and
 the `a88-backend-comparison.json` and `a88-browser-comparison.json`, and
 cgroup inspect/logs. No renderer, scheduling, client data, source retention,
 production resources or hosting billing plan are changed by this experiment.
+
+## A89 — Render versus Azure attribution without cutover (17 November 2026)
+
+This comparison is a **read-only assessment**, not a hosting change. Repository
+issues #270, #491, and #941 stay open. The existing
+'qa_monthly_preview_latency_e2e.py --part sources|native' is the workload
+source of truth; do not add a special faster case for one host. It writes to a
+fresh temporary namespace, not the application's standing-data directory.
+Only run it where a disposable isolated process/container and the host's
+resource policy permit it. Do not run synthetic generation against an active
+customer workspace, change service replicas, copy private client reports, or
+switch the authoritative writer.
+
+**Control-plane baseline (17 Nov, observation only):** Render's service
+metadata showed one Oregon Docker instance with a 1-vCPU, 2-GiB configured
+limit, deploying from main. Read-only deploy metadata showed its current
+build's commit, but neither Render's deploy status nor GitHub's main
+SHA independently establishes which build a browser session receives.
+Contemporaneous Render CPU/memory samples were idle/low-usage and HTTP
+latency samples were unavailable. The Azure served build, active revision,
+region, replica count and CPU/RAM limits were **not independently verified
+in this A89 run**. The private Azure identifiers, credentials, endpoints,
+revision IDs, and container diagnostics must stay outside this public repo.
+In particular, do not infer that Azure is slower or faster from these facts.
+
+### Reproducible, synthetic-only side-by-side control
+
+1. Read deployment/build identity independently for each environment. On
+   Render, reconcile live deploy status and its commit with About's served
+   'APP_GIT_COMMIT'; on Azure, reconcile About with the active Container Apps
+   revision/image and the reported commit. Record the current writer
+   separately. If any of these disagree, mark identity unverified; don't
+   silently substitute main or a registry's newest tag.
+2. In an **isolated** container built from a pinned SHA, run the existing
+   '--part sources' and '--part native' commands via
+   'scripts/qa_monthly_host_deterministic.py' in separate fresh processes
+   at identical '--memory=512m --memory-swap=512m --cpus=0.5' limits with
+   'RESOURCE_REQUIRE_512_MB=1' and 'RESOURCE_REQUIRE_HALF_CPU=1'.
+   Capture both JSON files, the exact image/SHA and nonsecret platform
+   resource metadata. Repeat using the same pinned image and limits on the
+   other host *only if permitted*. The application/renderer image, dependency
+   versions and generated input hashes must match. The A89 runner preserves
+   the existing benchmark work path but replaces synthetic noise randomness,
+   DOCX ZIP timestamps and PDF trailer IDs with deterministic equivalents
+   inside its disposable process only. For naturally different
+   1-vCPU/2-GiB or other host limits, run a second separate equal-limit
+   control before interpreting the observed host configuration.
+3. Bundle each host's **synthetic-only** receipts as JSON. The two names below
+   refer to private **local files**, never production endpoints:
+
+   ~~~json
+   {
+     "synthetic_only": true,
+     "execution": "isolated",
+     "served_commit": "<40-character pinned and independently checked SHA>",
+     "region": "<general nonsecret region, or omit>",
+     "service_resource_verified": false,
+     "sources": "<replace this string with parsed backend-sources.json object>",
+     "native": "<replace this string with parsed backend-native.json object>"
+   }
+   ~~~
+
+   The input's 'served_commit' is checked against **both benchmark receipt**
+   commits. An operator must independently verify it against the actual
+   served build before claiming served acceptance. Use 'served_synthetic'
+   only when the workload genuinely ran on the relevant served environment
+   in isolation; use 'isolated' for CI/disposable Docker. Set
+   'service_resource_verified=true' only with independently captured
+   control-plane evidence; this is a *declaration*, not remote attestation.
+   Private identifiers and host URLs should be omitted entirely.
+4. Compare the files without making network or data-store calls:
+
+   ~~~sh
+   python scripts/qa_monthly_host_comparison.py \
+     --render /private/render-synthetic.json \
+     --azure /private/azure-synthetic.json \
+     --output /private/host-comparison.json
+   ~~~
+
+   Exit 0 means matching verified *receipt contents*, not causal proof;
+   exit 1 means a confounder; exit 2 means missing/malformed/unsafe receipt.
+   The tool shows per-case **five-sample** cold/warm median/min/max times,
+   native no-reuse/reuse medians, exact commit and limits, and reported RSS.
+   It rejects OOM-tainted cases, missing/duplicate workloads, stale commit
+   receipts, absent native control and mismatched page/raster identities.
+   Output whitelists only timing, build and resource fields: unrelated fields
+   in the private input are never copied to its summary.
+5. Keep HTTP client/network/first-paint metrics **separate** from the
+   synthetic Python timing boundary. If either host's request metrics lack
+   sufficient samples, report no median rather than inventing one.
+   CPU quota, RAM, deployment state, region, image digest and active writer
+   are independent variables; do not label different-build/different-limit
+   results a software or platform regression. An identical artifact on two
+   hosts may still differ because of cold starts, noisy neighbors, storage,
+   concurrency or network conditions. The comparison never measures user
+   clicks, browser paint or real reports.
+
+**Decision rule:** Do not raise the hosting plan or change minimum replicas
+from an idle control-plane sample. If equal-image, equal-limit, equal-fixture
+cold and warm distributions show CPU saturation, evaluate a separately
+authorized 1-vCPU/2-GiB versus 0.5-vCPU/512-MiB capacity experiment, with
+per-session RSS and queue/Office child CPU included. If idle latency remains
+high, isolate startup, disk/LibreOffice, preview raster, network, and browser
+decode before spending. Minimum replicas help measured cold starts, not
+slow conversion; a background-worker queue helps only if bounded queue
+delay/concurrency is the measured bottleneck. No billing, replica, deployment,
+production-write, or Azure cutover configuration changes are authorized by
+this evidence.
