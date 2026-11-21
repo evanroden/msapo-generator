@@ -48,6 +48,22 @@ def canonical_docx(raw):
     return result.getvalue()
 
 
+def stable_pdf_bytes(build, *, attempts=20):
+    """Return PDF bytes whose random trailer ID canonical_pdf can fix in place.
+
+    MuPDF writes each /ID string in its shorter form: hex for most random
+    identifiers, but a literal string, whose length varies, for roughly one
+    save in eighty. Only the hex pair has the fixed byte length that
+    canonical_pdf replaces without moving any xref offset, so regenerate
+    (every save draws a fresh ID) until that form appears.
+    """
+    for _ in range(attempts):
+        raw = build()
+        if len(_ID.findall(raw)) == 1:
+            return raw
+    raise ValueError("Synthetic PDF must contain exactly one trailer ID pair")
+
+
 def canonical_pdf(raw):
     """Remove only PyMuPDF's random trailer identifier at fixed byte length."""
     def replace(match):
@@ -78,7 +94,8 @@ def install_synthetic_patches():
     DocumentClass.save = stable_save
     from scripts import qa_monthly_preview_latency_e2e as qa
     original_pdf = qa._pdf
-    qa._pdf = lambda *args, **kwargs: canonical_pdf(original_pdf(*args, **kwargs))
+    qa._pdf = lambda *args, **kwargs: canonical_pdf(
+        stable_pdf_bytes(lambda: original_pdf(*args, **kwargs)))
     return qa
 
 

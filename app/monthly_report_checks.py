@@ -8,7 +8,6 @@ from dataclasses import dataclass, replace
 from datetime import date
 
 from app.monthly_report_content_policy import (
-    contains_price,
     contains_private_contact,
     schema_price_columns,
     table_has_pricing,
@@ -22,6 +21,9 @@ from app.monthly_report_model import (
     used_source_ids,
 )
 from app.monthly_report_page_reference import page_identity
+from app.monthly_report_financial_policy import (
+    financial_output_gate, OUTPUT_PRICE_BLOCK, OUTPUT_UNREADABLE_BLOCK,
+)
 
 
 @dataclass(frozen=True)
@@ -266,7 +268,6 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                     tuple(picture_target(draft, block, n) for n in pending_pictures)))
             if block.asset_hashes:
                 from app.monthly_report_asset_review import asset_context
-                from app.monthly_report_content_policy import page_allowed
                 source_index = {s.id: s for s in draft.sources}
                 image_references = {reference for n in range(len(block.asset_hashes)) for reference in asset_context(block, n)}
                 for reference in block.references:
@@ -283,18 +284,27 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                         page_captions = tuple(block.asset_captions[index] if index < len(block.asset_captions) else ""
                                               for index in range(len(block.asset_hashes))
                                               if reference in asset_context(block, index))
-                        if page not in source.selected_pages or not 1 <= page <= len(source.page_texts) or not page_allowed(source, page, profile=draft.profile, destination=block.key, output_captions=page_captions):
+                        decision = financial_output_gate(
+                            source=source, page=page, profile=draft.profile,
+                            destination=block.key, output_captions=page_captions)
+                        if page not in source.selected_pages or not decision.allowed:
                             from app.monthly_report_mbcx_financial_pages import has_financial_page_review
-                            checks.append(ReportCheck("financial_page" if has_financial_page_review(source, page) else "client_source_page", f"Remove or review page {page} of {source.filename} in this section. Its current selection is not approved for the client report.", True, block.key,
-                                tuple(picture_target(draft, block, n, source=source, page=page)
-                                      for n in range(len(block.asset_hashes))
-                                      if reference in asset_context(block, n))))
+                            targets = tuple(picture_target(draft, block, n, source=source, page=page)
+                                            for n in range(len(block.asset_hashes))
+                                            if reference in asset_context(block, n))
+                            checks.append(ReportCheck("financial_page" if has_financial_page_review(source, page) else "client_source_page", f"Remove or review page {page} of {source.filename} in this section. Its current selection is not approved for the client report.", True, block.key, targets))
+                            # Section preview intentionally tolerates incomplete
+                            # ordinary page selection, never detected prices or
+                            # an unreadable source raster without page review.
+                            if decision.reason in (OUTPUT_PRICE_BLOCK, OUTPUT_UNREADABLE_BLOCK):
+                                checks.append(ReportCheck("pricing", decision.reason,
+                                                          True, block.key, targets))
             for table in block.extra_tables:
                 month_labels = _annual_work_order_month_cells(block.key, table)
                 texts.extend((block.key, cell, None, (r, c) in month_labels)
                              for r, row in enumerate((table.columns, *table.rows))
                              for c, cell in enumerate(row))
-                if table_has_pricing(table.columns, table.rows):
+                if not financial_output_gate(table_pricing=table_has_pricing(table.columns, table.rows)).allowed:
                     checks.append(ReportCheck("pricing", "Remove pricing or clarify ambiguous total rows in the client table.", True, block.key))
                 if any(any(i < len(r) and r[i].strip() for r in table.rows)
                        for i in schema_price_columns(table.columns, table.rows)):
@@ -303,6 +313,11 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
     for block in draft.blocks:
         if block.key in layout_keys and block.source != "Omit":
             texts.append((block.key, block.text, block))
+            from app.monthly_report_correction_targets import picture_target
+            texts.extend((block.key, caption, None, False,
+                          (picture_target(draft, block, index),))
+                         for index, caption in enumerate(block.asset_captions)
+                         if index < len(block.asset_hashes))
             if not block.reviewed:
                 from app.monthly_report_ai_correction_targets import paragraph_target
                 checks.append(ReportCheck("review", f"Review the AI draft: {block.key}.", True, block.key,
@@ -356,7 +371,9 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                              if index < len(block.asset_hashes))
                 texts.extend((spec.key, cell) for row in block.rows for cell in row)
                 if block.rows:
-                    if table_has_pricing(tuple(c.title for c in spec.columns), block.rows, work_orders=spec.type == "work_order_grid"):
+                    if not financial_output_gate(table_pricing=table_has_pricing(
+                            tuple(c.title for c in spec.columns), block.rows,
+                            work_orders=spec.type == "work_order_grid")).allowed:
                         checks.append(ReportCheck("pricing", "Remove pricing or clarify ambiguous total rows in the client table.", True, spec.key))
                     texts.extend((spec.key, col.title) for col in spec.columns)
                     if any(any(i < len(r) and r[i].strip() for r in block.rows)
@@ -379,7 +396,7 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                 "text_character",
                 f"Remove unsupported text characters ({codes}) from {key.replace('_', ' ')} before creating the report.",
                 True, key, correction_targets))
-        if contains_price(text):
+        if not financial_output_gate(text=text).allowed:
             checks.append(ReportCheck("pricing", f"Remove pricing from {key.replace('_', ' ')}. Client reports cannot contain prices.", True, key, correction_targets))
         # Preserve deliberate human edits for correction rather than silently
         # deleting them. Official contact/contract identity sections have their
