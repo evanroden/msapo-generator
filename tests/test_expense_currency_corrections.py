@@ -93,7 +93,9 @@ def ancestry(app, *, kind, text):
 @pytest.mark.parametrize('kind,text', [
     ('button', 'Remove this receipt'),
     ('button', 'Try reading this receipt again'),
-    ('error', 'Receipt currency appears to be'),
+    # U11 leads with the action; the currency notice now reads
+    # 'Enter approved U.S.-dollar amounts ... The receipt currency appears to be ...'.
+    ('error', 'receipt currency appears to be'),
 ])
 def test_receipt_corrections_are_inside_the_editor_not_compact_hidden_preview(monkeypatch, tmp_path, kind, text):
     app = make_app(monkeypatch, tmp_path, error=True)

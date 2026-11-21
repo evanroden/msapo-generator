@@ -1924,7 +1924,7 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
     skipped = sum(len(c.source.page_texts) for c in scoped) - len(eligible)
     if skipped:
         st.caption(f"{skipped} source page(s) are not sent to the document reader: "
-                   "already accepted, native mapped, different section, "
+                   "already accepted, native mapped, hidden worksheet, different section, "
                    "unrelated site/month or awaiting destination correction. "
                    "Originals remain available.")
     scoped = tuple(c for c in scoped if any((c.source.id, n) in eligible
