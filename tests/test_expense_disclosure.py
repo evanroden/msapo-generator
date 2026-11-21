@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 RRH = "Rochester Regional Health"
 TOKEN = hashlib.sha256(RRH.encode("utf-8")).hexdigest()[:10]
 
-_COLLAPSED_MARKER = "Every detail below stays editable"
+_COLLAPSED_MARKER = "Open this panel to review or change any detail"
 
 # Every control the step-2 block owns.
 _TEXT_FIELDS = (

@@ -181,7 +181,7 @@ def receipt_limit(browser, url):
             uploader.set_input_files({"name": f"synthetic-{abs(delta)}-{'under' if accepted else 'over'}.pdf",
                                       "mimeType": "application/pdf", "buffer": payload})
             if accepted:
-                expect(page.get_by_text(re.compile(r"3 unique receipts ready for review"))).to_be_visible(timeout=90000)
+                expect(page.get_by_text(re.compile(r"Review 3 unique receipts\."))).to_be_visible(timeout=90000)
                 record(f"Receipt: native limit minus one byte ({limit - 1:,} bytes) accepted in actual browser uploader")
             else:
                 # The native error is produced by Streamlit before the app receives bytes.
@@ -189,7 +189,7 @@ def receipt_limit(browser, url):
                 # (?i): Playwright passes the pattern to JavaScript, which rejects it).
                 error = page.get_by_text(re.compile(r"File must be 15(\.0)?\s*MB or smaller", re.IGNORECASE))
                 expect(error.first).to_be_visible(timeout=45000)
-                expect(page.get_by_text(re.compile(r"3 unique receipts ready for review"))).to_be_visible()
+                expect(page.get_by_text(re.compile(r"Review 3 unique receipts\."))).to_be_visible()
                 record(f"Receipt: native limit plus one byte ({limit + 1:,} bytes) rejected with visible native size error")
             page.screenshot(path=str(OUT / ("receipt-under-limit.png" if accepted else "receipt-over-limit.png")), full_page=False)
         assert not errors and not external, (errors, external)
