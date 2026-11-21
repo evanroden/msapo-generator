@@ -4,6 +4,10 @@ on:
   pull_request:
     paths:
       - 'scripts/qa_monthly_preview_latency_e2e.py'
+      - 'scripts/qa_monthly_host_deterministic.py'
+      - 'scripts/qa_monthly_host_comparison.py'
+      - 'tests/test_qa_monthly_host_deterministic.py'
+      - 'tests/test_qa_monthly_host_comparison.py'
       - 'app/monthly_report_preview.py'
       - 'app/monthly_report_preview_store.py'
       - 'app/monthly_report_section_assembly_cache.py'
@@ -23,6 +27,8 @@ on:
     branches: [main]
     paths:
       - 'scripts/qa_monthly_preview_latency_e2e.py'
+      - 'scripts/qa_monthly_host_deterministic.py'
+      - 'scripts/qa_monthly_host_comparison.py'
       - 'scripts/qa_monthly_preview_browser_latency.py'
       - '.github/workflows/monthly-preview-latency.yml'
 
@@ -49,7 +55,7 @@ jobs:
               --env RESOURCE_REQUIRE_512_MB=1 \
               --env RESOURCE_REQUIRE_HALF_CPU=1 \
               --env ANTHROPIC_API_KEY=test-key-not-used \
-              --entrypoint python msapo-491-latency scripts/qa_monthly_preview_latency_e2e.py --part "$part"
+              --entrypoint python msapo-491-latency scripts/qa_monthly_host_deterministic.py --part "$part"
             test "$(docker inspect --format='{{.State.OOMKilled}}' "msapo-491-latency-$part")" = false
           done
       - name: Copy collected measurements even when a later check fails
