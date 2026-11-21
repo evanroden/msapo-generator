@@ -198,7 +198,13 @@ class PreviewStore:
             return tuple(result)
 
     def discard_owner_prefix(self, prefix):
-        """Expire only a named isolated tester's own cached pages."""
+        """Expire one complete QA namespace, never a neighboring owner/site."""
+        # Only reset_scope uses this API. Require a complete QA owner boundary
+        # (qa:<scope>:), not a potentially shared string prefix.
+        if (not isinstance(prefix, str) or not prefix.startswith('qa:')
+                or not prefix.endswith(':') or prefix.count(':') != 2
+                or not prefix[3:-1]):
+            raise ValueError('A complete isolated preview owner scope is required.')
         with self._lock:
             for key, item in tuple(self._files.items()):
                 if item.owner.startswith(prefix):
