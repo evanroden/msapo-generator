@@ -95,7 +95,7 @@ def test_xlsx_missing_formula_cache_and_hidden_sheet_are_explicit(context):
     assert parsed.tables[0].missing_formula_cache_cells == ("D2",)
     assert parsed.tables[1].hidden is True
     assert parsed.tables[0].rows[0][3] == ""
-    assert any("without cached results" in notice for notice in parsed.source.notices)
+    assert any("without trusted cached results" in notice for notice in parsed.source.notices)
     assert any("Hidden worksheets" in notice for notice in parsed.source.notices)
     assert work_order_evidence(parsed, period, profile) == ()
     pending = review_spreadsheet(parsed, profile, period)
@@ -143,7 +143,7 @@ def test_cached_formula_result_is_read_not_executed(context):
     assert content.tables[0].rows[0][-1] == "2"
     assert content.tables[0].missing_formula_cache_count == 0
     assert review_spreadsheet(content, profile, period).ready_for_inclusion
-    assert not any("without cached results" in notice for notice in content.source.notices)
+    assert not any("without trusted cached results" in notice for notice in content.source.notices)
     assert sources.source_bytes(profile, content.source) == raw
 
 

@@ -64,8 +64,8 @@ class SourceTable:
     name: str
     columns: tuple[str, ...]
     rows: tuple[tuple[str, ...], ...]
+    # XLSX review provenance; CSV and legacy cache tables use safe defaults.
     hidden: bool = False
-    # Missing cached results, not formula expressions: never calculate formulas.
     missing_formula_cache_count: int = 0
     missing_formula_cache_cells: tuple[str, ...] = ()
 
@@ -308,7 +308,7 @@ def _email(raw: bytes) -> tuple[str, tuple[tuple[str, bytes], ...], tuple[str, .
     text = body.get_content() if body else ""
     if body and body.get_content_type() == "text/html":
         text = _plain_html(text)
-    headers = "\n".join(f"{'Message date' if key == 'Date' else key}: {message.get(key, '')}" for key in ("Subject", "Date", "From"))
+    headers = "\n".join(f"{'Message date' if key == 'Date' else key}: {message.get(key, '')}" for key in ("Subject", "Date"))
     attachments, notices = [], []
     def direct_parts(part):
         # walk() descends through message/rfc822 attachments even when its
@@ -328,7 +328,16 @@ def _email(raw: bytes) -> tuple[str, tuple[tuple[str, bytes], ...], tuple[str, .
         if filename:
             if len(attachments) >= MAX_SOURCES:
                 raise ValueError("Too many email attachments; split this message before processing.")
-            payload = item.get_payload(decode=True) or b""
+            try:
+                payload = item.get_payload(decode=True) or b""
+            except (ValueError, OSError, LookupError, UnicodeError):
+                # Keep one placeholder in the queue so the next attachment
+                # retains its exact ordinal and gets processed independently.
+                payload = b""
+                notices.append(f"Email attachment {len(attachments) + 1} could not be decoded; save that item separately.")
+            if item.defects:
+                payload = b""
+                notices.append(f"Email attachment {len(attachments) + 1} has invalid MIME encoding; save that item separately.")
             attachments.append((Path(filename.replace("\\", "/")).name, payload))
     return headers + "\n\n" + str(text), tuple(attachments), tuple(notices)
 
@@ -358,18 +367,29 @@ def _msg(raw: bytes) -> tuple[str, tuple[tuple[str, bytes], ...], tuple[str, ...
                 text = _plain_html(html.decode("utf-8", errors="replace"))
             else:
                 notices.append("MSG has no readable plain/HTML body. Review the original or paste its text; compressed RTF is not executed.")
-        text = "Subject: " + string([], "0037") + "\nSender: " + string([], "0C1A") + "\n\n" + text
+        text = "Subject: " + string([], "0037") + "\n\n" + text
         attachments = []
         folders = sorted({p[0] for p in paths if p[0].startswith("__attach_version1.0_")})
-        for folder in folders:
+        for index, folder in enumerate(folders, 1):
             if len(attachments) >= MAX_SOURCES:
                 raise ValueError("Too many MSG attachments; split this message before processing.")
-            payload = read([folder, "__substg1.0_37010102"])
-            filename = string([folder], "3707") or string([folder], "3704")
+            filename = ""
+            try:
+                filename = string([folder], "3707") or string([folder], "3704")
+                payload = read([folder, "__substg1.0_37010102"])
+            except (ValueError, OSError, LookupError, UnicodeError):
+                # One defective attachment property must not discard the
+                # envelope or any preceding/following valid siblings.
+                notices.append(f"MSG attachment {index} could not be read; save that item separately from the original.")
+                attachments.append((Path(filename.replace("\\", "/")).name if filename else
+                                    f"unreadable-attachment-{index}.msg", b""))
+                continue
             if payload and filename:
                 attachments.append((Path(filename.replace("\\", "/")).name, payload))
             else:
-                notices.append("An embedded MSG object could not be read as a file attachment; review it in the original.")
+                notices.append(f"MSG attachment {index} has no readable file data or name; review it in the original.")
+                attachments.append((Path(filename.replace("\\", "/")).name if filename else
+                                    f"unreadable-attachment-{index}.msg", b""))
         return text, tuple(attachments), tuple(notices)
 
 
@@ -549,76 +569,71 @@ def _spreadsheet(raw: bytes, suffix: str) -> tuple[SourceTable, ...]:
                 text = raw.decode("cp1252")
         return (_csv_table(text),)
     from app.monthly_report_xlsx_currency import currency_evidence_value, preserve_currency_number_types
-    # Bound ZIP/XML before openpyxl reads shared strings or worksheet dimensions.
+    # Enforce compressed-package and expanded-part budgets before either
+    # read-only workbook view decodes XML or shared strings.
     from zipfile import ZipFile
-    with ZipFile(BytesIO(raw)) as z:
+    try:
+        archive = ZipFile(BytesIO(raw))
+    except BadZipFile as exc:
+        raise ValueError("Workbook is not a valid XLSX package. Export a fresh XLSX or CSV copy.") from exc
+    with archive as z:
         infos = z.infolist()
-        if len({i.filename for i in infos}) != len(infos):
+        names = [part.filename for part in infos]
+        if len(set(names)) != len(names):
             raise ValueError("Workbook contains duplicate package parts. Export a fresh XLSX or CSV copy.")
+        if (any(name.startswith("/") or "\\" in name or ".." in name.split("/") for name in names)
+                or any(part.flag_bits & 1 for part in infos)
+                or any("vbaproject" in name.casefold() for name in names)):
+            raise ValueError("Workbook has unsafe package parts. Export a macro-free XLSX copy.")
         if len(infos) > MAX_WORKBOOK_PARTS:
             raise ValueError(f"Workbook exceeds {MAX_WORKBOOK_PARTS:,} package parts. Upload the required sheets separately.")
-        if sum(i.file_size for i in infos) > MAX_WORKBOOK_BYTES:
+        if sum(part.file_size for part in infos) > MAX_WORKBOOK_BYTES:
             raise ValueError(f"Expanded workbook exceeds the {byte_limit_label(MAX_WORKBOOK_BYTES)} safe parsing budget. Upload the required sheets separately.")
-        if any(i.file_size > MAX_WORKBOOK_PART_BYTES for i in infos):
+        if any(part.file_size > MAX_WORKBOOK_PART_BYTES for part in infos):
             raise ValueError(f"A workbook part exceeds the {byte_limit_label(MAX_WORKBOOK_PART_BYTES)} safe parsing budget. Export the required cells as CSV or a smaller workbook.")
-    # Data-only loading cannot tell a genuinely blank cell from a formula that
-    # lacks a saved result. Probe bounded XML for formulas before opening a
-    # separate lazy formula view; ordinary formula-free files retain one read.
-    with ZipFile(BytesIO(raw)) as z:
-        has_formulas = any(
-            re.search(rb"<(?:[A-Za-z_][A-Za-z0-9_.-]*:)?f(?:\s|>)", z.read(part.filename))
-            for part in z.infolist()
-            if part.filename.startswith("xl/worksheets/") and part.filename.endswith(".xml")
-        )
+    workbook = formula_workbook = None
     try:
+        # Openpyxl never evaluates formulas. A separate read-only formula view
+        # identifies which blank/error values are NOT trusted cached results.
         workbook = load_workbook(BytesIO(raw), read_only=True, data_only=True, keep_links=False)
-    except (XMLParseError, XMLSyntaxError) as exc:
-        raise ValueError("Workbook XML could not be read. Export a fresh XLSX or CSV copy.") from exc
-    except TypeError as exc:
-        raise ValueError("Workbook structure could not be read. Export a fresh XLSX or CSV copy.") from exc
-    formula_workbook = None
-    try:
+        formula_workbook = load_workbook(BytesIO(raw), read_only=True, data_only=False, keep_links=False)
         if len(workbook.worksheets) > MAX_WORKSHEETS:
             raise ValueError(f"Workbook exceeds {MAX_WORKSHEETS:,} worksheets; upload the required sheets separately.")
         preserve_currency_number_types(workbook)
-        if has_formulas:
-            formula_workbook = load_workbook(
-                BytesIO(raw), read_only=True, data_only=False, keep_links=False)
         tables, total = [], 0
-        for sheet_index, sheet in enumerate(workbook.worksheets):
-            if sheet.max_row and sheet.max_row > MAX_TABLE_ROWS or sheet.max_column and sheet.max_column > 200:
+        for sheet, formula_sheet in zip(workbook.worksheets, formula_workbook.worksheets):
+            if (sheet.max_row and sheet.max_row > MAX_TABLE_ROWS
+                    or sheet.max_column and sheet.max_column > 200
+                    or (sheet.max_row or 0) * (sheet.max_column or 0) > MAX_TABLE_CELLS):
                 raise ValueError("Worksheet dimensions exceed the review budget.")
+            if total + (sheet.max_row or 0) * (sheet.max_column or 0) > MAX_TABLE_CELLS:
+                raise ValueError("Workbook cells exceed the total review budget.")
             missing, missing_count = [], 0
 
-            def stored_rows():
+            def records():
                 nonlocal missing_count
-                cached_rows = sheet.iter_rows()
-                if formula_workbook is None:
-                    for row in cached_rows:
-                        yield tuple(currency_evidence_value(cell.value, cell.number_format) for cell in row)
-                    return
-                formula_rows = formula_workbook.worksheets[sheet_index].iter_rows()
-                for row, expressions in zip(cached_rows, formula_rows):
-                    if len(row) != len(expressions):
-                        raise ValueError("Workbook formula inventory disagrees with stored cell positions.")
-                    for cell, expression in zip(row, expressions):
-                        if expression.data_type == "f" and cell.value is None:
+                for row, formula_row in zip(sheet.iter_rows(), formula_sheet.iter_rows()):
+                    converted = []
+                    for cell, original in zip(row, formula_row):
+                        value = cell.value
+                        if original.data_type == "f" and (value is None or cell.data_type == "e"):
                             missing_count += 1
                             if len(missing) < 16:
-                                missing.append(cell.coordinate)
-                    yield tuple(currency_evidence_value(cell.value, cell.number_format) for cell in row)
+                                missing.append(original.coordinate)
+                            value = None  # Never turn an uncached/error formula into a result.
+                        converted.append(currency_evidence_value(value, cell.number_format))
+                    yield tuple(converted)
 
             try:
-                table = _table(sheet.title, stored_rows())
+                table = _table(sheet.title, records())
             except ValueError as exc:
                 if str(exc) == "Spreadsheet has no nonempty rows.":
                     if missing_count:
-                        raise ValueError(
-                            f"Worksheet {sheet.title} contains uncached formulas but no readable rows. "
-                            "Recalculate and save it before importing.")
+                        places = ", ".join(missing)
+                        raise ValueError(f"Worksheet {sheet.title} has no trusted cached formula values ({places}); recalculate and save the original workbook.") from exc
                     continue
                 raise
-            total += len(table.rows) * len(table.columns)
+            total += (sheet.max_row or 0) * (sheet.max_column or 0)
             if total > MAX_TABLE_CELLS:
                 raise ValueError("Workbook cells exceed the total review budget.")
             tables.append(replace(table, hidden=sheet.sheet_state != "visible",
@@ -628,18 +643,14 @@ def _spreadsheet(raw: bytes, suffix: str) -> tuple[SourceTable, ...]:
             raise ValueError("Workbook has no nonempty worksheets.")
         return tuple(tables)
     except (XMLParseError, XMLSyntaxError) as exc:
-        # Read-only worksheets decode XML lazily, after the workbook loads.
-        # Contain only these parser failures, not arbitrary product SyntaxError.
         raise ValueError("Workbook XML could not be read. Export a fresh XLSX or CSV copy.") from exc
     except TypeError as exc:
-        # openpyxl can reject malformed typed properties when reading either
-        # the package or its lazy rows. Keep this decoder boundary separate
-        # from TypeError in product source mapping or persistence code.
         raise ValueError("Workbook structure could not be read. Export a fresh XLSX or CSV copy.") from exc
     finally:
         if formula_workbook is not None:
             formula_workbook.close()
-        workbook.close()
+        if workbook is not None:
+            workbook.close()
 
 
 def _cached_extraction(data, digest, suffix):
@@ -662,6 +673,10 @@ def _cached_extraction(data, digest, suffix):
         # The current serializer already validates this optional typed record.
         # It is neither text nor a sequence; legacy caches may omit it.
         if name == "financial_source_review":
+            continue
+        if name == "attachment_index":
+            if type(value) is not int or value < 0:
+                raise ValueError("Invalid attachment position in source cache.")
             continue
         if isinstance(value, tuple):
             sequence(record.get(name, []))
@@ -691,7 +706,8 @@ def _cached_extraction(data, digest, suffix):
         if (type(hidden) is not bool or type(missing_count) is not int
                 or not 0 <= missing_count <= MAX_TABLE_CELLS
                 or not isinstance(missing_cells, list) or len(missing_cells) > 16
-                or any(not isinstance(cell, str) or len(cell) > 16 for cell in missing_cells)):
+                or any(not isinstance(cell, str) or not re.fullmatch(r"[A-Z]{1,3}[1-9][0-9]{0,6}", cell)
+                       for cell in missing_cells)):
             raise ValueError("Invalid source extraction cache workbook provenance.")
         tables.append(SourceTable(table["name"], tuple(columns), tuple(tuple(row) for row in rows),
                                   hidden, missing_count, tuple(missing_cells)))
@@ -768,7 +784,7 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
                     and (not unicode_csv or data.get("csv_unicode_policy") == 1)
                     and (suffix != ".xlsx" or (type(data.get("xlsx_currency_policy")) is int
                                               and data["xlsx_currency_policy"] == 1
-                                              and data.get("xlsx_provenance_policy") == 1))
+                                               and data.get("xlsx_provenance_policy") == 1))
                     and (suffix != ".pdf" or (data.get("vendor_passage_policy", 0) >= 8
                                                and data.get("pdf_scan_policy", 0) >= 1))):
                 source = content.source
@@ -851,16 +867,16 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
             page_texts = ["\n".join(["\t".join(t.columns), *("\t".join(r) for r in t.rows)]) for t in tables]
             if suffix == ".xlsx":
                 notices.append("Workbook values use stored formula results; formulas are never executed. Missing cached results remain blank.")
-                hidden = [t.name for t in tables if t.hidden]
+                hidden = [table.name for table in tables if table.hidden]
                 if hidden:
-                    notices.append("Hidden worksheets retained for explicit review (not automatic work-order totals): "
+                    notices.append("Hidden worksheets retained for explicit review, not automatic totals: "
                                    + ", ".join(hidden) + ".")
-                missing_count = sum(t.missing_formula_cache_count for t in tables)
+                missing_count = sum(table.missing_formula_cache_count for table in tables)
                 if missing_count:
-                    examples = ", ".join(f"{t.name}!{cell}" for t in tables
-                                         for cell in t.missing_formula_cache_cells[:3])
-                    notices.append(f"{missing_count} formula cells without cached results "
-                                   f"({examples}); check the original workbook before accepting these rows.")
+                    examples = ", ".join(f"{table.name}!{cell}" for table in tables
+                                         for cell in table.missing_formula_cache_cells[:3])
+                    notices.append(f"{missing_count} formula cells without trusted cached results "
+                                   f"({examples}); recalculate and save the source workbook before accepting these cells.")
         elif suffix == ".docx":
             inspected = inspect_docx(path)
             for number, item in enumerate(inspected.items, 1):
@@ -936,10 +952,14 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
             label = Path(item.source.filename.replace("\\", "/")).name
             messages.append(f"Saved source unavailable: {label}. Replace it before generating dependent content.")
     text_size = sum(len(t) for c in existing for t in c.source.page_texts)
-    queue = [(name, raw, 0) for name, raw in files]
+    queue = [(name, raw, 0, "", 0) for name, raw in files]
     while queue:
-        filename, raw, depth = queue.pop(0)
+        filename, raw, depth, parent_digest, attachment_index = queue.pop(0)
         filename = Path(filename.replace("\\", "/")).name
+        parent = sources.get(parent_digest) if parent_digest else None
+        parent_label = parent.source.filename if parent else parent_digest[:12]
+        label = (f"{filename} (attachment {attachment_index} of {parent_label})"
+                 if parent_digest else filename)
         digest = hashlib.sha256(raw).hexdigest()
         if digest in sources:
             # Re-uploading the identical accepted original can repair a missing
@@ -957,25 +977,25 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
                     library._atomic_write(_path(profile, digest, existing_source.suffix), raw)
                     source_bytes(profile, existing_source)
                 except (ValueError, OSError):
-                    messages.append(f"Could not restore saved source: {filename}. The report still needs a valid copy.")
+                    messages.append(f"Could not restore saved source: {label}. The report still needs a valid copy.")
                     continue
-                messages.append(f"Saved source restored: {filename}. Prior reviews and report history are unchanged.")
+                messages.append(f"Saved source restored: {label}. Prior reviews and report history are unchanged.")
                 # Replace the size already counted for a damaged copy. Missing
                 # originals contribute zero until their successful restoration.
                 sizes += len(raw) - counted_sizes.get(digest, 0)
                 counted_sizes[digest] = len(raw)
             else:
-                messages.append(f"Duplicate skipped: {filename}")
+                messages.append(f"Duplicate skipped: {label}")
             continue
         if len(sources) >= MAX_SOURCES:
-            messages.append(f"Not read: {filename}. Report limit is {MAX_SOURCES:,} source files including attachments. Remove unused sources before adding more.")
+            messages.append(f"Not read: {label}. Report limit is {MAX_SOURCES:,} source files including attachments. Remove unused sources before adding more.")
             continue
         if sizes + len(raw) > MAX_REPORT_BYTES:
-            messages.append(f"Not read: {filename}. Report limit is {byte_limit_label(MAX_REPORT_BYTES)} of source files including attachments. Remove unused sources or use a smaller copy.")
+            messages.append(f"Not read: {label}. Report limit is {byte_limit_label(MAX_REPORT_BYTES)} of source files including attachments. Remove unused sources or use a smaller copy.")
             continue
         suffix = Path(filename).suffix.casefold()
         if suffix not in SUPPORTED or depth > 1:
-            messages.append(f"Not read: {filename}. Unsupported or nested attachment; retained in the original email.")
+            messages.append(f"Not read: {label}. Unsupported or nested attachment; retained in the original email.")
             continue
         path = _path(profile, digest, suffix)
         already_present = path.exists()
@@ -1007,18 +1027,23 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
                 reason = "The PDF is damaged or is not a valid PDF. Export a fresh copy and upload it again."
             else:
                 reason = str(exc)[:300]
-            messages.append(f"Not read: {filename}. {reason}")
+            messages.append(f"Not read: {label}. {reason}")
             continue
         except BaseException:
             # An unexpected fault is still raised (never hidden as a file
             # failure), but the upload it rejected must not stay on disk.
             _discard_rejected(path, cache, digest, already_present, existing_cache)
             raise
+        if parent_digest:
+            content = replace(content, source=replace(
+                content.source, attachment_parent_sha256=parent_digest,
+                attachment_index=attachment_index))
         sources[digest] = content
         sizes += len(raw)
         counted_sizes[digest] = len(raw)
         text_size += added
-        queue.extend((name, data, depth+1) for name, data in attachments)
+        queue.extend((name, data, depth + 1, digest, index)
+                     for index, (name, data) in enumerate(attachments, 1))
     return tuple(sources.values()), tuple(messages)
 
 

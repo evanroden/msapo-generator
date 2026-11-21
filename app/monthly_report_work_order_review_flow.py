@@ -450,6 +450,8 @@ def record_cross_source_decision(draft, bundle, binding, winner, *, expected_rev
 def reviewed_tables(draft, bundle, *, include_trades=False, skip_rows=(), allow_empty=False):
     """No partial insertion: every selected source group must be resolved."""
     _validate(draft, bundle)
+    if bundle["kind"] == "workorders" and bundle.get("grid_receipt"):
+        raise ValueError("This source already supplies the annual work-order grid. Remove its grid binding before adding a second row-derived total.")
     skipped = set(skip_rows)
     tables, identities = [], set()
     for group in bundle["groups"]:
@@ -465,7 +467,8 @@ def reviewed_tables(draft, bundle, *, include_trades=False, skip_rows=(), allow_
         for row in review.rows:
             if row.excluded:
                 continue
-            identity = (row.site, (row.work_order if bundle["kind"] == "workorders" else row.wo).casefold())
+            identity = ((row.site, row.work_date, row.work_order.casefold())
+                        if bundle["kind"] == "workorders" else (row.site, row.wo.casefold()))
             if identity in identities:
                 raise ValueError("Duplicate work-order identities across source groups need correction or explicit omission.")
             identities.add(identity)
@@ -515,6 +518,35 @@ def publish_bundle(draft, bundle, *, expected_revision, expected_block, include_
         if old not in remaining:
             raise ValueError("Previously included rows were edited or removed. Keep those edits; remove this review's remaining report tables before including a replacement.")
         remaining.remove(old)
+    # An annual grid from a different source may have counted these exact
+    # reviewed site/date/ID events without publishing a detailed row list.
+    # Do not let the list path publish those events a second time.
+    if bundle["kind"] == "workorders":
+        incoming_ids = {(row.site, row.work_date, row.work_order.casefold())
+            for group in bundle["groups"] if group["record"] and not group["omitted"]
+            for row in restored_group(bundle, group).rows if not row.excluded and not row.issues}
+        for raw in draft.source_row_reviews:
+            other = saved_receipt(raw)
+            if (other.get("kind") != "workorders"
+                    or other.get("source_id") == bundle["source_id"]
+                    or other.get("scope") != bundle["scope"]
+                    or not other.get("grid_receipt")):
+                continue
+            from app.monthly_report_rolling_workflow import validate_receipt
+            _, bound = validate_receipt(other["grid_receipt"])
+            if not any(table.reference in {item.reference for item in remaining}
+                       for table in bound):
+                continue
+            index = other["grid_receipt"]["group_index"]
+            if not 0 <= index < len(other["groups"]):
+                continue
+            group = other["groups"][index]
+            if group["record"] and not group["omitted"]:
+                grid_ids = {(row.site, row.work_date, row.work_order.casefold())
+                    for row in restored_group(other, group).rows
+                    if not row.excluded and not row.issues}
+                if incoming_ids & grid_ids:
+                    raise ValueError("Another source already publishes these work orders in annual grids. Compare the source rows before adding list totals.")
     result = draft
     decisions = {item["binding"]: item["winner"] for item in bundle.get("cross_source_decisions", [])}
     if bundle["kind"] == "workorders":

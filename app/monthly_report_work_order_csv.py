@@ -106,7 +106,7 @@ def work_order_evidence(content: SourceContent, period: ReportPeriod,
                 sites.setdefault(normalized, set()).add(facility_profile.key)
     for number, table in enumerate(content.tables, 1):
         if table.hidden:
-            continue  # Hidden worksheets require explicit row review; never auto-count.
+            continue  # A hidden sheet is never an automatic counted work order.
         wo, status, dated = (_column(table.columns, kind)
                              for kind in ("identity", "status", "date"))
         if None in (wo, status, dated):
