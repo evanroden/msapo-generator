@@ -109,6 +109,10 @@ def selected_issue_pages(draft):
                     f"Review page {number} of {source.filename} in Manage source files before emitting issue evidence. "
                     "Pricing, legal, signature, blank and unreviewed pages cannot be included.")
             label = f"{source.filename} · page {number}" + (" — " + caption if caption else "")
+            from app.monthly_report_financial_policy import financial_output_gate
+            decision = financial_output_gate(text=label)
+            if not decision.allowed:
+                raise ValueError(decision.reason)
             if re.search(r"[\x00-\x08\x0e-\x1b\x1f\ud800-\udfff\ufffe\uffff]", label):
                 raise ValueError(
                     f"Remove unsupported characters from the caption or filename of {source.filename} page {number}.")

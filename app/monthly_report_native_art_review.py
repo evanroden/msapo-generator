@@ -437,8 +437,11 @@ def make_native_art_review(inventory, *, actor, keep_native_ids, visually_review
     expected = tuple(item.original_id for item in inventory.occurrences)
     if not expected:
         _error('no native artwork needs a preservation record')
+    from app.monthly_report_financial_policy import financial_output_gate
+    suitability = financial_output_gate(artwork_reviewed=(
+        suitable_ids is not None and tuple(suitable_ids) == expected))
     if (tuple(keep_native_ids) != expected or tuple(visually_reviewed_ids) != expected
-            or suitable_ids is None or tuple(suitable_ids) != expected):
+            or not suitability.allowed):
         _error('every exact eligible occurrence requires preservation, inspection and visible-content suitability review')
     if (not isinstance(actor, str) or not actor.strip() or len(actor) > 120
             or any(ord(c) < 32 or ord(c) == 127 for c in actor)):
