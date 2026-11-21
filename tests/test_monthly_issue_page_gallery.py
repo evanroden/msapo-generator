@@ -182,16 +182,16 @@ def test_gallery_thumbnails_survive_rerenders_without_changing_sources(tmp_path,
     app, (alpha, beta), originals = setup_app(tmp_path, monkeypatch)
     before = app.session_state["draft"]
     first = next(uri for uri, caption in rendered if "page 1 · Selected" in caption)
-    assert first.startswith(("data:image/png;base64,", "data:image/jpeg;base64,"))
+    assert isinstance(first, bytes) and first.startswith((b"\x89PNG", b"\xff\xd8"))
     expected = sources.page_image(before.profile, sources.SourceContent(alpha), 1, preview=True)
-    assert b64decode(first.partition(",")[2]) == expected.data
+    assert first == expected.data
 
     rendered.clear()
     preview_button(app, "Preview alpha-equipment.pdf · page 1").click().run()
     assert not app.exception
     assert len([uri for uri, caption in rendered if "page 1" in caption]) >= 2
-    assert all(uri.startswith(("data:image/png;base64,", "data:image/jpeg;base64,"))
-               for uri, _ in rendered)
+    assert all(isinstance(raw, bytes) and raw.startswith((b"\x89PNG", b"\xff\xd8"))
+               for raw, _ in rendered)
     assert app.session_state["draft"] == before
     assert sources.source_bytes(before.profile, alpha) == originals[0]
     assert sources.source_bytes(before.profile, beta) == originals[1]
@@ -203,7 +203,7 @@ def test_unavailable_inline_preview_keeps_the_original_selection(tmp_path, monke
     def unavailable(_picture):
         raise ValueError("preview too large")
 
-    monkeypatch.setattr(gallery, "source_thumbnail_uri", unavailable)
+    monkeypatch.setattr(gallery, "source_thumbnail_bytes", unavailable)
     app, (alpha, beta), originals = setup_app(tmp_path, monkeypatch)
     before = app.session_state["draft"]
     preview_button(app, "Preview alpha-equipment.pdf · page 1").click().run()
