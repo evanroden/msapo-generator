@@ -23,6 +23,11 @@ def conversion_slot(*, wait_seconds=10):
     if getattr(_CONVERSION_LOCAL, 'active', False):
         yield
         return
+    from app import monthly_report_resource_scheduler as scheduler
+    if scheduler.parallel_enabled():
+        with _parallel_conversion_slot(wait_seconds=wait_seconds):
+            yield
+        return
     from app.office_conversion_admission import OfficeLaneBusy, conversion_lane
     from app import office_process
     from contextlib import ExitStack
@@ -122,6 +127,7 @@ _WORK_SLOT = (threading.Lock() if _WORK_CAPACITY == 1
 _ADMISSION_LOCK = threading.Lock()
 _ACTIVE_WORK = 0
 _WORK_LOCAL = threading.local()
+_PREVIEW_REQUEST_LOCAL = threading.local()
 _PRIORITY_LOCK = threading.Lock()
 _FOREGROUND_WAITING = 0
 _FOREGROUND_ACTIVE = 0
@@ -217,6 +223,16 @@ def preview_memory_guard():
     return getattr(_WORK_LOCAL, 'preview_guard', None) if getattr(_WORK_LOCAL, 'active', False) else None
 
 
+@contextmanager
+def preview_revision_guard(is_current):
+    """A worker's read-only revision test; never mutate an operator's draft."""
+    previous = getattr(_PREVIEW_REQUEST_LOCAL, 'is_current', None)
+    _PREVIEW_REQUEST_LOCAL.is_current = is_current
+    try:
+        yield
+    finally:
+        _PREVIEW_REQUEST_LOCAL.is_current = previous
+
 def _wait_for_review_slot(wait_seconds):
     """Reserve a short Review turn; final exports keep first claim.
 
@@ -249,6 +265,11 @@ def work_slot(*, preview=False, review=False, wait_seconds=130):
     global _FOREGROUND_WAITING, _FOREGROUND_ACTIVE
     if getattr(_WORK_LOCAL, 'active', False):
         yield
+        return
+    from app import monthly_report_resource_scheduler as scheduler
+    if scheduler.parallel_enabled():
+        with _parallel_work_slot(preview=preview, review=review, wait_seconds=wait_seconds):
+            yield
         return
     queue_started = time.monotonic()
     with span("job_queue"):
@@ -328,3 +349,90 @@ def work_slot(*, preview=False, review=False, wait_seconds=130):
             with _PRIORITY_LOCK:
                 _FOREGROUND_ACTIVE -= 1
         _WORK_SLOT.release()
+
+
+@contextmanager
+def _parallel_work_slot(*, preview, review, wait_seconds):
+    """Independent native assemblies on high-memory hosts only.
+
+    The legacy lock remains untouched on constrained and unconfigured hosts.
+    LO called from an assembly borrows its admitted heavy reservation.
+    """
+    from app.monthly_report_resource_scheduler import AdmissionUnavailable, lease
+    headroom = memory_headroom()
+    if preview and headroom is not None and headroom < PREVIEW_HEADROOM_BYTES:
+        raise RenderBusy('Preview is queued while the service is busy. Your edits are still here.')
+    priority = 'review' if review else 'visible' if preview else 'export'
+    timeout = min(wait_seconds, 10) if review else 0 if preview else wait_seconds
+    queue_started = time.monotonic()
+    try:
+        from contextlib import ExitStack
+        with ExitStack() as stack:
+            with span("job_queue"):
+                stack.enter_context(lease('heavy', priority=priority, wait_seconds=timeout,
+                                          headroom=memory_headroom,
+                                          is_current=getattr(_PREVIEW_REQUEST_LOCAL, 'is_current', None) if preview else None))
+            record_span("work_queue", time.monotonic() - queue_started)
+            _WORK_LOCAL.active = True
+            _WORK_LOCAL.preview_guard = _PreviewMemoryGuard(headroom) if preview else None
+            try:
+                if preview:
+                    _WORK_LOCAL.preview_guard()
+                yield
+            finally:
+                _WORK_LOCAL.preview_guard = None
+                _WORK_LOCAL.active = False
+    except AdmissionUnavailable as exc:
+        record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
+        raise RenderBusy(str(exc)) from exc
+
+
+@contextmanager
+def _parallel_conversion_slot(*, wait_seconds):
+    """Reserve A02 memory but use A01's authoritative Office mode/lanes."""
+    from contextlib import ExitStack
+    from app.monthly_report_resource_scheduler import AdmissionUnavailable, lease
+    from app.office_conversion_admission import OfficeLaneBusy, conversion_lane
+    from app import office_process
+
+    # A standalone PO/expense conversion also consumes a heavy reservation.
+    # Monthly assembly already holds its heavy lease.
+    own_heavy = not getattr(_WORK_LOCAL, 'active', False)
+    priority = 'visible' if preview_memory_guard() else 'export'
+    queue_started = time.monotonic()
+    try:
+        with ExitStack() as stack:
+            with span("job_queue"):
+                if own_heavy:
+                    stack.enter_context(lease('heavy', priority=priority,
+                                              wait_seconds=wait_seconds, headroom=memory_headroom))
+                # Always inside a heavy lease: the one above or the Monthly
+                # assembly's, which this thread already holds.
+                stack.enter_context(lease('conversion', priority=priority, nested=True,
+                                          wait_seconds=wait_seconds, headroom=memory_headroom,
+                                          is_current=getattr(_PREVIEW_REQUEST_LOCAL, 'is_current', None)
+                                          if preview_memory_guard() else None))
+                lane, parallel = stack.enter_context(conversion_lane(
+                    wait_seconds=wait_seconds, serial_lock=_SLOT,
+                    folder=_root() / 'render-jobs', memory_headroom=memory_headroom))
+            record_span("work_queue", time.monotonic() - queue_started)
+            office_process._OFFICE_MARKER_LOCAL.slot = lane
+            office_process._OFFICE_MARKER_LOCAL.serial = not parallel
+            try:
+                try:
+                    office_process.require_idle()
+                except office_process.OfficeCleanupPending as exc:
+                    raise RenderBusy(str(exc)) from exc
+                _CONVERSION_LOCAL.active = True
+                import gc
+                gc.collect()
+                if preview_memory_guard() is not None:
+                    _reclaim_preview_heap()
+                yield
+            finally:
+                _CONVERSION_LOCAL.active = False
+                del office_process._OFFICE_MARKER_LOCAL.slot
+                del office_process._OFFICE_MARKER_LOCAL.serial
+    except (AdmissionUnavailable, OfficeLaneBusy) as exc:
+        record_span("work_queue", time.monotonic() - queue_started, outcome="busy")
+        raise RenderBusy(str(exc)) from exc

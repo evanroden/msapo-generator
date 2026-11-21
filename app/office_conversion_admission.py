@@ -55,6 +55,12 @@ def _limits(root=Path('/sys/fs/cgroup')):
 
 def parallel_enabled():
     """Requires an explicit flag AND measured container capacity."""
+    # A02 must use these same .conversion-mode/.conversion-lock leases, not
+    # independently lock its own Office children during a rolling restart.
+    if os.environ.get('MSAPO_RENDER_PARALLEL') == '1':
+        from app import monthly_report_resource_scheduler as render_scheduler
+        if render_scheduler.parallel_enabled():
+            return True
     if os.environ.get('MSAPO_OFFICE_PARALLEL') != '1' or sys.platform != 'linux':
         return False
     limits = _limits()

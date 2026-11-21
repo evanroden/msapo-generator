@@ -10,6 +10,8 @@ import streamlit as st
 from app import monthly_report_library as library
 from app import monthly_report_section_assembly_cache as assembly_cache
 from app.monthly_report_render_jobs import RenderBusy
+from app import monthly_report_resource_scheduler as render_resources
+from app.monthly_report_render_jobs import preview_revision_guard
 from app.monthly_report_preview import (
     _section_scope, preview_page, preview_section, section_preview_fingerprint,  # noqa: F401 (tests patch preview_page here)
 )
@@ -23,11 +25,14 @@ PREVIEW_HEIGHT = 760
 # are bounded across all visitors by STORE, rather than once for each session.
 ORDERED_CACHE_BYTES = 256 * 1024
 DEBOUNCE_SECONDS = 1.5
-_PREVIEW_WORKER = ThreadPoolExecutor(max_workers=1, thread_name_prefix='report-preview')
-_PREVIEW_SLOT = BoundedSemaphore(1)
+# Two independent visible previews only on a measured/opted-in >=2 GiB host.
+# The existing one-worker/one-slot queue remains the 512 MiB default.
+_PREVIEW_CAPACITY = 2 if render_resources.parallel_enabled() else 1
+_PREVIEW_WORKER = ThreadPoolExecutor(max_workers=_PREVIEW_CAPACITY, thread_name_prefix='report-preview')
+_PREVIEW_SLOT = BoundedSemaphore(_PREVIEW_CAPACITY)
 
 
-def _build_preview_entry(draft, section_key, assets, title, owner=None):
+def _build_preview_entry(draft, section_key, assets, title, owner=None, is_current=None):
     def loader(ref):
         return assets.get(ref) or library.read_asset(draft.profile.contract, draft.profile.key, ref)
     try:
@@ -35,8 +40,13 @@ def _build_preview_entry(draft, section_key, assets, title, owner=None):
         # session-scoped reuse key. Library-backed assets are SHA-verified.
         asset_versions = tuple(sorted((ref, hashlib.sha256(raw).digest())
                                       for ref, raw in assets.items())) if owner else ()
-        with assembly_cache.owner_scope(owner, asset_versions):
-            preview = preview_section(draft, section_key, loader)
+        # The stale check is read-only. A replacement never revokes an
+        # already-running conversion or deletes an accepted last-good ticket.
+        with preview_revision_guard(is_current):
+            if is_current is not None and not is_current():
+                return {'busy': True}
+            with assembly_cache.owner_scope(owner, asset_versions):
+                preview = preview_section(draft, section_key, loader)
         ticket = STORE.put(owner or uuid4().hex, preview)
         return {'ticket': ticket, 'pages': ticket.pages}
     except RenderBusy:
@@ -145,6 +155,8 @@ def _advance_preview_queue(state):
     if ready is None or not _PREVIEW_SLOT.acquire(blocking=False):
         return
     fingerprint, draft, assets, title = state['queue'].pop(ready)
+    is_current = lambda: (state.get('wanted', {}).get(ready) == fingerprint
+                          and _is_visible(state, ready))
     try:
         # When the hidden QA workflow is active, the worker must inherit its
         # physical storage namespace. Ordinary live scheduling is unchanged.
@@ -153,10 +165,10 @@ def _advance_preview_queue(state):
             from contextvars import copy_context
             future = _PREVIEW_WORKER.submit(copy_context().run, _build_preview_entry,
                                             draft, ready, assets, title,
-                                            state.setdefault('owner', uuid4().hex))
+                                            state.setdefault('owner', uuid4().hex), is_current)
         else:
             future = _PREVIEW_WORKER.submit(_build_preview_entry, draft, ready, assets, title,
-                                            state.setdefault('owner', uuid4().hex))
+                                            state.setdefault('owner', uuid4().hex), is_current)
     except Exception:
         _PREVIEW_SLOT.release()
         state['cache'][ready] = {'fingerprint': fingerprint, 'error': 'The preview could not start. Your edits are still here.'}
@@ -261,17 +273,21 @@ def _retry_preview(prefix, section):
     _enqueue_visible(state, section)
 
 
-def _preview_status(*, pending=False, pages=0, stale=False, failed=False):
-    """One state per pane; a stale last-good image must never look current."""
+def _preview_status(*, pending=False, pages=0, stale=False, failed=False, phase=None):
+    """Do not claim a queued request is running or stale content is current."""
     if failed:
         return "Preview unavailable — retry"
     if stale:
-        return ("Showing older preview — latest changes not shown · Updating…"
-                if pending else
-                "Showing older preview — latest changes not shown · Retry preview")
+        if pending:
+            stage = "Queued…" if phase == "queued" else "Rendering…" if phase == "running" else "Updating…"
+            return "Showing older preview — latest changes not shown · " + stage
+        return "Showing older preview — latest changes not shown · Retry preview"
     if pages:
         return f"Current · {pages} page" + ("s" if pages != 1 else "")
-    return "Updating preview…" if pending else ""
+    if not pending:
+        return ""
+    return ("Queued for preview…" if phase == "queued" else
+            "Rendering preview…" if phase == "running" else "Updating preview…")
 
 
 def _scoped_callback(callback, *args):
@@ -295,6 +311,8 @@ def _render_ordered_preview(section_key, prefix, title):
     _enqueue_visible(state, section_key)
     _advance_preview_queue(state)
     pending = _pending(state, section_key)
+    phase = ("running" if state.get('running') and state['running'][0] == section_key
+             else "queued" if section_key in state['queue'] else None)
     entry = _current_entry(state, section_key)
     # The containing section and workspace reference already name this pane.
     # Keep its current/updating state in the viewer instead of adding another
@@ -302,7 +320,7 @@ def _render_ordered_preview(section_key, prefix, title):
     images, ticket = (), None
     stale = False
     error = ""
-    status = _preview_status(pending=pending)
+    status = _preview_status(pending=pending, phase=phase)
     if entry and entry.get('error'):
         error = entry['error']
     if entry and not entry.get('error'):
@@ -313,7 +331,7 @@ def _render_ordered_preview(section_key, prefix, title):
         if older and STORE.available(state['owner'], older.get('ticket')):
             ticket = older['ticket']
             stale = True
-            status = _preview_status(pending=pending, stale=True)
+            status = _preview_status(pending=pending, stale=True, phase=phase)
         elif older:
             _discard(state, state['last_good'].pop(section_key))
 

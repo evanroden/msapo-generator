@@ -308,6 +308,27 @@ the repository, compare `SMARTSHEET_FORM_URL`,
 `SMARTSHEET_FORM_FIELD_MAP_JSON`, `SMARTSHEET_URL_PREFILL_ENABLED`, and
 `SMARTSHEET_API_MODE` in both places.
 
+### Optional high-memory render concurrency
+
+Monthly native assembly and LibreOffice share bounded resource leases. The
+default (including the 512 MiB / 0.5 CPU Render service) is **one work slot
+and one conversion slot**, unchanged. To opt into two simultaneous heavy jobs
+on a separately approved, measured high-resource deployment, set
+`MSAPO_RENDER_PARALLEL=1`. This setting has no effect unless Linux cgroups
+report a **finite memory limit of at least 2 GiB and CPU quota/affinity of
+at least 2 CPUs**. Jobs still need sufficient live memory headroom and yield
+or request a retry under pressure. The flag does not change hosting plans,
+billable resources, upload limits, stored originals, output fidelity or the
+app's single-instance database requirements.
+
+Foreground exports outrank deliberate Review, visible previews outrank
+optional tasks, and equal-priority pending admissions are FIFO within their
+resource class. LibreOffice uses separate subprocesses, private profiles,
+output directories and crash markers; smaller hosts retain the original
+cross-process conversion lock. Queue and running labels are stage indicators,
+not estimated percentages. This scheduler does not authorize multiple app
+replicas against the existing SQLite/network storage.
+
 ## Input support
 
 The PO UI accepts PDF, TXT, PNG, JPEG, WebP, TIFF/TIF, BMP, and HEIC/HEIF/HIF up

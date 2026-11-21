@@ -6,10 +6,10 @@ import streamlit as st
 from app.monthly_report_render_jobs import RenderBusy
 
 
-def show_busy_retry():
+def show_busy_retry(message=None):
     from app.monthly_report_ui import preserve_report_draft_state
     preserve_report_draft_state(finalize=True)
-    st.info("Another report is being prepared. Your edits are still here. Retry shortly.")
+    st.info(message or "Another report is being prepared. Your edits are still here. Retry shortly.")
     st.button("Retry", key="report_capacity_retry")
 
 
@@ -25,6 +25,6 @@ def recover_render_busy(function):
                 # Includes saved-source reloads before section setup. This is
                 # only a same-session handoff, never global admission/proof.
                 return function(*args, **kwargs)
-        except RenderBusy:
-            show_busy_retry()
+        except RenderBusy as exc:
+            show_busy_retry(str(exc))
     return recover
