@@ -8,6 +8,7 @@ from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 
+import pytest
 from PIL import Image
 from streamlit.testing.v1 import AppTest
 
@@ -26,6 +27,14 @@ _FORBIDDEN = re.compile(
     r"|\b(?:Traceback|[a-zA-Z_][a-zA-Z0-9_]*(?:Error|Exception))\b",
     flags=re.IGNORECASE,
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_served_commit(monkeypatch):
+    # The About caption deliberately shows the served commit (see
+    # tests/test_public_build_status.py); keep this status scan hermetic.
+    monkeypatch.delenv("RENDER_GIT_COMMIT", raising=False)
+    monkeypatch.delenv("APP_GIT_COMMIT", raising=False)
 
 
 def _assert_no_internal_status(app: AppTest) -> None:
@@ -131,3 +140,29 @@ def test_external_status_details_do_not_display_internal_tokens():
     clean = safe_status_detail(raw)
     assert _FORBIDDEN.search(clean) is None
     assert "details omitted" in clean
+
+
+def test_missing_mileage_rate_keeps_the_travel_date_and_asks_for_the_rate(
+    monkeypatch, tmp_path
+):
+    # The travel date sets both the reimbursement rate and the date recorded
+    # on the report, so the fix for an unconfigured rate is adding the
+    # published rate, never choosing another date.
+    _configure_smartsheet(monkeypatch)
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    app = AppTest.from_file(ROOT / "run_web.py", default_timeout=30).run()
+    app.segmented_control[0].set_value("Expense reimbursement").run()
+    next(
+        toggle for toggle in app.toggle
+        if toggle.label == "Include reimbursable business mileage"
+    ).set_value(True).run()
+    next(
+        field for field in app.date_input if field.label == "Travel date *"
+    ).set_value(date(2027, 1, 2)).run()
+    _assert_no_internal_status(app)
+    errors = [str(element.value) for element in app.error]
+    rate_errors = [message for message in errors if "IRS business-mileage rate" in message]
+    assert rate_errors, errors
+    assert all("2027-01-02" in message for message in rate_errors)
+    assert all("Keep the actual travel date" in message for message in rate_errors)
+    assert not any("Enter a travel date" in message for message in rate_errors)

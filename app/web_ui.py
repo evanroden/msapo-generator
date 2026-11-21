@@ -1709,7 +1709,10 @@ def _render_footer(workflow: str = PURCHASE_WORKFLOW) -> None:
     )
     commit = runtime_commit()
     with st.expander("About"):
-        st.caption("Use the current app version for this request.")
+        # The served commit is deliberately public: owners and the live QA
+        # scripts read this exact caption to confirm which build is running
+        # (tests/test_public_build_status.py).
+        st.caption("Running code: " + (commit if commit else "build identifier unavailable"))
         if workflow == PURCHASE_WORKFLOW:
             field_with_help(st.button, "Load synthetic quote", key="load_synthetic_test",
                       help="Load a built-in example to explore quote review. This replaces the current browser draft without submitting a request.",
@@ -3086,7 +3089,8 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
         except Exception as exc:
             st.error(
                 "Use the Generate button again to create the MSAPO form PDF. "
-                "The package could not be created, and nothing was submitted."
+                "The package could not be created, and nothing was submitted. "
+                + safe_status_detail(exc)
             )
         else:
             st.session_state["scope_pdf_bytes"] = scope_pdf

@@ -1777,9 +1777,12 @@ def _render_mileage_entries(
         if travel_date is None:
             st.error("Enter the travel date to calculate mileage reimbursement.")
         elif rate is None:
+            # Keep the real travel date: it sets both the rate and the date on
+            # the report, so the only correct action is adding the published rate.
             st.error(
-                f"Enter a travel date with an available IRS business-mileage rate; "
-                f"no rate is configured for {travel_date:%Y-%m-%d}."
+                "Keep the actual travel date and ask the app administrator to add "
+                f"the published IRS business-mileage rate for {travel_date:%Y-%m-%d}; "
+                "no rate is configured for that date yet."
             )
         else:
             reimbursement = (parse_mileage(miles) or 0) * rate
