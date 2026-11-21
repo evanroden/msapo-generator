@@ -15,6 +15,7 @@ import hashlib
 import json
 import logging
 import os
+import random
 import resource
 import sys
 import tempfile
@@ -72,7 +73,10 @@ def _fixture(directory):
     for index in range(8):
         # Low-resolution texture enlarged to phone dimensions has a realistic
         # small encoded/large decoded footprint, without allocating pixel lists.
-        texture = Image.effect_noise((480, 320), 24).convert('RGB')
+        texture = (Image.frombytes("L", (480, 320),
+                random.Random(8811 + index).randbytes(480 * 320)).convert("RGB")
+                if os.environ.get("QA_A88_DETERMINISTIC") == "1"
+                else Image.effect_noise((480, 320), 24).convert('RGB'))
         texture.paste((40 + index * 18, 95, 130), (index * 30, 25, index * 30 + 30, 100))
         photo = texture.resize((4800, 3200), Image.Resampling.BICUBIC)
         raw = BytesIO()

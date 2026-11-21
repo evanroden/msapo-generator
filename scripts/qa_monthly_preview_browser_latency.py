@@ -49,7 +49,8 @@ def _decoded(image):
             "decode_attempts": attempts,
             "width": image.evaluate("(node) => node.naturalWidth"),
             "height": image.evaluate("(node) => node.naturalHeight"),
-            "sha256": sha256((image.get_attribute("src") or "").encode()).hexdigest()}
+            "src_sha256": sha256((image.get_attribute("src") or "").encode()).hexdigest(),
+            "decoded_png_sha256": sha256(image.screenshot()).hexdigest()}
 
 
 def _exercise(browser_type, engine):
@@ -209,7 +210,7 @@ def main():
         # The same real synthetic Monthly app is served inside the separately
         # restricted production container. Browser Playwright stays on host;
         # actual Streamlit, LibreOffice and PyMuPDF share the 512-MiB/0.5-CPU cap.
-        evidence["backend_resources"] = "Docker production image 512 MiB RAM, 0.5 CPU"
+        evidence["backend_resources"] = os.environ.get("QA491_BACKEND_RESOURCES", "Docker production image 512 MiB RAM, 0.5 CPU")
         with urllib.request.urlopen(URL + "/_stcore/health", timeout=10) as response:
             if response.status != 200:
                 raise RuntimeError("The capped synthetic Monthly app is not healthy.")
