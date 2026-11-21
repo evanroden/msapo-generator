@@ -284,3 +284,69 @@ def test_disappearing_reader_configuration_rejects_old_native_action_without_spe
     assert not app.exception
     assert calls['start']==calls['reserve']==calls['prepare']==0
     assert any('not configured' in x.value for x in app.warning)
+
+
+def test_partial_chunk_success_retries_only_failed_pages_and_keeps_manual_draft(monkeypatch, tmp_path):
+    """Native AppTest: per-batch receipts flow into the visible ledger and retry."""
+    app, calls, uploads, _ = setup(monkeypatch, tmp_path)
+    uploads[0] = [upload(b"Inspected pump A; repair not completed.", "a.txt"),
+                  upload(b"Inspected pump B; replacement pending.", "b.txt")]
+    attempted = []
+
+    def batches(profile, contents, destination, *, table_columns=None, page_refs=None,
+                period=None, corrections=None, accepted_pages=()):
+        allowed = set(page_refs) if page_refs is not None else None
+        payloads = []
+        for content in contents:
+            ref = (content.source.id, 1)
+            if allowed is None or ref in allowed:
+                payloads.append([{"type": "text", "text":
+                                 f"SOURCE {ref[0]} PAGE 1\n{content.source.page_texts[0]}"}])
+        attempted.append(tuple(structured._payload_pages(p)[0] for p in payloads))
+        return tuple(payloads)
+
+    monkeypatch.setattr(structured, "reader_batches", batches)
+    first_read = True
+    def worker(payloads):
+        nonlocal first_read
+        receipts = []
+        for index, payload in enumerate(payloads):
+            pages = structured._payload_pages(payload)[0]
+            failed = first_read and index == 1
+            receipts.append({"pages": [list(p) for p in pages], "skipped": [],
+                             "status": "failed" if failed else "processed",
+                             "items": [], "visual_pages": []})
+        first_read = False
+        return {"items": [], "visual_pages": [], "notices": [], "coverage": receipts}
+    monkeypatch.setattr(structured, "read_batches", worker)
+
+    app.run()
+    originals = tuple(c.sha256 for c in app.session_state["test_draft"].sources)
+    read(app).click().run()
+    assert not app.exception
+    key = next(k for k in app.session_state.filtered_state if k.endswith("_coverage"))
+    state = app.session_state[key]
+    assert len(state["eligible"]) == 2
+    assert len(state["processed"]) == len(state["failed"]) == 1
+    assert "Kept manual wording." in app.session_state["test_draft"].blocks[0].text
+    assert any("1/2 pages processed" in c.value for c in app.caption)
+    retry = next(b for b in app.button if b.label == "Retry reading uploaded files")
+    retry.click().run()
+    assert not app.exception
+    assert len(attempted) == 2
+    assert len(attempted[0]) == 2
+    assert attempted[1] == ((state["failed"][0],),)
+    state = app.session_state[key]
+    assert len(state["processed"]) == 2 and not state["failed"]
+    assert tuple(c.sha256 for c in app.session_state["test_draft"].sources) == originals
+    assert "Kept manual wording." in app.session_state["test_draft"].blocks[0].text
+    app.run()
+    assert len(attempted) == 2  # No automatic paid replays after completion.
+    completed = app.session_state["test_draft"]
+    saved = library.save_snapshot(completed, expected_revision=0,
+                                  entered_editor="Synthetic editor")
+    reloaded = library.load_snapshot(completed.profile.contract,
+                                     completed.profile.key, completed.period)
+    assert reloaded.revision == saved.revision
+    assert tuple(c.sha256 for c in reloaded.draft.sources) == originals
+    assert "Kept manual wording." in reloaded.draft.blocks[0].text
