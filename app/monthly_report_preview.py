@@ -282,7 +282,12 @@ def section_preview_fingerprint(draft, section_key):
     }
     from app.monthly_report_designs import fingerprint
     value["native_layout"] = fingerprint(draft.profile)
-    from app.monthly_report_source_view_runtime import cache_identity
+    from app.monthly_report_source_view_runtime import cache_identity, source_revision_identity
+    # Replacing one immutable source with new bytes under the same filename
+    # must invalidate page images and the "Current" label. A page selection
+    # alone can have unchanged references/geometry after that replacement.
+    if scope.sources:
+        value["source_revisions"] = source_revision_identity(scope)
     source_identity = cache_identity(draft)
     if source_identity:
         value['source_view'] = source_identity
