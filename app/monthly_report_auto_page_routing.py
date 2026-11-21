@@ -40,8 +40,10 @@ _HEADINGS = (
         r"^(?:capital (?:renewal|replacement|plan|projects?)|equipment replacement plan)\b", re.I)),
     ("training", None, re.compile(
         r"^(?:training (?:record|summary|log|attendance)|completed training)\b", re.I)),
+    # "Work order: WO-123" or "Work order # 123" is an identifier field on a
+    # service report, not a work-order section heading.
     ("work_orders", None, re.compile(
-        r"^(?:work[ -]orders?(?:\s+(?:summary|status|report|log))?|cmms export)\b", re.I)),
+        r"^(?:work[ -]orders?(?:\s+(?:summary|status|report|log))?|cmms export)\b(?!\s*[:#])", re.I)),
     ("standing", None, re.compile(
         r"^(?:organizational? chart|contact (?:directory|matrix)|workflow diagram|"
         r"thermal capacity|standing (?:data|information))\b", re.I)),
@@ -219,17 +221,24 @@ def route_pages(contents, profile=None, *, period=None, overrides=None, owned=No
     return tuple(result)
 
 
-def batch_destinations(choices, section_page_owners=(), omitted=()):
+def batch_destinations(choices, section_page_owners=(), omitted=(), selected=None):
     """Pages to prepare in this batch.
 
     Ready and review pages are new additions. A retained page already belongs
     to a report block, and preparing it again re-merges the same page. That is
     harmless for an included block, but a block whose section was deliberately
     left out takes the incoming copy in the merge and its section is switched
-    back on. Retained pages of omitted blocks therefore stay where they are.
+    back on. Retained pages of omitted blocks therefore stay where they are,
+    and so does a retained page the operator has since deselected: preparing
+    it would fail the whole addition. `selected` maps a source id to its
+    selected page numbers.
     """
+    def still_selected(choice):
+        return selected is None or choice.page in selected.get(choice.source_id, ())
+
     return [(choice.source_id, choice.destination, choice.page) for choice in choices
             if choice.destination
             and (choice.action in {"ready", "review"}
-                 or (choice.action == "retained" and choice.destination not in omitted))
+                 or (choice.action == "retained" and choice.destination not in omitted
+                     and still_selected(choice)))
             and not (choice.source_id in section_page_owners and choice.destination == "water_reports")]

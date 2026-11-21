@@ -82,8 +82,12 @@ def test_utility_upload_has_readable_destination_and_prepared_pages(monkeypatch,
     assert not app.exception
     assert select(app, "Classification").value == "Utility results"
     destination = select(app, "Report section for synthetic-utility.pdf")
-    assert destination.value == "utility_analysis"
+    # The control starts on Automatic (its own value since #959's review), and
+    # the page's routed section is spelled out beside it.
+    from app.monthly_report_upload_ui import AUTO_PAGE_ROUTE
+    assert destination.value == AUTO_PAGE_ROUTE
     assert "Monthly scorecards — utility results and charts" in destination.options
+    assert any("synthetic-utility.pdf" in item.value and "Monthly scorecards" in item.value for item in app.text)
     button(app, "Include page").click().run()
     button(app, "Add selected pages and tables to report").click().run()
     assert not app.exception

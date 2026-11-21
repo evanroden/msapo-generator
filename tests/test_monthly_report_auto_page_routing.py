@@ -219,3 +219,88 @@ st.session_state['returned'] = render_uploads(
     _, additions, _ = app.session_state["returned"]
     assert "utility_analysis" not in additions
     assert set(additions) == {"improvements"}
+
+
+def test_work_order_identifier_fields_are_not_section_headings():
+    # Review finding on #959: "Work order: WO-123" on a service report made the
+    # page ambiguous (no destination), or overrode its Vendor service type.
+    profile = synthetic_profiles()[0]
+    service = content("SERVICE REPORT\nWork order: WO-123\nPump inspected.")
+    route, = route_pages((service,), profile)
+    assert (route.action, route.destination) == ("ready", "improvements")
+    vendor = content("Work order # 123\nPump inspected.", classification="Vendor service")
+    route, = route_pages((vendor,), profile)
+    assert (route.action, route.destination) == ("ready", "improvements")
+    summary = content("WORK ORDER SUMMARY\nPM closed.", classification="Vendor service")
+    assert route_pages((summary,), profile)[0].section == "work_orders"
+
+
+def _intake_app(profile, content_, blocks, key):
+    from streamlit.testing.v1 import AppTest
+    from app.monthly_report_model import ReportPeriod
+    app = AppTest.from_string(f'''
+import streamlit as st
+from app.monthly_report_upload_ui import render_uploads
+from app.monthly_report_ui import _field
+st.session_state['returned'] = render_uploads(
+    st.session_state['profile'], st.session_state['period'], {key!r}, _field,
+    attached_blocks=st.session_state['blocks'])
+''', default_timeout=30)
+    app.session_state["profile"] = profile
+    app.session_state["period"] = ReportPeriod(2026, 9)
+    app.session_state[key + "_evidence"] = (content_,)
+    app.session_state["blocks"] = blocks
+    app.run()
+    assert not app.exception
+    return app
+
+
+def _ingested(monkeypatch, tmp_path, profile, *texts, classification="Reference only", selected=None):
+    from app import monthly_report_sources as sources
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    ingested, _ = sources.ingest(profile, "synthetic-routing-" + str(len(texts)) + ".pdf", _two_page_pdf(*texts))
+    pages = tuple(range(1, len(texts) + 1))
+    source = replace(ingested.source, classification=classification, service_date="2026-09-02",
+                     facility=profile.facilities[0].key, captions=(),
+                     selected_pages=pages if selected is None else selected)
+    source = replace(source, client_page_reviews=tuple((n, page_fingerprint(source, n)) for n in pages))
+    return replace(ingested, source=source)
+
+
+def test_unselected_retained_page_does_not_abort_another_addition(monkeypatch, tmp_path):
+    # Review finding on #959: a deselected page that a report block still owns
+    # was prepared again, and preparation refused it and dropped the whole Add.
+    from app import monthly_report_sources as sources
+    profile = synthetic_profiles()[0]
+    full = _ingested(monkeypatch, tmp_path, profile,
+                     "UTILITY ANALYSIS. Energy use 120 kWh.", "SERVICE REPORT. Pump inspected.")
+    block, = sources.prepare_pages(profile, (full,), ((full.source.id, "utility_analysis", 1),))
+    deselected = replace(full, source=replace(full.source, selected_pages=(2,)))
+    app = _intake_app(profile, deselected, {block.key: block}, "deselected_test")
+    add = next(b for b in app.button if b.label == "Add selected pages and tables to report")
+    add.click().run()
+    assert not app.exception and not app.error
+    _, additions, _ = app.session_state["returned"]
+    assert set(additions) == {"improvements"}
+
+
+def test_keep_as_reference_only_can_override_automatic_routing(monkeypatch, tmp_path):
+    # Review finding on #959: a "Reference only" file showed "Keep as reference
+    # only" by default while its service page was routed to Activity, and
+    # choosing the option already shown recorded nothing.
+    from app.monthly_report_upload_ui import AUTO_PAGE_ROUTE
+    profile = synthetic_profiles()[0]
+    reference = _ingested(monkeypatch, tmp_path, profile, "SERVICE REPORT. Pump inspected.")
+    app = _intake_app(profile, reference, {}, "reference_test")
+    selector = next(s for s in app.selectbox
+                    if s.label == "Report section for " + reference.source.filename)
+    assert selector.value == AUTO_PAGE_ROUTE
+    assert not next(b for b in app.button if b.label == "Add selected pages and tables to report").disabled
+    selector.set_value("Do not embed").run()
+    assert not app.exception
+    add = next(b for b in app.button if b.label == "Add selected pages and tables to report")
+    assert add.disabled
+    selector = next(s for s in app.selectbox
+                    if s.label == "Report section for " + reference.source.filename)
+    selector.set_value(AUTO_PAGE_ROUTE).run()
+    assert not next(b for b in app.button if b.label == "Add selected pages and tables to report").disabled

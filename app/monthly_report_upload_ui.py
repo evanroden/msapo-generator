@@ -13,10 +13,18 @@ from app.monthly_report_content_policy import page_status, page_fingerprint, pag
 from app.monthly_report_upload_guidance import evidence_limits_summary, evidence_upload_options
 
 
+# The default destination control value: each page by its own heading, else
+# the file's classification. Every other value is an explicit override.
+AUTO_PAGE_ROUTE = "Automatic"
+
+
 def _remember_manual_page_route(key, identity, control):
     """Only a native operator change records a durable route override."""
     routes = dict(st.session_state.get(key, {}))
-    routes[identity] = st.session_state[control]
+    if st.session_state[control] == AUTO_PAGE_ROUTE:
+        routes.pop(identity, None)
+    else:
+        routes[identity] = st.session_state[control]
     st.session_state[key] = routes
 
 
@@ -629,7 +637,8 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
     defaults = {"Vendor service": "improvements", "Water treatment": "water_reports",
                 "MBCx": "mbcx_report", "Utility results": "utility_analysis",
                 "Improvement / training photo": "improvements"}
-    labels = {"Do not embed": "Keep as reference only",
+    labels = {AUTO_PAGE_ROUTE: "Automatic: each page by its heading, otherwise by the file type",
+              "Do not embed": "Keep as reference only",
               "vendor_reports": "Maintenance — ENFRA onsite work only",
               "water_reports": "Water treatment — chemical/service pages",
               "mbcx_report": "MBCx — commissioning report pages",
@@ -660,13 +669,19 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
             st.session_state[control_key] = route_values[control_key]
         if visible:
             rendered_routes.append(control_key)
-        control = field(control_key, defaults.get(item.source.classification, "Do not embed"))
-        options = ("Do not embed", *sources.PAGE_DESTINATIONS)
+        control = field(control_key, AUTO_PAGE_ROUTE)
+        options = (AUTO_PAGE_ROUTE, "Do not embed", *sources.PAGE_DESTINATIONS)
         if st.session_state[control] not in options:
-            st.session_state[control] = defaults.get(item.source.classification, "Do not embed")
-        # Old sessions may have a source-level correction but no explicit
-        # callback receipt. A nondefault saved choice remains a human override.
-        if item.source.id not in manual and st.session_state[control] != defaults.get(item.source.classification, "Do not embed"):
+            st.session_state[control] = AUTO_PAGE_ROUTE
+        # "Automatic" is its own value, so choosing any destination (including
+        # "Keep as reference only") is a change the callback records. A session
+        # from before that option holds the file type's section as its untouched
+        # default: that still means automatic. Any other saved value without a
+        # callback receipt remains a human override.
+        legacy_default = defaults.get(item.source.classification, "Do not embed")
+        if item.source.id not in manual and st.session_state[control] == legacy_default:
+            st.session_state[control] = AUTO_PAGE_ROUTE
+        if item.source.id not in manual and st.session_state[control] != AUTO_PAGE_ROUTE:
             manual[item.source.id] = st.session_state[control]
         route_controls.append((item.source.filename, item.source.id, control))
     if route_controls:
@@ -678,7 +693,7 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                 for filename, identity, control in route_controls:
                     if selected_source_id is None or identity == selected:
                         st.selectbox("Report section for " + filename,
-                                     ("Do not embed", *sources.PAGE_DESTINATIONS),
+                                     (AUTO_PAGE_ROUTE, "Do not embed", *sources.PAGE_DESTINATIONS),
                                      format_func=labels.get, key=control,
                                      on_change=_remember_manual_page_route,
                                      args=(manual_key, identity, control))
@@ -700,7 +715,8 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
     # A retained page of a deliberately omitted section is never prepared
     # again: merging it would switch that section back on.
     omitted = {name for name, block in (attached_blocks or {}).items() if block.source == "Omit"}
-    destinations.extend(batch_destinations(choices, section_page_owners, omitted))
+    selected = {item.source.id: frozenset(item.source.selected_pages) for item in contents}
+    destinations.extend(batch_destinations(choices, section_page_owners, omitted, selected))
     for filename, identity, _ in route_controls:
         decisions = by_source[identity]
         grouped = defaultdict(list)
