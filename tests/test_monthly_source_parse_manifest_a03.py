@@ -409,3 +409,52 @@ def test_interrupted_stage_is_invalidated_when_an_extraction_policy_changes(prof
     assert count == [True]
     assert library._read(cache_for(profile, content))["csv_headerless_policy"] == 1
     assert not stage.exists()
+
+
+def _staged(tmp_path, name, raw):
+    from app.monthly_report_streamed_upload import StagedUpload
+    path = tmp_path / ("staged-" + name)
+    path.write_bytes(raw)
+    return StagedUpload(path, len(raw), sha256(raw).hexdigest())
+
+
+def test_streamed_non_csv_upload_stays_warm_with_a_parse_manifest(profile, monkeypatch, tmp_path):
+    """A streamed TXT/PDF upload has no bytes at cache lookup; its manifest still validates."""
+    raw = b"Synthetic pump inspection completed on schedule.\n"
+    first, _ = sources.ingest(profile, "streamed.txt", _staged(tmp_path, "one.txt", raw))
+    assert "parse_manifest" in library._read(cache_for(profile, first))
+    calls = []
+    original = sources.suggest_facts
+    monkeypatch.setattr(sources, "suggest_facts", lambda *args: (calls.append(True), original(*args))[1])
+    again, _ = sources.ingest(profile, "streamed.txt", _staged(tmp_path, "two.txt", raw))
+    assert calls == []  # A cache hit, not a rebuild.
+    assert again.source.page_texts == first.source.page_texts
+
+
+def test_streamed_upload_resumes_checkpoint_and_publishes_its_original(profile, monkeypatch, tmp_path):
+    digest = sha256(CSV).hexdigest()
+    with monkeypatch.context() as patch:
+        patch.setattr(sources, "suggest_facts",
+                      lambda *_: (_ for _ in ()).throw(RuntimeError("synthetic interruption")))
+        with pytest.raises(RuntimeError, match="synthetic interruption"):
+            sources.ingest(profile, "first.csv", _staged(tmp_path, "first.csv", CSV))
+    original_path = sources._path(profile, digest, ".csv")
+    assert not original_path.exists()  # Streamed originals publish only after validation.
+    with monkeypatch.context() as patch:
+        patch.setattr(sources, "_spreadsheet", lambda *_: pytest.fail("completed stage parsed again"))
+        content, _ = sources.ingest(profile, "second.csv", _staged(tmp_path, "second.csv", CSV))
+    assert content.source.filename == "second.csv"
+    assert original_path.read_bytes() == CSV
+    assert sources.source_bytes(profile, content.source) == CSV
+
+
+def test_resumed_checkpoint_meets_the_streamed_text_budget(profile, monkeypatch, tmp_path):
+    with monkeypatch.context() as patch:
+        patch.setattr(sources, "suggest_facts",
+                      lambda *_: (_ for _ in ()).throw(RuntimeError("synthetic interruption")))
+        with pytest.raises(RuntimeError, match="synthetic interruption"):
+            sources.ingest(profile, "budget.csv", _staged(tmp_path, "budget.csv", CSV))
+    with monkeypatch.context() as patch:
+        patch.setattr(sources, "_spreadsheet", lambda *_: pytest.fail("completed stage parsed again"))
+        with pytest.raises(ValueError, match="Total extracted text exceeds"):
+            sources.ingest(profile, "budget.csv", _staged(tmp_path, "again.csv", CSV), max_new_text=10)

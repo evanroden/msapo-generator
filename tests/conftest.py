@@ -72,3 +72,17 @@ requires_libreoffice = pytest.mark.skipif(
         "missing (libreoffice-core alone is not sufficient)"
     ),
 )
+
+
+@pytest.fixture(autouse=True)
+def _fresh_visible_queue(monkeypatch):
+    """Give every test its own A24 admission queue.
+
+    ``QUEUE`` is process-wide and remembers how many previews were admitted in
+    a row (``_preview_burst``). Without a fresh queue, a test that admits two
+    previews changes which waiter the next test admits first: after
+    tests/test_monthly_report_section_preview.py, a waiting export went
+    ahead of a waiting Review in tests/test_review_preview_priority.py.
+    """
+    from app import monthly_report_visible_queue as visible
+    monkeypatch.setattr(visible, "QUEUE", visible.VisibleFirstQueue())

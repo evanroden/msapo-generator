@@ -215,9 +215,9 @@ def test_retry_succeeds_without_touching_another_profile_review(review, monkeypa
     app.session_state[other_key + "_mappings"] = {"unrelated": "unchanged"}
     reads = []
     stage = ui._stage
-    def record(upload):
+    def record(upload, *, on_progress=None):
         reads.append(upload.getvalue())
-        return stage(upload)
+        return stage(upload, on_progress=on_progress)
     monkeypatch.setattr(ui, "_stage", record)
     try:
         for _ in range(2):

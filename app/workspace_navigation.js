@@ -168,8 +168,12 @@ globalThis.ENFRAWorkspaceNavigation = {
         const controls = () => [select,reviewButton,backButton,nextButton,progress];
         const sameControls = () => establishedControls && controls().every((node,index)=>node===establishedControls[index]);
         const readyOwners = () => owns() && controls().filter(Boolean).every(current);
+        // A pair marker is streamed metadata, not the section owner. A
+        // replacement marker can still describe the exact same ordered,
+        // connected section containers. Keep strict report, toolbar and
+        // container identity checks, but validate the live marker each time.
         const sameNodes = (a,b) => Boolean(a && b && a.length === b.length &&
-            a.every((item,index) => item.id === b[index].id && item.target === b[index].target && item.marker === b[index].marker));
+            a.every((item,index) => item.id === b[index].id && item.target === b[index].target));
         const ownedNodes = () => {
             if (!owns() || !app.contains(root) || !app.contains(nav) || !controls().filter(Boolean).every(liveControl) ||
                 nav.querySelector('.epc-section-selector') !== select ||
@@ -199,10 +203,14 @@ globalThis.ENFRAWorkspaceNavigation = {
         const pendingIntent = () => {
             const intent = state.navigationIntent;
             if (!intent) return null;
+            const nodes = ownedNodes();
             if (intent.owner !== lease || intent.identity !== identity || intent.origin !== state.navigationActive ||
                 intent.back !== backButton || intent.next !== nextButton || !sameControls() ||
                 intent.input !== (state.navigationInputSerial || 0) || state.navigationRequest !== intent.target ||
-                !sameNodes(intent.nodes,ownedNodes())) {cancelIntent();return null;}
+                !sameNodes(intent.nodes,nodes)) {cancelIntent();return null;}
+            // Readiness must use the replacement marker, not a disconnected
+            // snapshot. The original click still owns the same section pair.
+            intent.nodes = nodes;
             return intent;
         };
         // Streamlit retains stale replacement widgets in a native collapsed

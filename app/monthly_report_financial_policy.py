@@ -1,6 +1,7 @@
 """Non-enabling foundation for source-aware Monthly financial output.
 
-No current output gate calls this module. Review records must be created by a
+The Monthly output gate below is conservative: provenance is not permission to
+introduce new monetary output. Review records must be created by a
 trusted, explicit application review of verified original bytes; parser/AI labels
 are NOT authorization. Fingerprints bind data, not signatures or authenticity.
 A caller must map every monetary dependency to the exact current output item;
@@ -133,3 +134,50 @@ class ReviewedFinancialPage:
     source_review_fingerprint: str
     semantics: str
     version: int = 1
+
+
+OUTPUT_PRICE_BLOCK = "Remove pricing before including this content in a client report."
+OUTPUT_UNREADABLE_BLOCK = "Review the unreadable source page as non-financial before including it."
+
+
+def financial_output_gate(*, text="", table_pricing=False, source=None, page=None,
+                          profile=None, destination=None, output_captions=(),
+                          artwork_reviewed=None):
+    """Shared output decision for visible content and immutable source artwork.
+
+    Use the existing detector and exact review receipts, not parser/AI labels.
+    Directly uploaded photos have no source page and retain their own occurrence
+    review and renderer. The earlier reviewed MBCx exception is preserved only
+    through its original, narrower validator; this gate grants no new exception.
+    Native artwork callers supply a suitability result only after checking the
+    exact original occurrence inventory. This function does not read pixels.
+    """
+    from app.monthly_report_content_policy import contains_price, page_status, page_fingerprint
+
+    if table_pricing or contains_price(text) or any(contains_price(c) for c in output_captions):
+        return FinancialDecision(False, OUTPUT_PRICE_BLOCK)
+    if artwork_reviewed is False:
+        return FinancialDecision(False, OUTPUT_UNREADABLE_BLOCK)
+    if source is None:
+        return FinancialDecision(True, "No detected monetary output.")
+    if type(page) is not int or not 1 <= page <= len(source.page_texts):
+        return FinancialDecision(False, "Restore the exact source page before including it.")
+    from app.monthly_report_mbcx_financial_pages import financial_page_allowed, has_financial_page_review
+    if has_financial_page_review(source, page):
+        # Preserve the existing exact MBCx review contract; never fall back to
+        # ordinary approval for a stale or stripped financial receipt.
+        allowed = financial_page_allowed(source, page, profile, destination,
+                                         output_captions=output_captions)
+        return FinancialDecision(allowed, "Existing scoped financial-page review." if allowed else
+                                 "Remove or renew the existing financial-page review.")
+    page_text = source.page_texts[page - 1]
+    if contains_price(page_text) or contains_price(dict(source.captions).get(page, "")):
+        return FinancialDecision(False, OUTPUT_PRICE_BLOCK)
+    unreadable = page in source.needs_vision or not page_text.strip()
+    status, _ = page_status(page_text, unreadable=page in source.needs_vision)
+    reviewed = dict(source.client_page_reviews).get(page) == page_fingerprint(source, page)
+    if not reviewed and unreadable:
+        return FinancialDecision(False, OUTPUT_UNREADABLE_BLOCK)
+    allowed = status not in ("pricing", "legal", "blank", "signature") and reviewed
+    return FinancialDecision(allowed, "Current non-financial page review." if allowed else
+                             "Remove or review the source page before including it.")

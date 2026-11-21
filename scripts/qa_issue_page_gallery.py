@@ -61,15 +61,35 @@ def choose(page, control, value, record):
 
 
 
-def open_gallery(issue):
+def open_gallery(issue, rounds=10):
     evidence = issue.get_by_text("Evidence", exact=True)
-    if evidence.locator("xpath=ancestor::details[1]").get_attribute("open") is None:
+    evidence_details = evidence.locator("xpath=ancestor::details[1]")
+    if evidence_details.get_attribute("open") is None:
         evidence.click()
+        # Let the expansion (and its rerun) land before measuring position.
+        expect(evidence_details).to_have_attribute("open", "")
     summary = issue.get_by_text("Choose supporting pages by preview", exact=True)
     details = summary.locator("xpath=ancestor::details[1]")
-    if details.get_attribute("open") is None:
-        summary.click()
-    expect(issue.get_by_role("combobox", name="Source file to inspect", exact=True)).to_be_visible()
+    combobox = issue.get_by_role("combobox", name="Source file to inspect", exact=True)
+    # A rerun after the source manager closes can shift the layout or move the
+    # page: WebKit has landed on Training Summary and on Proposals with the
+    # gallery still closed. Each round centers the summary, confirms it is in
+    # view, clicks the native control only while the gallery is closed (never
+    # a force-click), and gives the gallery a few seconds to appear.
+    for _ in range(rounds):
+        if details.get_attribute("open") is None:
+            summary.evaluate("node => node.scrollIntoView({block: 'center'})")
+            try:
+                expect(summary).to_be_in_viewport(timeout=1500)
+            except AssertionError:
+                continue
+            summary.click()
+        try:
+            expect(combobox).to_be_visible(timeout=3000)
+            return
+        except AssertionError:
+            continue
+    expect(combobox).to_be_visible()
 
 
 def checkbox(issue, filename, number):
@@ -218,6 +238,12 @@ def browser_task(browser_type, name):
         # must restore the exact selected associations, without test injection.
         page.reload(wait_until="domcontentloaded")
         issue = page.locator(ISSUES)
+        # The reload re-renders the whole app; the issues pair (and its
+        # multiselect) does not exist until that render lands, ~5s on a
+        # slow host. Asserting tags immediately races that render and
+        # reports the restored selections as lost. Wait for the control.
+        expect(issue.get_by_test_id("stMultiSelect").filter(
+            has_text="Supporting source pages")).to_have_count(1, timeout=45000)
         assert_tags(issue, expected)
         qa.scroll_pair(page, ISSUES)
         open_gallery(issue)

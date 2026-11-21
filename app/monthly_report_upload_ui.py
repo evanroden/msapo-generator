@@ -339,6 +339,22 @@ def _cmms(content, profile, period, prefix, field):
     return (signature, result[1]) if result else (signature, None)
 
 
+_READ_RESULTS = ("accepted", "restored", "duplicate")
+
+
+def _selection_identity(upload):
+    """Cheap identity of the chooser's current files, without copying their bytes."""
+    def size(item):
+        value = getattr(item, "size", None)
+        if value is None:
+            try:
+                value = item.getbuffer().nbytes
+            except (AttributeError, ValueError):
+                value = None
+        return value
+    return tuple((item.name, size(item), getattr(item, "file_id", "")) for item in (upload or ()))
+
+
 def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, field, *, retain_accepted=False,
                    attached_blocks=None, included_source_ids=(), show_intake=True, selected_source_id=None,
                    visible=True, scope_draft=None, shown_source_page=None, section_page_owners=()):
@@ -358,18 +374,51 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
     retired_key = key + "_retired_contributions"
     accepted = st.session_state.get(accepted_key) if retain_accepted else None
     if show_intake:
+        # The native chooser has a single maximum; the real per-type limits
+        # are enforced before parsing and stated directly beside the chooser.
+        st.caption(evidence_limits_summary())
+        generation_key = prefix + "_source_upload_generation"
+        generation = st.session_state.get(generation_key, 0)
+        upload_key = prefix + "_source_upload" + (f"_{generation}" if generation else "")
         upload = st.file_uploader("Monthly source files", type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
-                                 accept_multiple_files=True, key=prefix + "_source_upload", **evidence_upload_options())
-        picked = tuple((u.name, u.getvalue()) for u in (upload or ()))
-        selection = _signature([(name, hashlib.sha256(raw).hexdigest()) for name, raw in picked])
+                                 accept_multiple_files=True, key=upload_key, **evidence_upload_options())
         if st.button("Read monthly files", disabled=not upload, key=prefix + "_read_sources"):
-            with st.spinner("Reading local files and checking duplicates…"):
-                contents, messages = sources.ingest_batch(profile, picked, contents)
-            st.session_state[key] = contents
-            st.session_state[key + "_messages"] = messages
-            st.session_state[key + "_attempted_selection"] = selection
-        if picked and st.session_state.get(key + "_attempted_selection") == selection:
+            from app.monthly_report_streamed_upload import ingest_uploaded_selection
+            with st.status("Processing selected source files…", expanded=True) as status:
+                progress_text = st.empty()
+                progress_bar = st.progress(0.0)
+
+                def on_progress(name, copied, declared):
+                    progress_text.caption(f"Staging {name}: {copied:,} bytes read and hashed")
+                    progress_bar.progress(min(1.0, copied / max(1, declared or copied)))
+
+                def checkpoint(updated):
+                    # A later rejected/cancelled sibling must not erase a
+                    # successfully accepted source from this same request.
+                    st.session_state[key] = updated
+
+                contents, messages, receipts = ingest_uploaded_selection(
+                    profile, upload, contents, on_progress=on_progress,
+                    on_checkpoint=checkpoint)
+                st.session_state[key] = contents
+                st.session_state[key + "_messages"] = messages
+                st.session_state[key + "_upload_receipts"] = receipts
+                status.update(label=f"Finished processing {len(receipts)} file(s).", state="complete")
+            # Remount the native uploader; it owns the original browser bytes
+            # until its widget is retired. Only small receipts survive reruns.
+            # The next user rerun remounts the uploader. Do not force a
+            # mid-render rerun: other editors in this same Streamlit delivery
+            # must first consume their pending human changes.
+            # A file that was not read keeps the uploader mounted instead, so
+            # the per-file retry below can reread its unchanged bytes (A65).
+            if any(result not in _READ_RESULTS for _, result, _ in receipts):
+                st.session_state[key + "_attempted_selection"] = _selection_identity(upload)
+            else:
+                st.session_state.pop(key + "_attempted_selection", None)
+                st.session_state[generation_key] = generation + 1
+        if upload and st.session_state.get(key + "_attempted_selection") == _selection_identity(upload):
             from app.monthly_report_source_recovery_ui import render_failed_file_retries
+            picked = tuple((u.name, u.getvalue()) for u in upload)
             retried = render_failed_file_retries(profile, period,
                 st.session_state.get(prefix + "_revision", 0), key, picked, contents,
                 messages=st.session_state.get(key + "_messages", ()))
@@ -377,8 +426,25 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                 contents, messages, _ = retried
                 st.session_state[key] = contents
                 st.session_state[key + "_messages"] = messages
+                # The retried file's receipt is replaced by the retry's own notices.
+                st.session_state[key + "_upload_receipts"] = tuple(
+                    receipt for receipt in st.session_state.get(key + "_upload_receipts", ())
+                    if receipt[1] in _READ_RESULTS or receipt[2] in messages)
+    for filename, result, message in st.session_state.get(key + "_upload_receipts", ()):
+        if result == "accepted":
+            st.success(message)
+        elif result == "restored":
+            st.success(message)
+        elif result == "duplicate":
+            st.info(message)
+        else:
+            st.error(message)
+    # Messages unrelated to the already displayed file receipt (for example,
+    # a previously saved original that is now unavailable) still need review.
+    receipt_messages = {receipt[2] for receipt in st.session_state.get(key + "_upload_receipts", ())}
     for message in st.session_state.get(key + "_messages", ()):
-        st.warning(message)
+        if message not in receipt_messages and not message.startswith(("Duplicate skipped:", "Saved source restored:")):
+            st.warning(message)
     if not contents:
         if accepted:
             st.session_state[pending_key] = True
@@ -1616,7 +1682,7 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
         if old:
             old["future"].cancel()
         for suffix in ("read", "native_ids", "completed_ids", "pending", "error",
-                       "cache_checked", "completed_read", "read_cycle"):
+                       "cache_checked", "completed_read", "read_cycle", "coverage"):
             st.session_state.pop(local_key + "_" + suffix, None)
         st.session_state[local_key + "_context"] = context
     additions = {}
@@ -1737,9 +1803,38 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                                         or _pending_rich_text_edit(prefix, current)):
                 st.session_state[local_key + "_pending"] = (job, value)
                 raise ValueError("New source suggestions are ready. Your edits were kept; add the suggestions below when ready.")
-            result, pages = structured.reader_update(job["contents"], destination, value, current,
-                table_columns=job.get("table_columns"), corrections=job.get("corrections"),
-                accepted_pages=job.get("accepted_pages", ()), profile=profile, period=period)
+            coverage_mode = isinstance(value, dict) and isinstance(value.get("coverage"), list)
+            if coverage_mode:
+                result, pages, accepted, failed, visually_skipped = structured.reader_coverage_update(
+                    job["contents"], destination, value, current,
+                    table_columns=job.get("table_columns"),
+                    corrections=job.get("corrections"),
+                    accepted_pages=job.get("accepted_pages", ()), profile=profile, period=period)
+                _, oversized, eligible = structured.reader_page_plan(
+                    job["contents"], destination, profile=profile,
+                    table_columns=job.get("table_columns"), period=period,
+                    corrections=job.get("corrections"),
+                    accepted_pages=job.get("accepted_pages", ()))
+                earlier = st.session_state.get(local_key + "_coverage", {})
+                if earlier.get("target") != job["request"]:
+                    earlier = {}
+                processed = set(earlier.get("processed", ())) | set(accepted)
+                skipped = set(earlier.get("skipped", ())) | set(oversized) | set(visually_skipped)
+                all_pages = set(earlier.get("eligible", ())) | set(eligible)
+                # A missing receipt is an unresolved page, not a silent success.
+                failed_pages = (set(earlier.get("failed", ())) | set(failed)
+                                | (all_pages - processed - skipped)) - processed - skipped
+                coverage_state = {
+                    "target": job["request"], "eligible": tuple(sorted(all_pages)),
+                    "processed": tuple(sorted(processed)), "skipped": tuple(sorted(skipped)),
+                    "failed": tuple(sorted(failed_pages)),
+                }
+                st.session_state[local_key + "_coverage"] = coverage_state
+            else:
+                result, pages = structured.reader_update(job["contents"], destination, value, current,
+                    table_columns=job.get("table_columns"),
+                    corrections=job.get("corrections"),
+                    accepted_pages=job.get("accepted_pages", ()), profile=profile, period=period)
             prepared = ()
             if destination == "activity_summary" and pages:
                 selected = []
@@ -1762,21 +1857,55 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                 changed = {content.source.id: content for content in selected}
                 contents = tuple(changed.get(content.source.id, content) for content in contents)
                 st.session_state[evidence_key] = contents
+            if coverage_mode:
+                # A validated image-page inclusion updates the source fingerprint.
+                # Rebind receipts to the resulting current scope, not stale job input.
+                coverage_state["target"] = read_target()
+                st.session_state[local_key + "_coverage"] = coverage_state
             additions[destination] = result
             additions.update({block.key: block for block in prepared})
             remember(result, contents)
-            st.session_state[local_key + "_messages"] = tuple(value.get("notices", ())) + structured.reader_page_notices(
+            notices = tuple(value.get("notices", ())) + structured.reader_page_notices(
                 job["contents"], destination, value)
-            st.session_state[local_key + "_completed_ids"] = tuple(
-                set(st.session_state.get(local_key + "_completed_ids", ()))
-                | {content.source.id for content in job["contents"]})
-            st.session_state[local_key + "_completed_read"] = read_target()
+            finished = set(st.session_state.get(local_key + "_completed_ids", ()))
+            if coverage_mode:
+                seen = processed | skipped
+                for content in job["contents"]:
+                    if all(ref in seen for ref in all_pages if ref[0] == content.source.id):
+                        finished.add(content.source.id)
+                remaining = all_pages - seen
+                if remaining:
+                    st.session_state.pop(local_key + "_completed_read", None)
+                    sources_by_id = {c.source.id: c.source.filename for c in job["contents"]}
+                    labels = [f"{sources_by_id.get(sid, 'Source')} page {n}"
+                              for sid, n in sorted(remaining)]
+                    notices += ("Document reader: " + str(len(remaining))
+                                + " pages still need reading. Retry only those pages: "
+                                + ", ".join(labels[:8])
+                                + (" (and more)" if len(labels) > 8 else "") + ".",)
+                else:
+                    st.session_state[local_key + "_completed_read"] = read_target()
+            else:
+                finished.update(content.source.id for content in job["contents"])
+                st.session_state[local_key + "_completed_read"] = read_target()
+            st.session_state[local_key + "_completed_ids"] = tuple(sorted(finished))
+            st.session_state[local_key + "_messages"] = notices
             st.session_state.pop(local_key + "_error", None)
-            # A reuse-cache failure cannot turn an already validated, applied
-            # result into another paid reading. Its completion remains current.
-            if not job.get("cached"):
+            if coverage_mode and remaining:
+                st.session_state[local_key + "_error"] = "Some reading chunks failed; accepted pages remain saved in this draft."
+            # Cache only validated results. A cache failure must never erase
+            # applied chunks or automatically repeat a paid request.
+            cache_safe = (not coverage_mode or
+                          (bool(accepted) or not remaining) and
+                          not any(r.get("status") == "processed"
+                                  and any((p[0], p[1]) in failed_pages for p in r.get("pages", ()))
+                                  for r in value["coverage"]))
+            if not job.get("cached") and cache_safe:
                 try:
-                    ai.save_cache(profile, "section_upload", job["digest"], value)
+                    earlier_cached = ai.cached(profile, "section_upload", job["digest"]) if coverage_mode else None
+                    safe_value = (structured.merge_reader_coverage(earlier_cached, value)
+                                  if coverage_mode else value)
+                    ai.save_cache(profile, "section_upload", job["digest"], safe_value)
                 except (ValueError, OSError) as exc:
                     st.session_state[local_key + "_error"] = "The reading is ready, but its reuse cache could not be saved: " + str(exc)
         except ValueError as exc:
@@ -1861,7 +1990,7 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
     skipped = sum(len(c.source.page_texts) for c in scoped) - len(eligible)
     if skipped:
         st.caption(f"{skipped} source page(s) are not sent to the document reader: "
-                   "already accepted, native mapped, different section, "
+                   "already accepted, native mapped, hidden worksheet, different section, "
                    "unrelated site/month or awaiting destination correction. "
                    "Originals remain available.")
     scoped = tuple(c for c in scoped if any((c.source.id, n) in eligible
@@ -1907,12 +2036,38 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                 if not ai.configured():
                     raise ValueError("The document reader is not configured. Native extracted text and manual editing remain available.")
                 def prepare():
-                    payloads = structured.reader_batches(profile, scoped, destination,
+                    coverage = st.session_state.get(local_key + "_coverage", {})
+                    if coverage.get("target") == target:
+                        _, _, eligible_pages = structured.reader_page_plan(
+                            scoped, destination, profile=profile,
                             table_columns=table_columns, period=period,
                             corrections=corrections, accepted_pages=accepted_pages)
+                        complete = set(coverage.get("processed", ())) | set(coverage.get("skipped", ()))
+                        pending_pages = tuple(ref for ref in eligible_pages if ref not in complete)
+                        payloads = structured.reader_batches(
+                            profile, scoped, destination, table_columns=table_columns,
+                            page_refs=pending_pages, period=period, corrections=corrections,
+                            accepted_pages=accepted_pages)
+                    else:
+                        payloads = structured.reader_batches(
+                            profile, scoped, destination, table_columns=table_columns,
+                            period=period, corrections=corrections,
+                            accepted_pages=accepted_pages)
                     if not payloads:
-                        raise ValueError("No unmapped eligible pages remain for external reading.")
-                    for _ in payloads:
+                        # Oversized-only evidence must still acquire a visible
+                        # manual-review receipt, without a paid model request.
+                        _, oversized, eligible_pages = structured.reader_page_plan(
+                            scoped, destination, profile=profile,
+                            table_columns=table_columns, period=period,
+                            corrections=corrections, accepted_pages=accepted_pages)
+                        if not eligible_pages or set(oversized) != set(eligible_pages):
+                            raise ValueError("No unmapped eligible pages remain for external reading.")
+                    if len(payloads) > ai.MAX_CALLS:
+                        raise ValueError("These files require more than 80 bounded reading requests. Select fewer sources; no requests were spent.")
+                    for payload in payloads:
+                        refs, _, unavailable = structured._payload_pages(payload)
+                        if refs and set(refs).issubset(unavailable):
+                            continue
                         ai.reserve_call(profile, period)
                     return payloads
                 future = start_receipt(prepare, structured.read_batches)
@@ -1952,6 +2107,19 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
     complete_finished_job()
     if local_key + "_error" in st.session_state:
         st.warning(st.session_state[local_key + "_error"])
+    coverage = st.session_state.get(local_key + "_coverage", {})
+    if coverage.get("target") == read_target():
+        st.caption("Document reader coverage: "
+                   + str(len(coverage["processed"])) + "/" + str(len(coverage["eligible"]))
+                   + " pages processed; " + str(len(coverage["skipped"]))
+                   + " skipped for manual review; " + str(len(coverage["failed"]))
+                   + " failed/retryable. Original uploads and accepted edits are retained.")
+        if coverage["skipped"]:
+            source_names = {c.source.id: c.source.filename for c in contents}
+            labels = [f"{source_names.get(sid, 'Source')} page {n}"
+                      for sid, n in coverage["skipped"]]
+            st.warning("Manual source review needed for unreadable/oversized pages: "
+                       + ", ".join(labels[:8]) + (" (and more)" if len(labels) > 8 else "") + ".")
     completed = st.session_state.get(local_key + "_completed_read") == read_target()
     if local_key + "_job" in st.session_state:
         _section_read_progress(local_key)
