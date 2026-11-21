@@ -123,6 +123,19 @@ def derive_import_view(path, inspection):
     return fresh
 
 
+def source_revision_identity(draft):
+    """Ordered immutable source-byte identities for preview admission.
+
+    Filenames are descriptive, never authority: the immutable SHA and the
+    file identity distinguish a replaced same-name upload. This
+    identity is operation-local and cannot change standing data or receipts.
+    """
+    # Review/consent toggles do not change the immutable source identity;
+    # section geometry and review receipts are handled by their own checks.
+    return tuple(sorted((source.id, source.filename, source.sha256)
+                        for source in draft.sources))
+
+
 # Preview-only identity hints. These contain no source bytes or authorization.
 # Full render/preview operations continue to rederive and hash the original.
 _IDENTITY_HINTS = OrderedDict()

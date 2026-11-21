@@ -6,16 +6,16 @@ shared-report data, persistence, PDF regeneration or fixture substitution.
 """
 from __future__ import annotations
 
+from base64 import b64decode
 from hashlib import sha256
 import json
 import os
-import re
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import time
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 from urllib.request import urlopen
 
 import pymupdf
@@ -40,12 +40,8 @@ def image_ready(page):
           return deep(document).some(img => img.complete && img.naturalWidth > 0);
         }""", timeout=45000)
     value = image.get_attribute("src")
-    assert value and re.fullmatch(r"/(?:[A-Za-z0-9_-]+/)*media/[a-f0-9]{32}\.jpe?g", value), value
-    # Independently fetch the real decoded page bytes by its current scoped
-    # media URL. Do not reuse the fixture's Python PDF or old inline payload.
-    response = page.context.request.get(urljoin(URL, value))
-    assert response.ok and response.headers.get("content-type", "").startswith("image/jpeg")
-    return response.body()
+    assert value and value.startswith("data:image/jpeg;base64,"), value
+    return b64decode(value.partition(",")[2], validate=True)
 
 
 def download_current(page, label="Download PDF"):
