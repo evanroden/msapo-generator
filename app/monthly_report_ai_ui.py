@@ -116,7 +116,7 @@ def _queue_page_reads(draft, prefix, source, pages, *, failed_only=False):
     waiting = []
     for page in dict.fromkeys(pages):
         try:
-            key, _ = ai.extraction_request(source, (page,))
+            key, _ = ai.extraction_request(source, (page,), profile=draft.profile, period=draft.period)
             saved = ai.cached(draft.profile, "extraction", key)
             if saved is not None:
                 facts = ai.normalize_facts(saved, source, (page,), draft.profile,
@@ -151,7 +151,7 @@ def _advance_page_reads(draft, prefix):
     while batch["waiting"]:
         page = batch["waiting"][0]
         try:
-            key, content = ai.extraction_request(current, (page,))
+            key, content = ai.extraction_request(current, (page,), profile=draft.profile, period=draft.period)
             saved = ai.cached(draft.profile, "extraction", key)
             if saved is not None:
                 facts = ai.normalize_facts(saved, current, (page,), draft.profile,
@@ -164,6 +164,7 @@ def _advance_page_reads(draft, prefix):
                 "source_id": current.id, "source_fingerprint": current.fingerprint,
                 "pages": (page,), "scope": batch["scope"],
                 "profile": draft.profile, "period": draft.period,
+                "approval_scope": _approval_scope(draft, prefix),
             }
 
             def prepare():
@@ -218,6 +219,11 @@ def _finish_job(draft, prefix):
         return
     try:
         result = job["future"].result()
+        if "approval_scope" in job and job["approval_scope"] != _approval_scope(draft, prefix):
+            raise ValueError(
+                "Report, month or editing context changed while reading. "
+                "Start again; existing report content was preserved."
+            )
         contents = st.session_state.get(prefix + "_evidence", ())
         current = next(
             (c.source for c in contents if c.source.id == job.get("source_id")), None
@@ -810,6 +816,7 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                                 prefix, draft,
                                 {
                                     "kind": "coverage",
+                                    "approval_scope": _approval_scope(draft, prefix),
                                     "source_id": source.id,
                                     "source_fingerprint": source.fingerprint,
                                     "plan": planned,
@@ -826,7 +833,7 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
             states = {}
             for page in pages:
                 try:
-                    key, _ = ai.extraction_request(source, (page,))
+                    key, _ = ai.extraction_request(source, (page,), profile=draft.profile, period=draft.period)
                     states[page] = items.status(draft.profile, draft.period, key)
                 except ValueError:
                     states[page] = "unread"
@@ -871,6 +878,7 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                     )
                     meta = {
                         "kind": "ocr",
+                        "approval_scope": _approval_scope(draft, prefix),
                         "source_id": source.id,
                         "source_fingerprint": source.fingerprint,
                         "page": page,
@@ -1035,6 +1043,10 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                     ai.vendor_names(draft),
                     draft.profile.asset_tags,
                     instruction,
+                    profile=draft.profile,
+                    report_revision=ai.digest(tuple(
+                        sorted((name, block.fingerprint) for name, block in blocks.items())
+                    )),
                 )
                 from app.monthly_report_guided import _rich_text_scope
                 from app.monthly_report_ai_suggestion_action import request_receipt, finish_receipt
@@ -1061,6 +1073,7 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                         draft,
                         {
                             "kind": "draft",
+                            "approval_scope": _approval_scope(draft, prefix),
                             "suggestion_request": request,
                             "key": key,
                             "block": target,
