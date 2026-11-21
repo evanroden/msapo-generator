@@ -26,21 +26,27 @@ sys.path.insert(0, str(ROOT))
 from scripts import qa_monthly_adaptive as qa
 from scripts import qa_issue_page_gallery as gallery
 from scripts import blank_start
+from scripts import image_decode
 
 URL = "http://127.0.0.1:8534"
 OUT = ROOT / "test-artifacts" / "monthly-preview-latency"
 qa.URL = URL
 
 
-def _decoded(image):
-    started_ns = time.monotonic_ns()
+def _ready(image):
     image.wait_for(state="visible", timeout=90000)
     expect(image).to_have_js_property("complete", True, timeout=30000)
+
+
+def _decoded(image):
+    started_ns = time.monotonic_ns()
     # complete + naturalWidth can precede the actual decoded pixel. Browser
     # decode() awaits the image decoder before the first-useful-page clock ends.
-    image.evaluate("(node) => node.decode()")
-    assert image.evaluate("(node) => node.naturalWidth > 0 && node.naturalHeight > 0")
+    # A re-render can swap the image mid-decode; the wait then covers decoding
+    # the image the page shows now, and the attempts are recorded.
+    attempts = image_decode.decode_current(image, _ready)
     return {"decode_ready_wait_ms": round((time.monotonic_ns() - started_ns) / 1_000_000, 3),
+            "decode_attempts": attempts,
             "width": image.evaluate("(node) => node.naturalWidth"),
             "height": image.evaluate("(node) => node.naturalHeight"),
             "sha256": sha256((image.get_attribute("src") or "").encode()).hexdigest()}
