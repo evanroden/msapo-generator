@@ -10,7 +10,9 @@ from app.monthly_report_content_policy import (
     table_price_columns, proposal_price_columns, technical_source_text,
 )
 from app.monthly_report_model import ResolvedBlock
-from app.monthly_report_pre_model_routing import choose_reader_pages, classify_page
+from app.monthly_report_pre_model_routing import (
+    choose_reader_pages, classify_page, hidden_worksheet_pages,
+)
 from app.monthly_report_reconciliation import preserve_noop_block
 
 COLUMNS = {
@@ -1093,6 +1095,8 @@ def reader_update(contents, destination, value, existing=None, *, table_columns=
         profile, contents, destination, period=period, corrections=corrections,
         accepted_pages=accepted_pages, native_mapped=native_mapped))
         if profile is not None else None)
+    # Hidden worksheets are excluded even when no admission profile is given.
+    hidden_pages = hidden_worksheet_pages(contents)
     contact_pages = _activity_contact_pages(contents, value) if destination == "activity_summary" else set()
     block = existing or ResolvedBlock(destination, "This month")
     texts, rows, refs, pages, blocked_notices = [], [], [], {}, []
@@ -1127,6 +1131,7 @@ def reader_update(contents, destination, value, existing=None, *, table_columns=
                 and page_role.destinations and destination not in page_role.destinations
                 or (source.id, number) in accepted_pages
                 or (source.id, number) in native_mapped
+                or (source.id, number) in hidden_pages
                 or admitted is not None and (source.id, number) not in admitted):
             continue
         text, row = item.get("text", ""), item.get("row", [])
