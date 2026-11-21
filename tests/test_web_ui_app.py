@@ -212,7 +212,7 @@ def test_expense_approver_name_suggestions_fill_the_paired_email(monkeypatch):
     )
     assert email.value == "remembered@example.invalid"
     assert any(
-        "Director email recalled from this account's confirmed history"
+        "Confirm the director email recalled from this account's confirmed history"
         in caption.value
         for caption in app.caption
     )

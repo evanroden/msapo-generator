@@ -70,7 +70,8 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
     try:
         config = load_config()
     except SmartsheetConfigurationError as exc:
-        st.error("Check the Smartsheet form setup before continuing; the link could not be prepared.")
+        st.error("Check the Smartsheet form setup before continuing; the link could not be prepared: "
+                 + safe_status_detail(exc))
         return
 
     fields = dict(context.fields)
@@ -196,7 +197,8 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
     try:
         prefilled = build_prefilled_form_url(fields, config)
     except SmartsheetConfigurationError as exc:
-        st.error("Check the Smartsheet form setup and generate again; the prefilled link could not be prepared.")
+        st.error("Check the Smartsheet form setup and generate again; the prefilled link could not be "
+                 "prepared: " + safe_status_detail(exc))
         return
     # A SECOND required-value check, and not redundant with the one above. That
     # one asks "is the value present?"; this one asks "did it actually survive

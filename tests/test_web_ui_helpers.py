@@ -49,7 +49,7 @@ def test_review_path_does_not_return_before_rendering_correctable_fields():
     )[1]
 
     assert "\n        return" not in review_path
-    invalidation = review_path.index("A PDF-bearing detail changed")
+    invalidation = review_path.index("a detail in the PDF changed")  # U11 wording
     for marker in (
         'total_key = f"total_{token}"',
         'contact_key = f"contact_{token}"',

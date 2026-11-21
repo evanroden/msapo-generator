@@ -573,8 +573,10 @@ def test_the_summary_line_still_renders_when_blocked():
     missing vendor is often the very thing being reported. Only the colour
     changes."""
     source = Path("app/smartsheet_inline.py").read_text(encoding="utf-8")
-    assert "st.markdown(summary)" in source
-    assert "st.success(summary)" in source
+    # U11 renders the same summary through safe_status_detail (presentation only).
+    assert "st.markdown(safe_status_detail(summary))" in source
+    assert ('st.success("Review both files and the prefilled form before submitting. " '
+            '+ safe_status_detail(summary))') in source
 
 
 # --- 11: an optional note must not vanish when you type it -----------------

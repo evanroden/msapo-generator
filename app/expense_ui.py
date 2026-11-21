@@ -409,7 +409,8 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
         # post-render-write reason given in this function's docstring.
         _seed_profile(browser_token, account, browser_timezone)
         for problem in director_config_problems(accounts):
-            st.warning("Review the account-director setup before generating this expense report.")
+            st.warning("Review the account-director setup before generating this expense report: "
+                       + safe_status_detail(problem))
         _account_token_for_note = hashlib.sha256(account.encode("utf-8")).hexdigest()[:10]
         if account_director(account) is None and not str(
             st.session_state.get(f"expense_approver_name_{_account_token_for_note}", "") or ""
@@ -808,7 +809,8 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
             try:
                 signature_preview = employee_signature_png(employee_name)
             except ExpenseReportError as exc:
-                st.error("Check the Employee name before confirming the signature preview.")
+                st.error("Check the Employee name before confirming the signature preview. "
+                         + safe_status_detail(exc))
             else:
                 confirmation_key = f"expense_signature_confirmed_{account_token}"
                 confirmed_name_key = f"expense_signature_confirmed_name_{account_token}"
@@ -934,7 +936,8 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
 
         generation_error = str(st.session_state.get("expense_generation_error", "") or "")
         if generation_error:
-            st.error("Check the required report details, then generate the expense package again. No package was created.")
+            st.error("Check the required report details, then generate the expense package again. "
+                     "No package was created: " + safe_status_detail(generation_error))
         email_error = str(st.session_state.get("expense_email_error", "") or "")
         if email_error:
             st.error(
@@ -2358,7 +2361,8 @@ def _render_generated_package(
     # carry the PDF.
     if not package.pdf_bytes:
         if package.pdf_error:
-            st.warning("Download the completed Excel report; the PDF could not be created. Export the workbook to PDF before sending.")
+            st.warning("Download the completed Excel report; the PDF could not be created. Export the "
+                       "workbook to PDF before sending. " + safe_status_detail(package.pdf_error))
         with st.expander("Other file and email options", expanded=False):
             st.download_button(
                 "Download completed Excel report",
