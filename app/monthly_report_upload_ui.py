@@ -339,6 +339,22 @@ def _cmms(content, profile, period, prefix, field):
     return (signature, result[1]) if result else (signature, None)
 
 
+_READ_RESULTS = ("accepted", "restored", "duplicate")
+
+
+def _selection_identity(upload):
+    """Cheap identity of the chooser's current files, without copying their bytes."""
+    def size(item):
+        value = getattr(item, "size", None)
+        if value is None:
+            try:
+                value = item.getbuffer().nbytes
+            except (AttributeError, ValueError):
+                value = None
+        return value
+    return tuple((item.name, size(item), getattr(item, "file_id", "")) for item in (upload or ()))
+
+
 def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, field, *, retain_accepted=False,
                    attached_blocks=None, included_source_ids=(), show_intake=True, selected_source_id=None,
                    visible=True, scope_draft=None, shown_source_page=None, section_page_owners=()):
@@ -358,18 +374,51 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
     retired_key = key + "_retired_contributions"
     accepted = st.session_state.get(accepted_key) if retain_accepted else None
     if show_intake:
+        # The native chooser has a single maximum; the real per-type limits
+        # are enforced before parsing and stated directly beside the chooser.
+        st.caption(evidence_limits_summary())
+        generation_key = prefix + "_source_upload_generation"
+        generation = st.session_state.get(generation_key, 0)
+        upload_key = prefix + "_source_upload" + (f"_{generation}" if generation else "")
         upload = st.file_uploader("Monthly source files", type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
-                                 accept_multiple_files=True, key=prefix + "_source_upload", **evidence_upload_options())
-        picked = tuple((u.name, u.getvalue()) for u in (upload or ()))
-        selection = _signature([(name, hashlib.sha256(raw).hexdigest()) for name, raw in picked])
+                                 accept_multiple_files=True, key=upload_key, **evidence_upload_options())
         if st.button("Read monthly files", disabled=not upload, key=prefix + "_read_sources"):
-            with st.spinner("Reading local files and checking duplicates…"):
-                contents, messages = sources.ingest_batch(profile, picked, contents)
-            st.session_state[key] = contents
-            st.session_state[key + "_messages"] = messages
-            st.session_state[key + "_attempted_selection"] = selection
-        if picked and st.session_state.get(key + "_attempted_selection") == selection:
+            from app.monthly_report_streamed_upload import ingest_uploaded_selection
+            with st.status("Processing selected source files…", expanded=True) as status:
+                progress_text = st.empty()
+                progress_bar = st.progress(0.0)
+
+                def on_progress(name, copied, declared):
+                    progress_text.caption(f"Staging {name}: {copied:,} bytes read and hashed")
+                    progress_bar.progress(min(1.0, copied / max(1, declared or copied)))
+
+                def checkpoint(updated):
+                    # A later rejected/cancelled sibling must not erase a
+                    # successfully accepted source from this same request.
+                    st.session_state[key] = updated
+
+                contents, messages, receipts = ingest_uploaded_selection(
+                    profile, upload, contents, on_progress=on_progress,
+                    on_checkpoint=checkpoint)
+                st.session_state[key] = contents
+                st.session_state[key + "_messages"] = messages
+                st.session_state[key + "_upload_receipts"] = receipts
+                status.update(label=f"Finished processing {len(receipts)} file(s).", state="complete")
+            # Remount the native uploader; it owns the original browser bytes
+            # until its widget is retired. Only small receipts survive reruns.
+            # The next user rerun remounts the uploader. Do not force a
+            # mid-render rerun: other editors in this same Streamlit delivery
+            # must first consume their pending human changes.
+            # A file that was not read keeps the uploader mounted instead, so
+            # the per-file retry below can reread its unchanged bytes (A65).
+            if any(result not in _READ_RESULTS for _, result, _ in receipts):
+                st.session_state[key + "_attempted_selection"] = _selection_identity(upload)
+            else:
+                st.session_state.pop(key + "_attempted_selection", None)
+                st.session_state[generation_key] = generation + 1
+        if upload and st.session_state.get(key + "_attempted_selection") == _selection_identity(upload):
             from app.monthly_report_source_recovery_ui import render_failed_file_retries
+            picked = tuple((u.name, u.getvalue()) for u in upload)
             retried = render_failed_file_retries(profile, period,
                 st.session_state.get(prefix + "_revision", 0), key, picked, contents,
                 messages=st.session_state.get(key + "_messages", ()))
@@ -377,8 +426,25 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                 contents, messages, _ = retried
                 st.session_state[key] = contents
                 st.session_state[key + "_messages"] = messages
+                # The retried file's receipt is replaced by the retry's own notices.
+                st.session_state[key + "_upload_receipts"] = tuple(
+                    receipt for receipt in st.session_state.get(key + "_upload_receipts", ())
+                    if receipt[1] in _READ_RESULTS or receipt[2] in messages)
+    for filename, result, message in st.session_state.get(key + "_upload_receipts", ()):
+        if result == "accepted":
+            st.success(message)
+        elif result == "restored":
+            st.success(message)
+        elif result == "duplicate":
+            st.info(message)
+        else:
+            st.error(message)
+    # Messages unrelated to the already displayed file receipt (for example,
+    # a previously saved original that is now unavailable) still need review.
+    receipt_messages = {receipt[2] for receipt in st.session_state.get(key + "_upload_receipts", ())}
     for message in st.session_state.get(key + "_messages", ()):
-        st.warning(message)
+        if message not in receipt_messages and not message.startswith(("Duplicate skipped:", "Saved source restored:")):
+            st.warning(message)
     if not contents:
         if accepted:
             st.session_state[pending_key] = True
