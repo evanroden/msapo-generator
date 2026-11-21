@@ -165,7 +165,12 @@ def prepare_imported_contents(source, raw, sections):
 
 def has_generated_contents(raw):
     with ZipFile(BytesIO(raw)) as package:
-        root = parse_xml(package.read("word/document.xml"))
+        xml = package.read("word/document.xml")
+    # Only prepare_imported_contents writes these field instructions; a body
+    # without the prefix cannot hold one, so skip a second full parse.
+    if ("PAGEREF " + PREFIX).encode() not in xml:
+        return False
+    root = parse_xml(xml)
     return any(n.get(qn("w:instr"), "").strip().startswith("PAGEREF " + PREFIX)
                for n in root.iter(qn("w:fldSimple")))
 
