@@ -212,7 +212,7 @@ def test_expense_approver_name_suggestions_fill_the_paired_email(monkeypatch):
     )
     assert email.value == "remembered@example.invalid"
     assert any(
-        "Director email recalled from this account's confirmed history"
+        "Confirm the director email recalled from this account's confirmed history"
         in caption.value
         for caption in app.caption
     )
@@ -729,7 +729,7 @@ def test_itemized_receipt_selection_recalculates_reimbursable_amount(
     # purchased items: $20 / $30 × $33 = $22.
     assert amount_field().value == "22.00"
     assert any(
-        "Selected 1 of 2 items; reimbursable amount $22.00" in caption.value
+        "Review the selection: Selected 1 of 2 items; reimbursable amount $22.00" in caption.value
         for caption in app.caption
     )
 

@@ -431,9 +431,12 @@ def _section_preview_docx(draft, section_key, asset_loader=None, *, source_view=
 
 
 @measured("section_preview_total_including_queue")
-def preview_section(draft, section_key, asset_loader=None, *, source_view=None):
-    """High-quality, section-only preview with bounded, cleaned-up conversion."""
-    with monthly_render_jobs.work_slot(preview=True):
+def preview_section(draft, section_key, asset_loader=None, *, source_view=None,
+                    owner=None, revision=None, is_current=None):
+    """High-quality, section-only preview with cancellable waiting admission."""
+    admission = ({'owner': owner, 'revision': revision, 'is_current': is_current}
+                 if owner is not None else {})
+    with monthly_render_jobs.work_slot(preview=True, **admission):
         return _preview_section(draft, section_key, asset_loader, source_view=source_view)
 
 
