@@ -458,7 +458,13 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
         x.button("Compare fixture facts", key="monthly_qa_compare",
                  on_click=_queue_compare_request)
         generation_context = _generation_context(saved, current_generation)
-        generation_surface = y.empty()
+        # A container, not st.empty(): the browser keeps a container's earlier
+        # children until this run replaces them, so the explanation above the
+        # editor keeps its height while the editor re-renders. An empty
+        # placeholder is cleared as each rerun starts and refilled only after
+        # the editor, which moved the whole report twice per rerun: Chromium's
+        # scroll anchoring then scrolled the page and closed an open dropdown.
+        generation_surface = y.container()
         y.button("Generate QA Word and PDF", key="monthly_qa_generate",
                  on_click=_queue_generation_request,
                  args=(generation_context,))
@@ -516,7 +522,7 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
                     else:
                         st.session_state["monthly_qa_package"] = (working.fingerprint, package)
                         _finish_generation(request, "completed")
-            with generation_surface.container():
+            with generation_surface:
                 _render_generation_problem(current_generation, working)
             if state := st.session_state.get("monthly_qa_comparison"):
                 if state.get("fingerprint") != working.fingerprint:

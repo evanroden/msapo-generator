@@ -244,3 +244,40 @@ def test_rejected_qa_action_shows_plain_reason_near_qa_button(monkeypatch, tmp_p
     assert not app.exception
     assert any("Before generating: Review and confirm the cover photograph" in e.value for e in app.error)
     assert any(c.value.startswith("QA generation action rejected") for c in app.caption)
+
+
+def test_generation_explanation_above_editor_keeps_its_height_through_a_rerun(monkeypatch, tmp_path):
+    """The toolbar explanation must not be cleared while the editor re-renders.
+
+    The browser keeps a container's earlier children until a run replaces
+    them, but replaces an st.empty() placeholder as soon as it is re-sent. A
+    placeholder filled only after the editor therefore removed and restored
+    this explanation on every rerun, moving the report below it twice.
+    """
+    from streamlit.runtime.forward_msg_queue import ForwardMsgQueue
+    app = visit(monkeypatch, tmp_path)
+    next(b for b in app.button if b.label == "Replay synthetic source files").click().run()
+    assert not app.exception
+    deltas = []
+    monkeypatch.setattr(ForwardMsgQueue, "_before_enqueue_msg",
+                        staticmethod(lambda msg: deltas.append(msg) if msg.HasField("delta") else None))
+    app.run()
+    assert not app.exception
+
+    def kind(msg):
+        delta = msg.delta
+        if delta.WhichOneof("type") == "new_element":
+            return delta.new_element.WhichOneof("type")
+        return delta.WhichOneof("type")
+
+    generate = next(tuple(msg.metadata.delta_path) for msg in deltas
+                    if kind(msg) == "button"
+                    and msg.delta.new_element.button.label == "Generate QA Word and PDF")
+    surface = generate[:-1] + (generate[-1] - 1,)
+    at_surface = [kind(msg) for msg in deltas if tuple(msg.metadata.delta_path) == surface]
+    # One block, never an element that would replace its retained children.
+    assert at_surface == ["add_block"], at_surface
+    explanations = [msg.delta.new_element.markdown.body for msg in deltas
+                    if tuple(msg.metadata.delta_path[:len(surface)]) == surface
+                    and kind(msg) == "markdown"]
+    assert any(text.startswith("Before generating: Establish the site scope") for text in explanations), explanations
