@@ -17,6 +17,8 @@ from uuid import uuid4
 
 import pymupdf as fitz
 
+from app.monthly_report_preview_metrics import measured
+
 
 MAX_DISK_BYTES = 64 * 1024 * 1024
 MAX_RASTER_BYTES = 8 * 1024 * 1024
@@ -84,6 +86,7 @@ class PreviewStore:
             if entry.retired or now - entry.used > self.max_age:
                 self._remove(key)
 
+    @measured("preview_store_put")
     def put(self, owner, preview):
         if not owner or not isinstance(owner, str):
             raise ValueError('A private preview owner is required.')
@@ -147,6 +150,7 @@ class PreviewStore:
             if self._get(owner, ticket) is not None:
                 self._remove(ticket.key)
 
+    @measured("preview_store_pages_decode")
     def pages(self, owner, ticket, indexes, *, dpi=120):
         """Decode only the one/two visible pages; never build a whole-page HTML."""
         if dpi not in (96, 120, 150):
@@ -194,7 +198,13 @@ class PreviewStore:
             return tuple(result)
 
     def discard_owner_prefix(self, prefix):
-        """Expire only a named isolated tester's own cached pages."""
+        """Expire one complete QA namespace, never a neighboring owner/site."""
+        # Only reset_scope uses this API. Require a complete QA owner boundary
+        # (qa:<scope>:), not a potentially shared string prefix.
+        if (not isinstance(prefix, str) or not prefix.startswith('qa:')
+                or not prefix.endswith(':') or prefix.count(':') != 2
+                or not prefix[3:-1]):
+            raise ValueError('A complete isolated preview owner scope is required.')
         with self._lock:
             for key, item in tuple(self._files.items()):
                 if item.owner.startswith(prefix):

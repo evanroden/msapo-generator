@@ -14,6 +14,7 @@ from app.monthly_report_preview import (
     _section_scope, preview_page, preview_section, section_preview_fingerprint,  # noqa: F401 (tests patch preview_page here)
 )
 from app.monthly_report_preview_store import STORE, PreviewTicket
+from app.monthly_report_source_view_runtime import source_revision_identity
 from app.monthly_report_preview_view import render_view, viewport
 
 
@@ -77,7 +78,8 @@ def _reset_report_preview_identity(state, identity):
     for entry in tuple(state.get('last_good', {}).values()):
         _discard(state, entry)
     for field in ('wanted', 'queue', 'cache', 'requests', 'last_good',
-                  'visible', 'page_requests', 'ready_after', 'timers'):
+                  'visible', 'page_requests', 'ready_after', 'timers',
+                  'generations', 'source_revisions'):
         state[field] = {}
     state['report_identity'] = identity
     # A worker already running on the old report is discarded when complete,
@@ -109,7 +111,12 @@ def _advance_preview_queue(state):
             entry = future.result()
         except Exception:
             entry = {'error': 'The section preview could not update. Your edits are still here.'}
-        if state['wanted'].get(section) == fingerprint:
+        # Fingerprint equality alone is insufficient after A -> B -> A while
+        # A#1 is in flight. Only the exact admitted request generation can
+        # publish A#3's result, including its labels and raster ticket.
+        if (state['wanted'].get(section) == fingerprint
+                and state.get('generations', {}).get(section, 0)
+                    == state.get('running_generation', 0)):
             if entry.get('busy'):
                 request = state.get('running_request')
                 if request is not None and _is_visible(state, section):
@@ -126,6 +133,7 @@ def _advance_preview_queue(state):
             _discard(state, entry)
         state['running'] = None
         state.pop('running_request', None)
+        state.pop('running_generation', None)
         _bound_ordered_preview_cache(state)
     for section, request in list(state['queue'].items()):
         if state['wanted'].get(section) != request[0] or not _is_visible(state, section):
@@ -155,6 +163,7 @@ def _advance_preview_queue(state):
     else:
         state['running'] = (ready, fingerprint, future)
         state['running_request'] = (fingerprint, draft, assets, title)
+        state['running_generation'] = state.get('generations', {}).get(ready, 0)
 
 
 def _ordered_preview_state(prefix):
@@ -182,7 +191,9 @@ def _enqueue_visible(state, section):
     if not state['visible'].get(section) or _current_entry(state, section):
         return
     running = state.get('running')
-    if running and running[:2] == (section, state['wanted'].get(section)):
+    if (running and running[:2] == (section, state['wanted'].get(section))
+            and state.get('running_generation', 0)
+                == state.get('generations', {}).get(section, 0)):
         return
     request = state['requests'].get(section)
     if request is not None:
@@ -194,14 +205,35 @@ def _pending(state, section):
                 state.get('running') and state['running'][0] == section))
 
 
+def _current_page_request(state, section, ticket=None):
+    """Only acknowledge a viewport for this revision AND exact PDF ticket.
+
+    Before the ticket exists the placeholder page-zero request is provisional;
+    it must not override a later real ticket's initial content page.
+    """
+    view = state.get('page_requests', {}).get(section)
+    key = ticket.key if ticket is not None else None
+    if (isinstance(view, dict) and view.get('generation') == state['wanted'].get(section)
+            and view.get('ticket_key') == key):
+        return view
+    return None
+
+
 def _viewport_changed(prefix, section, widget_key):
     state = _ordered_preview_state(prefix)
     value = st.session_state.get(widget_key, {})
-    view = viewport(value.get('viewport'), state['wanted'].get(section)) if isinstance(value, dict) else None
+    raw = value.get('viewport') if isinstance(value, dict) else None
+    view = viewport(raw, state['wanted'].get(section))
     if view is None:
         return
+    ticket_key = raw.get('ticketKey')
+    if (ticket_key is not None and (type(ticket_key) is not str or len(ticket_key) != 32
+            or any(char not in '0123456789abcdef' for char in ticket_key))):
+        return
     state['visible'][section] = view['visible']
-    state['page_requests'][section] = view
+    state['page_requests'][section] = {
+        **view, 'generation': state['wanted'].get(section), 'ticket_key': ticket_key,
+    }
     if not view['visible']:
         state['queue'].pop(section, None)
         prior = state.setdefault('last_good', {}).pop(section, {})
@@ -286,8 +318,12 @@ def _render_ordered_preview(section_key, prefix, title):
             _discard(state, state['last_good'].pop(section_key))
 
     if ticket and state['visible'].get(section_key):
-        view = state['page_requests'].get(section_key, {'pages': (0,), 'dpi': 120})
-        indexes = tuple(index for index in view['pages'] if index < ticket.pages) or (0,)
+        # A new ticket starts at its content page, not an unrelated divider.
+        # Ignore old revision viewports until the browser requests this one.
+        view = _current_page_request(state, section_key, ticket) or {
+            'pages': (ticket.initial_page,), 'dpi': 120,
+        }
+        indexes = tuple(index for index in view['pages'] if index < ticket.pages) or (ticket.initial_page,)
         try:
             raster = STORE.pages(state['owner'], ticket, indexes, dpi=view['dpi'])
         except (ValueError, OSError):
@@ -341,7 +377,7 @@ def _render_ordered_preview(section_key, prefix, title):
     widget_key = prefix + '_preview_surface_' + section_key
     render_view(key=widget_key, view_scope=state['owner'] + '|' + widget_key, generation=state['wanted'].get(section_key, ''), title=title,
                 ticket=ticket, images=images, status=status, stale=stale,
-                acknowledged_viewport=state['page_requests'].get(section_key),
+                acknowledged_viewport=_current_page_request(state, section_key, ticket),
                 pending=pending,
                 on_poll=_scoped_callback(_poll_changed, prefix, section_key, widget_key),
                 on_change=_scoped_callback(_viewport_changed, prefix, section_key, widget_key))
@@ -365,6 +401,34 @@ def _request_scope(draft, section_key, assets):
     return scope, {ref: assets[ref] for ref in used if ref in assets}
 
 
+def _register_preview_request(state, section_key, fingerprint, draft, assets, title):
+    """Admit one immutable request incarnation, including ABA re-selection.
+
+    This runs before asynchronous scheduling, not inside a worker. It also
+    decides whether a prior ticket is safe to show as an explicitly stale
+    text-edit preview or must vanish after a source revision changes.
+    """
+    prior = state['wanted'].get(section_key)
+    if prior == fingerprint:
+        return
+    source_revision = source_revision_identity(draft)
+    old_revision = state.setdefault('source_revisions', {}).get(section_key)
+    state['source_revisions'][section_key] = source_revision
+    state['generation_sequence'] = state.get('generation_sequence', 0) + 1
+    state.setdefault('generations', {})[section_key] = state['generation_sequence']
+    state['wanted'][section_key] = fingerprint
+    previous = state['cache'].pop(section_key, {})
+    if prior is not None and old_revision != source_revision:
+        _discard(state, previous)
+        _discard(state, state.setdefault('last_good', {}).pop(section_key, {}))
+    else:
+        _remember_previous_preview(state, section_key, previous)
+    state['queue'].pop(section_key, None)
+    scope, needed_assets = _request_scope(draft, section_key, assets)
+    state['requests'][section_key] = (fingerprint, scope, needed_assets, title)
+    state['ready_after'][section_key] = monotonic() + DEBOUNCE_SECONDS if prior else 0
+
+
 def render_ordered_section_preview(draft, section_key, assets, prefix):
     title = 'Cover' if section_key == 'cover' else next(
         (section.title for section in draft.sections if section.key == section_key), 'Report section')
@@ -378,15 +442,7 @@ def render_ordered_section_preview(draft, section_key, assets, prefix):
     except Exception:
         st.warning('The section preview is unavailable. Your edits are still here.')
         return None
-    prior = state['wanted'].get(section_key)
-    if prior != fingerprint:
-        state['wanted'][section_key] = fingerprint
-        previous = state['cache'].pop(section_key, {})
-        _remember_previous_preview(state, section_key, previous)
-        state['queue'].pop(section_key, None)
-        scope, needed_assets = _request_scope(draft, section_key, assets)
-        state['requests'][section_key] = (fingerprint, scope, needed_assets, title)
-        state['ready_after'][section_key] = monotonic() + DEBOUNCE_SECONDS if prior else 0
+    _register_preview_request(state, section_key, fingerprint, draft, assets, title)
     _enqueue_visible(state, section_key)
     _advance_preview_queue(state)
     # Component polling reruns only its preview fragment while visible and

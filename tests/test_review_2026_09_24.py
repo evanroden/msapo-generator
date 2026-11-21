@@ -9,7 +9,7 @@ from pathlib import Path
 import pymupdf as fitz
 import pytest
 from dotenv import dotenv_values
-from PIL import Image
+from PIL import Image, ImageDraw
 from streamlit.testing.v1 import AppTest
 
 from app import expense_ui, ocr, web_ui
@@ -63,6 +63,17 @@ def _picture():
     return out.getvalue()
 
 
+def _scan_picture():
+    """A scanned page with visible ink: a uniformly white image is not a scan."""
+    image = Image.new("RGB", (80, 160), "white")
+    drawing = ImageDraw.Draw(image)
+    for y in range(12, 150, 14):
+        drawing.line((6, y, 74, y), fill="black", width=2)
+    out = BytesIO()
+    image.save(out, format="PNG")
+    return out.getvalue()
+
+
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
 def test_tiled_scan_under_native_heading_is_not_silently_omitted(monkeypatch, rotation):
     with fitz.open() as pdf:
@@ -85,12 +96,14 @@ def test_tiled_scan_under_native_heading_is_not_silently_omitted(monkeypatch, ro
 
 def test_repeated_overlapping_logos_do_not_count_as_a_full_page_scan(monkeypatch):
     with fitz.open() as pdf:
-        page = pdf.new_page(width=200, height=300)
+        page = pdf.new_page(width=612, height=792)
         page.insert_text(
             (10, 20), "Complete native quote, with repeated decorative logos"
         )
-        for _ in range(4):
-            page.insert_image(fitz.Rect(0, 100, 100, 200), stream=_picture())
+        # 40 overlapping copies of a logo-sized image (1.6% of the page each)
+        # would add up to more than half the page if overlaps were summed.
+        for _ in range(40):
+            page.insert_image(fitz.Rect(250, 400, 350, 500), stream=_scan_picture())
         payload = pdf.tobytes()
     monkeypatch.setattr(
         ocr, "_ocr_pdf", lambda *_a, **_k: pytest.fail("Logo sent to OCR")
@@ -132,10 +145,10 @@ def test_native_pdf_text_is_decoded_once_per_page(monkeypatch):
 def test_ocr_stops_before_later_requests_when_combined_text_exceeds_budget(monkeypatch):
     with fitz.open() as pdf:
         page = pdf.new_page(width=200, height=300)
-        page.insert_image(page.rect, stream=_picture())
+        page.insert_image(page.rect, stream=_scan_picture())
         pdf.new_page().insert_text((20, 30), "Complete native quote content")
         page = pdf.new_page(width=200, height=300)
-        page.insert_image(page.rect, stream=_picture())
+        page.insert_image(page.rect, stream=_scan_picture())
         payload = pdf.tobytes()
     monkeypatch.setattr(ocr, "_MAX_EXTRACTED_CHARS", 35)
     calls = []

@@ -105,6 +105,8 @@ def test_legacy_fingerprints_and_serialization(monkeypatch,tmp_path):
     # Reconstruct the historical schema, not current asdict with new defaults.
     assert old.pop('financial_source_review') is None
     assert old.pop('financial_page_reviews') == ()
+    assert old.pop('attachment_parent_sha256') == ''
+    assert old.pop('attachment_index') == 0
     # Independently reproduced on pre-financial/recovery tree780690056a9f.
     assert s.fingerprint == '02c3e5d6abfd9d9eb6e64f68b675ed06c3d3e87a9c33c81caf6840a6f6fdcffe'
     assert s.fingerprint == sha256(json.dumps(old,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
@@ -197,10 +199,13 @@ def test_legacy_draft_fingerprint_and_saved_source_stay_unchanged(monkeypatch,tm
     assert old.pop('cover_recovery_request') is None
     old.pop('source_row_reviews',None)
     old.pop("omitted_sections", None)  # Absent from the historical schema.
+    old.pop("source_coverage_receipts", None)
     for source in old['sources']:
         source.pop('pdf_text_blocks'); source.pop('scope_review')
         assert source.pop('financial_source_review') is None
         assert source.pop('financial_page_reviews') == ()
+        assert source.pop('attachment_parent_sha256') == ''
+        assert source.pop('attachment_index') == 0
     for block in old['blocks']:
         block.pop('asset_instances')
         assert block.pop('cover_original') is None
@@ -280,7 +285,7 @@ def test_version_one_cache_rechecks_ambiguous_classification(monkeypatch,tmp_pat
     assert not upgraded.source.actions
     assert upgraded.source.classification=='Reference only'
     assert any('not auto-imported' in n for n in upgraded.source.notices)
-    assert json.loads(path.read_text())['vendor_passage_policy']==7
+    assert json.loads(path.read_text())['vendor_passage_policy']==8
 
 
 @pytest.mark.parametrize('heading', ["Technician's note", 'Technician’s note', 'Phase 2 result', 'Note (internal)', 'Note #2'])
@@ -342,7 +347,7 @@ def test_version_two_cache_rechecks_unknown_heading_boundary(monkeypatch,tmp_pat
     path.write_text(json.dumps(data))
     upgraded,_=sources.ingest(synthetic_profiles()[0],c.source.filename,raw)
     assert not upgraded.source.actions
-    assert json.loads(path.read_text())['vendor_passage_policy']==7
+    assert json.loads(path.read_text())['vendor_passage_policy']==8
 
 
 @pytest.mark.parametrize('heading', ['Supervisor ID:42.', 'Finding #2:12.'])

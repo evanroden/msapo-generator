@@ -43,7 +43,7 @@ def setup(monkeypatch, tmp_path, *, draft=None):
     return app, store
 
 
-def synthetic_preview(draft, loader):
+def synthetic_preview(draft, loader, *, ticket_only=False):
     """Render two actual PDF pages with the last-section draft fact."""
     assert any('last-section fact' in block.text for block in draft.blocks)
     text = '\n'.join(block.text for block in draft.blocks)
@@ -76,7 +76,7 @@ def test_direct_review_renders_unvisited_section_on_first_activation(monkeypatch
         assert not preview_state(app)
         unchanged = app.session_state['draft']
         calls = []
-        def render(draft, loader):
+        def render(draft, loader, *, ticket_only=False):
             calls.append(draft)
             return synthetic_preview(draft, loader)
         monkeypatch.setattr(review_ui, 'preview_report', render)
@@ -89,11 +89,11 @@ def test_direct_review_renders_unvisited_section_on_first_activation(monkeypatch
         with fitz.open(store._files[state['ticket'].key].path) as pdf:
             assert len(pdf) == 2
             assert 'last-section fact' in pdf[1].get_text()
-        assert any('Current draft · page 1 of 2' in value.value for value in app.caption)
+        assert any('Draft page 1 of 2' in value.value for value in app.caption)
         next(field for field in app.number_input
              if field.label == 'Draft preview page').set_value(2).run()
         assert not app.exception and preview_state(app) == state
-        assert any('Current draft · page 2 of 2' in value.value for value in app.caption)
+        assert any('Draft page 2 of 2' in value.value for value in app.caption)
         assert calls == [unchanged]
     finally:
         store.close()
@@ -103,7 +103,7 @@ def test_unchanged_repeat_click_keeps_one_ticket_and_one_render(monkeypatch, tmp
     app, store = setup(monkeypatch, tmp_path)
     try:
         renders = []
-        def render(draft, loader):
+        def render(draft, loader, *, ticket_only=False):
             renders.append(preview_fingerprint(draft))
             return synthetic_preview(draft, loader)
         monkeypatch.setattr(review_ui, 'preview_report', render)
@@ -126,7 +126,7 @@ def test_unchanged_repeat_click_keeps_one_ticket_and_one_render(monkeypatch, tmp
         store.close()
 
 
-def test_new_edit_retire_old_ticket_before_any_current_claim(monkeypatch, tmp_path):
+def test_new_edit_keeps_last_good_visibly_outdated_until_refreshed(monkeypatch, tmp_path):
     app, store = setup(monkeypatch, tmp_path)
     try:
         monkeypatch.setattr(review_ui, 'preview_report', synthetic_preview)
@@ -138,13 +138,17 @@ def test_new_edit_retire_old_ticket_before_any_current_claim(monkeypatch, tmp_pa
         app.session_state['draft'] = revised
         app.run()
         assert not app.exception
-        assert not preview_state(app)
-        assert not store.available(owner(app), before['ticket'])
+        assert preview_state(app) == before
+        assert store.available(owner(app), before['ticket'])
         assert any('report changed' in c.value.lower() for c in app.caption)
+        assert any('Older draft' in c.value and 'latest changes not shown' in c.value
+                   for c in app.caption)
         assert not any('Current draft · page' in c.value for c in app.caption)
+        assert not any('Draft page' in c.value for c in app.caption)
         click_preview(app)
         assert preview_state(app)['fingerprint'] == preview_fingerprint(revised)
         assert preview_state(app)['ticket'] != before['ticket']
+        assert not store.available(owner(app), before['ticket'])
         assert app.session_state['draft'] == revised
     finally:
         store.close()
@@ -181,7 +185,7 @@ def test_failed_preview_has_scoped_retry_and_does_not_change_canonical_data(
     try:
         draft = app.session_state['draft']
         attempts = []
-        def flaky(current, loader):
+        def flaky(current, loader, *, ticket_only=False):
             attempts.append(current)
             if len(attempts) == 1:
                 raise ValueError('Synthetic output image is beyond preview budget.')
@@ -215,7 +219,7 @@ def test_full_guided_review_preview_uses_current_draft_after_all_editors(
         monkeypatch, tmp_path):
     from test_monthly_report_ui import monthly
     calls = []
-    def checked(draft, loader):
+    def checked(draft, loader, *, ticket_only=False):
         calls.append(draft)
         with fitz.open() as pdf:
             pdf.new_page().insert_text((72, 72), "Synthetic guided Review")
@@ -240,7 +244,7 @@ def test_full_guided_review_preview_uses_current_draft_after_all_editors(
         assert calls and calls[-1].fingerprint == current.fingerprint
         assert any('Synthetic direct Review activity.' == block.text
                    for block in calls[-1].blocks if block.key == 'activity_summary')
-        assert any('Current draft · page 1 of 1' in c.value for c in app.caption)
+        assert any('Draft page 1 of 1' in c.value for c in app.caption)
     finally:
         cache.close()
 
@@ -254,7 +258,7 @@ def test_expected_render_busy_is_actionable_and_retry_preserves_draft(monkeypatc
     app, store = setup(monkeypatch, tmp_path)
     try:
         original = app.session_state['draft']
-        def busy(draft, loader):
+        def busy(draft, loader, *, ticket_only=False):
             raise RenderBusy(message)
         monkeypatch.setattr(review_ui, 'preview_report', busy)
         click_preview(app)
@@ -289,7 +293,7 @@ def test_real_busy_work_slot_keeps_its_reason_without_starting_conversion(monkey
 def test_unexpected_render_failure_remains_generic(monkeypatch, tmp_path):
     app, store = setup(monkeypatch, tmp_path)
     try:
-        def unexpected(draft, loader):
+        def unexpected(draft, loader, *, ticket_only=False):
             raise RuntimeError('Synthetic private internal diagnostic')
         monkeypatch.setattr(review_ui, 'preview_report', unexpected)
         click_preview(app)

@@ -6,7 +6,8 @@ import json
 
 import streamlit as st
 
-from app import monthly_report_ai as ai, monthly_report_library as library
+from app import monthly_report_ai as ai, monthly_report_ai_items as items, monthly_report_library as library
+from app import monthly_report_ai_coverage as coverage
 from app.monthly_report_model import BlockSpec, EvidenceFact, ReportSource, ResolvedBlock
 from app.monthly_report_prompts import copilot_prompt, parse_copilot
 from app.monthly_report_sources import SourceContent
@@ -82,6 +83,128 @@ def copilot_source(text, profile, period):
     return replace(source, facts=tuple(facts)), unmatched, len(lines) - len(facts)
 
 
+@st.fragment(run_every=1)
+def _reading_progress(prefix):
+    # Only mounted while a job exists; completion advances the page queue
+    # without requiring another click. The UI thread remains the sole writer.
+    job = st.session_state.get(prefix + "_ai_job")
+    if job is not None and job["future"].done():
+        st.rerun()
+
+
+def _page_scope(draft):
+    return (draft.profile.contract, draft.profile.key, draft.period.key,
+            st.session_state.get("_monthly_qa_generation", ""))
+
+
+def _merge_page_facts(prefix, source, facts):
+    """Keep older proposals and human-accepted facts; never replace by ID."""
+    key = prefix + "_ai_facts"
+    proposed = st.session_state.get(key)
+    merged = {}
+    if proposed and proposed[:2] == (source.id, source.fingerprint):
+        merged = {fact.id: fact for fact in proposed[2]}
+    for fact in facts:
+        merged.setdefault(fact.id, fact)
+    st.session_state[key] = (source.id, source.fingerprint, tuple(merged.values()))
+
+
+def _queue_page_reads(draft, prefix, source, pages, *, failed_only=False):
+    """Resolve cached successful siblings without another model request."""
+    if prefix + "_ai_job" in st.session_state:
+        return
+    waiting = []
+    for page in dict.fromkeys(pages):
+        try:
+            key, _ = ai.extraction_request(source, (page,))
+            saved = ai.cached(draft.profile, "extraction", key)
+            if saved is not None:
+                facts = ai.normalize_facts(saved, source, (page,), draft.profile,
+                                           draft.period, ai.vendor_names(draft))
+                _merge_page_facts(prefix, source, facts)
+            elif not failed_only or items.status(draft.profile, draft.period, key) == "failed":
+                waiting.append(page)
+        except ValueError as exc:
+            # One empty/invalid source page cannot prevent independent pages
+            # from being read. Report the exact skipped page to the operator.
+            st.warning(f"Page {page}: {exc}")
+    st.session_state[prefix + "_ai_page_batch"] = {
+        "scope": _page_scope(draft), "source_id": source.id,
+        "source_fingerprint": source.fingerprint, "waiting": waiting,
+    }
+    _advance_page_reads(draft, prefix)
+
+
+def _advance_page_reads(draft, prefix):
+    """Start at most one pending page; a completed sibling is never resubmitted."""
+    batch_key = prefix + "_ai_page_batch"
+    batch = st.session_state.get(batch_key)
+    if not batch or prefix + "_ai_job" in st.session_state:
+        return
+    contents = st.session_state.get(prefix + "_evidence", ())
+    current = next((c.source for c in contents
+                    if c.source.id == batch["source_id"]), None)
+    if (batch["scope"] != _page_scope(draft) or not current
+            or current.fingerprint != batch["source_fingerprint"]):
+        st.session_state.pop(batch_key, None)
+        return
+    while batch["waiting"]:
+        page = batch["waiting"][0]
+        try:
+            key, content = ai.extraction_request(current, (page,))
+            saved = ai.cached(draft.profile, "extraction", key)
+            if saved is not None:
+                facts = ai.normalize_facts(saved, current, (page,), draft.profile,
+                                           draft.period, ai.vendor_names(draft))
+                _merge_page_facts(prefix, current, facts)
+                batch["waiting"].pop(0)
+                continue
+            job = {
+                "kind": "extraction", "page_job": True, "key": key,
+                "source_id": current.id, "source_fingerprint": current.fingerprint,
+                "pages": (page,), "scope": batch["scope"],
+                "profile": draft.profile, "period": draft.period,
+            }
+
+            def prepare():
+                state, token = items.claim(draft.profile, draft.period, key)
+                if state != "claimed":
+                    raise ValueError(
+                        "This page is already cached or being read in another session. "
+                        "Recheck its results before requesting it again."
+                    )
+                job["token"] = token
+                return content
+
+            if items.status(draft.profile, draft.period, key) == "pending":
+                # Another session owns this page. Do not hold its siblings
+                # hostage or submit the same paid work twice.
+                batch["waiting"].pop(0)
+                continue
+            batch["waiting"].pop(0)  # Never auto-retry a failed page.
+            started = _start(prefix, draft, job, prepare)
+            if not started:
+                latest = items.status(draft.profile, draft.period, key)
+                if latest == "pending":
+                    continue  # The other session won the claim race.
+                if latest == "accepted":
+                    saved = ai.cached(draft.profile, "extraction", key)
+                    if saved is not None:
+                        facts = ai.normalize_facts(saved, current, (page,),
+                                                   draft.profile, draft.period,
+                                                   ai.vendor_names(draft))
+                        _merge_page_facts(prefix, current, facts)
+                    continue
+                batch["waiting"].insert(0, page)  # Capacity was full.
+                return
+            return
+        except ValueError as exc:
+            # Invalid content is local to its page. Other pages remain queued.
+            st.warning(str(exc))
+            batch["waiting"].pop(0)
+    st.session_state.pop(batch_key, None)
+
+
 def _finish_job(draft, prefix):
     key = prefix + "_ai_job"
     job = st.session_state.get(key)
@@ -100,7 +223,8 @@ def _finish_job(draft, prefix):
             (c.source for c in contents if c.source.id == job.get("source_id")), None
         )
         if job["kind"] == "extraction":
-            if not current or current.fingerprint != job["source_fingerprint"]:
+            if (not current or current.fingerprint != job["source_fingerprint"]
+                    or (job.get("page_job") and job["scope"] != _page_scope(draft))):
                 raise ValueError(
                     "Source details changed while reading. Start again to read the current version."
                 )
@@ -112,12 +236,55 @@ def _finish_job(draft, prefix):
                 draft.period,
                 ai.vendor_names(draft),
             )
-            ai.save_cache(draft.profile, "extraction", job["key"], result)
+            if job.get("page_job"):
+                if not items.accept(draft.profile, draft.period, job["key"],
+                                    job.get("token"), result):
+                    raise ValueError("A newer page reading took precedence. Existing facts were preserved.")
+                _merge_page_facts(prefix, current, facts)
+            else:
+                ai.save_cache(draft.profile, "extraction", job["key"], result)
+                st.session_state[prefix + "_ai_facts"] = (
+                    current.id, current.fingerprint, facts,
+                )
+        elif job["kind"] == "coverage":
+            if not current or current.fingerprint != job["source_fingerprint"]:
+                raise ValueError("The source changed while reading. Earlier suggestions were not applied.")
+            outcome = coverage.collect(job["plan"], result, current, draft.profile, draft.period)
+            for cache_key, response in outcome["cacheable"]:
+                try:
+                    ai.save_cache(draft.profile, "full_coverage", cache_key, response)
+                except (ValueError, OSError):
+                    st.warning("A verified reading could not be cached; its suggestions remain available.")
+            previous = st.session_state.get(prefix + "_ai_facts")
+            retained = {
+                fact.id: fact for fact in previous[2]
+            } if (previous and previous[0] == current.id
+                  and previous[1] == current.fingerprint) else {}
+            retained.update((fact.id, fact) for fact in outcome["facts"])
             st.session_state[prefix + "_ai_facts"] = (
-                current.id,
-                current.fingerprint,
-                facts,
-            )
+                current.id, current.fingerprint, tuple(retained.values()))
+            st.session_state[prefix + "_ai_coverage"] = (
+                current.id, current.fingerprint, outcome, job["plan"].pages)
+        elif job["kind"] == "all_coverage":
+            if job["owner_scope"] != _approval_scope(draft, prefix):
+                raise ValueError("The report context changed while reading. Earlier suggestions were not applied.")
+            by_id = {content.source.id: content.source for content in contents}
+            if len(by_id) != len(contents):
+                raise ValueError("Duplicate source identities require review before automatic reading.")
+            if any(source_id not in by_id or by_id[source_id].fingerprint != fingerprint
+                   for source_id, fingerprint, _ in job["plans"]):
+                raise ValueError("The source collection changed while reading. Earlier suggestions were not applied.")
+            pending = {}
+            for source_id, fingerprint, planned in job["plans"]:
+                source = by_id[source_id]
+                outcome = coverage.collect(planned, result, source, draft.profile, draft.period)
+                for cache_key, response in outcome["cacheable"]:
+                    try:
+                        ai.save_cache(draft.profile, "full_coverage", cache_key, response)
+                    except (ValueError, OSError):
+                        st.warning("A verified source reading could not be cached; its facts remain available.")
+                pending[source_id] = (fingerprint, outcome["facts"], outcome, planned.pages)
+            st.session_state[prefix + "_ai_all_proposals"] = pending
         elif job["kind"] == "draft":
             if (
                 tuple(s.fingerprint for s in draft.sources)
@@ -130,7 +297,11 @@ def _finish_job(draft, prefix):
                 result, job["block"], job["facts"], draft.sources
             )
             ai.save_cache(draft.profile, "draft", job["key"], result)
+            from app.monthly_report_ai_suggestion_action import finish_receipt
             st.session_state[prefix + "_ai_suggestion"] = block
+            st.session_state[prefix + "_ai_suggestion_receipt"] = finish_receipt(
+                job.get("suggestion_request"), block)
+            st.session_state.pop(prefix + "_ai_editing", None)
         else:
             from app.monthly_report_image_review import complete_review
 
@@ -157,6 +328,12 @@ def _finish_job(draft, prefix):
                 "Image text read. Compare it with the preview before including the page or its facts."
             )
     except Exception as exc:
+        if job.get("page_job") and job.get("token"):
+            try:
+                items.fail(job["profile"], job["period"], job["key"], job["token"])
+            except (OSError, ValueError):
+                # A QA reset may have retired the original namespace.
+                pass
         st.warning(
             "Reading was not applied. "
             + (
@@ -174,11 +351,65 @@ def _start(prefix, draft, job, prepare, read=ai.request_json):
         future = start_receipt(prepare, read)
         if future is None:
             st.info("The document reader is busy. Try again shortly.")
-        else:
-            st.session_state[prefix + "_ai_job"] = {**job, "future": future}
-            st.rerun()
+            return False
+        st.session_state[prefix + "_ai_job"] = {**job, "future": future}
+        st.rerun()
+        return True
     except ValueError as exc:
         st.warning(str(exc))
+        return False
+
+
+
+def _queue_suggestion_choice(prefix, action, token):
+    """A native action carries the exact displayed snapshot, not a new one."""
+    st.session_state[prefix + "_ai_pending_choice"] = (action, token)
+
+
+def _linked_input_pending(prefix, block):
+    """Detect an uncommitted native linked-editor input before applying AI."""
+    if block is None or not block.ai_paragraphs:
+        return False
+    registration = st.session_state.get(prefix + "_ai_linked_controls", {}).get(block.key)
+    if not isinstance(registration, dict) or registration.get("paragraphs") != block.ai_paragraphs:
+        return False
+    manual = st.session_state.get(registration.get("manual"))
+    if isinstance(manual, str) and manual != _linked_manual_text(block):
+        return True
+    for paragraph, fields in zip(block.ai_paragraphs, registration.get("fields", ())):
+        text = st.session_state.get(fields["text"])
+        evidence = st.session_state.get(fields["evidence"])
+        if (isinstance(text, str) and text != paragraph.text
+                or isinstance(evidence, list) and tuple(evidence) != paragraph.fact_ids):
+            return True
+    return False
+
+
+def _forget_proposal_text_widgets(prefix):
+    """A dismissed/replaced suggestion cannot revive an old text-area edit."""
+    stem = prefix + "_ai_p_"
+    for key in tuple(st.session_state):
+        if key.startswith(stem):
+            del st.session_state[key]
+    st.session_state["report_draft_mirror"] = {
+        key: value for key, value in st.session_state.get("report_draft_mirror", {}).items()
+        if not key.startswith(stem)
+    }
+
+
+def _forget_accepted_text_widgets(prefix, block_key):
+    """Retire obsolete native mirrors only after the exact choice was accepted."""
+    stems = (prefix + "_edit_" + block_key + "_text_",
+             prefix + "_edit_linked_" + block_key + "_",
+             prefix + "_linked_" + block_key + "_")
+    for key in tuple(st.session_state):
+        if key.startswith(stems):
+            del st.session_state[key]
+    st.session_state["report_draft_mirror"] = {
+        key: value for key, value in st.session_state.get("report_draft_mirror", {}).items()
+        if not key.startswith(stems)
+    }
+    st.session_state.get(prefix + "_ai_linked_controls", {}).pop(block_key, None)
 
 
 def _approval_scope(draft, prefix):
@@ -194,6 +425,21 @@ def _fact_approval(draft, prefix, source, facts):
 
 def _queue_fact_approval(prefix, identity):
     st.session_state[prefix + "_pending_fact_approval"] = identity
+
+
+def _date_repair(prior, fact, current):
+    """The saved fact with only the re-read date (and its flags) applied.
+
+    Facts saved before exact-source binding (A55) have empty source and page
+    digests. A fresh read of the same original fills them, so they may be
+    adopted with the date, but only when the read is bound to this original;
+    an already bound fact keeps its digests and must match them exactly.
+    """
+    provenance = {}
+    if (not prior.source_sha256 and not prior.page_sha256
+            and fact.source_sha256 == current.sha256):
+        provenance = {"source_sha256": fact.source_sha256, "page_sha256": fact.page_sha256}
+    return replace(prior, date=fact.date, flags=fact.flags, **provenance)
 
 
 def _apply_pending_fact_approval(draft, prefix):
@@ -216,12 +462,36 @@ def _apply_pending_fact_approval(draft, prefix):
     # chunk; it is not permission to remove previously accepted facts from
     # this source. Deterministic fact IDs make unchanged reacceptance idempotent.
     facts = {fact.id: fact for fact in current.facts}
-    facts.update((fact.id, fact) for fact in proposed[2])
+    for fact in proposed[2]:
+        prior = facts.get(fact.id)
+        if prior is None:
+            facts[fact.id] = fact
+        elif (
+            # Explicitly re-reading can repair a *provably unsupported* saved
+            # date on the same immutable quote, without changing any other
+            # human-edited field or replacing an already supported date.
+            prior.date and fact.date and prior.date != fact.date
+            and not prior.flags
+            and _date_repair(prior, fact, current) == fact
+            and ai.fact_date_problems((prior,), (current,))
+            and not ai.fact_date_problems((fact,), (current,))
+        ):
+            facts[fact.id] = fact
+        # Otherwise keep the accepted fact, including human corrections.
     updated = replace(current, facts=tuple(facts.values()))
+    # Only native acceptance may record a receipt for later-month replay.
+    from app.monthly_report_ai_replay import record_acceptance
+    try:
+        record_acceptance(draft.profile, current, proposed[2])
+    except (OSError, ValueError) as exc:
+        st.warning("Fact replay was not saved; current reviewed facts are retained. " + str(exc))
     st.session_state[prefix + "_evidence"] = tuple(
         replace(content, source=updated) if content.source.id == current.id else content
         for content in contents)
     st.session_state.pop(prefix + "_ai_facts", None)
+    pending = st.session_state.get(prefix + "_ai_all_proposals")
+    if pending and current.id in pending:
+        pending.pop(current.id, None)
 
 
 def _linked_manual_text(block):
@@ -314,7 +584,11 @@ def edit_linked_paragraphs(draft, blocks, prefix, field, allowed_keys=None):
                         st.caption("This saved fact is unavailable. Choose current evidence or explicitly remove its link.")
                         continue
                     source, fact = facts[identity]
-                    st.caption(f"{source.filename}, page {fact.page}: {fact.quote}")
+                    st.caption(
+                        f"{ai.clean_text(source.filename)}, page {fact.page} · "
+                        f"original SHA-256 {fact.source_sha256 or source.sha256}: "
+                        + ai.fact_quote_for_display(fact.quote)
+                    )
                 paragraphs.append(
                     replace(
                         paragraph, text=ai.clean_text(text), fact_ids=tuple(selected)
@@ -358,11 +632,47 @@ def edit_linked_paragraphs(draft, blocks, prefix, field, allowed_keys=None):
 
 def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_container=None):
     """Return updated draft/blocks; caller still owns snapshot confirmation."""
+    # Bind this editor incarnation even before a suggestion is displayed.
+    from app.monthly_report_guided import _rich_text_scope
+    _rich_text_scope(prefix)
     _finish_job(draft, prefix)
+    _advance_page_reads(draft, prefix)
     _apply_pending_fact_approval(draft, prefix)
     busy = prefix + "_ai_job" in st.session_state
+    if busy:
+        _reading_progress(prefix)
     evidence_key = prefix + "_evidence"
     contents = st.session_state.get(evidence_key, ())
+    from app.monthly_report_ai_replay import ReviewedReplay, replay_reviewed_facts
+    replay_seen_key = prefix + "_accepted_replay_seen"
+    seen = set(st.session_state.get(replay_seen_key, ()))
+    replayed = {}
+    enriched = []
+    for content in contents:
+        source = content.source
+        token = ai.digest((draft.profile.contract, draft.profile.key, draft.period.key,
+                           tuple(f.key for f in draft.profile.facilities),
+                           source.id, source.sha256, source.scope_review, source.page_texts))
+        receipt_key = prefix + "_accepted_replay_" + token
+        if token not in seen:
+            try:
+                past = replay_reviewed_facts(draft, source)
+            except (OSError, ValueError) as exc:
+                st.warning("Prior extraction could not be verified and was not reused: " + str(exc))
+                past = ReviewedReplay()
+            st.session_state[receipt_key] = past
+            seen.add(token)
+            if past.reusable:
+                facts = {fact.id: fact for fact in source.facts}
+                facts.update((fact.id, fact) for fact in past.reusable)
+                source = replace(source, facts=tuple(facts.values()))
+                content = replace(content, source=source)
+        replayed[source.id] = st.session_state.get(receipt_key, ReviewedReplay())
+        enriched.append(content)
+    st.session_state[replay_seen_key] = tuple(seen)
+    if tuple(enriched) != tuple(contents):
+        contents = tuple(enriched)
+        st.session_state[evidence_key] = contents
     draft = replace(draft, sources=tuple(content.source for content in contents))
     targets = [key for key in LABELS if allowed_keys is None or key in allowed_keys]
     if not targets:
@@ -373,15 +683,62 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
     # Keep optional writing mechanics out of the primary Activity editor.
     # Everything still renders in the same section so a reviewed suggestion
     # can be accepted without navigating away or overwriting manual work.
-    with st.expander("Help write this summary", expanded=False):
+    with st.expander("Help write this summary",
+                     expanded=bool(st.session_state.get(prefix + "_ai_suggestion"))):
         st.caption(
             "Use reviewed source facts to suggest wording. Check the proposal, "
             "then choose Add or Replace."
         )
         st.caption("Reading and drafting send selected text or page images to the external document reader and may use paid requests. Choose a reading or drafting action to start.")
         with st.expander("Limits"):
-            st.caption("No prices in suggestions. Maximum 80 reading/drafting requests per report/month; cached results are reused. Each source read is limited to 60,000 characters. Image reading shares the report's 20-image allowance.")
+            st.caption("Maximum 80 paid reading/drafting requests shared by this profile and report month, including retries; cached calls are reused. Each model call is limited to 60,000 characters. Full-source reading partitions long uploads automatically; automatic image reading has a separate bounded allowance.")
         if contents:
+            # Bulk reading is an explicit paid action, never an upload side effect.
+            # Only previously classified, in-scope files are admitted; the
+            # source manager continues to own unknown/other-site decisions.
+            from app import monthly_report_structured_uploads as structured
+            names = {
+                name.casefold() for facility in draft.profile.facilities
+                for name in (facility.key, facility.title, *facility.aliases)
+            }
+            eligible_all = tuple(
+                c for c in structured.reader_sources(contents, "activity_summary")
+                if c.source.classification != "Reference only"
+                and c.source.facility.casefold() in names
+            )
+            if len(contents) > 1:
+                st.caption(
+                    f"{len(eligible_all)} of {len(contents)} uploaded sources are "
+                    "eligible for a single full-document fact read. Unknown "
+                    "classification, unknown-site, other-site and unmapped activity sources "
+                    "remain intact and require individual review.")
+                if st.button(
+                    "Find facts across eligible uploaded files",
+                    key=prefix + "_ai_extract_all",
+                    disabled=busy or not eligible_all,
+                ):
+                    try:
+                        plans = tuple(
+                            (c.source.id, c.source.fingerprint, coverage.plan(c.source))
+                            for c in eligible_all if c.source.page_texts)
+                        if not plans:
+                            raise ValueError("No classified source has readable or visual pages.")
+                        selected_contents = {c.source.id: c for c in eligible_all}
+
+                        def prepare_all():
+                            return coverage.join_prepared(tuple(
+                                coverage.prepare_run(
+                                    planned, selected_contents[source_id],
+                                    draft.profile, draft.period)
+                                for source_id, _, planned in plans))
+
+                        _start(
+                            prefix, draft,
+                            {"kind": "all_coverage", "plans": plans,
+                             "owner_scope": _approval_scope(draft, prefix)},
+                            prepare_all, coverage.run)
+                    except ValueError as exc:
+                        st.warning(str(exc))
             by_id = {c.source.id: c for c in contents}
             chosen = st.selectbox(
                 "File to read for work performed",
@@ -390,6 +747,23 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                 key=prefix + "_ai_source",
             )
             source = by_id[chosen].source
+            past = replayed.get(source.id, ReviewedReplay())
+            if past.reusable:
+                st.caption(f"{len(past.reusable)} verified recommendations reused from "
+                           f"{past.from_period}; corrected text remains editable.")
+            if past.historical:
+                st.caption(f"{len(past.historical)} accepted facts from {past.from_period} "
+                           "remain historical, not work completed in this report month.")
+                for fact in past.historical:
+                    st.write(f"Earlier month · Page {fact.page} · {fact.text}")
+            all_pending = st.session_state.get(prefix + "_ai_all_proposals", {})
+            if (chosen in all_pending
+                    and all_pending[chosen][0] == source.fingerprint):
+                fingerprint, facts, outcome, selected_pages = all_pending[chosen]
+                st.session_state[prefix + "_ai_facts"] = (
+                    chosen, fingerprint, facts)
+                st.session_state[prefix + "_ai_coverage"] = (
+                    chosen, fingerprint, outcome, selected_pages)
             pages = st.multiselect(
                 "Pages to read for facts",
                 list(range(1, len(source.page_texts) + 1)),
@@ -400,46 +774,77 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
             )
             from app.monthly_report_ai_correction_ui import render_fact_page_context
             render_fact_page_context(prefix,replace(draft,blocks=tuple(blocks.values())),source,by_id[chosen])
+            reviewed_pages = {fact.page for fact in (*past.reusable, *past.historical)}
+            already_reviewed = bool(pages and set(pages) <= reviewed_pages)
+            if already_reviewed:
+                st.caption("These pages have accepted source-linked facts. Use the earlier "
+                           "review without a model request, or explicitly read again.")
+            read_again = (st.button("Re-read pages for additional facts (uses document reader)",
+                                    key=prefix + "_ai_reread", disabled=busy)
+                          if already_reviewed else False)
             if st.button(
                 "Find work, findings and follow-ups",
                 key=prefix + "_ai_extract",
                 disabled=busy or not pages,
+            ) or read_again:
+                try:
+                    if already_reviewed and not read_again:
+                        st.info("Prior reviewed facts are displayed above. No paid extraction "
+                                "request was made; earlier work remains historical.")
+                    else:
+                        if source.facility and source.facility.casefold() not in names:
+                            raise ValueError("This file is assigned to another site. Correct its source scope before sending it to the reader.")
+                        needs_coverage = (
+                            len(pages) > 20
+                            or sum(len(source.page_texts[n - 1]) for n in pages) > ai.MAX_EVIDENCE_CHARS
+                            or any(n in source.needs_vision for n in pages)
+                        )
+                        if needs_coverage:
+                            planned = coverage.plan(source, pages)
+
+                            def prepare():
+                                return coverage.prepare_run(
+                                    planned, by_id[chosen], draft.profile, draft.period)
+
+                            _start(
+                                prefix, draft,
+                                {
+                                    "kind": "coverage",
+                                    "source_id": source.id,
+                                    "source_fingerprint": source.fingerprint,
+                                    "plan": planned,
+                                },
+                                prepare,
+                                coverage.run,
+                            )
+                        else:
+                            _queue_page_reads(draft, prefix, source, pages)
+                except ValueError as exc:
+                    st.warning(str(exc))
+            # Each source/page is an independent content-hash receipt. Cached
+            # reads are not human-approved until Use these facts is clicked.
+            states = {}
+            for page in pages:
+                try:
+                    key, _ = ai.extraction_request(source, (page,))
+                    states[page] = items.status(draft.profile, draft.period, key)
+                except ValueError:
+                    states[page] = "unread"
+            if states:
+                st.caption(
+                    "Page reading: "
+                    + ", ".join(f"{sum(v == status for v in states.values())} {status}"
+                                for status in ("accepted", "pending", "failed", "unread"))
+                    + ". Accepted readings still need your fact review."
+                )
+            failed_pages = [page for page, status in states.items() if status == "failed"]
+            if failed_pages and st.button(
+                "Retry failed pages only",
+                key=prefix + "_ai_retry_failed",
+                disabled=busy,
             ):
                 try:
-                    key, content = ai.extraction_request(source, pages)
-                    saved = ai.cached(draft.profile, "extraction", key)
-                    if saved is not None:
-                        facts = ai.normalize_facts(
-                            saved,
-                            source,
-                            pages,
-                            draft.profile,
-                            draft.period,
-                            ai.vendor_names(draft),
-                        )
-                        st.session_state[prefix + "_ai_facts"] = (
-                            source.id,
-                            source.fingerprint,
-                            facts,
-                        )
-                    else:
-
-                        def prepare():
-                            ai.reserve_call(draft.profile, draft.period)
-                            return content
-
-                        _start(
-                            prefix,
-                            draft,
-                            {
-                                "kind": "extraction",
-                                "key": key,
-                                "source_id": source.id,
-                                "source_fingerprint": source.fingerprint,
-                                "pages": pages,
-                            },
-                            prepare,
-                        )
+                    _queue_page_reads(draft, prefix, source, failed_pages, failed_only=True)
                 except ValueError as exc:
                     st.warning(str(exc))
             image_pages = [n for n in source.needs_vision if n in pages]
@@ -485,6 +890,29 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                     _start(
                         prefix, draft, meta, prepare, lambda v: v[0] or read_image(v[1])
                     )
+            coverage_state = st.session_state.get(prefix + "_ai_coverage")
+            if coverage_state and (coverage_state[0], coverage_state[1], coverage_state[3]) == (
+                    source.id, source.fingerprint, tuple(pages)):
+                outcome = coverage_state[2]
+                inventory = outcome["inventory"]
+                ready_pages = sum(status == "ready" for status in inventory.values())
+                st.caption(
+                    f"Reader inventory: {len(inventory)}/{len(pages)} selected pages accounted; "
+                    f"{ready_pages} classified from native evidence, "
+                    f"{len(inventory) - ready_pages} need visual/manual review or a retry. "
+                    f"{outcome['rejected_claims']} ungrounded claims withheld. "
+                    f"{outcome['admitted_calls']} new calls, "
+                    f"{outcome['cache_hits']} cache hits; "
+                    f"{outcome['total_seconds']:.2f}s network/queue worker time "
+                    "(not a UI first-paint measurement).")
+                if ready_pages != len(inventory):
+                    pending_pages = [str(n) for n, status in inventory.items()
+                                     if status != "ready"]
+                    st.warning(
+                        "No pages were silently discarded. Pages needing review or retry: "
+                        + ", ".join(pending_pages[:30])
+                        + ("…" if len(pending_pages) > 30 else "")
+                        + ". Choose Find work, findings and follow-ups to retry uncached pages.")
             proposed = st.session_state.get(prefix + "_ai_facts")
             if proposed and proposed[0] == source.id:
                 if proposed[1] != source.fingerprint:
@@ -495,6 +923,10 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                     st.write(f"{len(proposed[2])} facts found")
                     for fact in proposed[2]:
                         st.write(f"Page {fact.page} · {fact.text}")
+                        st.caption(
+                            f"Original SHA-256 {fact.source_sha256 or source.sha256} · "
+                            f"Exact quote: {ai.fact_quote_for_display(fact.quote)}"
+                        )
                         if fact.flags:
                             st.warning("; ".join(fact.flags))
                     st.caption("These facts support suggested wording. Original pages keep their own inclusion decisions.")
@@ -604,11 +1036,20 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                     draft.profile.asset_tags,
                     instruction,
                 )
+                from app.monthly_report_guided import _rich_text_scope
+                from app.monthly_report_ai_suggestion_action import request_receipt, finish_receipt
+                request = request_receipt(draft, blocks.get(target), target, _rich_text_scope(prefix))
+                # An in-flight new read must not leave an earlier proposal actionable.
+                _forget_proposal_text_widgets(prefix)
+                for suffix in ("_ai_suggestion", "_ai_suggestion_receipt",
+                               "_ai_pending_choice", "_ai_editing"):
+                    st.session_state.pop(prefix + suffix, None)
                 saved = ai.cached(draft.profile, "draft", key)
                 if saved is not None:
-                    st.session_state[prefix + "_ai_suggestion"] = ai.normalize_draft(
-                        saved, target, facts, sources
-                    )
+                    suggested = ai.normalize_draft(saved, target, facts, sources)
+                    st.session_state[prefix + "_ai_suggestion"] = suggested
+                    st.session_state[prefix + "_ai_suggestion_receipt"] = finish_receipt(
+                        request, suggested)
                 else:
 
                     def prepare():
@@ -620,6 +1061,7 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                         draft,
                         {
                             "kind": "draft",
+                            "suggestion_request": request,
                             "key": key,
                             "block": target,
                             "facts": facts,
@@ -628,121 +1070,123 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_c
                             ),
                         },
                         prepare,
+                        read=lambda chunk: ai.request_json(
+                            chunk,
+                            response_kind="paragraphs",
+                            validator=lambda value: ai.normalize_draft(
+                                value, target, facts, sources,
+                            ),
+                        ),
                     )
             except ValueError as exc:
                 st.warning(str(exc))
         suggestion = st.session_state.get(prefix + "_ai_suggestion")
         if suggestion and suggestion.key in targets:
-            st.subheader("Check the suggested wording")
-            st.caption(
-                "Nothing below replaces your report until you choose Add or Replace."
-            )
-            facts = {f.id: f for s in sources for f in s.facts}
-            paragraphs, ready = [], True
-            for n, paragraph in enumerate(suggestion.ai_paragraphs):
-                text = st.text_area(
-                    f"Suggested paragraph {n + 1}",
-                    key=field(
-                        prefix + "_ai_p_" + suggestion.fingerprint + str(n),
-                        paragraph.text,
-                    ),
-                    height=90,
-                )
-                evidence = "\n".join(
-                    f"Page {facts[i].page}: {facts[i].quote}"
-                    for i in paragraph.fact_ids
-                    if i in facts
-                )
-                st.caption(evidence or "Source evidence is no longer available.")
-                flags = tuple(
-                    f for f in paragraph.flags if "Unsupported number" not in f
-                )
-                if ai.numbers(text) - ai.fact_numbers(facts[i] for i in paragraph.fact_ids if i in facts):
-                    flags += ("Unsupported number: correct against the evidence",)
-                for flag in flags:
-                    st.warning(flag)
-                checked = st.checkbox(
-                    f"I checked paragraph {n + 1} against its source",
-                    key=prefix + "_ai_p_ok_" + ai.digest((text, evidence, flags)),
-                )
-                ready &= (
-                    checked
-                    and bool(text.strip())
-                    and not ai.contains_price(text)
-                    and not any("Unsupported number" in f for f in flags)
-                )
-                paragraphs.append(
-                    replace(paragraph, text=ai.clean_text(text), flags=flags)
-                )
-            ready &= bool(
-                paragraphs
-            ) and suggestion.ai_evidence_fingerprint == ai.evidence_fingerprint(
-                sources, suggestion.references
-            )
+            from app.monthly_report_guided import _pending_rich_text_edit, _rich_text_scope
+            from app.monthly_report_ai_suggestion_action import (
+                SuggestionConflict, accept, capture, checked_suggestion, verify)
+            st.subheader("Suggested wording · " + LABELS.get(suggestion.key, suggestion.key))
+            st.caption("This is optional. Accept adds the shown text to this section; Edit lets you correct it first.")
             existing = blocks.get(suggestion.key)
-            # This help precedes the ordinary native editor. Its callback may
-            # already have delivered newer wording on the same request as an
-            # older Replace click; keep that input and show its current value.
-            from app.monthly_report_guided import _pending_rich_text_edit
-            pending_manual = _pending_rich_text_edit(prefix, existing) if existing else None
-            if pending_manual is not None:
-                st.info("Your latest wording is shown below. Check it before choosing Add or Replace.")
-            compared = pending_manual or existing
-            st.text(
-                "Current wording:\n"
-                + (compared.text if compared else "Nothing entered yet.")
-            )
-            mode = st.radio(
-                "Use the checked suggestion",
-                ["Add below existing wording", "Replace existing wording"],
-                key=prefix + "_ai_apply_mode",
-            )
-            if st.button(
-                "Dismiss suggestion — keep my current wording",
-                key=prefix + "_ai_dismiss",
-            ):
-                st.session_state.pop(prefix + "_ai_suggestion", None)
-                st.info("Suggestion dismissed. Your report content and sources are unchanged.")
+            scope = _rich_text_scope(prefix)
+            receipt = st.session_state.get(prefix + "_ai_suggestion_receipt")
+            editing = bool(st.session_state.get(prefix + "_ai_editing", False))
+            texts = []
+            facts = {f.id: (s, f) for s in sources for f in s.facts}
+            for n, paragraph in enumerate(suggestion.ai_paragraphs):
+                if editing:
+                    value = st.text_area(
+                        f"Suggested paragraph {n + 1}",
+                        key=field(prefix + "_ai_p_" + suggestion.fingerprint + str(n),
+                                  paragraph.text),
+                        height=90)
+                else:
+                    st.markdown(f"**Paragraph {n + 1}**")
+                    st.write(paragraph.text)
+                    value = paragraph.text
+                texts.append(value)
+            with st.expander("Evidence, citations and notices", expanded=False):
+                for n, paragraph in enumerate(suggestion.ai_paragraphs):
+                    st.markdown(f"**Paragraph {n + 1} evidence**")
+                    for fact_id in paragraph.fact_ids:
+                        match = facts.get(fact_id)
+                        if match is None:
+                            st.warning("Saved source fact is unavailable: " + fact_id)
+                        else:
+                            source, fact = match
+                            st.caption(
+                                f"{ai.clean_text(source.filename)}, page {fact.page} · "
+                                f"original SHA-256 {fact.source_sha256 or source.sha256}: "
+                                + ai.fact_quote_for_display(fact.quote))
+                    for flag in paragraph.flags:
+                        st.warning(flag)
+            try:
+                verify(receipt, draft, existing, suggestion, scope)
+                checked_suggestion(suggestion, tuple(texts), sources)
+                valid = True
+            except (SuggestionConflict, ValueError) as exc:
+                valid = False
+                st.warning(str(exc))
+                st.caption("No report content changed. Review the current source or edit the proposal before accepting.")
+            if st.button("Edit suggestion", key=prefix + "_ai_edit",
+                         disabled=editing):
+                st.session_state[prefix + "_ai_editing"] = True
                 st.rerun()
-            if st.button(
-                "Use checked wording in this report",
-                disabled=not ready,
-                key=prefix + "_ai_apply_" + ai.digest((
-                    _approval_scope(draft, prefix), suggestion.fingerprint,
-                    compared.fingerprint if compared else "", mode,
-                    tuple(asdict(paragraph) for paragraph in paragraphs),
-                    ai.evidence_fingerprint(sources, suggestion.references))),
-            ) and ready and pending_manual is None:
-                revised = replace(
-                    suggestion,
-                    ai_paragraphs=tuple(paragraphs),
-                    text="\n".join("- " + p.text for p in paragraphs),
-                )
-                blocks[revised.key] = ai.apply_suggestion(
-                    existing, revised, sources, append=mode.startswith("Add")
-                )
-                draft = replace(
-                    draft,
-                    sections=tuple(
-                        replace(s, included=True)
-                        if any(b.key == revised.key for b in s.blocks)
-                        else s
-                        for s in draft.sections
-                    ),
-                )
-                st.session_state.pop(prefix + "_ai_suggestion", None)
-                # Remove stale widget mirrors so the normal editor shows the accepted text.
-                for key in list(st.session_state):
-                    if key.startswith(prefix + "_edit_" + revised.key + "_text_"):
-                        del st.session_state[key]
-                st.session_state["report_draft_mirror"] = {
-                    k: v
-                    for k, v in st.session_state.get("report_draft_mirror", {}).items()
-                    if not k.startswith(prefix + "_edit_" + revised.key + "_text_")
-                }
-                st.success(
-                    "Checked wording added. Existing pictures and tables were retained."
-                )
+            if st.button("Dismiss suggestion", key=prefix + "_ai_dismiss"):
+                _forget_proposal_text_widgets(prefix)
+                for suffix in ("_ai_suggestion", "_ai_suggestion_receipt",
+                               "_ai_pending_choice", "_ai_editing"):
+                    st.session_state.pop(prefix + suffix, None)
+                st.info("Suggestion dismissed. Current report content and sources were retained.")
+                st.rerun()
+            # Only an explicit Replace removes the prior text; ordinary Accept
+            # is always additive, even if an earlier panel remembered Replace.
+            # The button identifies the displayed REPORT/source proposal, not
+            # the candidate textarea bytes. A corrected textarea value delivered
+            # with the click is validated and accepted in that same action.
+            # A native manual input can arrive in the same event as Accept/Replace.
+            # Render both actions disabled while that newer input is pending.
+            pending_manual = _pending_rich_text_edit(prefix, existing) if existing else None
+            manual_pending = pending_manual is not None or _linked_input_pending(prefix, existing)
+            token = ai.digest((receipt, editing,
+                               existing.fingerprint if existing else None,
+                               tuple((s.id, s.fingerprint) for s in sources)))
+            st.button("Accept edited suggestion" if editing else "Accept suggestion",
+                      disabled=not valid or manual_pending, key=prefix + "_ai_accept_" + token,
+                      on_click=_queue_suggestion_choice,
+                      args=(prefix, "add", token))
+            if editing:
+                st.button("Replace current wording with edited suggestion",
+                          disabled=not valid or manual_pending, key=prefix + "_ai_replace_" + token,
+                          on_click=_queue_suggestion_choice,
+                          args=(prefix, "replace", token))
+            pending = st.session_state.pop(prefix + "_ai_pending_choice", None)
+            if pending is not None:
+                if (not isinstance(pending, tuple) or len(pending) != 2
+                        or pending[1] != token or pending[0] not in ("add", "replace")):
+                    st.warning("The displayed suggestion changed before that action. Current wording was kept; choose again.")
+                else:
+                    try:
+                        new_text = _pending_rich_text_edit(prefix, existing) if existing else None
+                        incoming = new_text is not None or _linked_input_pending(prefix, existing)
+                        revised = accept(
+                            draft, existing, suggestion, receipt, scope, tuple(texts),
+                            append=pending[0] == "add", pending_manual=incoming)
+                    except (SuggestionConflict, ValueError) as exc:
+                        st.warning(str(exc))
+                    else:
+                        blocks[revised.key] = revised
+                        draft = replace(
+                            draft, sections=tuple(
+                                replace(section, included=True)
+                                if any(spec.key == revised.key for spec in section.blocks)
+                                else section for section in draft.sections))
+                        for suffix in ("_ai_suggestion", "_ai_suggestion_receipt",
+                                       "_ai_pending_choice", "_ai_editing"):
+                            st.session_state.pop(prefix + suffix, None)
+                        _forget_accepted_text_widgets(prefix, revised.key)
+                        _forget_proposal_text_widgets(prefix)
+                        st.success("Accepted wording saved to this section. Existing pictures and tables were retained.")
     from contextlib import nullcontext
     with editor_container if editor_container is not None else nullcontext():
         blocks = edit_linked_paragraphs(draft, blocks, prefix, field, allowed_keys)

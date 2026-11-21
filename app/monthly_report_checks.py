@@ -9,6 +9,7 @@ from datetime import date
 
 from app.monthly_report_content_policy import (
     contains_price,
+    contains_private_contact,
     schema_price_columns,
     table_has_pricing,
 )
@@ -203,7 +204,10 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                               and section_key in draft.omitted_sections
                               and any(s.key == section_key and not s.included
                                       for s in draft.sections))
-        if explicitly_omitted:
+        if explicitly_omitted or (item.category == "proposal" and not item.included):
+            # Keep excluded proposal identities for reimport matching, but do
+            # not demand review of content that the user left out of output.
+            # Re-inclusion still requires the normal decision confirmation.
             continue
         for problem in problem_details(item, draft):
             checks.append(ReportCheck("follow_up", problem.message, True, item.key,
@@ -377,6 +381,16 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                 True, key, correction_targets))
         if contains_price(text):
             checks.append(ReportCheck("pricing", f"Remove pricing from {key.replace('_', ' ')}. Client reports cannot contain prices.", True, key, correction_targets))
+        # Preserve deliberate human edits for correction rather than silently
+        # deleting them. Official contact/contract identity sections have their
+        # own client-facing purpose; private contact data cannot enter ordinary
+        # technical narratives, captions or work-order/proposal rows.
+        if (key not in {"report_identity", "footer", "footer_text",
+                        "contact_matrix", "subcontractor_matrix"}
+                and contains_private_contact(text)):
+            checks.append(ReportCheck("private_contact",
+                f"Remove private contact details from {key.replace('_', ' ')} before client export.",
+                True, key, correction_targets))
         phrases = placeholder_matches(text)
         if phrases:
             checks.append(ReportCheck("placeholder", f"Remove template instructions from {key}: {', '.join(phrases)}.", True, key, correction_targets))

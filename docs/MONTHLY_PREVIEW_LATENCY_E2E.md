@@ -147,3 +147,240 @@ conversion, a warm raster optimization cannot solve it. If outcomes miss
 these proposed targets, keep #491 open and route the next bounded fix and
 served verification through P20. Do not close it from synthetic benchmark
 code or a host change alone.
+
+## A22 synthetic stage attribution (17 November 2026)
+
+At the inspected starting main `f0af99567223aea3375f60e671450048be2bf0a0`,
+the existing reproducible harness offered five cold/warm total-ingest and
+thumbnail attempts for six source workloads, and three native runs per reuse
+mode. **It did not distinguish hash/cache lookup, parse, visual read,
+admission, conversion and raster in an ordered trace**. This missing
+attribution is the baseline failure A22 exercises; it is not a measured
+regression in rendering or proof of a conversion bottleneck.
+
+The A22 collector in `app/monthly_report_latency_trace.py` is activated only
+inside disposable synthetic harness calls and uses process monotonic clocks.
+It emits allowlisted stage labels and relative elapsed/CPU milliseconds. It
+never collects source filenames, contents, report identities, user IDs,
+prompts, paths, model secrets or raw images. No collection, log or saved receipt
+runs for normal application requests. Source-received is a point marker at the
+beginning of the validated upload path. Hash/cache covers the content hash,
+scope lookup and cache policy. Parse covers source inspection and derivative
+metadata publication on a miss. Optional visual-read covers the actual
+first-page derivative request, with raster nested within on a cold PDF miss.
+No parse/raster span on a warm hit is correct and does not mean a page was
+silently skipped.
+
+Native-section receipts include work admission (`job_queue`), original DOCX
+assembly (`native_assembly`), real LibreOffice conversion
+(`conversion`) and first-two-page `PreviewStore` rasterization (`raster`).
+A cooperative `read_with_capacity_wait` retry records only its actual queue
+sleep, not the subsequent admitted read. The headless browser adds
+`first_decoded_browser_image` from a real Load button press until decoded
+image availability; uploaded-source first-image timing is measured separately.
+These are **distinct clock origins and journeys**: server spans may be nested;
+do not add them to browser end-to-end wall time.
+
+The CI evidence workflow now runs the *same checked-out SHA and synthetic
+fixtures* under both 512 MiB/0.5 CPU and no explicit Docker cgroup caps,
+with at least five cold/warm source attempts per 2/24/96-page PDF and
+1/4/8-image DOCX, plus three native attempts per reuse mode and three browser
+attempts per Chromium/WebKit engine. Production-image CPU and RSS/cgroup OOM
+counters, source hashes, native package-member digests, thumbnail hashes,
+page counts and geometry remain in the existing receipts. Uncapped is a
+CI-runner resource class, **not a larger authorized production instance**.
+The synthetic test asserts cold parse/warm reuse, strictly ordered nonnegative
+clock spans, disabled-telemetry safety, invalid inputs, independent profiles,
+same-source digest, replacement survival and cooperative retry cancellation.
+
+Interpret `dominant_*_stage` only after both exact-head CI artifact families
+finish. It is a mean among the listed *nonoverlapping top-level stages*,
+not a proof that a specific service is the live-user bottleneck; visual raster
+is nested inside visual read and must not be double-counted. If capped and
+uncapped artifacts disagree, report both rather than selecting a favorable
+sample. No scheduling or cache-policy optimization is justified merely by
+adding this trace. Real client documents, a served production writer, physical
+Safari and authentic DOCX/PDF report acceptance are outside this harness.
+
+## A01 extension — critical-path receipts (17 November 2026)
+
+Baseline SHA: `f0af99567223aea3375f60e671450048be2bf0a0`.
+The baseline has cold/warm backend phases and real synthetic native-browser
+timings, but does **not** export per-request process/thread queue waits,
+numeric-only office execution spans, 256-row CSV/XLSX timing distributions, or
+initial navigation-to-interactive time. This is the deterministic
+**missing-measurement baseline**, not a fabricated slow production run.
+
+The A01 instrumentation is passive and context-local: it records only a
+fixed phase name, milliseconds and outcome within an explicit benchmark
+capture. No filenames, content, source/site identifiers, API inputs or paid
+reader calls are included. Non-benchmark users have no emitted spans.
+Work-admission, intra-process office locks and cross-process file locks are
+separate. Nested office calls do not double-count lock waits; a rejected
+request records `busy`. The native fixture records physical assembly,
+office lock/convert and first-two-page raster per run.
+
+For PRs changing the harness, CI runs the **same exact production Dockerfile
+and requirements.lock** in three isolated phases: uncapped backend, 512 MiB /
+0.5 CPU backend, and browser headless Chromium/WebKit against both uncapped
+runner and a capped server. Raw JSON, Docker inspect settings, RSS/peak,
+cgroup OOM events, CPU usage and browser samples are artifacts. Do not compare
+uncapped and capped data from different head SHAs. Each cold ingest uses a
+fresh synthetic namespace; warm re-ingest uses the same immutable original.
+CSV/XLSX contain exactly 256 invented work-order rows. Text/tables are
+deliberately **not** assigned a raster thumbnail. The mixed case ingests
+PDF/DOCX/CSV/XLSX and validates duplicate SHA identity and rejected
+empty/unsupported/malformed inputs. DOCX sources contain 1/4/8 photographs
+**and** small tables. Backend concurrency covers two distinct source
+namespace owners, not two simultaneous LibreOffice conversions.
+
+Benchmark commands on the exact checkout, run both resource modes:
+
+```sh
+docker build --build-arg APP_GIT_COMMIT="$(git rev-parse HEAD)" -t msapo-a01 .
+for part in sources native; do
+  docker run --rm -e ANTHROPIC_API_KEY=test-key-not-used \
+    --entrypoint python msapo-a01 scripts/qa_monthly_preview_latency_e2e.py --part "$part"
+  docker run --rm --memory=512m --memory-swap=512m --cpus=0.5 \
+    -e RESOURCE_REQUIRE_512_MB=1 -e RESOURCE_REQUIRE_HALF_CPU=1 \
+    -e ANTHROPIC_API_KEY=test-key-not-used \
+    --entrypoint python msapo-a01 scripts/qa_monthly_preview_latency_e2e.py --part "$part"
+done
+docker run --rm --entrypoint python msapo-a01 scripts/benchmark_monthly_preview_cache.py --output /tmp/raster.json
+```
+
+Read each JSON's `environment.commit`, `samples.*.samples_ms`,
+`native_section.runs.*.samples.*.critical_path_spans` and cgroup fields.
+The standalone raster benchmark now reports raw samples and omits p95 for
+under 20 samples. The browser `navigation_to_first_interactive_seconds`
+is separate from press-to-decoded-preview and upload-selection-to-thumbnail
+elapsed. Its upload clock **includes** UI clicks and localhost transport and
+cannot isolate pure transfer from processing. Neither backend phases nor
+headless-browser readings constitute a live Render measurement.
+
+### Five critical-path hypotheses and proposed targets, NOT measured results
+
+| Ordered probe | What to quantify | Proposed improvement goal | Would added CPU/RAM help? |
+|---|---|---|---|
+| 1. Cold native assembly | `native_assembly` and conversion-independent package SHA | Reduce cold native assembly median at least 30% with equal package parts and scope | CPU/RAM may help large picture processing; reuse will not help a changed revision |
+| 2. Writer execution | `office_execution` less `office_*_queue`; generated PDF SHA/pages | Reduce median conversion/execution at least 25% | CPU helps CPU-bound conversion; RAM helps only if currently memory-limited |
+| 3. Admission and wait | `work_queue` and `office_thread_queue`/`office_process_queue` (busy rate) | Reduce waiting without increasing OOMs; maintain finite queue and correct priority | Larger resources alone cannot remove serialized file locks |
+| 4. Cold PDF/DOCX extraction | cold ingest and thumbnails, separately for 2/24/96 PDF and 1/4/8 DOCX | Reduce cold PDF-24 and DOCX-4 median at least 20% | CPU can help OCR/pixel decoding; no paid AI is invoked in CI |
+| 5. First decoded browser image | navigation→interactive, press→image, upload→image, edit→current | Cut synthetic first-use/interaction median at least 25% without stale paint | Network transfer, Streamlit rerun, navigation and browser decode may dominate regardless of server CPU |
+
+These are optimization *hypotheses and candidate targets*, not measured
+before/after improvements or owner-approved SLAs. Actual ranking requires
+the new exact-head JSON samples. Exports, saved/reloaded state, real AI
+response wall time, source mapping versus extraction microspans, cross-site
+month acceptance, physical-device first paint and live production speed
+are **not** individually measured by this addition. Their absence must
+remain visible when routing A02–A05/A19; never infer acceptance from this
+harness.
+
+## A89 — Render versus Azure attribution without cutover (17 November 2026)
+
+This comparison is a **read-only assessment**, not a hosting change. Repository
+issues #270, #491, and #941 stay open. The existing
+'qa_monthly_preview_latency_e2e.py --part sources|native' is the workload
+source of truth; do not add a special faster case for one host. It writes to a
+fresh temporary namespace, not the application's standing-data directory.
+Only run it where a disposable isolated process/container and the host's
+resource policy permit it. Do not run synthetic generation against an active
+customer workspace, change service replicas, copy private client reports, or
+switch the authoritative writer.
+
+**Control-plane baseline (17 Nov, observation only):** Render's service
+metadata showed one Oregon Docker instance with a 1-vCPU, 2-GiB configured
+limit, deploying from main. Read-only deploy metadata showed its current
+build's commit, but neither Render's deploy status nor GitHub's main
+SHA independently establishes which build a browser session receives.
+Contemporaneous Render CPU/memory samples were idle/low-usage and HTTP
+latency samples were unavailable. The Azure served build, active revision,
+region, replica count and CPU/RAM limits were **not independently verified
+in this A89 run**. The private Azure identifiers, credentials, endpoints,
+revision IDs, and container diagnostics must stay outside this public repo.
+In particular, do not infer that Azure is slower or faster from these facts.
+
+### Reproducible, synthetic-only side-by-side control
+
+1. Read deployment/build identity independently for each environment. On
+   Render, reconcile live deploy status and its commit with About's served
+   'APP_GIT_COMMIT'; on Azure, reconcile About with the active Container Apps
+   revision/image and the reported commit. Record the current writer
+   separately. If any of these disagree, mark identity unverified; don't
+   silently substitute main or a registry's newest tag.
+2. In an **isolated** container built from a pinned SHA, run the existing
+   '--part sources' and '--part native' commands via
+   'scripts/qa_monthly_host_deterministic.py' in separate fresh processes
+   at identical '--memory=512m --memory-swap=512m --cpus=0.5' limits with
+   'RESOURCE_REQUIRE_512_MB=1' and 'RESOURCE_REQUIRE_HALF_CPU=1'.
+   Capture both JSON files, the exact image/SHA and nonsecret platform
+   resource metadata. Repeat using the same pinned image and limits on the
+   other host *only if permitted*. The application/renderer image, dependency
+   versions and generated input hashes must match. The A89 runner preserves
+   the existing benchmark work path but replaces synthetic noise randomness,
+   DOCX ZIP timestamps and PDF trailer IDs with deterministic equivalents
+   inside its disposable process only. For naturally different
+   1-vCPU/2-GiB or other host limits, run a second separate equal-limit
+   control before interpreting the observed host configuration.
+3. Bundle each host's **synthetic-only** receipts as JSON. The two names below
+   refer to private **local files**, never production endpoints:
+
+   ~~~json
+   {
+     "synthetic_only": true,
+     "execution": "isolated",
+     "served_commit": "<40-character pinned and independently checked SHA>",
+     "region": "<general nonsecret region, or omit>",
+     "service_resource_verified": false,
+     "sources": "<replace this string with parsed backend-sources.json object>",
+     "native": "<replace this string with parsed backend-native.json object>"
+   }
+   ~~~
+
+   The input's 'served_commit' is checked against **both benchmark receipt**
+   commits. An operator must independently verify it against the actual
+   served build before claiming served acceptance. Use 'served_synthetic'
+   only when the workload genuinely ran on the relevant served environment
+   in isolation; use 'isolated' for CI/disposable Docker. Set
+   'service_resource_verified=true' only with independently captured
+   control-plane evidence; this is a *declaration*, not remote attestation.
+   Private identifiers and host URLs should be omitted entirely.
+4. Compare the files without making network or data-store calls:
+
+   ~~~sh
+   python scripts/qa_monthly_host_comparison.py \
+     --render /private/render-synthetic.json \
+     --azure /private/azure-synthetic.json \
+     --output /private/host-comparison.json
+   ~~~
+
+   Exit 0 means matching verified *receipt contents*, not causal proof;
+   exit 1 means a confounder; exit 2 means missing/malformed/unsafe receipt.
+   The tool shows per-case **five-sample** cold/warm median/min/max times,
+   native no-reuse/reuse medians, exact commit and limits, and reported RSS.
+   It rejects OOM-tainted cases, missing/duplicate workloads, stale commit
+   receipts, absent native control and mismatched page/raster identities.
+   Output whitelists only timing, build and resource fields: unrelated fields
+   in the private input are never copied to its summary.
+5. Keep HTTP client/network/first-paint metrics **separate** from the
+   synthetic Python timing boundary. If either host's request metrics lack
+   sufficient samples, report no median rather than inventing one.
+   CPU quota, RAM, deployment state, region, image digest and active writer
+   are independent variables; do not label different-build/different-limit
+   results a software or platform regression. An identical artifact on two
+   hosts may still differ because of cold starts, noisy neighbors, storage,
+   concurrency or network conditions. The comparison never measures user
+   clicks, browser paint or real reports.
+
+**Decision rule:** Do not raise the hosting plan or change minimum replicas
+from an idle control-plane sample. If equal-image, equal-limit, equal-fixture
+cold and warm distributions show CPU saturation, evaluate a separately
+authorized 1-vCPU/2-GiB versus 0.5-vCPU/512-MiB capacity experiment, with
+per-session RSS and queue/Office child CPU included. If idle latency remains
+high, isolate startup, disk/LibreOffice, preview raster, network, and browser
+decode before spending. Minimum replicas help measured cold starts, not
+slow conversion; a background-worker queue helps only if bounded queue
+delay/concurrency is the measured bottleneck. No billing, replica, deployment,
+production-write, or Azure cutover configuration changes are authorized by
+this evidence.

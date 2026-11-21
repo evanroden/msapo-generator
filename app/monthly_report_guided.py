@@ -1096,12 +1096,10 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
             draft = replace(draft, sources=_keep_missing_sources(prefix, sources))
         if additions:
             draft, blocks = _apply_prepared(draft, blocks, additions, incoming_specs, prefix)
-            if local_destination == "water_reports":
-                # A completed page-review receipt is consumed only after the
-                # additions are present in the current draft. This prevents
-                # an intentionally removed page from silently reappearing.
-                from app.monthly_report_upload_ui import acknowledge_autoincluded_water_pages
-                acknowledge_autoincluded_water_pages(prefix, blocks)
+            from app.monthly_report_upload_ui import acknowledge_autoincluded_pages
+            # Consume a page-review receipt only after its exact approved
+            # images have been merged into this draft. No editor rerun here.
+            acknowledge_autoincluded_pages(prefix, blocks, local_destination)
     if section.key == "activity":
         from app.monthly_report_source_manager_ui import render_guided_source_manager
         # Vendor originals use this existing page-by-page manager. A second
@@ -1327,12 +1325,57 @@ def _current_source_detail(source, contents):
     return source
 
 
+def _monthly_step_markup(draft, prefix):
+    """Presentation only: reuse source review's existing resolved-state receipts."""
+    from app.monthly_report_source_manager_ui import _statuses, _pending_source_selection
+    from app.monthly_report_step_spine import monthly_step_spine, monthly_step_states
+
+    statuses = _statuses(draft, {block.key: block for block in draft.blocks}, prefix)
+    package = st.session_state.get(prefix + "_package")
+    generated = bool(package and package.fingerprint == draft.fingerprint and package.docx)
+    sources_ready = generated or (
+        not st.session_state.get(prefix + "_batch_files_open", not statuses)
+        and not _pending_source_selection(prefix)
+        and all(item.resolved for item in statuses)
+    )
+    sections_ready = generated or bool(monthly_entries_by_section(draft))
+    return monthly_step_spine(monthly_step_states(
+        report_ready=True, sources_ready=sources_ready,
+        sections_ready=sections_ready, generated=generated,
+    ), section_count=len(draft.sections))
+
+
 @recover_render_busy
 def render_guided_workflow(browser_token, browser_timezone, field, move):
+    from app.monthly_report_step_spine import monthly_step_spine, monthly_step_states
+    # Stable first-screen slot: later updates never move the native editors.
+    step_spine = st.empty()
+    step_spine.markdown(monthly_step_spine(monthly_step_states()), unsafe_allow_html=True)
     st.session_state["_monthly_source_detail_anchors"] = set()
     st.session_state["_monthly_source_detail_forms"] = {}
     st.session_state["_monthly_source_details_managed"] = True
     last_contract, last_profile = remembered_report_preferences(browser_token)
+    # First-use intake belongs ahead of the account and site forms. Returning
+    # editors retain their optional replace-report control inside the editor.
+    from app.monthly_report_entry_upload import render_first_upload, ENTRY_STAGE
+    from app.monthly_report_directory_ui import contract_choices
+    entry_active = not bool(last_profile) or bool(st.session_state.get(ENTRY_STAGE))
+    entry_upload = entry_stage = None
+    inferred_accounts = ()
+    # One keyed slot on every run, filled only while the entry upload applies.
+    # It can stop applying between runs with no click (this browser's report
+    # preferences are remembered shortly after a report starts). Without a
+    # fixed slot everything below would move up, and Streamlit would briefly
+    # show the old and new copies of the editor together.
+    with st.container(key="monthly_entry_upload_slot"):
+        if entry_active:
+            entry_upload, entry_stage, inferred_accounts = render_first_upload(field, contract_choices())
+            if len(inferred_accounts) == 1 and not last_contract:
+                contract_key = field("report_contract", "")
+                if not st.session_state.get(contract_key) and not st.session_state.get("report_change_contract"):
+                    st.session_state[contract_key] = inferred_accounts[0]
+            elif len(inferred_accounts) == 1 and last_contract and last_contract != inferred_accounts[0]:
+                st.warning("The uploaded cover suggests a different contract. Use Change contract if this report belongs to that account; site identity must still be reviewed.")
     recovery_available = active_work.enabled(browser_token)
     with st.expander("Help"):
         st.write("1. Choose sites and month.\n2. Update the sections below; sections without a new update can stay blank.\n3. Review source pages that need attention, then create and download Word/PDF.")
@@ -1355,7 +1398,15 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     completed_setup = st.session_state.pop("report_setup_done", None)
     remembered = last_profile if last_contract == contract else ""
     returning = any(p.key == remembered for p in profiles) and not completed_setup
-    initial_sites_open = st.session_state.setdefault("report_sites_initially_open_" + _signature(contract), not returning)
+    suggested_sites = ()
+    if entry_stage:
+        from app.monthly_report_start_ui import site_choices
+        from app.monthly_report_start_import import source_sites
+        suggested_sites = tuple(s.key for s in source_sites(
+            entry_stage[2], site_choices(contract, profiles)))
+    initial_sites_open = st.session_state.setdefault(
+        "report_sites_initially_open_" + _signature(contract),
+        not returning and not bool(suggested_sites))
     # Always use the same container/label. Remembering this report after its
     # first acknowledged edit must not move existing native editors.
     st.markdown('<span id="report-profile-details"></span>', unsafe_allow_html=True)
@@ -1363,7 +1414,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     with site_box:
         candidate, existing = select_sites(contract, profiles, remembered, field, completed_setup,
             render_details_action=lambda candidate, existing: _render_report_details_action(
-                candidate, existing, period, browser_token))
+                candidate, existing, period, browser_token),
+            suggested_sites=suggested_sites,
+            source_digest=entry_stage[2].sha256 if entry_stage else "")
     # Caption wrapping must not change the space above the next site press.
     # Keep one native keyed container after the chooser, before either early
     # return, with all identity text in normal document flow (no nested scroll).
@@ -1372,7 +1425,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     if not candidate:
         return
     if not existing:
-        starting_choice(candidate, profiles, period, "", field)
+        starting_choice(candidate, profiles, period, "", field,
+                        entry_upload=entry_upload, entry_stage=entry_stage,
+                        entry_active=entry_active)
         return
     selected = existing.key
     state = library.load_profile(contract, selected)
@@ -1382,16 +1437,38 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     snapshot = library.load_snapshot(contract, selected, period)
     from app.monthly_report_start import read_starting_state, refresh_profile_identity
     from app.monthly_report_read_wait import read_with_capacity_wait
+    draft_key = prefix + "_draft"
+    resume = st.session_state.get("report_resume_import") == (contract, selected, period.key)
+    # Keep these native delta slots even when the expensive selection proof is
+    # unnecessary. Removing them on warm reruns shifts every editor below and
+    # can make the first keystroke disappear despite an unchanged widget key.
     read_status = st.empty()
     read_checkpoint = st.empty()
-    try:
-        imported, prior, prior_draft = read_with_capacity_wait(
-            lambda: read_starting_state(contract, selected, period),
-            read_checkpoint.empty,
-            lambda: read_status.info("Waiting for report capacity… Your edits are kept."),
-        )
-    finally:
-        read_status.empty()
+
+    def read_checked_start():
+        # Cold entries and deliberate publication use the SAME bounded
+        # capacity wait. Never queue a mutable save, only a fresh read-only
+        # original/source-view proof; cancellation cannot publish stale work.
+        try:
+            return read_with_capacity_wait(
+                lambda: read_starting_state(contract, selected, period),
+                read_checkpoint.empty,
+                lambda: read_status.info("Waiting for report capacity… Your edits are kept."),
+            )
+        finally:
+            read_status.empty()
+
+    if draft_key not in st.session_state or resume or completed_setup == selected:
+        # Fresh entry/resume rechecks the original and candidate snapshots.
+        # Do NOT cache the source proof: each independent reader invocation
+        # retains its own before/after immutable-source verification.
+        imported, prior, prior_draft = read_checked_start()
+        # A warm editor needs only this label, not another imported DOCX
+        # digest or a retained multi-megabyte previous-month draft.
+        st.session_state[prefix + "_prior_display_period"] = (
+            prior_draft.period.label if prior_draft else "")
+    else:
+        imported = prior = prior_draft = None
     if completed_setup == selected:
         # The editor replaces the setup review but keeps its scroll offset.
         # Start this deliberate entry at monthly work, once.
@@ -1399,8 +1476,6 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         record_report_preferences(browser_token, contract, selected)
         if imported:
             record_report_preparer(browser_token, contract, selected, imported.prepared_by)
-    draft_key = prefix + "_draft"
-    resume = st.session_state.get("report_resume_import") == (contract, selected, period.key)
     # Keep this status slot on every render. Removing a one-shot root element
     # after recovery shifts the workspace's delta path and replaces its native
     # editors on the first edit, even when their widget keys and text agree.
@@ -1483,6 +1558,11 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             from app.monthly_report_org_chart_defaults import apply_defaults as apply_chart_defaults
             draft = apply_chart_defaults(draft, assets)
         st.session_state[draft_key] = draft
+        # Shared report copies are independent of each browser's recovery
+        # journal. Keep the exact ancestor for field-level shared-save CAS.
+        from app.monthly_report_conflict_merge import MergeBase
+        st.session_state[prefix + "_shared_base"] = MergeBase(snapshot.draft if snapshot else draft)
+        st.session_state[prefix + "_shared_base_revision"] = snapshot.revision if snapshot else 0
         # A saved empty standing block is an intentional report choice, not a
         # first-use gap. Preserve it on reopen and next-month rollover alike.
         st.session_state[prefix + "_directory_defaults_attempted"] = preserve_saved_defaults
@@ -1508,6 +1588,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             recovery_ack_error = exc
     from app.monthly_report_setup import normalize_mbcx
     draft, removed_prices = client_table_draft(complete_guided_sections(normalize_mbcx(refresh_profile_identity(st.session_state[draft_key], profile))))
+    step_spine.markdown(_monthly_step_markup(draft, prefix), unsafe_allow_html=True)
     if removed_prices:
         st.info("Price columns were left out of this working report: " + ", ".join(removed_prices) + ". The saved original remains available. Check the remaining wording and images for prices before download.")
     # The native preparer renderer owns the unique in-page anchor and
@@ -1655,11 +1736,16 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     from app.monthly_report_correction_ui import consume_photo_caption
     consume_photo_caption(prefix,replace(draft,blocks=tuple(blocks.values())),_rich_text_scope(prefix))
     with workspace("monthly", prefix, navigation_key="monthly_report_navigation", landing=landing):
+        st.markdown('<span id="monthly-step-sections" class="po-step-anchor" aria-hidden="true"></span>',
+                    unsafe_allow_html=True)
         with st.container(key="monthly_report_navigation"):
             st.markdown('<span class="epc-section-navigation">'
                         '<button type="button" class="epc-section-back" disabled>Back</button>'
+                        '<span class="epc-navigation-attention" role="status" aria-live="polite" hidden></span>'
                         '<span class="epc-section-progress" role="status" aria-live="polite">Cover</span>'
                         '<button type="button" class="epc-section-next" disabled>Next</button></span>', unsafe_allow_html=True)
+        from app.monthly_report_section_inclusion import render_section_preferences
+        section_choices = render_section_preferences(draft, prefix, field)
         with workspace_section("monthly_cover", "Cover"):
             editor_column, preview_column = workspace_columns("monthly_cover")
             with editor_column:
@@ -1670,7 +1756,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 from app.monthly_report_section_ui import render_section_setup
                 source_pending = render_section_setup(contract, period, prepared, field, state=state,
                                      working_draft=replace(draft, blocks=tuple(blocks.values())),
-                                     working_assets=tuple(assets.items()), working_revision=st.session_state[prefix + "_revision"])
+                                     working_assets=tuple(assets.items()), working_revision=st.session_state[prefix + "_revision"],
+                                     entry_upload=entry_upload, entry_stage=entry_stage,
+                                     entry_active=entry_active)
                 if not source_pending:
                     from app.monthly_report_cover_ui import render_cover_photograph
                     blocks = render_cover_photograph(
@@ -1700,7 +1788,6 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     render_section_preview(proposed_draft, "cover", proposed_assets, prefix, deferred=True)
         from app.monthly_report_section_help import editor_section_title
         from app.monthly_report_model import included_sections
-        section_choices = {}
         for section in draft.sections:
             title = editor_section_title(section) or section.key.replace("_", " ").capitalize()
             with workspace_section("monthly_" + section.key, title):
@@ -1716,8 +1803,6 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     if section != before:
                         draft = replace(draft, sections=tuple(
                             section if item is before else item for item in draft.sections))
-                from app.monthly_report_section_inclusion import render_section_inclusion
-                section_choices[section.key] = render_section_inclusion(draft, section, prefix, field)
                 numbered = next((s for s in included_sections(draft.sections) if s.key == section.key), None)
                 heading = f"{numbered.number}. {title}" if numbered else title
                 st.subheader(heading, anchor="report-section-" + section.key,
@@ -1768,18 +1853,33 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     acknowledge_issue_controls(draft, prefix)
     current_revision = snapshot.revision if snapshot else 0
     conflict = current_revision != st.session_state[prefix + "_revision"]
+    if not conflict and st.session_state.get(prefix + "_shared_base_revision") != current_revision:
+        # The same browser just published a shared version. On the next run,
+        # advance its ancestor to that exact saved report, not to an edited UI.
+        from app.monthly_report_conflict_merge import MergeBase
+        st.session_state[prefix + "_shared_base"] = MergeBase(snapshot.draft if snapshot else draft)
+        st.session_state[prefix + "_shared_base_revision"] = current_revision
+    def inherited_metadata_for_save():
+        # A deliberate publication, unlike a keystroke, must recheck the
+        # starting original and read the latest prior-month carryover. Never
+        # substitute a warm session label for verified source or saved issues.
+        _, latest_prior, _ = read_checked_start()
+        ancestor = snapshot or latest_prior
+        return (ancestor.open_issues if ancestor else (),
+                ancestor.pending_proposals if ancestor else ())
     if conflict:
-        st.warning("Another version was saved. Your working draft is preserved. Compare it with the saved report before creating another version.")
+        st.warning("Another version was saved. Your working draft is preserved. "
+                   "Compare the newer report and resolve competing fields before continuing.")
         with st.expander("Compare saved content"):
             from app.monthly_report_compare_ui import render_conflict_comparison
             render_conflict_comparison(draft, snapshot,
                 working_asset_loader=lambda ref: assets.get(ref) or library.read_asset(contract, selected, ref),
                 saved_asset_loader=lambda ref: library.read_asset(contract, selected, ref))
-        accept = st.checkbox("I compared the saved version and want to save my draft as the next version", key=prefix + f"_accept_{current_revision}")
-        st.caption("Continuing keeps your draft and uses the newer shared version as its starting revision. It does not save; your next save creates another shared version.")
-        if st.button("Continue with my draft", key=prefix + "_accept_revision", disabled=not accept):
-            st.session_state[prefix + "_revision"] = current_revision
-            st.rerun()
+        from app.monthly_report_shared_conflict_ui import render_shared_merge_choice
+        render_shared_merge_choice(draft, snapshot, prefix, assets, profile)
+    merge_notice = st.session_state.pop(prefix + "_shared_merge_notice", None)
+    if merge_notice:
+        st.info(merge_notice)
     st.markdown('<span id="shared-report-history"></span>', unsafe_allow_html=True)
     history = st.expander("Shared report history", expanded=False,
                           key=prefix + "_history_open", on_change="rerun")
@@ -1790,9 +1890,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             render_snapshot_history(draft, prefix, assets, snapshot)
         if st.button("Save shared version", key=prefix + "_save", disabled=conflict or not prepared.strip()):
             try:
+                open_issues, pending_proposals = inherited_metadata_for_save()
                 saved = library.save_snapshot(draft, expected_revision=current_revision, assets=tuple(assets.items()), entered_editor=prepared,
-                                              open_issues=snapshot.open_issues if snapshot else prior.open_issues if prior else (),
-                                              pending_proposals=snapshot.pending_proposals if snapshot else prior.pending_proposals if prior else ())
+                                              open_issues=open_issues,
+                                              pending_proposals=pending_proposals)
             except (ValueError, OSError) as exc:
                 st.error("Shared version could not be saved: " + str(exc))
                 st.caption("Your draft remains on this page. Check its recovery status before leaving, then retry saving.")
@@ -1815,8 +1916,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     with st.expander("Report actions"):
         if snapshot:
             st.caption(f"Opened shared version {snapshot.revision} · {period.label}. Current edits use the save status above.")
-        elif prior_draft:
-            st.caption(f"Starting report: saved {prior_draft.period.label} for these sites. Monthly updates start fresh; site information carries forward.")
+        elif st.session_state.get(prefix + "_prior_display_period"):
+            st.caption(f"Starting report: saved {st.session_state[prefix + '_prior_display_period']} for these sites. Monthly updates start fresh; site information carries forward.")
         st.markdown("**Start over on this browser**")
         st.caption(f"Discard this browser's unfinished changes for {profile.title} · {period.label}. "
                    "Sites: " + "; ".join(site.title for site in profile.facilities) + ". "
@@ -1966,6 +2067,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             if any(size and size.high > 15 * 1024 * 1024
                    for size in (sizes_forecast.word, sizes_forecast.pdf)):
                 st.caption("This range crosses the 15 MB target; only the finished files confirm their size.")
+        # Read-only preflight receipt; no draft or workflow changes.
+        st.markdown('<span class="epc-review-attention-source" data-count="' +
+                    str(len(checks)) + '" aria-hidden="true"></span>', unsafe_allow_html=True)
         if checks:
             count = len(checks)
             st.markdown(f"**{count} {'item needs' if count == 1 else 'items need'} attention**")
@@ -2086,7 +2190,17 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             st.session_state.pop(empty_confirmation_key, None)
             try:
                 with st.spinner("Preparing the Word and PDF downloads…"):
-                    package = generate_report(draft, acknowledged_fingerprint=draft.fingerprint, asset_loader=loader)
+                    # Never share completed conversion bytes between visitors or
+                    # report incarnations. Include unsaved image bytes in the
+                    # scope even when their reference labels have not changed.
+                    from hashlib import sha256
+                    asset_versions = tuple(sorted((ref, sha256(raw).digest())
+                                                  for ref, raw in assets.items()))
+                    from app import monthly_report_final_conversion_cache as final_cache
+                    report_identity = (draft.profile.contract, draft.profile.key, draft.period.key)
+                    with final_cache.owner_scope(browser_token, report_identity, asset_versions):
+                        package = generate_report(
+                            draft, acknowledged_fingerprint=draft.fingerprint, asset_loader=loader)
             except ValueError as exc:
                 st.error(str(exc))
                 st.caption("Your edits and saved versions are unchanged. Retry generation when the service is ready.")
@@ -2096,9 +2210,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             from app.monthly_report_output_ui import record_shared_save
             record_shared_save(prefix, package)
             try:
+                open_issues, pending_proposals = inherited_metadata_for_save()
                 saved = library.save_snapshot(draft, expected_revision=current_revision, assets=tuple(assets.items()), entered_editor=prepared,
-                                              open_issues=snapshot.open_issues if snapshot else prior.open_issues if prior else (),
-                                              pending_proposals=snapshot.pending_proposals if snapshot else prior.pending_proposals if prior else ())
+                                              open_issues=open_issues,
+                                              pending_proposals=pending_proposals)
                 st.session_state[prefix + "_revision"] = saved.revision
                 st.session_state[draft_key] = saved.draft
                 if recovery_available:
@@ -2116,6 +2231,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 save_status.shared_saved(saved.revision)
             except (ValueError, OSError) as exc:
                 record_shared_save(prefix, package, error=str(exc))
+        if package is None:
+            from app.monthly_report_output_ui import outdated_output_status
+            outdated_output_status(prefix, _rich_text_scope(prefix), draft)
         if package:
             from app.monthly_report_output_ui import render_output_status, record_shared_save, package_identity, queue_retry, matches_retry
             needs_shared_save = render_output_status(package, draft, snapshot, prefix)
@@ -2131,9 +2249,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                           args=(prefix, "save", retry_identity, retry_scope, retry_revision))
                 if matches_retry(output_retries["save"], package, retry_scope, retry_revision) and not conflict and prepared.strip():
                     try:
+                        open_issues, pending_proposals = inherited_metadata_for_save()
                         saved = library.save_snapshot(draft, expected_revision=current_revision, assets=tuple(assets.items()), entered_editor=prepared,
-                            open_issues=snapshot.open_issues if snapshot else prior.open_issues if prior else (),
-                            pending_proposals=snapshot.pending_proposals if snapshot else prior.pending_proposals if prior else ())
+                            open_issues=open_issues,
+                            pending_proposals=pending_proposals)
                         st.session_state[prefix + "_revision"] = saved.revision
                         st.session_state[draft_key] = saved.draft
                         record_shared_save(prefix, package, saved=saved)
@@ -2218,4 +2337,6 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     if source_detail_notice:st.warning(source_detail_notice)
     from app.monthly_report_correction_ui import finish_photo_caption
     finish_photo_caption(prefix)
+    step_spine.markdown(_monthly_step_markup(st.session_state[draft_key], prefix),
+                        unsafe_allow_html=True)
     _refresh_period_editors_after_commit(prefix)

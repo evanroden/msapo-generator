@@ -105,6 +105,13 @@ def summarize_coverage(review, decisions: tuple[CoverageDecision, ...], *,
                 or decision.table_number != review.table_number):
             raise ValueError("Coverage belongs to a different contract, site or source.")
         active.append(decision)
+    # A legacy/hand-restored review may lack the normalizer's duplicate issue.
+    # Confirmed month coverage cannot authorize double counting those rows.
+    identities = {}
+    for row in review.rows:
+        if row.site and row.work_date and row.work_order.strip():
+            key = (row.site, row.work_date, row.work_order.casefold())
+            identities[key] = identities.get(key, 0) + 1
     results = []
     for month in months:
         confirmed = any(v.start_month <= month <= v.end_month for v in active)
@@ -131,6 +138,9 @@ def summarize_coverage(review, decisions: tuple[CoverageDecision, ...], *,
                            if i != "source date is outside this report period")
             if row.excluded or issues:
                 unresolved.append(f"Source row {row.origin.row_number}: excluded or unresolved")
+                continue
+            if identities.get((row.site, row.work_date, row.work_order.casefold()), 0) > 1:
+                unresolved.append(f"Source row {row.origin.row_number}: duplicate site/date/work-order identity")
                 continue
             try:
                 when = date.fromisoformat(row.work_date)

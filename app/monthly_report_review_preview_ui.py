@@ -48,12 +48,67 @@ def _available(owner, ticket):
         return False
 
 
+def _visibility_changed(prefix, widget_key, identity):
+    """A browser view receipt never edits the draft or starts a conversion."""
+    from app.monthly_report_review_activation import valid_activation
+    value = st.session_state.get(widget_key)
+    if valid_activation(value, identity):
+        st.session_state[prefix + "_review_preview_activation"] = identity
+
+
+def _show_ticket(slot, owner, current, draft, prefix, *, stale):
+    """Paint the last good ticket before potentially expensive replacement work."""
+    ticket = current["ticket"]
+    with slot.container():
+        if stale:
+            st.caption("Showing older preview — latest changes not shown. "
+                       "This is not the current draft; refresh is pending or needs retry.")
+        page = st.number_input(
+            "Draft preview page", min_value=1, max_value=ticket.pages,
+            value=1, step=1, key=prefix + "_review_preview_page_" + ticket.key,
+        )
+        try:
+            # First two pages are decoded together, then only the visible pair
+            # when the reader advances. Never request the remaining report eagerly.
+            first = int(page) - 1
+            visible = STORE.pages(owner, ticket, tuple(range(first, min(first + 2, ticket.pages))), dpi=120)
+            if not visible:
+                raise ValueError("The preview page expired.")
+        except (ValueError, OSError):
+            _discard_preview(owner, current)
+            st.session_state.pop(prefix + "_review_draft_preview", None)
+            st.warning("This draft page could not be displayed. Recreate the preview to retry.")
+            return False
+        for index, raster in visible:
+            st.image(raster, width="stretch")
+            if stale:
+                st.caption(f"Older draft page {index + 1} of {ticket.pages} · latest changes not shown")
+            else:
+                st.caption(f"Draft page {index + 1} of {ticket.pages}")
+        if stale:
+            st.caption(f"Older draft · page {page} of {ticket.pages} · "
+                       f"{current.get('period', draft.period.label)} · latest changes not shown")
+        else:
+            st.caption(f"Current draft · page {page} of {ticket.pages} · {draft.period.label} · "
+                       "full report, no omitted pages")
+    return True
+
+
 def render_review_preview(draft, assets, prefix):
-    """Render the current *complete* draft only after an explicit Review action."""
+    """Populate Review directly when visible, from the complete canonical draft.
+
+    The browser reports only that this revision's Review is in view. The server
+    assembles from the already accepted/saved draft, never mounted widgets.
+    One automatic attempt per revision prevents busy/error rerun loops; the
+    native button is an explicit recovery path.
+    """
+    from app.monthly_report_review_activation import render_activation
     owner = st.session_state.setdefault(prefix + "_review_preview_owner", uuid4().hex)
     state_key = prefix + "_review_draft_preview"
+    attempted_key = prefix + "_review_preview_attempted"
     current = st.session_state.get(state_key)
     sections = included_sections(draft.sections)
+    profile = (draft.profile.contract, draft.profile.key, draft.period.key)
 
     try:
         identity = preview_fingerprint(draft)
@@ -63,79 +118,72 @@ def render_review_preview(draft, assets, prefix):
         st.warning("The draft source or design changed. Check its source review before creating a preview: " + str(exc))
         return
 
-    # A changed profile, saved source view, draft field, attachment or include/
-    # exclude decision must retire the old ticket before displaying any page.
-    stale = bool(current and (
-        not isinstance(current, dict)
-        or current.get("fingerprint") != identity
-        or current.get("profile") != (draft.profile.contract, draft.profile.key, draft.period.key)
-    ))
-    if stale:
+    # Earlier pages can remain inspectable for the same site/month only, with
+    # an explicit outdated label. A cross-report move retires them immediately.
+    if current and (not isinstance(current, dict) or current.get("profile") != profile
+                    or not isinstance(current.get("ticket"), PreviewTicket)):
         _discard_preview(owner, current)
         st.session_state.pop(state_key, None)
         current = None
-    elif current and (not isinstance(current.get("ticket"), PreviewTicket)
-                      or not _available(owner, current["ticket"])):
+    elif current and not _available(owner, current["ticket"]):
         st.session_state.pop(state_key, None)
         current = None
         st.caption("The temporary draft preview expired. Recreate it to see the current report.")
 
+    stale = bool(current and current.get("fingerprint") != identity)
     st.markdown("**Draft report preview**")
     st.caption("Preview the entire current report, including sections you have not opened. "
                "This is a watermarked draft, not the finished Word or PDF.")
     if stale:
-        st.caption("The report changed. The earlier draft preview was discarded; recreate it to see the edits.")
+        st.caption("The report changed. An older preview is retained but is not current.")
     if not sections:
+        _discard_preview(owner, current)
+        st.session_state.pop(state_key, None)
         st.caption("No report sections are included. Choose a section before previewing.")
         return
 
-    # The native button identifies its exact report/source revision. A delayed
-    # click from an earlier report cannot authorize a new preview on this key.
-    button_key = prefix + "_review_preview_build_" + identity
-    # A click on the same complete draft must reuse its live ticket. Rebuilding
-    # would strand the previous PDF/raster files until cache expiry/eviction.
-    if st.button("Preview current draft", key=button_key) and current is None:
-        loader = lambda ref: (
-            assets.get(ref) or library.read_asset(draft.profile.contract, draft.profile.key, ref))
-        try:
-            with st.spinner("Preparing the current draft preview…"):
-                preview = preview_report(draft, loader)
-                if preview.fingerprint != identity:
-                    raise ValueError("The report changed while its draft preview was being prepared. Retry with the current version.")
-                ticket = STORE.put(owner, preview)
-        except (ValueError, OSError, RenderBusy) as exc:
-            st.warning(str(exc))
-            st.caption("The report is unchanged. Correct the named issue or retry the draft preview.")
-        except Exception:
-            st.warning("The draft preview could not finish. Your edits are unchanged; retry when ready.")
-        else:
-            current = {
-                "fingerprint": identity,
-                "profile": (draft.profile.contract, draft.profile.key, draft.period.key),
-                "ticket": ticket,
-            }
-            st.session_state[state_key] = current
-
-    if not current:
-        return
-    ticket = current["ticket"]
-    if not _available(owner, ticket):
-        st.session_state.pop(state_key, None)
-        st.warning("The temporary preview is no longer available. Recreate it to see the current report.")
-        return
-
-    page = st.number_input(
-        "Draft preview page", min_value=1, max_value=ticket.pages,
-        value=1, step=1, key=prefix + "_review_preview_page_" + ticket.key,
+    widget_key = prefix + "_review_visibility"
+    attempted = st.session_state.get(attempted_key) == identity
+    render_activation(
+        key=widget_key, identity=identity, attempted=attempted or bool(current and not stale),
+        on_change=lambda: _visibility_changed(prefix, widget_key, identity),
     )
-    try:
-        visible = STORE.pages(owner, ticket, (int(page) - 1,), dpi=120)
-        if not visible:
-            raise ValueError("The preview page expired.")
-    except (ValueError, OSError):
-        _discard_preview(owner, current)
-        st.session_state.pop(state_key, None)
-        st.warning("This draft page could not be displayed. Recreate the preview to retry.")
+    # A delayed click/request from a previous revision cannot build another
+    # report on this key. The fallback remains useful without browser JS.
+    pressed = st.button("Preview current draft", key=prefix + "_review_preview_build_" + identity)
+    slot = st.empty()
+    if current and not _show_ticket(slot, owner, current, draft, prefix, stale=stale):
+        current = None
+        stale = False
+
+    activated = st.session_state.get(prefix + "_review_preview_activation") == identity
+    if not (pressed or (activated and not attempted)) or (current and not stale):
         return
-    st.image(visible[0][1], width="stretch")
-    st.caption(f"Current draft · page {page} of {ticket.pages} · {draft.period.label}")
+
+    # Record before work starts; a failed/busy conversion must not rerun
+    # automatically on every harmless Streamlit rerender.
+    st.session_state[attempted_key] = identity
+    loader = lambda ref: (
+        assets.get(ref) or library.read_asset(draft.profile.contract, draft.profile.key, ref))
+    try:
+        with st.spinner("Preparing the current draft preview…"):
+            # Ticket PDFs never leave the store: only rasterized pages reach
+            # this UI. Downloadable draft PDFs keep the flattened path.
+            preview = preview_report(draft, loader, ticket_only=True)
+            if preview.fingerprint != identity:
+                raise ValueError("The report changed while its draft preview was being prepared. Retry with the current version.")
+            ticket = STORE.put(owner, preview)
+    except (ValueError, OSError, RenderBusy) as exc:
+        st.warning(str(exc))
+        st.caption("The report is unchanged. Correct the named issue or retry the draft preview.")
+        return
+    except Exception:
+        st.warning("The draft preview could not finish. Your edits are unchanged; retry when ready.")
+        return
+
+    fresh = {"fingerprint": identity, "profile": profile, "period": draft.period.label,
+             "ticket": ticket}
+    st.session_state[state_key] = fresh
+    if current:
+        _discard_preview(owner, current)
+    _show_ticket(slot, owner, fresh, draft, prefix, stale=False)

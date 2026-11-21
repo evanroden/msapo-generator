@@ -230,8 +230,10 @@ def test_scorecard_utility_upload_uses_one_labeled_control_without_extra_heading
     assert not app.session_state["test_blocks"]
     next(w for w in app.toggle if w.label == "Review individual pages").set_value(True).run()
     assert any(w.label == "Page to review" for w in app.selectbox)
-    # The fallback still requires explicit price-safe page acceptance.
-    assert button(app, "Add reviewed pages").disabled
+    # Individual technical pages now append on the last explicit decision.
+    # Before any decision there must be no automatic inclusion or second Add.
+    assert not any(w.label == "Add reviewed pages" for w in app.button)
+    assert not app.session_state["test_blocks"]
 
 
 def test_whole_pdf_preflight_counts_other_section_pages_before_review(monkeypatch, tmp_path):
