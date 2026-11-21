@@ -45,6 +45,35 @@ def _decoded(image):
             "sha256": sha256((image.get_attribute("src") or "").encode()).hexdigest()}
 
 
+# The Streamlit front end mounts this root before its session connects. A
+# page that stays without it is a blank start: the server answered its health
+# check but the browser never ran the app's front end.
+APP_ROOT = '[data-testid="stApp"]'
+BLANK_START_SECONDS = 30
+
+
+def _open_app(page, diagnostics):
+    """Open the app; reload once, on the record, if the front end never mounts.
+
+    A second blank start still fails the journey. Every reload is kept in the
+    receipt so a pattern on one stage or engine stays visible.
+    """
+    page.goto(URL, wait_until="domcontentloaded")
+    try:
+        page.locator(APP_ROOT).wait_for(state="attached", timeout=BLANK_START_SECONDS * 1000)
+        return 0
+    except Exception:
+        diagnostics["blank_starts"].append({
+            "ready_state": page.evaluate("() => document.readyState"),
+            "body_children": page.evaluate("() => document.body ? document.body.children.length : -1"),
+            "aborted_requests": list(diagnostics["aborted_requests"]),
+            "failed_requests": list(diagnostics["failed_requests"]),
+            "page_errors": list(diagnostics["page_errors"]),
+            "console_errors": list(diagnostics["console_errors"])})
+        page.reload(wait_until="domcontentloaded")
+        return 1
+
+
 def _exercise(browser_type, engine):
     browser = browser_type.launch(headless=True)
     records = []
@@ -54,6 +83,8 @@ def _exercise(browser_type, engine):
             context.add_cookies([{"name": "epc_device_id", "value": secrets.token_hex(16), "url": URL}])
             external = []
             errors = []
+            diagnostics = {"aborted_requests": external, "page_errors": errors, "failed_requests": [],
+                           "console_errors": [], "blank_starts": []}
             context.route("**/*", lambda route: route.continue_()
                           if urlparse(route.request.url).scheme in {"data", "blob"}
                           or (urlparse(route.request.url).hostname == "127.0.0.1"
@@ -61,9 +92,15 @@ def _exercise(browser_type, engine):
                           else (external.append(route.request.url), route.abort()))
             page = context.new_page()
             page.on("pageerror", lambda error: errors.append(str(error)))
+            page.on("requestfailed", lambda request: diagnostics["failed_requests"].append(
+                f"{request.method} {urlparse(request.url).path} {request.failure}"))
+            page.on("console", lambda message: diagnostics["console_errors"].append(message.text[:300])
+                    if message.type == "error" else None)
             try:
                 navigation_started = time.perf_counter()
-                page.goto(URL, wait_until="domcontentloaded")
+                blank_start_reloads = _open_app(page, diagnostics)
+                if blank_start_reloads:
+                    navigation_started = time.perf_counter()
                 # Include initial app bootstrap separately from the press-to-image
                 # measurement; neither is a physical-device/production sample.
                 load_button = page.get_by_role("button", name="Load known-value report", exact=True)
@@ -149,6 +186,8 @@ def _exercise(browser_type, engine):
                 assert not external and not errors, {"external": external, "pageerrors": errors}
                 records.append({"index": sequence + 1, "cache_path": "cold",
                                  "navigation_to_first_interactive_seconds": round(first_interactive_seconds, 4),
+                                 "blank_start_reloads": blank_start_reloads,
+                                 "blank_starts": diagnostics["blank_starts"],
                                  "source_kind": "pdf",
                                  "browser_stage_receipt": {
                                      "clock": "monotonic_ns",
@@ -166,9 +205,14 @@ def _exercise(browser_type, engine):
                                 "preview_generation_changed": before_generation != after_layout[0],
                                 "manual_edit_retained": True, "upload_sha256": sha256(alpha).hexdigest(),
                                 "second_upload_sha256": sha256(beta).hexdigest()})
-            except Exception:
+            except Exception as exc:
                 OUT.mkdir(parents=True, exist_ok=True)
                 page.screenshot(path=str(OUT / f"{engine}-{sequence + 1}-failure.png"))
+                # Keep what the browser saw; a failed run writes no browser.json.
+                failure = dict(diagnostics, error=str(exc)[:2000], url=page.url,
+                               app_root_mounted=page.locator(APP_ROOT).count() > 0)
+                (OUT / f"{engine}-{sequence + 1}-failure.json").write_text(
+                    json.dumps(failure, indent=2, sort_keys=True) + "\n")
                 raise
             finally:
                 context.close()
