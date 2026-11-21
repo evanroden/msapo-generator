@@ -40,15 +40,17 @@ def test_review_waits_for_existing_job_and_background_yields():
     assert entered.is_set() and jobs._REVIEW_WAITING==0
 
 
-def test_final_export_has_priority_over_waiting_review():
+def test_waiting_review_precedes_export_that_has_not_started():
+    # A24 changes only admission order. An admitted export remains uninterrupted.
     order=[]
-    finish_export=Event()
+    finish_review=Event()
     def review():
-        with jobs.work_slot(preview=True,review=True,wait_seconds=2): order.append('review')
+        with jobs.work_slot(preview=True,review=True,wait_seconds=2):
+            order.append('review')
+            assert finish_review.wait(2)
     def export():
         with jobs.work_slot(wait_seconds=2):
             order.append('export')
-            assert finish_export.wait(2)
     jobs._WORK_SLOT.acquire()
     try:
         with ThreadPoolExecutor(max_workers=2) as pool:
@@ -57,14 +59,14 @@ def test_final_export_has_priority_over_waiting_review():
             export_future=pool.submit(export)
             await_condition(lambda: jobs._FOREGROUND_WAITING==1)
             jobs._WORK_SLOT.release()
-            await_condition(lambda: order==['export'])
-            assert not review_future.done()
-            finish_export.set()
-            export_future.result(timeout=3);review_future.result(timeout=3)
+            await_condition(lambda: order==['review'])
+            assert not export_future.done()
+            finish_review.set()
+            review_future.result(timeout=3);export_future.result(timeout=3)
     finally:
-        finish_export.set()
+        finish_review.set()
         if jobs._WORK_SLOT.locked():jobs._WORK_SLOT.release()
-    assert order==['export','review']
+    assert order==['review','export']
 
 
 def test_review_timeout_does_not_take_or_release_another_job():
