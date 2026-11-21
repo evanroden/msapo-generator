@@ -90,11 +90,9 @@ _LOADED_PAGE_READY = r"""expected => {
  if(images.length!==1)return false;
  const image=images[0],src=image.getAttribute('src'),style=getComputedStyle(image);
  const rect=image.getBoundingClientRect();
- // The src attribute is a relative media path; currentSrc is absolute, so
- // compare it with the resolved src property (the exact image now shown).
  return image.isConnected && image.getClientRects().length>0 && rect.width>0 && rect.height>0
    && style.visibility!=='hidden' && style.visibility!=='collapse' && style.display!=='none'
-   && /^\/(?:[A-Za-z0-9_-]+\/)*media\/[a-f0-9]{32}\.jpe?g$/.test(src||'') && image.currentSrc===image.src
+   && /^data:image\/jpeg;base64,.+/.test(src||'') && image.currentSrc===src
    && image.complete===true && image.naturalWidth>0 && image.naturalHeight>0;
 }"""
 
