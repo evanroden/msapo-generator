@@ -75,10 +75,17 @@ def open_gallery(issue):
         # scroll alone leaves it below the fold; a rerun shifting layout
         # can then starve Playwright's own scroll-into-view for 30s (the
         # A88 WebKit failure, viewport found at Proposals). Center the
-        # summary first so a small layout shift cannot push it out of view,
-        # then click the native control -- no force-click.
-        summary.evaluate("node => node.scrollIntoView({block: 'center'})")
-        expect(summary).to_be_in_viewport(timeout=15000)
+        # summary and confirm it is in view, centering it again if a later
+        # rerun moved the page (a single check without re-centering failed
+        # once the page moved to Training Summary), then click the native
+        # control -- no force-click.
+        for _ in range(10):
+            summary.evaluate("node => node.scrollIntoView({block: 'center'})")
+            try:
+                expect(summary).to_be_in_viewport(timeout=1500)
+                break
+            except AssertionError:
+                continue
         summary.click()
     expect(issue.get_by_role("combobox", name="Source file to inspect", exact=True)).to_be_visible()
 
