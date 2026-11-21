@@ -30,7 +30,11 @@ def sample(monkeypatch, tmp_path):
 
 
 def _page_key(source, page):
-    return ai.extraction_request(source, (page,))[0]
+    # A51 scopes each page read to the report's contract, site and month, and
+    # the UI derives keys that way; the receipts these tests inspect must use
+    # the same key as the `sample` draft (synthetic site 0, September 2026).
+    return ai.extraction_request(source, (page,), profile=synthetic_profiles()[0],
+                                 period=ReportPeriod(2026, 9))[0]
 
 
 def test_two_session_claim_is_atomic_and_fencing_prevents_stale_overwrite(sample):
