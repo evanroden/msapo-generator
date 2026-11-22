@@ -142,7 +142,9 @@ def test_inferred_vendor_destination_is_visible_and_cancel_never_commits(
     assert any(e.label == "Change destination (optional)" for e in app.expander)
     selector = next(s for s in app.selectbox
                     if s.label == "Report section for " + filename)
-    assert selector.value == "improvements"
+    # Automatic is its own value; the inferred section is the text line above.
+    from app.monthly_report_upload_ui import AUTO_PAGE_ROUTE
+    assert selector.value == AUTO_PAGE_ROUTE
     assert app.session_state["routing_result"][1] == {}
     assert app.session_state["routing_test_evidence"][0].source.sha256 == content.source.sha256
     # No Add click means no image, page or report block is prepared or saved.

@@ -1543,23 +1543,43 @@ def prepare_pages(profile: ReportProfile, contents: tuple[SourceContent, ...],
     """
     from app.monthly_report_content_policy import page_allowed
     sources = {c.source.id: c for c in contents}
-    if len(dict(destinations)) != len(destinations):
+    # Legacy (source, section) routes still embed all selected pages. The
+    # per-page route adds an explicit page number, so mixed original PDFs can
+    # contribute *different* reviewed pages without cloning any page.
+    arities = {len(entry) for entry in destinations}
+    if arities not in ({2}, {3}, set()):
+        raise ValueError("Choose one consistent source/page routing format.")
+    if arities == {2} and len(dict(destinations)) != len(destinations):
         raise ValueError("Each source needs one page destination.")
+    if arities == {3} and len({(identity, number) for identity, _, number in destinations}) != len(destinations):
+        raise ValueError("Each source page may be routed only once; duplicate page destination.")
     allowed_pairs = set(only_pages) if only_pages is not None else None
     matched_pairs = set()
     planned = []
-    for identity, slot in destinations:
-        if identity not in sources or slot not in PAGE_DESTINATIONS:
-            raise ValueError("Unknown page source or destination.")
-        content = sources[identity]
-        allowed = set(image_numbers(content))
-        selected = tuple(
-            n for n in content.source.selected_pages
-            if n in allowed and (allowed_pairs is None or (identity, n) in allowed_pairs))
-        matched_pairs.update((identity, n) for n in selected)
-        if any(n < 1 or n > len(content.source.page_texts) for n in content.source.selected_pages):
-            raise ValueError("Selected source page does not exist.")
-        planned.extend((content, slot, n) for n in selected)
+    if arities == {3}:
+        for identity, slot, number in destinations:
+            if identity not in sources or slot not in PAGE_DESTINATIONS:
+                raise ValueError("Unknown page source or destination.")
+            content = sources[identity]
+            if (type(number) is not int or number not in image_numbers(content)
+                    or number not in content.source.selected_pages):
+                raise ValueError("Selected source page does not exist or is no longer selected.")
+            if allowed_pairs is None or (identity, number) in allowed_pairs:
+                matched_pairs.add((identity, number))
+                planned.append((content, slot, number))
+    else:
+        for identity, slot in destinations:
+            if identity not in sources or slot not in PAGE_DESTINATIONS:
+                raise ValueError("Unknown page source or destination.")
+            content = sources[identity]
+            allowed = set(image_numbers(content))
+            selected = tuple(
+                n for n in content.source.selected_pages
+                if n in allowed and (allowed_pairs is None or (identity, n) in allowed_pairs))
+            matched_pairs.update((identity, n) for n in selected)
+            if any(n < 1 or n > len(content.source.page_texts) for n in content.source.selected_pages):
+                raise ValueError("Selected source page does not exist.")
+            planned.extend((content, slot, n) for n in selected)
     if allowed_pairs is not None and matched_pairs != allowed_pairs:
         raise ValueError("The requested source pages changed. Review them again before inclusion.")
     if len(planned) > MAX_EMBED_PAGES:

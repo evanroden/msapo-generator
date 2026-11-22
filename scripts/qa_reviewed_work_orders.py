@@ -64,6 +64,27 @@ def uploaded_source_ready(page):
     return value
 
 
+def scroll_to_control(page, control, *, attempts=3):
+    """Scroll the combobox that the finished run rendered into view.
+
+    Locator.scroll_into_view_if_needed resolves one element and never retries.
+    When the click before it is still rerunning the form, Streamlit replaces
+    that combobox and the call fails with "Element is not attached to the
+    DOM". Wait for the run to finish and scroll its replacement instead. Any
+    other error, or a third replacement in a row, still fails the journey.
+    Returns the attempt that succeeded and prints each retry.
+    """
+    for attempt in range(1, attempts + 1):
+        settled(page, "v=>true")
+        try:
+            control.scroll_into_view_if_needed()
+            return attempt
+        except Exception as error:  # playwright.sync_api.Error
+            if "not attached" not in str(error) or attempt == attempts:
+                raise
+            print(f"RETRY scroll: the combobox was re-rendered during attempt {attempt}", flush=True)
+
+
 def select(page, label, option):
     # This journey deliberately uses the native keyboard opener. Pointer
     # dropdown/scroll behavior has its own repository-wide browser gate.
@@ -71,7 +92,7 @@ def select(page, label, option):
     # popup and letting the later option click scroll it closes the native
     # overlay before that click can land, especially after a narrow reload.
     control = page.get_by_role("combobox", name=label, exact=True)
-    control.scroll_into_view_if_needed()
+    scroll_to_control(page, control)
     settled(page, "v=>true")
     control.press("ArrowDown")
     page.get_by_role("option", name=option, exact=True).click()
