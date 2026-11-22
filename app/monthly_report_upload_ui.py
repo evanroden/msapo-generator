@@ -13,6 +13,21 @@ from app.monthly_report_content_policy import page_status, page_fingerprint, pag
 from app.monthly_report_upload_guidance import evidence_limits_summary, evidence_upload_options
 
 
+# The default destination control value: each page by its own heading, else
+# the file's classification. Every other value is an explicit override.
+AUTO_PAGE_ROUTE = "Automatic"
+
+
+def _remember_manual_page_route(key, identity, control):
+    """Only a native operator change records a durable route override."""
+    routes = dict(st.session_state.get(key, {}))
+    if st.session_state[control] == AUTO_PAGE_ROUTE:
+        routes.pop(identity, None)
+    else:
+        routes[identity] = st.session_state[control]
+    st.session_state[key] = routes
+
+
 # Exact, explicit page-review receipts permit single-action append only for
 # supported technical-page sections. Other evidence keeps its existing route.
 AUTO_INCLUDE_PAGE_DESTINATIONS = frozenset({"water_reports", "mbcx_report", "utility_analysis"})
@@ -678,20 +693,25 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
     st.caption(f"{len(contents)} sources. {sum(len(c.source.selected_pages) for c in contents)} selected pages/items. "
                f"{sum(len(set(c.source.needs_vision) & set(c.source.selected_pages)) for c in contents)} selected pages need OCR/vision; no paid extraction runs automatically.")
     blocks, specs = {}, {}
-    # The ordinary destination is inferred from the source classification,
-    # and was previously hidden in an expander far above the Add action.
-    # Keep the same native selection keys, but display the *actual* selections
-    # beside the commit; a route is changed only by explicit user choice.
+    # Keep the existing optional, source-level override. Without an explicit
+    # override the *individual page heading* may route a mixed PDF to more than
+    # one section; review, omissions and actual existing ownership still win.
+    from app.monthly_report_auto_page_routing import batch_destinations, route_pages
+    from app.monthly_report_section_uploads import included_pages
+    from collections import defaultdict
     destinations = []
     defaults = {"Vendor service": "improvements", "Water treatment": "water_reports",
                 "MBCx": "mbcx_report", "Utility results": "utility_analysis",
                 "Improvement / training photo": "improvements"}
-    labels = {"Do not embed": "Keep as reference only",
+    labels = {AUTO_PAGE_ROUTE: "Automatic: each page by its heading, otherwise by the file type",
+              "Do not embed": "Keep as reference only",
               "vendor_reports": "Maintenance — ENFRA onsite work only",
               "water_reports": "Water treatment — chemical/service pages",
               "mbcx_report": "MBCx — commissioning report pages",
               "utility_analysis": "Monthly scorecards — utility results and charts",
               "improvements": "Monthly activity — vendor service reports and photos"}
+    manual_key = key + "_manual_page_routes"
+    manual = dict(st.session_state.get(manual_key, {}))
     route_controls = []
     # A source's destination is delivered outside any form. Keep the last
     # delivered value in ordinary session state when its selectbox is unmounted,
@@ -715,33 +735,69 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
             st.session_state[control_key] = route_values[control_key]
         if visible:
             rendered_routes.append(control_key)
-        control = field(control_key, defaults.get(item.source.classification, "Do not embed"))
-        options = ("Do not embed", *sources.PAGE_DESTINATIONS)
+        control = field(control_key, AUTO_PAGE_ROUTE)
+        options = (AUTO_PAGE_ROUTE, "Do not embed", *sources.PAGE_DESTINATIONS)
         if st.session_state[control] not in options:
-            st.session_state[control] = defaults.get(item.source.classification, "Do not embed")
+            st.session_state[control] = AUTO_PAGE_ROUTE
+        # "Automatic" is its own value, so choosing any destination (including
+        # "Keep as reference only") is a change the callback records. A session
+        # from before that option holds the file type's section as its untouched
+        # default: that still means automatic. Any other saved value without a
+        # callback receipt remains a human override.
+        legacy_default = defaults.get(item.source.classification, "Do not embed")
+        if item.source.id not in manual and st.session_state[control] == legacy_default:
+            st.session_state[control] = AUTO_PAGE_ROUTE
+        if item.source.id not in manual and st.session_state[control] != AUTO_PAGE_ROUTE:
+            manual[item.source.id] = st.session_state[control]
         route_controls.append((item.source.filename, item.source.id, control))
     if route_controls:
         with st.container(key=key + "_destination_review"):
-            st.text("Destination for reviewed pages")
-            for filename, identity, control in route_controls:
-                selected_slot = st.session_state[control]
-                st.text(filename + " → " + labels.get(selected_slot, selected_slot))
+            st.text("Automatic destinations for reviewed pages")
             with st.expander("Change destination (optional)"):
                 # Only the current file needs an editable route widget. Other
                 # delivered routes still participate in bulk Add unchanged.
                 for filename, identity, control in route_controls:
                     if selected_source_id is None or identity == selected:
                         st.selectbox("Report section for " + filename,
-                                     ("Do not embed", *sources.PAGE_DESTINATIONS),
-                                     format_func=labels.get, key=control)
+                                     (AUTO_PAGE_ROUTE, "Do not embed", *sources.PAGE_DESTINATIONS),
+                                     format_func=labels.get, key=control,
+                                     on_change=_remember_manual_page_route,
+                                     args=(manual_key, identity, control))
     st.session_state[routes_key] = {control: st.session_state[control]
                                   for _, _, control in route_controls}
     st.session_state[rendered_key] = tuple(rendered_routes)
-    for _, identity, control in route_controls:
-        slot = st.session_state[control]
-        if (slot != "Do not embed"
-                and not (identity in section_page_owners and slot == "water_reports")):
-            destinations.append((identity, slot))
+    manual.update(st.session_state.get(manual_key, {}))
+    # A genuinely removed page retains its exclusion receipt. Previously
+    # attached images keep their precise owner and are never cloned.
+    owners = included_pages(attached_blocks or {})
+    try:
+        choices = route_pages(contents, profile, period=period, overrides=manual, owned=owners)
+    except ValueError as exc:
+        st.warning("Source routing needs correction: " + str(exc))
+        choices = ()
+    by_source = defaultdict(list)
+    for choice in choices:
+        by_source[choice.source_id].append(choice)
+    # A retained page of a deliberately omitted section is never prepared
+    # again: merging it would switch that section back on.
+    omitted = {name for name, block in (attached_blocks or {}).items() if block.source == "Omit"}
+    selected = {item.source.id: frozenset(item.source.selected_pages) for item in contents}
+    destinations.extend(batch_destinations(choices, section_page_owners, omitted, selected))
+    for filename, identity, _ in route_controls:
+        decisions = by_source[identity]
+        grouped = defaultdict(list)
+        for decision in decisions:
+            grouped[decision.destination or decision.section].append(decision.page)
+        if grouped:
+            st.text(filename + " · " + "; ".join(
+                f"{labels.get(slot, slot)}: {', '.join(map(str, pages))}"
+                for slot, pages in grouped.items()))
+        corrections = [decision for decision in decisions if decision.action in {"blocked", "review"}]
+        if corrections:
+            first = corrections[0]
+            st.warning(f"{filename} · page/item {first.page}: {first.reason}"
+                       + (f" ({len(corrections)-1} other pages need review in this file.)"
+                          if len(corrections) > 1 else ""))
     cmms_contents = [c for c in contents if (selected_source_id is None or c.source.id == selected_source_id)
                      and c.tables and c.source.classification == "CMMS export"
                      and any(i in c.source.selected_pages for i in range(1, len(c.tables)+1))]
