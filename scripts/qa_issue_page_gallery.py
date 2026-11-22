@@ -22,6 +22,7 @@ from playwright.sync_api import expect, sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+from scripts import qa_monthly_live as live
 
 ALPHA = "synthetic-alpha-equipment.pdf"
 BETA = "synthetic-beta-equipment.pdf"
@@ -163,6 +164,8 @@ def browser_task(browser_type, name):
     try:
         page.goto(qa.URL, wait_until="domcontentloaded")
         page.get_by_role("button", name="Load known-value report", exact=True).click()
+        # QA captions live inside the collapsed "QA details" disclosure.
+        live.open_qa_details(page)
         expect(page.get_by_text(re.compile(r"^QA fixture state: known-value prefill"))).to_be_visible(timeout=90000)
         expect(page.get_by_role("textbox", name="Activity summary", exact=True)).to_be_visible(timeout=45000)
         opener = page.get_by_role("button", name="Manage source files", exact=True)

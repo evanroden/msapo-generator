@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts import qa_monthly_adaptive as qa
 from scripts import qa_issue_page_gallery as gallery
+from scripts import qa_monthly_live as live
 from scripts import blank_start
 from scripts import image_decode
 
@@ -85,6 +86,8 @@ def _exercise(browser_type, engine):
                 start = time.perf_counter()
                 start_ns = time.monotonic_ns()
                 load_button.click()
+                # QA captions live inside the collapsed "QA details" disclosure.
+                live.open_qa_details(page)
                 expect(page.get_by_text(re.compile(r"^QA fixture state: known-value prefill"))).to_be_visible(timeout=90000)
                 field = page.get_by_role("textbox", name="Activity summary", exact=True)
                 expect(field).to_be_visible(timeout=90000)

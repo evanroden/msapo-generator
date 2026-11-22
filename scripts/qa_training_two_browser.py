@@ -30,6 +30,7 @@ from playwright.sync_api import expect, sync_playwright, TimeoutError
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+from scripts import qa_monthly_live as live
 OUT = ROOT / "test-artifacts" / "training-two-browser"
 PORT = 8548
 URL = f"http://127.0.0.1:{PORT}"
@@ -248,6 +249,8 @@ def journey():
         try:
             a.goto(URL, wait_until="domcontentloaded")
             a.get_by_role("button", name="Load known-value report", exact=True).click()
+            # QA captions live inside the collapsed "QA details" disclosure.
+            live.open_qa_details(a)
             expect(a.get_by_text(re.compile(r"^QA fixture state: known-value prefill"))).to_be_visible(timeout=45000)
             open_training(a)
             baseline_revision, baseline_names, baseline = snapshot_store(token)
