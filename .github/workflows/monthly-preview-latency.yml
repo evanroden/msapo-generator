@@ -16,6 +16,10 @@ on:
       - 'tests/test_monthly_report_review_ticket_first_pages.py'
       - 'tests/test_monthly_report_section_assembly_cache.py'
       - 'scripts/qa_monthly_preview_browser_latency.py'
+      # Helpers the browser journey imports.
+      - 'scripts/image_decode.py'
+      - 'scripts/click_retry.py'
+      - 'tests/test_qa_latency_image_decode.py'
       - 'scripts/qa_monthly_preview_a88_compare.py'
       - 'scripts/qa_monthly_report_resources.py'
       - 'tests/test_monthly_preview_a88_compare.py'
@@ -40,6 +44,8 @@ on:
       - 'scripts/qa_monthly_host_deterministic.py'
       - 'scripts/qa_monthly_host_comparison.py'
       - 'scripts/qa_monthly_preview_browser_latency.py'
+      - 'scripts/image_decode.py'
+      - 'scripts/click_retry.py'
       - '.github/workflows/monthly-preview-latency.yml'
 
 permissions:
