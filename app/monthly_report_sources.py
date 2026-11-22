@@ -19,6 +19,7 @@ from itertools import groupby
 import codecs
 import csv
 import hashlib
+import os
 from pathlib import Path
 import re
 import time
@@ -841,24 +842,67 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes | StagedUpload, *,
     # Separate sites never share extraction or mutable report state. The lock
     # also deduplicates in-flight parses in other worker processes on this disk.
     lock = _path(profile, digest, ".json").parent / ".parse-locks" / digest
-    try:
-        with library._locked(lock):
-            result = _ingest_locked(profile, filename, raw, digest, suffix,
-                                    staged=staged, size=size, max_new_text=max_new_text)
-    finally:
-        # A finished parse leaves no lock residue: rejected uploads must leave
-        # nothing behind, and the lock only guards in-flight parses.
-        try:
-            (lock / ".write-lock").unlink()
-        except FileNotFoundError:
-            pass
-        try:
-            lock.rmdir()
-            lock.parent.rmdir()
-        except OSError:
-            pass
+    with _parse_lock(lock):
+        result = _ingest_locked(profile, filename, raw, digest, suffix,
+                                staged=staged, size=size, max_new_text=max_new_text)
     parse_manifest.qa_stage("ingest", started, "complete")
     return result
+
+
+@contextmanager
+def _parse_lock(directory: Path):
+    """Exclusive in-flight parse of one digest that leaves no lock residue.
+
+    A finished parse removes its lock file, so a caller that opened that file
+    while waiting holds a lock nobody else can see once it gets it. Each caller
+    therefore checks, after locking, that the path still names the file it
+    locked, and locks the current file otherwise. The holder removes the file
+    while it still holds it, so every waiter on that file retries.
+    """
+    if os.name == "nt":  # No POSIX locks: keep the library's lock and cleanup.
+        try:
+            with library._locked(directory):
+                yield
+        finally:
+            for remove in ((directory / ".write-lock").unlink, directory.rmdir, directory.parent.rmdir):
+                try:
+                    remove()
+                except OSError:
+                    pass
+        return
+    import fcntl
+    library._qa_path_guard(directory)
+    path = directory / ".write-lock"
+    while True:
+        directory.mkdir(parents=True, exist_ok=True)
+        try:
+            handle = path.open("a+b")
+        except FileNotFoundError:  # A finishing holder removed the directory.
+            continue
+        with handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                named = os.stat(path)
+            except FileNotFoundError:
+                named = None
+            held = os.fstat(handle.fileno())
+            if named is None or (named.st_dev, named.st_ino) != (held.st_dev, held.st_ino):
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                continue
+            try:
+                yield
+            finally:
+                try:
+                    path.unlink()
+                except FileNotFoundError:
+                    pass
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        break
+    try:
+        directory.rmdir()
+        directory.parent.rmdir()
+    except OSError:
+        pass
 
 
 def _ingest_locked(profile: ReportProfile, filename: str, raw: bytes | StagedUpload | None,
@@ -975,6 +1019,7 @@ def _ingest_locked(profile: ReportProfile, filename: str, raw: bytes | StagedUpl
             # upload's name drives suggestions and the published cache.
             source = replace(checkpoint.source, filename=filename)
             tables, image_items = checkpoint.tables, list(checkpoint.image_items)
+            pdf_ocr_spans = list(checkpoint.ocr_spans)
         elif suffix == ".pdf":
             with fitz.open(stream=raw, filetype="pdf") as pdf:
                 if pdf.is_encrypted and not pdf.authenticate(""):
@@ -1098,7 +1143,7 @@ def _ingest_locked(profile: ReportProfile, filename: str, raw: bytes | StagedUpl
             if suffix not in (".eml", ".msg"):
                 # The source is already stored and the expensive decode completed.
                 # An interrupted publication leaves only a disposable checkpoint.
-                parsed = SourceContent(source, tables, tuple(image_items))
+                parsed = SourceContent(source, tables, tuple(image_items), tuple(pdf_ocr_spans))
                 library._atomic_write(stage, library._json(
                     parse_manifest.stage_record(parsed, policies=policies)))
             parse_manifest.qa_stage("parse", extraction_started, "complete")

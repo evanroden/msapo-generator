@@ -15,7 +15,8 @@ import stat
 from time import perf_counter, time
 
 PARSER_POLICY_VERSION = 1
-STAGE_POLICY_VERSION = 1
+# 2: checkpoints keep local OCR spans; a version-1 stage lost them on resume.
+STAGE_POLICY_VERSION = 2
 DISK_PARSE_TTL_SECONDS = 30 * 24 * 3600
 DISK_STAGE_TTL_SECONDS = 24 * 3600
 
@@ -84,7 +85,11 @@ def stage_record(content, *, policies=None) -> dict:
               "source_suffix": content.source.suffix,
               "source": asdict(content.source),
               "tables": [asdict(table) for table in content.tables],
-              "image_items": list(content.image_items)}
+              "image_items": list(content.image_items),
+              # Which page text local OCR added, with confidence and position.
+              # Without them a resumed parse would present OCR text as native.
+              "ocr_spans": [[page, start, end, confidence, list(box)]
+                            for page, start, end, confidence, box in content.ocr_spans]}
     record["payload_sha256"] = _digest({k: v for k, v in record.items() if k != "payload_sha256"})
     return record
 

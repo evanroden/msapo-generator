@@ -458,3 +458,93 @@ def test_resumed_checkpoint_meets_the_streamed_text_budget(profile, monkeypatch,
         patch.setattr(sources, "_spreadsheet", lambda *_: pytest.fail("completed stage parsed again"))
         with pytest.raises(ValueError, match="Total extracted text exceeds"):
             sources.ingest(profile, "budget.csv", _staged(tmp_path, "again.csv", CSV), max_new_text=10)
+
+
+def test_parse_lock_stays_exclusive_after_a_holder_removes_its_lock_file(profile, monkeypatch):
+    """A waiter on the removed lock file must not run beside a newer caller."""
+    import fcntl
+    import threading
+
+    entered, inside, gates = [], [], {name: threading.Event() for name in "ABC"}
+    state = Lock()
+    waiting = threading.Event()
+    real_flock = fcntl.flock
+
+    def flock(fd, operation):
+        if operation == fcntl.LOCK_EX and threading.current_thread().name == "B":
+            waiting.set()  # B has opened the lock file and is about to wait on it.
+        return real_flock(fd, operation)
+
+    def parse(*_args, **_kwargs):
+        name = threading.current_thread().name
+        with state:
+            entered.append((name, tuple(inside)))
+            inside.append(name)
+        gates[name].wait(timeout=10)
+        with state:
+            inside.remove(name)
+        return "parsed", ()
+
+    monkeypatch.setattr(fcntl, "flock", flock)
+    monkeypatch.setattr(sources, "_ingest_locked", parse)
+    run = lambda name: threading.Thread(target=sources.ingest, args=(profile, "same.csv", CSV), name=name)
+    a, b, c = run("A"), run("B"), run("C")
+    a.start()
+    while not inside:
+        sleep(.01)
+    b.start()
+    assert waiting.wait(timeout=10)
+    sleep(.1)
+    gates["A"].set()  # A finishes and removes the lock file B is waiting on.
+    a.join(timeout=10)
+    while "B" not in inside:
+        sleep(.01)
+    c.start()
+    sleep(.3)  # With a stale lock, C would enter now, beside B.
+    assert [name for name, _ in entered] == ["A", "B"]
+    gates["B"].set()
+    b.join(timeout=10)
+    gates["C"].set()
+    c.join(timeout=10)
+    assert entered == [("A", ()), ("B", ()), ("C", ())]
+    digest = sha256(CSV).hexdigest()
+    assert not (sources._path(profile, digest, ".json").parent / ".parse-locks").exists()
+
+
+def test_resumed_pdf_checkpoint_keeps_local_ocr_spans(profile, monkeypatch):
+    """OCR offsets survive an interruption, so OCR text is never taken as native."""
+    import pymupdf as fitz
+    from app import monthly_report_pdf_reader as reader
+
+    lines = ("PUMP PX-72 NOT STARTED", "Synthetic follow-up visit pending")
+    tsv = ["\t".join(("level", "page_num", "block_num", "par_num", "line_num", "word_num",
+                      "left", "top", "width", "height", "conf", "text"))]
+    for line_number, line in enumerate(lines, 1):
+        for word_number, word in enumerate(line.split(), 1):
+            tsv.append("\t".join(str(v) for v in (5, 1, 1, 1, line_number, word_number,
+                                                   20 + 60 * word_number, 30 * line_number, 50, 20, 91, word)))
+    which = reader.shutil.which
+    monkeypatch.setattr(reader.shutil, "which",
+                        lambda name, *a, **k: "/usr/bin/tesseract" if name == "tesseract" else which(name, *a, **k))
+    monkeypatch.setattr(reader, "_ocr_image", lambda data, *, timeout: "\n".join(tsv) + "\n")
+    with fitz.open() as drawing:
+        page = drawing.new_page()
+        page.insert_text((50, 70), "\n".join(lines), fontsize=11)
+        image = page.get_pixmap().tobytes("png")
+    with fitz.open() as scanned:
+        scanned.new_page().insert_image(scanned[0].rect, stream=image)
+        raw = scanned.tobytes()
+    original_facts = sources.suggest_facts
+    with monkeypatch.context() as patch:
+        patch.setattr(sources, "suggest_facts",
+                      lambda *_: (_ for _ in ()).throw(RuntimeError("synthetic interruption")))
+        with pytest.raises(RuntimeError, match="synthetic interruption"):
+            sources.ingest(profile, "scan.pdf", raw)
+    with monkeypatch.context() as patch:
+        patch.setattr(reader, "read_page", lambda *a, **k: pytest.fail("completed stage parsed again"))
+        patch.setattr(sources, "suggest_facts", original_facts)
+        resumed, _ = sources.ingest(profile, "scan.pdf", raw)
+    assert list(resumed.source.page_texts) == ["\n".join(lines)]
+    assert [(span[0], resumed.source.page_texts[0][span[1]:span[2]], span[3])
+            for span in resumed.ocr_spans] == [(1, line, 91.0) for line in lines]
+    assert library._read(cache_for(profile, resumed))["ocr_spans"]
