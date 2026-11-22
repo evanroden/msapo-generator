@@ -233,6 +233,35 @@ def test_qa_diagnostics_are_collected_in_one_closed_disclosure(monkeypatch, tmp_
     assert any(c.value.startswith("QA working report SHA256:") for c in app.caption)
 
 
+def test_qa_details_keep_one_identity_when_the_editor_above_changes(monkeypatch, tmp_path):
+    """Once opened, the hosted QA disclosure must stay open across reruns.
+
+    Without a key the browser identifies an expander by its position, and a
+    run that changes how many elements the editor draws above it rebuilds it
+    closed: the hosted live check found its fixture receipt hidden (main
+    d662220d). A keyed block keeps one identity wherever it renders, and its
+    key must survive the QA route's own clearing on a fixture load or reset.
+    """
+    from streamlit.runtime.forward_msg_queue import ForwardMsgQueue
+    from app.monthly_report_testing_ui import QA_DETAILS_KEY
+    assert not QA_DETAILS_KEY.startswith(("report_", "report_guided_", "monthly_qa_", "_shared_fixture_"))
+    blocks = []
+
+    def record(msg):
+        if msg.HasField("delta") and msg.delta.WhichOneof("type") == "add_block":
+            block = msg.delta.add_block
+            if block.WhichOneof("type") == "expandable" and block.expandable.label == "QA details":
+                blocks.append((tuple(msg.metadata.delta_path), block.id))
+
+    monkeypatch.setattr(ForwardMsgQueue, "_before_enqueue_msg", staticmethod(record))
+    app = visit(monkeypatch, tmp_path)
+    next(b for b in app.button if b.label == "Load known-value report").click().run()
+    assert not app.exception
+    assert len({path for path, _ in blocks}) > 1, blocks  # The editor above changed its position.
+    identities = {identity for _, identity in blocks}
+    assert len(identities) == 1 and next(iter(identities)).endswith("-" + QA_DETAILS_KEY), identities
+
+
 def test_rejected_qa_action_shows_plain_reason_near_qa_button(monkeypatch, tmp_path):
     from app import monthly_report_docx as output
     app = visit(monkeypatch, tmp_path)

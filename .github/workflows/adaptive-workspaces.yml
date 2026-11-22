@@ -122,6 +122,9 @@ on:
       - 'tests/test_workflow_hydration_default.py'
       - 'scripts/qa_monthly_preparer_navigation.py'
       - 'scripts/qa_monthly_text_hydration.py'
+      # Shared Back/Next walk used by the text-hydration and adaptive journeys.
+      - 'scripts/monthly_sequential_navigation.py'
+      - 'tests/test_monthly_sequential_navigation_harness.py'
       - 'scripts/qa_monthly_training_date.py'
       - 'scripts/qa_training_date_delivery.py'
       - 'scripts/qa_training_frontend_delivery.py'
@@ -296,6 +299,9 @@ on:
       - 'tests/test_workflow_hydration_default.py'
       - 'scripts/qa_monthly_preparer_navigation.py'
       - 'scripts/qa_monthly_text_hydration.py'
+      # Shared Back/Next walk used by the text-hydration and adaptive journeys.
+      - 'scripts/monthly_sequential_navigation.py'
+      - 'tests/test_monthly_sequential_navigation_harness.py'
       - 'scripts/qa_monthly_training_date.py'
       - 'scripts/qa_training_date_delivery.py'
       - 'scripts/qa_training_frontend_delivery.py'

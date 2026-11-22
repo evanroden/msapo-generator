@@ -278,6 +278,11 @@ def _render_reset_readiness(base):
     readiness()
 
 
+# Outside every prefix the QA route and the Monthly entry point clear, so a
+# fixture load or a reset does not close the disclosure the reader opened.
+QA_DETAILS_KEY = "_qa_details_disclosure"
+
+
 def _clear_report_widgets():
     # Never let a QA widget, in-memory PDF, or old viewport flow into a real
     # report when the browser switches workflow modes.
@@ -288,9 +293,9 @@ def _clear_report_widgets():
 
 def render(browser_token: str, browser_timezone: str, field, move, live_storage_root, *,
            qa_details_expanded: bool = False):
-    """QA fixture page. The hosted QA route keeps diagnostics collapsed; the
-    synthetic browser fixture opens them, because its journeys read those
-    receipts after every rerun and a rebuilt expander closes again."""
+    """QA fixture page. The hosted QA route keeps diagnostics collapsed until
+    opened; the synthetic browser fixture opens them, because its journeys read
+    those receipts after every rerun, including the first after a reload."""
     if testing.scope() is None:
         raise ValueError("Testing controls require a server-side isolated context.")
     st.warning("ISOLATED SYNTHETIC TESTING — not a client report. No live report, contact, capacity, logo or design records are accessible here.")
@@ -559,7 +564,10 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
     # It renders after the editor, below it: filled late into a placeholder
     # above the editor, its changing height moved the page under WebKit, which
     # has no scroll anchoring, and sent sections and toolbar out of view.
-    with st.expander("QA details", expanded=qa_details_expanded):
+    # Its key keeps it open once opened: without one, every rerun that changed
+    # how many elements the editor drew above it rebuilt it closed, and the
+    # hosted live check found its fixture receipt hidden (main d662220d).
+    with st.expander("QA details", expanded=qa_details_expanded, key=QA_DETAILS_KEY):
         from hashlib import sha256
         _render_reset_readiness(live_storage_root)
         st.caption(f"QA fixture state: {kind} · generation {current_generation[:12]} · "
