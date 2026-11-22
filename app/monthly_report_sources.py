@@ -873,36 +873,40 @@ def _parse_lock(directory: Path):
     import fcntl
     library._qa_path_guard(directory)
     path = directory / ".write-lock"
-    while True:
-        directory.mkdir(parents=True, exist_ok=True)
-        try:
-            handle = path.open("a+b")
-        except FileNotFoundError:  # A finishing holder removed the directory.
-            continue
-        with handle:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-            try:
-                named = os.stat(path)
-            except FileNotFoundError:
-                named = None
-            held = os.fstat(handle.fileno())
-            if named is None or (named.st_dev, named.st_ino) != (held.st_dev, held.st_ino):
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-                continue
-            try:
-                yield
-            finally:
-                try:
-                    path.unlink()
-                except FileNotFoundError:
-                    pass
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        break
     try:
-        directory.rmdir()
-        directory.parent.rmdir()
-    except OSError:
-        pass
+        while True:
+            directory.mkdir(parents=True, exist_ok=True)
+            try:
+                handle = path.open("a+b")
+            except FileNotFoundError:  # A finishing holder removed the directory.
+                continue
+            with handle:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                try:
+                    named = os.stat(path)
+                except FileNotFoundError:
+                    named = None
+                held = os.fstat(handle.fileno())
+                if named is None or (named.st_dev, named.st_ino) != (held.st_dev, held.st_ino):
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                    continue
+                try:
+                    yield
+                finally:
+                    try:
+                        path.unlink()
+                    except FileNotFoundError:
+                        pass
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            break
+    finally:
+        # Also when the parse failed: a rejected upload leaves nothing behind.
+        # A directory another caller is using is not empty, so it stays.
+        try:
+            directory.rmdir()
+            directory.parent.rmdir()
+        except OSError:
+            pass
 
 
 def _ingest_locked(profile: ReportProfile, filename: str, raw: bytes | StagedUpload | None,

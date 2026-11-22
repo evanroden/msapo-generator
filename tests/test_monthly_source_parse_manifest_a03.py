@@ -511,6 +511,18 @@ def test_parse_lock_stays_exclusive_after_a_holder_removes_its_lock_file(profile
     assert not (sources._path(profile, digest, ".json").parent / ".parse-locks").exists()
 
 
+def test_parse_lock_leaves_nothing_behind_when_the_parse_fails(profile, monkeypatch):
+    """A rejected upload must not leave its lock directories in the profile."""
+    def parse(*_args, **_kwargs):
+        raise ValueError("Not read: synthetic parse failure")
+
+    monkeypatch.setattr(sources, "_ingest_locked", parse)
+    with pytest.raises(ValueError, match="synthetic parse failure"):
+        sources.ingest(profile, "same.csv", CSV)
+    digest = sha256(CSV).hexdigest()
+    assert not (sources._path(profile, digest, ".json").parent / ".parse-locks").exists()
+
+
 def test_resumed_pdf_checkpoint_keeps_local_ocr_spans(profile, monkeypatch):
     """OCR offsets survive an interruption, so OCR text is never taken as native."""
     import pymupdf as fitz
