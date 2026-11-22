@@ -144,6 +144,13 @@ def _located(content, canary):
 
 def _ingested(tmp_path, monkeypatch):
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    # This manifest counts the text each extractor reads natively. Pin the
+    # server without local OCR (as in CI) so it is the same where tesseract
+    # is installed (production). OCR-read text is covered by the A07 reader
+    # tests and by A57's raster canary, which pins OCR both ways.
+    import shutil
+    which = shutil.which
+    monkeypatch.setattr(shutil, "which", lambda name, *a, **k: None if name == "tesseract" else which(name, *a, **k))
     originals, attachment = _synthetic_originals()
     contents, messages = sources.ingest_batch(PROFILE, originals)
     assert messages == (), messages
