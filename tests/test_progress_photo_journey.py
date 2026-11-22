@@ -287,7 +287,7 @@ def test_changed_word_or_pdf_photo_content_cannot_pass(output_fixture, wrong):
 
 def test_fixture_only_adds_read_only_progress_observation_after_actual_production_render():
     source = (Path(__file__).parent / "fixtures/workspaces/monthly_app.py").read_text()
-    assert source.index('render(token, "America/New_York", _field, _move, base)') < source.index("emit_progress_snapshot(base, token)")
+    assert source.index('render(token, "America/New_York", _field, _move, base, qa_details_expanded=True)') < source.index("emit_progress_snapshot(base, token)")
     assert 'if os.environ.get("EPC_MONTHLY_PROGRESS_TASK") == "1"' in source
     assert "_working_report" not in source  # Fixture never injects an alternate report/editor.
 
