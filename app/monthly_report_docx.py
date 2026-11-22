@@ -150,7 +150,6 @@ class ReportPackage:
     source_view_art_digest: str = ""
     contents_notice: str = ""
     generated_contents: bool = False
-    imported_contents_kind: str = ""
 
 
 def canonical_docx(raw: bytes) -> bytes:
@@ -615,9 +614,7 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
     source = source_for(draft.profile)
     if source is not None:
         from app.monthly_report_native_layout import build_native_docx
-        raw = build_native_docx(draft, source, asset_loader=asset_loader, master=is_master(draft.profile), source_view=source_view)
-        from app.monthly_report_imported_contents import prepare_imported_contents
-        return prepare_imported_contents(source, raw, included_sections(draft.sections))
+        return build_native_docx(draft, source, asset_loader=asset_loader, master=is_master(draft.profile), source_view=source_view)
     if source_view is not None:
         raise ValueError("A compatibility source view requires its pinned original native design.")
     document = Document(SHELL_PATH)
@@ -875,8 +872,6 @@ def _generate_report(draft, *, acknowledged_fingerprint='', asset_loader=None, s
 def _generate_verified_report(draft, *, acknowledged_fingerprint, asset_loader, operation):
     source_view = operation.view
     generated_contents = operation.original is None
-    from app.monthly_report_imported_contents import source_kind, has_generated_contents, withdraw_generated_contents, NOTICE
-    imported_kind = source_kind(operation.original)
     docx = assemble_docx(draft, acknowledged_fingerprint=acknowledged_fingerprint, asset_loader=asset_loader, source_view=source_view)
     # Retained native PNGs may still contain erased artwork under alpha zero.
     # This bounded derivative pass is separate from pixel-preserving metadata
@@ -896,24 +891,16 @@ def _generate_verified_report(draft, *, acknowledged_fingerprint, asset_loader, 
     from app.monthly_report_contents_review import contents_notice_for
     from app.monthly_report_contents_pagination import ensure_pdf_page_links, synchronize
     notice = contents_notice_for(draft.profile)
-    native_generated = not generated_contents and has_generated_contents(docx)
-    if generated_contents or native_generated:
+    if generated_contents:
         selected = included_sections(draft.sections)
         pdf = ensure_pdf_page_links(pdf, selected)
         updated, generated_notice = synchronize(docx, pdf, selected)
-        if native_generated and generated_notice != "":
-            # Never distribute a native index whose actual destinations were
-            # not proved. The retry input is the same notice-bearing Word file.
-            docx = canonical_docx(withdraw_generated_contents(docx))
-            if pdf is not None:
-                pdf, error = _convert_report_pdf(draft, docx)
-            notice = notice or NOTICE
-        elif generated_notice is not None:
+        if generated_notice is not None:
             docx, notice = canonical_docx(updated), generated_notice
     return ReportPackage(docx, pdf, report_filename(draft, "docx"), report_filename(draft, "pdf"), draft.fingerprint, error,
                          source_view.receipt_sha256 if source_view is not None else "",
                          hashlib.sha256(docx).hexdigest() if source_view is not None else "",
-                         operation.art_digest, notice, generated_contents, imported_kind)
+                         operation.art_digest, notice, generated_contents)
 
 
 def retry_report_pdf(draft: ReportDraft, package: ReportPackage, *, source_view=None) -> ReportPackage:
