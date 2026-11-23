@@ -76,3 +76,12 @@ def test_dated_utility_reference_is_retained_for_review_not_silently_dropped():
     plan = automatic_section_plans(doc, result)['scorecards']
     assert source.id in plan['selected']
     assert not plan['approved']
+
+
+def test_section_heading_is_not_undated_monthly_work():
+    heading = item('heading', 'activity', '2 Monthly Activity Summary')
+    caption = item('caption', 'activity', 'Pump overhaul work completed.')
+    result = analyze_starting_report(inspection(heading, caption), PROFILE, PERIOD)
+    assert heading.id not in result.period_review_items
+    assert heading.id not in result.uncertain_items
+    assert caption.id in result.period_review_items
