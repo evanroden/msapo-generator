@@ -279,7 +279,8 @@ def analyze_starting_report(inspection, profile, period, known_sites=(), *, conf
             current.append(item.id)
         # Only standalone dated prose is safely left out automatically. Tables
         # can contain cumulative history; images cannot inherit a nearby date.
-        elif item.kind == "text" and periods and all(p < requested for p in periods):
+        elif (slot in MONTHLY_BLOCKS and item.kind == "text" and periods
+              and all(p < requested for p in periods)):
             older.append(item.id)
         else:
             uncertain.append(item.id)
