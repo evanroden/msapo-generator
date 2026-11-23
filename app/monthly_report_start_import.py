@@ -187,6 +187,23 @@ def _target_month_evidence(text, requested):
     return current, planned
 
 
+def merge_source_site_choices(*groups):
+    """Keep saved identities without losing known aliases on the same key.
+
+    A target/saved site may have no aliases. Replacing the catalog entry with
+    that record must not erase distinctive cover abbreviations. Different
+    titles for one key remain ambiguous and are not silently combined.
+    """
+    choices = {}
+    for group in groups:
+        for site in group:
+            prior = choices.get(site.key)
+            if prior is not None and _words(prior.title) == _words(site.title):
+                site = replace(site, aliases=tuple(dict.fromkeys((*prior.aliases, *site.aliases))))
+            choices[site.key] = site
+    return tuple(choices.values())
+
+
 def analyze_starting_report(inspection, profile, period, known_sites=(), *, confirmed_sites=None,
                             known_profiles=(), confirmed_period=None):
     known = {}
