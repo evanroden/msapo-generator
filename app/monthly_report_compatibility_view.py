@@ -34,7 +34,9 @@ IMAGE_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships
 DPI_URI = '{28A0092B-C50C-407E-A947-70E740481C1C}'
 MAX_COORD = 50_000_000
 # Narrow prototype envelope, not the importer's much larger general limits.
-MAX_VIEW_SOURCE_BYTES = 24 * 1024 * 1024
+# Source admission may exceed the old 24 MiB envelope while the tighter
+# expanded/XML/media/complexity limits below still bound actual processing.
+MAX_VIEW_SOURCE_BYTES = 32 * 1024 * 1024
 MAX_VIEW_EXPANDED_BYTES = 32 * 1024 * 1024
 MAX_VIEW_XML_BYTES = 20 * 1024 * 1024
 MAX_VIEW_MEDIA_BYTES = 16 * 1024 * 1024

@@ -17,12 +17,12 @@ from app.monthly_report_import import (
 from app.monthly_report_model import known_sections, layout_blocks
 from app.monthly_report_sections import (
     build_section_import, _build_section_import,
-    default_slot,
+    default_slot, is_formatting,
     section_reviews,
     small_artwork,
     table_without_prices,
 )
-from app.monthly_report_setup import MONTHLY_BLOCKS
+from app.monthly_report_setup import MONTHLY_BLOCKS, PERIOD_REVIEW_BLOCKS
 from app.monthly_report_source_content_roles import source_text_role, validate_role_reviews
 from app.monthly_report_source_table_roles import source_table_role, validate_table_role_reviews
 
@@ -187,6 +187,23 @@ def _target_month_evidence(text, requested):
     return current, planned
 
 
+def merge_source_site_choices(*groups):
+    """Keep saved identities without losing known aliases on the same key.
+
+    A target/saved site may have no aliases. Replacing the catalog entry with
+    that record must not erase distinctive cover abbreviations. Different
+    titles for one key remain ambiguous and are not silently combined.
+    """
+    choices = {}
+    for group in groups:
+        for site in group:
+            prior = choices.get(site.key)
+            if prior is not None and _words(prior.title) == _words(site.title):
+                site = replace(site, aliases=tuple(dict.fromkeys((*prior.aliases, *site.aliases))))
+            choices[site.key] = site
+    return tuple(choices.values())
+
+
 def analyze_starting_report(inspection, profile, period, known_sites=(), *, confirmed_sites=None,
                             known_profiles=(), confirmed_period=None):
     known = {}
@@ -229,8 +246,22 @@ def analyze_starting_report(inspection, profile, period, known_sites=(), *, conf
     else:
         # A plain date or print/issue timestamp cannot certify a report month.
         source_period = None
+    period_blocks = MONTHLY_BLOCKS | PERIOD_REVIEW_BLOCKS
+    known_slots = {b.key for section in known_sections() for b in section.blocks} | {
+        b.key for b in layout_blocks()}
+    known_section_keys = {section.key for section in known_sections()}
     for item in inspection.items:
-        if item.suggested_slot not in MONTHLY_BLOCKS:
+        if is_formatting(item):
+            continue
+        slot = item.suggested_slot
+        # Text with no recognized slot uses the same section fallback as the
+        # automatic import plan. Captions must not evade month review because
+        # the inspector left their individual routing hint empty. Do not infer
+        # a monthly role for cover/unknown sections or for standing tables.
+        if (item.kind == "text" and slot not in known_slots
+                and item.section in known_section_keys):
+            slot = default_slot(item.section)
+        if slot not in period_blocks:
             continue
         # Explicit source examples, author instructions, and placeholders are
         # not evidence of completed work even when their cells contain this
@@ -250,7 +281,8 @@ def analyze_starting_report(inspection, profile, period, known_sites=(), *, conf
             current.append(item.id)
         # Only standalone dated prose is safely left out automatically. Tables
         # can contain cumulative history; images cannot inherit a nearby date.
-        elif item.kind == "text" and periods and all(p < requested for p in periods):
+        elif (slot in MONTHLY_BLOCKS and item.kind == "text" and periods
+              and all(p < requested for p in periods)):
             older.append(item.id)
         else:
             uncertain.append(item.id)

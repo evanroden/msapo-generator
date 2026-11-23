@@ -1085,9 +1085,13 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
         analyze_starting_report,
         automatic_section_plans,
         build_starting_import,
+        merge_source_site_choices,
     )
     profiles = library.list_profiles(contract)
-    known_sites = {f.key: f for f in (*_site_options(contract), *(f for profile in profiles for f in profile.facilities), *candidate.facilities)}
+    known_sites = {f.key: f for f in merge_source_site_choices(
+        _site_options(contract),
+        (f for profile in profiles for f in profile.facilities),
+        candidate.facilities)}
     analysis = analyze_starting_report(inspection, candidate, period, known_sites.values(), known_profiles=profiles)
     from app.monthly_report_source_sites_ui import correct_detected_sites
     confirmed_source = correct_detected_sites(
