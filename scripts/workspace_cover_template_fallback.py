@@ -13,7 +13,7 @@ ORIGINAL = 'September 2026 synthetic initial work costs $500.'
 
 
 def make_source(directory):
-    """Real DOCX exceeds the unchanged native-art budget, not upload admission."""
+    """Real DOCX exceeds the bounded native-art budget, not upload admission."""
     from docx import Document
     from app.monthly_report_model import synthetic_profiles
     directory = Path(directory); directory.mkdir(parents=True, exist_ok=True)
@@ -61,9 +61,9 @@ def make_source(directory):
     next(fallback.iter(qn('a:blip'))).set(qn('r:embed'),rid)
     doc.add_heading('Activity Summary', 1)
     doc.add_paragraph(ORIGINAL)
-    path = directory/'synthetic-25mib-source.docx'; doc.save(path)
+    path = directory/'synthetic-33mib-source.docx'; doc.save(path)
     with ZipFile(path, 'a') as package:
-        package.writestr('synthetic-padding.bin', b'\0'*(25*1024*1024), compress_type=ZIP_STORED)
+        package.writestr('synthetic-padding.bin', b'\0'*(33*1024*1024), compress_type=ZIP_STORED)
     return path
 
 
