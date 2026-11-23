@@ -22,7 +22,7 @@ from app.monthly_report_sections import (
     small_artwork,
     table_without_prices,
 )
-from app.monthly_report_setup import MONTHLY_BLOCKS
+from app.monthly_report_setup import MONTHLY_BLOCKS, PERIOD_REVIEW_BLOCKS
 from app.monthly_report_source_content_roles import source_text_role, validate_role_reviews
 from app.monthly_report_source_table_roles import source_table_role, validate_table_role_reviews
 
@@ -246,8 +246,20 @@ def analyze_starting_report(inspection, profile, period, known_sites=(), *, conf
     else:
         # A plain date or print/issue timestamp cannot certify a report month.
         source_period = None
+    period_blocks = MONTHLY_BLOCKS | PERIOD_REVIEW_BLOCKS
+    known_slots = {b.key for section in known_sections() for b in section.blocks} | {
+        b.key for b in layout_blocks()}
+    known_section_keys = {section.key for section in known_sections()}
     for item in inspection.items:
-        if item.suggested_slot not in MONTHLY_BLOCKS:
+        slot = item.suggested_slot
+        # Text with no recognized slot uses the same section fallback as the
+        # automatic import plan. Captions must not evade month review because
+        # the inspector left their individual routing hint empty. Do not infer
+        # a monthly role for cover/unknown sections or for standing tables.
+        if (item.kind == "text" and slot not in known_slots
+                and item.section in known_section_keys):
+            slot = default_slot(item.section)
+        if slot not in period_blocks:
             continue
         # Explicit source examples, author instructions, and placeholders are
         # not evidence of completed work even when their cells contain this
