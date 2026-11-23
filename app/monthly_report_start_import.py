@@ -17,7 +17,7 @@ from app.monthly_report_import import (
 from app.monthly_report_model import known_sections, layout_blocks
 from app.monthly_report_sections import (
     build_section_import, _build_section_import,
-    default_slot,
+    default_slot, is_formatting,
     section_reviews,
     small_artwork,
     table_without_prices,
@@ -251,6 +251,8 @@ def analyze_starting_report(inspection, profile, period, known_sites=(), *, conf
         b.key for b in layout_blocks()}
     known_section_keys = {section.key for section in known_sections()}
     for item in inspection.items:
+        if is_formatting(item):
+            continue
         slot = item.suggested_slot
         # Text with no recognized slot uses the same section fallback as the
         # automatic import plan. Captions must not evade month review because
