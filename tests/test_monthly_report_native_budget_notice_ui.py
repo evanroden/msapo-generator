@@ -128,18 +128,18 @@ def test_compressed_source_notice_uses_the_exact_configured_binding_limit(monkey
     assert "128 MiB upload limit" in warning
 
 
-def test_existing_24_mib_source_limit_notice_remains_available(monkeypatch, tmp_path):
+def test_current_32_mib_source_limit_notice_remains_available(monkeypatch, tmp_path):
     from scripts.workspace_cover_template_fallback import make_source
     path = make_source(tmp_path)
     original, inspection = path.read_bytes(), inspect_docx(path)
-    assert compatibility.MAX_VIEW_SOURCE_BYTES == 24 * 1024 * 1024
+    assert compatibility.MAX_VIEW_SOURCE_BYTES == 32 * 1024 * 1024
     assert compatibility.MAX_VIEW_SOURCE_BYTES < len(original) < MAX_DOCX_BYTES
     assert runtime.import_candidate(inspection)
     app = _confirm_source_site(start_app(monkeypatch, tmp_path, path))
     _assert_preserved_and_blocked(app, path, original, inspection)
     warning = _require_processing_guidance(app)
     # The established full template-fallback journey depends on this wording.
-    assert "limited to 24 MiB" in warning
+    assert "limited to 32 MiB" in warning
 
 
 def test_unsupported_native_artwork_is_not_relabelled_as_a_processing_limit(monkeypatch, tmp_path):
