@@ -63,3 +63,16 @@ def test_cover_or_unknown_text_does_not_acquire_a_monthly_role():
     result = analyze_starting_report(doc, PROFILE, PERIOD)
     assert not result.period_review_items
     assert not result.older_items
+
+
+def test_dated_utility_reference_is_retained_for_review_not_silently_dropped():
+    source = item('contract-caption', 'scorecards',
+                  'Delivery obligation matrix, August 2026 contract analysis.',
+                  'utility_analysis')
+    doc = inspection(source)
+    result = analyze_starting_report(doc, PROFILE, PERIOD)
+    assert source.id not in result.older_items
+    assert source.id in result.period_review_items
+    plan = automatic_section_plans(doc, result)['scorecards']
+    assert source.id in plan['selected']
+    assert not plan['approved']
