@@ -105,7 +105,7 @@ def highlight_needed_fields(widget_keys: Iterable[str]) -> None:
     # restyled rather than broken.
     st.markdown(
         f"<style>{selectors} {{"
-        "background:#FCFCF3;"
+        "background:var(--enfra-needs-background,#FCFCF3);"
         "border-left:4px solid var(--enfra-yellow);"
         "border-radius:4px;"
         "padding:0.35rem 0 0.35rem 0.7rem;"
