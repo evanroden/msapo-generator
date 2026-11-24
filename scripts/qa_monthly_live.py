@@ -142,7 +142,6 @@ def await_fixture_state(page, mode: str, *, previous_generation: str | None = No
     """Wait for a committed, generation-bound state, not an always-visible button."""
     if mode not in ("empty", "known-value prefill", "original-source replay"):
         raise ValueError("Invalid fixture state.")
-    open_qa_details(page, timeout=timeout)
     locator = page.get_by_text(re.compile(r"^QA fixture state: ")).first
     different = ("(?!" + re.escape(previous_generation) + r"\b)"
                  if previous_generation else "")
@@ -151,6 +150,11 @@ def await_fixture_state(page, mode: str, *, previous_generation: str | None = No
                          r" · generation " + different +
                          r"[0-9a-f]{12} · revision " + revision + r"$")
     try:
+        # First require the requested callback's committed state. Script-idle
+        # alone may still describe the preceding render before dispatch begins.
+        expect(locator).to_have_text(pattern, timeout=timeout)
+        open_qa_details(page, timeout=timeout)
+        locator.wait_for(timeout=timeout)
         expect(locator).to_have_text(pattern, timeout=timeout)
         observed = locator.text_content() or ""
         matched = STATE.fullmatch(observed)
