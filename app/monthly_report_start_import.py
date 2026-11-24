@@ -155,6 +155,20 @@ def mentioned_periods(text):
     return periods
 
 
+def _names_earlier_month(text, source_period, requested):
+    """True when text names the source report's month or only earlier dates.
+
+    A bare month word ("October vendor evidence") has no year, so it is only
+    read against the source report's own cover month. "May" is skipped
+    because it is also an ordinary word.
+    """
+    periods = mentioned_periods(text)
+    if periods:
+        return all(p < requested for p in periods)
+    name = calendar.month_name[source_period[1]]
+    return name != "May" and re.search(rf"\b{name}\b", text) is not None
+
+
 # A source cover can be one month behind unfinished work. A *planned* event
 # mentioned for the requested month is not proof that the event happened.
 # Inspect clauses rather than all body dates together: a completed September
@@ -262,6 +276,15 @@ def analyze_starting_report(inspection, profile, period, known_sites=(), *, conf
                 and item.section in known_section_keys):
             slot = default_slot(item.section)
         if slot not in period_blocks:
+            # Prose in a section with no monthly text block (for example a
+            # vendor-status narrative under the subcontractor table) is still
+            # dated work. When it names the earlier source month, or only
+            # earlier dated months, hold it for the same month review.
+            if (item.kind == "text" and item.section in known_section_keys
+                    and source_period and source_period < requested
+                    and not source_text_role(item)
+                    and _names_earlier_month(item.text, source_period, requested)):
+                uncertain.append(item.id)
             continue
         # Explicit source examples, author instructions, and placeholders are
         # not evidence of completed work even when their cells contain this
@@ -529,6 +552,19 @@ def _older_picture_titles(items, older_items):
     return titles
 
 
+def _picture_fallback_slot(section, item):
+    """The destination a section picture takes when it has no slot of its own."""
+    slot = item.suggested_slot
+    if section.key == "organization" and re.search(
+            r"(?:^|[_-])contact[_-]matrix(?:[_.-]|$)",
+            item.image_part.rsplit("/", 1)[-1].casefold()):
+        return "contact_matrix"
+    if not slot and section.key not in ("cover", "other", "proposals", "accounts_receivable"):
+        from app.monthly_report_visual_preservation import VISUAL_SLOTS
+        slot = VISUAL_SLOTS.get(section.key, "")
+    return slot
+
+
 def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_design=False, source_view=None,
                             native_art_review=None, source_path=None, profile=None, period=None):
     """Pre-fill recognizable content; ask only about unresolved source content.
@@ -548,6 +584,7 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
         if preserved is not None:
             kept_native = {item.original_id for item in preserved.inventory.occurrences}
     known = {b.key for s in known_sections() for b in s.blocks} | {b.key for b in layout_blocks()}
+    single_picture = {b.key: b.type == "image_page" for s in known_sections() for b in s.blocks}
     result = {}
     for section in section_reviews(inspection, source_view=source_view):
         cover_default = suggested_cover_photo(section.items, native_furniture_ids=furniture_ids) if section.key == "cover" else None
@@ -656,6 +693,18 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
                     # they can contain amounts only in pixels.
                     from app.monthly_report_visual_preservation import VISUAL_SLOTS
                     slot = VISUAL_SLOTS.get(section.key, "")
+                if (slot and section.key not in ("cover", "other")
+                        and single_picture.get(slot) and sum(
+                            other.kind == "image" and other.id not in kept_native
+                            and not other.suggested_slot.startswith("divider_")
+                            and not small_artwork(other)
+                            and _picture_fallback_slot(section, other) == slot
+                            for other in section.items) > 1):
+                    # Several pictures would all land on
+                    # one single-picture page (e.g. both workflow charts on
+                    # the org chart page). Ask instead of stacking them there.
+                    questions.append("A picture's purpose is not clear.")
+                    continue
                 if section.key == "cover" and slot not in ("brand_logo", "client_logo"):
                     # Optional cover photo is one chosen image; even when
                     # several pictures exist the gallery does not need one

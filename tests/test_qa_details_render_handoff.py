@@ -9,7 +9,8 @@ SOURCE = Path('scripts/qa_monthly_live.py')
 def helper():
     tree = ast.parse(SOURCE.read_text())
     node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'open_qa_details')
-    namespace = {'re': __import__('re')}
+    namespace = {'re': __import__('re'), 'time': __import__('time'),
+                 'BrowserTimeout': TimeoutError}
     exec(compile(ast.Module(body=[node], type_ignores=[]), str(SOURCE), 'exec'), namespace)
     return namespace['open_qa_details']
 
@@ -26,6 +27,8 @@ def test_render_finishes_before_opening_replacement_disclosure():
         def scroll_into_view_if_needed(self, **kwargs):
             events.append('scroll')
         def is_visible(self):
+            return state['open']
+        def evaluate(self, expression):
             return state['open']
         def click(self):
             assert not state['rendering']
@@ -77,3 +80,22 @@ def test_scroll_restoration_cannot_turn_open_action_into_close():
         get_by_text=lambda text, **kwargs: SimpleNamespace(first=label if isinstance(text, str) else status))
     helper()(page)
     assert state['open'] and not clicks
+
+
+def test_open_disclosure_hidden_by_rerun_is_not_clicked_closed():
+    """An open disclosure whose status is not painted yet must not be toggled."""
+    clicks, waits = [], []
+    state = {'painted': False}
+    def wait_status(timeout=None):
+        waits.append(timeout)
+        if len(waits) == 1:
+            raise TimeoutError('not painted yet')
+        state['painted'] = True
+    label = SimpleNamespace(wait_for=lambda **kwargs: None,
+        scroll_into_view_if_needed=lambda **kwargs: None,
+        evaluate=lambda expression: True, click=lambda: clicks.append('wrong-close'))
+    status = SimpleNamespace(is_visible=lambda: state['painted'], wait_for=wait_status)
+    page = SimpleNamespace(wait_for_function=lambda *a, **k: None,
+        get_by_text=lambda text, **kwargs: SimpleNamespace(first=label if isinstance(text, str) else status))
+    helper()(page)
+    assert state['painted'] and not clicks and waits == [3000, 3000]
