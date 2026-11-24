@@ -54,8 +54,7 @@ def main():
                     before=receipt.inner_text()
                     notes.fill(VALUE)
                     page.get_by_label('Synthetic reference',exact=True).click()
-                    expect(receipt).to_have_count(1)
-                    expect(receipt).not_to_have_text(before)
+                    page.wait_for_function("old=>{const a=[...document.querySelectorAll('p')].filter(n=>n.textContent.startsWith('Layout fixture pass '));return a.length===1&&a[0].textContent!==old}",arg=before)
                     expect(page.get_by_test_id('stApp')).to_have_attribute('data-test-script-state','notRunning')
                     expect(page.locator('[data-stale="true"]')).to_have_count(0)
                     expect(notes).to_have_count(1)
@@ -125,8 +124,7 @@ def main():
                 for workflow in ('Monthly report', 'Expense reimbursement', 'Purchase order'):
                     before=receipt.inner_text()
                     page.get_by_role('radio', name=workflow, exact=True).click()
-                    expect(receipt).to_have_count(1)
-                    expect(receipt).not_to_have_text(before)
+                    page.wait_for_function("old=>{const a=[...document.querySelectorAll('p')].filter(n=>n.textContent.startsWith('Layout fixture pass '));return a.length===1&&a[0].textContent!==old}",arg=before)
                     expect(page.get_by_test_id('stApp')).to_have_attribute('data-test-script-state', 'notRunning')
                     # A completed backend rerun may still have a stale widget
                     # owner in the browser until reconciliation finishes.
