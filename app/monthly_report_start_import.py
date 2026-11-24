@@ -527,6 +527,31 @@ def reuse_identical_saved_cover(plan, section, inspection, path, existing_blocks
             "automatic_brand_identity_refs": tuple(sorted(trusted_used))}
 
 
+def _older_picture_titles(items, older_items):
+    """Map each older-dated picture title to the one picture in its paragraph.
+
+    Matches the builder's own caption pairing: exactly one picture and one
+    short single-line title in the same Word paragraph, with no price.
+    """
+    older = set(older_items)
+    places = {}
+    for item in items:
+        places.setdefault((item.part, item.word_section, item.position), []).append(item)
+    titles = {}
+    for group in places.values():
+        pictures = [i for i in group if i.kind == "image"]
+        texts = [i for i in group if i.kind == "text"]
+        if len(group) != 2 or len(pictures) != 1 or len(texts) != 1:
+            continue
+        text, picture = texts[0], pictures[0]
+        line = text.text.strip()
+        if (text.id not in older or picture.text.strip() or not line
+                or "\n" in line or len(line) > 160 or contains_price(line)):
+            continue
+        titles[text.id] = picture.id
+    return titles
+
+
 def _picture_fallback_slot(section, item):
     """The destination a section picture takes when it has no slot of its own."""
     slot = item.suggested_slot
@@ -573,6 +598,13 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
         if analysis.site_relation != "same":
             plan["unsupported_reviewed"] = True
         questions = []
+        # A dated title typed in the same Word paragraph as its one picture
+        # is that picture's caption (vendor, report type, date), not
+        # last month's narrative. Keep it with the picture when the picture
+        # itself is kept, so the writer updates a date rather than retyping
+        # the whole caption. The period check still flags the old month.
+        older_titles = _older_picture_titles(section.items, analysis.older_items)
+        deferred_titles = {}
         for item in section.items:
             slot = item.suggested_slot
             if native_design and slot.startswith("divider_"):
@@ -610,6 +642,9 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
             if source_table_role(item):
                 plan.setdefault("table_role_required", []).append(item.id)
                 questions.append("Review source table instructions or examples.")
+                continue
+            if item.id in older_titles:
+                deferred_titles[item.id] = item
                 continue
             if item.id in analysis.older_items and item.kind != "image":
                 # Old prose is not current-month work. Its photos are still
@@ -728,6 +763,14 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
             plan["destinations"][item.id] = slot
             if item.kind == "text":
                 plan["texts"][item.id] = item.text
+        for title_id, picture_id in older_titles.items():
+            title = deferred_titles.get(title_id)
+            if title is None or picture_id not in plan["selected"]:
+                continue  # Without its picture the title is old narrative.
+            at = plan["selected"].index(picture_id) + 1
+            plan["selected"].insert(at, title_id)
+            plan["destinations"][title_id] = plan["destinations"].get(picture_id) or default_slot(section.key)
+            plan["texts"][title_id] = title.text
         plan["questions"] = tuple(dict.fromkeys(questions))
         plan["approved"] = not questions
         result[section.key] = plan
