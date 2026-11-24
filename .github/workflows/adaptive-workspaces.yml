@@ -1085,7 +1085,7 @@ jobs:
           name: workflow-shell-width-${{ github.run_attempt }}
           path: |
             test-artifacts/workflow-shell-width/
-            test-artifacts/duo-compact-portrait
+            test-artifacts/duo-compact-portrait/
             test-artifacts/system-appearance/
           retention-days: 7
           if-no-files-found: warn
