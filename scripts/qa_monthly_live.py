@@ -135,10 +135,26 @@ def open_qa_details(page, *, timeout=45000):
     # visibility after scrolling, not before a click's implicit scroll step.
     label.scroll_into_view_if_needed(timeout=timeout)
     status = page.get_by_text(re.compile(r"^QA fixture state: ")).first
-    if not status.is_visible():
-        label.click()
-        status.wait_for(timeout=timeout)
-
+    # A click only toggles. If a rerun restores or replaces the disclosure
+    # around the click (WebKit has no scroll anchoring and repaints later),
+    # one blind click can leave it closed for good. So click only while the
+    # disclosure is actually closed, and look again after each rerun settles.
+    deadline = time.monotonic() + timeout / 1000
+    while not status.is_visible():
+        if time.monotonic() > deadline:
+            status.wait_for(timeout=1)  # raises the usual Playwright timeout
+        if not label.evaluate("node => Boolean(node.closest('details')?.open)"):
+            label.click()
+        try:
+            status.wait_for(timeout=3000)
+        except BrowserTimeout:
+            # A rerun replaced the disclosure. Let it settle, find the new
+            # one and look again rather than clicking a stale node.
+            page.wait_for_function("""() => document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state') === 'notRunning'""",
+                                   timeout=timeout)
+            label = page.get_by_text("QA details", exact=True).first
+            label.wait_for(timeout=timeout)
+            label.scroll_into_view_if_needed(timeout=timeout)
 
 def await_fixture_state(page, mode: str, *, previous_generation: str | None = None,
                         timeout: int = 45000) -> dict:
