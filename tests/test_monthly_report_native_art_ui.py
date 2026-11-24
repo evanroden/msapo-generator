@@ -212,3 +212,25 @@ render_section_setup(profile.contract, period, 'Synthetic Operator', _field,
     assert app.error
     assert next(b for b in app.button if b.label == 'Continue to this month’s updates').disabled
     assert not any('Your sites and sections are ready' in x.value for x in app.success)
+
+
+def test_keep_all_button_ticks_every_shown_group(sample):
+    path, view, profile, period, inventory, receipt = sample
+    app = AppTest.from_string(f'''
+from pathlib import Path
+import streamlit as st
+from test_monthly_report_native_art_review import setup
+from app.monthly_report_section_ui import _native_art_preservation_review
+from app.monthly_report_ui import _field
+path, view, profile, period, inventory, _ = setup(Path({str(path)!r}))
+st.session_state['receipt'] = _native_art_preservation_review(path, view, profile, period,
+    'Synthetic Operator', 'synthetic', _field)
+''', default_timeout=30).run()
+    assert not app.exception and app.session_state['receipt'] is None
+    keep_all = [b for b in app.button if b.label.startswith('I reviewed all 2 above')]
+    assert len(keep_all) == 1
+    keep_all[0].click().run()
+    assert not app.exception
+    assert all(checkbox.value for checkbox in app.checkbox)
+    assert app.session_state['receipt'] == receipt
+    assert not [b for b in app.button if b.label.startswith('I reviewed all')], 'button goes once all are kept'

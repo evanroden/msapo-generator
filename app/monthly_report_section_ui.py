@@ -725,6 +725,7 @@ def _native_art_preservation_review(path, source_view, profile, period, actor, p
             return None
         groups.setdefault(occurrence.preview_group_key, []).append(occurrence)
     kept, reviewed = set(), set()
+    shown_keys = []
     with st.expander("Preserve native page artwork", expanded=True):
         st.caption("Keep this artwork in its original position. Check that it belongs in this report; "
                    "the original file stays unchanged.")
@@ -763,10 +764,21 @@ def _native_art_preservation_review(path, source_view, profile, period, actor, p
                 # One explicit action covers preservation AND the same visible
                 # suitability review. Old separate/partial choices cannot seed it.
                 st.caption("Confirm it belongs in this report, with no visible pricing or inappropriate private information.")
-                if st.checkbox("I reviewed this artwork and want to keep it unchanged",
-                               key=field(key + "_preserve_review_v1", False)):
+                review_key = field(key + "_preserve_review_v1", False)
+                shown_keys.append(review_key)
+                if st.checkbox("I reviewed this artwork and want to keep it unchanged", key=review_key):
                     kept.update(item.original_id for item in occurrences)
                     reviewed.update(item.original_id for item in occurrences)
+        # Every group is shown above. One button may tick them all, but only
+        # when each group actually displayed, so nothing is kept unseen.
+        if len(groups) > 1 and len(shown_keys) == len(groups) and not all(
+                st.session_state.get(review_key) for review_key in shown_keys):
+            def keep_all(keys=tuple(shown_keys)):
+                for review_key in keys:
+                    st.session_state[review_key] = True
+            st.button(f"I reviewed all {len(groups)} above. Keep them all unchanged",
+                      key=prefix + "_native_art_keep_all_" + inventory.sha256[:20],
+                      on_click=keep_all)
         ids = tuple(item.original_id for item in inventory.occurrences)
         if kept != set(ids) or reviewed != set(ids) or not actor.strip():
             st.info("Inspect and preserve every listed artwork group before this source design can be used.")
