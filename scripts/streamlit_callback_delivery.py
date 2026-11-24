@@ -17,7 +17,7 @@ BEFORE = b'''                        self._session_state.on_script_will_rerun(
                             rerun_data.widget_states
                         )
 '''
-AFTER = b'''                        # Complete native value + callback delivery together.
+LEGACY_AFTER = b'''                        # Complete native value + callback delivery together.
                         # External reruns remain queued until the next yield;
                         # explicit callback st.rerun behavior is unchanged.
                         self._execing = False
@@ -29,12 +29,30 @@ AFTER = b'''                        # Complete native value + callback delivery 
                             self._execing = True
 '''
 
+# A runner can wait behind a newer replacement's shared state lock. Check its
+# queued Stop after acquiring that lock, before applying its now-obsolete packet.
+AFTER = b'''                        # Serialize packet admission across replacement runners.
+                        # A stopped runner must not apply an older packet after
+                        # waiting for a newer runner's callback to finish.
+                        with self._session_state._lock:
+                            self._maybe_handle_execution_control_request()
+                            self._execing = False
+                            try:
+                                self._session_state.on_script_will_rerun(
+                                    rerun_data.widget_states
+                                )
+                            finally:
+                                self._execing = True
+'''
+
 
 def repaired_source(raw, *, installed_version):
     if installed_version != STREAMLIT_VERSION:
         raise RuntimeError('Unexpected Streamlit version; callback source was not changed.')
     if sha256(raw).hexdigest() == REPAIRED_SHA256:
         return raw
+    if sha256(raw).hexdigest() == LEGACY_REPAIRED_SHA256:
+        raw = raw.replace(LEGACY_AFTER, BEFORE, 1)
     if sha256(raw).hexdigest() != SOURCE_SHA256 or raw.count(BEFORE) != 1:
         raise RuntimeError('Unexpected runner source; no bytes were changed.')
     result = raw.replace(BEFORE, AFTER, 1)
@@ -71,4 +89,6 @@ def patch_callback_delivery(streamlit_root, *, installed_version):
         os.close(descriptor)
 
 
-REPAIRED_SHA256 = '56b253d547ea9f4d68b57f635e8e626962a7b3a630fd56ca857da697cd6b1620'
+LEGACY_REPAIRED_SHA256 = '56b253d547ea9f4d68b57f635e8e626962a7b3a630fd56ca857da697cd6b1620'
+
+REPAIRED_SHA256 = '1530c2a85815a640f1a360b2c8e5eeba84b5f75deca0de1ab15592574a95cafb'
