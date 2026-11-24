@@ -176,7 +176,8 @@ def render(base, token, field, move):
         st.button('Fail next synthetic shared save after commit',
                   on_click=_arm_fault, args=(fault_control, 'after'))
     st.button('Observe synthetic passive rerun')
-    render_guided_workflow(token, 'UTC', field, move)
+    # Fixture controls stay above the adaptive report. Cold display hydration
+    # below must not move a setup button between pointerdown and pointerup.
     if st.button('Render synthetic native contact outputs'):
         from app.monthly_report_native_layout import build_native_docx
         from app.pdf_converter import convert_to_pdf
@@ -192,8 +193,11 @@ def render(base, token, field, move):
         finally:
             pdf.unlink(missing_ok=True)
     if outputs := st.session_state.get('_contact_native_outputs'):
-        st.download_button('Download synthetic contact Word', outputs[0], 'synthetic-contacts.docx')
-        st.download_button('Download synthetic contact PDF', outputs[1], 'synthetic-contacts.pdf')
+        st.download_button('Download synthetic contact Word', outputs[0], 'synthetic-contacts.docx',
+                           mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document', on_click='ignore')
+        st.download_button('Download synthetic contact PDF', outputs[1], 'synthetic-contacts.pdf',
+                           mime='application/pdf', on_click='ignore')
+    render_guided_workflow(token, 'UTC', field, move)
     receipt = snapshot(base, token)
     receipt['sequence'] = st.session_state.get('_contact_receipt_sequence', 0) + 1
     st.session_state['_contact_receipt_sequence'] = receipt['sequence']
