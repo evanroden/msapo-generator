@@ -28,7 +28,24 @@ def _before_compact_portrait_additions(text):
     return text.replace(upload, '          path: test-artifacts/workflow-shell-width/\n')
 
 
+def _before_system_appearance_additions(text):
+    trigger = "      - 'scripts/qa_system_appearance.py'\n      - 'tests/test_system_appearance.py'\n      - '.streamlit/config.toml'\n"
+    if trigger not in text:
+        return text
+    assert text.count(trigger) == 2
+    text = text.replace(trigger, '')
+    step = ('      - name: Automatic system light and dark appearance\n'
+            '        timeout-minutes: 4\n'
+            '        run: python scripts/qa_system_appearance.py\n')
+    assert text.count(step) == 1
+    text = text.replace(step, '')
+    artifact = '            test-artifacts/system-appearance/\n'
+    assert text.count(artifact) == 1
+    return text.replace(artifact, '')
+
+
 def validate_partition(text):
+    text = _before_system_appearance_additions(text)
     text = _before_compact_portrait_additions(text)
     parts = re.split(r'(?=^  [a-z][a-z-]+:\n)', text.split('jobs:\n', 1)[1], flags=re.M)
     jobs = {re.match(r'  ([\w-]+):', p).group(1):p for p in parts if p.strip()}

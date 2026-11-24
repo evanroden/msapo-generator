@@ -23,7 +23,7 @@
         .stApp .st-key-workflow_mode div[role="radiogroup"] {
             grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
         }
-        .stApp .st-key-workflow_mode button[role="radio"] {
+        .stApp :is(.st-key-workflow_mode) button[role="radio"] {
             min-height: 52px !important;
             padding: .45rem .3rem !important;
             font-size: .85rem !important;
@@ -38,3 +38,30 @@
         nav.po-step-spine .step-title {font-size:.85rem;padding:0;}
         nav.po-step-spine .po-step-summary {display:none;}
     }
+
+/* App appearance follows the OS directly. Brand/document colors are not
+   inverted: generated report pages and their source artwork stay unchanged. */
+:root { color-scheme: light dark; }
+@media (prefers-color-scheme: dark) {
+  .stApp {--enfra-stage-background:#20342C;--enfra-stage-border:#77938A;--enfra-stage-text:#EDF5F0;--enfra-needs-background:#303C20;color:#EDF5F0 !important;background:linear-gradient(180deg,#203B30 0,#111E1A 250px) !important;}
+  .stApp .st-key-workflow_mode div[role="radiogroup"] {background:#20342C !important;border-color:#77938A !important;}
+  .stApp :is(.st-key-workflow_mode) button[role="radio"][aria-checked="false"] {background:#20342C !important;color:#EDF5F0 !important;}
+  .stApp :is(.st-key-workflow_mode) button[role="radio"][aria-checked="true"] {background:#092B24 !important;color:#FFFFFF !important;}
+  .stApp .po-step-link {background:#20342C !important;color:#EDF5F0 !important;border-color:#77938A;}
+  .stApp .po-step-link[data-state="current"] {background:#2C493C !important;border-bottom-color:#D6EF4B;}
+  .stApp .po-step-link:hover {background:#2C493C !important;}
+  .stApp .po-step-link .step-title,.stApp .po-step-summary,
+  .stApp .metric-value,.stApp .facility-name,.stApp .step-title,
+  .stApp .field-label,.stApp .scope-label,.stApp .app-footer a {color:#EDF5F0;}
+  .stApp .metric-label,.stApp .facility-address,.stApp .app-footer,
+  .stApp .st-key-load_synthetic_test button {color:#B8D2C8 !important;}
+  .stApp .metric-card,.stApp .needs-banner {background:#20342C;color:#EDF5F0;border-color:#77938A;}
+  .stApp .facility-banner {background:#2C493C;}
+  .stApp .needs-banner {border-left-color:#D6EF4B;}
+  .stApp div[data-testid="stFileUploader"] section {background:#20342C;border-color:#9EBDB2;}
+  [data-baseweb="calendar"] [role="gridcell"][aria-label^="Selected."] {color:#092B24 !important;}
+  [data-baseweb="calendar"] [role="gridcell"][aria-label^="Selected."] div {color:inherit !important;}
+  .stApp [data-baseweb="popover"],.stApp [role="listbox"] {color:#EDF5F0;}
+  .stApp .epc-compact-open,.stApp .epc-compact-back,.stApp .epc-preview-controls button {background:#20342C;color:#EDF5F0;border-color:#9EBDB2;}
+}
+@media print { :root {color-scheme:light;} }

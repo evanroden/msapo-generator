@@ -24,6 +24,11 @@ if choice != 'Expense reimbursement':
 with workspace({'Monthly report':'monthly','Purchase order':'po','Expense reimbursement':'expense'}[choice],'invented-duo-regression'):
     with workspace_section('duo_entry','Details'):
         st.subheader('Details')
+        st.markdown('<div class="metric-card"><span class="metric-value">Invented total</span></div><div class="needs-banner">Review needed</div>',unsafe_allow_html=True)
+        st.selectbox('Synthetic site',['Invented A','Invented B'])
+        st.checkbox('Synthetic confirmed')
+        st.date_input('Synthetic date')
+        st.button('Synthetic primary',type='primary')
         edit,preview=workspace_columns('duo_entry')
         with edit:
             st.text_area('Synthetic notes',key='notes')
@@ -33,3 +38,5 @@ with workspace({'Monthly report':'monthly','Purchase order':'po','Expense reimbu
 
 st.session_state['layout_qa_pass']=st.session_state.get('layout_qa_pass',0)+1
 st.caption('Layout fixture pass '+str(st.session_state['layout_qa_pass']))
+st.session_state['appearance_qa_pass']=st.session_state.get('appearance_qa_pass',0)+1
+st.caption('Appearance fixture pass '+str(st.session_state['appearance_qa_pass']))

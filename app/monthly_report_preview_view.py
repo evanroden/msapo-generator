@@ -20,6 +20,13 @@ CSS = """
 .report-preview-page img { position:absolute; inset:0; display:block; width:100%; height:100%; }
 .report-preview-placeholder { position:absolute; inset:20px; color:#64746d; text-align:center; }
 .report-preview figcaption { text-align:center; padding-top:7px; }
+@media (prefers-color-scheme:dark) {
+ .report-preview {color:#D6E7DF;}
+ .report-preview-scroll {background:#182A23;}
+ .report-preview-retry {background:#20342C;color:#EDF5F0;border-color:#9EBDB2;}
+ .report-preview-placeholder {color:#40524a;}
+}
+
 """
 HTML = '<div class="report-preview"><div class="report-preview-header"><span class="report-preview-status" role="status" aria-live="polite"></span><span class="report-preview-position" aria-label="Visible page"></span><button type="button" class="report-preview-retry" data-action="retry-request" hidden>Retry preview</button></div><div class="report-preview-scroll" tabindex="0" aria-label="Report preview — scroll to read all pages"></div></div>'
 JS = r"""
