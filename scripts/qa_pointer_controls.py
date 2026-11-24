@@ -179,6 +179,12 @@ def test_flow(page, flow, browser_name, view_name, touch):
         expect(page.get_by_label(re.compile(r"^I confirm this generated signature represents me"))).to_have_count(1)
 
     native = page.locator(INPUTS)
+    # Streamlit can report backend idle before the final native widgets have
+    # reconciled in WebKit. Require the existing full inventory before reading
+    # labels or beginning physical pointer checks, never accept a partial form.
+    page.wait_for_function("""p => document.querySelectorAll(p.selector).length >= p.minimum""",
+                           arg={"selector": INPUTS, "minimum": 6 if flow == "purchase" else 4},
+                           timeout=35000)
     count = native.count()
     assert count >= (6 if flow == "purchase" else 4), (flow,count)
     # Keep confirmation last. It gates generation, unlike all optional toggles.
