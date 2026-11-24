@@ -48,6 +48,18 @@ def main():
                 page.goto('http://127.0.0.1:8523')
                 root = page.locator('.epc-workspace')
                 notes = page.get_by_label('Synthetic notes', exact=True)
+                receipt = page.get_by_text('Layout fixture pass ',exact=False)
+
+                def commit_notes():
+                    before=receipt.inner_text()
+                    notes.fill(VALUE)
+                    page.get_by_label('Synthetic reference',exact=True).click()
+                    expect(receipt).to_have_count(1)
+                    expect(receipt).not_to_have_text(before)
+                    expect(page.get_by_test_id('stApp')).to_have_attribute('data-test-script-state','notRunning')
+                    expect(page.locator('[data-stale="true"]')).to_have_count(0)
+                    expect(notes).to_have_count(1)
+                    expect(root).to_have_count(1)
 
                 def settle(mode):
                     expect(root).to_have_attribute('data-epc-mode', mode)
@@ -81,8 +93,7 @@ def main():
                 expect(page.locator('.report-preview img').first).to_be_visible()
                 expect(page.locator('.report-preview img').first).to_have_js_property('complete', True)
                 assert page.locator('.report-preview img').first.evaluate('n=>n.naturalWidth>0')
-                notes.fill(VALUE)
-                page.get_by_label('Synthetic reference', exact=True).click()
+                commit_notes()
                 inspect('open-portrait', 'wide', 669, 885)
                 inspect('compact-phone', 'compact', 382, 600)
                 page.get_by_role('button', name='View preview', exact=True).click()
@@ -112,7 +123,10 @@ def main():
                 segments(None)
                 inspect('unfolded-return', 'wide', 669, 885)
                 for workflow in ('Monthly report', 'Expense reimbursement', 'Purchase order'):
+                    before=receipt.inner_text()
                     page.get_by_role('radio', name=workflow, exact=True).click()
+                    expect(receipt).to_have_count(1)
+                    expect(receipt).not_to_have_text(before)
                     expect(page.get_by_test_id('stApp')).to_have_attribute('data-test-script-state', 'notRunning')
                     # A completed backend rerun may still have a stale widget
                     # owner in the browser until reconciliation finishes.
@@ -120,8 +134,9 @@ def main():
                     expect(page.locator('.st-key-workflow_mode [role=radio][aria-checked=true]')).to_have_text(workflow)
                     expect(page.locator('.epc-workspace')).to_have_count(1)
                     expect(notes).to_be_visible()
-                    notes.fill(VALUE)
-                    page.get_by_label('Synthetic reference', exact=True).click()
+                    if notes.input_value()!=VALUE:
+                        commit_notes()
+                    expect(page.locator('[data-stale="true"]')).to_have_count(0)
                     inspect(workflow.lower().replace(' ', '-'), 'compact', 382, 600)
                 browser.close()
         finally:
