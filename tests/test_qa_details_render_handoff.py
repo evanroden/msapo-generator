@@ -49,3 +49,15 @@ def test_already_open_disclosure_is_not_toggled_closed():
         get_by_text=lambda text, **kwargs: SimpleNamespace(first=label if isinstance(text, str) else status))
     helper()(page)
     assert calls == ['idle']
+
+
+def test_requested_committed_state_precedes_idle_and_disclosure_open():
+    tree = ast.parse(SOURCE.read_text())
+    node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'await_fixture_state')
+    guarded = next(n for n in node.body if isinstance(n, ast.Try))
+    calls = guarded.body
+    assert isinstance(calls[0].value, ast.Call)
+    assert calls[0].value.func.attr == 'to_have_text'
+    assert calls[1].value.func.id == 'open_qa_details'
+    assert calls[2].value.func.attr == 'wait_for'
+    assert calls[3].value.func.attr == 'to_have_text'
