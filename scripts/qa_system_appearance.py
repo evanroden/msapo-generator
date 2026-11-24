@@ -24,7 +24,11 @@ def main():
       page.goto('http://127.0.0.1:8524')
       notes=page.get_by_label('Synthetic notes',exact=True)
       expect(notes).to_be_visible(timeout=30000)
+      receipt=page.get_by_text('Appearance fixture pass ',exact=False)
+      before=receipt.inner_text()
       notes.fill('Invented text survives system changes')
+      notes.press('Tab')
+      expect(receipt).not_to_have_text(before)
       for scheme in ('light','dark','light','dark'):
        page.emulate_media(color_scheme=scheme)
        expected='rgb(237, 245, 240)' if scheme=='dark' else 'rgb(0, 0, 0)'
@@ -41,7 +45,9 @@ def main():
        page.screenshot(path=str(OUT/f'{name}-{width}-{scheme}.png'))
       if width==390:
        for workflow in ('Expense reimbursement','Monthly report','Purchase order'):
+        before=receipt.inner_text()
         page.get_by_role('radio',name=workflow,exact=True).click()
+        expect(receipt).not_to_have_text(before)
         expect(notes).to_have_count(1)
         expect(page.locator('.st-key-workflow_mode [role=radio][aria-checked=true]')).to_have_text(workflow)
         expect(page.get_by_test_id('stApp')).to_have_attribute('data-test-script-state','notRunning')
@@ -59,7 +65,7 @@ def main():
         expect(page.locator('[data-stale="true"]')).to_have_count(0)
         page.screenshot(path=str(OUT/f'{name}-{workflow.split()[0]}-preview.png'))
         page.get_by_role('button',name='Back to editing',exact=True).click()
-        notes.fill('Invented text survives system changes')
+        assert notes.input_value()=='Invented text survives system changes'
       page.close()
      browser.close()
   finally:server.terminate();server.wait(timeout=20)
