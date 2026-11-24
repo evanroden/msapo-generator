@@ -23,6 +23,8 @@ def test_render_finishes_before_opening_replacement_disclosure():
             return self
         def wait_for(self, **kwargs):
             events.append('visible')
+        def scroll_into_view_if_needed(self, **kwargs):
+            events.append('scroll')
         def is_visible(self):
             return state['open']
         def click(self):
@@ -37,14 +39,14 @@ def test_render_finishes_before_opening_replacement_disclosure():
         def get_by_text(self, *args, **kwargs):
             return Locator()
     helper()(Page())
-    assert events == ['finish-render', 'visible', 'open', 'visible']
+    assert events == ['finish-render', 'visible', 'scroll', 'open', 'visible']
     assert state['open']
 
 
 def test_already_open_disclosure_is_not_toggled_closed():
     calls = []
     status = SimpleNamespace(is_visible=lambda: True)
-    label = SimpleNamespace(wait_for=lambda **kwargs: None, click=lambda: calls.append('click'))
+    label = SimpleNamespace(wait_for=lambda **kwargs: None, scroll_into_view_if_needed=lambda **kwargs: None, click=lambda: calls.append('click'))
     page = SimpleNamespace(wait_for_function=lambda *a, **k: calls.append('idle'),
         get_by_text=lambda text, **kwargs: SimpleNamespace(first=label if isinstance(text, str) else status))
     helper()(page)
@@ -61,3 +63,17 @@ def test_requested_committed_state_precedes_idle_and_disclosure_open():
     assert calls[1].value.func.id == 'open_qa_details'
     assert calls[2].value.func.attr == 'wait_for'
     assert calls[3].value.func.attr == 'to_have_text'
+
+
+def test_scroll_restoration_cannot_turn_open_action_into_close():
+    state = {'open': False}
+    clicks = []
+    def restore(**kwargs):
+        state['open'] = True
+    label = SimpleNamespace(wait_for=lambda **kwargs: None,
+        scroll_into_view_if_needed=restore, click=lambda: clicks.append('wrong-close'))
+    status = SimpleNamespace(is_visible=lambda: state['open'])
+    page = SimpleNamespace(wait_for_function=lambda *a, **k: None,
+        get_by_text=lambda text, **kwargs: SimpleNamespace(first=label if isinstance(text, str) else status))
+    helper()(page)
+    assert state['open'] and not clicks
