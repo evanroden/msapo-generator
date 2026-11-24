@@ -58,3 +58,20 @@ def test_contact_picture_is_vertically_centered_in_actual_pdf(tmp_path, monkeypa
         assert abs((y0 + y1)/2 - page.rect.height/2) < 25
         assert x0 > 50 and x1 < page.rect.width-40
         assert abs((x1-x0)/(y1-y0) - 1400/789) < .005
+
+
+@pytest.mark.parametrize("slot", ["org_chart", "contact_matrix"])
+@pytest.mark.parametrize("extra", ["notes", "table"])
+def test_authored_content_does_not_get_full_page_picture_spacing(slot, extra):
+    raw, reference = diagram()
+    block = ResolvedBlock(slot, 'This month', asset_hashes=(reference,),
+                          text='Authored notes stay beside their diagram.' if extra == 'notes' else '',
+                          rows=(("Contact", "Role"),) if extra == 'table' else ())
+    draft = replace(_draft(chart=False, contacts=False), blocks=(block,))
+    document = Document(BytesIO(_build_docx(draft, asset_loader={reference: raw}.__getitem__)))
+    paragraph = next(p for p in document.paragraphs if p._p.xpath('.//w:drawing'))
+    assert paragraph.paragraph_format.space_before is None
+    if extra == 'notes':
+        assert any(p.text == block.text for p in document.paragraphs)
+    else:
+        assert any(cell.text == 'Contact' for table in document.tables for row in table.rows for cell in row.cells)
