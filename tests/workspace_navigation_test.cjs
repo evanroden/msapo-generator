@@ -978,3 +978,12 @@ test(`W02 non-page gesture ${JSON.stringify(event)} does not reinterpret reached
     h.input({isTrusted:true,target:{},...event});h.scrollport.scrollTop-=793;h.measure();
     assert.equal(h.progress.dataset.section,'monthly_short');h.dispose();
 });
+
+
+test('W03 explicit return from Review retains its reached section through passive resize displacement',()=>{
+    const h=harness('wide');h.choose('monthly_training');h.choose('report_review');h.choose('monthly_training');
+    assert.equal(h.state.navigationActive,'monthly_training');
+    h.scrollport.scrollTop-=793;h.measure();
+    assert.equal(h.state.navigationActive,'monthly_training');
+    h.dispose();
+});
