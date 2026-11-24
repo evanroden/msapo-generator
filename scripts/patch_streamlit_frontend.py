@@ -450,10 +450,12 @@ def main():
         from scripts.streamlit_string_trigger_coalescing import patch_script_requests
         from scripts.streamlit_cover_upload_copy import patch_cover_upload_copy
         from scripts.streamlit_callback_delivery import patch_callback_delivery
+        from scripts.streamlit_shared_state_lock import patch_shared_state_lock
     except ModuleNotFoundError:  # Direct `python scripts/...` entrypoint.
         from streamlit_string_trigger_coalescing import patch_script_requests
         from streamlit_cover_upload_copy import patch_cover_upload_copy
         from streamlit_callback_delivery import patch_callback_delivery
+        from streamlit_shared_state_lock import patch_shared_state_lock
     parser = argparse.ArgumentParser()
     parser.add_argument("--static-dir", type=Path)
     parser.add_argument("--scalar-date", action="store_true")
@@ -461,6 +463,7 @@ def main():
     runtime = None
     cover_runtime = None
     callback_runtime = None
+    state_lock_runtime = None
     if args.static_dir is None:
         runtime = patch_script_requests(Path(streamlit.__file__).parent,
                                         installed_version=version("streamlit"))
@@ -468,12 +471,15 @@ def main():
                                                 installed_version=version("streamlit"))
         callback_runtime = patch_callback_delivery(Path(streamlit.__file__).parent,
                                                     installed_version=version("streamlit"))
+        state_lock_runtime = patch_shared_state_lock(Path(streamlit.__file__).parent,
+                                                    installed_version=version("streamlit"))
     result = patch_bundle(args.static_dir or Path(streamlit.__file__).parent / "static",
                           installed_version=version("streamlit"), scalar_date=args.scalar_date)
     if runtime is not None:
         result["native_trigger_runtime"] = runtime
         result["cover_upload_runtime"] = cover_runtime
         result["callback_delivery_runtime"] = callback_runtime
+        result["shared_state_lock_runtime"] = state_lock_runtime
     print(json.dumps(result, sort_keys=True))
 
 
