@@ -81,6 +81,13 @@ SQLite databases: `epc_memory.db` (learning and preferences) and
   beside the old one for a short time. Deploy by hand in a quiet window. The
   automatic deploy after each merge (cutover plan, M9; the owner's choice) does
   not wait for one, so a deploy can briefly overlap the two.
+- **Release by hand from Cloud Shell** while the automatic deploy cannot sign
+  in (M12): `scripts/azure_release_cloud_shell.sh` takes main's newest commit
+  (or one named), refuses it unless Tests passed on it, waits for a typed yes,
+  snapshots the share, builds in the registry (Cloud Shell has no Docker),
+  puts the old image back if the new revision never gets healthy, moves the
+  backup job and offers `scripts/host_check.py` inside the app. It runs from
+  the Cloud Shell in the Azure mobile app too.
 - **SQLite on a network share:** SQLite's WAL mode does not work over a network
   filesystem, and both databases used it. Both now detect an NFS or SMB mount
   under the data folder and use SQLite's rollback journal there, keeping WAL on
