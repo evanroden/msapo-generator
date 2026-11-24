@@ -49,7 +49,9 @@ def test_exact_patch_changes_only_scalar_boundary_and_is_idempotent(bundle):
     aliases = {name.encode(): native.encode() for native, name in expected.names.items()}
     matcher = re.compile(b"|".join(re.escape(name) for name in aliases))
     native_names = matcher.sub(lambda match: aliases[match[0]], repaired.read_bytes())
-    assert native_names == before.replace(compat.ORIGINAL, compat.REPAIRED, 1)
+    assert native_names == before.replace(compat.ORIGINAL, compat.REPAIRED, 1).replace(
+        b"ClearIcon:{props:{overrides:",
+        b"ClearIcon:{props:{onMouseDown:e=>{if(!t.isRange)e.preventDefault()},overrides:", 1)
     assert repaired.read_bytes().count(compat.REPAIRED) == 1
     references = re.compile(rb'''["'`](?:\./|static/js/)([A-Za-z0-9_.-]+\.js)["'`]''')
     for name, record in members.items():
@@ -400,3 +402,21 @@ for(const initial of ['', '2026/09/14', '2026/09/'])
                     "onFocus": method("onFocus", "onBlur"),
                     "onMouseDown": method("onMouseDown", "onPaste")})],
                    check=True, capture_output=True, text=True)
+
+
+def test_clear_focus_upgrade_preserves_exact_previous_scalar_generation(bundle):
+    root, target = bundle
+    sources, members = frontend._locked_sources(target.parent)
+    old = frontend._publication(sources, members, True, date_clear_focus=False)
+    assert old.names[frontend.INDEX_BUNDLE] == "index.enfra-frontend-f4caf983d74a.js"
+    for name, raw in old.payloads.items():
+        (target.parent / old.names[name]).write_bytes(raw)
+    (root / "index.html").write_bytes(frontend._publication_html(
+        (root / "index.html").read_bytes(), frontend.INDEX_BUNDLE, old, (old,)))
+    before = {p:p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    receipt = compat.patch_bundle(root, installed_version="1.61.1")
+    assert receipt["entry"] != old.names[frontend.INDEX_BUNDLE]
+    for path, raw in before.items():
+        if path.name != "index.html":
+            assert path.read_bytes() == raw
+    assert compat.patch_bundle(root, installed_version="1.61.1")["already_patched"]
