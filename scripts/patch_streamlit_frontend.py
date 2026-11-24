@@ -157,7 +157,7 @@ def _locked_sources(scripts):
 def _publication(sources, members, scalar_date, *, virtualizer_resize=True,
                  floating_resize=True, queued_scroll=True, latest_scroll_close=True,
                  selection_safe_close=True, no_cache_advertisements=True, instant_expander=True,
-                 tab_navigation=True, text_input_default=None, dataframe_action_owners=None, cold_source_gesture=None, textarea_default=None):
+                 tab_navigation=True, text_input_default=None, dataframe_action_owners=None, cold_source_gesture=None, textarea_default=None, date_clear_focus=None):
     # Calls reconstructing a named historical recipe must retain its bytes.
     # An unqualified publication means the current recipe, including first
     # text-input display; explicit flags still reconstruct every old version.
@@ -173,6 +173,8 @@ def _publication(sources, members, scalar_date, *, virtualizer_resize=True,
         cold_source_gesture = dataframe_action_owners
     if textarea_default is None:
         textarea_default = cold_source_gesture
+    if date_clear_focus is None:
+        date_clear_focus = textarea_default
     if not floating_resize:
         originals = json.loads(MANIFEST_PATH.read_bytes())["members"]
         sources = {name: raw for name, raw in sources.items() if name in originals}
@@ -199,6 +201,17 @@ def _publication(sources, members, scalar_date, *, virtualizer_resize=True,
         repaired[FLOATING_BUNDLE] = repair_floating(sources[FLOATING_BUNDLE])
     if scalar_date:
         repaired[DATE_BUNDLE] = sources[DATE_BUNDLE].replace(DATE_ORIGINAL, DATE_REPAIRED, 1)
+    if scalar_date and date_clear_focus:
+        # BaseWeb Clear normally blurs to its icon, then refocuses the input.
+        # That focus reopens the scalar calendar and can intercept the pointer
+        # release of the reader's next form action after scroll repositioning.
+        # Retain the existing input focus during mouse Clear only. Clear's
+        # native click, value update and keyboard activation remain unchanged.
+        boundary = b"ClearIcon:{props:{overrides:"
+        if repaired[DATE_BUNDLE].count(boundary) != 1:
+            raise RuntimeError("Unexpected native date Clear boundary; no bytes were changed.")
+        repaired[DATE_BUNDLE] = repaired[DATE_BUNDLE].replace(boundary,
+            b"ClearIcon:{props:{onMouseDown:e=>{if(!t.isRange)e.preventDefault()},overrides:", 1)
     if text_input_default:
         repaired[TEXT_INPUT_BUNDLE] = repair_text_input_default(sources[TEXT_INPUT_BUNDLE])
     if textarea_default:
@@ -258,12 +271,12 @@ def _validated_publications(static_dir, installed_version):
     # The first two are current outputs. The exact previous overlay-only
     # generations remain fully reconstructable upgrade inputs, including all
     # immutable members and preloads. Preserve their original identity recipe.
-    publications = tuple(_publication(sources, members, flag, virtualizer_resize=guard,
+    publications = tuple(_publication(sources, members, flag, date_clear_focus=True) for flag in (False, True)) + tuple(_publication(sources, members, flag, virtualizer_resize=guard,
                                      floating_resize=floating, queued_scroll=scroll,
                                      latest_scroll_close=latest, selection_safe_close=selection,
                                      no_cache_advertisements=no_refs, instant_expander=instant,
                                      tab_navigation=tab, text_input_default=text_default,
-                                     dataframe_action_owners=action_owners, cold_source_gesture=cold_gesture, textarea_default=textarea)
+                                     dataframe_action_owners=action_owners, cold_source_gesture=cold_gesture, textarea_default=textarea, date_clear_focus=False)
                          for textarea, cold_gesture, action_owners, text_default, tab, instant, no_refs, selection, latest, scroll, floating, guard in (
                              (True, True, True, True, True, True, True, True, True, True, True, True),
                              (False, True, True, True, True, True, True, True, True, True, True, True),
