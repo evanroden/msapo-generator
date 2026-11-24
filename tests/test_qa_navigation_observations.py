@@ -65,3 +65,14 @@ def test_warning_caption_diagnostics_preserve_original_native_actions():
     assert ast.literal_eval(navigate.args[1])=='report_review'
     assert len(navigate.keywords)==1 and navigate.keywords[0].arg=='keyboard'
     assert navigate.keywords[0].value.id=='keyboard'
+
+
+def test_capital_wire_observer_does_not_change_original_clear_actions():
+    tree=ast.parse(Path('scripts/qa_native_capital_rows.py').read_text())
+    exercise=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='exercise')
+    fills=[n for n in ast.walk(exercise) if isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and n.func.attr=='fill']
+    assert [ast.literal_eval(n.args[0]) for n in fills[:3]]==['','','']
+    wire=next(n for n in ast.walk(exercise) if isinstance(n,ast.Call) and getattr(n.func,'id','')=='WaterWidgetDelivery')
+    kw={k.arg:ast.literal_eval(k.value) for k in wire.keywords if k.arg!='ports'}
+    assert kw['widget_types']=={'button','text_input','text_area'}
+    assert kw['labels']=={'Facility','Priority','Recommendation','Edit capital item','Close editing'}
