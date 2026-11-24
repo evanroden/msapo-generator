@@ -28,8 +28,7 @@ def main():
       before=receipt.inner_text()
       notes.fill('Invented text survives system changes')
       notes.press('Tab')
-      expect(receipt).to_have_count(1)
-      expect(receipt).not_to_have_text(before)
+      page.wait_for_function("old=>{const a=[...document.querySelectorAll('p')].filter(n=>n.textContent.startsWith('Appearance fixture pass '));return a.length===1&&a[0].textContent!==old}",arg=before)
       for scheme in ('light','dark','light','dark'):
        page.emulate_media(color_scheme=scheme)
        expected='rgb(237, 245, 240)' if scheme=='dark' else 'rgb(0, 0, 0)'
@@ -48,11 +47,19 @@ def main():
        for workflow in ('Expense reimbursement','Monthly report','Purchase order'):
         before=receipt.inner_text()
         page.get_by_role('radio',name=workflow,exact=True).click()
-        expect(receipt).to_have_count(1)
-        expect(receipt).not_to_have_text(before)
+        page.wait_for_function("old=>{const a=[...document.querySelectorAll('p')].filter(n=>n.textContent.startsWith('Appearance fixture pass '));return a.length===1&&a[0].textContent!==old}",arg=before)
         expect(notes).to_have_count(1)
         expect(page.locator('.st-key-workflow_mode [role=radio][aria-checked=true]')).to_have_text(workflow)
         expect(page.get_by_test_id('stApp')).to_have_attribute('data-test-script-state','notRunning')
+        if workflow=='Expense reimbursement':
+         date=page.get_by_test_id('stDateInput').get_by_role('textbox')
+         date.focus();date.press('ArrowDown')
+         calendar=page.locator('[data-baseweb=calendar]')
+         expect(calendar).to_be_visible()
+         selected=calendar.locator('[role=gridcell][aria-label^="Selected."]')
+         expect(selected).to_have_css('color','rgb(9, 43, 36)')
+         page.screenshot(path=str(OUT/f'{name}-calendar.png'))
+         date.press('Escape')
         page.get_by_role('combobox',name='Synthetic site',exact=True).focus()
         page.get_by_role('combobox',name='Synthetic site',exact=True).press('ArrowDown')
         expect(page.get_by_role('option',name='Invented B',exact=True)).to_be_visible()
