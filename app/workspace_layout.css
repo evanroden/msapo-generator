@@ -26,6 +26,7 @@
 .epc-preview-controls button {font:inherit; min-height:44px; padding:.5rem .75rem; border:1px solid #557f7f; border-radius:.4rem; background:var(--background-color,#fff); color:inherit; cursor:pointer;}
 .epc-context-title {font-weight:600; margin-bottom:.5rem;}
 .epc-workspace:not([data-epc-mode="compact"]) .epc-compact-open, .epc-workspace:not([data-epc-mode="compact"]) .epc-compact-back {display:none;}
+.epc-workspace[data-epc-mode="wide"] .epc-workspace-row,
 .epc-workspace[data-epc-mode="book"] .epc-workspace-row {grid-template-columns:minmax(0,var(--epc-editor-width)) minmax(0,var(--epc-reference-width)); column-gap:var(--epc-column-gap) !important;}
 .epc-workspace[data-epc-mode="compact"] .epc-workspace-row {grid-template-columns:minmax(0,1fr);}
 .epc-workspace[data-epc-mode="compact"] .epc-workspace-reference {position:relative; top:auto;}
