@@ -55,9 +55,9 @@ def _contract_tile(title):
     label = _fallback_initials(title)
     st.markdown(
         '<div aria-label="Contract initials" style="width:8.5rem;height:3.5rem;'
-        'background:#e9efed;border:1px solid #c3d1cc;border-radius:.35rem;'
+        'background:var(--enfra-stage-background,#e9efed);border:1px solid var(--enfra-stage-border,#c3d1cc);border-radius:.35rem;'
         'display:flex;align-items:center;justify-content:center;'
-        'font-weight:700;letter-spacing:.08em;color:#174237">' + label + '</div>',
+        'font-weight:700;letter-spacing:.08em;color:var(--enfra-stage-text,#174237)">' + label + '</div>',
         unsafe_allow_html=True,
     )
 
