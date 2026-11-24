@@ -118,13 +118,18 @@ def _is_visible(state, section):
     return state.get('visible', {}).get(section, 'visible' not in state)
 
 
-def _prepare_raster_page(owner, ticket, is_current):
+def _preparation_dpi(state, section, ticket):
+    view = _current_page_request(state, section, ticket)
+    return view['dpi'] if view and view.get('dpi') in (96, 120, 150) else 120
+
+
+def _prepare_raster_page(owner, ticket, dpi, is_current):
     from app.monthly_report_render_jobs import work_slot
     try:
         # Fail fast behind visible conversions/exports, with existing cgroup
         # memory admission. Each lease decodes only one bounded page.
         with work_slot(preview=True, wait_seconds=0):
-            return STORE.prepare_next_page(owner, ticket, is_current=is_current)
+            return STORE.prepare_next_page(owner, ticket, dpi=dpi, is_current=is_current)
     except RenderBusy:
         return 'busy'
     except (OSError, ValueError):
@@ -167,27 +172,29 @@ def _advance_raster_preparation(state):
             continue
         if ticket.key in state.get('raster_limited', ()):
             continue
-        warm = STORE.prepared_pages(state['owner'], ticket)
+        dpi = _preparation_dpi(state, key, ticket)
+        warm = STORE.prepared_pages(state['owner'], ticket, dpi=dpi)
         if warm is None or len(warm) == ticket.pages:
             continue
         if not _PREVIEW_SLOT.acquire(False):
             return
         owner, fingerprint = state['owner'], state['wanted'].get(key)
         generation = state.get('generations', {}).get(key, 0)
-        def is_current(key=key, ticket=ticket, fingerprint=fingerprint, generation=generation):
+        def is_current(key=key, ticket=ticket, fingerprint=fingerprint, generation=generation, dpi=dpi):
             return (state.get('owner') == owner
                     and state.get('visible', {}).get(key)
                     and state['wanted'].get(key) == fingerprint
                     and state.get('generations', {}).get(key, 0) == generation
-                    and state.get('cache', {}).get(key, {}).get('ticket') == ticket)
+                    and state.get('cache', {}).get(key, {}).get('ticket') == ticket
+                    and _preparation_dpi(state, key, ticket) == dpi)
         try:
             from app.monthly_report_testing import scope
             if scope() is not None:
                 from contextvars import copy_context
                 future = _PREVIEW_WORKER.submit(copy_context().run, _prepare_raster_page,
-                                                owner, ticket, is_current)
+                                                owner, ticket, dpi, is_current)
             else:
-                future = _PREVIEW_WORKER.submit(_prepare_raster_page, owner, ticket, is_current)
+                future = _PREVIEW_WORKER.submit(_prepare_raster_page, owner, ticket, dpi, is_current)
         except Exception:
             _PREVIEW_SLOT.release()
             return
@@ -216,7 +223,8 @@ def _background_preparation_pending(state, section):
         if (not isinstance(ticket, PreviewTicket) or ticket.pages <= 1
                 or ticket.key in state.get('raster_limited', ())):
             continue
-        warm = STORE.prepared_pages(state['owner'], ticket)
+        dpi = _preparation_dpi(state, key, ticket)
+        warm = STORE.prepared_pages(state['owner'], ticket, dpi=dpi)
         if warm is not None and len(warm) < ticket.pages:
             return True
     return False
