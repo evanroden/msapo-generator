@@ -35,3 +35,6 @@ with workspace({'Monthly report':'monthly','Purchase order':'po','Expense reimbu
             st.text_input('Synthetic reference',key='reference')
         with preview:
             render_reference(key='duo',owner_scope='invented',title='Reference',raw=synthetic_pdf(),filename='synthetic.pdf')
+
+st.session_state['appearance_qa_pass']=st.session_state.get('appearance_qa_pass',0)+1
+st.caption('Appearance fixture pass '+str(st.session_state['appearance_qa_pass']))
