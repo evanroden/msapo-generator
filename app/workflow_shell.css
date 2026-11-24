@@ -59,6 +59,8 @@
   .stApp .facility-banner {background:#2C493C;}
   .stApp .needs-banner {border-left-color:#D6EF4B;}
   .stApp div[data-testid="stFileUploader"] section {background:#20342C;border-color:#9EBDB2;}
+  [data-baseweb="calendar"] [role="gridcell"][aria-label^="Selected."] {color:#092B24 !important;}
+  [data-baseweb="calendar"] [role="gridcell"][aria-label^="Selected."] div {color:inherit !important;}
   .stApp [data-baseweb="popover"],.stApp [role="listbox"] {color:#EDF5F0;}
   .stApp .epc-compact-open,.stApp .epc-compact-back,.stApp .epc-preview-controls button {background:#20342C;color:#EDF5F0;border-color:#9EBDB2;}
 }
