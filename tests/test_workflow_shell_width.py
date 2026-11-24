@@ -404,6 +404,7 @@ def test_delayed_state_uses_existing_readiness_gate_before_geometry(monkeypatch,
 
 
 def test_compact_workflow_and_step_navigation_keep_touch_targets():
+    assert '.stApp .st-key-workflow_mode' in CUSTOM_CSS
     assert 'grid-template-columns: repeat(3, minmax(0, 1fr)) !important;' in CUSTOM_CSS
     assert 'min-height: 52px !important;' in CUSTOM_CSS
     assert 'nav.po-step-spine ol {grid-template-columns:repeat(2,minmax(0,1fr))' in CUSTOM_CSS
