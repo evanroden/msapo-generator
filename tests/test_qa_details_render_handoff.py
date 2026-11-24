@@ -1,0 +1,51 @@
+"""Open actual QA disclosure only after native fixture render replaces it."""
+import ast
+from pathlib import Path
+from types import SimpleNamespace
+
+SOURCE = Path('scripts/qa_monthly_live.py')
+
+
+def helper():
+    tree = ast.parse(SOURCE.read_text())
+    node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'open_qa_details')
+    namespace = {'re': __import__('re')}
+    exec(compile(ast.Module(body=[node], type_ignores=[]), str(SOURCE), 'exec'), namespace)
+    return namespace['open_qa_details']
+
+
+def test_render_finishes_before_opening_replacement_disclosure():
+    events = []
+    state = {'rendering': True, 'open': True}
+    class Locator:
+        @property
+        def first(self):
+            return self
+        def wait_for(self, **kwargs):
+            events.append('visible')
+        def is_visible(self):
+            return state['open']
+        def click(self):
+            assert not state['rendering']
+            events.append('open')
+            state['open'] = True
+    class Page:
+        def wait_for_function(self, expression, **kwargs):
+            assert 'notRunning' in expression
+            events.append('finish-render')
+            state.update(rendering=False, open=False)
+        def get_by_text(self, *args, **kwargs):
+            return Locator()
+    helper()(Page())
+    assert events == ['finish-render', 'visible', 'open', 'visible']
+    assert state['open']
+
+
+def test_already_open_disclosure_is_not_toggled_closed():
+    calls = []
+    status = SimpleNamespace(is_visible=lambda: True)
+    label = SimpleNamespace(wait_for=lambda **kwargs: None, click=lambda: calls.append('click'))
+    page = SimpleNamespace(wait_for_function=lambda *a, **k: calls.append('idle'),
+        get_by_text=lambda text, **kwargs: SimpleNamespace(first=label if isinstance(text, str) else status))
+    helper()(page)
+    assert calls == ['idle']
