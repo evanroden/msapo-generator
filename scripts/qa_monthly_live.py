@@ -124,6 +124,11 @@ def state_diagnostics(page, action: str, error: Exception) -> None:
 
 def open_qa_details(page, *, timeout=45000):
     """Browser diagnostics intentionally opt into the collapsed QA disclosure."""
+    # A fixture callback's new captions can be readable before its full render
+    # replaces the disclosure. Open only after that render is idle, otherwise
+    # the old expanded node can disappear underneath receipt validation.
+    page.wait_for_function("""() => document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state') === 'notRunning'""",
+                           timeout=timeout)
     label = page.get_by_text("QA details", exact=True).first
     label.wait_for(timeout=timeout)
     status = page.get_by_text(re.compile(r"^QA fixture state: ")).first
