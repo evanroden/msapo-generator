@@ -9,7 +9,27 @@ EXPECTED_JOB = "  water-row-output:\n    runs-on: ubuntu-24.04\n    # Saved Wate
 ORIGINAL_WORKFLOW_SHA256 = '93cb2a0a6e15697491bdd4ec857f6a9d23da0ddade28c88f4f4ecac1bca4d9d3'
 COMMANDS = ('qa_water_page_journey.py', 'qa_report_row_cards.py')
 
+def _before_compact_portrait_additions(text):
+    """Reverse only the exact additive Duo checks; retain every old gate byte."""
+    trigger = "      - 'scripts/qa_duo_compact_portrait.py'\n"
+    if trigger not in text:
+        return text
+    assert text.count(trigger) == 2
+    text = text.replace(trigger, '')
+    step = ('      - name: Synthetic WebKit compact navigation and open portrait\n'
+            '        timeout-minutes: 3\n'
+            '        run: python scripts/qa_duo_compact_portrait.py\n')
+    assert text.count(step) == 1
+    text = text.replace(step, '')
+    upload = ('          path: |\n'
+              '            test-artifacts/workflow-shell-width/\n'
+              '            test-artifacts/duo-compact-portrait/\n')
+    assert text.count(upload) == 1
+    return text.replace(upload, '          path: test-artifacts/workflow-shell-width/\n')
+
+
 def validate_partition(text):
+    text = _before_compact_portrait_additions(text)
     parts = re.split(r'(?=^  [a-z][a-z-]+:\n)', text.split('jobs:\n', 1)[1], flags=re.M)
     jobs = {re.match(r'  ([\w-]+):', p).group(1):p for p in parts if p.strip()}
     assert 'water-row-output' in jobs
@@ -91,3 +111,17 @@ def test_partition_rejects_duplicate_suite_or_conditional_job():
     text=(ROOT/'.github/workflows/adaptive-workspaces.yml').read_text()
     for changed in (text.replace('python scripts/qa_report_row_cards.py','python scripts/qa_report_row_cards.py\n          python scripts/qa_report_row_cards.py'), text.replace('  water-row-output:\n','  water-row-output:\n    if: false\n')):
         with pytest.raises(AssertionError):validate_partition(changed)
+
+
+def test_compact_portrait_additions_cannot_weaken_old_gates():
+    text = (ROOT/'.github/workflows/adaptive-workspaces.yml').read_text()
+    for old, new in (
+        ('timeout-minutes: 3\n        run: python scripts/qa_duo_compact_portrait.py',
+         'timeout-minutes: 30\n        run: python scripts/qa_duo_compact_portrait.py'),
+        ('run: python scripts/qa_duo_compact_portrait.py',
+         'if: false\n        run: python scripts/qa_duo_compact_portrait.py'),
+        ('test-artifacts/duo-compact-portrait/', 'test-artifacts/other/'),
+    ):
+        assert old in text
+        with pytest.raises(AssertionError):
+            validate_partition(text.replace(old, new))

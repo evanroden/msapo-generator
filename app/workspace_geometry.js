@@ -164,5 +164,15 @@
     return sections[candidateIndex].id;
   }
 
-  return Object.freeze({ resolveDisplayContext, selectActiveSection });
+  // A continuous medium-width window can keep a smaller reference beside its
+  // editor. Real segment geometry retains the stricter book/tabletop minima.
+  function paneMinimums(width, textScale = 1, segments = null) {
+    const scale = Math.max(1, positive(textScale, 1));
+    const medium = (segments == null || Array.isArray(segments) && segments.length <= 1)
+      && width >= 600 * scale && width < 692 * scale;
+    return {minEditor:(medium ? 320 : 360)*scale,
+      minPreview:(medium ? 260 : 320)*scale,minHeight:240*scale};
+  }
+
+  return Object.freeze({ resolveDisplayContext, selectActiveSection, paneMinimums });
 });
