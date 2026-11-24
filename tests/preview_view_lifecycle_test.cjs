@@ -166,7 +166,7 @@ test('framework root-class replacement restores only owned layout without scroll
         disconnect(){this.active=false;}
     }
     const context={window,document,navigator:{},CSS:{escape:value=>value},
-        globalThis:{ENFRAWorkspaceGeometry:{resolveDisplayContext:()=>{measurements++;return {
+        globalThis:{ENFRAWorkspaceGeometry:{paneMinimums:()=>({minEditor:360,minPreview:320,minHeight:240}),resolveDisplayContext:()=>{measurements++;return {
             mode:'compact',reason:'single-segment',bounds:{x:0,y:0,width:545,height:757}};}}},
         ResizeObserver:Observer,MutationObserver:Observer,
         CustomEvent:class {constructor(type,options){this.type=type;this.detail=options.detail;}},
