@@ -413,7 +413,7 @@ def test_compact_workflow_and_step_navigation_keep_touch_targets():
     for filename in ('po_step_spine.py', 'monthly_report_step_spine.py'):
         assert 'aria-label=' in (ROOT/'app'/filename).read_text()
     css=(ROOT/'app/workspace_layout.css').read_text()
-    assert '.epc-workspace[data-epc-mode="wide"] .epc-workspace-row,' in css
+    assert '.epc-workspace[data-epc-mode="wide"] .epc-workspace-row {grid-template-columns:minmax(320px,1.12fr)' in css
     assert 'minmax(0,var(--epc-editor-width))' in css
     workflow=(ROOT/'.github/workflows/adaptive-workspaces.yml').read_text()
     assert 'run: python scripts/qa_duo_compact_portrait.py' in workflow
