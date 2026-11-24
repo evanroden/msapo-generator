@@ -36,5 +36,7 @@ with workspace({'Monthly report':'monthly','Purchase order':'po','Expense reimbu
         with preview:
             render_reference(key='duo',owner_scope='invented',title='Reference',raw=synthetic_pdf(),filename='synthetic.pdf')
 
+st.session_state['layout_qa_pass']=st.session_state.get('layout_qa_pass',0)+1
+st.caption('Layout fixture pass '+str(st.session_state['layout_qa_pass']))
 st.session_state['appearance_qa_pass']=st.session_state.get('appearance_qa_pass',0)+1
 st.caption('Appearance fixture pass '+str(st.session_state['appearance_qa_pass']))
