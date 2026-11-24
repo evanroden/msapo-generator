@@ -195,6 +195,33 @@ def _advance_raster_preparation(state):
         return
 
 
+def _background_preparation_pending(state, section):
+    """Keep visible heartbeat alive through queued work and admission retries."""
+    if not state.get('visible', {}).get(section):
+        return False
+    if state.get('raster_running'):
+        return True
+    running = state.get('running')
+    if running and running[0] in state.get('preparing', ()):
+        return True
+    if any(eligible(state, key) for key in state.get('queue', {})):
+        return True
+    # A busy worker clears running before its retry deadline. Missing warm
+    # pages still need a receipt even when there is no next included section.
+    for key in state.get('preparation_order', ()):
+        if not state.get('visible', {}).get(key):
+            continue
+        entry = _current_entry(state, key)
+        ticket = entry.get('ticket') if entry and not entry.get('error') else None
+        if (not isinstance(ticket, PreviewTicket) or ticket.pages <= 1
+                or ticket.key in state.get('raster_limited', ())):
+            continue
+        warm = STORE.prepared_pages(state['owner'], ticket)
+        if warm is not None and len(warm) < ticket.pages:
+            return True
+    return False
+
+
 def _advance_preview_queue(state):
     running = state.get('running')
     if running and running[2].done():
@@ -490,10 +517,8 @@ def _render_ordered_preview(section_key, prefix, title):
     render_view(key=widget_key, view_scope=state['owner'] + '|' + widget_key, generation=state['wanted'].get(section_key, ''), title=title,
                 ticket=ticket, images=images, status=status, stale=stale,
                 acknowledged_viewport=_current_page_request(state, section_key, ticket),
-                pending=pending, background_pending=bool(state['visible'].get(section_key)
-                    and state.get('running')
-                    and state['running'][0] in state.get('preparing', ()))
-                    or bool(state['visible'].get(section_key) and state.get('raster_running')),
+                pending=pending,
+                background_pending=_background_preparation_pending(state, section_key),
                 on_poll=_scoped_callback(_poll_changed, prefix, section_key, widget_key),
                 on_change=_scoped_callback(_viewport_changed, prefix, section_key, widget_key))
 
