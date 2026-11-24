@@ -45,3 +45,14 @@ def test_failed_derivation_is_not_cached(monkeypatch):
             pass
     assert len(calls) == 2
     cv.clear_view_cache()
+
+
+def test_a_changed_limit_derives_again(monkeypatch):
+    cv.clear_view_cache()
+    calls = []
+    monkeypatch.setattr(cv, '_derive_compatibility_view', lambda raw: calls.append(raw) or raw)
+    cv.derive_compatibility_view(b'report')
+    monkeypatch.setattr(cv, 'MAX_VIEW_XML_NODES', cv.MAX_VIEW_XML_NODES - 1)
+    cv.derive_compatibility_view(b'report')
+    assert len(calls) == 2
+    cv.clear_view_cache()

@@ -454,11 +454,18 @@ class CompatibilityView:
 # Every Streamlit click reruns the page, and each rerun used to rebuild this
 # view twice from the same bytes (about 8 seconds for a large monthly report).
 # The derivation is a pure function of the bytes, so the result is keyed by the
-# SHA-256 of exactly those bytes. A changed or replaced file has another digest
-# and is derived again; callers still compare the full view for equality.
+# SHA-256 of exactly those bytes and the limits in force. A changed or
+# replaced file, or a changed limit, is derived again; callers still compare
+# the full view for equality.
 _VIEW_CACHE = OrderedDict()
 _VIEW_CACHE_LOCK = RLock()
 _VIEW_CACHE_SIZE = 2
+
+
+def _limits_in_force():
+    """Every whole-number setting of this module (budgets, version, bounds)."""
+    return tuple(sorted((name, value) for name, value in globals().items()
+                        if name.isupper() and type(value) is int))
 
 
 def clear_view_cache():
@@ -471,7 +478,7 @@ def derive_compatibility_view(original_bytes):
     if not isinstance(original_bytes, bytes):
         _fail('source byte budget/type')
     _budget('source byte budget', len(original_bytes), MAX_VIEW_SOURCE_BYTES)
-    key = (len(original_bytes), _hash(original_bytes))
+    key = (len(original_bytes), _hash(original_bytes), _limits_in_force())
     with _VIEW_CACHE_LOCK:
         cached = _VIEW_CACHE.get(key)
         if cached is not None:
