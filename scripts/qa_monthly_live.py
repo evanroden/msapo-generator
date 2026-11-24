@@ -131,6 +131,9 @@ def open_qa_details(page, *, timeout=45000):
                            timeout=timeout)
     label = page.get_by_text("QA details", exact=True).first
     label.wait_for(timeout=timeout)
+    # Scrolling a long report can finish a pending expander restoration. Read
+    # visibility after scrolling, not before a click's implicit scroll step.
+    label.scroll_into_view_if_needed(timeout=timeout)
     status = page.get_by_text(re.compile(r"^QA fixture state: ")).first
     if not status.is_visible():
         label.click()
