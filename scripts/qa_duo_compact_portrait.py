@@ -114,7 +114,11 @@ def main():
                 for workflow in ('Monthly report', 'Expense reimbursement', 'Purchase order'):
                     page.get_by_role('radio', name=workflow, exact=True).click()
                     expect(page.get_by_test_id('stApp')).to_have_attribute('data-test-script-state', 'notRunning')
-                    # New workflow's widget mount must finish before measuring.
+                    # A completed backend rerun may still have a stale widget
+                    # owner in the browser until reconciliation finishes.
+                    expect(notes).to_have_count(1)
+                    expect(page.locator('.st-key-workflow_mode [role=radio][aria-checked=true]')).to_have_text(workflow)
+                    expect(page.locator('.epc-workspace')).to_have_count(1)
                     expect(notes).to_be_visible()
                     notes.fill(VALUE)
                     page.get_by_label('Synthetic reference', exact=True).click()
