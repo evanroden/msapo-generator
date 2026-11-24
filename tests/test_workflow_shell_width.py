@@ -401,3 +401,19 @@ def _run_case_until_delayed_geometry(monkeypatch, tmp_path, delayed_action, occu
 def test_delayed_state_uses_existing_readiness_gate_before_geometry(monkeypatch, tmp_path,
                                                                   action, occurrence, delay):
     _run_case_until_delayed_geometry(monkeypatch, tmp_path, action, occurrence, delay)
+
+
+def test_compact_workflow_and_step_navigation_keep_touch_targets():
+    assert '.stApp .st-key-workflow_mode' in CUSTOM_CSS
+    assert 'grid-template-columns: repeat(3, minmax(0, 1fr)) !important;' in CUSTOM_CSS
+    assert 'min-height: 52px !important;' in CUSTOM_CSS
+    assert 'nav.po-step-spine ol {grid-template-columns:repeat(2,minmax(0,1fr))' in CUSTOM_CSS
+    assert 'nav.po-step-spine .po-step-link {min-height:48px' in CUSTOM_CSS
+    assert 'nav.po-step-spine .po-step-summary {display:none;}' in CUSTOM_CSS
+    for filename in ('po_step_spine.py', 'monthly_report_step_spine.py'):
+        assert 'aria-label=' in (ROOT/'app'/filename).read_text()
+    css=(ROOT/'app/workspace_layout.css').read_text()
+    assert '.epc-workspace[data-epc-mode="wide"] .epc-workspace-row {grid-template-columns:minmax(320px,1.12fr)' in css
+    assert 'minmax(0,var(--epc-editor-width))' in css
+    workflow=(ROOT/'.github/workflows/adaptive-workspaces.yml').read_text()
+    assert 'run: python scripts/qa_duo_compact_portrait.py' in workflow

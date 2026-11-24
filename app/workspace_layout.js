@@ -305,7 +305,8 @@ export default function(component) {
             visual:visual ? {x:visual.offsetLeft,y:visual.offsetTop,width:visual.width,height:visual.height,scale:visual.scale} : null,
             app:{x:block.x + left,y:workingTop,width:Math.max(0,block.width-left-right),height:Math.max(0,outer.y+outer.height-workingTop)},
             chromeBottom,
-            scrollport:outer, segments, posture, minEditor:360*textScale,minPreview:320*textScale,minHeight:240*textScale,
+            scrollport:outer, segments, posture,
+            ...geometry.paneMinimums(block.width-left-right, textScale, segments),
             safe:{top:parseFloat(insets.paddingTop)||0,right:parseFloat(insets.paddingRight)||0,bottom:parseFloat(insets.paddingBottom)||0,left:parseFloat(insets.paddingLeft)||0}};
     }
     function css(name, number) {root.style.setProperty('--epc-' + name, Math.round(number * 100)/100 + 'px');}

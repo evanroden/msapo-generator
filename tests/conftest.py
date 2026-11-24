@@ -86,3 +86,17 @@ def _fresh_visible_queue(monkeypatch):
     """
     from app import monthly_report_visible_queue as visible
     monkeypatch.setattr(visible, "QUEUE", visible.VisibleFirstQueue())
+
+
+@pytest.fixture(autouse=True)
+def _fresh_source_view_cache():
+    """Start each test without native source views remembered by another test.
+
+    The cache is keyed by file bytes, so a test that patches the derivation to
+    fail must not be handed a view that an earlier test built from the same
+    fixture file.
+    """
+    from app import monthly_report_compatibility_view as compatibility_view
+    compatibility_view.clear_view_cache()
+    yield
+    compatibility_view.clear_view_cache()
