@@ -17,6 +17,7 @@ from scripts.workspace_warning_routes import SCENARIOS,CAPTIONS,PENDING,MISSING_
 from scripts.qa_about_logo_refresh import controller_environment
 from scripts.qa_import_receipts import wait_receipt
 from scripts.monthly_sequential_navigation import navigate_sections
+from scripts.qa_navigation_observations import observe_navigation
 from scripts.workspace_history_observations import namespace
 OUT=ROOT/'test-artifacts/warning-routes';PORT=8558;URL=f'http://127.0.0.1:{PORT}'
 ENGINES=('chromium','playwright-webkit')
@@ -484,8 +485,9 @@ def exercise(engine,name,mode,scenario,base):
         manager=page.locator('.st-key-'+prefix+'_source_manager_panel')
         caption,selected=select_source_caption(page,manager,prefix,old,keyboard=keyboard)
         pending_sequence=selected['sequence']
-        caption.fill('Synthetic pending old-source caption')
-        navigate_sections(page,'report_review',keyboard=keyboard)
+        with observe_navigation(page, record):
+            caption.fill('Synthetic pending old-source caption')
+            navigate_sections(page,'report_review',keyboard=keyboard)
         pending=after(page,pending_sequence);assert dict(pending['working']['sources'][0]['captions'])[1]=='Synthetic pending old-source caption'
         assert pending['originals']==initial['originals'];capture('pending-inputs-retained')
         if scenario=='source':
@@ -580,8 +582,9 @@ def exercise(engine,name,mode,scenario,base):
         # user control; mandatory checks above may not be bypassed.
         advisory=page.get_by_role('checkbox',name='I checked these specific warnings',exact=True)
         if advisory.count():check(advisory)
-        activate(page.get_by_role('button',name='Create Word and PDF',exact=True))
-        page.wait_for_function('''()=>{const n=document.querySelector('[data-warning-routes]');if(!n)return false;try{return !!JSON.parse(n.dataset.warningRoutes).output['report.pdf']}catch(_){return false}}''',timeout=180000)
+        with observe_navigation(page, record.setdefault('output_navigation', {})):
+            activate(page.get_by_role('button',name='Create Word and PDF',exact=True))
+            page.wait_for_function('''()=>{const n=document.querySelector('[data-warning-routes]');if(!n)return false;try{return !!JSON.parse(n.dataset.warningRoutes).output['report.pdf']}catch(_){return false}}''',timeout=180000)
         final=capture('actual-saved-output')
         directory,_,_=namespace(base,token)
         for filename in ('report.docx','report.pdf'):shutil.copy2(directory/'warning-output'/filename,output/filename)
