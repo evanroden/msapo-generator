@@ -293,3 +293,34 @@ render_section_setup(p.contract, ReportPeriod(2026, 9), "Synthetic Editor", _fie
     assert len(called) == 2
     assert not any(button.label == "Analyze report" for button in app.button)
     assert not app.exception
+
+
+def test_earlier_report_keeps_dated_picture_title_with_its_picture(tmp_path):
+    # A title typed in the same paragraph as its picture is the picture's
+    # caption. Rolling the report forward must not strip the vendor and
+    # report type off a kept picture just because the title carries a date.
+    profile = synthetic_profiles()[0]
+    doc = Document()
+    doc.add_heading(profile.facilities[0].title, 0)
+    doc.add_paragraph("Monthly Report · July 2026")
+    doc.add_heading("2 Monthly Activity Summary", 1)
+    data = BytesIO()
+    Image.new("RGB", (400, 300), "navy").save(data, "PNG")
+    paragraph = doc.add_paragraph()
+    paragraph.add_run("Synthetic Vendor — Water Treatment — July 14, 2026")
+    paragraph.add_run().add_picture(BytesIO(data.getvalue()), width=Inches(4))
+    doc.add_paragraph("July 2026: Repaired the pump.")
+    path = tmp_path / "titled-picture.docx"
+    doc.save(path)
+
+    inspection = inspect_docx(path)
+    analysis = analyze_starting_report(inspection, profile, PERIOD, ())
+    title = next(i for i in inspection.items if i.kind == "text" and "Water Treatment" in i.text)
+    assert title.id in analysis.older_items
+    plans = automatic_section_plans(inspection, analysis)
+    mapped, _ = build_starting_import(path, inspection, plans.values(), profile=profile, period=PERIOD)
+    draft = imported_draft(profile, PERIOD, "Synthetic Editor", mapped)
+    picture = next(b for b in draft.blocks if b.asset_hashes)
+    assert picture.asset_captions == ("Synthetic Vendor — Water Treatment — July 14, 2026",)
+    # Old narrative prose is still left out of the new month.
+    assert "Repaired the pump" not in " ".join(b.text for b in draft.blocks)
