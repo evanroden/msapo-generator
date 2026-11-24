@@ -22,3 +22,6 @@ test_support/
 # Operating-system files
 .DS_Store
 Thumbs.db
+
+# Synthetic browser layout evidence
+test-artifacts/duo-compact-portrait/

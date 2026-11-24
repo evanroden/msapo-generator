@@ -16,3 +16,25 @@
         padding-bottom: max(3rem, env(safe-area-inset-bottom)) !important;
         padding-left: max(1rem, env(safe-area-inset-left)) !important;
     }
+
+    /* Keep all workflow choices in one touch-sized row on narrow screens.
+       Wrapping labels is preferable to spending three rows before the form. */
+    @media (max-width: 540px) {
+        .stApp .st-key-workflow_mode div[role="radiogroup"] {
+            grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+        }
+        .stApp .st-key-workflow_mode button[role="radio"] {
+            min-height: 52px !important;
+            padding: .45rem .3rem !important;
+            font-size: .85rem !important;
+            overflow-wrap: anywhere;
+        }
+    }
+    /* Compact progress for the Purchase order and Monthly report workflows. Links and spoken summaries remain intact. */
+    @media (max-width: 700px) {
+        nav.po-step-spine ol {grid-template-columns:repeat(2,minmax(0,1fr));gap:.3rem;}
+        nav.po-step-spine .po-step-link {min-height:48px;padding:.35rem;align-items:center;gap:.35rem;}
+        nav.po-step-spine .step-num {height:26px;width:26px;flex:0 0 26px;}
+        nav.po-step-spine .step-title {font-size:.85rem;padding:0;}
+        nav.po-step-spine .po-step-summary {display:none;}
+    }

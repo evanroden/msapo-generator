@@ -366,3 +366,11 @@ def test_native_phone_entry_rejects_hydration_or_delivery_corruption(failure):
     else: events[-1]['connected'] = False
     with pytest.raises(AssertionError):
         validate_native_phone_entry(events, 'old', 'new')
+
+
+def test_fixture_outputs_stay_before_responsive_report_and_download_without_rerun():
+    source = (ROOT/'scripts/workspace_contact_observations.py').read_text()
+    assert source.index("if st.button('Render synthetic native contact outputs'):") < source.index("    render_guided_workflow(token, 'UTC', field, move)")
+    assert source.count("on_click='ignore'") == 2
+    assert "mime='application/pdf'" in source
+    assert "mime='application/vnd.openxmlformats-officedocument.wordprocessingml.document'" in source
