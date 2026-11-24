@@ -143,19 +143,18 @@ def open_qa_details(page, *, timeout=45000):
     while not status.is_visible():
         if time.monotonic() > deadline:
             status.wait_for(timeout=1)  # raises the usual Playwright timeout
-        page.wait_for_function("""() => document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state') === 'notRunning'""",
-                               timeout=timeout)
-        label = page.get_by_text("QA details", exact=True).first
-        label.wait_for(timeout=timeout)
-        is_open = label.evaluate("node => Boolean(node.closest('details')?.open)")
-        if not is_open:
-            label.scroll_into_view_if_needed(timeout=timeout)
+        if not label.evaluate("node => Boolean(node.closest('details')?.open)"):
             label.click()
         try:
             status.wait_for(timeout=3000)
         except BrowserTimeout:
-            continue
-
+            # A rerun replaced the disclosure. Let it settle, find the new
+            # one and look again rather than clicking a stale node.
+            page.wait_for_function("""() => document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state') === 'notRunning'""",
+                                   timeout=timeout)
+            label = page.get_by_text("QA details", exact=True).first
+            label.wait_for(timeout=timeout)
+            label.scroll_into_view_if_needed(timeout=timeout)
 
 def await_fixture_state(page, mode: str, *, previous_generation: str | None = None,
                         timeout: int = 45000) -> dict:
