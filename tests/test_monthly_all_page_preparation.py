@@ -342,3 +342,37 @@ def test_partial_write_with_failed_cleanup_is_accounted_and_ticket_revoked(monke
         assert not cache._prepared
     finally:
         cache.close()
+
+
+@pytest.mark.parametrize('dpi', [96, 120, 150])
+def test_ui_warms_active_resolution_and_cancels_on_viewport_change(monkeypatch, dpi):
+    from concurrent.futures import Future
+    from threading import BoundedSemaphore
+    from app import monthly_report_section_preview_ui as ui
+    cache = module.PreviewStore()
+    ticket = cache.put('owner', sample(2))
+    jobs = []
+    class Worker:
+        def submit(self, fn, *args):
+            jobs.append((fn, args))
+            return Future()
+    monkeypatch.setattr(ui, 'STORE', cache)
+    monkeypatch.setattr(ui, '_PREVIEW_WORKER', Worker())
+    monkeypatch.setattr(ui, '_PREVIEW_SLOT', BoundedSemaphore(1))
+    state = {'owner':'owner', 'visible':{'activity':True}, 'wanted':{'activity':'a'},
+             'cache':{'activity':{'fingerprint':'a','ticket':ticket}}, 'queue':{},
+             'preparation_order':('activity',), 'page_requests':{'activity':{
+                 'generation':'a','ticket_key':ticket.key,'dpi':dpi}}}
+    try:
+        ui._advance_raster_preparation(state)
+        fn, args = jobs[0]
+        assert args[2] == dpi and args[-1]()
+        fn(*args)
+        assert cache.prepared_pages('owner', ticket, dpi=dpi) == (0,)
+        with patch.object(module.fitz, 'open', wraps=module.fitz.open) as opened:
+            assert cache.pages('owner', ticket, (0,), dpi=dpi)
+            assert opened.call_count == 0
+        state['page_requests']['activity']['dpi'] = 96 if dpi != 96 else 150
+        assert not args[-1](), 'Resolution changes invalidate in-flight preparation'
+    finally:
+        cache.close()
