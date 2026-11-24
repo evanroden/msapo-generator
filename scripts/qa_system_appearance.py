@@ -28,6 +28,7 @@ def main():
       before=receipt.inner_text()
       notes.fill('Invented text survives system changes')
       notes.press('Tab')
+      expect(receipt).to_have_count(1)
       expect(receipt).not_to_have_text(before)
       for scheme in ('light','dark','light','dark'):
        page.emulate_media(color_scheme=scheme)
@@ -47,6 +48,7 @@ def main():
        for workflow in ('Expense reimbursement','Monthly report','Purchase order'):
         before=receipt.inner_text()
         page.get_by_role('radio',name=workflow,exact=True).click()
+        expect(receipt).to_have_count(1)
         expect(receipt).not_to_have_text(before)
         expect(notes).to_have_count(1)
         expect(page.locator('.st-key-workflow_mode [role=radio][aria-checked=true]')).to_have_text(workflow)
