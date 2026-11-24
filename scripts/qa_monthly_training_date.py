@@ -647,6 +647,12 @@ def exercise(browser_type, engine, *, patched):
         clear.click()
         expect(field).to_have_value("")
         expect(date.locator('[aria-live="assertive"]')).to_have_text("")
+        # Clear refocuses the native input and opens its real calendar. The
+        # empty value is committed before that popup mounts. Starting the next
+        # pointer hit-test while it is still mounting can put pointerdown on
+        # Submit and pointerup on a newly positioned day cell in WebKit.
+        # Observe this existing native response, without a dismiss or retry.
+        expect(page.locator('[data-baseweb="calendar"]')).to_be_visible()
         record_date(page, date, "cleared-date")
         submit = page.get_by_role("button", name="Add completed training", exact=True)
         submit_form(page, submit, "missing-date")
