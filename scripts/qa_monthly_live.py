@@ -124,8 +124,16 @@ def state_diagnostics(page, action: str, error: Exception) -> None:
 
 def open_qa_details(page, *, timeout=45000):
     """Browser diagnostics intentionally opt into the collapsed QA disclosure."""
+    # A fixture callback's new captions can be readable before its full render
+    # replaces the disclosure. Open only after that render is idle, otherwise
+    # the old expanded node can disappear underneath receipt validation.
+    page.wait_for_function("""() => document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state') === 'notRunning'""",
+                           timeout=timeout)
     label = page.get_by_text("QA details", exact=True).first
     label.wait_for(timeout=timeout)
+    # Scrolling a long report can finish a pending expander restoration. Read
+    # visibility after scrolling, not before a click's implicit scroll step.
+    label.scroll_into_view_if_needed(timeout=timeout)
     status = page.get_by_text(re.compile(r"^QA fixture state: ")).first
     if not status.is_visible():
         label.click()
@@ -137,7 +145,6 @@ def await_fixture_state(page, mode: str, *, previous_generation: str | None = No
     """Wait for a committed, generation-bound state, not an always-visible button."""
     if mode not in ("empty", "known-value prefill", "original-source replay"):
         raise ValueError("Invalid fixture state.")
-    open_qa_details(page, timeout=timeout)
     locator = page.get_by_text(re.compile(r"^QA fixture state: ")).first
     different = ("(?!" + re.escape(previous_generation) + r"\b)"
                  if previous_generation else "")
@@ -146,6 +153,11 @@ def await_fixture_state(page, mode: str, *, previous_generation: str | None = No
                          r" · generation " + different +
                          r"[0-9a-f]{12} · revision " + revision + r"$")
     try:
+        # First require the requested callback's committed state. Script-idle
+        # alone may still describe the preceding render before dispatch begins.
+        expect(locator).to_have_text(pattern, timeout=timeout)
+        open_qa_details(page, timeout=timeout)
+        locator.wait_for(timeout=timeout)
         expect(locator).to_have_text(pattern, timeout=timeout)
         observed = locator.text_content() or ""
         matched = STATE.fullmatch(observed)
