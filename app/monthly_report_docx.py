@@ -779,7 +779,9 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
                              page_break_before=page > 0 or (workflow_starts_page and not text_items),
                              keep_with_next=bool(captions[index]), alt_text=diagram_alt,
                              center_frame_height=(8.5 if page == 0 else 9.5)
-                             if spec.key in ("org_chart", "contact_matrix") and not captions[index] else None)
+                             if (spec.key in ("org_chart", "contact_matrix")
+                                 and not captions[index] and not block.text.strip()
+                                 and not block.rows) else None)
                     if captions[index]:
                         document.add_paragraph(captions[index], style="Caption")
                     index += 1
