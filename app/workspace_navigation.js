@@ -465,7 +465,8 @@ globalThis.ENFRAWorkspaceNavigation = {
             if (restored?.target.isConnected) {
                 owner().scrollTop=restore.scroll;
                 owner().scrollTop+=box(restored.target).top-box(owner()).top-restore.offset;
-                state.navigationJump={id:restored.id,scroll:owner().scrollTop};
+                state.navigationJump={id:restored.id,scroll:owner().scrollTop,explicit:true,
+                    identity,target:restored.target};
                 restore=null;
             }
             const jump=state.navigationJump;
