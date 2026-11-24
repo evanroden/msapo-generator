@@ -60,6 +60,12 @@ _render_ordered_preview('activity', 'heartbeat', 'Activity')
     assert not app.exception
     assert payload(app)['pending'] is False
     assert payload(app)['backgroundPending'] is True
+    state['running'] = None
+    state['queue'] = {'water': ('w', None, {}, 'Water')}
+    state['retry_after'] = float('inf')
+    app.run()
+    assert payload(app)['pending'] is False
+    assert payload(app)['backgroundPending'] is True
     state['visible']['activity'] = False
     app.run()
     assert payload(app)['pending'] is False
@@ -71,3 +77,35 @@ def test_background_heartbeat_does_not_relabel_ready_current_work():
     assert 'data.pending || data.backgroundPending' in JS
     assert 'if (!active || frameworkBusy()' in JS
     assert '2000' in JS
+
+
+def test_queued_successor_keeps_ready_pane_heartbeat_through_busy_retry():
+    from app import monthly_report_section_preview_ui as ui
+    state = {'visible': {'activity': True}, 'preparing': ('water',),
+             'queue': {'water': object()}, 'retry_after': float('inf')}
+    assert ui._background_preparation_pending(state, 'activity')
+    assert not ui._background_preparation_pending(state, 'water')
+    state['preparing'] = ()
+    assert not ui._background_preparation_pending(state, 'activity')
+
+
+def test_raster_retry_keeps_last_pane_heartbeat_until_ready_or_limited(monkeypatch):
+    from app import monthly_report_section_preview_ui as ui
+    from app.monthly_report_preview_store import PreviewStore
+    from test_monthly_report_preview_store import sample
+    cache = PreviewStore()
+    monkeypatch.setattr(ui, 'STORE', cache)
+    ticket = cache.put('owner', sample(2))
+    state = {'owner': 'owner', 'visible': {'activity': True},
+             'wanted': {'activity': 'a'}, 'cache': {'activity': {'fingerprint': 'a', 'ticket': ticket}},
+             'preparation_order': ('activity',), 'raster_retry_after': float('inf')}
+    try:
+        assert ui._background_preparation_pending(state, 'activity')
+        state['raster_limited'] = {ticket.key}
+        assert not ui._background_preparation_pending(state, 'activity')
+        state['raster_limited'].clear()
+        for _ in range(ticket.pages):
+            cache.prepare_next_page('owner', ticket)
+        assert not ui._background_preparation_pending(state, 'activity')
+    finally:
+        cache.close()
