@@ -85,3 +85,28 @@ def test_section_heading_is_not_undated_monthly_work():
     assert heading.id not in result.period_review_items
     assert heading.id not in result.uncertain_items
     assert caption.id in result.period_review_items
+
+
+def test_earlier_month_prose_in_a_table_only_section_needs_month_review():
+    # A vendor-status narrative sits under the subcontractor table, which has
+    # no monthly text block. Naming the cover's month without a year must not
+    # let it carry into the next report unchecked.
+    named = item('vendor-note', 'subcontractors', 'October vendor evidence: blower motor test passed.')
+    dated = item('vendor-scan', 'subcontractors', 'Balance report scanned October 23, 2026.')
+    standing = item('vendor-standing', 'subcontractors', 'Vendors are listed by trade.')
+    doc = inspection(named, dated, standing)
+    result = analyze_starting_report(doc, PROFILE, PERIOD)
+    assert named.id in result.period_review_items
+    assert dated.id in result.period_review_items
+    assert standing.id not in result.period_review_items
+    plan = automatic_section_plans(doc, result)['subcontractors']
+    assert set(plan['period_review_items']) == {named.id, dated.id}
+    assert not plan['approved']
+
+
+def test_month_name_check_needs_an_earlier_source_cover():
+    note = item('vendor-note', 'subcontractors', 'November vendor evidence: blower motor test passed.')
+    doc = DocxInspection('synthetic-period-routing', (note,), (), (), 1,
+                         cover_title_candidates=(PROFILE.facilities[0].title,
+                                                 'Monthly Report November 2026'))
+    assert note.id not in analyze_starting_report(doc, PROFILE, PERIOD).period_review_items

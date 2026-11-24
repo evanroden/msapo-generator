@@ -155,6 +155,20 @@ def mentioned_periods(text):
     return periods
 
 
+def _names_earlier_month(text, source_period, requested):
+    """True when text names the source report's month or only earlier dates.
+
+    A bare month word ("October vendor evidence") has no year, so it is only
+    read against the source report's own cover month. "May" is skipped
+    because it is also an ordinary word.
+    """
+    periods = mentioned_periods(text)
+    if periods:
+        return all(p < requested for p in periods)
+    name = calendar.month_name[source_period[1]]
+    return name != "May" and re.search(rf"\b{name}\b", text) is not None
+
+
 # A source cover can be one month behind unfinished work. A *planned* event
 # mentioned for the requested month is not proof that the event happened.
 # Inspect clauses rather than all body dates together: a completed September
@@ -262,6 +276,15 @@ def analyze_starting_report(inspection, profile, period, known_sites=(), *, conf
                 and item.section in known_section_keys):
             slot = default_slot(item.section)
         if slot not in period_blocks:
+            # Prose in a section with no monthly text block (for example a
+            # vendor-status narrative under the subcontractor table) is still
+            # dated work. When it names the earlier source month, or only
+            # earlier dated months, hold it for the same month review.
+            if (item.kind == "text" and item.section in known_section_keys
+                    and source_period and source_period < requested
+                    and not source_text_role(item)
+                    and _names_earlier_month(item.text, source_period, requested)):
+                uncertain.append(item.id)
             continue
         # Explicit source examples, author instructions, and placeholders are
         # not evidence of completed work even when their cells contain this
