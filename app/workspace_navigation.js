@@ -88,7 +88,12 @@ globalThis.ENFRAWorkspaceNavigation = {
             const consumes=vertical<0 ? node.scrollTop>0 : node.scrollTop<node.scrollHeight-node.clientHeight;
             if (consumes || /contain|none/.test(style.overscrollBehaviorY)) {vertical=0;break;}
         }
-        if (vertical || scrollKey || scrollbar) state.explicitReview = false;
+        if (vertical || scrollKey || scrollbar) {
+            state.explicitReview = false;
+            // Only a real page-scroll gesture yields a reached explicit section
+            // to geometry. Native reflow/scroll anchoring is not a new choice.
+            if (state.navigationJump?.explicit) state.navigationJump = null;
+        }
         // A stationary touch tap still belongs to its preceding pointerdown
         // (including native Add-row focus provenance). Movement/cancel ends it.
         if (event.type === 'touchstart' || event.type === 'touchend') return;
@@ -264,8 +269,11 @@ globalThis.ENFRAWorkspaceNavigation = {
             if (state.navigationRequest) return;
             const entry=entries.find(item=>item.id===id && !item.outside && item.target.isConnected);
             if (!entry) return;
+            const prior=state.navigationJump;
             state.navigationActive=id;
-            state.navigationJump={id,scroll:owner().scrollTop};
+            state.navigationJump={id,scroll:owner().scrollTop,
+                ...(prior?.explicit && prior.id===id && prior.identity===identity && prior.target===entry.target
+                    ? {explicit:true,identity,target:entry.target} : {})};
         };
         const choose = () => navigate(select.value);
         const openReview = () => navigate('report_review');
@@ -449,18 +457,22 @@ globalThis.ENFRAWorkspaceNavigation = {
                 }
                 const focus=entry.target.querySelector?.('h1,h2,h3,h4') || entry.target;
                 if (focus.isConnected) {focus.setAttribute('tabindex','-1');focus.focus({preventScroll:true});}
-                state.navigationJump={id:entry.id,scroll:owner().scrollTop};
+                state.navigationJump={id:entry.id,scroll:owner().scrollTop,explicit:true,
+                    identity,target:entry.target};
                 if (state.reviewNavigation) state.reviewScrollTop=scrollport.scrollTop;
             }
             const restored = entries.find(item => item.id === restore?.id);
             if (restored?.target.isConnected) {
                 owner().scrollTop=restore.scroll;
                 owner().scrollTop+=box(restored.target).top-box(owner()).top-restore.offset;
-                state.navigationJump={id:restored.id,scroll:owner().scrollTop};
+                state.navigationJump={id:restored.id,scroll:owner().scrollTop,explicit:true,
+                    identity,target:restored.target};
                 restore=null;
             }
             const jump=state.navigationJump;
-            let active=state.navigationIntent?.origin || (jump && Math.abs(owner().scrollTop-jump.scroll)<=1 ? jump.id : null);
+            const reached = jump?.explicit && jump.identity === identity &&
+                entries.some(item=>item.id===jump.id && item.target===jump.target && connected(item.target));
+            let active=state.navigationIntent?.origin || (jump && (reached || !jump.explicit && Math.abs(owner().scrollTop-jump.scroll)<=1) ? jump.id : null);
             if (!active && state.reviewNavigation && entries.some(item => item.outside)) active='report_review';
             if (!active) {
                 state.navigationJump=null;

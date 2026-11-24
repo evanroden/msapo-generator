@@ -375,7 +375,7 @@ export default function(component) {
     function pollWhenPending() {
         if (pollTimer !== null) clearTimeout(pollTimer);
         pollTimer = null;
-        if (!active || frameworkBusy() || !data.pending || !visibleNow()) return;
+        if (!active || frameworkBusy() || !(data.pending || data.backgroundPending) || !visibleNow()) return;
         pollTimer = setTimeout(() => {
             pollTimer = null;
             if (!active || frameworkBusy() || !visibleNow()) return;
@@ -533,7 +533,7 @@ def _preview_component(_runtime):
     return st.components.v2.component('report_preview_surface', html=HTML, css=CSS, js=JS)
 
 
-def render_view(*, key, generation, title, ticket=None, images=(), status='', stale=False, on_change, view_scope=None, pending=False, on_poll=None, acknowledged_viewport=None, focus_on_open=False):
+def render_view(*, key, generation, title, ticket=None, images=(), status='', stale=False, on_change, view_scope=None, pending=False, on_poll=None, acknowledged_viewport=None, focus_on_open=False, background_pending=False):
     view = _preview_component(Runtime.instance())
     applied = acknowledged_viewport or {'visible': False, 'pages': (0,), 'dpi': 96}
     # The native container arrives before the asynchronous browser component.
@@ -544,6 +544,7 @@ def render_view(*, key, generation, title, ticket=None, images=(), status='', st
             'generation': generation, 'title': title, 'viewScope': str(view_scope or key), 'ready': ticket is not None and not stale, 'stale': bool(stale),
             'focusOnOpen': bool(focus_on_open),
             'sizes': ticket.sizes if ticket else (), 'status': status, 'pending': bool(pending),
+            'backgroundPending': bool(background_pending),
             'initialPage': ticket.initial_page if ticket else 0,
             'ticketKey': ticket.key if ticket else None,
             'acknowledgedViewport': {'visible': bool(applied['visible']), 'pages': list(applied['pages']),

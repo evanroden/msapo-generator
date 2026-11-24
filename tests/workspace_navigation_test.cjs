@@ -929,3 +929,61 @@ test('W01 a genuinely replaced section owner cannot inherit an accepted Next',()
     assert.equal(h.progress.dataset.section,'monthly_cover');
     h.dispose();
 });
+
+
+test('W02 passive native scroll displacement keeps reached Next origin across a full render',()=>{
+    const h=harness('wide',true);
+    h.nextButton.onclick();h.measure();
+    h.nextButton.onclick();h.measure();
+    assert.equal(h.progress.dataset.section,'monthly_short');
+    const focus=h.document.activeElement;
+    h.scrollport.scrollTop-=793;h.rerender();
+    assert.equal(h.document.activeElement,focus,'passive displacement never refocuses');
+    assert.equal(h.progress.dataset.section,'monthly_short');
+    h.nextButton.onclick();h.measure();
+    assert.equal(h.progress.dataset.section,'monthly_training','one Next advances from the reached section');
+    h.dispose();
+});
+
+for(const mode of ['wide','compact','tabletop','confined'])
+for(const type of ['wheel','keydown','scrollbar','touchmove'])
+test(`W02 ${mode} reached section yields to genuine ${type}`,()=>{
+    const h=harness(mode,true);h.nextButton.onclick();h.measure();h.nextButton.onclick();h.measure();
+    const target={closest:()=>null};
+    if(type==='wheel')h.input({isTrusted:true,type:'wheel',deltaY:-20,target});
+    if(type==='keydown')h.input({isTrusted:true,type:'keydown',key:'PageUp',target});
+    if(type==='touchmove'){
+        h.input({isTrusted:true,type:'touchstart',touches:[{clientX:0,clientY:0}],target});
+        h.input({isTrusted:true,type:'touchmove',touches:[{clientX:0,clientY:20}],target});
+    }
+    if(type==='scrollbar')h.input({isTrusted:true,type:'pointerdown',clientX:995,clientY:500,
+        target:{matches:()=>true,closest:()=>null,clientLeft:0,clientTop:0,clientWidth:984,clientHeight:1000,
+            getBoundingClientRect:()=>({left:0,right:1000,top:0,bottom:1000})}});
+    assert.equal(h.state.navigationJump,null);
+    if(h.state.ownsScroll)h.root.scrollTop=650;else h.scrollport.scrollTop=1100;
+    h.measure();assert.equal(h.progress.dataset.section,'monthly_activity');h.dispose();
+});
+for(const kind of ['replacement','report'])test(`W02 explicit reached anchor rejects ${kind}`,()=>{
+    const h=harness('wide',true);h.nextButton.onclick();h.measure();h.nextButton.onclick();h.measure();
+    if(kind==='replacement')h.pairs[2].pair={...h.pairs[2].pair};else h.state.identity='other';
+    h.scrollport.scrollTop-=793;h.rerender();
+    assert.equal(h.progress.dataset.section,'monthly_activity');h.dispose();
+});
+for(const event of [{type:'keydown',key:'Tab'},{type:'pointerdown'},
+    {type:'wheel',deltaY:-20,ctrlKey:true},
+    {type:'wheel',deltaY:-20,target:{scrollHeight:300,clientHeight:100,scrollTop:50}},
+    {type:'wheel',deltaY:-20,target:{scrollHeight:300,clientHeight:100,scrollTop:0,style:{overflowY:'auto',overscrollBehaviorY:'contain'}}}])
+test(`W02 non-page gesture ${JSON.stringify(event)} does not reinterpret reached section`,()=>{
+    const h=harness('wide',true);h.nextButton.onclick();h.measure();h.nextButton.onclick();h.measure();
+    h.input({isTrusted:true,target:{},...event});h.scrollport.scrollTop-=793;h.measure();
+    assert.equal(h.progress.dataset.section,'monthly_short');h.dispose();
+});
+
+
+test('W03 explicit return from Review retains its reached section through passive resize displacement',()=>{
+    const h=harness('wide');h.choose('monthly_training');h.choose('report_review');h.choose('monthly_training');
+    assert.equal(h.state.navigationActive,'monthly_training');
+    h.scrollport.scrollTop-=793;h.measure();
+    assert.equal(h.state.navigationActive,'monthly_training');
+    h.dispose();
+});

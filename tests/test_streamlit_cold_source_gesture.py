@@ -21,7 +21,8 @@ def test_only_early_guard_is_added_to_previous_entry_and_upgrade_keeps_old_bytes
     root, scripts = bundle
     sources, members = compat._locked_sources(scripts)
     old = compat._publication(sources, members, scalar_date, cold_source_gesture=False)
-    new = compat._publication(sources, members, scalar_date)
+    new = compat._publication(sources, members, scalar_date, textarea_default=False)
+    latest = compat._publication(sources, members, scalar_date)
     guard = Path('scripts/streamlit_cold_source_gesture.js').read_bytes()
     def normalized(p, key):
         raw = p.payloads[key]
@@ -40,7 +41,7 @@ def test_only_early_guard_is_added_to_previous_entry_and_upgrade_keeps_old_bytes
     before = files(root)
     assert not compat.selected_frontend(root)['cold_source_gesture']
     receipt = compat.patch_bundle(root, installed_version='1.61.1')
-    assert receipt['cold_source_gesture'] and receipt['entry'] == new.names[compat.INDEX_BUNDLE]
+    assert receipt['cold_source_gesture'] and receipt['entry'] == latest.names[compat.INDEX_BUNDLE]
     assert compat.selected_frontend(root)['cold_source_gesture']
     for name, raw in before.items():
         if name != 'index.html':
