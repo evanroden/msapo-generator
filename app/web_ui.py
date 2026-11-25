@@ -2258,13 +2258,16 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
 
     contact_key = f"contact_{token}"
     analysis_contact_name = str(analysis.contact_name or "").strip()
-    if is_operator_vendor_name(analysis_contact_name):
+    rejected_operator_contact = is_operator_vendor_name(analysis_contact_name)
+    if rejected_operator_contact:
         analysis_contact_name = ""
     if contact_key not in st.session_state:
         st.session_state[contact_key] = analysis_contact_name
 
     email_key = f"cemail_{token}"
-    analysis_contact_email = str(analysis.contact_email or "").strip()
+    analysis_contact_email = (
+        "" if rejected_operator_contact else str(analysis.contact_email or "").strip()
+    )
     if email_key not in st.session_state:
         st.session_state[email_key] = analysis_contact_email
 
