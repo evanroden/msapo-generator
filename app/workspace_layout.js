@@ -458,9 +458,13 @@ export default function(component) {
         globalThis.ENFRAWorkspaceNavigation?.focusEntries(state, root);
         const viewportSignature = JSON.stringify([sample.visual?.width,sample.visual?.height,sample.visual?.scale,sample.layout,sample.textScale,context.mode]);
         const viewportChanged = state.focusViewport && viewportSignature !== state.focusViewport;
-        if (viewportChanged && state.focusTextScale !== sample.textScale) focusClearUntil = Date.now() + 600;
-        // Font changes can reflow native descendants after the first resolver
-        // pass. Recheck only this bounded transition, never normal user scrolling.
+        if (viewportChanged) {
+            focusClearUntil = !ownsScroll || state.focusTextScale !== sample.textScale
+                ? Date.now() + 600 : 0;
+        }
+        // Viewport and font changes can reflow native descendants after the first
+        // resolver pass. Recheck only this bounded transition, never ordinary
+        // scrolling. Deliberate input cancels the window synchronously.
         if ((viewportChanged || Date.now() < focusClearUntil) && !state.navigationRequest) {
             if (Date.now() < focusClearUntil) schedule();
             const owner = ownsScroll ? root : scrollport;
