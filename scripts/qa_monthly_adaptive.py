@@ -623,6 +623,39 @@ def reading_state(field):
     }""")
 
 
+def exercise_viewport_clearance(page, name, field):
+    field.click()
+    field.evaluate("n=>{window.__monthlyActivityNode=n;n.setSelectionRange(6,17)}")
+    before = editor_state(field)
+    # The same authoritative editor must clear persistent navigation when
+    # the usable viewport shrinks, without blur, text or selection loss.
+    for appearance in ("dark", "light"):
+        page.emulate_media(color_scheme=appearance)
+        for label, width, height in (("portrait",669,885),("keyboard-height",669,250),("phone",390,844)):
+            page.set_viewport_size({"width":width,"height":height})
+            page.wait_for_function("""() => document.querySelector('.epc-workspace')?.dataset.epcMode ===
+                (innerWidth <= 540 || innerHeight < 400 ? 'compact' : 'wide')""")
+            frames(page)
+            check(name, appearance + " " + label + " keeps native editing state",editor_state(field) == before)
+            if label == "keyboard-height":
+                clearance=field.evaluate("""n=>({field:n.getBoundingClientRect().toJSON(),
+                    nav:document.querySelector('.epc-section-navigation').getBoundingClientRect().toJSON()})""")
+                check(name, appearance + " short viewport editor clears navigation",
+                      clearance["field"]["top"] >= clearance["nav"]["bottom"] + 8, clearance)
+            nav_colors=page.locator('.epc-section-navigation').evaluate("""n=>{
+                const names=['.epc-section-back','.epc-section-progress','.epc-section-next'];
+                return {background:getComputedStyle(n).backgroundColor,
+                    controls:names.map(s=>({selector:s,color:getComputedStyle(n.querySelector(s)).color}))};
+            }""")
+            if appearance == "dark":
+                check(name, "dark " + label + " navigation has paired dark surface and light text",
+                    nav_colors["background"] == "rgb(32, 52, 44)" and
+                    all(c["color"] in ("rgb(237, 245, 240)","rgb(184, 210, 200)") for c in nav_colors["controls"]),nav_colors)
+            capture(page,name,appearance+"-"+label+"-native-editor")
+    page.set_viewport_size({"width":1440,"height":900})
+    mode(page,"wide")
+
+
 def exercise(browser_type, name):
     browser = browser_type.launch(headless=True)
     context = browser.new_context(viewport={"width": 1440, "height": 900})
@@ -667,6 +700,7 @@ def exercise(browser_type, name):
 
         field = page.get_by_role("textbox", name="Activity summary", exact=True)
         navigate_sections(page, "monthly_activity")
+        exercise_viewport_clearance(page, name, field)
         original = field.input_value()
         # Edit the actual authoritative field, not an oracle or a mocked parser.
         # Repeated explicitly synthetic notes yield genuine multipage section PDF.
