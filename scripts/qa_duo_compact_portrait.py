@@ -5,6 +5,7 @@ QA_WEBKIT_EXECUTABLE optionally selects an installed WebKit binary. All data is
 invented. Outputs stay in an ignored evidence directory, not in the repository.
 """
 import json
+from contextlib import contextmanager, ExitStack
 import os
 from pathlib import Path
 import subprocess
@@ -18,6 +19,26 @@ from qa_device_metadata import browser_evidence
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'test-artifacts' / 'duo-compact-portrait'
 VALUE = 'Invented notes retained through resize and preview.'
+
+
+@contextmanager
+def capture_first_failure(page, context, evidence):
+    """Capture before Playwright exits, without retries or changed acceptance."""
+    try:
+        yield
+    except Exception as exc:
+        evidence['first_failure'] = {'type': type(exc).__name__, 'message': str(exc)[:2000]}
+        try:
+            page.screenshot(path=str(OUT / 'first-failure.png'), full_page=True)
+            (OUT / 'first-failure.html').write_text(page.content())
+        except Exception as capture:
+            evidence['capture_error'] = type(capture).__name__
+        raise
+    finally:
+        try:
+            context.tracing.stop(path=str(OUT / 'trace.zip'))
+        except Exception as capture:
+            evidence['trace_error'] = type(capture).__name__
 
 
 def main():
@@ -39,10 +60,13 @@ def main():
                     time.sleep(.2)
             else:
                 raise RuntimeError('Disposable fixture did not start')
-            with sync_playwright() as playwright:
+            with sync_playwright() as playwright, ExitStack() as captures:
                 options = {'executable_path': os.environ['QA_WEBKIT_EXECUTABLE']} if os.environ.get('QA_WEBKIT_EXECUTABLE') else {}
                 browser = playwright.webkit.launch(**options)
-                page = browser.new_page(viewport={'width': 669, 'height': 885})
+                context = browser.new_context(viewport={'width': 669, 'height': 885})
+                context.tracing.start(screenshots=True, snapshots=True, sources=True)
+                page = context.new_page()
+                captures.enter_context(capture_first_failure(page, context, evidence))
                 page.set_default_timeout(20000)
                 evidence['environment'] = browser_evidence(page, engine='webkit', input_method='automated mouse and keyboard')
                 page.goto('http://127.0.0.1:8523')
@@ -139,6 +163,7 @@ def main():
                         commit_notes()
                     expect(page.locator('[data-stale="true"]')).to_have_count(0)
                     inspect(workflow.lower().replace(' ', '-'), 'compact', 382, 600)
+                captures.close()
                 browser.close()
         finally:
             server.terminate()
