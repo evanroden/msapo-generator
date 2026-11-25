@@ -28,15 +28,13 @@ def render_loaded_file_card(staged, filename, analysis, target, period, *, remov
     st.markdown("**Loaded file:** " + literal(filename))
     st.caption("Recognized source sites: " + literal(source_site) + " · Source month: " + literal(source_month))
     st.caption("Target sites: " + literal(target_sites) + " · Target month: " + literal(period.label))
-    st.caption("File read; report sections and artwork still require their ordinary review.")
-    with st.expander("Preview recognized content", expanded=False):
-        st.caption("Text found in the Word file; this is not a rendered page or artwork approval.")
-        headings = tuple(str(line).strip()[:180] for line in inspection.title_candidates if str(line).strip())
-        if headings:
-            for heading in headings[:5]:
-                st.text(heading)
-        else:
-            st.info("No readable cover text. Review the original artwork; identity is not confirmed.")
+    # The card names the file, its sites and both months. A preview of raw
+    # recognized text and a reminder that sections still need review were
+    # diagnostic noise here (owner review F12); each section's own review
+    # still follows. Only a file with no readable cover text keeps a note,
+    # because the sites above then cannot have been read from it.
+    if not any(str(line).strip() for line in inspection.title_candidates):
+        st.info("No readable cover text. Review the original artwork; identity is not confirmed.")
     if staged[0] is not None:
         st.button("Remove loaded file", key=remove_key, on_click=on_remove)
     else:

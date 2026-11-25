@@ -727,8 +727,8 @@ def _native_art_preservation_review(path, source_view, profile, period, actor, p
     kept, reviewed = set(), set()
     shown_keys = []
     with st.expander("Preserve native page artwork", expanded=True):
-        st.caption("Keep this artwork in its original position. Check that it belongs in this report; "
-                   "the original file stays unchanged.")
+        st.caption("Keep this artwork in its original position. Check that each picture belongs in this report, "
+                   "with no visible pricing or inappropriate private information; the original file stays unchanged.")
         with _operation_from_verified_view(path, source_view) as operation:
             items = {item.id: item for item in operation.view.original_inspection.items}
             for number, (group, occurrences) in enumerate(groups.items(), 1):
@@ -762,8 +762,8 @@ def _native_art_preservation_review(path, source_view, profile, period, actor, p
                     st.error("This verified artwork could not be displayed; preservation remains blocked.")
                     continue
                 # One explicit action covers preservation AND the same visible
-                # suitability review. Old separate/partial choices cannot seed it.
-                st.caption("Confirm it belongs in this report, with no visible pricing or inappropriate private information.")
+                # suitability review (stated once above, not under every
+                # picture). Old separate/partial choices cannot seed it.
                 review_key = field(key + "_preserve_review_v1", False)
                 shown_keys.append(review_key)
                 if st.checkbox("I reviewed this artwork and want to keep it unchanged", key=review_key):
