@@ -2,7 +2,7 @@
 
 GitHub's Azure Ubuntu image configures three signed-archive mirrors:
 https://github.com/actions/runner-images/blob/main/images/ubuntu/scripts/build/configure-apt-sources.sh
-Only the two observed AWS hostnames plus the exact documented URI form below may
+Only the three observed AWS hostnames plus the exact documented URI form below may
 match the additional profile; unobserved path/priority variants still fail.
 Canonical's documented EC2 primary URI form (not a wildcard allowlist here):
 https://github.com/canonical/cloud-init/blob/d5873d2e693cb3e83d7e50c97da3b8586faf8c2e/config/cloud.cfg.tmpl#L348-L358
@@ -39,9 +39,17 @@ EC2_WEST_ORIGINAL = {EC2_WEST_PRIMARY: '1',
                      'https://security.ubuntu.com/ubuntu/': '3'}
 EC2_WEST_PREFERRED = {**EC2_WEST_ORIGINAL, EC2_WEST_PRIMARY: '2',
                       'https://archive.ubuntu.com/ubuntu/': '1'}
+EC2_EAST1_PRIMARY = 'http://us-east-1.ec2.archive.ubuntu.com/ubuntu/'
+EC2_EAST1_ORIGINAL = {EC2_EAST1_PRIMARY: '1',
+                      'https://archive.ubuntu.com/ubuntu/': '2',
+                      'https://security.ubuntu.com/ubuntu/': '3'}
+EC2_EAST1_PREFERRED = {**EC2_EAST1_ORIGINAL, EC2_EAST1_PRIMARY: '2',
+                       'https://archive.ubuntu.com/ubuntu/': '1'}
 MIRROR_PROFILES = ((ORIGINAL, PREFERRED), (EC2_ORIGINAL, EC2_PREFERRED),
-                   (EC2_WEST_ORIGINAL, EC2_WEST_PREFERRED))
-KNOWN_MIRROR_URIS = frozenset(ORIGINAL) | frozenset(EC2_ORIGINAL) | frozenset(EC2_WEST_ORIGINAL)
+                   (EC2_WEST_ORIGINAL, EC2_WEST_PREFERRED),
+                   (EC2_EAST1_ORIGINAL, EC2_EAST1_PREFERRED))
+KNOWN_MIRROR_URIS = frozenset().union(*(original for original, _ in MIRROR_PROFILES))
+
 ENTRY = re.compile(r'(?P<uri>\S+)(?P<separator>\t+)priority:(?P<priority>[1-3])(?P<end>\r?\n|$)')
 DIAGNOSTIC_BYTES = 4096
 DIAGNOSTIC_LINES = 32
