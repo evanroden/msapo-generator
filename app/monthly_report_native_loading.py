@@ -72,5 +72,9 @@ def reserve_empty_uploader(key, label, *, label_visibility="visible"):
         # The pinned empty dropzone stacks its button and size hint below 23rem:
         # padding1.5rem + button2.5rem + gap.75rem + hint1.4rem.
         + '@container ' + container + ' (width < 23rem){'
-        + skeleton + '::after{height:6.15rem;}}</style>'
+        + skeleton + '::after{height:6.15rem;}}'
+        + '@media(max-width:900px),(pointer:coarse){'
+        + skeleton + '::after{height:4.5rem;}'
+        + '@container ' + container + ' (width < 23rem){'
+        + skeleton + '::after{height:' + ('6.4rem' if label_visibility == 'collapsed' else '7.65rem') + ';}}}</style>'
     )
