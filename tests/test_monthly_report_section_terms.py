@@ -13,8 +13,9 @@ def test_mbcx_and_enfra_connect_defined_where_section_is_edited():
     assert "ENFRA Connect" in guidance
     assert "platform" in guidance
     assert "verified" in guidance
-    assert "Include only verified findings and savings" in guidance
-    assert "otherwise record the current status" in guidance
+    assert "include only verified findings and savings" in guidance
+    # The MBCx status box was removed (owner decision, 25 Nov 2026).
+    assert "record the current status" not in guidance
 
 
 def test_rfi_acronym_expanded_with_clear_workflow():

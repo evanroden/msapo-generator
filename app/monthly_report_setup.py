@@ -378,6 +378,18 @@ def merge_drafts(existing: ReportDraft | None, incoming: ReportDraft) -> ReportD
     return replace(existing, blocks=tuple(old_blocks.values()), sections=sections)
 
 
+def _leave_out_plain_status(status: ResolvedBlock) -> ResolvedBlock:
+    """Owner decision (25 Nov 2026): MBCx has no free-text status box.
+
+    A plain note saved earlier or carried from an earlier month has no editor,
+    so it is left out of the report rather than printed unchecked. Its text
+    stays in the draft and history; nothing is deleted.
+    """
+    if not status.ai_paragraphs and status.source != "Omit" and status.text.strip():
+        return replace(status, source="Omit", reviewed_fingerprint="", client_reviewed_fingerprint="")
+    return status
+
+
 def normalize_mbcx(draft: ReportDraft) -> ReportDraft:
     """Separate legacy MBCx wording from monthly pages on a detached draft.
 
@@ -387,7 +399,8 @@ def normalize_mbcx(draft: ReportDraft) -> ReportDraft:
     """
     section = next((s for s in draft.sections if s.key == "mbcx"), None)
     if not section or not any(b.key == "mbcx_report" for b in section.blocks):
-        return draft
+        return replace(draft, blocks=tuple(_leave_out_plain_status(b) if b.key == "mbcx_status" else b
+                                           for b in draft.blocks))
     status_spec = next(b for s in default_sections() if s.key == "mbcx" for b in s.blocks if b.key == "mbcx_status")
     specs = section.blocks
     if not any(b.key == "mbcx_status" for b in specs):
@@ -420,13 +433,7 @@ def normalize_mbcx(draft: ReportDraft) -> ReportDraft:
                                              client_reviewed_fingerprint=""))
     if status is None:
         status = ResolvedBlock("mbcx_status", "This month")
-    if not status.ai_paragraphs and status.source != "Omit" and status.text.strip():
-        # Owner decision (25 Nov 2026): MBCx has no free-text status box. A
-        # plain note saved earlier or carried from an earlier month has no
-        # editor, so it is left out of the report rather than printed
-        # unchecked. Its text stays in the draft and history; nothing is deleted.
-        status = replace(status, source="Omit", reviewed_fingerprint="", client_reviewed_fingerprint="")
-    blocks["mbcx_status"] = status
+    blocks["mbcx_status"] = _leave_out_plain_status(status)
     return replace(draft, sections=tuple(replace(s, blocks=specs) if s.key == "mbcx" else s for s in draft.sections),
                    blocks=tuple(blocks.values()))
 
