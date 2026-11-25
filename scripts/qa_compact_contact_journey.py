@@ -297,6 +297,20 @@ def browser_task(browser_type, name, *, held_recovery=False):
         state, after_no_edit = outputs('after-no-edit', state)
         assert after_no_edit['document_xml_sha256'] == before_output['document_xml_sha256']
         contacts = page.locator(CONTACTS)
+        original_view = dict(page.viewport_size)
+        target_sizes = []
+        for width in (320, 390, 669, 885, 1280):
+            page.set_viewport_size({'width':width, 'height':885})
+            actions = contacts.get_by_role('button',name='Edit contact',exact=True)
+            expect(actions.first).to_be_visible()
+            sizes = actions.evaluate_all('nodes=>nodes.map(n=>({width:n.getBoundingClientRect().width,height:n.getBoundingClientRect().height}))')
+            assert sizes and all(item['width'] >= 90 and 40 <= item['height'] <= 60 for item in sizes), sizes
+            assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+2')
+            actions.first.scroll_into_view_if_needed()
+            page.screenshot(path=str(out/f'contact-actions-{width}.png'))
+            target_sizes.append({'viewport':width,'actions':sizes})
+        record['summary_actions'] = target_sizes
+        page.set_viewport_size(original_view)
         contacts.get_by_role('button',name='Edit contacts',exact=True).click()
         expect(contacts.get_by_role('textbox',name='Name',exact=True)).to_have_count(0)
         state = capture('contacts-open',state)
