@@ -380,7 +380,8 @@ export default function(component) {
         const ownsScroll = context.mode === 'tabletop' || Boolean(confined);
         const ownedScrollBefore = state.ownsScroll;
         const previous = state.mode;
-        const activeBefore = previous && previous !== context.mode ? pairs.find(p => p.id === state.active) || pairs.find(p => p.pair.getBoundingClientRect().bottom > sample.scrollport.y + 120) : null;
+        const focusedPair = pairs.find(p => p.pair.querySelector('.epc-workspace-editor')?.contains(document.activeElement));
+        const activeBefore = previous && previous !== context.mode ? focusedPair || pairs.find(p => p.id === state.active) || pairs.find(p => p.pair.getBoundingClientRect().bottom > sample.scrollport.y + 120) : null;
         if (!ownedScrollBefore && ownsScroll) state.outerScroll = scrollport.scrollTop;
         root.dataset.epcMode = context.mode;
         root.dataset.epcReason = context.reason || '';
