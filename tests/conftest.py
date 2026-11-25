@@ -100,3 +100,16 @@ def _fresh_source_view_cache():
     compatibility_view.clear_view_cache()
     yield
     compatibility_view.clear_view_cache()
+
+
+@pytest.fixture(autouse=True)
+def _fresh_native_preview_caches():
+    """Start each test without repeat-preview proofs remembered by another test.
+
+    Both caches are keyed by verified source hashes, so a test that patches a
+    scan or image read to fail must not be handed an earlier test's result.
+    """
+    from app import monthly_report_native_art_review as art
+    from app import monthly_report_native_layout as layout
+    art.clear_physical_cache()
+    layout.clear_view_image_digests()
