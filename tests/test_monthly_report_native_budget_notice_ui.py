@@ -61,7 +61,7 @@ def _require_processing_guidance(app):
     assert "isn't damaged and is kept" in warning
     assert "Choose a template below" in warning
     assert "smaller copy" in warning
-    assert any("too large to read" in error.value for error in app.error)
+    assert any("too large" in error.value and "smaller copy" in error.value for error in app.error)
     assert not any("Repair that artwork in the original Word file" in error.value
                    for error in app.error)
     return warning

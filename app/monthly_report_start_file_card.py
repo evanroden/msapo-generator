@@ -37,5 +37,3 @@ def render_loaded_file_card(staged, filename, analysis, target, period, *, remov
         st.info("No readable cover text. Review the original artwork; identity is not confirmed.")
     if staged[0] is not None:
         st.button("Remove loaded file", key=remove_key, on_click=on_remove)
-    else:
-        st.caption("Saved original — closing this review does not delete the original.")
