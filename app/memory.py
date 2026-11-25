@@ -70,6 +70,8 @@ import time
 import threading
 from pathlib import Path
 
+from app.vendor_identity import is_operator_vendor_name
+
 # Read only by suggest_admin_emails/suggest_contacts, which have no caller in
 # the app today. Not a live tuning knob -- changing it changes nothing visible.
 SUGGEST_THRESHOLD = 5
@@ -608,7 +610,7 @@ def record_send(
                     (contract, admin, now, now),
                 )
             # Contact pairs only count when the name AND a plausible email match up
-            if name and cemail and _looks_like_email(cemail):
+            if name and cemail and _looks_like_email(cemail) and not is_operator_vendor_name(name):
                 conn.execute(
                     "INSERT INTO contacts (contract,name,email,count,last_used) VALUES (?,?,?,1,?) "
                     "ON CONFLICT(contract,name,email) DO UPDATE SET count=count+1, last_used=?",
@@ -668,6 +670,7 @@ def record_vendor_contact(
         or len(vend) > 240
         or len(name) > 160
         or len(context) > 200
+        or is_operator_vendor_name(name)
     ):
         return 0
 
@@ -859,6 +862,8 @@ def vendor_reps(contract: str, vendor: str | None) -> list[tuple[str, str]]:
         seen: set[tuple[str, str]] = set()
         result: list[tuple[str, str]] = []
         for _, name, email, _, _ in matched:
+            if is_operator_vendor_name(name):
+                continue
             pair = (str(name), str(email))
             if pair not in seen:
                 seen.add(pair)
@@ -1923,7 +1928,8 @@ def correct_vendor_contact(
     target_name = _norm_name(new_name)
     target_email = _norm_email(new_email)
     if (not contract or not vendor or not name or not email or not target_name
-            or not target_email or not _looks_like_email(target_email) or len(target_name) > 160):
+            or not target_email or not _looks_like_email(target_email) or len(target_name) > 160
+            or is_operator_vendor_name(target_name)):
         return False
     if (target_name, target_email) == (name, email):
         return True
