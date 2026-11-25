@@ -759,7 +759,7 @@ __WORKFLOW_SHELL_CSS__
         div[data-baseweb="base-input"] input { width: 100%; }
     }
 </style>
-""".replace("__WORKFLOW_SHELL_CSS__", (Path(__file__).with_name("workflow_shell.css")).read_text(encoding="utf-8"))
+""".replace("__WORKFLOW_SHELL_CSS__", (Path(__file__).with_name("workflow_shell.css")).read_text(encoding="utf-8") + (Path(__file__).with_name("native_controls.css")).read_text(encoding="utf-8"))
 
 
 def _h(value: object) -> str:
