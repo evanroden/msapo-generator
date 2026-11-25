@@ -1,4 +1,4 @@
-"""Two documented-form, observed EC2 hosts; no wildcard or trust-policy fallback."""
+"""Three documented-form, observed EC2 hosts; no wildcard or trust-policy fallback."""
 import re
 
 import pytest
@@ -12,7 +12,7 @@ EC2 = AZURE.replace('http://azure.archive.ubuntu.com/ubuntu/', EC2_URI)
 PREFERRED = EC2.replace('priority:1', 'priority:X').replace('priority:2', 'priority:1').replace('priority:X', 'priority:2')
 
 
-@pytest.mark.parametrize('region', ['us-east-2', 'us-west-2'])
+@pytest.mark.parametrize('region', ['us-east-2', 'us-west-2', 'us-east-1'])
 def test_exact_documented_ec2_profile_changes_only_priority_digits(region):
     source = EC2.replace('us-east-2', region)
     preferred = PREFERRED.replace('us-east-2', region)
@@ -30,7 +30,7 @@ def test_exact_documented_ec2_profile_changes_only_priority_digits(region):
     ''.join(reversed(EC2.splitlines(keepends=True))),
     EC2.replace('\tpriority:', '\t\tpriority:'),
 ])
-@pytest.mark.parametrize('region', ['us-east-2', 'us-west-2'])
+@pytest.mark.parametrize('region', ['us-east-2', 'us-west-2', 'us-east-1'])
 def test_exact_profile_preserves_uri_bytes_format_mode_and_unrelated_source(
     source, region, tmp_path, monkeypatch, capsys,
 ):
@@ -54,7 +54,7 @@ def test_exact_profile_preserves_uri_bytes_format_mode_and_unrelated_source(
 
 
 @pytest.mark.parametrize('bad_uri', [
-    'http://us-east-1.ec2.archive.ubuntu.com/ubuntu/',
+    'http://eu-west-1.ec2.archive.ubuntu.com/ubuntu/',
     'http://us-west-1.ec2.archive.ubuntu.com/ubuntu/',
     'http://x.us-east-2.ec2.archive.ubuntu.com/ubuntu/',
     'http://us-east-2.ec2.archive.ubuntu.com.evil.invalid/ubuntu/',
@@ -123,7 +123,7 @@ def test_rejected_ec2_profile_diagnostic_remains_structural_and_private(tmp_path
     assert '"unknown_hosts": []' in output
     assert '/ubuntu/' not in output
 
-@pytest.mark.parametrize('region', ['us-east-2', 'us-west-2'])
+@pytest.mark.parametrize('region', ['us-east-2', 'us-west-2', 'us-east-1'])
 @pytest.mark.parametrize('suffix', ['?q=x', '#x', '../', 'extra/'])
 def test_each_exact_region_still_rejects_path_query_and_fragment(region, suffix):
     source = EC2.replace('us-east-2', region).replace('/ubuntu/', '/ubuntu/' + suffix)
