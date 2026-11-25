@@ -222,8 +222,12 @@ def suggest_facts(source: ReportSource, profile: ReportProfile) -> ReportSource:
     # report; the body words alone made it "Reference only", which left its
     # completed work unrouted. Conflicting titles keep the word count rule.
     from app.monthly_report_pre_model_routing import title_source_type
-    titled = title_source_type(text)
-    if titled:
+    titled, titles = title_source_type(text)
+    title_text = "\n".join(titles).casefold()
+    # A title that itself names two types ("Utility analysis and maintenance
+    # report") is still mixed and waits for a person to choose.
+    if titled and [kind for kind, terms in patterns
+                   if any(term in title_text for term in terms)] in ([], [titled]):
         hits = [titled]
     classification = hits[0] if len(hits) == 1 else "Reference only"
     if not hits and source.suffix in ocr.SUPPORTED_IMAGE_SUFFIXES:

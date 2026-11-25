@@ -39,9 +39,13 @@ def test_quotation_that_mentions_a_service_visit_stays_a_quote():
     (("Notes from the week", "nothing titled"), ""),
 ])
 def test_title_type_reads_only_anchored_titles(lines, expected):
-    assert title_source_type("\n".join(lines)) == expected
+    assert title_source_type("\n".join(lines))[0] == expected
 
 
 def test_untitled_mixed_file_still_needs_a_person_to_choose():
     facts = _facts("Notes", "The service visit found a leak.", "A quote will follow.")
     assert facts.classification == "Reference only"
+
+
+def test_a_title_naming_two_types_still_needs_a_person_to_choose():
+    assert _facts("Utility analysis and maintenance report.").classification == "Reference only"
