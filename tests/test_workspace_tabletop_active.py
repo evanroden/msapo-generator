@@ -111,3 +111,31 @@ for(const ownsScroll of [true,false]) for(const changed of [true,false]) {
 }
 '''
     subprocess.run(['node', '-e', script], cwd=ROOT, check=True, capture_output=True, text=True)
+
+
+def test_mode_transition_prefers_the_current_native_editor_over_stale_preview():
+    script = r'''
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const source=fs.readFileSync('app/workspace_layout.js','utf8');
+const start=source.indexOf('        const focusedPair =');
+const end=source.indexOf('        if (!ownedScrollBefore',start);
+assert.ok(start>=0&&end>start);
+for(const [focused,previous,mode,wanted] of [
+ ['activity','book','tabletop','activity'],
+ ['activity','wide','tabletop','activity'],
+ ['reference','book','tabletop','organization'],
+ ['none','book','tabletop','organization'],
+ ['activity','tabletop','tabletop',null],
+]) {
+ const document={activeElement:focused};
+ const pairs=['organization','activity'].map(id=>({id,pair:{
+  querySelector:()=>({contains:n=>n===id}),
+  getBoundingClientRect:()=>({bottom:500}),
+ }}));
+ const result=vm.runInNewContext(source.slice(start,end)+'\nactiveBefore?.id ?? null',{
+  pairs,document,previous,context:{mode},state:{active:'organization'},sample:{scrollport:{y:0}},
+ });
+ assert.equal(result,wanted,'focus owns the transition only inside a native editor');
+}
+'''
+    subprocess.run(['node', '-e', script], cwd=ROOT, check=True, capture_output=True, text=True)
