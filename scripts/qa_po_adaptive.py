@@ -171,6 +171,20 @@ def exercise_page(page, name, errors):
         })""")
         raise
     check(name + " exactly one authoritative scope editor", scope.count() == 1)
+    # Summary cards must size against the editor pane, not the outer viewport.
+    # 669px open portrait has a ~330px editor beside its reference.
+    page.set_viewport_size({"width":669,"height":885})
+    settle(page, "wide")
+    cards = page.locator(".po-summary-metrics .metric-card")
+    expect(cards).to_have_count(3)
+    card_boxes = cards.evaluate_all("nodes=>nodes.map(n=>n.getBoundingClientRect().toJSON())")
+    check(name + " portrait summary cards remain readable", all(box["width"] >= 150 for box in card_boxes), card_boxes)
+    amounts = page.locator(".po-summary-metrics .metric-card").last.locator(".metric-value")
+    check(name + " portrait amount stays on one line", amounts.evaluate("n=>n.getBoundingClientRect().height<=parseFloat(getComputedStyle(n).lineHeight)+1"))
+    page.screenshot(path=str(OUT / (name + "-portrait-summary.png")))
+    page.set_viewport_size({"width":1440,"height":900})
+    settle(page, "wide")
+
     page.locator('[data-testid="stMain"]').evaluate("node => {node.scrollTop=650}")
     page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
     wide = capture(page, name, "wide-source")
