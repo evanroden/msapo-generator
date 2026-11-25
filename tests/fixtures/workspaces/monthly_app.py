@@ -73,6 +73,9 @@ from app.monthly_report_testing import isolated, scope
 from app.monthly_report_testing_ui import render
 from app.monthly_report_ui import _field, _move
 
+# Match the production single-sourced shell without copying its CSS.
+st.html('<style>' + (Path(__file__).resolve().parents[3] / 'app/workflow_shell.css').read_text(encoding='utf-8') + '</style>')
+
 token = device_token(st.context.cookies)
 # AppTest cannot provide HTTP request cookies. This explicit local-only seam is
 # confined to this disposable fixture; the browser path must use the real cookie.
