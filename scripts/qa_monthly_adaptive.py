@@ -944,10 +944,11 @@ def _failure_site(exc):
     import traceback
     frames = [frame for frame in traceback.extract_tb(exc.__traceback__)
               if "/scripts/" in frame.filename.replace("\\", "/")]
-    if not frames:
-        return ""
-    frame = frames[-1]
-    return f" [at {Path(frame.filename).name}:{frame.lineno} in {frame.name}: {(frame.line or '').strip()[:160]}]"
+    # The innermost frame is often a shared helper such as check(); the one
+    # before it names the actual step, so show both.
+    return " [at " + " <- ".join(
+        f"{Path(frame.filename).name}:{frame.lineno} in {frame.name}: {(frame.line or '').strip()[:120]}"
+        for frame in reversed(frames[-2:])) + "]" if frames else ""
 
 
 def main():
