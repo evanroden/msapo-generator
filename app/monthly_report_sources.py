@@ -217,6 +217,14 @@ def suggest_facts(source: ReportSource, profile: ReportProfile) -> ReportSource:
                 ("Training", ("training", "safety briefing")),
                 ("Vendor service", ("service report", "service visit", "maintenance report")))
     hits = [kind for kind, terms in patterns if any(term in sample for term in terms)]
+    # A document's own title decides its type. A vendor service report that
+    # mentions a quote or a water reading in its body is still a service
+    # report; the body words alone made it "Reference only", which left its
+    # completed work unrouted. Conflicting titles keep the word count rule.
+    from app.monthly_report_pre_model_routing import title_source_type
+    titled = title_source_type(text)
+    if titled:
+        hits = [titled]
     classification = hits[0] if len(hits) == 1 else "Reference only"
     if not hits and source.suffix in ocr.SUPPORTED_IMAGE_SUFFIXES:
         classification = "Improvement / training photo"
