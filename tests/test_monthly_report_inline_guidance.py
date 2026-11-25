@@ -47,7 +47,7 @@ def test_inline_word_count_reduces_by_at_least_thirty_percent():
 def test_inline_copy_preserves_relevant_scope_and_safety():
     terms = {
         "scorecards": ("unknown capacity", "NR", "confirmed"),
-        "mbcx": ("Add monitoring results or a brief status update.",),
+        "mbcx": ("Upload this month’s MBCx report.",),
         "maintenance": ("ENFRA", "onsite", "vendor", "Monthly Activity Summary"),
         "water": ("out-of-range", "follow-up"),
         "issues": ("this report only",),
@@ -60,7 +60,7 @@ def test_inline_copy_preserves_relevant_scope_and_safety():
         text = editor_section_guidance(section)
         for phrase in required:
             assert phrase.casefold() in text.casefold(), (section, phrase)
-    assert editor_section_guidance("mbcx") == "Add monitoring results or a brief status update."
+    assert editor_section_guidance("mbcx") == "Upload this month’s MBCx report."
     heading_help = editor_section_heading_help("mbcx")
     assert all(term in heading_help for term in ("MBCx", "monitoring-based commissioning", "verified"))
     assert all(editor_section_heading_help(key) is None
@@ -106,6 +106,6 @@ st.caption(editor_section_guidance("mbcx"))
     assert not app.exception
     assert [item.value for item in app.get("subheader")] == ["MBCx Reports"]
     assert [item.value for item in app.get("caption")] == [
-        "Add monitoring results or a brief status update."
+        "Upload this month’s MBCx report."
     ]
     assert not app.button and not app.checkbox

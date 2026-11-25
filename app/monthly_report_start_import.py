@@ -275,6 +275,13 @@ def analyze_starting_report(inspection, profile, period, known_sites=(), *, conf
         if (item.kind == "text" and slot not in known_slots
                 and item.section in known_section_keys):
             slot = default_slot(item.section)
+        if (slot == "mbcx_status" and item.kind == "text"
+                and source_period and source_period < requested):
+            # The MBCx status note has no editor (owner decision, 25 Nov
+            # 2026), so an earlier month's note is left out, not held for a
+            # month check. The original file keeps it unchanged.
+            older.append(item.id)
+            continue
         if slot not in period_blocks:
             # Prose in a section with no monthly text block (for example a
             # vendor-status narrative under the subcontractor table) is still
