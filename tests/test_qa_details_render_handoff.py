@@ -24,14 +24,15 @@ def test_render_finishes_before_opening_replacement_disclosure():
             return self
         def wait_for(self, **kwargs):
             events.append('visible')
-        def scroll_into_view_if_needed(self, **kwargs):
-            events.append('scroll')
         def is_visible(self):
             return state['open']
         def evaluate(self, expression):
             return state['open']
-        def click(self):
+        def click(self, *, trial=False, timeout=None):
             assert not state['rendering']
+            if trial:
+                events.append('trial-scroll')
+                return
             events.append('open')
             state['open'] = True
     class Page:
@@ -42,18 +43,19 @@ def test_render_finishes_before_opening_replacement_disclosure():
         def get_by_text(self, *args, **kwargs):
             return Locator()
     helper()(Page())
-    assert events == ['finish-render', 'visible', 'scroll', 'open', 'visible']
+    assert events == ['finish-render', 'visible', 'trial-scroll', 'open', 'visible']
     assert state['open']
 
 
 def test_already_open_disclosure_is_not_toggled_closed():
     calls = []
     status = SimpleNamespace(is_visible=lambda: True)
-    label = SimpleNamespace(wait_for=lambda **kwargs: None, scroll_into_view_if_needed=lambda **kwargs: None, click=lambda: calls.append('click'))
+    label = SimpleNamespace(wait_for=lambda **kwargs: None,
+        click=lambda **kwargs: calls.append('trial' if kwargs.get('trial') else 'click'))
     page = SimpleNamespace(wait_for_function=lambda *a, **k: calls.append('idle'),
         get_by_text=lambda text, **kwargs: SimpleNamespace(first=label if isinstance(text, str) else status))
     helper()(page)
-    assert calls == ['idle']
+    assert calls == ['idle', 'trial']
 
 
 def test_requested_committed_state_precedes_idle_and_disclosure_open():
@@ -71,10 +73,13 @@ def test_requested_committed_state_precedes_idle_and_disclosure_open():
 def test_scroll_restoration_cannot_turn_open_action_into_close():
     state = {'open': False}
     clicks = []
-    def restore(**kwargs):
-        state['open'] = True
+    def restore(*, trial=False, timeout=None):
+        if trial:
+            state['open'] = True
+        else:
+            clicks.append('wrong-close')
     label = SimpleNamespace(wait_for=lambda **kwargs: None,
-        scroll_into_view_if_needed=restore, click=lambda: clicks.append('wrong-close'))
+        click=restore)
     status = SimpleNamespace(is_visible=lambda: state['open'])
     page = SimpleNamespace(wait_for_function=lambda *a, **k: None,
         get_by_text=lambda text, **kwargs: SimpleNamespace(first=label if isinstance(text, str) else status))
@@ -92,8 +97,8 @@ def test_open_disclosure_hidden_by_rerun_is_not_clicked_closed():
             raise TimeoutError('not painted yet')
         state['painted'] = True
     label = SimpleNamespace(wait_for=lambda **kwargs: None,
-        scroll_into_view_if_needed=lambda **kwargs: None,
-        evaluate=lambda expression: True, click=lambda: clicks.append('wrong-close'))
+        evaluate=lambda expression: True,
+        click=lambda **kwargs: None if kwargs.get('trial') else clicks.append('wrong-close'))
     status = SimpleNamespace(is_visible=lambda: state['painted'], wait_for=wait_status)
     page = SimpleNamespace(wait_for_function=lambda *a, **k: None,
         get_by_text=lambda text, **kwargs: SimpleNamespace(first=label if isinstance(text, str) else status))
