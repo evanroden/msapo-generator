@@ -273,6 +273,8 @@ def exercise_page(page, name, errors):
     package.get_by_role("button", name="Back to editing", exact=True).click()
     check(name + " local editing return", package.locator(".epc-workspace-reference").is_hidden())
     capture(page, name, "compact")
+    from workspace_text_acceptance import exercise_larger_text
+    REPORT.setdefault('larger_text',{})[name]=exercise_larger_text(page,scope,output=OUT,name=name)
     check(name + " no browser errors", not errors, errors)
     check(name + " zero external browser requests", not blocked, blocked)
 
