@@ -88,6 +88,7 @@ from app.job_numbers import (
     job_numbers_for_contract,
     suggest_job_number,
 )
+from app.vendor_identity import is_operator_vendor_name
 from app.memory import (
     record_device_account_manager,
     record_po_history,
@@ -2257,11 +2258,16 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
 
     contact_key = f"contact_{token}"
     analysis_contact_name = str(analysis.contact_name or "").strip()
+    rejected_operator_contact = is_operator_vendor_name(analysis_contact_name)
+    if rejected_operator_contact:
+        analysis_contact_name = ""
     if contact_key not in st.session_state:
         st.session_state[contact_key] = analysis_contact_name
 
     email_key = f"cemail_{token}"
-    analysis_contact_email = str(analysis.contact_email or "").strip()
+    analysis_contact_email = (
+        "" if rejected_operator_contact else str(analysis.contact_email or "").strip()
+    )
     if email_key not in st.session_state:
         st.session_state[email_key] = analysis_contact_email
 
@@ -2960,6 +2966,8 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
         draft_problems.append("choose the specific asset or No asset applies")
     if not str(st.session_state.get(contact_key, "")).strip():
         draft_problems.append("enter the vendor representative name")
+    elif is_operator_vendor_name(str(st.session_state.get(contact_key, ""))):
+        draft_problems.append("use your name only as the requester, not the vendor representative")
     contact_email = str(st.session_state.get(email_key, "")).strip()
     if not required_email_is_valid(contact_email):
         draft_problems.append("enter a valid vendor representative email")
