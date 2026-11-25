@@ -992,6 +992,8 @@ def exercise(browser_type, name):
         exercise_natural_review_navigation(page, name, field, "compact")
         expect(page.get_by_text("Monthly DOM blocked external attempts: 0", exact=True)).to_be_visible()
         check(name, "zero external browser requests or sharing", not attempts and not page.evaluate("window.__monthlyShareAttempts.length"), attempts)
+        from workspace_text_acceptance import exercise_larger_text
+        REPORT.setdefault('larger_text',{})[name]=exercise_larger_text(page,field,output=OUT,name=name)
         check(name, "no uncaught browser errors", not errors, errors)
     except Exception as exc:
         REPORT["browsers"].setdefault(name, {})["failure"] = {"type": type(exc).__name__, "message": str(exc)[:3000], "traceback": traceback.format_exc(), "browser_errors": errors, "blocked_external": attempts}
