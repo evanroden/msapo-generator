@@ -198,13 +198,45 @@ def check_settings(report: Report) -> None:
     from app.config import account_director, director_config_problems
     accounts = contracts.contract_names()
     configured = sum(account_director(account) is not None for account in accounts)
+    learned_keys = learned_director_accounts()
+    from app.memory import _account_key
+    learned = sum(account_director(account) is None and _account_key(account) in learned_keys
+                  for account in accounts)
     problems = director_config_problems(accounts)
-    report.line("PASS" if configured and not problems else "WARN",
-                f"expense directors configured for {configured} of {len(accounts)} account(s)"
-                + ("" if configured else ": expense forms will name no director")
+    # Directors are normally LEARNED: the first filed report for an account
+    # remembers its director for everyone. An empty configuration is therefore
+    # expected, not a fault; only a malformed or mistyped one is.
+    report.line("WARN" if problems else ("PASS" if configured else "INFO"),
+                f"expense directors configured for {configured} of {len(accounts)} account(s), "
+                f"learned from filed reports for {learned} more"
+                + ("" if configured or learned else
+                   ": each account's first expense form asks for its director")
                 + ("" if not problems else f"; {len(problems)} problem(s):"))
     for problem in problems:
         report.line("", "  " + problem)
+
+
+def learned_director_accounts() -> set[str]:
+    """Account keys with a director confirmed on a filed expense report.
+
+    Read-only: the check must never create or migrate the memory database,
+    so an absent file simply means nothing has been learned yet.
+    """
+    from app.memory import _data_dir
+    path = _data_dir() / "epc_memory.db"
+    if not path.is_file():
+        return set()
+    try:
+        conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+        try:
+            rows = conn.execute(
+                "SELECT DISTINCT account_key FROM expense_approvers "
+                "WHERE use_count>=1 AND role='director'").fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return set()
+    return {str(row[0]) for row in rows}
 
 
 def check_foundry(report: Report, model: str, http_client=None) -> None:

@@ -146,14 +146,38 @@ def test_offline_skips_the_api(host, monkeypatch, capsys):
     assert "INFO  Anthropic API not checked (--offline)" in capsys.readouterr().out
 
 
-def test_an_empty_director_map_is_a_warning(host, monkeypatch, capsys):
+def test_an_empty_director_map_is_expected_not_a_warning(host, monkeypatch, capsys):
+    """Directors are learned from filed reports, so none configured is normal."""
     from app import config
     monkeypatch.setattr(config, "_ACCOUNT_DIRECTORS", {})
     monkeypatch.setattr(config, "_ACCOUNT_DIRECTOR_PROBLEMS", [])
     assert host_check.main(OFFLINE) == 0
-    assert any(line.startswith("WARN  expense directors configured for 0 of ")
-               and line.endswith(": expense forms will name no director")
-               for line in capsys.readouterr().out.splitlines())
+    out = capsys.readouterr().out
+    assert any(line.startswith("INFO  expense directors configured for 0 of ")
+               and line.endswith(": each account's first expense form asks for its director")
+               for line in out.splitlines())
+    assert "WARN  expense directors" not in out
+
+
+def test_learned_directors_are_counted_without_printing_them(host, monkeypatch, capsys):
+    from app import config, contracts, memory
+    learned_account = contracts.contract_names()[0]
+    monkeypatch.setattr(config, "_ACCOUNT_DIRECTORS", {})
+    monkeypatch.setattr(config, "_ACCOUNT_DIRECTOR_PROBLEMS", [])
+    assert memory.record_expense_approver(
+        account=learned_account, approver_name="Synthetic Learned",
+        approver_email="learned@example.invalid", context_id="report-1") == 1
+    before = (host / "epc_memory.db").read_bytes()
+    assert host_check.main(OFFLINE) == 0
+    out = capsys.readouterr().out
+    assert "learned from filed reports for 1 more" in out
+    assert "Synthetic Learned" not in out and "example.invalid" not in out
+    assert (host / "epc_memory.db").read_bytes() == before
+
+
+def test_the_director_count_never_creates_the_memory_database(host):
+    assert host_check.learned_director_accounts() == set()
+    assert not (host / "epc_memory.db").exists()
 
 
 def test_a_configured_director_map_passes(host, monkeypatch, capsys):

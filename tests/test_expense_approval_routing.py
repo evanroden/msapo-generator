@@ -428,11 +428,12 @@ def test_the_migration_is_idempotent(legacy_database):
 # --- the form: configured director wins, administrators are not seeded ---------
 
 
-def _expense_app(monkeypatch, *, remembered: dict, director) -> AppTest:
+def _expense_app(monkeypatch, *, remembered: dict, director, learned=()) -> AppTest:
     for key, value in dotenv_values(ROOT / ".env.example").items():
         if value is not None:
             monkeypatch.setenv(key, value)
     monkeypatch.setattr(expense_ui, "account_director", lambda _account: director)
+    monkeypatch.setattr(expense_ui, "expense_approvers", lambda _account: list(learned))
     monkeypatch.setattr(expense_ui, "director_config_problems", lambda _known: [])
     monkeypatch.setattr(
         expense_ui, "remembered_expense_profile", lambda *_args: dict(remembered)
@@ -496,6 +497,48 @@ def test_a_remembered_director_is_seeded_when_none_is_configured(monkeypatch):
         "Remembered Director",
         "remembered.director@example.invalid",
     )
+
+
+LEARNED = ("Learned Director", "learned.director@example.invalid")
+OTHER_LEARNED = ("Second Director", "second.director@example.invalid")
+
+
+def test_the_only_learned_director_is_seeded_on_a_new_device(monkeypatch):
+    """Nothing configured and nothing on this device: the one director this
+    account has already confirmed on a filed report fills the fields."""
+    app = _expense_app(monkeypatch, remembered={}, director=None, learned=(LEARNED,))
+    assert not app.exception
+    assert _director_fields(app) == LEARNED
+
+
+def test_several_learned_directors_are_offered_not_guessed(monkeypatch):
+    app = _expense_app(
+        monkeypatch, remembered={}, director=None, learned=(LEARNED, OTHER_LEARNED)
+    )
+    assert not app.exception
+    assert _director_fields(app) == ("", "")
+    assert any("already used on this account" in c.value for c in app.caption)
+
+
+def test_this_devices_director_outranks_the_account_history(monkeypatch):
+    app = _expense_app(monkeypatch, remembered=CONFIRMED, director=None, learned=(LEARNED,))
+    assert _director_fields(app) == (
+        "Remembered Director",
+        "remembered.director@example.invalid",
+    )
+
+
+def test_the_configured_director_outranks_the_account_history(monkeypatch):
+    app = _expense_app(
+        monkeypatch, remembered={}, director=(DIRECTOR_NAME, DIRECTOR_EMAIL), learned=(LEARNED,)
+    )
+    assert _director_fields(app) == (DIRECTOR_NAME, DIRECTOR_EMAIL)
+
+
+def test_a_first_filer_is_told_the_director_will_be_remembered(monkeypatch):
+    app = _expense_app(monkeypatch, remembered={}, director=None)
+    assert _director_fields(app) == ("", "")
+    assert any("remembers it for this account" in c.value for c in app.caption)
 
 
 def test_the_manager_is_recalled_from_this_device(monkeypatch):
