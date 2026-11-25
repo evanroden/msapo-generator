@@ -25,8 +25,8 @@ if memory._data_dir().resolve() != root.resolve():
     raise RuntimeError('Expense test storage was not isolated')
 expense_report.PDF_BACKEND = 'libreoffice'
 st.set_page_config(layout='wide')
-# Match the production single-sourced shell without copying its CSS.
-st.html('<style>' + (Path(__file__).resolve().parents[3] / 'app/workflow_shell.css').read_text(encoding='utf-8') + '</style>')
+# Match only the production native-target rules, preserving fixture geometry.
+st.html('<style>' + (Path(__file__).resolve().parents[3] / 'app/native_controls.css').read_text(encoding='utf-8') + '</style>')
 
 # A hidden fixture-only acknowledgement lets browser checks wait for a genuine
 # completed fragment render before comparing the full-app run counter.
