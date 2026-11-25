@@ -417,3 +417,23 @@ def test_compact_workflow_and_step_navigation_keep_touch_targets():
     assert 'minmax(0,var(--epc-editor-width))' in css
     workflow=(ROOT/'.github/workflows/adaptive-workspaces.yml').read_text()
     assert 'run: python scripts/qa_duo_compact_portrait.py' in workflow
+
+
+def test_native_touch_targets_share_production_shell_and_all_journeys():
+    css = (ROOT / 'app/native_controls.css').read_text()
+    assert '@media (max-width: 900px), (pointer: coarse)' in css
+    for selector in ('stCheckbox', 'stRadio', 'stToggle', 'stTextInputRootElement',
+                     'stNumberInputContainer', 'stDateInput', 'stSelectbox',
+                     'stMultiSelect', 'stExpandSidebarButton'):
+        assert selector in css
+    for workflow in ('monthly', 'po', 'expense'):
+        script = (ROOT / f'scripts/qa_{workflow}_adaptive.py').read_text()
+        assert 'exercise_touch_targets(page,output=OUT,name=name)' in script
+    for fixture in ('monthly', 'expense'):
+        source = (ROOT / f'tests/fixtures/workspaces/{fixture}_app.py').read_text()
+        assert "'app/native_controls.css').read_text" in source
+    helper = (ROOT / 'scripts/workspace_touch_acceptance.py').read_text()
+    assert 'input[type="checkbox"],input[type="radio"]' in helper
+    assert "closest('label')" in helper
+    assert "closest('[inert]')" in helper
+    assert 'for width in (320,390,669)' in helper
