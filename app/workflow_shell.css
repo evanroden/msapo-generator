@@ -65,24 +65,3 @@
   .stApp .epc-compact-open,.stApp .epc-compact-back,.stApp .epc-preview-controls button {background:#20342C;color:#EDF5F0;border-color:#9EBDB2;}
 }
 @media print { :root {color-scheme:light;} }
-
-/* Native form controls keep their real hit area on phones, unfolded narrow
-   windows and touch devices. Do not enlarge hidden radio/checkbox inputs:
-   their associated label is the native activation target. */
-@media (max-width: 900px), (pointer: coarse) {
-  .stApp [data-testid="stMain"] :is(button, summary),
-  .stApp [data-testid="stSidebar"] :is(button, summary),
-  .stApp [data-testid="stHeader"] [data-testid="stExpandSidebarButton"] {
-    min-height: 44px;
-    min-width: 44px;
-  }
-  .stApp :is([data-testid="stCheckbox"], [data-testid="stRadio"], [data-testid="stToggle"]) label {
-    min-height: 44px;
-    min-width: 44px;
-    align-items: center;
-  }
-  .stApp :is([data-testid="stTextInputRootElement"], [data-testid="stNumberInputContainer"], [data-testid="stDateInput"], [data-testid="stSelectbox"], [data-testid="stMultiSelect"]) input:not([type="hidden"]) {
-    min-height: 44px;
-    box-sizing: border-box;
-  }
-}
