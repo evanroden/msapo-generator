@@ -141,7 +141,7 @@ for(const [focused,previous,mode,wanted] of [
     subprocess.run(['node', '-e', script], cwd=ROOT, check=True, capture_output=True, text=True)
 
 
-def test_text_reflow_rechecks_only_its_bounded_window_and_honors_user_cancel():
+def test_viewport_reflow_rechecks_only_its_bounded_window_and_honors_user_cancel():
     script = r'''
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const source=fs.readFileSync('app/workspace_layout.js','utf8');
@@ -151,7 +151,7 @@ const calls=[];let now=1000,scheduled=0;
 const sample={visual:{width:669,height:885,scale:1},layout:{width:669,height:885},textScale:2};
 const context={mode:'compact'},root={getBoundingClientRect:()=>({top:0,bottom:885})};
 const env={sample,context,root,scrollport:root,ownsScroll:false,top:122,bottom:885,
- state:{focusViewport:'old',focusTextScale:1.5},focusClearUntil:0,Date:{now:()=>now},
+ state:{focusViewport:'old',focusTextScale:2},focusClearUntil:0,Date:{now:()=>now},
  schedule:()=>scheduled++,navigation:null,ENFRAWorkspaceNavigation:{keepFocusedClear:x=>calls.push(x)}};
 const evaluate=()=>vm.runInNewContext('{'+source.slice(start,end)+'}',env);
 evaluate();assert.equal(calls.length,1);assert.equal(env.focusClearUntil,1600);
@@ -164,5 +164,11 @@ vm.runInNewContext(source.slice(a,b),Object.assign(env,{subscriptions:cleanups,
  document:{addEventListener:(type,fn)=>listeners[type]=fn,removeEventListener(){}}}));
 for(const type of ['pointerdown','keydown','wheel','touchstart']){env.focusClearUntil=2000;listeners[type]();assert.equal(env.focusClearUntil,0);}
 assert.equal(cleanups.length,4);
+// Switching into a confined owner must cancel any page-flow settle window.
+env.state.focusViewport='old';env.state.focusTextScale=2;
+env.focusClearUntil=2200;env.ownsScroll=true;now=1700;
+evaluate();assert.equal(env.focusClearUntil,0);
+const after=calls.length;now=1750;evaluate();
+assert.equal(calls.length,after,'a stale page-flow window must not undo confined reading');
 '''
     subprocess.run(['node','-e',script],cwd=ROOT,check=True,capture_output=True,text=True)
