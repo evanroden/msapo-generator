@@ -95,14 +95,14 @@ const start=source.indexOf('        const viewportSignature =');
 const end=source.indexOf('        const signature =',start);
 assert.ok(start>=0 && end>start);
 for(const ownsScroll of [true,false]) for(const changed of [true,false]) {
- const sample={visual:{width:669,height:250,scale:1},layout:{width:669,height:250}};
+ const sample={visual:{width:669,height:250,scale:1},layout:{width:669,height:250},textScale:1};
  const context={mode:ownsScroll?'tabletop':'compact'};
- const current=JSON.stringify([669,250,1,sample.layout,context.mode]);
- const state={focusViewport:changed?'previous':current};
+ const current=JSON.stringify([669,250,1,sample.layout,1,context.mode]);
+ const state={focusViewport:changed?'previous':current,focusTextScale:1};
  const root={getBoundingClientRect:()=>({top:416,bottom:900})};
  const scrollport={getBoundingClientRect:()=>({top:0,bottom:900})};
  const calls=[];
- const env={state,sample,context,root,scrollport,ownsScroll,top:122,bottom:900,navigation:{height:()=>50},
+ const env={state,sample,context,root,scrollport,ownsScroll,top:122,bottom:900,focusClearUntil:0,schedule:()=>{},navigation:{height:()=>50},
   ENFRAWorkspaceNavigation:{keepFocusedClear:value=>calls.push(value)}};
  vm.runInNewContext(source.slice(start,end),env);
  assert.equal(calls.length,changed?1:0,'ordinary scroll never invokes corrective scrolling');
@@ -139,3 +139,30 @@ for(const [focused,previous,mode,wanted] of [
 }
 '''
     subprocess.run(['node', '-e', script], cwd=ROOT, check=True, capture_output=True, text=True)
+
+
+def test_text_reflow_rechecks_only_its_bounded_window_and_honors_user_cancel():
+    script = r'''
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const source=fs.readFileSync('app/workspace_layout.js','utf8');
+const start=source.indexOf('        const viewportSignature =');
+const end=source.indexOf('        const signature =',start);
+const calls=[];let now=1000,scheduled=0;
+const sample={visual:{width:669,height:885,scale:1},layout:{width:669,height:885},textScale:2};
+const context={mode:'compact'},root={getBoundingClientRect:()=>({top:0,bottom:885})};
+const env={sample,context,root,scrollport:root,ownsScroll:false,top:122,bottom:885,
+ state:{focusViewport:'old',focusTextScale:1.5},focusClearUntil:0,Date:{now:()=>now},
+ schedule:()=>scheduled++,navigation:null,ENFRAWorkspaceNavigation:{keepFocusedClear:x=>calls.push(x)}};
+const evaluate=()=>vm.runInNewContext('{'+source.slice(start,end)+'}',env);
+evaluate();assert.equal(calls.length,1);assert.equal(env.focusClearUntil,1600);
+now=1400;evaluate();assert.equal(calls.length,2,'late native reflow stays covered');
+now=1601;evaluate();assert.equal(calls.length,2,'ordinary later scrolling stays untouched');
+// All deliberate input gestures cancel the settling window synchronously.
+const a=source.indexOf('    const cancelFocusClear ='),b=source.indexOf('    const controlsOwner =',a);
+const listeners={},cleanups=[];env.focusClearUntil=2000;
+vm.runInNewContext(source.slice(a,b),Object.assign(env,{subscriptions:cleanups,
+ document:{addEventListener:(type,fn)=>listeners[type]=fn,removeEventListener(){}}}));
+for(const type of ['pointerdown','keydown','wheel','touchstart']){env.focusClearUntil=2000;listeners[type]();assert.equal(env.focusClearUntil,0);}
+assert.equal(cleanups.length,4);
+'''
+    subprocess.run(['node','-e',script],cwd=ROOT,check=True,capture_output=True,text=True)
