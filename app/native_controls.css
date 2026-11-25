@@ -13,6 +13,10 @@
     min-width: 44px;
     align-items: center;
   }
+  .stApp :is([data-testid="stTextInputRootElement"], [data-testid="stNumberInputContainer"]),
+  .stApp :is([data-testid="stDateInput"], [data-testid="stSelectbox"], [data-testid="stMultiSelect"]) [role="group"] {
+    min-height: 48px;
+  }
   .stApp :is([data-testid="stTextInputRootElement"], [data-testid="stNumberInputContainer"], [data-testid="stDateInput"], [data-testid="stSelectbox"], [data-testid="stMultiSelect"]) input:not([type="hidden"]) {
     min-height: 44px;
     box-sizing: border-box;
