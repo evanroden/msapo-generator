@@ -534,6 +534,11 @@ __WORKFLOW_SHELL_CSS__
     }
     .po-step-anchor { display: block; height: 0; scroll-margin-top: 1rem; }
 
+    .po-summary-metrics {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+        gap: 0.75rem;
+    }
     .metric-card {
         background: #FFFFFF;
         border: 1px solid var(--enfra-concrete);
@@ -2487,7 +2492,6 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
 
     _render_tax_alert(getattr(analysis, "tax_status", ""))
 
-    metrics = st.columns(3)
     metric_values = (
         ("Vendor", vendor_value or "Needs your input"),
         (
@@ -2498,13 +2502,14 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
         ),
         ("Final amount", total_value or "Needs your input"),
     )
-    for column, (label, value) in zip(metrics, metric_values):
-        with column:
-            st.markdown(
-                f'<div class="metric-card"><div class="metric-label">{_h(label)}</div>'
-                f'<div class="metric-value">{_h(value)}</div></div>',
-                unsafe_allow_html=True,
-            )
+    # Respond to the actual editor pane, not the full window. On an open
+    # portrait/folded screen a wide viewport can still have a 320px editor.
+    cards = "".join(
+        f'<div class="metric-card"><div class="metric-label">{_h(label)}</div>'
+        f'<div class="metric-value">{_h(value)}</div></div>'
+        for label, value in metric_values
+    )
+    st.markdown(f'<div class="po-summary-metrics">{cards}</div>', unsafe_allow_html=True)
 
     if analysis.facility_name:
         st.markdown(
