@@ -345,6 +345,13 @@ export default function(component) {
             figure.style.width = width + 'px';
             figure.style.marginInline = 'auto';
         });
+        // Let the final native page reach the reading line in a tall, narrow
+        // pane. Otherwise scroll clamping leaves the blank tail of its preceding
+        // divider above the requested content page. Keep every page reachable.
+        const finalPage = scroll.querySelectorAll('figure');
+        const finalBounds = finalPage.length ? finalPage[finalPage.length-1].getBoundingClientRect() : null;
+        const finalHeight = finalBounds ? finalBounds.bottom-finalBounds.top : 0;
+        scroll.style.paddingBottom = Math.max(12, scroll.clientHeight-finalHeight-16)+'px';
         if (state.restore && pagesKnown) {
             const figure = scroll.querySelector('figure[data-index="'+state.page+'"]');
             if (figure) scroll.scrollTop = figure.offsetTop - scroll.offsetTop + (state.offset || 0);
