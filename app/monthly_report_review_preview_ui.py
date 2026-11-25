@@ -94,7 +94,7 @@ def _show_ticket(slot, owner, current, draft, prefix, *, stale):
     return True
 
 
-def render_review_preview(draft, assets, prefix):
+def _render_review_preview(draft, assets, prefix):
     """Populate Review directly when visible, from the complete canonical draft.
 
     The browser reports only that this revision's Review is in view. The server
@@ -187,3 +187,22 @@ def render_review_preview(draft, assets, prefix):
     if current:
         _discard_preview(owner, current)
     _show_ticket(slot, owner, fresh, draft, prefix, stale=False)
+
+
+def render_review_preview(draft, assets, prefix):
+    """Keep visibility, preview paging and recovery inside a view-only fragment.
+
+    The parent has already accepted and saved its native editors. Review can
+    assemble only this immutable draft revision, without replaying those editors.
+    Carry the disposable testing namespace into independent fragment callbacks.
+    """
+    from app.monthly_report_testing import scope, capture_namespace
+    if scope() is not None:
+        captured = capture_namespace()
+
+        def scoped_review(draft, assets, prefix):
+            with captured():
+                return _render_review_preview(draft, assets, prefix)
+
+        return st.fragment(scoped_review)(draft, assets, prefix)
+    return st.fragment(_render_review_preview)(draft, assets, prefix)
