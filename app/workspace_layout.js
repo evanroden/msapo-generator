@@ -450,6 +450,14 @@ export default function(component) {
         navigation?.update(context,sample);
         updateActive(context);
         globalThis.ENFRAWorkspaceNavigation?.focusEntries(state, root);
+        const viewportSignature = JSON.stringify([sample.visual?.width,sample.visual?.height,sample.visual?.scale,sample.layout,context.mode]);
+        if (state.focusViewport && viewportSignature !== state.focusViewport && !state.navigationRequest) {
+            const owner = ownsScroll ? root : scrollport;
+            const ownerBox = owner.getBoundingClientRect();
+            globalThis.ENFRAWorkspaceNavigation?.keepFocusedClear({root,scrollport:owner,
+                top:Math.max(ownerBox.top,top),bottom:Math.min(ownerBox.bottom,bottom)-8});
+        }
+        state.focusViewport = viewportSignature;
         const signature = JSON.stringify([context.mode,context.editor,context.preview,top]);
         if (signature !== lastGeometry) {
             lastGeometry = signature;
