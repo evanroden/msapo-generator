@@ -732,6 +732,23 @@ def exercise(browser_type, name):
         page.locator('.epc-section-navigation').scroll_into_view_if_needed()
         navigate_sections(page, "monthly_activity")
         exercise_viewport_clearance(page, name, field)
+        # The initial two-page Activity section ends with one short content
+        # page after its divider. Tall portrait panes must still put that page
+        # at the top, without dropping the divider or changing report content.
+        page.set_viewport_size({"width":669,"height":885})
+        mode(page,"wide")
+        scroll_pair(page, ACTIVITY)
+        current_image(page, ACTIVITY, selected_page=2)
+        page.wait_for_function("""() => {
+            function all(root,selector) {let nodes=[...root.querySelectorAll(selector)];
+                for(const n of root.querySelectorAll('*'))if(n.shadowRoot)nodes.push(...all(n.shadowRoot,selector));return nodes;}
+            const root=document.querySelector('.st-key-epc_pair_monthly_activity');
+            const scroll=all(root,'.report-preview-scroll')[0], figures=all(root,'figure');
+            return figures.length===2 && Math.abs(figures[1].getBoundingClientRect().top-scroll.getBoundingClientRect().top)<4;
+        }""")
+        capture(page,name,"portrait-last-content-page-aligned")
+        page.set_viewport_size({"width":1440,"height":900})
+        mode(page,"wide")
         original = field.input_value()
         # Edit the actual authoritative field, not an oracle or a mocked parser.
         # Repeated explicitly synthetic notes yield genuine multipage section PDF.
