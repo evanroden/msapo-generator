@@ -28,7 +28,7 @@ export default function(component) {
         state.sourceReviewReturn = null;
     }
     globalThis.ENFRAWorkspaceNavigation?.land(state, data.landing);
-    let frame = null, focusFrame = null, disposed = false, pairs = [], lastGeometry = '';
+    let frame = null, focusFrame = null, focusClearUntil = 0, disposed = false, pairs = [], lastGeometry = '';
     const subscriptions = [];
     if (state.landingRequest) {
         const cancelLanding = event => {
@@ -43,6 +43,11 @@ export default function(component) {
     for (const type of ['pointerdown', 'keydown', 'wheel', 'touchstart', 'touchmove', 'touchend', 'touchcancel']) {
         document.addEventListener(type, noteInput, {capture:true, passive:true});
         subscriptions.push(() => document.removeEventListener(type, noteInput, {capture:true}));
+    }
+    const cancelFocusClear = () => {focusClearUntil = 0;};
+    for (const type of ['pointerdown','keydown','wheel','touchstart']) {
+        document.addEventListener(type,cancelFocusClear,{capture:true,passive:true});
+        subscriptions.push(() => document.removeEventListener(type,cancelFocusClear,{capture:true}));
     }
     const controlsOwner = {};
     if (data.workflow === 'monthly' && globalThis.ENFRASourceReviewNavigation)
@@ -304,7 +309,7 @@ export default function(component) {
         return {layout:{width:document.documentElement.clientWidth, height:window.innerHeight},
             visual:visual ? {x:visual.offsetLeft,y:visual.offsetTop,width:visual.width,height:visual.height,scale:visual.scale} : null,
             app:{x:block.x + left,y:workingTop,width:Math.max(0,block.width-left-right),height:Math.max(0,outer.y+outer.height-workingTop)},
-            chromeBottom,
+            chromeBottom, textScale,
             scrollport:outer, segments, posture,
             ...geometry.paneMinimums(block.width-left-right, textScale, segments),
             safe:{top:parseFloat(insets.paddingTop)||0,right:parseFloat(insets.paddingRight)||0,bottom:parseFloat(insets.paddingBottom)||0,left:parseFloat(insets.paddingLeft)||0}};
@@ -451,8 +456,13 @@ export default function(component) {
         navigation?.update(context,sample);
         updateActive(context);
         globalThis.ENFRAWorkspaceNavigation?.focusEntries(state, root);
-        const viewportSignature = JSON.stringify([sample.visual?.width,sample.visual?.height,sample.visual?.scale,sample.layout,context.mode]);
-        if (state.focusViewport && viewportSignature !== state.focusViewport && !state.navigationRequest) {
+        const viewportSignature = JSON.stringify([sample.visual?.width,sample.visual?.height,sample.visual?.scale,sample.layout,sample.textScale,context.mode]);
+        const viewportChanged = state.focusViewport && viewportSignature !== state.focusViewport;
+        if (viewportChanged && state.focusTextScale !== sample.textScale) focusClearUntil = Date.now() + 600;
+        // Font changes can reflow native descendants after the first resolver
+        // pass. Recheck only this bounded transition, never normal user scrolling.
+        if ((viewportChanged || Date.now() < focusClearUntil) && !state.navigationRequest) {
+            if (Date.now() < focusClearUntil) schedule();
             const owner = ownsScroll ? root : scrollport;
             const ownerBox = owner.getBoundingClientRect();
             globalThis.ENFRAWorkspaceNavigation?.keepFocusedClear({root,scrollport:owner,
@@ -460,6 +470,7 @@ export default function(component) {
                 bottom:Math.min(ownerBox.bottom,bottom)-8});
         }
         state.focusViewport = viewportSignature;
+        state.focusTextScale = sample.textScale;
         const signature = JSON.stringify([context.mode,context.editor,context.preview,top]);
         if (signature !== lastGeometry) {
             lastGeometry = signature;

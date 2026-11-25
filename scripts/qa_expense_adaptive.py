@@ -445,6 +445,8 @@ def run(browser_type,name):
         expect(mileage.get_by_label('Business miles *',exact=True)).to_be_visible()
         check(name+' mileage-only has actual trip review',mileage.get_by_text('Current trips and reimbursement',exact=True).count()==1)
         mileage.screenshot(path=str(OUT/f'{name}-mileage-only.png'))
+        from workspace_text_acceptance import exercise_larger_text
+        EVIDENCE.setdefault('larger_text',{})[name]=exercise_larger_text(page,first.get_by_label('Reimbursable amount *',exact=True).first,output=OUT,name=name)
         check(name+' no browser errors',not errors,errors)
         check(name+' zero external browser requests',not blocked,blocked)
     except Exception:
