@@ -1,4 +1,5 @@
 import base64
+import pytest
 from concurrent.futures import Future
 import inspect
 from pathlib import Path
@@ -459,7 +460,8 @@ def test_missing_rrh_work_category_requires_an_explicit_selection(monkeypatch):
     assert generate.disabled
 
 
-def test_vendor_representative_is_filled_from_account_vendor_memory(monkeypatch):
+@pytest.mark.parametrize("rejected_contact", [False, True])
+def test_vendor_representative_is_filled_from_account_vendor_memory(monkeypatch, rejected_contact):
     _configure_smartsheet(monkeypatch)
     monkeypatch.setattr(
         web_ui,
@@ -472,8 +474,8 @@ def test_vendor_representative_is_filled_from_account_vendor_memory(monkeypatch)
             scope_of_work="Repair steam boiler B-1.",
             inclusions=["Labor"],
             exclusions=["Unquoted work"],
-            contact_name=None,
-            contact_email=None,
+            contact_name="Evan Roden" if rejected_contact else None,
+            contact_email="requester@example.invalid" if rejected_contact else None,
             total_amount="$1,819.80",
             short_description="Boiler Repair",
             work_category="repairs",
