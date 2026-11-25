@@ -34,3 +34,15 @@
   .st-key-epc_workspace_monthly .epc-section-selector {color:#EDF5F0;background:#20342C;border-color:#9EBDB2;}
   .st-key-epc_workspace_monthly .epc-section-navigation button:disabled {color:#B8D2C8;opacity:1;}
 }
+
+/* Keep the Monthly editor readable while the app works (review F10).
+   Streamlit 1.61.1 fades every element of the previous run to one third
+   opacity 0.5 s into any rerun, so an ordinary edit or a section choice grays
+   out the whole report. Fields stay usable and keep their values throughout,
+   so only a run that is still going after 4 s dims the page, and only
+   lightly; Streamlit's own running indicator still shows at once. The
+   attribute selector outranks Streamlit's one-class stale style; section
+   headers (expander summaries) carry no stale attribute, so they stay solid. */
+.st-key-epc_workspace_monthly [data-testid="stElementContainer"][data-stale="true"] {opacity:1;transition:opacity .3s ease-in 4s;}
+.st-key-epc_workspace_monthly [data-testid="stElementContainer"][data-stale="true"]:not(:has([data-testid="stElementContainer"])) {opacity:.75;}
+.st-key-epc_workspace_monthly [data-testid="stExpander"] summary {opacity:1;}
