@@ -131,9 +131,9 @@ def open_qa_details(page, *, timeout=45000):
                            timeout=timeout)
     label = page.get_by_text("QA details", exact=True).first
     label.wait_for(timeout=timeout)
-    # Scrolling a long report can finish a pending expander restoration. Read
-    # visibility after scrolling, not before a click's implicit scroll step.
-    label.scroll_into_view_if_needed(timeout=timeout)
+    # Trial activation scrolls and checks actionability without toggling. Unlike
+    # scroll_into_view_if_needed, it reacquires a disclosure replaced mid-scroll.
+    label.click(trial=True, timeout=timeout)
     status = page.get_by_text(re.compile(r"^QA fixture state: ")).first
     # A click only toggles. If a rerun restores or replaces the disclosure
     # around the click (WebKit has no scroll anchoring and repaints later),
@@ -154,7 +154,7 @@ def open_qa_details(page, *, timeout=45000):
                                    timeout=timeout)
             label = page.get_by_text("QA details", exact=True).first
             label.wait_for(timeout=timeout)
-            label.scroll_into_view_if_needed(timeout=timeout)
+            label.click(trial=True, timeout=timeout)
 
 def await_fixture_state(page, mode: str, *, previous_generation: str | None = None,
                         timeout: int = 45000) -> dict:
