@@ -177,3 +177,21 @@ def test_guided_divider_block_is_rendered_and_explicit_omission_wins():
     raw = assemble_docx(report, asset_loader=lambda ref: image.getvalue())
     with ZipFile(BytesIO(raw)) as package:
         assert b'behindDoc="1"' not in package.read("word/document.xml")
+
+
+def test_review_conversion_scratch_never_enters_durable_library(monkeypatch, tmp_path):
+    outputs = fake_converter(monkeypatch, tmp_path)
+    captured = []
+    convert = preview.pdf_converter.convert_to_pdf
+
+    def observe(path):
+        captured.append(path)
+        assert path.is_file()
+        assert not path.resolve().is_relative_to((tmp_path / "monthly_reports").resolve())
+        return convert(path)
+
+    monkeypatch.setattr(preview.pdf_converter, "convert_to_pdf", observe)
+    preview.preview_report(draft(), ticket_only=True)
+    assert captured and not any(path.exists() for path in captured)
+    assert not any(path.exists() for path in outputs)
+    assert not (tmp_path / "monthly_reports" / "previews").exists()
