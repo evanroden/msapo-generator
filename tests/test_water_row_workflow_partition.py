@@ -39,7 +39,7 @@ def validate_partition(text):
         "      # Shared Back/Next walk used by the text-hydration and adaptive journeys.\n"
         "      - 'scripts/monthly_sequential_navigation.py'\n"
         "      - 'tests/test_monthly_sequential_navigation_harness.py'\n",
-        ""
+        "")
     # Approved later edit (#820): pushes keep their active run instead of
     # cancelling it. Reverse only that concurrency block; every other byte
     # of the original workflow is still compared below.
