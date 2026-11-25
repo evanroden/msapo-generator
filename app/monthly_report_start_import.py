@@ -275,6 +275,16 @@ def analyze_starting_report(inspection, profile, period, known_sites=(), *, conf
         if (item.kind == "text" and slot not in known_slots
                 and item.section in known_section_keys):
             slot = default_slot(item.section)
+        if (item.section == "subcontractors" and item.kind in ("text", "image")
+                and source_period and source_period < requested
+                and not (slot or "").startswith("divider_")
+                and not source_text_role(item)):
+            # Section 6 carries a standing vendor roster (the table). Prose
+            # and report pages beside it are an earlier month's service
+            # evidence, not a new completion, so a new month keeps only the
+            # roster. The original file keeps the evidence unchanged.
+            older.append(item.id)
+            continue
         if (slot == "mbcx_status" and item.kind == "text"
                 and source_period and source_period < requested):
             # The MBCx status note has no editor (owner decision, 25 Nov
@@ -653,7 +663,10 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
             if item.id in older_titles:
                 deferred_titles[item.id] = item
                 continue
-            if item.id in analysis.older_items and item.kind != "image":
+            if item.id in analysis.older_items and (
+                    item.kind != "image" or section.key == "subcontractors"):
+                # Subcontractor pictures beside the roster are an earlier
+                # month's vendor report pages (see analyze_starting_report).
                 # Old prose is not current-month work. Its photos are still
                 # source artwork belonging to this exact section, however:
                 # retain them with immutable source/month provenance so they

@@ -87,21 +87,38 @@ def test_section_heading_is_not_undated_monthly_work():
     assert caption.id in result.period_review_items
 
 
-def test_earlier_month_prose_in_a_table_only_section_needs_month_review():
-    # A vendor-status narrative sits under the subcontractor table, which has
-    # no monthly text block. Naming the cover's month without a year must not
-    # let it carry into the next report unchecked.
+def test_new_month_keeps_only_the_standing_vendor_roster():
+    # Section 6 is a standing vendor roster (the table). Prose and report
+    # pages beside it are last month's service evidence, so a new month
+    # leaves them out instead of carrying them as current work.
     named = item('vendor-note', 'subcontractors', 'October vendor evidence: blower motor test passed.')
-    dated = item('vendor-scan', 'subcontractors', 'Balance report scanned October 23, 2026.')
+    undated = item('vendor-detail', 'subcontractors', 'Blower motor runout is 0.005 in TIR.')
     standing = item('vendor-standing', 'subcontractors', 'Vendors are listed by trade.')
-    doc = inspection(named, dated, standing)
+    page = ImportItem('vendor-page', 'image', 'word/document.xml', 101, 0,
+                      section='subcontractors', suggested_slot='')
+    roster = ImportItem('vendor-roster', 'table', 'word/document.xml', 102, 0,
+                        section='subcontractors', suggested_slot='subcontractor_matrix',
+                        rows=(('Discipline', 'Vendor'), ('Electrical', 'Example Electric')))
+    doc = inspection(named, undated, standing, page, roster)
     result = analyze_starting_report(doc, PROFILE, PERIOD)
-    assert named.id in result.period_review_items
-    assert dated.id in result.period_review_items
-    assert standing.id not in result.period_review_items
+    left_out = {named.id, undated.id, standing.id, page.id}
+    assert left_out <= set(result.older_items)
+    assert not left_out & set(result.period_review_items)
+    assert roster.id not in result.older_items
     plan = automatic_section_plans(doc, result)['subcontractors']
-    assert set(plan['period_review_items']) == {named.id, dated.id}
-    assert not plan['approved']
+    assert not left_out & set(plan['selected'])
+
+
+def test_same_month_report_keeps_vendor_evidence():
+    note = item('vendor-note', 'subcontractors', 'November vendor evidence: blower motor test passed.')
+    page = ImportItem('vendor-page', 'image', 'word/document.xml', 101, 0,
+                      section='subcontractors', suggested_slot='')
+    doc = DocxInspection('synthetic-period-routing', (note, page), (), (), 1,
+                         cover_title_candidates=(PROFILE.facilities[0].title,
+                                                 'Monthly Report November 2026'))
+    result = analyze_starting_report(doc, PROFILE, PERIOD)
+    assert note.id not in result.older_items
+    assert page.id not in result.older_items
 
 
 def test_month_name_check_needs_an_earlier_source_cover():
