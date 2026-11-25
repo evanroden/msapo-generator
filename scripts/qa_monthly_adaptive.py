@@ -653,6 +653,20 @@ def exercise_viewport_clearance(page, name, field):
                     all(c["color"] in ("rgb(237, 245, 240)","rgb(184, 210, 200)") for c in nav_colors["controls"]),nav_colors)
             capture(page,name,appearance+"-"+label+"-native-editor")
     page.set_viewport_size({"width":1440,"height":900})
+    inject(page,[{"x":0,"y":0,"width":1440,"height":380},{"x":0,"y":410,"width":1440,"height":490}])
+    mode(page,"tabletop")
+    for height in (850,900):
+        page.set_viewport_size({"width":1440,"height":height})
+        mode(page,"tabletop")
+        frames(page)
+        clearance=field.evaluate("""n=>({field:n.getBoundingClientRect().toJSON(),
+            nav:document.querySelector('.epc-section-navigation').getBoundingClientRect().toJSON()})""")
+        check(name, "owned tabletop root keeps editor below its own navigation " + str(height),
+              clearance["field"]["top"] >= clearance["nav"]["bottom"] + 8,clearance)
+        check(name,"owned tabletop resize keeps native editing state",editor_state(field)==before)
+        capture(page,name,"tabletop-resize-clearance-"+str(height))
+    inject(page,None)
+    page.set_viewport_size({"width":1440,"height":900})
     mode(page,"wide")
 
 
