@@ -45,6 +45,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Mapping
 
+from app.vendor_identity import is_operator_vendor_name
 from app import contracts
 from app.config import (
     FACILITIES,
@@ -977,6 +978,8 @@ def build_po_context(
         warnings.append("Confirm the vendor name before submission.")
     if not fields["contact_name"]:
         warnings.append("Confirm the vendor representative name before submission.")
+    elif is_operator_vendor_name(fields["contact_name"]):
+        warnings.append("Your name belongs in the requester field, not the vendor representative field.")
     if not fields["contact_email"]:
         warnings.append("Confirm the vendor representative email before submission.")
     if not description:
