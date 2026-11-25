@@ -415,10 +415,16 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
         if account_director(account) is None and not str(
             st.session_state.get(f"expense_approver_name_{_account_token_for_note}", "") or ""
         ).strip():
-            st.caption(
-                "Enter the ENFRA director over this contract below, not the contract "
-                "administrator; no director is set up for this account yet."
-            )
+            if expense_approvers(account):
+                st.caption(
+                    "Choose the ENFRA director over this contract below, not the contract "
+                    "administrator. The list shows directors already used on this account."
+                )
+            else:
+                st.caption(
+                    "Enter the ENFRA director over this contract below, not the contract "
+                    "administrator. The tool remembers it for this account once the report is generated."
+                )
         # Every step-2 widget key is namespaced by this digest so switching accounts
         # gives a fresh, independently remembered set of details rather than
         # carrying one facility's approver into another's report. _seed_profile
@@ -2051,7 +2057,12 @@ def _seed_profile(
                 profile.get("approver_email", ""),
             )
         else:
-            seeded_approver = ("", "")
+            # No configured director and none on this device: fall back to
+            # what this ACCOUNT has learned from filed reports, but only when
+            # exactly one director has ever been confirmed for it. With two or
+            # more the right one is a choice, so the list offers them instead.
+            learned = expense_approvers(account)
+            seeded_approver = learned[0] if len(learned) == 1 else ("", "")
         defaults = {
             f"expense_employee_name_{account_token}": employee_name,
             f"expense_employee_number_{account_token}": profile.get("employee_number", ""),
