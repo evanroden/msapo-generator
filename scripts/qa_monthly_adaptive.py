@@ -664,6 +664,20 @@ def exercise(browser_type, name):
         expect(page.get_by_text(re.compile(r"^QA comparison completed: known-value prefill · 18/18"))).to_be_visible(timeout=60000)
         check(name, "actual known-value pipeline independently checks 18/18", True)
         exercise_site_selection(page, name)
+        # The actual Monthly navigation was missing from the generic system
+        # appearance fixture. Check its enabled/disabled controls and progress
+        # under live OS appearance changes, without changing report content.
+        for scheme in ("dark","light","dark","light"):
+            page.emulate_media(color_scheme=scheme)
+            if scheme == "dark":
+                nav=page.locator('.epc-section-navigation')
+                expect(nav).to_have_css("background-color","rgb(32, 52, 44)")
+                for selector in ('.epc-section-back','.epc-section-progress','.epc-section-next'):
+                    color=nav.locator(selector).evaluate("n=>getComputedStyle(n).color")
+                    check(name,"Monthly dark navigation readable "+selector,
+                          color in ("rgb(237, 245, 240)","rgb(184, 210, 200)"),color)
+                capture(page,name,"monthly-dark-native-navigation")
+
 
         field = page.get_by_role("textbox", name="Activity summary", exact=True)
         navigate_sections(page, "monthly_activity")
