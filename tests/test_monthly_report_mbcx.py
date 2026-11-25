@@ -90,7 +90,8 @@ def test_plain_status_note_is_left_out_of_the_report_but_kept_in_the_draft():
     draft = normalize_mbcx(legacy_draft(ResolvedBlock("mbcx_report", "Stock text", text="Synthetic reporting is pending.")))
     status = next(b for b in draft.blocks if b.key == "mbcx_status")
     assert status.source == "Omit" and status.text == "Synthetic reporting is pending."
-    document = Document(BytesIO(assemble_docx(draft)))
+    # An empty MBCx section only raises an ordinary warning to acknowledge.
+    document = Document(BytesIO(assemble_docx(draft, acknowledged_fingerprint=draft.fingerprint)))
     text = "\n".join(p.text for p in document.paragraphs)
     assert "Synthetic reporting is pending." not in text
 
