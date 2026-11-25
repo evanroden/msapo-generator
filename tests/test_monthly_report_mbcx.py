@@ -203,3 +203,9 @@ def test_ordered_mbcx_has_one_instruction_and_no_status_box(monkeypatch, tmp_pat
     assert sum(item.value == "Upload this month’s MBCx report." for item in app.caption) == 1
     assert not any(item.label == "Status or findings" for item in app.text_area)
     assert not any(item.value == "**System performance reports**" for item in app.markdown)
+    # Owner review F14: the report upload is the only way to add MBCx pages.
+    hidden = [item.value for item in app.markdown
+              if "mbcx_report_page_replacement_actions{display:none;}" in item.value]
+    shown = [item.value for item in app.markdown
+             if "mbcx_report_page_replacement_actions{display:block;}" in item.value]
+    assert hidden and not shown

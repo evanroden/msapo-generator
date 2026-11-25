@@ -1226,7 +1226,10 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
         pages = blocks.get("mbcx_report", ResolvedBlock("mbcx_report", "This month"))
         blocks["mbcx_status"], blocks["mbcx_report"] = render_mbcx(
             status, pages, prefix, field,
-            lambda block: _edit_content(specs["mbcx_report"], block, state, prefix, assets, field, draft))
+            # Owner review F14: the monthly MBCx report upload is the one way
+            # to add pages here, so the extra image-page control stays hidden.
+            lambda block: _edit_content(specs["mbcx_report"], block, state, prefix, assets, field, draft,
+                                        page_actions_open=False))
         blocks["mbcx_status"] = _review_carried_update(blocks["mbcx_status"], period, prefix)
         handled.update(("mbcx_status", "mbcx_report"))
     for original_spec in section.blocks:
