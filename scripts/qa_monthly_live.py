@@ -446,11 +446,13 @@ def correct_replay_source_scope(page):
     # stays unchanged and the later 18/18 check still verifies its byte digest.
     correction = page.locator('[class*="st-key-monthly_source_warning_"]').filter(has=warning)
     correction.get_by_role("button", name="Correct site", exact=True).click()
-    details = page.locator('[data-testid="stForm"]').filter(has=
+    source_id = correction.locator('.enfra-source-warning').get_attribute('data-source-id')
+    assert source_id and re.fullmatch(r"[0-9a-f]{64}", source_id)
+    owner = page.locator('[class*="_managed_source_' + source_id + '"]')
+    details = owner.locator('[data-testid="stForm"]').filter(has=
         page.locator('[data-testid="stMultiSelect"]').filter(has_text="Source sites"))
-    # The targeted link exposes exactly this source's existing form. Other
-    # collapsed correction forms remain mounted, so select the visible one.
-    details = details.filter(visible=True)
+    expect(details).to_be_visible(timeout=25000)
+    page.wait_for_function("() => document.querySelector('[data-testid=stApp]')?.getAttribute('data-test-script-state') === 'notRunning'")
     expect(details).to_have_count(1)
     sites = details.locator('[data-testid="stMultiSelect"]').filter(has_text="Source sites")
     combo = sites.get_by_role("combobox")
@@ -473,10 +475,14 @@ def correct_replay_source_scope(page):
     names = choices.all_text_contents()
     other = next(name for name in names if name.strip() != "synthetic-activity.txt")
     page.get_by_role("option", name=other, exact=True).click()
+    expect(details).to_be_hidden(timeout=25000)
+    page.wait_for_function("() => document.querySelector('[data-testid=stApp]')?.getAttribute('data-test-script-state') === 'notRunning'")
     expect(page.get_by_text("QA working report SHA256: " + before, exact=True)).to_be_visible()
     expect(page.get_by_text("QA durable report SHA256: " + before, exact=True)).to_be_visible()
     files.click()
     page.get_by_role("option", name="synthetic-activity.txt", exact=True).click()
+    expect(details).to_be_visible(timeout=25000)
+    page.wait_for_function("() => document.querySelector('[data-testid=stApp]')?.getAttribute('data-test-script-state') === 'notRunning'")
     expect(sites.get_by_text("Demo North", exact=True)).to_be_visible()
     checkpoint("source form buffer survives file selection",
                combo.evaluate("(el, original) => el === original && el.isConnected", pending_input))
