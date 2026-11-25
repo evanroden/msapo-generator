@@ -351,7 +351,8 @@ export default function(component) {
         const finalPage = scroll.querySelectorAll('figure');
         const finalBounds = finalPage.length ? finalPage[finalPage.length-1].getBoundingClientRect() : null;
         const finalHeight = finalBounds ? finalBounds.bottom-finalBounds.top : 0;
-        scroll.style.paddingBottom = Math.max(12, scroll.clientHeight-finalHeight-16)+'px';
+        const trailing = Math.max(12, scroll.clientHeight-finalHeight-16)+'px';
+        if (scroll.style.paddingBottom !== trailing) scroll.style.paddingBottom = trailing;
         if (state.restore && pagesKnown) {
             const figure = scroll.querySelector('figure[data-index="'+state.page+'"]');
             if (figure) scroll.scrollTop = figure.offsetTop - scroll.offsetTop + (state.offset || 0);
@@ -479,7 +480,16 @@ export default function(component) {
         }
     }, {rootMargin:'120px 0px', threshold:0.01});
     observer.observe(panel);
-    const resize = new ResizeObserver(() => {sizePages(); changed();});
+    // Padding changes the observed content box. Defer these writes out of
+    // ResizeObserver delivery so WebKit does not report an observation loop.
+    let resizeFrame = null;
+    const resize = new ResizeObserver(() => {
+        if (!active || resizeFrame !== null) return;
+        resizeFrame = requestAnimationFrame(() => {
+            resizeFrame = null;
+            if (active) {sizePages(); changed();}
+        });
+    });
     resize.observe(scroll);
     scroll.addEventListener('scroll', changed, {passive:true});
     function layoutChanged() {sizePages();changed();}
@@ -513,6 +523,8 @@ export default function(component) {
         workspace?.removeEventListener('epc-workspace-layout', layoutChanged);
         document.removeEventListener('visibilitychange', changed);
         resize.disconnect();
+        if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
+        resizeFrame = null;
         scroll.removeEventListener('scroll', changed);
         if (timer !== null) clearTimeout(timer);
         timer = null;
