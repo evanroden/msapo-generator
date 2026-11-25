@@ -275,10 +275,11 @@ def _render_contact_summary_actions(spec, block, prefix, active_key):
     st.session_state[prefix + "_organization_contact_binding"] = (scope, signature)
     for table_index, table in enumerate(tables):
         for row_index, row in enumerate(table.rows):
-            description, action = st.columns([5, 1])
-            with description:
-                st.text(_visible_contact_summary(table.columns, row, row_index))
-            with action:
+            # Native flex wrapping reserves the action's readable content width.
+            # Fixed fractional columns squeezed its label into single letters
+            # beside the reference pane in open portrait windows.
+            with st.container(horizontal=True, vertical_alignment="center"):
+                st.text(_visible_contact_summary(table.columns, row, row_index), width="stretch")
                 st.button("Edit contact",
                           key=f"{prefix}_organization_contact_{scope}_{signature}_{table_index}_{row_index}",
                           on_click=_open_contact_from_summary,
