@@ -1,4 +1,4 @@
-"""One documented, observed EC2 host; no wildcard or trust-policy fallback."""
+"""Two documented-form, observed EC2 hosts; no wildcard or trust-policy fallback."""
 import re
 
 import pytest
@@ -12,7 +12,12 @@ EC2 = AZURE.replace('http://azure.archive.ubuntu.com/ubuntu/', EC2_URI)
 PREFERRED = EC2.replace('priority:1', 'priority:X').replace('priority:2', 'priority:1').replace('priority:X', 'priority:2')
 
 
-def test_exact_documented_ec2_profile_changes_only_priority_digits():
+@pytest.mark.parametrize('region', ['us-east-2', 'us-west-2'])
+def test_exact_documented_ec2_profile_changes_only_priority_digits(region):
+    source = EC2.replace('us-east-2', region)
+    preferred = PREFERRED.replace('us-east-2', region)
+    assert mirror.prefer_official_archive(source) == preferred
+    assert mirror.prefer_official_archive(preferred) == preferred
     assert mirror.prefer_official_archive(EC2) == PREFERRED
     assert mirror.prefer_official_archive(PREFERRED) == PREFERRED
     mask = lambda s: re.sub(r'priority:[1-3]', 'priority:X', s)
@@ -25,9 +30,11 @@ def test_exact_documented_ec2_profile_changes_only_priority_digits():
     ''.join(reversed(EC2.splitlines(keepends=True))),
     EC2.replace('\tpriority:', '\t\tpriority:'),
 ])
+@pytest.mark.parametrize('region', ['us-east-2', 'us-west-2'])
 def test_exact_profile_preserves_uri_bytes_format_mode_and_unrelated_source(
-    source, tmp_path, monkeypatch, capsys,
+    source, region, tmp_path, monkeypatch, capsys,
 ):
+    source = source.replace('us-east-2', region)
     target = tmp_path / 'apt-mirrors.txt'
     target.write_bytes(source.encode())
     target.chmod(0o640)
@@ -43,12 +50,12 @@ def test_exact_profile_preserves_uri_bytes_format_mode_and_unrelated_source(
     assert other.read_bytes() == before
     assert capsys.readouterr().err == ''
     assert re.sub(rb'priority:[1-3]', b'priority:X', once) == re.sub(rb'priority:[1-3]', b'priority:X', source.encode())
-    assert EC2_URI.encode() in once
+    assert EC2_URI.replace('us-east-2', region).encode() in once
 
 
 @pytest.mark.parametrize('bad_uri', [
     'http://us-east-1.ec2.archive.ubuntu.com/ubuntu/',
-    'http://us-west-2.ec2.archive.ubuntu.com/ubuntu/',
+    'http://us-west-1.ec2.archive.ubuntu.com/ubuntu/',
     'http://x.us-east-2.ec2.archive.ubuntu.com/ubuntu/',
     'http://us-east-2.ec2.archive.ubuntu.com.evil.invalid/ubuntu/',
     'http://us-east-2.ec2.archive.ubuntu.com@evil.invalid/ubuntu/',
@@ -115,3 +122,17 @@ def test_rejected_ec2_profile_diagnostic_remains_structural_and_private(tmp_path
     assert '"us-east-2.ec2.archive.ubuntu.com": 2' in output
     assert '"unknown_hosts": []' in output
     assert '/ubuntu/' not in output
+
+@pytest.mark.parametrize('region', ['us-east-2', 'us-west-2'])
+@pytest.mark.parametrize('suffix', ['?q=x', '#x', '../', 'extra/'])
+def test_each_exact_region_still_rejects_path_query_and_fragment(region, suffix):
+    source = EC2.replace('us-east-2', region).replace('/ubuntu/', '/ubuntu/' + suffix)
+    with pytest.raises(ValueError):
+        mirror.prefer_official_archive(source)
+
+
+def test_regions_cannot_be_mixed_or_duplicated():
+    west = EC2.replace('us-east-2', 'us-west-2')
+    for source in (west + EC2.splitlines(keepends=True)[0], west + west.splitlines(keepends=True)[0]):
+        with pytest.raises(ValueError):
+            mirror.prefer_official_archive(source)
