@@ -85,3 +85,29 @@ for(const [previous,mode,ownsScroll,ownedScrollBefore,hasAnchor] of [
 }
 '''
     subprocess.run(['node', '-e', script], cwd=ROOT, check=True, capture_output=True, text=True)
+
+
+def test_clearance_uses_the_owned_roots_measured_navigation_and_skips_ordinary_scroll():
+    script = r'''
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const source=fs.readFileSync('app/workspace_layout.js','utf8');
+const start=source.indexOf('        const viewportSignature =');
+const end=source.indexOf('        const signature =',start);
+assert.ok(start>=0 && end>start);
+for(const ownsScroll of [true,false]) for(const changed of [true,false]) {
+ const sample={visual:{width:669,height:250,scale:1},layout:{width:669,height:250}};
+ const context={mode:ownsScroll?'tabletop':'compact'};
+ const current=JSON.stringify([669,250,1,sample.layout,context.mode]);
+ const state={focusViewport:changed?'previous':current};
+ const root={getBoundingClientRect:()=>({top:416,bottom:900})};
+ const scrollport={getBoundingClientRect:()=>({top:0,bottom:900})};
+ const calls=[];
+ const env={state,sample,context,root,scrollport,ownsScroll,top:122,bottom:900,navigation:{height:()=>50},
+  ENFRAWorkspaceNavigation:{keepFocusedClear:value=>calls.push(value)}};
+ vm.runInNewContext(source.slice(start,end),env);
+ assert.equal(calls.length,changed?1:0,'ordinary scroll never invokes corrective scrolling');
+ if(changed){assert.equal(calls[0].top,ownsScroll?478:122);assert.equal(calls[0].scrollport,ownsScroll?root:scrollport);}
+ assert.equal(state.focusViewport,current);
+}
+'''
+    subprocess.run(['node', '-e', script], cwd=ROOT, check=True, capture_output=True, text=True)
