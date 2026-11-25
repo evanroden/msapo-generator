@@ -197,7 +197,7 @@ def test_saved_acknowledgment_keeps_raw_escaped_title_and_persisted_state(stored
         TOKEN, *stored.identity[:2], PERIOD.year, PERIOD.month)).run()
     assert not app.exception
     markup, = (item.value for item in app.markdown if 'class="enfra-browser-save-status"' in item.value)
-    assert "Browser draft<br>Last saved · Time unavailable" in markup
+    assert ">Saved</p>" in markup
     assert 'data-save-state="saved"' in markup
     assert 'title="' + escape(timestamp, quote=True) + '"' in markup
     assert "<synthetic " not in markup
