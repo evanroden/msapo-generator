@@ -89,7 +89,10 @@ def main():
                     evidence['checks'].append({'name': name, **observed})
 
                 settle('wide')
-                expect(page.locator('.report-preview img').first).to_be_visible()
+                # Native controls may move the lazy viewer below the fold.
+                # Bring its real container into view before requiring pixels.
+                page.locator('.epc-workspace-reference').scroll_into_view_if_needed()
+                expect(page.locator('.report-preview img').first).to_be_visible(timeout=20000)
                 expect(page.locator('.report-preview img').first).to_have_js_property('complete', True)
                 assert page.locator('.report-preview img').first.evaluate('n=>n.naturalWidth>0')
                 commit_notes()
