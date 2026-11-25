@@ -938,6 +938,18 @@ def exercise(browser_type, name):
         browser.close()
 
 
+def _failure_site(exc):
+    """Name the innermost QA script line that failed, so an intermittent
+    browser failure in CI identifies its exact step without the artifacts."""
+    import traceback
+    frames = [frame for frame in traceback.extract_tb(exc.__traceback__)
+              if "/scripts/" in frame.filename.replace("\\", "/")]
+    if not frames:
+        return ""
+    frame = frames[-1]
+    return f" [at {Path(frame.filename).name}:{frame.lineno} in {frame.name}: {(frame.line or '').strip()[:160]}]"
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     failures = []
@@ -966,7 +978,7 @@ def main():
                         try:
                             exercise(browser_type, name)
                         except Exception as exc:
-                            failures.append(name + ": " + type(exc).__name__ + ": " + str(exc)[:300])
+                            failures.append(name + ": " + type(exc).__name__ + ": " + str(exc)[:300] + _failure_site(exc))
                 completed = True
             finally:
                 process.terminate()
