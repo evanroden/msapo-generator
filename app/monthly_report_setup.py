@@ -420,6 +420,12 @@ def normalize_mbcx(draft: ReportDraft) -> ReportDraft:
                                              client_reviewed_fingerprint=""))
     if status is None:
         status = ResolvedBlock("mbcx_status", "This month")
+    if not status.ai_paragraphs and status.source != "Omit" and status.text.strip():
+        # Owner decision (25 Nov 2026): MBCx has no free-text status box. A
+        # plain note saved earlier or carried from an earlier month has no
+        # editor, so it is left out of the report rather than printed
+        # unchecked. Its text stays in the draft and history; nothing is deleted.
+        status = replace(status, source="Omit", reviewed_fingerprint="", client_reviewed_fingerprint="")
     blocks["mbcx_status"] = status
     return replace(draft, sections=tuple(replace(s, blocks=specs) if s.key == "mbcx" else s for s in draft.sections),
                    blocks=tuple(blocks.values()))

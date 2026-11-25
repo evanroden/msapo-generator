@@ -69,7 +69,8 @@ def test_explicitly_omitted_update_is_not_silently_revived():
     assert status.source == "Omit" and status.text == old.text
     kept = ResolvedBlock("mbcx_status", "This month", text="Synthetic included wording.")
     conflict = normalize_mbcx(legacy_draft(old, kept))
-    assert next(b for b in conflict.blocks if b.key == "mbcx_status") == kept
+    # A plain note has no editor, so it is kept in the draft but left out.
+    assert next(b for b in conflict.blocks if b.key == "mbcx_status") == replace(kept, source="Omit")
     assert next(b for b in conflict.blocks if b.key == "mbcx_report") == old
 
 
@@ -84,12 +85,14 @@ def test_new_design_has_no_automatic_commissioning_claim_and_old_orders_expose_u
     assert not any(b.text for b in draft.blocks if b.key.startswith("mbcx_"))
 
 
-def test_status_only_report_prints_the_editable_update():
+def test_plain_status_note_is_left_out_of_the_report_but_kept_in_the_draft():
     from app.monthly_report_docx import assemble_docx
     draft = normalize_mbcx(legacy_draft(ResolvedBlock("mbcx_report", "Stock text", text="Synthetic reporting is pending.")))
+    status = next(b for b in draft.blocks if b.key == "mbcx_status")
+    assert status.source == "Omit" and status.text == "Synthetic reporting is pending."
     document = Document(BytesIO(assemble_docx(draft)))
     text = "\n".join(p.text for p in document.paragraphs)
-    assert text.count("Synthetic reporting is pending.") == 1
+    assert "Synthetic reporting is pending." not in text
 
 
 def app_for(text="", pages=0, status=None):
@@ -110,56 +113,23 @@ st.session_state["status"], st.session_state["pages"] = render_mbcx(st.session_s
 '''.replace("INITIAL_STATUS", repr(status or ResolvedBlock("mbcx_status", "This month", text=text))).replace("PAGE_COUNT", str(pages))).run()
 
 
-def test_novice_can_choose_sentence_then_edit_without_page_or_destination_dropdown():
+def test_mbcx_has_no_status_box_or_starter_sentences():
+    # Owner decision (25 Nov 2026): the section is the uploaded report only.
     app = app_for()
     assert not app.exception and not app.selectbox and not app.multiselect
+    assert not app.text_area and not app.button
     assert app.session_state["status"].text == ""
-    assert {button.label for button in app.button} == {"Not started", "Awaiting this month’s report"}
-    next(b for b in app.button if b.label == "Not started").click().run()
-    assert app.session_state["status"].text == "Monitoring-based commissioning reporting has not started."
-    app.text_area[0].set_value("Synthetic monitoring starts after equipment setup.").run()
-    app.run()
-    assert app.session_state["status"].text == "Synthetic monitoring starts after equipment setup."
     assert not app.session_state["pages"].asset_hashes
-    assert not app.button and not app.exception
 
 
-def test_returning_user_sees_exact_existing_update_and_shared_pages():
+def test_saved_plain_note_has_no_editor_and_is_left_unchanged():
     app = app_for("Synthetic colleague's reviewed update.", 2)
-    assert not app.exception
-    assert app.text_area[0].value == "Synthetic colleague's reviewed update."
-    assert not app.button  # starters cannot overwrite existing colleague wording
+    before = app.session_state["status"]
+    assert not app.exception and not app.text_area and not app.button
     assert any(c.value == "Shared page editor: 2 pages" for c in app.caption)
-    app.text_area[0].set_value("Synthetic updated result.").run()
-    assert app.session_state["pages"].asset_hashes == ("page0", "page1")
-
-
-def test_delivered_human_wording_is_not_replaced_by_an_earlier_empty_state_preset():
-    from app.monthly_report_mbcx_ui import STATUS_STARTERS
-    app = app_for()
-    app.text_area[0].set_value("Synthetic sensor investigation remains open; retain this exact finding.")
-    next(b for b in app.button if b.label == STATUS_STARTERS[0][0]).click().run()
-    assert not app.exception
-    assert app.session_state["status"].text == "Synthetic sensor investigation remains open; retain this exact finding."
-    assert app.text_area[0].value == app.session_state["status"].text
-    assert any("Your wording was kept" in item.value for item in app.info)
-
-
-def test_chosen_preset_has_concise_visible_state_until_the_wording_changes():
-    from app.monthly_report_mbcx_ui import STATUS_STARTERS
-    app = app_for()
-    identity = app.text_area[0].proto.id
-    label, sentence = STATUS_STARTERS[1]
-    next(b for b in app.button if b.label == label).click().run()
-    assert not app.exception and app.session_state["status"].text == sentence
-    assert app.text_area[0].proto.id == identity
-    assert any(item.value == "Status: " + label for item in app.caption)
-    assert not app.button
     app.run()
-    assert any(item.value == "Status: " + label for item in app.caption)
-    app.text_area[0].set_value("Synthetic draft report received; findings are being reviewed.").run()
-    assert not any(item.value.startswith("Status: ") for item in app.caption)
-    assert not app.button
+    assert app.session_state["status"] == before
+    assert app.session_state["pages"].asset_hashes == ("page0", "page1")
 
 
 def test_source_linked_update_has_one_editor_and_retains_its_review_and_evidence():
@@ -185,18 +155,12 @@ def test_source_linked_update_has_one_editor_and_retains_its_review_and_evidence
     assert app.session_state["pages"].asset_hashes == ("page0", "page1")
 
 
-def test_omitted_update_can_be_included_without_changing_its_wording_or_sources():
+def test_omitted_plain_note_cannot_be_brought_back_without_an_editor():
     status = ResolvedBlock("mbcx_status", "Omit", text="Synthetic monitoring report is pending.",
                            references=("report-period:2026-09", "source-1:1"))
     app = app_for(status=status)
-    assert not app.exception and app.session_state["status"] == status
-    next(b for b in app.button if b.label == "Include this update").click().run()
-    included = replace(status, source="This month")
-    assert app.session_state["status"] == included
-    app.run()
-    assert not app.exception and not app.button
-    assert app.text_area[0].value == status.text
-    assert app.session_state["status"] == included
+    assert not app.exception and not app.button and not app.text_area
+    assert app.session_state["status"] == status
 
 
 def test_including_omitted_linked_update_preserves_sources_and_requires_source_review():
@@ -219,40 +183,11 @@ def test_including_omitted_linked_update_preserves_sources_and_requires_source_r
     assert app.session_state["pages"].asset_hashes == ("page0",)
 
 
-def test_legacy_suggested_update_has_one_use_action_and_keeps_review_until_edited():
-    status = ResolvedBlock("mbcx_status", "This month", text="Synthetic monitoring shows stable operation.",
-                           ai_written=True, references=("source-1:1",))
-    app = app_for(status=status)
-    assert not app.exception and not app.checkbox
-    assert not app.session_state["status"].reviewed
-    next(b for b in app.button if b.label == "Use this update").click().run()
-    assert app.session_state["status"].reviewed
-    app.run()
-    assert not app.exception and not app.button and not app.checkbox
-    assert any("review is retained" in c.value for c in app.caption)
-    app.text_area[0].set_value("Synthetic monitoring found a sensor fault.").run()
-    assert not app.session_state["status"].reviewed
-    assert any(b.label == "Use this update" for b in app.button)
-
-
-def test_user_entered_update_does_not_need_a_remember_or_review_choice():
-    app = app_for("Synthetic operator entered an update.")
-    assert not app.exception and not app.checkbox and not app.button
-    app.text_area[0].set_value("Synthetic operator updated the result.").run()
-    app.run()
-    assert app.session_state["status"].text == "Synthetic operator updated the result."
-    assert not app.checkbox and not app.button
-
-
-def test_compact_mbcx_has_one_editable_status_and_no_repeat_page_instructions():
+def test_compact_mbcx_has_no_status_editor_and_no_repeat_page_instructions():
     app = app_for()
-    assert not app.exception
-    assert len(app.text_area) == 1
-    assert app.text_area[0].label == "Status or findings"
+    assert not app.exception and not app.text_area
     captions = [c.value for c in app.caption]
-    # The ordered section owns the single short introduction. This inner
-    # editor must not repeat it before the same status field.
-    assert "Add monitoring results or a brief status update." not in captions
+    assert "Upload this month’s MBCx report." not in captions
     assert not any("No report pages added" in c or
                    "Add a PDF or Word report using the files area" in c
                    for c in captions)
@@ -260,22 +195,10 @@ def test_compact_mbcx_has_one_editable_status_and_no_repeat_page_instructions():
     assert app.session_state["pages"].asset_hashes == ()
 
 
-def test_ordered_mbcx_has_one_instruction_and_the_same_editable_status(monkeypatch, tmp_path):
+def test_ordered_mbcx_has_one_instruction_and_no_status_box(monkeypatch, tmp_path):
     from test_monthly_report_ui import monthly
     app = monthly(monkeypatch, tmp_path)
     assert not app.exception
-    assert sum(item.value == "Add monitoring results or a brief status update."
-               for item in app.caption) == 1
-    assert sum(item.label == "Status or findings" for item in app.text_area) == 1
+    assert sum(item.value == "Upload this month’s MBCx report." for item in app.caption) == 1
+    assert not any(item.label == "Status or findings" for item in app.text_area)
     assert not any(item.value == "**System performance reports**" for item in app.markdown)
-
-
-def test_mbcx_status_only_needs_no_upload_or_second_review():
-    app = app_for("Synthetic verified commissioning status.")
-    before = app.session_state["status"]
-    assert not app.exception
-    assert app.text_area[0].value == before.text
-    assert not app.button
-    app.run()
-    assert app.session_state["status"] == before
-    assert not app.exception

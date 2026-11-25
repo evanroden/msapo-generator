@@ -7,7 +7,7 @@ from app.monthly_report_model import default_sections
 
 
 def test_mbcx_and_enfra_connect_defined_where_section_is_edited():
-    assert section_help("mbcx").guidance == "Add monitoring results or a brief status update."
+    assert section_help("mbcx").guidance == "Upload this month’s MBCx report."
     guidance = _quiet_help_text()
     assert "MBCx means monitoring-based commissioning" in guidance
     assert "ENFRA Connect" in guidance
