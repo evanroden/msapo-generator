@@ -113,3 +113,32 @@ def test_target_changed_during_warning_keeps_wording_but_rejects_old_destination
     assert app.session_state.ai_warning_draft.blocks[0].ai_paragraphs[1].text=='Replaced 100 seals.'
     assert 'enfra-page-correction-request' not in '\n'.join(m.value for m in app.markdown)
     assert any('wording or evidence changed' in w.value for w in app.warning)
+
+
+def test_rebound_evidence_native_default_matches_retained_selection():
+    """A new widget identity must hydrate with its actual saved evidence."""
+    app=workspace()
+    before=next(w for w in app.multiselect if w.label=='Evidence for paragraph 2')
+    assert list(before.proto.default), 'Native first render must not start empty'
+    # The same explicit removal used by the browser changes the binding key.
+    from dataclasses import replace
+    draft=app.session_state.ai_warning_draft
+    source=draft.sources[0]
+    second=replace(source.facts[0],id='synthetic-independent-evidence')
+    source=replace(source,facts=(*source.facts,second))
+    block=draft.blocks[0]
+    paragraph=replace(block.ai_paragraphs[1],fact_ids=(*block.ai_paragraphs[1].fact_ids,second.id))
+    app.session_state.ai_warning_draft=replace(draft,sources=(source,),
+        blocks=(replace(block,ai_paragraphs=(*block.ai_paragraphs[:1],paragraph)),))
+    app.run()
+    evidence=next(w for w in app.multiselect if w.label=='Evidence for paragraph 2')
+    evidence.set_value([paragraph.fact_ids[0]]).run()
+    app.run()
+    rebound=next(w for w in app.multiselect if w.label=='Evidence for paragraph 2')
+    assert rebound.key!=evidence.key
+    assert rebound.value==[paragraph.fact_ids[0]]
+    assert len(rebound.proto.default)==1
+    for _ in range(2):
+        action(app).click().run()
+        assert app.session_state.ai_warning_draft.blocks[0].ai_paragraphs[1].fact_ids==(paragraph.fact_ids[0],)
+        assert 'enfra-page-correction-request' in '\n'.join(m.value for m in app.markdown)

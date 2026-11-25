@@ -380,7 +380,8 @@ export default function(component) {
         const ownsScroll = context.mode === 'tabletop' || Boolean(confined);
         const ownedScrollBefore = state.ownsScroll;
         const previous = state.mode;
-        const activeBefore = previous && previous !== context.mode ? pairs.find(p => p.id === state.active) || pairs.find(p => p.pair.getBoundingClientRect().bottom > sample.scrollport.y + 120) : null;
+        const focusedPair = pairs.find(p => p.pair.querySelector('.epc-workspace-editor')?.contains(document.activeElement));
+        const activeBefore = previous && previous !== context.mode ? focusedPair || pairs.find(p => p.id === state.active) || pairs.find(p => p.pair.getBoundingClientRect().bottom > sample.scrollport.y + 120) : null;
         if (!ownedScrollBefore && ownsScroll) state.outerScroll = scrollport.scrollTop;
         root.dataset.epcMode = context.mode;
         root.dataset.epcReason = context.reason || '';
@@ -450,6 +451,15 @@ export default function(component) {
         navigation?.update(context,sample);
         updateActive(context);
         globalThis.ENFRAWorkspaceNavigation?.focusEntries(state, root);
+        const viewportSignature = JSON.stringify([sample.visual?.width,sample.visual?.height,sample.visual?.scale,sample.layout,context.mode]);
+        if (state.focusViewport && viewportSignature !== state.focusViewport && !state.navigationRequest) {
+            const owner = ownsScroll ? root : scrollport;
+            const ownerBox = owner.getBoundingClientRect();
+            globalThis.ENFRAWorkspaceNavigation?.keepFocusedClear({root,scrollport:owner,
+                top:ownsScroll ? ownerBox.top + (navigation?.height() || 0) + 12 : Math.max(ownerBox.top,top),
+                bottom:Math.min(ownerBox.bottom,bottom)-8});
+        }
+        state.focusViewport = viewportSignature;
         const signature = JSON.stringify([context.mode,context.editor,context.preview,top]);
         if (signature !== lastGeometry) {
             lastGeometry = signature;
