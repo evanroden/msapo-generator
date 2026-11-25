@@ -702,3 +702,21 @@ test('cold section preview starts at meaningful content once and preserves subse
     assert.equal(panel._previewState.page,0,'the initial hint never overrides an existing reading choice');
     cleanup();
 });
+
+test('tall portrait final page gets bounded trailing room without hiding its divider',()=>{
+    const {root,panel}=dom();
+    class Observer {constructor(callback){this.callback=callback;}observe(){}disconnect(){}}
+    const document=new Element();document.createElement=tag=>new Element(tag);
+    const scroll=panel.querySelector('.report-preview-scroll');
+    scroll.clientHeight=638;
+    const context={window:{devicePixelRatio:1},document,Map,JSON,Array,Number,Math,String,
+        IntersectionObserver:Observer,ResizeObserver:Observer,MutationObserver:Observer,
+        setTimeout:()=>1,clearTimeout:()=>{}};
+    const source=fs.readFileSync('app/monthly_report_preview_view.py','utf8').split('JS = r"""\n')[1].split('\n"""')[0];
+    const render=vm.runInNewContext('('+source.replace('export default function','function')+')',context);
+    const cleanup=render({parentElement:root,data:{viewScope:'portrait|activity',generation:'one',sizes:[[612,792],[612,792]],initialPage:1,pages:[],ready:true},setStateValue:()=>{}});
+    assert.equal(panel.querySelectorAll('figure').length,2,'divider remains reachable');
+    assert.equal(scroll.style.paddingBottom,'122px','only enough room to align the final page is added');
+    assert.equal(panel._previewState.page,1);
+    cleanup();
+});
