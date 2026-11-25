@@ -122,13 +122,14 @@ def _preview_verified_report(draft, asset_loader=None, *, source_view=None, fing
 
     with phase("report_docx_assembly"):
         raw = _build_docx(draft, asset_loader=small_asset if asset_loader else None, source_view=source_view)
-    scratch = library._root() / "previews"
-    scratch.mkdir(parents=True, exist_ok=True)
+    # This DOCX is disposable conversion input, never a standing report asset.
+    # Keep it outside the durable library while a view-only fragment runs in
+    # parallel with editor recovery and its storage-integrity checks.
     stem = "preview-" + uuid4().hex
     expected = pdf_converter.OUTPUT_DIR / (stem + ".pdf")
     actual = None
     try:
-        with tempfile.TemporaryDirectory(prefix="report-", dir=scratch) as directory:
+        with tempfile.TemporaryDirectory(prefix="monthly-review-preview-") as directory:
             path = Path(directory) / (stem + ".docx")
             from app.monthly_report_designs import render_profile_for
             with phase("report_render_compat"):

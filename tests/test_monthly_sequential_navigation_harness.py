@@ -61,3 +61,20 @@ def test_every_intervening_step_is_activated_once_and_verified(monkeypatch, keyb
         (('press' if keyboard else 'click'), '.epc-section-back')] * 3
     assert ('to_be_disabled', '.epc-section-next') in events
     assert ('to_be_disabled', '.epc-section-back') in events
+
+def test_adaptive_entry_scrolls_once_before_strict_sequential_journey():
+    """Setup may start above the workspace; traversal itself cannot rescue."""
+    import ast
+    from pathlib import Path
+    tree = ast.parse(Path('scripts/qa_monthly_adaptive.py').read_text())
+    exercise = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'exercise')
+    calls = sorted((node for node in ast.walk(exercise) if isinstance(node, ast.Call)), key=lambda node: node.lineno)
+    scrolls = [node for node in calls if getattr(node.func, 'attr', '') == 'scroll_into_view_if_needed']
+    assert len(scrolls) == 1
+    scroll = scrolls[0]
+    assert ast.literal_eval(scroll.func.value.args[0]) == '.epc-section-navigation'
+    setup = next(node for node in calls if getattr(node.func, 'id', '') == 'exercise_site_selection')
+    first_navigation = next(node for node in calls if getattr(node.func, 'id', '') == 'navigate_sections')
+    assert setup.lineno < scroll.lineno < first_navigation.lineno
+    helper = ast.parse(Path('scripts/monthly_sequential_navigation.py').read_text())
+    assert not any(isinstance(node, ast.Call) and 'scroll' in getattr(node.func, 'attr', '') for node in ast.walk(helper))

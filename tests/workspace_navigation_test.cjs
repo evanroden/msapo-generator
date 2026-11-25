@@ -987,3 +987,28 @@ test('W03 explicit return from Review retains its reached section through passiv
     assert.equal(h.state.navigationActive,'monthly_training');
     h.dispose();
 });
+
+for (const [label, fieldBox, expected] of [
+    ['obscured by navigation',{top:58,bottom:170,height:112,width:330},-64],
+    ['under viewport edge',{top:220,bottom:264,height:44,width:330},22],
+    ['already clear',{top:125,bottom:170,height:45,width:330},0],
+    ['tall native editor',{top:140,bottom:440,height:300,width:330},18],
+]) test('viewport transition clears focused editor: '+label,()=>{
+    const field={getBoundingClientRect:()=>fieldBox,matches:()=>true,closest:()=>null};
+    const context={document:{activeElement:field}};
+    vm.runInNewContext(fs.readFileSync('app/workspace_navigation.js','utf8'),context);
+    const owner={scrollTop:100};
+    context.ENFRAWorkspaceNavigation.keepFocusedClear({root:{contains:()=>true},scrollport:owner,top:122,bottom:242});
+    assert.equal(owner.scrollTop,100+expected);
+});
+
+for(const kind of ['outside','reference','non-editor','hidden','no-room'])
+test('viewport clearance leaves '+kind+' alone',()=>{
+ const field={getBoundingClientRect:()=>({top:0,bottom:100,height:100,width:kind==='hidden'?0:300}),
+   matches:()=>kind!=='non-editor',closest:()=>kind==='reference'?{}:null};
+ const context={document:{activeElement:field}};
+ vm.runInNewContext(fs.readFileSync('app/workspace_navigation.js','utf8'),context);
+ const owner={scrollTop:70};
+ context.ENFRAWorkspaceNavigation.keepFocusedClear({root:{contains:()=>kind!=='outside'},scrollport:owner,top:122,bottom:kind==='no-room'?100:242});
+ assert.equal(owner.scrollTop,70);
+});

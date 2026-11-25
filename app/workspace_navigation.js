@@ -155,6 +155,20 @@ globalThis.ENFRAWorkspaceNavigation = {
         const shift = box.top - anchor.top;
         if (Math.abs(shift) >= 1) scrollport.scrollTop += shift;
     },
+    // A viewport change can leave the same focused field under fixed chrome.
+    // Correct only that geometry transition, never ordinary typing or scrolling.
+    // The native node, selection, focus and inner scroll are left untouched.
+    keepFocusedClear({root, scrollport, top, bottom}) {
+        const field = document.activeElement;
+        if (!field || !root.contains(field) || !field.matches?.('textarea, input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]):not([type="file"]), [contenteditable="true"]') ||
+            field.closest?.('.epc-workspace-reference')) return;
+        const box = field.getBoundingClientRect();
+        if (!box.width || !box.height || bottom <= top) return;
+        // Align the top of a taller editor. Do not fight its native inner scroll.
+        const shift = box.top < top || box.height > bottom - top ? box.top - top :
+            box.bottom > bottom ? box.bottom - bottom : 0;
+        if (Math.abs(shift) >= 1) scrollport.scrollTop += shift;
+    },
     create({root, app, scrollport, nav, state, geometry, schedule}) {
         if (!nav) return null;
         let select = null, reviewButton = null, backButton = null, nextButton = null, progress = null;
