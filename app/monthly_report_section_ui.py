@@ -546,12 +546,9 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                         unread = tuple(i for i in section.items if i.kind == "unsupported")
                         if native_art_size_limited:
                             blocking.append(
-                                "This source exceeds the native-artwork processing limit, not necessarily "
-                                "the Word upload limit. Its cover cannot be certified by this "
-                                "inspection. Choose an available independent ENFRA template, keep an "
-                                "existing report cover, or retry with a smaller Word source. "
-                                "Replacing the upload starts a new review; the original remains "
-                                "available. " + cover_recovery
+                                "This file is too large for automatic artwork reading, so its cover "
+                                "can't be checked. Choose a template, keep an existing cover, or "
+                                "upload a smaller copy. " + cover_recovery
                             )
                         else:
                             for item in unread[:4]:
@@ -1036,20 +1033,14 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                      and "source byte budget" in str(exc))):
                 native_art_size_limited = True
                 st.warning(
-                    f"This file is within the {byte_limit_label(docx_import.MAX_DOCX_BYTES)} upload limit, but automatic native-artwork "
-                    f"interpretation is limited to {byte_limit_label(MAX_VIEW_SOURCE_BYTES)}. "
-                    "This is a processing limit, not evidence that the artwork is damaged. "
-                    "Your original and current review are unchanged. Use an available independent "
-                    "template below, or keep the original and upload a smaller test copy. "
-                    "Replacing the upload starts a new review.")
+                    f"Automatic artwork reading is limited to {byte_limit_label(MAX_VIEW_SOURCE_BYTES)} "
+                    f"(uploads can be up to {byte_limit_label(docx_import.MAX_DOCX_BYTES)}). "
+                    "Your file isn't damaged and is kept. Choose a template below or upload a smaller copy.")
             elif isinstance(exc, CompatibilityBudgetError):
                 native_art_size_limited = True
                 st.warning(
-                    "Automatic native-artwork interpretation stopped. " + str(exc) + " "
-                    "This is a processing limit, not evidence that the artwork is damaged. "
-                    "Your original and current review are unchanged. Use an available independent "
-                    "template below, or keep the original and upload a smaller test copy. "
-                    "Replacing the upload starts a new review.")
+                    "Automatic artwork reading stopped. " + str(exc) + " "
+                    "Your file isn't damaged and is kept. Choose a template below or upload a smaller copy.")
             else:
                 st.warning("Automatic native artwork interpretation is blocked: " + str(exc))
     if source_view is not None and not automatic_view:
@@ -1482,11 +1473,10 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                        "as a separate explicit fallback. The original upload and already "
                        "edited body sections remain available.")
             if native_art_size_limited:
-                message = ("This upload exceeds the native-artwork processing limit, so its page design cannot yet be used. "
-                           "Choose an available ENFRA template above, or keep the original and upload a smaller test copy. "
-                           "Replacing the upload starts a new review; the original is not damaged by this error.")
+                message = ("This file's page design can't be used because it's too large to read. "
+                           "Choose a template above or upload a smaller copy.")
             st.error(message)
-            todo.append("Choose an independent template or a smaller test copy to continue."
+            todo.append("Choose a template or upload a smaller copy to continue."
                         if native_art_size_limited else
                         "Repair the source cover artwork before using it as a new report design.")
     prepared_import = None

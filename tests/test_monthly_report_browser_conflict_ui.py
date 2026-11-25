@@ -117,7 +117,7 @@ def test_recovery_choice_write_failure_keeps_both_copies_and_an_actionable_error
     monkeypatch.setattr(active, 'save', original)
     _button(first, 'Keep this page for recovery').click().run()
     assert not first.exception
-    assert any('data-save-state="saved"' in item.value and 'Last saved' in item.value for item in first.markdown)
+    assert any('data-save-state="saved"' in item.value and '>Saved ' in item.value for item in first.markdown)
     assert active.load(TOKEN, RRH_CONTRACT, 'synthetic-guided', PERIOD).draft == next(
         value for key, value in first.session_state.filtered_state.items()
         if key.endswith('_draft') and hasattr(value, 'blocks'))

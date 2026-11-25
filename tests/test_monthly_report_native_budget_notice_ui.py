@@ -57,13 +57,11 @@ def _warnings(app):
 
 def _require_processing_guidance(app):
     warning = _warnings(app)
-    assert "processing limit" in warning
-    assert "not evidence that the artwork is damaged" in warning
-    assert "original and current review are unchanged" in warning
-    assert "independent template" in warning
-    assert "smaller test copy" in warning
-    assert "Replacing the upload starts a new review" in warning
-    assert any("native-artwork processing limit" in error.value for error in app.error)
+    assert "Automatic artwork reading" in warning
+    assert "isn't damaged and is kept" in warning
+    assert "Choose a template below" in warning
+    assert "smaller copy" in warning
+    assert any("too large" in error.value and "smaller copy" in error.value for error in app.error)
     assert not any("Repair that artwork in the original Word file" in error.value
                    for error in app.error)
     return warning
@@ -125,7 +123,7 @@ def test_compressed_source_notice_uses_the_exact_configured_binding_limit(monkey
     _assert_preserved_and_blocked(app, path, original, inspection)
     warning = _require_processing_guidance(app)
     assert "limited to 32 KiB" in warning
-    assert "128 MiB upload limit" in warning
+    assert "uploads can be up to 128 MiB" in warning
 
 
 def test_current_32_mib_source_limit_notice_remains_available(monkeypatch, tmp_path):
@@ -151,7 +149,7 @@ def test_unsupported_native_artwork_is_not_relabelled_as_a_processing_limit(monk
     _assert_preserved_and_blocked(app, path, original, inspection)
     warning = _warnings(app)
     assert "Automatic native artwork interpretation is blocked: " + str(refused.value) in warning
-    assert "processing limit" not in warning
+    assert "Automatic artwork reading" not in warning
     assert any("Repair that artwork in the original Word file" in error.value
                for error in app.error)
 
@@ -176,7 +174,7 @@ def test_nonbudget_derivation_errors_keep_existing_blocking_notice(monkeypatch, 
     _assert_preserved_and_blocked(app, path, original, inspection)
     warning = _warnings(app)
     assert "Automatic native artwork interpretation is blocked: " + str(error) in warning
-    assert "processing limit" not in warning
-    assert "independent template" not in warning and "smaller test copy" not in warning
+    assert "Automatic artwork reading" not in warning
+    assert "Choose a template" not in warning and "smaller copy" not in warning
     assert any("Repair that artwork in the original Word file" in item.value
                for item in app.error)

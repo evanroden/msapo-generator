@@ -151,8 +151,8 @@ def test_resource_limit_explains_intake_vs_native_budget_without_lowering_intake
     app=start_app(monkeypatch,tmp_path,source)
     assert not app.exception
     warnings=' '.join(w.value for w in app.warning)
-    assert '128 MiB upload limit' in warnings and 'limited to 1 MiB' in warnings
-    assert 'not evidence that the artwork is damaged' in warnings
+    assert 'uploads can be up to 128 MiB' in warnings and 'limited to 1 MiB' in warnings
+    assert "isn't damaged and is kept" in warnings
     assert MAX_DOCX_BYTES == 128*1024*1024
     assert source.read_bytes()==original
     assert continue_button(app).disabled
