@@ -420,7 +420,7 @@ def test_compact_workflow_and_step_navigation_keep_touch_targets():
 
 
 def test_native_touch_targets_share_production_shell_and_all_journeys():
-    css = (ROOT / 'app/workflow_shell.css').read_text()
+    css = (ROOT / 'app/native_controls.css').read_text()
     assert '@media (max-width: 900px), (pointer: coarse)' in css
     for selector in ('stCheckbox', 'stRadio', 'stToggle', 'stTextInputRootElement',
                      'stNumberInputContainer', 'stDateInput', 'stSelectbox',
@@ -431,7 +431,7 @@ def test_native_touch_targets_share_production_shell_and_all_journeys():
         assert 'exercise_touch_targets(page,output=OUT,name=name)' in script
     for fixture in ('monthly', 'expense'):
         source = (ROOT / f'tests/fixtures/workspaces/{fixture}_app.py').read_text()
-        assert "'app/workflow_shell.css').read_text" in source
+        assert "'app/native_controls.css').read_text" in source
     helper = (ROOT / 'scripts/workspace_touch_acceptance.py').read_text()
     assert 'input[type="checkbox"],input[type="radio"]' in helper
     assert "closest('label')" in helper
