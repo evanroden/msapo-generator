@@ -76,6 +76,7 @@ import sqlite3
 import tempfile
 import time
 import threading
+import unicodedata
 from pathlib import Path
 
 from app.vendor_identity import is_operator_vendor_name
@@ -712,19 +713,32 @@ def _connect(*, _run_retention: bool = True) -> sqlite3.Connection | None:
         return None
 
 
+def _clean_text(value: str | None) -> str:
+    """Unicode-compatibility form with invisible format characters removed.
+
+    Text pasted from Outlook signatures, Word and PDF reports arrives with
+    zero-width spaces, soft hyphens, full-width letters and decomposed accents.
+    Without this, "Jos\u00e9" typed on a tablet and "Jose\u0301" pasted from a
+    PDF were two people in every learned list. NFKC maps compatibility forms
+    to their plain equivalents; category Cf is the invisible formatting set.
+    """
+    text = unicodedata.normalize("NFKC", value or "")
+    return "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
+
+
 def _norm_email(email: str | None) -> str:
     # Ends-only strip, deliberately NOT the whitespace collapse _norm_name does:
-    # an address is stored as the operator confirmed it. The consequence is that
-    # an interior newline or tab survives normalization AND survives
-    # _looks_like_email below -- see the note there.
-    return (email or "").strip().lower()
+    # an address is stored as the operator confirmed it. An interior newline or
+    # tab survives normalization, which is why _looks_like_email rejects any
+    # whitespace rather than only a literal space.
+    return _clean_text(email).strip().lower()
 
 
 def _norm_name(name: str | None) -> str:
     # Collapses interior runs so "  Evan   Roden " and "Evan Roden" are one
     # person. This is the DISPLAY form that gets written back into the widget;
     # _requester_key is the comparison form.
-    return " ".join((name or "").split())
+    return " ".join(_clean_text(name).split())
 
 
 def _requester_key(name: str | None) -> str:
@@ -767,7 +781,7 @@ def _norm_vendor(vendor: str | None) -> str:
     # vendor_contacts exactly like this. _vendor_match_key is a second, looser
     # key computed only at read time, so history is never rewritten by a change
     # to the suffix list below.
-    return " ".join((vendor or "").split()).lower()
+    return " ".join(_clean_text(vendor).split()).lower()
 
 
 # Suffixes stripped only from the END of a vendor name, so "LP Gas Co" keeps its
@@ -817,18 +831,19 @@ def _looks_like_email(email: str) -> bool:
     expense_report._looks_like_email, which all require a non-space run either
     side of the "@" and a dot in the domain).
 
-    It accepts "@.", "a@b@c.d", and -- because it tests only for a literal
-    SPACE, while _norm_email does not collapse interior whitespace -- an address
-    carrying a newline or tab, which is exactly the shape a PDF-wrapped address
-    arrives in. Those get stored and later prefilled, and the strict validator
-    downstream then blocks the submission with no hint that memory is to blame.
+    It accepts "@." and "a@b@c.d". It rejects ANY whitespace, not only a
+    literal space: _norm_email does not collapse interior whitespace, and an
+    address carrying a newline or tab -- the shape a PDF-wrapped address
+    arrives in -- used to be stored, prefilled later, and then blocked by the
+    strict validator downstream with no hint that memory was to blame.
 
     On the PO path this is a second gate only: web_ui teaches vendor contacts
     solely from a package that already passed validate_submission_fields.
     """
-    return "@" in email and "." in email.split("@")[-1] and " " not in email
+    return "@" in email and "." in email.split("@")[-1] and not any(ch.isspace() for ch in email)
 
 
+@_guarded
 def record_send(
     *,
     contract: str,
@@ -995,23 +1010,22 @@ def record_vendor_contact(
             # never the count. This is the branch that makes Streamlit's
             # constant re-execution harmless.
             #
-            # UPDATE-only, so it cannot RECREATE a vendor_contacts row that went
-            # missing while its event row survived; the count then reads 0
-            # forever for this package. record_expense_approver was changed to
-            # an upsert for exactly that reason -- see the
-            # "..._recovers_if_its_directory_row_is_missing" test in
-            # tests/test_expense_memory.py -- but this function,
-            # record_device_account_manager and record_device_requester
-            # were not.
+            # An UPSERT, like record_expense_approver's: if the vendor_contacts
+            # row went missing while its event row survived, a plain UPDATE
+            # matched nothing and this package's representative was never
+            # offered again. The insert restores it at count 1 (this one
+            # package); an existing row keeps its count.
             conn.execute(
                 "UPDATE vendor_contact_events SET recorded_at=? "
                 "WHERE contract=? AND context_id=?",
                 (now, contract, context),
             )
             conn.execute(
-                "UPDATE vendor_contacts SET last_used=? WHERE contract=? "
-                "AND vendor=? AND name=? AND email=?",
-                (now, contract, vend, name, email),
+                "INSERT INTO vendor_contacts "
+                "(contract,vendor,name,email,count,last_used) VALUES (?,?,?,?,1,?) "
+                "ON CONFLICT(contract,vendor,name,email) DO UPDATE SET "
+                "last_used=excluded.last_used",
+                (contract, vend, name, email, now),
             )
 
         row = conn.execute(
@@ -1275,13 +1289,16 @@ def record_device_account_manager(
             # ("evan roden" -> "Evan Roden") reaches the prefill; the KEY is
             # casefolded, so that is not a new person.
             #
-            # UPDATE-only: if the directory row were missing while its event row
-            # survived, this silently restores nothing and the count stays 0.
-            # See the matching note in record_vendor_contact.
+            # An UPSERT for the same reason as in record_vendor_contact: a
+            # directory row missing beside its surviving event is restored at
+            # count 1 instead of leaving this browser with no requester.
             conn.execute(
-                "UPDATE device_account_managers SET display_name=?, last_used=? "
-                "WHERE device_hash=? AND account_key=? AND manager_key=?",
-                (name, now, device, account_key, manager),
+                "INSERT INTO device_account_managers "
+                "(device_hash,account_key,manager_key,display_name,use_count,last_used) "
+                "VALUES (?,?,?,?,1,?) "
+                "ON CONFLICT(device_hash,account_key,manager_key) DO UPDATE SET "
+                "display_name=excluded.display_name, last_used=excluded.last_used",
+                (device, account_key, manager, name, now),
             )
 
         row = conn.execute(
@@ -1307,7 +1324,10 @@ def record_report_preparer(device_token: str, account: str, profile: str, name: 
     """Remember only a completed report's preparer, scoped to device and profile."""
     device = _device_hash(device_token)
     account_key = _account_key(account)
-    if not device or not account_key or not profile or not name.strip():
+    # Normalized like every other remembered name: a preparer read from an
+    # imported Word/PDF report often carries doubled or invisible spacing.
+    name = _norm_name(name)
+    if not device or not account_key or not profile or not name or len(name) > 160:
         return
     conn = _connect()
     if conn is None:
@@ -1317,7 +1337,7 @@ def record_report_preparer(device_token: str, account: str, profile: str, name: 
             conn.execute(
                 "INSERT INTO device_report_preparers VALUES (?, ?, ?, ?) "
                 "ON CONFLICT(device_hash, account_key, profile_key) DO UPDATE SET display_name=excluded.display_name",
-                (device, account_key, profile, name.strip()),
+                (device, account_key, profile, name),
             )
     except Exception as error:
         _note_failure("record_report_preparer", error)
@@ -1751,8 +1771,10 @@ def record_expense_approver(
                 (account_key, approver_key, name, email, now),
             )
         else:
-            # Same approver, same report: an UPSERT, not the plain UPDATE its
-            # three sibling functions use. Two reasons, both load-bearing.
+            # Same approver, same report: an UPSERT, as in record_vendor_contact
+            # and record_device_account_manager (only the legacy, unwired
+            # record_device_requester still uses a plain UPDATE). Two reasons,
+            # both load-bearing.
             #
             # It RECOVERS a directory row that went missing while its event row
             # survived; a plain UPDATE would match nothing and this account

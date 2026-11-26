@@ -77,6 +77,11 @@ Failures are swallowed but no longer silent (26 November 2026):
   folder is not on a network share, which is what happens if the share did not
   mount and the app created the folder on the container's own disk.
 
+Names, emails and vendor names are compared after Unicode NFKC normalization
+with invisible formatting characters (zero-width spaces, soft hyphens)
+removed, so text pasted from Outlook, Word or PDF matches what was typed. An
+address containing any whitespace is never learned.
+
 This rule does not apply to the Smartsheet submission store: failure to read
 idempotency state must stop a potentially duplicate remote write. Do not turn
 that failure into an empty history.

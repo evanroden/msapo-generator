@@ -15,7 +15,7 @@ import sqlite3
 
 import pytest
 
-from app import memory
+from app import expense_ui, memory
 
 ACCOUNT = "SYNTHETIC ACCOUNT"
 NAME = "Synthetic Director"
@@ -227,3 +227,67 @@ def test_corruption_and_unknown_errors_still_return_safe_defaults(store, monkeyp
     assert memory.remembered_report_preparer(TOKEN, ACCOUNT, "water") == ""
     assert memory.record_report_preferences(TOKEN, ACCOUNT, "water") is None
     assert (data / "epc_memory.db").read_bytes() == b"TEST ONLY not a database"
+
+
+@pytest.mark.parametrize("typed", [
+    "  synthetic   DIRECTOR ",
+    "Synthetic Director",
+    "Synthetic​ Director",
+    "Synthetic Dir­ector",
+    "Synthｅtic Director",
+])
+def test_the_same_director_typed_differently_is_one_entry(store, typed):
+    memory.record_expense_approver(account=ACCOUNT, approver_name=NAME, approver_email=EMAIL, context_id="a")
+    memory.record_expense_approver(account=ACCOUNT, approver_name=typed,
+                                   approver_email=" Director@Example.invalid​", context_id="b")
+    entries = memory.expense_approvers(ACCOUNT)
+    assert len(entries) == 1 and entries[0][1] == EMAIL
+    # The expense form's own pairing key must agree with memory's.
+    assert expense_ui._employee_name_key(typed) == memory._requester_key(NAME)
+    assert expense_ui._approver_identity_key(typed, EMAIL.upper()) == \
+        expense_ui._approver_identity_key(NAME, EMAIL)
+
+
+def test_composed_and_decomposed_accents_are_one_person_and_one_vendor(store):
+    composed, decomposed = "José Example", "José Example"
+    memory.record_expense_approver(account=ACCOUNT, approver_name=composed,
+                                   approver_email="jose@example.invalid", context_id="a")
+    memory.record_expense_approver(account=ACCOUNT, approver_name=decomposed,
+                                   approver_email="jose@example.invalid", context_id="b")
+    assert len(memory.expense_approvers(ACCOUNT)) == 1
+    memory.record_vendor_contact(contract=ACCOUNT, vendor="Café Supply", contact_name="Synthetic Rep",
+                                 contact_email="rep@example.invalid", context_id="v")
+    assert memory.remembered_vendor_contact(ACCOUNT, "Café Supply") == ("Synthetic Rep", "rep@example.invalid")
+
+
+@pytest.mark.parametrize("email", ["director@exam\nple.invalid", "director@\texample.invalid"])
+def test_an_address_with_hidden_whitespace_is_not_learned(store, email):
+    assert memory.record_expense_approver(account=ACCOUNT, approver_name=NAME,
+                                          approver_email=email, context_id="a") == 0
+    assert memory.expense_approvers(ACCOUNT) == []
+
+
+def test_a_report_preparer_is_remembered_in_its_normal_form(store):
+    memory.record_report_preparer(TOKEN, ACCOUNT, "water", "  Synthetic   Preparer​ ")
+    assert memory.remembered_report_preparer(TOKEN, ACCOUNT, "water") == "Synthetic Preparer"
+
+
+def test_a_rerun_restores_a_vendor_representative_missing_beside_its_event(store):
+    kwargs = dict(contract=ACCOUNT, vendor="Synthetic Supply", contact_name="Synthetic Rep",
+                  contact_email="rep@example.invalid", context_id="pkg-1")
+    assert memory.record_vendor_contact(**kwargs) == 1
+    with sqlite3.connect(store / "data" / "epc_memory.db") as conn:
+        conn.execute("DELETE FROM vendor_contacts")
+    assert memory.record_vendor_contact(**kwargs) == 1
+    assert memory.remembered_vendor_contact(ACCOUNT, "Synthetic Supply") == ("Synthetic Rep", "rep@example.invalid")
+    assert memory.record_vendor_contact(**kwargs) == 1  # still idempotent
+
+
+def test_a_rerun_restores_a_requester_missing_beside_its_event(store):
+    kwargs = dict(device_token=TOKEN, account=ACCOUNT, manager_name="Synthetic Manager", context_id="pkg-1")
+    assert memory.record_device_account_manager(**kwargs) == 1
+    with sqlite3.connect(store / "data" / "epc_memory.db") as conn:
+        conn.execute("DELETE FROM device_account_managers")
+    assert memory.record_device_account_manager(**kwargs) == 1
+    assert memory.remembered_device_account_manager(TOKEN, ACCOUNT) == "Synthetic Manager"
+    assert memory.record_device_account_manager(**kwargs) == 1
