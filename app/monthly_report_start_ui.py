@@ -153,6 +153,19 @@ def select_sites(contract, profiles, remembered, field, completed=None, *, rende
                  suggested_sites=(), source_digest=""):
     options = site_choices(contract, profiles)
     prefix = "report_sites_" + _key(contract)
+    # Keep the exact obsolete review identity recoverable, not every site
+    # whose name happens to mention testing. This only filters presentation;
+    # profiles, source identity, originals and snapshot history stay intact.
+    from app.contracts import RRH_CONTRACT
+    retired = tuple(site for site in options if contract == RRH_CONTRACT
+                    and site.key == "rrh-tester-ux-review-2026-10-09")
+    if retired:
+        with st.expander("Retired test reports"):
+            restore = st.checkbox("Show the retired RRH test site",
+                                  key=prefix + "_show_retired_test_site",
+                                  help="Opens the old review site and its saved reports without changing or deleting them.")
+        if not restore:
+            options = tuple(site for site in options if site not in retired)
     if completed:
         st.session_state[prefix + "_new_site"] = ""
     seed = next((p for p in profiles if p.key == (completed or remembered)), None)
