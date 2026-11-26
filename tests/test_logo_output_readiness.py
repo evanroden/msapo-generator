@@ -55,3 +55,16 @@ def test_no_click_after_readiness_budget_expires(monkeypatch):
         def get_by_role(self,*args,**kwargs): raise AssertionError('must not click after budget')
     with pytest.raises(TimeoutError,match='deadline'):
         click_ready_native_output(Page(),{'scope':'s','generation':'g','sequence':1})
+
+
+def test_observer_is_installed_only_after_ready_and_uses_same_deadline(monkeypatch):
+    times = iter([100, 118])
+    monkeypatch.setattr('time.monotonic', lambda: next(times))
+    calls = []
+    class Page:
+        def wait_for_function(self, *args, **kwargs): calls.append('ready')
+        def get_by_role(self, *args, **kwargs): return self
+        def click(self, **kwargs): calls.append(('click', kwargs))
+    click_ready_native_output(Page(), {'scope':'s','generation':'g','sequence':1},
+        before_click=lambda: calls.append('observer'))
+    assert calls == ['ready', 'observer', ('click', {'timeout':12000})]
