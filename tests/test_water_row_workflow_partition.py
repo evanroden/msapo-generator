@@ -69,6 +69,14 @@ def validate_partition(text):
     restored = restored.replace(marker, '            test-artifacts/water-page-journey/\n            test-artifacts/report-row-cards/\n'+marker)
     reconstructed = text.replace(jobs['synthetic-dom'],restored).replace(EXPECTED_JOB,'')
     reconstructed = reconstructed.replace('# This lane retains its own 8-minute native ceiling; DOM remains25.', '# Native aggregate allowance rises from 25 to 33 minutes across these two jobs.')
+    # Approved later edit (#1081): the synthetic-dom job also runs when the
+    # shared Back/Next walk changes. Reverse only that path addition; every
+    # other byte of the original workflow is still compared below.
+    reconstructed = reconstructed.replace(
+        "      # Shared Back/Next walk used by the text-hydration and adaptive journeys.\n"
+        "      - 'scripts/monthly_sequential_navigation.py'\n"
+        "      - 'tests/test_monthly_sequential_navigation_harness.py'\n",
+        "")
     # Approved later edit (#820): pushes keep their active run instead of
     # cancelling it. Reverse only that concurrency block; every other byte
     # of the original workflow is still compared below.
