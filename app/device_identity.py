@@ -73,8 +73,15 @@ def cookie_bootstrap_html(*, reload_parent: bool = True) -> str:
 (() => {
   const name = 'epc_device_id';
   const reloadParent = __RELOAD_PARENT__;
-  const present = document.cookie.split('; ').some(item => item.startsWith(name + '='));
-  if (present) return;
+  const secure = window.location.protocol === 'https:' ? '; Secure' : '';
+  const current = document.cookie.split('; ').find(item => item.startsWith(name + '='));
+  if (current) {
+    const kept = current.slice(name.length + 1);
+    if (/^[0-9a-f]{32}$/.test(kept)) {
+      document.cookie = `${name}=${kept}; Max-Age=31536000; Path=/; SameSite=Lax${secure}`;
+    }
+    return;
+  }
 
   const bytes = new Uint8Array(16);
   if (window.crypto && window.crypto.getRandomValues) {
@@ -83,7 +90,6 @@ def cookie_bootstrap_html(*, reload_parent: bool = True) -> str:
     for (let i = 0; i < bytes.length; i += 1) bytes[i] = Math.floor(Math.random() * 256);
   }
   const token = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
-  const secure = window.location.protocol === 'https:' ? '; Secure' : '';
   document.cookie = `${name}=${token}; Max-Age=31536000; Path=/; SameSite=Lax${secure}`;
 
   const reloadKey = 'epc-device-cookie-reload-v1';
@@ -102,7 +108,12 @@ def cookie_bootstrap_html(*, reload_parent: bool = True) -> str:
     # 1. The early return on an existing cookie is what makes this idempotent.
     #    Streamlit re-renders the iframe on every rerun, so without it each
     #    rerun would mint a new token and every device-scoped memory row would
-    #    be orphaned after a single interaction.
+    #    be orphaned after a single interaction. Before returning, the SAME
+    #    token is written back with a fresh Max-Age: a cookie written once
+    #    expired a year after the first visit however often the browser was
+    #    used (and Safari caps script-written cookies to 7 days), after which
+    #    a new token silently orphaned everything that browser had learned.
+    #    Only a value that is already a valid token is renewed.
     # 2. `stored` re-reads document.cookie before reloading. If the browser
     #    refused the write (third-party/ITP restrictions, cookies disabled), a
     #    reload would accomplish nothing and the guard below would still be set

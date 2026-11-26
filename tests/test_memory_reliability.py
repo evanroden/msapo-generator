@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import sqlite3
+import subprocess
 
 import pytest
 
@@ -291,3 +293,37 @@ def test_a_rerun_restores_a_requester_missing_beside_its_event(store):
     assert memory.record_device_account_manager(**kwargs) == 1
     assert memory.remembered_device_account_manager(TOKEN, ACCOUNT) == "Synthetic Manager"
     assert memory.record_device_account_manager(**kwargs) == 1
+
+
+NODE = shutil.which("node")
+
+
+def _run_cookie_script(existing_cookie: str) -> list[str]:
+    from app.device_identity import cookie_bootstrap_html
+    script = cookie_bootstrap_html(reload_parent=False)
+    body = script.split("<script>", 1)[1].rsplit("</script>", 1)[0]
+    harness = (
+        "const writes = [];\n"
+        f"let jar = {json.dumps(existing_cookie)};\n"
+        "globalThis.document = { get cookie() { return jar; }, set cookie(v) { writes.push(v);"
+        " const pair = v.split(';')[0]; jar = jar ? jar + '; ' + pair : pair; } };\n"
+        "globalThis.window = { location: { protocol: 'https:' }, crypto: require('crypto').webcrypto,"
+        " parent: { location: { reload() {} } } };\n"
+        "globalThis.sessionStorage = { getItem() { return null; }, setItem() {} };\n"
+        + body + "\nconsole.log(JSON.stringify(writes));\n"
+    )
+    out = subprocess.run([NODE, "-e", harness], capture_output=True, text=True, timeout=30, check=True)
+    return json.loads(out.stdout)
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_the_browser_identity_cookie_is_renewed_on_every_visit():
+    token = "0123456789abcdef0123456789abcdef"
+    writes = _run_cookie_script(f"other=1; epc_device_id={token}")
+    assert len(writes) == 1
+    assert writes[0].startswith(f"epc_device_id={token}; Max-Age=31536000")
+    # A value that is not our own token is never renewed or replaced here.
+    assert _run_cookie_script("epc_device_id=not-a-token") == []
+    # A browser without the cookie still gets a fresh random token.
+    fresh = _run_cookie_script("")
+    assert len(fresh) == 1 and fresh[0].startswith("epc_device_id=") and token not in fresh[0]
