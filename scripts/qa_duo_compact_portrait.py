@@ -116,6 +116,12 @@ def main():
                 # Native controls may move the lazy viewer below the fold.
                 # Bring its real container into view before requiring pixels.
                 page.locator('.epc-workspace-reference').scroll_into_view_if_needed()
+                                # The reference container is nearly empty until the preview
+                                # fragment mounts, so it can sit inside the viewport while
+                                # the lazy viewer itself is still below the fold and the
+                                # scroll above is a no-op for it. Scroll the observed panel
+                                # itself into view so the viewer reports visible and loads.
+                                page.locator('.report-preview').scroll_into_view_if_needed()
                 expect(page.locator('.report-preview img').first).to_be_visible(timeout=20000)
                 expect(page.locator('.report-preview img').first).to_have_js_property('complete', True)
                 assert page.locator('.report-preview img').first.evaluate('n=>n.naturalWidth>0')
