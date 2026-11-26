@@ -8,6 +8,7 @@ from datetime import date
 from hashlib import sha256
 import re
 import pymupdf as fitz
+from app.extracted_text import normalize_extracted_text
 
 _LABEL = re.compile(r'(?im)^[ \t]*(actions?|findings?|recommendations?|follow[- ]?ups?)\s*[:=]')
 _FIELD = re.compile(r"^[ \t]*[A-Za-z][^:\r\n=]{0,60}\s*[:=]")
@@ -161,7 +162,8 @@ def block_spans(page, text, number, *, ambiguous_pages=None):
     for block in native_blocks:
         if len(block) < 7 or block[6] != 0:
             continue
-        raw = block[4].strip()
+        # Page text is normalized at intake; compare like with like.
+        raw = normalize_extracted_text(block[4]).strip()
         if not raw:
             continue
         while cursor < len(text) and text[cursor].isspace():

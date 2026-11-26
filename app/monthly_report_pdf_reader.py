@@ -17,6 +17,7 @@ import subprocess
 import time
 
 import pymupdf as fitz
+from app.extracted_text import normalize_extracted_text
 from app.image_open import open_image
 
 # Keep long originals admitted; expensive local OCR is separately bounded.
@@ -100,7 +101,8 @@ def _column_text(page, native: str) -> tuple[str, bool]:
         for line in block.get("lines", ()):
             if line.get("wmode") != 0 or tuple(line.get("dir", ())) != (1.0, 0.0):
                 continue
-            content = "".join(span.get("text", "") for span in line.get("spans", ())).strip()
+            content = normalize_extracted_text(
+                "".join(span.get("text", "") for span in line.get("spans", ()))).strip()
             if content:
                 lines.append((fitz.Rect(line["bbox"]), content))
     if len(lines) < 4:
