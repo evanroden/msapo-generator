@@ -666,50 +666,106 @@ def _initialize(conn: sqlite3.Connection, path: Path, stat: os.stat_result) -> N
 
 
 
-# Stored keys written before _clean_text existed. Each column is rewritten with
-# the same normalizer its writer uses today, so a name saved with a decomposed
-# accent or a zero-width space is found again by the new lookup. UPDATE OR
-# IGNORE leaves a row alone when its normalized key already exists: the newer
-# row then answers recall for that person, and nothing is deleted.
-_NORMALIZED_KEY_COLUMNS = (
-    ("admin_emails", "email", "_norm_email"),
-    ("contacts", "name", "_norm_name"),
-    ("contacts", "email", "_norm_email"),
-    ("vendor_contacts", "vendor", "_norm_vendor"),
-    ("vendor_contacts", "name", "_norm_name"),
-    ("vendor_contacts", "email", "_norm_email"),
-    ("vendor_contact_events", "vendor", "_norm_vendor"),
-    ("vendor_contact_events", "name", "_norm_name"),
-    ("vendor_contact_events", "email", "_norm_email"),
-    ("device_requesters", "requester_key", "_requester_key"),
-    ("device_requester_events", "requester_key", "_requester_key"),
-    ("device_account_managers", "manager_key", "_requester_key"),
-    ("device_account_manager_events", "manager_key", "_requester_key"),
-    ("device_expense_employees", "employee_key", "_requester_key"),
-    ("expense_approvers", "approver_key", "_requester_key"),
-    ("expense_approvers", "email", "_norm_email"),
-    ("expense_approver_events", "approver_key", "_requester_key"),
-    ("expense_approver_events", "email", "_norm_email"),
-)
+# Stored keys written before _clean_text existed. Each key column is rewritten
+# with the same normalizer its writer uses today, so a name saved with a
+# decomposed accent or a zero-width space is found again by the new lookup.
+_DIRECTORY_KEYS = {
+    "admin_emails": {"email": "_norm_email"},
+    "contacts": {"name": "_norm_name", "email": "_norm_email"},
+    "vendor_contacts": {"vendor": "_norm_vendor", "name": "_norm_name", "email": "_norm_email"},
+    "device_requesters": {"requester_key": "_requester_key"},
+    "device_account_managers": {"manager_key": "_requester_key"},
+    "device_expense_employees": {"employee_key": "_requester_key"},
+    "expense_approvers": {"approver_key": "_requester_key", "email": "_norm_email"},
+}
+# History rows are keyed by report (context_id), so their name columns never
+# collide and are simply rewritten after the directory rows are merged.
+_EVENT_KEYS = {
+    "vendor_contact_events": {"vendor": "_norm_vendor", "name": "_norm_name", "email": "_norm_email"},
+    "device_requester_events": {"requester_key": "_requester_key"},
+    "device_account_manager_events": {"manager_key": "_requester_key"},
+    "expense_approver_events": {"approver_key": "_requester_key", "email": "_norm_email"},
+}
+_USE_COUNTS = ("count", "use_count")
+
+
+def _merge_directory_keys(conn: sqlite3.Connection, table: str, keys: dict[str, str]) -> None:
+    """Normalize one directory table; rows that become one entry are merged.
+
+    Two spellings of the same person (e.g. composed and decomposed accents)
+    become one row whose use count is the sum of both, so a later correction
+    of either report decrements the one surviving entry and never orphans it.
+    The newer row's display fields win; nothing else is dropped.
+    """
+    info = list(conn.execute(f"PRAGMA table_info({table})"))
+    columns = [row[1] for row in info]
+    if any(column not in columns for column in keys):
+        return
+    primary = [row[1] for row in sorted(info, key=lambda row: row[5]) if row[5]]
+    normalize = {column: globals()[name] for column, name in keys.items()}
+    changed = " OR ".join(f"{column} IS NOT NULL" for column in keys)
+    rows = conn.execute(f"SELECT rowid, {', '.join(columns)} FROM {table} WHERE {changed}").fetchall()
+    for rowid, *values in rows:
+        row = dict(zip(columns, values))
+        fixed = {column: normalize[column](row[column]) for column in keys}
+        if all(fixed[column] == row[column] for column in keys):
+            continue
+        target_key = {column: fixed.get(column, row[column]) for column in primary}
+        where = " AND ".join(f"{column} = ?" for column in primary)
+        target = conn.execute(f"SELECT rowid, {', '.join(columns)} FROM {table} WHERE {where}",
+                              [target_key[column] for column in primary]).fetchone()
+        if target is None:
+            sets = ", ".join(f"{column} = ?" for column in keys)
+            conn.execute(f"UPDATE {table} SET {sets} WHERE rowid = ?", [*fixed.values(), rowid])
+            continue
+        target_rowid, *target_values = target
+        merged = dict(zip(columns, target_values))
+        newer = row if row.get("last_used", 0) > merged.get("last_used", 0) else merged
+        for column in columns:
+            if column in primary:
+                continue
+            if column in _USE_COUNTS:
+                merged[column] = (merged[column] or 0) + (row[column] or 0)
+            elif column == "last_used":
+                merged[column] = max(merged[column] or 0, row[column] or 0)
+            else:
+                merged[column] = newer[column]
+        others = [column for column in columns if column not in primary]
+        if others:
+            conn.execute(f"UPDATE {table} SET {', '.join(f'{column} = ?' for column in others)} "
+                         "WHERE rowid = ?", [*(merged[column] for column in others), target_rowid])
+        conn.execute(f"DELETE FROM {table} WHERE rowid = ?", (rowid,))
 
 
 def _migrate_normalized_keys(conn: sqlite3.Connection) -> None:
     """Rewrite pre-normalization keys in place; idempotent and cheap to rerun."""
-    functions = {name: globals()[name] for _, _, name in _NORMALIZED_KEY_COLUMNS}
-    for name, function in functions.items():
+    names = {name for keys in (*_DIRECTORY_KEYS.values(), *_EVENT_KEYS.values()) for name in keys.values()}
+    for name in names:
+        function = globals()[name]
         conn.create_function(name, 1, lambda value, f=function: f(value), deterministic=True)
     tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+
+    def stale(table, keys):
+        return conn.execute(
+            f"SELECT 1 FROM {table} WHERE "
+            + " OR ".join(f"{column} != {name}({column})" for column, name in keys.items())
+            + " LIMIT 1").fetchone() is not None
+
     with conn:
-        for table, column, name in _NORMALIZED_KEY_COLUMNS:
-            if table not in tables:
-                continue
-            columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
-            if column not in columns:
-                continue
-            conn.execute(
-                f"UPDATE OR IGNORE {table} SET {column} = {name}({column}) "
-                f"WHERE {column} != {name}({column})"
-            )
+        for table, keys in _DIRECTORY_KEYS.items():
+            if table in tables and _has_columns(conn, table, keys) and stale(table, keys):
+                _merge_directory_keys(conn, table, keys)
+        for table, keys in _EVENT_KEYS.items():
+            if table in tables and _has_columns(conn, table, keys):
+                sets = ", ".join(f"{column} = {name}({column})" for column, name in keys.items())
+                where = " OR ".join(f"{column} != {name}({column})" for column, name in keys.items())
+                conn.execute(f"UPDATE {table} SET {sets} WHERE {where}")
+
+
+def _has_columns(conn: sqlite3.Connection, table: str, keys) -> bool:
+    columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    return all(column in columns for column in keys)
+
 
 def _connect(*, _run_retention: bool = True) -> sqlite3.Connection | None:
     """Open (and initialize) the database; None if storage is unavailable.

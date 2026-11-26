@@ -387,3 +387,29 @@ def test_a_failure_inside_the_status_throttle_is_published_by_later_activity(sto
     clock[0] += memory._STATUS_WRITE_INTERVAL_SECONDS
     memory.remembered_report_preparer(TOKEN, ACCOUNT, "water")  # a later successful call
     assert json.loads(path.read_text(encoding="utf-8"))["failures"] == 2
+
+
+def test_two_saved_spellings_of_one_person_merge_and_a_correction_keeps_the_other_report(store):
+    composed, decomposed = "José Example", "José Example"
+    email = "jose@example.invalid"
+    memory.record_expense_approver(account=ACCOUNT, approver_name=composed,
+                                   approver_email=email, context_id="report-a")
+    # An older version saved the same person a second time, unnormalized, for report b.
+    with sqlite3.connect(store / "data" / "epc_memory.db") as conn:
+        account_key = conn.execute("SELECT account_key FROM expense_approvers").fetchone()[0]
+        conn.execute("INSERT INTO expense_approvers (account_key, approver_key, display_name, email, use_count,"
+                     " last_used) VALUES (?, ?, ?, ?, 1, 1)", (account_key, decomposed.casefold(), decomposed, email))
+        conn.execute("INSERT INTO expense_approver_events (account_key, context_id, approver_key, email,"
+                     " recorded_at) VALUES (?, 'report-b', ?, ?, 1)", (account_key, decomposed.casefold(), email))
+    memory._INITIALIZED_DATABASES.clear()
+
+    assert len(memory.expense_approvers(ACCOUNT)) == 1
+    with sqlite3.connect(store / "data" / "epc_memory.db") as conn:
+        assert conn.execute("SELECT approver_key, use_count FROM expense_approvers").fetchall() == [
+            (memory._requester_key(composed), 2)]
+    # Report b is corrected to someone else: report a still names José.
+    memory.record_expense_approver(account=ACCOUNT, approver_name="Synthetic Other",
+                                   approver_email="other@example.invalid", context_id="report-b")
+    names = sorted(entry[0] for entry in memory.expense_approvers(ACCOUNT))
+    assert names == sorted([composed, "Synthetic Other"])
+    assert memory.failure_summary()["failures"] == 0
