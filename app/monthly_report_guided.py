@@ -1830,7 +1830,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     )
                     draft = replace(draft, cover_recovery_request=st.session_state.pop(
                         prefix + "_cover_recovery_request_update", draft.cover_recovery_request))
-                with st.expander("About this report"):
+                with st.sidebar.expander("Report design and artwork"):
                     from app.monthly_report_designs_ui import render_design_status, render_apply_master_design
                     render_design_status(draft)
                     render_apply_master_design(replace(draft, blocks=tuple(blocks.values())), prefix)

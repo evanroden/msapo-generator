@@ -112,9 +112,9 @@ def test_catalog_change_between_review_and_apply_is_rejected(shared_logos, monke
     assert app.warning
 
 
-def test_real_guided_entry_is_inside_optional_about_and_source_pending_guard():
+def test_real_guided_entry_is_in_sidebar_and_source_pending_guard():
     source = Path('app/monthly_report_guided.py').read_text()
-    start = source.index('with st.expander("About this report")')
+    start = source.index('with st.sidebar.expander("Report design and artwork")')
     end = source.index('with preview_column:', start)
     excerpt = source[start:end]
     assert 'if not source_pending and "brand_logo" in blocks:' in excerpt
