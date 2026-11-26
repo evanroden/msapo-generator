@@ -73,7 +73,10 @@ def protected_files(base, token):
 
 
 def about(page):
-    panel = page.get_by_test_id('stExpander').filter(has=page.locator('summary').get_by_text('About this report', exact=True))
+    sidebar = page.get_by_test_id('stSidebar')
+    if sidebar.get_attribute('aria-expanded') == 'false':
+        page.get_by_test_id('stExpandSidebarButton').get_by_role('button').click()
+    panel = sidebar.get_by_test_id('stExpander').filter(has=page.locator('summary').get_by_text('Report design and artwork', exact=True))
     expect(panel).to_have_count(1)
     if not panel.evaluate("node => node.matches('details') ? node.open : node.querySelector('details').open"):
         panel.locator('summary').first.click()
@@ -83,8 +86,9 @@ def about(page):
 def native_outputs(page, directory, expected):
     prior = receipt(page)
     sequence = prior['sequence']
-    with native_click_geometry(page, directory):
-        click_ready_native_output(page, prior)
+    with ExitStack() as observations:
+        click_ready_native_output(page, prior,
+            before_click=lambda: observations.enter_context(native_click_geometry(page, directory)))
         wait_state(page, after=sequence, scope=prior['scope'], generation=prior['generation'])
     for label, name in (('Download synthetic native Word', 'actual.docx'), ('Download synthetic native PDF', 'actual.pdf')):
         with page.expect_download(timeout=30000) as event:
