@@ -70,16 +70,19 @@ def test_placeholder_prompts_are_not_extracted_and_ids_stay_put(tmp_path):
         _run("Reviewer: ") + placeholder("Click or tap here to enter text."),
         _run("Closing line."),
     ])
-    texts = _texts(inspection)
-    assert "Visible note." in texts and "Reviewer:" in texts
-    assert not any("Click or tap" in t or "Enter the" in t for t in texts)
-    # The prompt-only paragraph keeps its ordinal: later IDs match a document
-    # in which that paragraph had real text, so saved mappings do not shift.
+    offered = [i.text for i in inspection.items if i.kind == "text" and i.note != importer._PLACEHOLDER_NOTE]
+    assert "Visible note." in offered and "Reviewer:" in offered
+    assert not any("Click or tap" in t or "Enter the" in t for t in offered)
+    # The prompt-only paragraph stays in the inventory, unsuggested, so item
+    # IDs, item count and saved per-item texts match a filled-in document.
+    prompt = next(i for i in inspection.items if i.note == importer._PLACEHOLDER_NOTE)
+    assert prompt.suggested_slot == ""
     closing = next(i for i in inspection.items if i.text == "Closing line.")
     filled = _docx(tmp_path, [
         _run("Visible note."), _run("2026-10-14"), _run("Reviewer: x"), _run("Closing line."),
     ])
     assert closing.id == next(i for i in filled.items if i.text == "Closing line.").id
+    assert len(inspection.items) == len(filled.items)
 
 
 def test_word_symbol_table_never_invents_unknown_dingbats():
@@ -119,3 +122,43 @@ def test_pdf_intake_reads_ligatures_as_plain_letters_and_keeps_passage_proof(tmp
 
 def test_purchase_order_pdf_text_reads_ligatures_as_plain_letters():
     assert "Replaced efficient filter on 24-hour unit." in ocr.extract_text_from_pdf(_ligature_pdf())
+
+
+def test_ligature_labels_in_side_by_side_columns_still_need_page_review():
+    from app.monthly_report_vendor_passages import block_spans
+    with fitz.open() as pdf:
+        page = pdf.new_page(width=760, height=620)
+        page.insert_font(fontname="dv", fontfile=FONT)
+        left = "ﬁndings: The demo filter was worn.\nNext visit in spring."
+        right = "ﬁndings: The demo fan stayed offline.\nParts are on order."
+        assert page.insert_textbox(fitz.Rect(35, 135, 315, 355), left, fontsize=10, fontname="dv") >= 0
+        assert page.insert_textbox(fitz.Rect(425, 135, 725, 355), right, fontsize=10, fontname="dv") >= 0
+        assert any("ﬁndings" in block[4] for block in page.get_text("blocks"))
+        text = normalize_extracted_text(page.get_text()).strip()
+        assert "findings:" in text
+        ambiguous = set()
+        assert block_spans(page, text, 1, ambiguous_pages=ambiguous) == ()
+        assert ambiguous == {1}
+
+
+def _paragraph(inner):
+    return parse_xml(f"<w:p {W_NS}>{inner}</w:p>")
+
+
+def test_rewriting_imported_text_does_not_repeat_symbols_or_hyphens():
+    from app.monthly_report_native_layout import _set_reviewed_footer_text, _set_text
+    inner = (_run("Limit 44") + '<w:r><w:sym w:font="Symbol" w:char="F0B0"/></w:r>' + _run("F, 24")
+             + "<w:r><w:noBreakHyphen/></w:r>" + _run("hour"))
+    for writer in (_set_text, _set_reviewed_footer_text):
+        paragraph = _paragraph(inner)
+        value = importer._text(paragraph)
+        assert value == "Limit 44°F, 24-hour"
+        writer(paragraph, value)
+        assert importer._text(paragraph) == value
+        paragraph = _paragraph(inner)
+        writer(paragraph, "Limit 45°F, 24-hour")
+        assert importer._text(paragraph) == "Limit 45°F, 24-hour"
+    # A symbol with no known text equivalent is never imported, so it stays.
+    paragraph = _paragraph('<w:r><w:sym w:font="Wingdings" w:char="F041"/></w:r>' + _run(" Note"))
+    _set_text(paragraph, "Revised note")
+    assert paragraph.find(".//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}sym") is not None

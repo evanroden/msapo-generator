@@ -344,6 +344,7 @@ def _remove_page_field_results(element, fields):
 
 
 _OFF = ("0", "false", "off")
+_PLACEHOLDER_NOTE = "Word placeholder prompt only; not report text."
 
 
 def _not_displayed(element):
@@ -1031,12 +1032,17 @@ def inspect_docx(path: Path) -> DocxInspection:
                                         if text_role != "Editable native text frames":
                                             ordinary_exclude = frames
                                             ordinary_text = _text(element, exclude=frames)
-                                if not ordinary_text and _text(element, exclude=ordinary_exclude, displayed=False):
+                                prompt_text = ("" if ordinary_text else
+                                               _text(element, exclude=ordinary_exclude, displayed=False))
+                                if prompt_text:
                                     # Only a placeholder prompt or invisible
-                                    # characters: nothing to offer, but keep the ordinal
-                                    # this paragraph always had so later item IDs (and
-                                    # saved mappings that name them) do not shift.
-                                    primary_item_count += 1
+                                    # characters. Keep the item exactly where it
+                                    # always was: saved reviews store one text per
+                                    # item and several workflows refuse a source whose
+                                    # fresh inventory length differs. It is listed
+                                    # with no suggested slot, so it is not carried in.
+                                    add("text", part, position, text=prompt_text,
+                                        note=_PLACEHOLDER_NOTE, suggested_slot="")
                                 elif ordinary_text:
                                     add("text", part, position, text=ordinary_text, note=source_note,
                                         suggested_slot=(content_slot if content_slot and not detected else

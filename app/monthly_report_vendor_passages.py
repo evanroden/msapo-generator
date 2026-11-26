@@ -153,8 +153,13 @@ def block_spans(page, text, number, *, ambiguous_pages=None):
     geometry = {b['number']: b for b in page.get_text(
         'dict', flags=fitz.TEXTFLAGS_DICT & ~fitz.TEXT_PRESERVE_IMAGES)['blocks']
         if b.get('type') == 0}
-    native_blocks = [block for block in page.get_text('blocks')
-                     if len(block) >= 7 and block[6] == 0 and block[4].strip()]
+    # Page text is normalized at intake. Normalize each block's text once,
+    # before the safety check too, so a label typed with a ligature or a hidden
+    # character (e.g. "\ufb01ndings:") gets the same reading-order check.
+    native_blocks = [(*block[:4], normalize_extracted_text(block[4]), *block[5:])
+                     for block in page.get_text('blocks')
+                     if len(block) >= 7 and block[6] == 0]
+    native_blocks = [block for block in native_blocks if block[4].strip()]
     if _parallel_reading_order_ambiguous(native_blocks):
         if ambiguous_pages is not None:
             ambiguous_pages.add(number)
@@ -162,8 +167,7 @@ def block_spans(page, text, number, *, ambiguous_pages=None):
     for block in native_blocks:
         if len(block) < 7 or block[6] != 0:
             continue
-        # Page text is normalized at intake; compare like with like.
-        raw = normalize_extracted_text(block[4]).strip()
+        raw = block[4].strip()
         if not raw:
             continue
         while cursor < len(text) and text[cursor].isspace():
