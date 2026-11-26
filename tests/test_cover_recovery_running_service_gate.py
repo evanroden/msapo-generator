@@ -215,14 +215,14 @@ def test_only_exact_existing_last_good_art_may_be_copied_to_private_journal(muta
         with pytest.raises(AssertionError):check()
 
 
-@pytest.mark.parametrize('name',['.conversion-lock','.active-office.json'])
+@pytest.mark.parametrize('name',['.conversion-lock','.conversion-mode.lock','.office-janitor.lock','.active-office.json'])
 def test_only_exact_valid_runtime_bookkeeping_is_outside_content_inventory(tmp_path,name):
     import os
     from scripts.qa_cover_recovery_service import runtime_bookkeeping
     root=tmp_path/'monthly_reports';folder=root/'render-jobs';folder.mkdir(parents=True)
     path=folder/name
     boot=Path('/proc/sys/kernel/random/boot_id').read_text().strip()+':'+os.readlink('/proc/self/ns/pid')
-    raw=b'' if name=='.conversion-lock' else __import__('json').dumps({'pid':os.getpid(),'boot':boot}).encode()
+    raw=b'' if name!='.active-office.json' else __import__('json').dumps({'pid':os.getpid(),'boot':boot}).encode()
     path.write_bytes(raw)
     assert runtime_bookkeeping(root,path)
     # Renderer state can be created/updated/removed without changing report content.
@@ -347,3 +347,19 @@ def test_large_upload_callsite_binds_preaction_baseline_and_keeps_liveness_check
     assert values['token']=='token' and values['original_digest']=='large_digest'
     assert "checkpoint('two-browser-held-large-uploads')" in source
     assert "fresh['held_upload_sizes']" in source
+
+
+@pytest.mark.parametrize('name',['.conversion-mode.lock','.office-janitor.lock'])
+@pytest.mark.parametrize('mutation',['content','hardlink','symlink','fifo','parent-link'])
+def test_new_exact_runtime_locks_remain_empty_single_regular_files(tmp_path,name,mutation):
+    import os
+    from scripts.qa_cover_recovery_service import runtime_bookkeeping
+    root=tmp_path/'monthly_reports';folder=root/'render-jobs';folder.mkdir(parents=True)
+    path=folder/name;path.write_bytes(b'')
+    if mutation=='content':path.write_bytes(b'x')
+    if mutation=='hardlink':os.link(path,tmp_path/'alias')
+    if mutation=='symlink':path.unlink();path.symlink_to(tmp_path/'elsewhere')
+    if mutation=='fifo':path.unlink();os.mkfifo(path)
+    if mutation=='parent-link':folder.rename(root/'real');folder.symlink_to(root/'real',target_is_directory=True)
+    with pytest.raises((AssertionError,ValueError,OSError)):
+        runtime_bookkeeping(root,path)
