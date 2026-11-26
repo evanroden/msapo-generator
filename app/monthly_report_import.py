@@ -365,6 +365,13 @@ def _not_displayed(element):
     return hidden
 
 
+def _has_literal_text(element, exclude=()) -> bool:
+    """Whether any w:t outside ``exclude`` holds non-whitespace text."""
+    skipped = {id(node) for root in exclude for node in root.iter(W + "t")}
+    return any((node.text or "").strip() and id(node) not in skipped
+               for node in element.iter(W + "t"))
+
+
 def _text(element, *, exclude=(), displayed=True) -> str:
     """Text of a Word element in reading order.
 
@@ -1032,15 +1039,23 @@ def inspect_docx(path: Path) -> DocxInspection:
                                         if text_role != "Editable native text frames":
                                             ordinary_exclude = frames
                                             ordinary_text = _text(element, exclude=frames)
-                                prompt_text = ("" if ordinary_text else
+                                # Item membership follows the rule sources cached
+                                # before symbol/placeholder reading were read with:
+                                # a paragraph is an item iff a w:t holds text.
+                                # Saved reviews store one text per item, and
+                                # several workflows refuse a source whose fresh
+                                # inventory length differs, so a paragraph that
+                                # holds only a symbol or hyphen gains no item.
+                                listed = _has_literal_text(element, ordinary_exclude)
+                                prompt_text = ("" if ordinary_text or not listed else
                                                _text(element, exclude=ordinary_exclude, displayed=False))
-                                if prompt_text:
+                                if not listed:
+                                    pass
+                                elif prompt_text:
                                     # Only a placeholder prompt or invisible
-                                    # characters. Keep the item exactly where it
-                                    # always was: saved reviews store one text per
-                                    # item and several workflows refuse a source whose
-                                    # fresh inventory length differs. It is listed
-                                    # with no suggested slot, so it is not carried in.
+                                    # characters: keep the item where it always
+                                    # was, with no suggested slot, so it is listed
+                                    # but not carried into the report.
                                     add("text", part, position, text=prompt_text,
                                         note=_PLACEHOLDER_NOTE, suggested_slot="")
                                 elif ordinary_text:

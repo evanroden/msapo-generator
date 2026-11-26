@@ -172,3 +172,12 @@ def test_text_written_into_a_placeholder_survives_reimport():
     assert importer._text(paragraph) == "Prepared by: Alice"
     _set_text(paragraph, "Prepared by: Bob")
     assert importer._text(paragraph) == "Prepared by: Bob"
+
+
+def test_a_symbol_only_paragraph_adds_no_item_so_saved_inventories_still_match(tmp_path):
+    checkbox = '<w:r><w:sym w:font="Wingdings" w:char="F0FE"/></w:r>'
+    hyphen = "<w:r><w:noBreakHyphen/></w:r>"
+    inspection = _docx(tmp_path, [_run("Before."), checkbox, hyphen, _run("After.")])
+    plain = _docx(tmp_path, [_run("Before."), "", "", _run("After.")])
+    assert len(inspection.items) == len(plain.items)
+    assert [i.id for i in inspection.items] == [i.id for i in plain.items]
