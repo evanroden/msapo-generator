@@ -327,3 +327,63 @@ def test_the_browser_identity_cookie_is_renewed_on_every_visit():
     # A browser without the cookie still gets a fresh random token.
     fresh = _run_cookie_script("")
     assert len(fresh) == 1 and fresh[0].startswith("epc_device_id=") and token not in fresh[0]
+
+
+def test_a_returning_browser_renews_its_cookie_once_per_session_without_a_reload():
+    from app.device_identity import cookie_script_plan
+    state: dict = {}
+    assert cookie_script_plan("", state) == (True, True)  # new browser: create, then reload
+    assert cookie_script_plan("0123456789abcdef0123456789abcdef", state) == (True, False)
+    assert cookie_script_plan("0123456789abcdef0123456789abcdef", state) == (False, False)
+    assert cookie_script_plan("", {}) == (True, True)
+
+
+def test_names_saved_before_normalization_are_found_after_the_upgrade(store):
+    composed, decomposed = "José Example", "José Example"
+    vendor_composed, vendor_decomposed = "Café Supply", "Café Supply"
+    memory.record_expense_approver(account=ACCOUNT, approver_name=composed,
+                                   approver_email="jose@example.invalid", context_id="a")
+    memory.record_vendor_contact(contract=ACCOUNT, vendor=vendor_composed, contact_name="Synthetic Rep",
+                                 contact_email="rep@example.invalid", context_id="v")
+    memory.record_device_account_manager(device_token=TOKEN, account=ACCOUNT,
+                                         manager_name=composed, context_id="m")
+    # Rewrite the stored keys into the form older versions saved: not normalized.
+    with sqlite3.connect(store / "data" / "epc_memory.db") as conn:
+        for table, column in (("expense_approvers", "approver_key"),
+                              ("expense_approver_events", "approver_key"),
+                              ("device_account_managers", "manager_key"),
+                              ("device_account_manager_events", "manager_key")):
+            conn.execute(f"UPDATE {table} SET {column} = ?", (decomposed.casefold(),))
+        for table in ("vendor_contacts", "vendor_contact_events"):
+            conn.execute(f"UPDATE {table} SET vendor = ?", (vendor_decomposed.lower(),))
+    memory._INITIALIZED_DATABASES.clear()  # the next process start runs the migration
+
+    assert memory.remembered_vendor_contact(ACCOUNT, vendor_composed) == ("Synthetic Rep", "rep@example.invalid")
+    assert memory.remembered_device_account_manager(TOKEN, ACCOUNT) == composed
+    memory.record_expense_approver(account=ACCOUNT, approver_name=composed,
+                                   approver_email="jose@example.invalid", context_id="b")
+    assert len(memory.expense_approvers(ACCOUNT)) == 1
+    with sqlite3.connect(store / "data" / "epc_memory.db") as conn:
+        keys = {row[0] for row in conn.execute("SELECT approver_key FROM expense_approvers")}
+    assert keys == {memory._requester_key(composed)}
+    assert memory.failure_summary()["failures"] == 0
+
+
+def test_a_failure_inside_the_status_throttle_is_published_by_later_activity(store, monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(memory, "_monotonic", lambda: clock[0])
+    real = sqlite3.connect
+
+    def broken(*args, **kwargs):
+        raise sqlite3.OperationalError("TEST ONLY disk unavailable")
+
+    monkeypatch.setattr(memory.sqlite3, "connect", broken)
+    memory.remembered_report_preparer(TOKEN, ACCOUNT, "water")  # first failure: written at once
+    clock[0] += 1
+    memory.remembered_report_preparer(TOKEN, ACCOUNT, "water")  # inside the interval: held back
+    path = memory._status_path(store / "data")
+    assert json.loads(path.read_text(encoding="utf-8"))["failures"] == 1
+    monkeypatch.setattr(memory.sqlite3, "connect", real)
+    clock[0] += memory._STATUS_WRITE_INTERVAL_SECONDS
+    memory.remembered_report_preparer(TOKEN, ACCOUNT, "water")  # a later successful call
+    assert json.loads(path.read_text(encoding="utf-8"))["failures"] == 2

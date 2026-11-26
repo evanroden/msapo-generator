@@ -128,6 +128,25 @@ def cookie_bootstrap_html(*, reload_parent: bool = True) -> str:
     return source.replace("__RELOAD_PARENT__", "true" if reload_parent else "false")
 
 
+RENEWED_SESSION_KEY = "_epc_device_cookie_renewed"
+
+
+def cookie_script_plan(token: str, session_state) -> tuple[bool, bool]:
+    """Whether this run renders the cookie script, and whether it may reload.
+
+    No token yet: render it and reload once, so the next request carries the
+    new cookie. A token already present: render it once per browser session,
+    without a reload, so the script pushes the one-year expiry forward and a
+    regular user's identity (and everything remembered for it) never lapses.
+    """
+    if not token:
+        return True, True
+    if session_state.get(RENEWED_SESSION_KEY):
+        return False, False
+    session_state[RENEWED_SESSION_KEY] = True
+    return True, False
+
+
 def ensure_device_cookie(*, reload_parent: bool = True) -> None:
     """Attempt cookie creation without blocking the rest of the PO workflow.
 

@@ -495,12 +495,20 @@ def failure_summary() -> dict:
         }
 
 
+# True while the status file is behind the counts: a failure arrived inside the
+# write interval. The next guarded call after the interval publishes it, so a
+# lone failure in a burst is never left out of the file the health check reads.
+_status_stale = False
+
+
 def _write_status(force: bool = False) -> None:
-    global _last_status_write
+    global _last_status_write, _status_stale
     now = _monotonic()
     if not force and now - _last_status_write < _STATUS_WRITE_INTERVAL_SECONDS:
+        _status_stale = True
         return
     _last_status_write = now
+    _status_stale = False
     try:
         path = _status_path()
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -595,6 +603,8 @@ def _guarded(function):
                     _WRITE_TURN.release()
                 stack.pop()
             if not errors:
+                if _status_stale and len(stack) == 0:
+                    _write_status()
                 return result
             if attempt < BUSY_ATTEMPTS and any(_is_busy(error) for _, error in errors):
                 with _FAILURE_LOCK:
@@ -603,6 +613,8 @@ def _guarded(function):
                 continue
             for stage, error in errors:
                 _record_failure(operation, stage, error)
+            if _status_stale and len(stack) == 0:
+                _write_status()
             return result
         return result
 
@@ -612,6 +624,8 @@ def _guarded(function):
 def _reset_failure_state() -> None:
     """Tests only: forget counts, rate limits and the status throttle."""
     global _failure_total, _retried_total, _first_failure_at, _last_failure_at, _last_status_write
+    global _status_stale
+    _status_stale = False
     with _FAILURE_LOCK:
         _failure_counts.clear()
         _last_logged.clear()
@@ -642,12 +656,60 @@ def _initialize(conn: sqlite3.Connection, path: Path, stat: os.stat_result) -> N
     # After the identity migration, which rebuilds
     # expense_approvers without the role column.
     _migrate_expense_routing_columns(conn)
+    # Last: keys written before names were Unicode-normalized.
+    _migrate_normalized_keys(conn)
     version = conn.execute("PRAGMA schema_version").fetchone()[0]
     if len(_INITIALIZED_DATABASES) >= 128:
         _INITIALIZED_DATABASES.clear()
     if switched:
         _INITIALIZED_DATABASES[str(path)] = (stat.st_dev, stat.st_ino, version)
 
+
+
+# Stored keys written before _clean_text existed. Each column is rewritten with
+# the same normalizer its writer uses today, so a name saved with a decomposed
+# accent or a zero-width space is found again by the new lookup. UPDATE OR
+# IGNORE leaves a row alone when its normalized key already exists: the newer
+# row then answers recall for that person, and nothing is deleted.
+_NORMALIZED_KEY_COLUMNS = (
+    ("admin_emails", "email", "_norm_email"),
+    ("contacts", "name", "_norm_name"),
+    ("contacts", "email", "_norm_email"),
+    ("vendor_contacts", "vendor", "_norm_vendor"),
+    ("vendor_contacts", "name", "_norm_name"),
+    ("vendor_contacts", "email", "_norm_email"),
+    ("vendor_contact_events", "vendor", "_norm_vendor"),
+    ("vendor_contact_events", "name", "_norm_name"),
+    ("vendor_contact_events", "email", "_norm_email"),
+    ("device_requesters", "requester_key", "_requester_key"),
+    ("device_requester_events", "requester_key", "_requester_key"),
+    ("device_account_managers", "manager_key", "_requester_key"),
+    ("device_account_manager_events", "manager_key", "_requester_key"),
+    ("device_expense_employees", "employee_key", "_requester_key"),
+    ("expense_approvers", "approver_key", "_requester_key"),
+    ("expense_approvers", "email", "_norm_email"),
+    ("expense_approver_events", "approver_key", "_requester_key"),
+    ("expense_approver_events", "email", "_norm_email"),
+)
+
+
+def _migrate_normalized_keys(conn: sqlite3.Connection) -> None:
+    """Rewrite pre-normalization keys in place; idempotent and cheap to rerun."""
+    functions = {name: globals()[name] for _, _, name in _NORMALIZED_KEY_COLUMNS}
+    for name, function in functions.items():
+        conn.create_function(name, 1, lambda value, f=function: f(value), deterministic=True)
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    with conn:
+        for table, column, name in _NORMALIZED_KEY_COLUMNS:
+            if table not in tables:
+                continue
+            columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+            if column not in columns:
+                continue
+            conn.execute(
+                f"UPDATE OR IGNORE {table} SET {column} = {name}({column}) "
+                f"WHERE {column} != {name}({column})"
+            )
 
 def _connect(*, _run_retention: bool = True) -> sqlite3.Connection | None:
     """Open (and initialize) the database; None if storage is unavailable.

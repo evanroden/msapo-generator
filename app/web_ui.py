@@ -71,7 +71,7 @@ from app.config import (
     operator_today,
     valid_categories_for_site,
 )
-from app.device_identity import device_token, ensure_device_cookie
+from app.device_identity import cookie_script_plan, device_token, ensure_device_cookie
 from app.expense_ui import (
     EXPENSE_WORKFLOW,
     PURCHASE_WORKFLOW,
@@ -1821,9 +1821,12 @@ def main() -> None:
         browser_timezone = str(st.context.timezone or "").strip()
     except Exception:
         browser_timezone = ""
-    if not browser_token:
+    # A returning browser also gets the script once per session, which only
+    # renews its existing cookie's expiry (no reload).
+    render_cookie_script, reload_for_cookie = cookie_script_plan(browser_token, st.session_state)
+    if render_cookie_script:
         try:
-            ensure_device_cookie()
+            ensure_device_cookie(reload_parent=reload_for_cookie)
         except Exception as exc:  # noqa: BLE001 - convenience feature, never fatal
             # Still non-blocking: memory is a convenience and must not take the
             # page down. But it is now visible in the server log rather than
