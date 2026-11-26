@@ -36,4 +36,6 @@ def render_loaded_file_card(staged, filename, analysis, target, period, *, remov
     if not any(str(line).strip() for line in inspection.title_candidates):
         st.info("No readable cover text. Review the original artwork; identity is not confirmed.")
     if staged[0] is not None:
-        st.button("Remove loaded file", key=remove_key, on_click=on_remove)
+        with st.sidebar.expander("Starting report options"):
+            st.caption("Clear only the pending file review. Saved reports, original files and report history stay unchanged.")
+            st.button("Clear pending starting report", key=remove_key, on_click=on_remove)

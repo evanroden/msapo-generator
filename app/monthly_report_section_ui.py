@@ -885,7 +885,8 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             upload = entry_upload
             loaded_card_slot = st.empty()
             if state:
-                with st.expander("Original-file recovery (optional)"):
+                with st.sidebar.expander("Saved starting report"):
+                    st.caption("Open the unchanged saved original for deliberate section review.")
                     _open_saved_original()
         else:
             # The picker stays in the same native parent across every rerun. Before
@@ -995,7 +996,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             st.button("Retry report analysis", key=prefix + "_retry_analysis")
         st.info("The newly selected file has not been analyzed. Retry or choose another file before continuing.")
         return True
-    if not optional_import:
+    if not optional_import and not entry_active:
         _open_saved_original()
     staged = st.session_state.get(prefix + "_stage")
     if not staged:
