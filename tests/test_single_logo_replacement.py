@@ -203,7 +203,7 @@ def test_hosted_native_acceptance_requires_both_engines_inside_shared_budget():
     name='      - name: Shared logo single-record replacement, stale review and restore\n'
     step=workflow.split(name,1)[1].split('      - name:',1)[0]
     assert "if: ${{ !cancelled() }}" in step
-    assert "ci_native_test_budget.py --minutes 25" in step
+    assert "ci_native_test_budget.py --minutes 26 --command-minutes 25" in step
     assert "python scripts/qa_single_logo_admin.py\n" in step
     assert "chromium-only" not in step
     assert "test-artifacts/single-logo-admin/" in workflow
