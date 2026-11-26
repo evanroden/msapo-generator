@@ -426,6 +426,11 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                     st.text(table_task_label(table, item.suggested_slot or section.key,
                                              position=n - 1,
                                              total=sum(i.kind == "table" for i in items)))
+                    if not table.columns:
+                        blocking.append("Name each table column before including these records.")
+                        plan["tables"][item.id] = table
+                        plan["selected"].append(item.id)
+                        continue
                     # Headings are source content, not unique cell identities.
                     # Number only colliding display labels; keep the saved schema
                     # and each physical column separate through native grid edits.

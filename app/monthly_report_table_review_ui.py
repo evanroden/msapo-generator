@@ -10,6 +10,18 @@ from app.monthly_report_editor import _signature
 
 def review_table_headings(table, key, field):
     """Preserve every cell until the operator confirms unambiguous headings."""
+    if not table.columns and any(any(str(cell).strip() for cell in row) for row in table.rows):
+        width = max(map(len, table.rows))
+        st.warning("This table has records but no confirmed column headings. Name each physical column before editing its cells. The source records have been kept unchanged.")
+        st.dataframe([{str(n + 1): row[n] if n < len(row) else "" for n in range(width)}
+                      for row in table.rows[:12]], hide_index=True)
+        key += "_missing_headings_" + _signature((table.columns, table.rows))
+        headings = tuple(st.text_input(f"Column {n + 1} heading", key=field(key + f"_{n}", ""))
+                         .strip() for n in range(width))
+        valid = all(headings) and len(set(headings)) == len(headings)
+        if st.button("Use these column names", key=key + "_apply", disabled=not valid):
+            return replace(table, columns=headings)
+        return table
     if not ambiguous_price_columns(table.columns, table.rows):
         return table
     st.warning("Some column headings ran together in the uploaded report. Check the table below and name each column. No equipment or recommendation has been removed.")

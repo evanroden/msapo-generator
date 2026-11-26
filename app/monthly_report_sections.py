@@ -96,6 +96,15 @@ def table_without_prices(item):
             # The original source remains immutable. Only a fully understood
             # multi-site year grid acquires an explicit Category column.
             return annual, ()
+    roles = getattr(item, "table_row_roles", ())
+    first = getattr(item, "table_header_row", 0)
+    if (getattr(item, "section", "") == "rfi" and first < len(roles)
+            and roles[first] == "data" and len(rows[0]) == 3
+            and re.fullmatch(r"[0-9]+", rows[0][0].strip())):
+        # A numbered RFI record in a native data-first continuation is not
+        # a column schema. Keep it unresolved rather than inventing headings
+        # or guessing that a preceding table has the same identity.
+        return ReportTable((), rows), ()
     headings = logical_table_columns(rows[0])
     removed = (proposal_price_columns(headings, rows[1:])
                if getattr(item, "section", "") == "proposals"
