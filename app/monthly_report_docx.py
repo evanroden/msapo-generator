@@ -826,6 +826,9 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
                 if spec.key == "thermal_capacity":
                     _fit_imported_table_columns(table, imported.columns, imported.rows)
                 _format_table(table, True, header_rows=2 if titled else 1, partial_rows=partial)
+                if spec.key == "subcontractor_matrix":
+                    from app.monthly_report_roster_pagination import keep_contact_groups
+                    keep_contact_groups(table, imported.columns)
                 placed_tables.append(((getattr(imported, "anchor", ""), _body_items(document)[table_start:]), imported))
             _follow_anchors(text_items, placed_tables)
             _after_pictures(text_items, picture_items, placed_tables)

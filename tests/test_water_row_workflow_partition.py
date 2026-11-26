@@ -44,7 +44,23 @@ def _before_system_appearance_additions(text):
     return text.replace(artifact, '')
 
 
+def before_dom_runtime_allowance(text):
+    """Reverse only the exact 60-second aggregate increase, with command caps intact."""
+    start = text.index('  synthetic-dom:\n')
+    boundary = re.search(r'\n  [a-z][a-z-]+:', text[start + 1:])
+    assert boundary is not None
+    end = start + 1 + boundary.start()
+    lane = text[start:end]
+    changed = '--minutes 26 --command-minutes 25'
+    assert lane.count(changed) == 15
+    assert '--minutes 25' not in lane
+    assert '    timeout-minutes: 60\n' in lane
+    assert lane.count('        timeout-minutes: 26\n') == 15
+    return text[:start] + lane.replace(changed, '--minutes 25') + text[end:]
+
+
 def validate_partition(text):
+    text = before_dom_runtime_allowance(text)
     text = _before_system_appearance_additions(text)
     text = _before_compact_portrait_additions(text)
     parts = re.split(r'(?=^  [a-z][a-z-]+:\n)', text.split('jobs:\n', 1)[1], flags=re.M)
