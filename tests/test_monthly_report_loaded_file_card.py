@@ -44,7 +44,9 @@ def test_first_upload_loads_single_source_card_without_analyze_click(monkeypatch
     # F12: no diagnostic preview or generic review reminder on the card.
     assert not any(w.label == "Preview recognized content" for w in app.expander)
     assert "File read; report sections" not in display
-    assert any(w.label == "Remove loaded file" for w in app.button)
+    assert any(w.label == "Clear pending starting report" for w in app.sidebar.button)
+    assert any(w.label == "Starting report options" and not w.proto.expanded for w in app.sidebar.expander)
+    assert not any(w.label == "Remove loaded file" for w in app.button)
     assert not any(w.label == "Analyze report" for w in app.button)
     assert any(b.label == "Continue to this month’s updates" and not b.disabled for b in app.button)
     assert raw == original.read_bytes()
@@ -96,7 +98,7 @@ def test_replace_and_remove_loaded_source_do_not_retain_stale_identity(monkeypat
 
     # Simulate the browser's cleared picker before using the explicit Remove.
     chosen["raw"] = None
-    next(b for b in app.button if b.label == "Remove loaded file").click().run()
+    next(b for b in app.button if b.label == "Clear pending starting report").click().run()
     assert not app.exception
     assert stage_key not in app.session_state.filtered_state
     assert "Loaded file:" not in _card_text(app)
@@ -119,7 +121,7 @@ def test_bad_replacement_keeps_previous_loaded_card_and_source_bytes(monkeypatch
     assert "Loaded file:" in _card_text(app)
     assert "synthetic-starting.docx" in _card_text(app)
     assert any("newly selected file has not been analyzed" in x.value for x in app.info)
-    assert any(b.label == "Remove loaded file" for b in app.button)
+    assert any(b.label == "Clear pending starting report" for b in app.button)
 
 
 def test_unknown_source_and_questionable_month_stay_visibly_unconfirmed(monkeypatch, tmp_path):
@@ -132,7 +134,7 @@ def test_unknown_source_and_questionable_month_stay_visibly_unconfirmed(monkeypa
     assert "Unknown" in display or "Not checked yet" in display
     assert "Source month: Unconfirmed" in display
     assert not any(b.label == "Continue to this month’s updates" for b in app.button)
-    assert any(b.label == "Remove loaded file" for b in app.button)
+    assert any(b.label == "Clear pending starting report" for b in app.button)
     # Source membership remains a real, reachable human correction, not an
     # inferred approval from an unknown cover or a questionable period.
     target_name = synthetic_profiles()[0].facilities[0].title
@@ -166,3 +168,37 @@ def test_conflicting_cover_months_keep_loaded_card_unconfirmed_until_chosen(monk
     choice.set_value((2026, 9)).run()
     assert not app.exception
     assert "Source month: 2026-09" in _card_text(app)
+
+
+def test_saved_original_review_moves_to_collapsed_sidebar_without_rewriting_history(monkeypatch, tmp_path):
+    from streamlit.testing.v1 import AppTest
+    from app.monthly_report_model import synthetic_profiles
+    original=report_file(tmp_path,activity=('September2026synthetic completed work.',)).read_bytes()
+    app=_start(monkeypatch,tmp_path,{'raw':original})
+    draft=save_start(app)
+    state=library.load_profile(draft.profile.contract,draft.profile.key)
+    saved_original=library.imported_original(draft.profile.contract,draft.profile.key)
+    before=saved_original.read_bytes()
+    recovered=AppTest.from_string('''
+import streamlit as st
+from app.monthly_report_section_ui import render_section_setup
+from app.monthly_report_model import ReportPeriod
+from app.monthly_report_ui import _field
+from app.monthly_report_import import inspect_docx
+from app import monthly_report_library as library
+state=st.session_state['record']
+source=library.imported_original(state.profile.contract,state.profile.key)
+render_section_setup(state.profile.contract,ReportPeriod(2026,9),'Synthetic Editor',_field,
+    identity=state.profile,state=state,entry_active=True,entry_stage=(None,source,inspect_docx(source)))
+''',default_timeout=35)
+    recovered.session_state['record']=state
+    recovered.run()
+    assert not recovered.exception
+    panels=[e for e in recovered.sidebar.expander if e.label=='Saved starting report']
+    assert len(panels)==1 and not panels[0].proto.expanded
+    assert not any(e.label=='Original-file recovery (optional)' for e in recovered.expander)
+    action=next(b for b in recovered.sidebar.button if b.label=='Open the saved original for section review')
+    action.click().run()
+    assert not recovered.exception
+    assert saved_original.read_bytes()==before==original
+    assert library.load_profile(draft.profile.contract,draft.profile.key).revision==state.revision
