@@ -53,6 +53,30 @@ _SOURCE_TYPES = {
     "Capital renewal": "capital_renewal",
     "Proposal / quote": "proposals",
 }
+_TITLE_TYPES = {destination: kind for kind, destination in _SOURCE_TYPES.items()
+                if kind != "Improvement / training photo"}
+
+
+def title_source_type(text: str) -> tuple[str, tuple[str, ...]]:
+    """The source type a document's own title names, with its title lines.
+
+    Reads the first six non-empty lines with the same anchored headings that
+    route pages. A price field such as "Quote amount:" is not a title. Returns
+    ("", ()) when no title or titles of different types are found.
+    """
+    lines = [line.strip() for line in str(text).splitlines() if line.strip()][:6]
+    found, titles = set(), []
+    for line in lines:
+        if re.match(r"^(?:proposal|quotation|quote)\s+(?:amount|total|price|cost|fees?|budget)\s*[:=]", line, re.I):
+            continue
+        if len(line) <= 150:
+            hits = {destination for destination, pattern in _HEADINGS if pattern.match(line)}
+            if hits:
+                found |= hits
+                titles.append(line)
+    return (_TITLE_TYPES[found.pop()], tuple(titles)) if len(found) == 1 else ("", ())
+
+
 _READER_DESTINATIONS = frozenset({"activity_summary", "capital_renewal", "proposals"})
 _SITE_LABEL = re.compile(r"(?im)^\s*(?:facility|site|building)\s*[:=]\s*([^\r\n]{1,160})")
 

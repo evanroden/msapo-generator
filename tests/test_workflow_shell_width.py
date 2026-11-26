@@ -401,3 +401,39 @@ def _run_case_until_delayed_geometry(monkeypatch, tmp_path, delayed_action, occu
 def test_delayed_state_uses_existing_readiness_gate_before_geometry(monkeypatch, tmp_path,
                                                                   action, occurrence, delay):
     _run_case_until_delayed_geometry(monkeypatch, tmp_path, action, occurrence, delay)
+
+
+def test_compact_workflow_and_step_navigation_keep_touch_targets():
+    assert '.stApp .st-key-workflow_mode' in CUSTOM_CSS
+    assert 'grid-template-columns: repeat(3, minmax(0, 1fr)) !important;' in CUSTOM_CSS
+    assert 'min-height: 52px !important;' in CUSTOM_CSS
+    assert 'nav.po-step-spine ol {grid-template-columns:repeat(2,minmax(0,1fr))' in CUSTOM_CSS
+    assert 'nav.po-step-spine .po-step-link {min-height:48px' in CUSTOM_CSS
+    assert 'nav.po-step-spine .po-step-summary {display:none;}' in CUSTOM_CSS
+    for filename in ('po_step_spine.py', 'monthly_report_step_spine.py'):
+        assert 'aria-label=' in (ROOT/'app'/filename).read_text()
+    css=(ROOT/'app/workspace_layout.css').read_text()
+    assert '.epc-workspace[data-epc-mode="wide"] .epc-workspace-row {grid-template-columns:minmax(320px,1.12fr)' in css
+    assert 'minmax(0,var(--epc-editor-width))' in css
+    workflow=(ROOT/'.github/workflows/adaptive-workspaces.yml').read_text()
+    assert 'run: python scripts/qa_duo_compact_portrait.py' in workflow
+
+
+def test_native_touch_targets_share_production_shell_and_all_journeys():
+    css = (ROOT / 'app/native_controls.css').read_text()
+    assert '@media (max-width: 900px), (pointer: coarse)' in css
+    for selector in ('stCheckbox', 'stRadio', 'stToggle', 'stTextInputRootElement',
+                     'stNumberInputContainer', 'stDateInput', 'stSelectbox',
+                     'stMultiSelect', 'stExpandSidebarButton'):
+        assert selector in css
+    for workflow in ('monthly', 'po', 'expense'):
+        script = (ROOT / f'scripts/qa_{workflow}_adaptive.py').read_text()
+        assert 'exercise_touch_targets(page,output=OUT,name=name)' in script
+    for fixture in ('monthly', 'expense'):
+        source = (ROOT / f'tests/fixtures/workspaces/{fixture}_app.py').read_text()
+        assert "'app/native_controls.css').read_text" in source
+    helper = (ROOT / 'scripts/workspace_touch_acceptance.py').read_text()
+    assert 'input[type="checkbox"],input[type="radio"]' in helper
+    assert "closest('label')" in helper
+    assert "closest('[inert]')" in helper
+    assert 'for width in (320,390,669)' in helper

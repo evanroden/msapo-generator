@@ -88,6 +88,7 @@ from app.job_numbers import (
     job_numbers_for_contract,
     suggest_job_number,
 )
+from app.vendor_identity import is_operator_vendor_name
 from app.memory import (
     record_device_account_manager,
     record_po_history,
@@ -533,6 +534,11 @@ __WORKFLOW_SHELL_CSS__
     }
     .po-step-anchor { display: block; height: 0; scroll-margin-top: 1rem; }
 
+    .po-summary-metrics {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+        gap: 0.75rem;
+    }
     .metric-card {
         background: #FFFFFF;
         border: 1px solid var(--enfra-concrete);
@@ -753,7 +759,7 @@ __WORKFLOW_SHELL_CSS__
         div[data-baseweb="base-input"] input { width: 100%; }
     }
 </style>
-""".replace("__WORKFLOW_SHELL_CSS__", (Path(__file__).with_name("workflow_shell.css")).read_text(encoding="utf-8"))
+""".replace("__WORKFLOW_SHELL_CSS__", (Path(__file__).with_name("workflow_shell.css")).read_text(encoding="utf-8") + (Path(__file__).with_name("native_controls.css")).read_text(encoding="utf-8"))
 
 
 def _h(value: object) -> str:
@@ -2257,11 +2263,16 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
 
     contact_key = f"contact_{token}"
     analysis_contact_name = str(analysis.contact_name or "").strip()
+    rejected_operator_contact = is_operator_vendor_name(analysis_contact_name)
+    if rejected_operator_contact:
+        analysis_contact_name = ""
     if contact_key not in st.session_state:
         st.session_state[contact_key] = analysis_contact_name
 
     email_key = f"cemail_{token}"
-    analysis_contact_email = str(analysis.contact_email or "").strip()
+    analysis_contact_email = (
+        "" if rejected_operator_contact else str(analysis.contact_email or "").strip()
+    )
     if email_key not in st.session_state:
         st.session_state[email_key] = analysis_contact_email
 
@@ -2481,7 +2492,6 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
 
     _render_tax_alert(getattr(analysis, "tax_status", ""))
 
-    metrics = st.columns(3)
     metric_values = (
         ("Vendor", vendor_value or "Needs your input"),
         (
@@ -2492,13 +2502,14 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
         ),
         ("Final amount", total_value or "Needs your input"),
     )
-    for column, (label, value) in zip(metrics, metric_values):
-        with column:
-            st.markdown(
-                f'<div class="metric-card"><div class="metric-label">{_h(label)}</div>'
-                f'<div class="metric-value">{_h(value)}</div></div>',
-                unsafe_allow_html=True,
-            )
+    # Respond to the actual editor pane, not the full window. On an open
+    # portrait/folded screen a wide viewport can still have a 320px editor.
+    cards = "".join(
+        f'<div class="metric-card"><div class="metric-label">{_h(label)}</div>'
+        f'<div class="metric-value">{_h(value)}</div></div>'
+        for label, value in metric_values
+    )
+    st.markdown(f'<div class="po-summary-metrics">{cards}</div>', unsafe_allow_html=True)
 
     if analysis.facility_name:
         st.markdown(
@@ -2960,6 +2971,8 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
         draft_problems.append("choose the specific asset or No asset applies")
     if not str(st.session_state.get(contact_key, "")).strip():
         draft_problems.append("enter the vendor representative name")
+    elif is_operator_vendor_name(str(st.session_state.get(contact_key, ""))):
+        draft_problems.append("use your name only as the requester, not the vendor representative")
     contact_email = str(st.session_state.get(email_key, "")).strip()
     if not required_email_is_valid(contact_email):
         draft_problems.append("enter a valid vendor representative email")

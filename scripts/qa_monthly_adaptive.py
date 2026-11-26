@@ -623,6 +623,53 @@ def reading_state(field):
     }""")
 
 
+def exercise_viewport_clearance(page, name, field):
+    field.click()
+    field.evaluate("n=>{window.__monthlyActivityNode=n;n.setSelectionRange(6,17)}")
+    before = editor_state(field)
+    # The same authoritative editor must clear persistent navigation when
+    # the usable viewport shrinks, without blur, text or selection loss.
+    for appearance in ("dark", "light"):
+        page.emulate_media(color_scheme=appearance)
+        for label, width, height in (("portrait",669,885),("keyboard-height",669,250),("phone",390,844)):
+            page.set_viewport_size({"width":width,"height":height})
+            page.wait_for_function("""() => document.querySelector('.epc-workspace')?.dataset.epcMode ===
+                (innerWidth <= 540 || innerHeight < 400 ? 'compact' : 'wide')""")
+            frames(page)
+            check(name, appearance + " " + label + " keeps native editing state",editor_state(field) == before)
+            if label == "keyboard-height":
+                clearance=field.evaluate("""n=>({field:n.getBoundingClientRect().toJSON(),
+                    nav:document.querySelector('.epc-section-navigation').getBoundingClientRect().toJSON()})""")
+                check(name, appearance + " short viewport editor clears navigation",
+                      clearance["field"]["top"] >= clearance["nav"]["bottom"] + 8, clearance)
+            nav_colors=page.locator('.epc-section-navigation').evaluate("""n=>{
+                const names=['.epc-section-back','.epc-section-progress','.epc-section-next'];
+                return {background:getComputedStyle(n).backgroundColor,
+                    controls:names.map(s=>({selector:s,color:getComputedStyle(n.querySelector(s)).color}))};
+            }""")
+            if appearance == "dark":
+                check(name, "dark " + label + " navigation has paired dark surface and light text",
+                    nav_colors["background"] == "rgb(32, 52, 44)" and
+                    all(c["color"] in ("rgb(237, 245, 240)","rgb(184, 210, 200)") for c in nav_colors["controls"]),nav_colors)
+            capture(page,name,appearance+"-"+label+"-native-editor")
+    page.set_viewport_size({"width":1440,"height":900})
+    inject(page,[{"x":0,"y":0,"width":1440,"height":380},{"x":0,"y":410,"width":1440,"height":490}])
+    mode(page,"tabletop")
+    for height in (850,900):
+        page.set_viewport_size({"width":1440,"height":height})
+        mode(page,"tabletop")
+        frames(page)
+        clearance=field.evaluate("""n=>({field:n.getBoundingClientRect().toJSON(),
+            nav:document.querySelector('.epc-section-navigation').getBoundingClientRect().toJSON()})""")
+        check(name, "owned tabletop root keeps editor below its own navigation " + str(height),
+              clearance["field"]["top"] >= clearance["nav"]["bottom"] + 8,clearance)
+        check(name,"owned tabletop resize keeps native editing state",editor_state(field)==before)
+        capture(page,name,"tabletop-resize-clearance-"+str(height))
+    inject(page,None)
+    page.set_viewport_size({"width":1440,"height":900})
+    mode(page,"wide")
+
+
 def exercise(browser_type, name):
     browser = browser_type.launch(headless=True)
     context = browser.new_context(viewport={"width": 1440, "height": 900})
@@ -664,9 +711,44 @@ def exercise(browser_type, name):
         expect(page.get_by_text(re.compile(r"^QA comparison completed: known-value prefill · 18/18"))).to_be_visible(timeout=60000)
         check(name, "actual known-value pipeline independently checks 18/18", True)
         exercise_site_selection(page, name)
+        # The actual Monthly navigation was missing from the generic system
+        # appearance fixture. Check its enabled/disabled controls and progress
+        # under live OS appearance changes, without changing report content.
+        for scheme in ("dark","light","dark","light"):
+            page.emulate_media(color_scheme=scheme)
+            if scheme == "dark":
+                nav=page.locator('.epc-section-navigation')
+                expect(nav).to_have_css("background-color","rgb(32, 52, 44)")
+                for selector in ('.epc-section-back','.epc-section-progress','.epc-section-next'):
+                    color=nav.locator(selector).evaluate("n=>getComputedStyle(n).color")
+                    check(name,"Monthly dark navigation readable "+selector,
+                          color in ("rgb(237, 245, 240)","rgb(184, 210, 200)"),color)
+                capture(page,name,"monthly-dark-native-navigation")
+
 
         field = page.get_by_role("textbox", name="Activity summary", exact=True)
+        # Site-selection setup leaves focus in the upper form. Scroll once on
+        # entry; later strict navigation cannot rescue unreachable controls.
+        page.locator('.epc-section-navigation').scroll_into_view_if_needed()
         navigate_sections(page, "monthly_activity")
+        exercise_viewport_clearance(page, name, field)
+        # The initial two-page Activity section ends with one short content
+        # page after its divider. Tall portrait panes must still put that page
+        # at the top, without dropping the divider or changing report content.
+        page.set_viewport_size({"width":669,"height":885})
+        mode(page,"wide")
+        scroll_pair(page, ACTIVITY)
+        current_image(page, ACTIVITY, selected_page=2)
+        page.wait_for_function("""() => {
+            function all(root,selector) {let nodes=[...root.querySelectorAll(selector)];
+                for(const n of root.querySelectorAll('*'))if(n.shadowRoot)nodes.push(...all(n.shadowRoot,selector));return nodes;}
+            const root=document.querySelector('.st-key-epc_pair_monthly_activity');
+            const scroll=all(root,'.report-preview-scroll')[0], figures=all(root,'figure');
+            return figures.length===2 && Math.abs(figures[1].getBoundingClientRect().top-scroll.getBoundingClientRect().top)<4;
+        }""")
+        capture(page,name,"portrait-last-content-page-aligned")
+        page.set_viewport_size({"width":1440,"height":900})
+        mode(page,"wide")
         original = field.input_value()
         # Edit the actual authoritative field, not an oracle or a mocked parser.
         # Repeated explicitly synthetic notes yield genuine multipage section PDF.
@@ -910,6 +992,10 @@ def exercise(browser_type, name):
         exercise_natural_review_navigation(page, name, field, "compact")
         expect(page.get_by_text("Monthly DOM blocked external attempts: 0", exact=True)).to_be_visible()
         check(name, "zero external browser requests or sharing", not attempts and not page.evaluate("window.__monthlyShareAttempts.length"), attempts)
+        from workspace_touch_acceptance import exercise_touch_targets
+        REPORT.setdefault('touch_targets',{})[name]=exercise_touch_targets(page,output=OUT,name=name)
+        from workspace_text_acceptance import exercise_larger_text
+        REPORT.setdefault('larger_text',{})[name]=exercise_larger_text(page,field,output=OUT,name=name)
         check(name, "no uncaught browser errors", not errors, errors)
     except Exception as exc:
         REPORT["browsers"].setdefault(name, {})["failure"] = {"type": type(exc).__name__, "message": str(exc)[:3000], "traceback": traceback.format_exc(), "browser_errors": errors, "blocked_external": attempts}
@@ -922,6 +1008,19 @@ def exercise(browser_type, name):
         (OUT / (name + "-wire.json")).write_text(json.dumps(wire.snapshot(), indent=2))
         context.close()
         browser.close()
+
+
+def _failure_site(exc):
+    """Name the innermost QA script line that failed, so an intermittent
+    browser failure in CI identifies its exact step without the artifacts."""
+    import traceback
+    frames = [frame for frame in traceback.extract_tb(exc.__traceback__)
+              if "/scripts/" in frame.filename.replace("\\", "/")]
+    # The innermost frame is often a shared helper such as check(); the one
+    # before it names the actual step, so show both.
+    return " [at " + " <- ".join(
+        f"{Path(frame.filename).name}:{frame.lineno} in {frame.name}: {(frame.line or '').strip()[:120]}"
+        for frame in reversed(frames[-2:])) + "]" if frames else ""
 
 
 def main():
@@ -952,7 +1051,7 @@ def main():
                         try:
                             exercise(browser_type, name)
                         except Exception as exc:
-                            failures.append(name + ": " + type(exc).__name__ + ": " + str(exc)[:300])
+                            failures.append(name + ": " + type(exc).__name__ + ": " + str(exc)[:300] + _failure_site(exc))
                 completed = True
             finally:
                 process.terminate()

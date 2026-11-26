@@ -58,6 +58,7 @@ class PreviewStore:
         self.max_age = max_age
         self._files = OrderedDict()
         self._rasters = OrderedDict()
+        self._prepared = OrderedDict()
         self._disk_bytes = 0
         self._raster_bytes = 0
         self._directory = None
@@ -72,6 +73,20 @@ class PreviewStore:
                                        entry.ticket, entry.used, retired=True)
         for raster in [value for value in self._rasters if value[0] == key]:
             self._raster_bytes -= len(self._rasters.pop(raster))
+        pending = False
+        for raster in [value for value in self._prepared if value[0] == key]:
+            path, size = self._prepared[raster]
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                # Keep failed deletions accounted, but never serve them after
+                # their PDF ticket is revoked.
+                pending = True
+                continue
+            del self._prepared[raster]
+            self._disk_bytes -= size
+        if pending:
+            return
         if entry is not None:
             try:
                 entry.path.unlink(missing_ok=True)
@@ -150,6 +165,92 @@ class PreviewStore:
             if self._get(owner, ticket) is not None:
                 self._remove(ticket.key)
 
+    def _page_prepared(self, key, index, dpi):
+        cache_key = (key, index, dpi)
+        if cache_key in self._rasters:
+            return True
+        prepared = self._prepared.get(cache_key)
+        if prepared is None:
+            return False
+        path, size = prepared
+        try:
+            return path.is_file() and path.stat().st_size == size
+        except OSError:
+            return False
+
+    def prepared_pages(self, owner, ticket, *, dpi=120):
+        """Return verified warm indexes, never infer readiness from a PDF alone."""
+        if dpi not in (96, 120, 150):
+            raise ValueError('Choose a supported preview resolution.')
+        with self._lock:
+            if self._get(owner, ticket) is None:
+                return None
+            return tuple(index for index in range(ticket.pages)
+                         if self._page_prepared(ticket.key, index, dpi))
+
+    def prepare_next_page(self, owner, ticket, *, dpi=120, is_current=lambda: True):
+        """Warm one missing page without evicting another visitor's raster.
+
+        Completed pages go to the existing private temporary-file budget,
+        not an ever-growing in-memory image cache. Visible page decoding still
+        uses the shared RAM budget. A bounded miss never claims readiness.
+        Callers run this through their existing background admission guard.
+        """
+        if dpi not in (96, 120, 150):
+            raise ValueError('Choose a supported preview resolution.')
+        with self._lock:
+            entry = self._get(owner, ticket)
+            if entry is None or not is_current():
+                return 'obsolete'
+            missing = next((index for index in range(ticket.pages)
+                            if not self._page_prepared(ticket.key, index, dpi)), None)
+            if missing is None:
+                return 'ready'
+            # Reserve the strict maximum encoded page size before decoding.
+            # Do not decode a page just to discover there is nowhere to keep it.
+            if self._disk_bytes + MAX_PAGE_BYTES > self.disk_limit:
+                return 'limited'
+            with fitz.open(entry.path) as document:
+                page = document[missing]
+                scale = min(dpi / 72, math.sqrt(MAX_PAGE_PIXELS / (page.rect.width * page.rect.height)))
+                pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), colorspace=fitz.csRGB, alpha=False)
+                raw = pixmap.tobytes('jpeg', jpg_quality=88)
+                del pixmap
+            if len(raw) > MAX_PAGE_BYTES:
+                raise ValueError('This preview page is too large to display safely.')
+            if not is_current():
+                return 'obsolete'
+            path = entry.path.with_name(f'{ticket.key}-{missing}-{dpi}.jpg')
+            prior = self._prepared.get((ticket.key, missing, dpi))
+            if prior is not None:
+                # Keep the reservation until damaged-file cleanup succeeds.
+                prior[0].unlink(missing_ok=True)
+                del self._prepared[(ticket.key, missing, dpi)]
+                self._disk_bytes -= prior[1]
+            try:
+                with path.open('xb') as stream:
+                    path.chmod(0o600)
+                    stream.write(raw)
+            except OSError:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    # Even a partial write whose cleanup fails stays inside
+                    # the disk budget. Revoke the entire ticket until cleanup
+                    # succeeds; incomplete bytes are never a prepared page.
+                    try:
+                        retained = path.stat().st_size
+                    except OSError:
+                        retained = MAX_PAGE_BYTES
+                    self._prepared[(ticket.key, missing, dpi)] = (path, retained)
+                    self._disk_bytes += retained
+                    self._remove(ticket.key)
+                raise
+            self._prepared[(ticket.key, missing, dpi)] = (path, len(raw))
+            self._disk_bytes += len(raw)
+            return ('ready' if all(self._page_prepared(ticket.key, index, dpi)
+                                   for index in range(ticket.pages)) else 'preparing')
+
     @measured("preview_store_pages_decode")
     def pages(self, owner, ticket, indexes, *, dpi=120):
         """Decode only the one/two visible pages; never build a whole-page HTML."""
@@ -176,6 +277,21 @@ class PreviewStore:
                 for index in indexes:
                     cache_key = (ticket.key, index, dpi)
                     raw = self._rasters.pop(cache_key, None)
+                    if raw is None and cache_key in self._prepared:
+                        path, size = self._prepared[cache_key]
+                        raw = path.read_bytes()
+                        if len(raw) != size or len(raw) > MAX_PAGE_BYTES:
+                            raise OSError('The prepared preview page is unavailable.')
+                        # Read one bounded JPEG from disk, never decode the PDF.
+                        # It can enter RAM only through the normal bounded LRU.
+                        while self._rasters and self._raster_bytes + len(raw) > self.raster_limit:
+                            _, old = self._rasters.popitem(last=False)
+                            self._raster_bytes -= len(old)
+                        if len(raw) <= self.raster_limit:
+                            self._rasters[cache_key] = raw
+                            self._raster_bytes += len(raw)
+                        result.append((index, raw))
+                        continue
                     if raw is None:
                         if document is None:
                             document = resources.enter_context(fitz.open(entry.path))
@@ -227,6 +343,7 @@ class PreviewStore:
                 # failed transiently. Only then can its remaining bytes clear.
                 self._files.clear()
                 self._rasters.clear()
+                self._prepared.clear()
                 self._disk_bytes = self._raster_bytes = 0
 
 
@@ -267,6 +384,13 @@ class _ScopedPreviewStore:
 
     def pages(self, owner, ticket, indexes, *, dpi=120):
         return self._active().pages(self._scoped_owner(owner), ticket, indexes, dpi=dpi)
+
+    def prepared_pages(self, owner, ticket, *, dpi=120):
+        return self._active().prepared_pages(self._scoped_owner(owner), ticket, dpi=dpi)
+
+    def prepare_next_page(self, owner, ticket, *, dpi=120, is_current=lambda: True):
+        return self._active().prepare_next_page(self._scoped_owner(owner), ticket,
+                                               dpi=dpi, is_current=is_current)
 
     def reset_scope(self):
         from app.monthly_report_testing import scope

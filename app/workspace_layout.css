@@ -23,9 +23,11 @@
 .epc-workspace[data-epc-review-open="true"] .st-key-monthly_report_navigation {min-height:var(--epc-nav-space,0px);box-sizing:border-box;}
 .epc-workspace[data-epc-review-open="true"] .epc-section-navigation {position:fixed;top:var(--epc-nav-top);left:var(--epc-nav-left);width:min(var(--epc-nav-width),25rem);box-sizing:border-box;z-index:15;pointer-events:auto;}
 .epc-preview-controls {display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; margin:.35rem 0;}
-.epc-preview-controls button {font:inherit; min-height:44px; padding:.5rem .75rem; border:1px solid #557f7f; border-radius:.4rem; background:var(--background-color,#fff); color:inherit; cursor:pointer;}
+.epc-preview-controls button {font:inherit; min-height:44px; padding:.5rem .75rem; border:1px solid #557f7f; border-radius:.4rem; background:var(--enfra-workspace-surface,var(--background-color,#fff)); color:inherit; cursor:pointer;}
 .epc-context-title {font-weight:600; margin-bottom:.5rem;}
 .epc-workspace:not([data-epc-mode="compact"]) .epc-compact-open, .epc-workspace:not([data-epc-mode="compact"]) .epc-compact-back {display:none;}
+/* Preserve the established wide ratio, but keep medium-window editors usable. */
+.epc-workspace[data-epc-mode="wide"] .epc-workspace-row {grid-template-columns:minmax(320px,1.12fr) minmax(0,1fr);}
 .epc-workspace[data-epc-mode="book"] .epc-workspace-row {grid-template-columns:minmax(0,var(--epc-editor-width)) minmax(0,var(--epc-reference-width)); column-gap:var(--epc-column-gap) !important;}
 .epc-workspace[data-epc-mode="compact"] .epc-workspace-row {grid-template-columns:minmax(0,1fr);}
 .epc-workspace[data-epc-mode="compact"] .epc-workspace-reference {position:relative; top:auto;}
@@ -33,11 +35,15 @@
    sticky section navigation (--epc-preview-top), or "Back to editing" sits under them and a tap misses it. */
 .epc-workspace[data-epc-mode="compact"] [class*="st-key-epc_reference_"] {scroll-margin-top:var(--epc-preview-top,7.5rem);}
 .epc-workspace[data-epc-mode="compact"] .epc-workspace-pair:not([data-epc-preview-open="true"]) .epc-reference-column {display:none;}
-.epc-workspace[data-epc-mode="tabletop"], .epc-workspace[data-epc-confined="true"] {position:fixed; z-index:14; left:var(--epc-editor-left); top:var(--epc-editor-top); width:var(--epc-editor-width); height:var(--epc-editor-height); overflow:auto; overscroll-behavior-y:contain; background:var(--background-color,#fff); padding:.5rem; box-sizing:border-box;}
+.epc-workspace[data-epc-mode="tabletop"], .epc-workspace[data-epc-confined="true"] {position:fixed; z-index:14; left:var(--epc-editor-left); top:var(--epc-editor-top); width:var(--epc-editor-width); height:var(--epc-editor-height); overflow:auto; overscroll-behavior-y:contain; background:var(--enfra-workspace-surface,var(--background-color,#fff)); padding:.5rem; box-sizing:border-box;}
 .epc-workspace[data-epc-mode="tabletop"] .epc-workspace-row {grid-template-columns:minmax(0,1fr); gap:0 !important;}
 .epc-workspace[data-epc-mode="tabletop"] .epc-reference-column {position:static; width:0 !important; height:0; min-height:0;}
-.epc-workspace[data-epc-mode="tabletop"] .epc-workspace-reference {position:fixed; left:var(--epc-reference-left); top:var(--epc-reference-top); width:var(--epc-reference-width); height:var(--epc-reference-height) !important; overflow:auto; box-sizing:border-box; padding:.5rem; background:var(--background-color,#fff); visibility:hidden; pointer-events:none;}
+.epc-workspace[data-epc-mode="tabletop"] .epc-workspace-reference {position:fixed; left:var(--epc-reference-left); top:var(--epc-reference-top); width:var(--epc-reference-width); height:var(--epc-reference-height) !important; overflow:auto; box-sizing:border-box; padding:.5rem; background:var(--enfra-workspace-surface,var(--background-color,#fff)); visibility:hidden; pointer-events:none;}
 .epc-workspace[data-epc-mode="tabletop"] .epc-workspace-pair[data-epc-active="true"] .epc-workspace-reference {visibility:visible; pointer-events:auto;}
 .epc-workspace[data-epc-mode="tabletop"] .epc-workspace-pair:not([data-epc-active="true"]) .epc-workspace-reference {display:none !important;}
 .epc-workspace-scroll-owner {overflow-y:hidden !important;}
 @media (prefers-reduced-motion:reduce) {.epc-workspace * {scroll-behavior:auto !important;}}
+
+@media (prefers-color-scheme: dark) {
+  .epc-workspace {--enfra-workspace-surface:#20342C;}
+}

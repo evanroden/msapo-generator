@@ -38,7 +38,13 @@ def test_first_automatic_source_photo_reaches_ready_without_business_click(monke
     class Worker:
         def submit(self, function, *args):
             future = Future()
-            jobs.append((future, function, args))
+            if len(args) > 1 and args[1] != "cover":
+                # Next-section preparation is independent of this controlled
+                # cover delivery. Complete it without stealing the held cover
+                # Future used to exercise stale/new source-photo transport.
+                future.set_result(function(*args))
+            else:
+                jobs.append((future, function, args))
             return future
 
     monkeypatch.setattr(ui, "_PREVIEW_WORKER", Worker())
@@ -48,7 +54,10 @@ def test_first_automatic_source_photo_reaches_ready_without_business_click(monke
         # converter must implement the updated keyword-only API as well.
         assert owner is not None and revision is not None
         assert callable(is_current) and is_current()
-        assert section == "cover", "Only the visible cover may start work"
+        if section != "cover":
+            with fitz.open() as pdf:
+                pdf.new_page().insert_text((40, 40), "Synthetic successor preview")
+                return ReportPreview(pdf.tobytes(), 1, section_preview_fingerprint(draft, section), draft.period.label)
         photo = next(block for block in draft.blocks if block.key == "cover_photo")
         raw = loader(photo.asset_hashes[0]) if photo.asset_hashes and photo.source != "Omit" else None
         rendered.append((draft, raw))

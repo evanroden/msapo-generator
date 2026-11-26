@@ -58,8 +58,19 @@ st.checkbox("QA fail next preview", key="a62_fail")
 st.markdown('<div style="height:1200px" aria-hidden="true"></div>', unsafe_allow_html=True)
 st.subheader("Review and download", anchor="report-review")
 draft = st.session_state["a62_draft"]
+# Read-only telemetry belongs to the same view-only fragment as its ticket.
+# A fragment activation intentionally does not repaint captions in the parent.
+render_native_review = getattr(review._render_review_preview, "_native_review", review._render_review_preview)
+
+
+def observed_review(draft, assets, prefix):
+    render_native_review(draft, assets, prefix)
+    state = st.session_state.get(prefix + "_review_draft_preview")
+    st.caption("QA canonical revision: " + preview_fingerprint(draft))
+    st.caption("QA ticket revision: " + (state.get("fingerprint", "") if isinstance(state, dict) else "none"))
+    st.caption("QA rendered text: " + st.session_state.get("a62_last_rendered_text", "none"))
+
+
+observed_review._native_review = render_native_review
+review._render_review_preview = observed_review
 review.render_review_preview(draft, {}, "a62_fixture")
-state = st.session_state.get("a62_fixture_review_draft_preview")
-st.caption("QA canonical revision: " + preview_fingerprint(draft))
-st.caption("QA ticket revision: " + (state.get("fingerprint", "") if isinstance(state, dict) else "none"))
-st.caption("QA rendered text: " + st.session_state.get("a62_last_rendered_text", "none"))

@@ -129,6 +129,14 @@ def _remove_managed_tags(source: str) -> str:
     )
 
 
+_SYSTEM_APPEARANCE_SCRIPT = """<script id="process-control-system-appearance">
+// Native widgets use the configured light/dark pair and its OS-change listener.
+// Discard only Streamlit's prior per-path appearance override before React boots.
+try { localStorage.setItem('stActiveTheme-' + location.pathname + '-v2', JSON.stringify('System')); } catch (_) {}
+</script>"""
+
+_SYSTEM_APPEARANCE_PATTERN = r'\s*<script id="process-control-system-appearance">.*?</script>'
+
 _SHELL_STYLE_ID = "process-control-workflow-shell"
 _SHELL_CSS_PATH = Path(__file__).resolve().parents[1] / "app" / "workflow_shell.css"
 
@@ -145,6 +153,7 @@ def _install_shell_style(source: str) -> str:
     if len(re.findall(pattern, source, flags=re.DOTALL)) > 1:
         raise RuntimeError("Duplicate managed workflow shell styles; static shell not published")
     source = re.sub(pattern, "", source, flags=re.DOTALL)
+    source = re.sub(_SYSTEM_APPEARANCE_PATTERN, "", source, flags=re.DOTALL)
     head = re.search(r"<head\b[^>]*>", source, flags=re.IGNORECASE)
     if head is None:
         raise RuntimeError("Missing opening head; static shell not published")
@@ -154,7 +163,7 @@ def _install_shell_style(source: str) -> str:
     script = re.search(r"<script\b", source, flags=re.IGNORECASE)
     if script and insertion > script.start():
         raise RuntimeError("Charset follows script; static shell not published")
-    return source[:insertion] + f'\n    <style id="{_SHELL_STYLE_ID}">\n{css}</style>' + source[insertion:]
+    return source[:insertion] + f'\n    <style id="{_SHELL_STYLE_ID}">\n{css}</style>\n{_SYSTEM_APPEARANCE_SCRIPT}' + source[insertion:]
 
 
 def patch_index(index_path: Path, *, origin: str = SITE_ORIGIN) -> None:

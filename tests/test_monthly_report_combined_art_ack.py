@@ -38,7 +38,8 @@ def test_single_group_ack_requires_every_group_and_actor_then_exact_receipt(samp
     app = review_app(sample)
     assert len(app.checkbox) == 2
     assert all('keep it unchanged' in c.label for c in app.checkbox)
-    assert sum('no visible pricing or inappropriate private information' in c.value for c in app.caption) == 2
+    # The pricing/privacy check is stated once for the panel, not under every picture (F12).
+    assert sum('no visible pricing or inappropriate private information' in c.value for c in app.caption) == 1
     app.checkbox[0].check().run()
     assert app.session_state['receipt'] is None
     app.checkbox[1].check().run()

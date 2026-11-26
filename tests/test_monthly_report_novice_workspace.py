@@ -66,21 +66,11 @@ def test_general_template_sections_have_one_editing_home(monkeypatch, tmp_path):
     assert not any(w.label in ('Pictures/pages to keep', 'Picture/page to view') for w in (*app.selectbox, *app.multiselect))
 
 
-def test_commissioning_update_is_editable_in_its_own_section_and_survives_next_month(monkeypatch, tmp_path):
-    from app import monthly_report_library as library
-    from app.contracts import RRH_CONTRACT
+def test_commissioning_section_has_no_status_box(monkeypatch, tmp_path):
+    # Owner decision (25 Nov 2026): MBCx is the uploaded report only.
     app = monthly(monkeypatch, tmp_path)
     next(w for w in app.text_input if w.label == 'Prepared by').set_value('Synthetic Editor').run()
     step(app, 2)
-    update = next(w for w in app.text_area if w.label == 'Status or findings')
-    assert update.value == ''
-    next(b for b in app.button if b.label == 'Not started').click().run()
-    update = next(w for w in app.text_area if w.label == 'Status or findings')
-    assert update.value == 'Monitoring-based commissioning reporting has not started.'
-    update.set_value('Synthetic equipment monitoring is awaiting activation.').run()
-    next(b for b in app.button if b.label == 'Save shared version').click().run()
-    saved = library.load_snapshot(RRH_CONTRACT, 'synthetic-guided', ReportPeriod(2026, 9))
-    assert next(b for b in saved.draft.blocks if b.key == 'mbcx_status').text == 'Synthetic equipment monitoring is awaiting activation.'
-    app.selectbox('report_month_number').set_value(10).run()
-    step(app, 2)
-    assert next(w for w in app.text_area if w.label == 'Status or findings').value == 'Synthetic equipment monitoring is awaiting activation.'
+    assert not app.exception
+    assert not any(w.label == 'Status or findings' for w in app.text_area)
+    assert not any(b.label in ('Not started', 'Awaiting this month’s report') for b in app.button)

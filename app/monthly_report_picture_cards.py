@@ -141,7 +141,12 @@ def review_pictures(images, section, path, prefix, scope, field, old, plan, bloc
         review_cover_gallery(images, path, prefix, old, plan)
         return
     options = picture_options(section, allow_branding=allow_branding)
-    single = {"cover_photo", "client_logo", "brand_logo", "divider_" + section}
+    from app.monthly_report_model import known_sections
+    # A full-page picture slot (org chart, each workflow, contact matrix)
+    # holds one picture; two choices there would print on the same page.
+    single = {"cover_photo", "client_logo", "brand_logo", "divider_" + section} | {
+        block.key for spec in known_sections() if spec.key == section
+        for block in spec.blocks if block.type == "image_page"}
     # Choices are copied into the section plan before widgets disappear on a
     # page change. A new widget is restored from this durable session plan.
     choices = {}

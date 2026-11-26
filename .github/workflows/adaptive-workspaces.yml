@@ -22,6 +22,10 @@ on:
       - 'app/workflow_shell.css'
       - 'scripts/patch_streamlit_metadata.py'
       - 'scripts/qa_workflow_shell_width.py'
+      - 'scripts/qa_duo_compact_portrait.py'
+      - 'scripts/qa_system_appearance.py'
+      - 'tests/test_system_appearance.py'
+      - '.streamlit/config.toml'
       - 'tests/test_workflow_shell_width.py'
       - 'tests/test_sidebar_navigation.py'
       - 'scripts/qa_expense_adaptive.py'
@@ -199,6 +203,10 @@ on:
       - 'app/workflow_shell.css'
       - 'scripts/patch_streamlit_metadata.py'
       - 'scripts/qa_workflow_shell_width.py'
+      - 'scripts/qa_duo_compact_portrait.py'
+      - 'scripts/qa_system_appearance.py'
+      - 'tests/test_system_appearance.py'
+      - '.streamlit/config.toml'
       - 'tests/test_workflow_shell_width.py'
       - 'tests/test_sidebar_navigation.py'
       - 'scripts/qa_expense_adaptive.py'
@@ -1069,12 +1077,21 @@ jobs:
           python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
           python scripts/qa_workflow_shell_width.py
           NATIVE_TEST
+      - name: Synthetic WebKit compact navigation and open portrait
+        timeout-minutes: 3
+        run: python scripts/qa_duo_compact_portrait.py
+      - name: Automatic system light and dark appearance
+        timeout-minutes: 4
+        run: python scripts/qa_system_appearance.py
       - name: Retain first shell-width failures and traces
         if: always()
         timeout-minutes: 3
         uses: actions/upload-artifact@v4
         with:
           name: workflow-shell-width-${{ github.run_attempt }}
-          path: test-artifacts/workflow-shell-width/
+          path: |
+            test-artifacts/workflow-shell-width/
+            test-artifacts/duo-compact-portrait/
+            test-artifacts/system-appearance/
           retention-days: 7
           if-no-files-found: warn

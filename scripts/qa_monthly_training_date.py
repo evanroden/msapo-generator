@@ -647,6 +647,10 @@ def exercise(browser_type, engine, *, patched):
         clear.click()
         expect(field).to_have_value("")
         expect(date.locator('[aria-live="assertive"]')).to_have_text("")
+        # Mouse Clear retains native input focus, rather than opening another
+        # calendar that can intercept the next form action's pointer release.
+        expect(field).to_be_focused()
+        expect(page.locator('[data-baseweb="calendar"]')).to_have_count(0)
         record_date(page, date, "cleared-date")
         submit = page.get_by_role("button", name="Add completed training", exact=True)
         submit_form(page, submit, "missing-date")

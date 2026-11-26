@@ -124,20 +124,43 @@ def state_diagnostics(page, action: str, error: Exception) -> None:
 
 def open_qa_details(page, *, timeout=45000):
     """Browser diagnostics intentionally opt into the collapsed QA disclosure."""
+    # A fixture callback's new captions can be readable before its full render
+    # replaces the disclosure. Open only after that render is idle, otherwise
+    # the old expanded node can disappear underneath receipt validation.
+    page.wait_for_function("""() => document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state') === 'notRunning'""",
+                           timeout=timeout)
     label = page.get_by_text("QA details", exact=True).first
     label.wait_for(timeout=timeout)
+    # Trial activation scrolls and checks actionability without toggling. Unlike
+    # scroll_into_view_if_needed, it reacquires a disclosure replaced mid-scroll.
+    label.click(trial=True, timeout=timeout)
     status = page.get_by_text(re.compile(r"^QA fixture state: ")).first
-    if not status.is_visible():
-        label.click()
-        status.wait_for(timeout=timeout)
-
+    # A click only toggles. If a rerun restores or replaces the disclosure
+    # around the click (WebKit has no scroll anchoring and repaints later),
+    # one blind click can leave it closed for good. So click only while the
+    # disclosure is actually closed, and look again after each rerun settles.
+    deadline = time.monotonic() + timeout / 1000
+    while not status.is_visible():
+        if time.monotonic() > deadline:
+            status.wait_for(timeout=1)  # raises the usual Playwright timeout
+        if not label.evaluate("node => Boolean(node.closest('details')?.open)"):
+            label.click()
+        try:
+            status.wait_for(timeout=3000)
+        except BrowserTimeout:
+            # A rerun replaced the disclosure. Let it settle, find the new
+            # one and look again rather than clicking a stale node.
+            page.wait_for_function("""() => document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state') === 'notRunning'""",
+                                   timeout=timeout)
+            label = page.get_by_text("QA details", exact=True).first
+            label.wait_for(timeout=timeout)
+            label.click(trial=True, timeout=timeout)
 
 def await_fixture_state(page, mode: str, *, previous_generation: str | None = None,
                         timeout: int = 45000) -> dict:
     """Wait for a committed, generation-bound state, not an always-visible button."""
     if mode not in ("empty", "known-value prefill", "original-source replay"):
         raise ValueError("Invalid fixture state.")
-    open_qa_details(page, timeout=timeout)
     locator = page.get_by_text(re.compile(r"^QA fixture state: ")).first
     different = ("(?!" + re.escape(previous_generation) + r"\b)"
                  if previous_generation else "")
@@ -146,6 +169,11 @@ def await_fixture_state(page, mode: str, *, previous_generation: str | None = No
                          r" · generation " + different +
                          r"[0-9a-f]{12} · revision " + revision + r"$")
     try:
+        # First require the requested callback's committed state. Script-idle
+        # alone may still describe the preceding render before dispatch begins.
+        expect(locator).to_have_text(pattern, timeout=timeout)
+        open_qa_details(page, timeout=timeout)
+        locator.wait_for(timeout=timeout)
         expect(locator).to_have_text(pattern, timeout=timeout)
         observed = locator.text_content() or ""
         matched = STATE.fullmatch(observed)
@@ -418,11 +446,13 @@ def correct_replay_source_scope(page):
     # stays unchanged and the later 18/18 check still verifies its byte digest.
     correction = page.locator('[class*="st-key-monthly_source_warning_"]').filter(has=warning)
     correction.get_by_role("button", name="Correct site", exact=True).click()
-    details = page.locator('[data-testid="stForm"]').filter(has=
+    source_id = correction.locator('.enfra-source-warning').get_attribute('data-source-id')
+    assert source_id and re.fullmatch(r"[0-9a-f]{64}", source_id)
+    owner = page.locator('[class*="_managed_source_' + source_id + '"]')
+    details = owner.locator('[data-testid="stForm"]').filter(has=
         page.locator('[data-testid="stMultiSelect"]').filter(has_text="Source sites"))
-    # The targeted link exposes exactly this source's existing form. Other
-    # collapsed correction forms remain mounted, so select the visible one.
-    details = details.filter(visible=True)
+    expect(details).to_be_visible(timeout=25000)
+    page.wait_for_function("() => document.querySelector('[data-testid=stApp]')?.getAttribute('data-test-script-state') === 'notRunning'")
     expect(details).to_have_count(1)
     sites = details.locator('[data-testid="stMultiSelect"]').filter(has_text="Source sites")
     combo = sites.get_by_role("combobox")
@@ -445,10 +475,14 @@ def correct_replay_source_scope(page):
     names = choices.all_text_contents()
     other = next(name for name in names if name.strip() != "synthetic-activity.txt")
     page.get_by_role("option", name=other, exact=True).click()
+    expect(details).to_be_hidden(timeout=25000)
+    page.wait_for_function("() => document.querySelector('[data-testid=stApp]')?.getAttribute('data-test-script-state') === 'notRunning'")
     expect(page.get_by_text("QA working report SHA256: " + before, exact=True)).to_be_visible()
     expect(page.get_by_text("QA durable report SHA256: " + before, exact=True)).to_be_visible()
     files.click()
     page.get_by_role("option", name="synthetic-activity.txt", exact=True).click()
+    expect(details).to_be_visible(timeout=25000)
+    page.wait_for_function("() => document.querySelector('[data-testid=stApp]')?.getAttribute('data-test-script-state') === 'notRunning'")
     expect(sites.get_by_text("Demo North", exact=True)).to_be_visible()
     checkpoint("source form buffer survives file selection",
                combo.evaluate("(el, original) => el === original && el.isConnected", pending_input))

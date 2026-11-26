@@ -38,8 +38,8 @@ def test_status_delta_path_stays_text_during_native_edit_full_render(monkeypatch
     assert len(status_paths) == 1
     transitions = [(kind, body) for path, kind, body in messages if path in status_paths]
     assert all(kind == "markdown" for kind, _ in transitions), transitions
-    assert 'Saving changes…' in transitions[0][1]
-    assert 'Browser draft<br>Last saved' in transitions[-1][1]
+    assert 'Saving…' in transitions[0][1]
+    assert '>Saved ' in transitions[-1][1]
     assert len(_status(app)) == 1
 
 
@@ -50,7 +50,7 @@ def test_status_uses_persisted_time_and_noop_does_not_claim_new_save(monkeypatch
     app = monthly(monkeypatch, tmp_path)
     _field(app).set_value("Synthetic acknowledged content.").run()
     saved = _status(app)
-    assert len(saved) == 1 and "Browser draft<br>Last saved · 22:45 UTC" in saved[0]
+    assert len(saved) == 1 and ">Saved 22:45 UTC</p>" in saved[0]
     assert 'title="2026-10-17T22:45:01+00:00"' in saved[0]
     monkeypatch.setattr(library, "_now", lambda: "2026-10-17T23:50:02+00:00")
     app.run()
@@ -74,7 +74,7 @@ def test_failed_save_has_one_explicit_retry_preserving_text_and_shared_history(m
     assert not app.exception
     assert len(calls) == 1
     assert "Save failed" in _status(app)[0]
-    assert "Last saved" not in _status(app)[0]
+    assert "Saved" not in _status(app)[0]
     assert any("not saved for a refresh" in item.value for item in app.error)
     next(item for item in app.button if item.label == "Retry browser save").click().run()
     assert len(calls) == 2, "one deliberate failed retry is one persistence attempt"
@@ -82,7 +82,7 @@ def test_failed_save_has_one_explicit_retry_preserving_text_and_shared_history(m
     next(item for item in app.button if item.label == "Retry browser save").click().run()
     assert not app.exception
     assert _field(app).value == "Synthetic unsaved human work."
-    assert "Browser draft<br>Last saved" in _status(app)[0]
+    assert ">Saved " in _status(app)[0]
     assert not any(item.label == "Retry browser save" for item in app.button)
     draft = next(value for key, value in app.session_state.filtered_state.items()
                  if key.endswith("_draft") and hasattr(value, "blocks"))

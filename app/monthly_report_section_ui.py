@@ -546,12 +546,9 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                         unread = tuple(i for i in section.items if i.kind == "unsupported")
                         if native_art_size_limited:
                             blocking.append(
-                                "This source exceeds the native-artwork processing limit, not necessarily "
-                                "the Word upload limit. Its cover cannot be certified by this "
-                                "inspection. Choose an available independent ENFRA template, keep an "
-                                "existing report cover, or retry with a smaller Word source. "
-                                "Replacing the upload starts a new review; the original remains "
-                                "available. " + cover_recovery
+                                "This file is too large for automatic artwork reading, so its cover "
+                                "can't be checked. Choose a template, keep an existing cover, or "
+                                "upload a smaller copy. " + cover_recovery
                             )
                         else:
                             for item in unread[:4]:
@@ -725,9 +722,10 @@ def _native_art_preservation_review(path, source_view, profile, period, actor, p
             return None
         groups.setdefault(occurrence.preview_group_key, []).append(occurrence)
     kept, reviewed = set(), set()
+    shown_keys = []
     with st.expander("Preserve native page artwork", expanded=True):
-        st.caption("Keep this artwork in its original position. Check that it belongs in this report; "
-                   "the original file stays unchanged.")
+        st.caption("Keep this artwork in its original position. Check that each picture belongs in this report, "
+                   "with no visible pricing or inappropriate private information; the original file stays unchanged.")
         with _operation_from_verified_view(path, source_view) as operation:
             items = {item.id: item for item in operation.view.original_inspection.items}
             for number, (group, occurrences) in enumerate(groups.items(), 1):
@@ -761,12 +759,23 @@ def _native_art_preservation_review(path, source_view, profile, period, actor, p
                     st.error("This verified artwork could not be displayed; preservation remains blocked.")
                     continue
                 # One explicit action covers preservation AND the same visible
-                # suitability review. Old separate/partial choices cannot seed it.
-                st.caption("Confirm it belongs in this report, with no visible pricing or inappropriate private information.")
-                if st.checkbox("I reviewed this artwork and want to keep it unchanged",
-                               key=field(key + "_preserve_review_v1", False)):
+                # suitability review (stated once above, not under every
+                # picture). Old separate/partial choices cannot seed it.
+                review_key = field(key + "_preserve_review_v1", False)
+                shown_keys.append(review_key)
+                if st.checkbox("I reviewed this artwork and want to keep it unchanged", key=review_key):
                     kept.update(item.original_id for item in occurrences)
                     reviewed.update(item.original_id for item in occurrences)
+        # Every group is shown above. One button may tick them all, but only
+        # when each group actually displayed, so nothing is kept unseen.
+        if len(groups) > 1 and len(shown_keys) == len(groups) and not all(
+                st.session_state.get(review_key) for review_key in shown_keys):
+            def keep_all(keys=tuple(shown_keys)):
+                for review_key in keys:
+                    st.session_state[review_key] = True
+            st.button(f"I reviewed all {len(groups)} above. Keep them all unchanged",
+                      key=prefix + "_native_art_keep_all_" + inventory.sha256[:20],
+                      on_click=keep_all)
         ids = tuple(item.original_id for item in inventory.occurrences)
         if kept != set(ids) or reviewed != set(ids) or not actor.strip():
             st.info("Inspect and preserve every listed artwork group before this source design can be used.")
@@ -1024,20 +1033,14 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                      and "source byte budget" in str(exc))):
                 native_art_size_limited = True
                 st.warning(
-                    f"This file is within the {byte_limit_label(docx_import.MAX_DOCX_BYTES)} upload limit, but automatic native-artwork "
-                    f"interpretation is limited to {byte_limit_label(MAX_VIEW_SOURCE_BYTES)}. "
-                    "This is a processing limit, not evidence that the artwork is damaged. "
-                    "Your original and current review are unchanged. Use an available independent "
-                    "template below, or keep the original and upload a smaller test copy. "
-                    "Replacing the upload starts a new review.")
+                    f"Automatic artwork reading is limited to {byte_limit_label(MAX_VIEW_SOURCE_BYTES)} "
+                    f"(uploads can be up to {byte_limit_label(docx_import.MAX_DOCX_BYTES)}). "
+                    "Your file isn't damaged and is kept. Choose a template below or upload a smaller copy.")
             elif isinstance(exc, CompatibilityBudgetError):
                 native_art_size_limited = True
                 st.warning(
-                    "Automatic native-artwork interpretation stopped. " + str(exc) + " "
-                    "This is a processing limit, not evidence that the artwork is damaged. "
-                    "Your original and current review are unchanged. Use an available independent "
-                    "template below, or keep the original and upload a smaller test copy. "
-                    "Replacing the upload starts a new review.")
+                    "Automatic artwork reading stopped. " + str(exc) + " "
+                    "Your file isn't damaged and is kept. Choose a template below or upload a smaller copy.")
             else:
                 st.warning("Automatic native artwork interpretation is blocked: " + str(exc))
     if source_view is not None and not automatic_view:
@@ -1085,9 +1088,13 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
         analyze_starting_report,
         automatic_section_plans,
         build_starting_import,
+        merge_source_site_choices,
     )
     profiles = library.list_profiles(contract)
-    known_sites = {f.key: f for f in (*_site_options(contract), *(f for profile in profiles for f in profile.facilities), *candidate.facilities)}
+    known_sites = {f.key: f for f in merge_source_site_choices(
+        _site_options(contract),
+        (f for profile in profiles for f in profile.facilities),
+        candidate.facilities)}
     analysis = analyze_starting_report(inspection, candidate, period, known_sites.values(), known_profiles=profiles)
     from app.monthly_report_source_sites_ui import correct_detected_sites
     confirmed_source = correct_detected_sites(
@@ -1466,11 +1473,10 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                        "as a separate explicit fallback. The original upload and already "
                        "edited body sections remain available.")
             if native_art_size_limited:
-                message = ("This upload exceeds the native-artwork processing limit, so its page design cannot yet be used. "
-                           "Choose an available ENFRA template above, or keep the original and upload a smaller test copy. "
-                           "Replacing the upload starts a new review; the original is not damaged by this error.")
+                message = ("This file's page design can't be used because it's too large to read. "
+                           "Choose a template above or upload a smaller copy.")
             st.error(message)
-            todo.append("Choose an independent template or a smaller test copy to continue."
+            todo.append("Choose a template or upload a smaller copy to continue."
                         if native_art_size_limited else
                         "Repair the source cover artwork before using it as a new report design.")
     prepared_import = None

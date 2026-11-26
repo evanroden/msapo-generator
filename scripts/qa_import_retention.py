@@ -223,7 +223,7 @@ def main():
     from playwright.sync_api import sync_playwright
     OUT.mkdir(parents=True,exist_ok=True)
     REPORT['tested_checkout']=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
-    assert MAX_VIEW_SOURCE_BYTES==24*1024*1024 and MAX_DOCX_BYTES==128*1024*1024
+    assert MAX_VIEW_SOURCE_BYTES==32*1024*1024 and MAX_DOCX_BYTES==128*1024*1024
     with tempfile.TemporaryDirectory(prefix='cover-fallback-synthetic-') as temp, ExitStack() as controller:
         base=Path(temp);(base/'monthly-dom-synthetic-only.marker').write_text('synthetic-monthly-dom-v1')
         sources={scenario:make_source(base/'input',scenario) for scenario in ('stale','scope')}

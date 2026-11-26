@@ -41,7 +41,9 @@ def test_first_upload_loads_single_source_card_without_analyze_click(monkeypatch
     app.run()
     assert upload_calls == [raw], "Exactly one Starting report picker was invoked."
     assert not app.exception
-    assert any(w.label == "Preview recognized content" for w in app.expander)
+    # F12: no diagnostic preview or generic review reminder on the card.
+    assert not any(w.label == "Preview recognized content" for w in app.expander)
+    assert "File read; report sections" not in display
     assert any(w.label == "Remove loaded file" for w in app.button)
     assert not any(w.label == "Analyze report" for w in app.button)
     assert any(b.label == "Continue to this month’s updates" and not b.disabled for b in app.button)

@@ -12,8 +12,13 @@ def test_sources_reproduce_both_production_classification_paths(tmp_path):
     from app.monthly_report_start_import import analyze_starting_report
     from app.monthly_report_model import synthetic_profiles, ReportPeriod
     p=synthetic_profiles()[0];sites=synthetic_profiles()[1].facilities
-    stale=analyze_starting_report(inspect_docx(make_source(tmp_path,'stale')),p,ReportPeriod(2026,9),sites)
-    assert stale.site_relation=='same' and len(stale.period_review_items)==2
+    inspection=inspect_docx(make_source(tmp_path,'stale'))
+    stale=analyze_starting_report(inspection,p,ReportPeriod(2026,9),sites)
+    assert stale.site_relation=='same'
+    reviewed={item.text for item in inspection.items if item.id in stale.period_review_items}
+    from scripts.workspace_import_retention import OLD
+    assert reviewed == {FIRST,SECOND}
+    assert {item.text for item in inspection.items if item.id in stale.older_items} == {OLD}
     scope=analyze_starting_report(inspect_docx(make_source(tmp_path,'scope')),p,ReportPeriod(2026,9),sites)
     assert scope.site_relation=='other'
 

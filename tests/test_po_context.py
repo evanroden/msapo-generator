@@ -497,3 +497,18 @@ def test_package_generation_date_survives_a_next_day_resume_with_stable_fingerpr
         smartsheet._api_attachment_name(name, data)
         for name, data in resumed.attachments
     ] == first_remote_names
+
+
+def test_operator_can_be_requester_but_not_vendor_representative():
+    state = _state(route=MATERIALS_PURCHASE)
+    token = _token("quote text")
+    state[f"requester_{token}_Tulane"] = "Evan Roden"
+    state[f"contact_{token}"] = "Evan Roden"
+    context = build_po_context(state, {})
+    assert context.fields["requester_name"] == "Evan Roden"
+    assert any("requester field" in message for message in context.warnings)
+    assert not context.ready
+    state[f"contact_{token}"] = "Alex Vendor"
+    corrected = build_po_context(state, {})
+    assert not any("requester field" in message for message in corrected.warnings)
+    assert corrected.fields["requester_name"] == "Evan Roden"
