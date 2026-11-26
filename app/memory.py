@@ -43,11 +43,13 @@ Falls back to a repo-local ./data_store for local dev, and degrades gracefully
 
 EVERY public function here is failure-swallowing by design: memory is a
 convenience and must never take down a PO or an expense report the operator has
-already produced. The cost of that choice is that ALL failures in this module
-are silent -- an unwritable disk, a schema mismatch and "nothing learned yet"
-are indistinguishable to every caller, and none of them logs. When device
-recall stops working in production, suspect this module even though nothing
-raised. See _SCHEMA for the specific silent failure that schema drift causes.
+already produced. The cost of that choice is that an unwritable disk, a schema
+mismatch and "nothing learned yet" are indistinguishable to every CALLER. They
+are not invisible to the operator: each swallowed failure is logged (rate
+limited, operation name and error code only, no personal data) and counted,
+and scripts/host_check.py reports the count as a warning -- see "Failure
+accounting" below. A failure caused only by a busy/locked database is retried
+briefly first. See _SCHEMA for the specific failure that schema drift causes.
 
 Callers: app/web_ui.py (account-manager and vendor-representative recall on the
 PO flow) and app/expense_ui.py (expense profile, employee number, and the
@@ -62,10 +64,16 @@ transactional database before this app is ever scaled past one instance.
 
 from __future__ import annotations
 
+import errno
+import functools
 import hashlib
+import json
+import logging
 import os
+import random
 import re
 import sqlite3
+import tempfile
 import time
 import threading
 from pathlib import Path
@@ -390,8 +398,254 @@ def _db_path() -> Path:
     return d / "epc_memory.db"
 
 
+# ---------------------------------------------------------------------------
+# Failure accounting. Every public function below still swallows its failures
+# (memory must never stop a PO or an expense report), but a swallowed failure
+# is no longer invisible:
+#
+# * it is LOGGED at WARNING, rate-limited per (operation, stage, error code),
+#   with only the operation name, the exception type and SQLite's error code --
+#   never a name, an email, a token, a path or an exception message, which can
+#   echo stored values;
+# * it is COUNTED in a process-wide counter, and the counts are written to a
+#   small status file OUTSIDE the data folder (the data folder may be the thing
+#   that failed), which scripts/host_check.py reports as a warning;
+# * an operation that failed only because SQLite was busy/locked is RETRIED a
+#   couple of times with jitter before it counts. SQLite's own busy handler is
+#   not fair between waiters, so on slow storage one unlucky request could time
+#   out while others keep winning the lock. Every write here is a single
+#   transaction that is rolled back on failure, so re-running it is safe.
+# ---------------------------------------------------------------------------
+
+_LOG = logging.getLogger(__name__)
+_LOG_INTERVAL_SECONDS = 60.0
+_STATUS_WRITE_INTERVAL_SECONDS = 5.0
+BUSY_ATTEMPTS = 3
+# Bound at import so tests that patch time.time/time.sleep for exact-count
+# timestamps never have their sequences consumed by this bookkeeping.
+_monotonic = time.monotonic
+_wall_clock = time.time
+_sleep = time.sleep
+_FAILURE_LOCK = threading.Lock()
+_failure_counts: dict[tuple[str, str, str], int] = {}
+_failure_total = 0
+_retried_total = 0
+_first_failure_at = 0.0
+_last_failure_at = 0.0
+_last_logged: dict[tuple[str, str, str], float] = {}
+_suppressed: dict[tuple[str, str, str], int] = {}
+_last_status_write = 0.0
+_PROCESS_STARTED_AT = time.time()
+_frames = threading.local()
+_TRANSIENT_CODES = ("SQLITE_BUSY", "SQLITE_LOCKED", "SQLITE_FULL", "SQLITE_READONLY")
+
+
+def _error_code(error: BaseException) -> str:
+    """A constant code for the failure, safe to log (never the message)."""
+    name = getattr(error, "sqlite_errorname", None)
+    if isinstance(name, str) and name:
+        return name
+    number = getattr(error, "errno", None)
+    if isinstance(number, int) and number in errno.errorcode:
+        return errno.errorcode[number]
+    return ""
+
+
+def _is_busy(error: BaseException) -> bool:
+    if not isinstance(error, sqlite3.OperationalError):
+        return False
+    code = _error_code(error)
+    if code:
+        return code.startswith(("SQLITE_BUSY", "SQLITE_LOCKED"))
+    text = str(error).lower()
+    return "database is locked" in text or "database is busy" in text
+
+
+def _status_path(data_dir: Path | None = None) -> Path:
+    """Where the running app leaves its failure counts for the host check.
+
+    Outside the data folder on purpose, and keyed by the data folder so two
+    deployments (or test runs) on one machine never read each other's counts.
+    EPC_MEMORY_STATUS_DIR overrides the temporary folder.
+    """
+    if data_dir is None:
+        data_dir = _data_dir()
+    folder = Path(os.getenv("EPC_MEMORY_STATUS_DIR") or Path(tempfile.gettempdir()) / "epc-memory-status")
+    digest = hashlib.sha256(str(Path(data_dir).resolve()).encode("utf-8")).hexdigest()[:16]
+    return folder / f"{digest}.json"
+
+
+def failure_summary() -> dict:
+    """Process-wide learned-memory failure counts since this process started."""
+    with _FAILURE_LOCK:
+        counts: dict[str, int] = {}
+        for (operation, stage, code), count in sorted(_failure_counts.items()):
+            label = operation if operation == stage else f"{operation}/{stage}"
+            label += f": {code}" if code else ""
+            counts[label] = counts.get(label, 0) + count
+        return {
+            "failures": _failure_total,
+            "retried_busy": _retried_total,
+            "first_failure_at": _first_failure_at,
+            "last_failure_at": _last_failure_at,
+            "counts": counts,
+            "pid": os.getpid(),
+            "process_started_at": _PROCESS_STARTED_AT,
+        }
+
+
+def _write_status(force: bool = False) -> None:
+    global _last_status_write
+    now = _monotonic()
+    if not force and now - _last_status_write < _STATUS_WRITE_INTERVAL_SECONDS:
+        return
+    _last_status_write = now
+    try:
+        path = _status_path()
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        handle, temporary = tempfile.mkstemp(prefix=".status-", dir=path.parent)
+        try:
+            with os.fdopen(handle, "w", encoding="utf-8") as stream:
+                json.dump(failure_summary(), stream)
+            os.replace(temporary, path)
+        except BaseException:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+            raise
+    except Exception:
+        pass  # Reporting a failure must never become a failure of its own.
+
+
+def _record_failure(operation: str, stage: str, error: BaseException) -> None:
+    """Count, log (rate-limited) and publish one final, swallowed failure."""
+    global _failure_total, _first_failure_at, _last_failure_at
+    try:
+        code = _error_code(error)
+        key = (operation, stage, code)
+        now = _monotonic()
+        with _FAILURE_LOCK:
+            _failure_total += 1
+            _failure_counts[key] = _failure_counts.get(key, 0) + 1
+            wall = _wall_clock()
+            _first_failure_at = _first_failure_at or wall
+            _last_failure_at = wall
+            first = _failure_total == 1
+            due = now - _last_logged.get(key, -_LOG_INTERVAL_SECONDS) >= _LOG_INTERVAL_SECONDS
+            if due:
+                _last_logged[key] = now
+                suppressed = _suppressed.pop(key, 0)
+            else:
+                _suppressed[key] = _suppressed.get(key, 0) + 1
+            total = _failure_total
+        if due:
+            where = operation if operation == stage else f"{operation} ({stage})"
+            _LOG.warning(
+                "Learned memory %s failed: %s%s; the workflow continued without it. "
+                "%d memory failure(s) since the app started%s.",
+                where, type(error).__name__, f" {code}" if code else "", total,
+                f", {suppressed} similar not logged" if suppressed else "",
+            )
+        _write_status(force=first or due)
+    except Exception:
+        pass
+
+
+def _note_failure(stage: str, error: BaseException) -> None:
+    """Called from every swallowed exception in this module."""
+    frames = getattr(_frames, "stack", None)
+    if frames:
+        frames[-1][1].append((stage, error))
+    else:
+        _record_failure(stage, stage, error)
+
+
+# Writers in ONE process queue here before they ask SQLite for the write lock.
+# SQLite's busy handler polls with growing sleeps and is not fair: with many
+# Streamlit sessions (one thread each) writing at once on slow storage, a
+# request could lose every poll for 5 s and drop its write. A Python lock hands
+# the turn over in order and only cross-process contention is left to SQLite.
+# The wait is bounded; after it a writer proceeds and relies on SQLite alone.
+_WRITE_TURN = threading.Lock()
+_WRITE_TURN_SECONDS = 10.0
+_WRITERS = ("record_", "delete_", "correct_", "forget_", "prune_")
+
+
+def _guarded(function):
+    """Retry busy/locked failures briefly; then count and log what remains."""
+    operation = function.__name__
+    writer = operation.startswith(_WRITERS)
+
+    @functools.wraps(function)
+    def wrapper(*args, **kwargs):
+        global _retried_total
+        stack = getattr(_frames, "stack", None)
+        if stack is None:
+            stack = _frames.stack = []
+        for attempt in range(1, BUSY_ATTEMPTS + 1):
+            errors: list[tuple[str, BaseException]] = []
+            stack.append((operation, errors))
+            turn = writer and len(stack) == 1 and _WRITE_TURN.acquire(timeout=_WRITE_TURN_SECONDS)
+            try:
+                result = function(*args, **kwargs)
+            finally:
+                if turn:
+                    _WRITE_TURN.release()
+                stack.pop()
+            if not errors:
+                return result
+            if attempt < BUSY_ATTEMPTS and any(_is_busy(error) for _, error in errors):
+                with _FAILURE_LOCK:
+                    _retried_total += 1
+                _sleep(random.uniform(0.05, 0.25) * attempt)
+                continue
+            for stage, error in errors:
+                _record_failure(operation, stage, error)
+            return result
+        return result
+
+    return wrapper
+
+
+def _reset_failure_state() -> None:
+    """Tests only: forget counts, rate limits and the status throttle."""
+    global _failure_total, _retried_total, _first_failure_at, _last_failure_at, _last_status_write
+    with _FAILURE_LOCK:
+        _failure_counts.clear()
+        _last_logged.clear()
+        _suppressed.clear()
+        _failure_total = _retried_total = 0
+        _first_failure_at = _last_failure_at = _last_status_write = 0.0
+
+
 _INITIALIZATION_LOCK = threading.Lock()
 _INITIALIZED_DATABASES: dict[str, tuple[int, int, int]] = {}
+
+
+def _initialize(conn: sqlite3.Connection, path: Path, stat: os.stat_result) -> None:
+    """Journal mode, schema and migrations; caller holds _INITIALIZATION_LOCK."""
+    # WAL on a local disk; the rollback journal on a network share
+    # (see app/sqlite_storage.py). Leaving WAL needs the only open
+    # connection; while another is open SQLite refuses ("database
+    # is locked"), so this request keeps the current mode and a
+    # later connection tries again.
+    from app.sqlite_storage import journal_mode
+    wanted = journal_mode(path)
+    try:
+        switched = str(conn.execute(f"PRAGMA journal_mode={wanted}").fetchone()[0]).upper() == wanted
+    except sqlite3.OperationalError:
+        switched = False
+    conn.executescript(_SCHEMA)
+    _migrate_expense_approver_identity(conn)
+    # After the identity migration, which rebuilds
+    # expense_approvers without the role column.
+    _migrate_expense_routing_columns(conn)
+    version = conn.execute("PRAGMA schema_version").fetchone()[0]
+    if len(_INITIALIZED_DATABASES) >= 128:
+        _INITIALIZED_DATABASES.clear()
+    if switched:
+        _INITIALIZED_DATABASES[str(path)] = (stat.st_dev, stat.st_ino, version)
 
 
 def _connect(*, _run_retention: bool = True) -> sqlite3.Connection | None:
@@ -399,8 +653,10 @@ def _connect(*, _run_retention: bool = True) -> sqlite3.Connection | None:
 
     Returns an open connection the CALLER must close -- every public function
     below does so in a ``finally``. Returns None instead of raising when the
-    disk is missing, read-only, full or corrupt (FM-G04), so learning degrades
-    without touching the workflow.
+    disk is missing or the database corrupt (FM-G04), so learning degrades
+    without touching the workflow. On a read-only or full disk an
+    already-initialized database is still returned so recall keeps working;
+    writes through it fail and are counted (see _record_failure).
 
     The journal mode (WAL on a local disk, the rollback journal on a network
     share) and migrations are established once per database identity/schema
@@ -417,27 +673,30 @@ def _connect(*, _run_retention: bool = True) -> sqlite3.Connection | None:
             version = conn.execute("PRAGMA schema_version").fetchone()[0]
             identity = (stat.st_dev, stat.st_ino, version)
             if _INITIALIZED_DATABASES.get(str(path)) != identity:
-                # WAL on a local disk; the rollback journal on a network share
-                # (see app/sqlite_storage.py). Leaving WAL needs the only open
-                # connection; while another is open SQLite refuses ("database
-                # is locked"), so this request keeps the current mode and a
-                # later connection tries again.
-                from app.sqlite_storage import journal_mode
-                wanted = journal_mode(path)
                 try:
-                    switched = str(conn.execute(f"PRAGMA journal_mode={wanted}").fetchone()[0]).upper() == wanted
-                except sqlite3.OperationalError:
-                    switched = False
-                conn.executescript(_SCHEMA)
-                _migrate_expense_approver_identity(conn)
-                # After the identity migration, which rebuilds
-                # expense_approvers without the role column.
-                _migrate_expense_routing_columns(conn)
-                version = conn.execute("PRAGMA schema_version").fetchone()[0]
-                if len(_INITIALIZED_DATABASES) >= 128:
-                    _INITIALIZED_DATABASES.clear()
-                if switched:
-                    _INITIALIZED_DATABASES[str(path)] = (stat.st_dev, stat.st_ino, version)
+                    _initialize(conn, path, stat)
+                except sqlite3.OperationalError as error:
+                    # Initialization WRITES whenever a deploy adds a table or
+                    # column. On a full or read-only disk, or while another
+                    # process holds the write lock past the timeout, that write
+                    # fails though every learned row is perfectly readable.
+                    # Returning None here made EVERY recall come back empty
+                    # (measured: a full share after a deploy that added a
+                    # table). The connection is still served -- uncached, so
+                    # the next one initializes again; what needs the missing
+                    # table fails and is counted like any other failure.
+                    # Corruption (DatabaseError), an unsupported schema and
+                    # every other error still return None below.
+                    if not _error_code(error).startswith(_TRANSIENT_CODES) and not _is_busy(error):
+                        raise
+                    if not _is_busy(error):
+                        # Busy is left to the next connection, which retries
+                        # initialization; this request's own reads go ahead.
+                        _note_failure("initialize", error)
+                    try:
+                        conn.rollback()
+                    except sqlite3.Error:
+                        pass
         # Ordinary memory reads trigger the daily retention check, without
         # holding the initialization lock. A failed prune cannot block a read.
         if _run_retention:
@@ -446,7 +705,8 @@ def _connect(*, _run_retention: bool = True) -> sqlite3.Connection | None:
             except Exception:
                 pass
         return conn
-    except Exception:
+    except Exception as error:
+        _note_failure("connect", error)
         if conn is not None:
             conn.close()
         return None
@@ -623,12 +883,14 @@ def record_send(
                         (contract, vend, name, cemail, now, now),
                     )
         return True
-    except Exception:
+    except Exception as error:
+        _note_failure("record_send", error)
         return False
     finally:
         conn.close()
 
 
+@_guarded
 def record_vendor_contact(
     *,
     contract: str,
@@ -759,7 +1021,8 @@ def record_vendor_contact(
         ).fetchone()
         conn.commit()
         return int(row[0]) if row else 0
-    except Exception:
+    except Exception as error:
+        _note_failure("record_vendor_contact", error)
         try:
             conn.rollback()
         except Exception:
@@ -769,6 +1032,7 @@ def record_vendor_contact(
         conn.close()
 
 
+@_guarded
 def suggest_admin_emails(contract: str) -> list[str]:
     """Admin emails used >= SUGGEST_THRESHOLD times on THIS contract only.
 
@@ -787,12 +1051,14 @@ def suggest_admin_emails(contract: str) -> list[str]:
             (contract, SUGGEST_THRESHOLD),
         ).fetchall()
         return [r[0] for r in rows]
-    except Exception:
+    except Exception as error:
+        _note_failure("suggest_admin_emails", error)
         return []
     finally:
         conn.close()
 
 
+@_guarded
 def suggest_contacts(contract: str) -> list[tuple[str, str]]:
     """(name, email) pairs used >= SUGGEST_THRESHOLD times on THIS contract.
 
@@ -811,12 +1077,14 @@ def suggest_contacts(contract: str) -> list[tuple[str, str]]:
             (contract, SUGGEST_THRESHOLD),
         ).fetchall()
         return [(r[0], r[1]) for r in rows]
-    except Exception:
+    except Exception as error:
+        _note_failure("suggest_contacts", error)
         return []
     finally:
         conn.close()
 
 
+@_guarded
 def vendor_reps(contract: str, vendor: str | None) -> list[tuple[str, str]]:
     """Every rep we've EVER seen for this vendor on THIS contract (no
     threshold — a vendor rarely has more than a few reps).
@@ -869,12 +1137,14 @@ def vendor_reps(contract: str, vendor: str | None) -> list[tuple[str, str]]:
                 seen.add(pair)
                 result.append(pair)
         return result
-    except Exception:
+    except Exception as error:
+        _note_failure("vendor_reps", error)
         return []
     finally:
         conn.close()
 
 
+@_guarded
 def remembered_vendor_contact(
     contract: str,
     vendor: str | None,
@@ -913,6 +1183,7 @@ def remembered_vendor_contact(
     return reps[0]
 
 
+@_guarded
 def record_device_account_manager(
     *,
     device_token: str | None,
@@ -1020,7 +1291,8 @@ def record_device_account_manager(
         ).fetchone()
         conn.commit()
         return int(row[0]) if row else 0
-    except Exception:
+    except Exception as error:
+        _note_failure("record_device_account_manager", error)
         try:
             conn.rollback()
         except Exception:
@@ -1030,6 +1302,7 @@ def record_device_account_manager(
         conn.close()
 
 
+@_guarded
 def record_report_preparer(device_token: str, account: str, profile: str, name: str) -> None:
     """Remember only a completed report's preparer, scoped to device and profile."""
     device = _device_hash(device_token)
@@ -1046,12 +1319,14 @@ def record_report_preparer(device_token: str, account: str, profile: str, name: 
                 "ON CONFLICT(device_hash, account_key, profile_key) DO UPDATE SET display_name=excluded.display_name",
                 (device, account_key, profile, name.strip()),
             )
-    except Exception:
+    except Exception as error:
+        _note_failure("record_report_preparer", error)
         pass  # Device memory must never discard a finished report.
     finally:
         conn.close()
 
 
+@_guarded
 def remembered_report_preparer(device_token: str, account: str, profile: str) -> str:
     device = _device_hash(device_token)
     account_key = _account_key(account)
@@ -1066,12 +1341,14 @@ def remembered_report_preparer(device_token: str, account: str, profile: str) ->
             (device, account_key, profile),
         ).fetchone()
         return str(row[0]) if row else ""
-    except Exception:
+    except Exception as error:
+        _note_failure("remembered_report_preparer", error)
         return ""
     finally:
         conn.close()
 
 
+@_guarded
 def record_report_preferences(device_token: str, account: str, profile: str) -> None:
     """An anonymous browser preference, never authentication or an access grant."""
     device = _device_hash(device_token)
@@ -1085,12 +1362,14 @@ def record_report_preferences(device_token: str, account: str, profile: str) -> 
             conn.execute("INSERT INTO device_report_preferences VALUES (?, ?, ?) "
                          "ON CONFLICT(device_hash) DO UPDATE SET account_name=excluded.account_name, profile_key=excluded.profile_key",
                          (device, account, profile))
-    except Exception:
+    except Exception as error:
+        _note_failure("record_report_preferences", error)
         pass
     finally:
         conn.close()
 
 
+@_guarded
 def remembered_report_preferences(device_token: str) -> tuple[str, str]:
     device = _device_hash(device_token)
     if not device:
@@ -1101,12 +1380,14 @@ def remembered_report_preferences(device_token: str) -> tuple[str, str]:
     try:
         row = conn.execute("SELECT account_name, profile_key FROM device_report_preferences WHERE device_hash=?", (device,)).fetchone()
         return (str(row[0]), str(row[1])) if row else ("", "")
-    except Exception:
+    except Exception as error:
+        _note_failure("remembered_report_preferences", error)
         return "", ""
     finally:
         conn.close()
 
 
+@_guarded
 def remembered_device_account_manager(
     device_token: str | None, account: str | None
 ) -> str:
@@ -1136,7 +1417,8 @@ def remembered_device_account_manager(
             (device, account_key),
         ).fetchone()
         return str(row[0]) if row else ""
-    except Exception:
+    except Exception as error:
+        _note_failure("remembered_device_account_manager", error)
         return ""
     finally:
         conn.close()
@@ -1179,6 +1461,7 @@ _EXPENSE_PROFILE_FIELDS = (
 )
 
 
+@_guarded
 def record_expense_profile(
     *,
     device_token: str | None,
@@ -1279,12 +1562,14 @@ def record_expense_profile(
                     ),
                 )
         return True
-    except Exception:
+    except Exception as error:
+        _note_failure("record_expense_profile", error)
         return False
     finally:
         conn.close()
 
 
+@_guarded
 def remembered_expense_profile(
     device_token: str | None,
     account: str | None,
@@ -1316,12 +1601,14 @@ def remembered_expense_profile(
         if not row:
             return {}
         return dict(zip(_EXPENSE_PROFILE_FIELDS, map(str, row)))
-    except Exception:
+    except Exception as error:
+        _note_failure("remembered_expense_profile", error)
         return {}
     finally:
         conn.close()
 
 
+@_guarded
 def remembered_expense_employee_number(
     device_token: str | None,
     account: str | None,
@@ -1368,12 +1655,14 @@ def remembered_expense_employee_number(
         if legacy and _requester_key(str(legacy[0])) == employee_key:
             return str(legacy[1])
         return ""
-    except Exception:
+    except Exception as error:
+        _note_failure("remembered_expense_employee_number", error)
         return ""
     finally:
         conn.close()
 
 
+@_guarded
 def record_expense_approver(
     *,
     account: str | None,
@@ -1489,7 +1778,8 @@ def record_expense_approver(
         ).fetchone()
         conn.commit()
         return int(row[0]) if row else 0
-    except Exception:
+    except Exception as error:
+        _note_failure("record_expense_approver", error)
         try:
             conn.rollback()
         except Exception:
@@ -1499,6 +1789,7 @@ def record_expense_approver(
         conn.close()
 
 
+@_guarded
 def expense_approvers(account: str | None) -> list[tuple[str, str]]:
     """Return confirmed approver name/email pairs for this account only.
 
@@ -1530,12 +1821,14 @@ def expense_approvers(account: str | None) -> list[tuple[str, str]]:
             (account_key,),
         ).fetchall()
         return [(str(name), str(email)) for name, email in rows]
-    except Exception:
+    except Exception as error:
+        _note_failure("expense_approvers", error)
         return []
     finally:
         conn.close()
 
 
+@_guarded
 def record_device_requester(
     *, device_token: str | None, requester_name: str | None, context_id: str | None
 ) -> int:
@@ -1620,7 +1913,8 @@ def record_device_requester(
         ).fetchone()
         conn.commit()
         return int(row[0]) if row else 0
-    except Exception:
+    except Exception as error:
+        _note_failure("record_device_requester", error)
         try:
             conn.rollback()
         except Exception:
@@ -1630,6 +1924,7 @@ def record_device_requester(
         conn.close()
 
 
+@_guarded
 def remembered_device_requester(device_token: str | None) -> str:
     """Most-recent requester with at least three distinct PO contexts.
 
@@ -1653,12 +1948,14 @@ def remembered_device_requester(device_token: str | None) -> str:
             (device, REQUESTER_SUGGEST_THRESHOLD),
         ).fetchone()
         return str(row[0]) if row else ""
-    except Exception:
+    except Exception as error:
+        _note_failure("remembered_device_requester", error)
         return ""
     finally:
         conn.close()
 
 
+@_guarded
 def forget_device_requester(device_token: str | None) -> bool:
     """Forget requester learning for this browser without affecting other memory.
 
@@ -1691,7 +1988,8 @@ def forget_device_requester(device_token: str | None) -> bool:
             conn.execute("DELETE FROM device_requester_events WHERE device_hash=?", (device,))
             conn.execute("DELETE FROM device_requesters WHERE device_hash=?", (device,))
         return True
-    except Exception:
+    except Exception as error:
+        _note_failure("forget_device_requester", error)
         return False
     finally:
         conn.close()
@@ -1729,6 +2027,7 @@ _RETAINED_CONTACT_TABLES = (
 )
 
 
+@_guarded
 def prune_stale_contacts(now: float | None = None) -> int:
     """Remove saved contacts last used more than two years ago.
 
@@ -1749,7 +2048,8 @@ def prune_stale_contacts(now: float | None = None) -> int:
             ).rowcount
         conn.commit()
         return removed
-    except Exception:
+    except Exception as error:
+        _note_failure("prune_stale_contacts", error)
         try:
             conn.rollback()
         except Exception:
@@ -1774,6 +2074,7 @@ def _maybe_prune_stale_contacts() -> None:
         pass
 
 
+@_guarded
 def record_po_history(
     *,
     contract: str,
@@ -1806,13 +2107,15 @@ def record_po_history(
                  str(quote_filename or "").replace("\\", "/").rsplit("/", 1)[-1].strip()[:240]),
             )
         return True
-    except Exception:
+    except Exception as error:
+        _note_failure("record_po_history", error)
         return False
     finally:
         conn.close()
         _maybe_prune_stale_contacts()
 
 
+@_guarded
 def po_history(contract: str, limit: int = 500) -> list[dict]:
     """Newest-first PO history for ONE contract (owner screen only)."""
     conn = _connect()
@@ -1830,12 +2133,14 @@ def po_history(contract: str, limit: int = 500) -> list[dict]:
             {"recorded_at": float(r[0]), "vendor": r[1], "total": r[2], "quote_filename": r[3]}
             for r in rows
         ]
-    except Exception:
+    except Exception as error:
+        _note_failure("po_history", error)
         return []
     finally:
         conn.close()
 
 
+@_guarded
 def contracts_with_saved_contacts() -> list[str]:
     """Contracts that have saved vendor contacts or PO history (owner screen only)."""
     conn = _connect()
@@ -1847,12 +2152,14 @@ def contracts_with_saved_contacts() -> list[str]:
             "ORDER BY 1"
         ).fetchall()
         return [str(r[0]) for r in rows if r[0]]
-    except Exception:
+    except Exception as error:
+        _note_failure("contracts_with_saved_contacts", error)
         return []
     finally:
         conn.close()
 
 
+@_guarded
 def saved_vendor_contacts(contract: str) -> list[dict]:
     """Every saved vendor representative for ONE contract (owner screen only)."""
     conn = _connect()
@@ -1871,12 +2178,14 @@ def saved_vendor_contacts(contract: str) -> list[dict]:
              "last_used": float(r[4])}
             for r in rows
         ]
-    except Exception:
+    except Exception as error:
+        _note_failure("saved_vendor_contacts", error)
         return []
     finally:
         conn.close()
 
 
+@_guarded
 def delete_vendor_contact(contract: str, vendor: str, name: str, email: str) -> bool:
     """Remove one saved representative from ONE contract, with its events.
 
@@ -1900,7 +2209,8 @@ def delete_vendor_contact(contract: str, vendor: str, name: str, email: str) -> 
         )
         conn.commit()
         return removed > 0
-    except Exception:
+    except Exception as error:
+        _note_failure("delete_vendor_contact", error)
         try:
             conn.rollback()
         except Exception:
@@ -1910,6 +2220,7 @@ def delete_vendor_contact(contract: str, vendor: str, name: str, email: str) -> 
         conn.close()
 
 
+@_guarded
 def correct_vendor_contact(
     contract: str,
     vendor: str,
@@ -1963,7 +2274,8 @@ def correct_vendor_contact(
         )
         conn.commit()
         return True
-    except Exception:
+    except Exception as error:
+        _note_failure("correct_vendor_contact", error)
         try:
             conn.rollback()
         except Exception:

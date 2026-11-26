@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -17,6 +18,24 @@ if str(REPO_ROOT) not in sys.path:
 # installs the script it runs as ``sys.modules['__main__']`` (see the fixture
 # below); this snapshot is what spawned children must start from again.
 _REAL_MAIN_MODULE = sys.modules.get("__main__")
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _private_memory_status_dir(tmp_path_factory):
+    """Keep app.memory's failure-status files out of the machine's temp folder.
+
+    Outage tests make the memory module record failures, and it publishes the
+    counts for scripts/host_check.py in a status folder. Pointing that folder at
+    a per-session directory (inherited by spawned app processes) means a test
+    run never leaves counts behind for a real host check to report.
+    """
+    previous = os.environ.get("EPC_MEMORY_STATUS_DIR")
+    os.environ["EPC_MEMORY_STATUS_DIR"] = str(tmp_path_factory.mktemp("memory-status"))
+    yield
+    if previous is None:
+        os.environ.pop("EPC_MEMORY_STATUS_DIR", None)
+    else:
+        os.environ["EPC_MEMORY_STATUS_DIR"] = previous
 
 
 @pytest.fixture(autouse=True)

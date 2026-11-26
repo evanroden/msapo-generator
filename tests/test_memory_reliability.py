@@ -1,0 +1,229 @@
+"""Learned memory stays optional, but its failures are no longer invisible.
+
+Synthetic accounts, names and addresses only. Each test here failed before the
+reliability changes: failures were neither logged nor counted, a busy database
+lost the write or the recall outright, a write lock held during initialization
+made every recall come back empty, the same person typed with invisible or
+compatibility characters became several entries, and a directory row missing
+beside its event row was never restored by a rerun.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import sqlite3
+
+import pytest
+
+from app import memory
+
+ACCOUNT = "SYNTHETIC ACCOUNT"
+NAME = "Synthetic Director"
+EMAIL = "director@example.invalid"
+TOKEN = "synthetic-browser-token"
+
+
+@pytest.fixture
+def store(monkeypatch, tmp_path):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("EPC_MEMORY_STATUS_DIR", str(tmp_path / "status"))
+    monkeypatch.setenv("EPC_SQLITE_JOURNAL_MODE", "delete")  # the Azure Files NFS mode
+    getattr(memory, "_reset_failure_state", lambda: None)()
+    memory._INITIALIZED_DATABASES.clear()
+    yield tmp_path
+    getattr(memory, "_reset_failure_state", lambda: None)()
+    memory._INITIALIZED_DATABASES.clear()
+
+
+def _short_timeout(monkeypatch, seconds=0.1):
+    real = sqlite3.connect
+
+    def connect(*args, **kwargs):
+        kwargs["timeout"] = seconds
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(memory.sqlite3, "connect", connect)
+    return real
+
+
+def test_a_swallowed_failure_is_logged_counted_and_published_without_personal_data(store, caplog):
+    data = store / "data"
+    data.mkdir()
+    (data / "epc_memory.db").write_bytes(b"TEST ONLY corrupt, keep for recovery")
+    with caplog.at_level(logging.WARNING, logger="app.memory"):
+        assert memory.record_expense_approver(account=ACCOUNT, approver_name=NAME,
+                                              approver_email=EMAIL, context_id="ctx-1") == 0
+        assert memory.remembered_device_account_manager(TOKEN, ACCOUNT) == ""
+
+    summary = memory.failure_summary()
+    assert summary["failures"] == 2
+    assert any(label.startswith("record_expense_approver/connect") for label in summary["counts"])
+    lines = [record.getMessage() for record in caplog.records if record.name == "app.memory"]
+    assert lines and "record_expense_approver" in lines[0] and "DatabaseError" in lines[0]
+    published = memory._status_path(data).read_text(encoding="utf-8")
+    assert json.loads(published)["failures"] >= 1
+    for text in (*lines, published):
+        for private in (ACCOUNT, NAME, EMAIL, TOKEN, str(data)):
+            assert private not in text
+    # The bad database is still never erased or replaced.
+    assert (data / "epc_memory.db").read_bytes() == b"TEST ONLY corrupt, keep for recovery"
+
+
+def test_failure_logging_is_rate_limited_but_every_failure_is_counted(store, caplog, monkeypatch):
+    def broken(*args, **kwargs):
+        raise sqlite3.OperationalError("TEST ONLY disk unavailable")
+
+    monkeypatch.setattr(memory.sqlite3, "connect", broken)
+    with caplog.at_level(logging.WARNING, logger="app.memory"):
+        for _ in range(25):
+            memory.remembered_report_preparer(TOKEN, ACCOUNT, "water")
+    assert memory.failure_summary()["failures"] == 25
+    assert len([r for r in caplog.records if r.name == "app.memory"]) == 1
+
+
+def test_a_busy_write_is_retried_instead_of_lost(store, monkeypatch):
+    assert memory.record_report_preparer(TOKEN, ACCOUNT, "water", "Synthetic Preparer") is None
+    real = _short_timeout(monkeypatch)
+    blocker = real(store / "data" / "epc_memory.db", timeout=5, isolation_level=None)
+    blocker.execute("BEGIN IMMEDIATE")  # another request holds the write lock
+
+    released = []
+
+    def release_then_wait(seconds):
+        if blocker.in_transaction:
+            blocker.execute("COMMIT")
+            released.append(seconds)
+
+    monkeypatch.setattr(memory, "_sleep", release_then_wait, raising=False)
+    count = memory.record_expense_approver(account=ACCOUNT, approver_name=NAME,
+                                           approver_email=EMAIL, context_id="ctx-busy")
+    blocker.close()
+    assert count == 1
+    assert released, "the busy attempt was never retried"
+    assert memory.failure_summary()["failures"] == 0
+    assert memory.failure_summary()["retried_busy"] == 1
+    assert memory.expense_approvers(ACCOUNT) == [(NAME, EMAIL)]
+
+
+def test_a_busy_read_is_retried_instead_of_recalling_nothing(store, monkeypatch):
+    memory.record_report_preparer(TOKEN, ACCOUNT, "water", "Synthetic Preparer")
+    real = _short_timeout(monkeypatch)
+    blocker = real(store / "data" / "epc_memory.db", timeout=5, isolation_level=None)
+    blocker.execute("BEGIN EXCLUSIVE")  # a commit in progress keeps readers out
+
+    def release_then_wait(seconds):
+        if blocker.in_transaction:
+            blocker.execute("COMMIT")
+
+    monkeypatch.setattr(memory, "_sleep", release_then_wait, raising=False)
+    assert memory.remembered_report_preparer(TOKEN, ACCOUNT, "water") == "Synthetic Preparer"
+    blocker.close()
+    assert memory.failure_summary()["failures"] == 0
+
+
+def test_a_lock_that_never_clears_is_given_up_on_and_counted(store, monkeypatch):
+    memory.record_report_preparer(TOKEN, ACCOUNT, "water", "Synthetic Preparer")
+    real = _short_timeout(monkeypatch)
+    blocker = real(store / "data" / "epc_memory.db", timeout=5, isolation_level=None)
+    blocker.execute("BEGIN IMMEDIATE")
+    monkeypatch.setattr(memory, "_sleep", lambda seconds: None, raising=False)
+    try:
+        assert memory.record_expense_approver(account=ACCOUNT, approver_name=NAME,
+                                              approver_email=EMAIL, context_id="ctx-stuck") == 0
+    finally:
+        blocker.close()
+    summary = memory.failure_summary()
+    assert summary["failures"] == 1
+    assert summary["retried_busy"] == memory.BUSY_ATTEMPTS - 1
+    assert any("SQLITE_BUSY" in label for label in summary["counts"])
+
+
+def test_concurrent_sessions_do_not_lose_writes_on_slow_storage(store, monkeypatch):
+    """Streamlit serves each browser on its own thread; on the NFS share a
+    commit is slow. SQLite's busy handler is not fair between those threads,
+    so some writes used to time out and vanish while others kept the lock."""
+    import threading
+    import time
+
+    real = sqlite3.connect
+
+    class SlowCommit(sqlite3.Connection):
+        def commit(self):
+            if self.in_transaction:
+                time.sleep(0.03)  # a slow network-share commit, lock held
+            return super().commit()
+
+    def connect(*args, **kwargs):
+        kwargs["timeout"] = 0.05
+        kwargs["factory"] = SlowCommit
+        return real(*args, **kwargs)
+
+    memory.record_report_preparer(TOKEN, ACCOUNT, "water", "Synthetic Preparer")  # create the file
+    monkeypatch.setattr(memory.sqlite3, "connect", connect)
+    monkeypatch.setattr(memory, "_sleep", lambda seconds: None, raising=False)
+    results = []
+
+    def session(number):
+        results.append(memory.record_expense_approver(
+            account=ACCOUNT, approver_name=f"Synthetic Director {number}",
+            approver_email=f"director{number}@example.invalid", context_id=f"report-{number}"))
+
+    threads = [threading.Thread(target=session, args=(n,)) for n in range(10)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert sorted(results) == [1] * 10
+    assert len(memory.expense_approvers(ACCOUNT)) == 10
+
+
+def _storage_error(code: str) -> sqlite3.OperationalError:
+    error = sqlite3.OperationalError("TEST ONLY storage refused the write")
+    error.sqlite_errorname = code
+    return error
+
+
+@pytest.mark.parametrize("code", ["SQLITE_FULL", "SQLITE_READONLY", "SQLITE_READONLY_DBMOVED"])
+def test_recall_still_works_when_initialization_cannot_write(store, monkeypatch, code):
+    """A full or read-only disk used to blank every recall after a deploy.
+
+    Measured on a full tmpfs: after a deploy that adds a table, initialization
+    fails with SQLITE_FULL and every recall came back empty, although every
+    learned row was still readable.
+    """
+    memory.record_report_preparer(TOKEN, ACCOUNT, "water", "Synthetic Preparer")
+    memory.record_device_account_manager(device_token=TOKEN, account=ACCOUNT,
+                                         manager_name="Synthetic Manager", context_id="ctx-1")
+    memory._INITIALIZED_DATABASES.clear()  # as after an app restart
+
+    def refuse(*args, **kwargs):
+        raise _storage_error(code)
+
+    monkeypatch.setattr(memory, "_initialize", refuse)
+    assert memory.remembered_report_preparer(TOKEN, ACCOUNT, "water") == "Synthetic Preparer"
+    assert memory.remembered_device_account_manager(TOKEN, ACCOUNT) == "Synthetic Manager"
+    # Not cached as initialized, so a later connection initializes again ...
+    assert memory._INITIALIZED_DATABASES == {}
+    # ... and the operator is told that storage refused a write.
+    assert any(code in label for label in memory.failure_summary()["counts"])
+
+
+def test_an_unsupported_schema_still_turns_memory_off(store, monkeypatch):
+    memory.record_report_preparer(TOKEN, ACCOUNT, "water", "Synthetic Preparer")
+    memory._INITIALIZED_DATABASES.clear()
+
+    def refuse(*args, **kwargs):
+        raise sqlite3.OperationalError("Unsupported expense approver schema")
+
+    monkeypatch.setattr(memory, "_initialize", refuse)
+    assert memory.remembered_report_preparer(TOKEN, ACCOUNT, "water") == ""
+    assert memory.failure_summary()["failures"] == 1
+
+
+def test_corruption_and_unknown_errors_still_return_safe_defaults(store, monkeypatch):
+    data = store / "data"
+    data.mkdir()
+    (data / "epc_memory.db").write_bytes(b"TEST ONLY not a database")
+    assert memory.remembered_report_preparer(TOKEN, ACCOUNT, "water") == ""
+    assert memory.record_report_preferences(TOKEN, ACCOUNT, "water") is None
+    assert (data / "epc_memory.db").read_bytes() == b"TEST ONLY not a database"
