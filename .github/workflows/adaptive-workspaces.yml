@@ -653,13 +653,13 @@ jobs:
       - name: Apply exact locked scalar date compatibility repair
         timeout-minutes: 26
         run: |
-          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/ci_native_test_budget.py --minutes 26 --command-minutes 25 <<'NATIVE_TEST'
           python scripts/patch_streamlit_date_input.py
           NATIVE_TEST
       - name: Pure geometry and real Streamlit DOM
         timeout-minutes: 26
         run: |
-          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/ci_native_test_budget.py --minutes 26 --command-minutes 25 <<'NATIVE_TEST'
           node --test tests/workspace_geometry_test.cjs
           node --test tests/preview_view_lifecycle_test.cjs
           node --test tests/preview_commit_gate_test.cjs
@@ -669,7 +669,7 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 26
         run: |
-          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/ci_native_test_budget.py --minutes 26 --command-minutes 25 <<'NATIVE_TEST'
           python scripts/qa_sidebar_navigation.py
           NATIVE_TEST
       - name: Upload native sidebar evidence immediately, including first failures
@@ -685,28 +685,28 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 26
         run: |
-          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/ci_native_test_budget.py --minutes 26 --command-minutes 25 <<'NATIVE_TEST'
           python scripts/qa_expense_adaptive.py
           NATIVE_TEST
       - name: Actual Purchase order workflow with isolated synthetic inputs
         if: ${{ !cancelled() }}
         timeout-minutes: 26
         run: |
-          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/ci_native_test_budget.py --minutes 26 --command-minutes 25 <<'NATIVE_TEST'
           python scripts/qa_po_adaptive.py
           NATIVE_TEST
       - name: Actual Monthly workflow with isolated synthetic inputs
         if: ${{ !cancelled() }}
         timeout-minutes: 26
         run: |
-          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/ci_native_test_budget.py --minutes 26 --command-minutes 25 <<'NATIVE_TEST'
           python scripts/qa_browser_diagnostics.py qa_monthly_adaptive.py
           NATIVE_TEST
       - name: Source correction links reach native controls and persist after reload
         if: ${{ !cancelled() }}
         timeout-minutes: 26
         run: |
-          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/ci_native_test_budget.py --minutes 26 --command-minutes 25 <<'NATIVE_TEST'
           python scripts/qa_source_corrections.py
           NATIVE_TEST
       - name: Upload source correction evidence immediately, including first failures
@@ -722,35 +722,35 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 26
         run: |
-          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/ci_native_test_budget.py --minutes 26 --command-minutes 25 <<'NATIVE_TEST'
           python scripts/qa_monthly_site_pointer.py
           NATIVE_TEST
       - name: Prepared-by correction link reaches the native field by pointer and keyboard
         if: ${{ !cancelled() }}
         timeout-minutes: 26
         run: |
-          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/ci_native_test_budget.py --minutes 26 --command-minutes 25 <<'NATIVE_TEST'
           python scripts/qa_monthly_preparer_navigation.py
           NATIVE_TEST
       - name: Native Training and issue text with real exports and deliberate clear/reentry
         if: ${{ !cancelled() }}
         timeout-minutes: 26
         run: |
-          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/ci_native_test_budget.py --minutes 26 --command-minutes 25 <<'NATIVE_TEST'
           python scripts/qa_monthly_text_hydration.py
           NATIVE_TEST
       - name: Shared fixture upload and actual Starting report workflow
         if: ${{ !cancelled() }}
         timeout-minutes: 26
         run: |
-          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/ci_native_test_budget.py --minutes 26 --command-minutes 25 <<'NATIVE_TEST'
           python scripts/qa_browser_diagnostics.py qa_shared_fixture_testing.py
           NATIVE_TEST
       - name: Shared logo single-record replacement, stale review and restore
         if: ${{ !cancelled() }}
         timeout-minutes: 26
         run: |
-          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/ci_native_test_budget.py --minutes 26 --command-minutes 25 <<'NATIVE_TEST'
           python scripts/qa_single_logo_admin.py
           NATIVE_TEST
       - name: Upload shared-logo evidence immediately, including first failures
@@ -766,7 +766,7 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 26
         run: |
-          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/ci_native_test_budget.py --minutes 26 --command-minutes 25 <<'NATIVE_TEST'
           python scripts/qa_about_logo_refresh.py
           NATIVE_TEST
       - name: Upload About-logo evidence immediately, including first failures
@@ -783,14 +783,14 @@ jobs:
         if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.number == 249 && github.run_attempt == 1 }}
         timeout-minutes: 26
         run: |
-          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/ci_native_test_budget.py --minutes 26 --command-minutes 25 <<'NATIVE_TEST'
           python scripts/qa_fresh_native_owner_diagnostic.py --emit-gate
           NATIVE_TEST
       - name: One separate diagnostic-only WebKit native observer owner capture
         if: ${{ !cancelled() && steps.native_owner_request.outputs.enabled == 'true' }}
         timeout-minutes: 26
         run: |
-          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/ci_native_test_budget.py --minutes 26 --command-minutes 25 <<'NATIVE_TEST'
           python scripts/qa_fresh_native_owner_diagnostic.py
           NATIVE_TEST
       - name: Upload synthetic screenshots and geometry
