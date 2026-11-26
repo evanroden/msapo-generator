@@ -181,3 +181,16 @@ def test_a_symbol_only_paragraph_adds_no_item_so_saved_inventories_still_match(t
     plain = _docx(tmp_path, [_run("Before."), "", "", _run("After.")])
     assert len(inspection.items) == len(plain.items)
     assert [i.id for i in inspection.items] == [i.id for i in plain.items]
+
+
+def test_an_unmapped_picture_font_glyph_is_not_turned_into_a_letter():
+    from app.extracted_text import word_symbol_text
+    from app.monthly_report_native_layout import _set_reviewed_footer_text
+    assert word_symbol_text("Webdings", "0061") == ""
+    assert word_symbol_text("Zapf Dingbats", "0034") == ""
+    assert word_symbol_text("Calibri", "00E9") == "é"
+    paragraph = _paragraph('<w:r><w:sym w:font="Webdings" w:char="0061"/></w:r>' + _run(" Page 3"))
+    assert importer._text(paragraph).strip() == "Page 3"
+    _set_reviewed_footer_text(paragraph, "Page 4")
+    assert paragraph.find(".//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}sym") is not None
+    assert "a" not in importer._text(paragraph).replace("Page", "")

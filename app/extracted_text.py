@@ -62,6 +62,16 @@ _WINGDINGS = {0x6C: "●", 0x6E: "■", 0x6F: "□", 0x71: "❑", 0xA7: "▪",
               0xFE: "☑"}
 _WINGDINGS_2 = {0x4F: "✗", 0x50: "✓", 0x52: "☑", 0x54: "☒", 0xA3: "☐"}
 _SYMBOL_FONTS = {"symbol": _SYMBOL, "wingdings": _WINGDINGS, "wingdings 2": _WINGDINGS_2}
+# Picture fonts whose codes are glyph slots, not letters: an unmapped code in one
+# of these must stay a symbol, never become the ASCII letter at that code.
+_GLYPH_FONTS = {"webdings", "wingdings 3", "zapf dingbats", "itc zapf dingbats",
+                "marlett", "mt extra", "bookshelf symbol 7", "ms reference specialty",
+                "ms outlook", "segoe mdl2 assets", "holomdl2 assets"}
+
+
+def _is_glyph_font(name: str) -> bool:
+    return (name in _GLYPH_FONTS or "dings" in name or "symbol" in name
+            or name.endswith(" assets"))
 
 
 def word_symbol_text(font: str, char: str) -> str:
@@ -75,9 +85,12 @@ def word_symbol_text(font: str, char: str) -> str:
         code = int(char or "", 16)
     except ValueError:
         return ""
-    table = _SYMBOL_FONTS.get((font or "").strip().casefold())
+    name = (font or "").strip().casefold()
+    table = _SYMBOL_FONTS.get(name)
     if table is not None:
         return table.get(code - 0xF000 if code >= 0xF000 else code, "")
+    if _is_glyph_font(name):
+        return ""
     if 0x20 <= code < 0xD800 and not 0x7F <= code < 0xA0:
         return chr(code)
     return ""
