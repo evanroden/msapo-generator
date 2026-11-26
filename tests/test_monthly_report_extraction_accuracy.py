@@ -162,3 +162,13 @@ def test_rewriting_imported_text_does_not_repeat_symbols_or_hyphens():
     paragraph = _paragraph('<w:r><w:sym w:font="Wingdings" w:char="F041"/></w:r>' + _run(" Note"))
     _set_text(paragraph, "Revised note")
     assert paragraph.find(".//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}sym") is not None
+
+
+def test_text_written_into_a_placeholder_survives_reimport():
+    from app.monthly_report_native_layout import _set_text
+    paragraph = _paragraph('<w:sdt><w:sdtPr><w:showingPlcHdr/></w:sdtPr><w:sdtContent>'
+                           + _run("Click or tap here to enter text.") + "</w:sdtContent></w:sdt>"
+                           + _run("Prepared by: Alice"))
+    assert importer._text(paragraph) == "Prepared by: Alice"
+    _set_text(paragraph, "Prepared by: Bob")
+    assert importer._text(paragraph) == "Prepared by: Bob"

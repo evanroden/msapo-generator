@@ -210,6 +210,25 @@ def _set_text(element, value):
             previous = node
         for node in group[1:]:
             node.text = ""
+    _clear_filled_placeholders(element)
+
+
+def _clear_filled_placeholders(element):
+    """A content control that now holds written text is no longer a prompt.
+
+    Import skips controls flagged w:showingPlcHdr (they show Word's prompt,
+    not report text). Once a writer has put the reviewed value inside one,
+    the flag must go, or the generated value would be dropped on reimport.
+    """
+    sdt, content_tag = qn("w:sdt"), qn("w:sdtContent")
+    controls = [ancestor for ancestor in element.iterancestors() if ancestor.tag == sdt]
+    controls += list(element.iter(sdt))
+    for control in controls:
+        flag = control.find(f"{qn('w:sdtPr')}/{qn('w:showingPlcHdr')}")
+        content = control.find(content_tag)
+        if flag is not None and content is not None and any(
+                (node.text or "").strip() for node in content.iter(qn("w:t"))):
+            flag.getparent().remove(flag)
 
 
 
