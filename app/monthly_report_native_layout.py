@@ -10,11 +10,12 @@ import hashlib
 import math
 import re
 import tempfile
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from copy import deepcopy
 from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
+from threading import Lock
 
 from docx import Document
 from docx.oxml import OxmlElement
@@ -1124,6 +1125,38 @@ def _source_image_digest(source_path, source_digest, item, line_art, preserve_tr
     return hashlib.sha256(normalized.data).hexdigest() + "." + normalized.extension
 
 
+# Source-view renders read images from a disposable rendition path, so the
+# path cannot be a cache key. The verified content identity (original,
+# rendition and receipt hashes) plus a hash of the item and options fully
+# determine the normalized image, so repeat previews reuse the digest. Only
+# hashes are kept: never the path or the source item.
+_VIEW_DIGESTS = OrderedDict()
+_VIEW_DIGESTS_LOCK = Lock()
+_VIEW_DIGESTS_SIZE = 512
+
+
+def clear_view_image_digests():
+    with _VIEW_DIGESTS_LOCK:
+        _VIEW_DIGESTS.clear()
+
+
+def _view_image_digest(source_path, source_digest, item, line_art, preserve_transparency=None):
+    key = (source_digest, hashlib.sha256(repr(item).encode()).hexdigest(), bool(line_art),
+           preserve_transparency)
+    with _VIEW_DIGESTS_LOCK:
+        hit = _VIEW_DIGESTS.get(key)
+        if hit is not None:
+            _VIEW_DIGESTS.move_to_end(key)
+            return hit
+    digest = _source_image_digest.__wrapped__(source_path, source_digest, item, line_art,
+                                              preserve_transparency)
+    with _VIEW_DIGESTS_LOCK:
+        _VIEW_DIGESTS[key] = digest
+        while len(_VIEW_DIGESTS) > _VIEW_DIGESTS_SIZE:
+            _VIEW_DIGESTS.popitem(last=False)
+    return digest
+
+
 def _unchanged_blocks(draft, inspection, source_path, *, section_key=None, source_view=None, image_digest=None):
     """Prove source facts were explicitly supplied unchanged in current inputs."""
     from app.monthly_report_operational_source import original_reference, cache_identity
@@ -1332,8 +1365,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     image_cache_identity = cache_identity(inspection, source_view)
     # Experimental operation-local cache; never retain source-view paths/items
     # across requests. Legacy source cache behavior remains unchanged.
-    image_digest = (_source_image_digest if source_view is None else
-                    lru_cache(maxsize=128)(_source_image_digest.__wrapped__))
+    image_digest = (_source_image_digest if source_view is None else _view_image_digest)
     source_digest = source_view.original_inspection.sha256 if source_view is not None else inspection.sha256
     original_path = original_path or source_path
     source_ref = lambda item: original_reference(inspection, item, source_view)

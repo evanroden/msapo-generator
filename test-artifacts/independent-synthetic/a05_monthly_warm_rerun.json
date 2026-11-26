@@ -1,0 +1,49 @@
+{
+  "synthetic": true,
+  "method": "Streamlit AppTest",
+  "edits": 10,
+  "starting_reader_calls": [],
+  "measurements": [
+    {
+      "wall_s": 0.162489,
+      "cpu_s": 0.164968
+    },
+    {
+      "wall_s": 0.132936,
+      "cpu_s": 0.13506
+    },
+    {
+      "wall_s": 0.136208,
+      "cpu_s": 0.13813
+    },
+    {
+      "wall_s": 0.147705,
+      "cpu_s": 0.151024
+    },
+    {
+      "wall_s": 0.13257,
+      "cpu_s": 0.135713
+    },
+    {
+      "wall_s": 0.134963,
+      "cpu_s": 0.138231
+    },
+    {
+      "wall_s": 0.138286,
+      "cpu_s": 0.140781
+    },
+    {
+      "wall_s": 0.137166,
+      "cpu_s": 0.139924
+    },
+    {
+      "wall_s": 0.143727,
+      "cpu_s": 0.146634
+    },
+    {
+      "wall_s": 0.172355,
+      "cpu_s": 0.175211
+    }
+  ],
+  "scope": "warm preparer input; no browser/queue timings"
+}
