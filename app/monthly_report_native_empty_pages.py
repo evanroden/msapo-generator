@@ -25,6 +25,13 @@ def _boundary(node):
     return node.tag == qn('w:sectPr') or node.find('.//' + qn('w:sectPr')) is not None
 
 
+def _physical_ending(node):
+    # Paragraph section properties describe physical geometry but do not prove
+    # that the following section starts on a new page. Limit tails to the
+    # terminal document boundary rather than infer continuous/next-page flow.
+    return node is None or node.tag == qn('w:sectPr')
+
+
 @dataclass(frozen=True)
 class EmptyPagePlan:
     runs: tuple
@@ -45,6 +52,10 @@ class EmptyPagePlan:
             # source page's cleanup proof. Keep both exact neighboring roots.
             if roots[0].getprevious() is not previous or roots[-1].getnext() is not following:
                 continue
+            if tail and (not _physical_ending(following)
+                         or following in pages.live or following in pages.support
+                         or following in pages.headings):
+                continue
             target = previous if tail else roots[-1]
             if tail and (target is None or target.getparent() is not body or not _plain(target)
                          or _text(target) or target in pages.live or target in pages.support
@@ -60,7 +71,7 @@ def empty_scorecard_pages(original, sections):
     runs, current, previous, starts_page = [], {}, None, True
     for pos, node in enumerate(original, 1):
         if sections.get(pos) != 'scorecards' or _boundary(node):
-            if (_boundary(node) and current and starts_page
+            if (_boundary(node) and _physical_ending(node) and current and starts_page
                     and previous is not None and not _boundary(previous)):
                 runs.append((current, previous, node, True))
             current, previous, starts_page = {}, node, True

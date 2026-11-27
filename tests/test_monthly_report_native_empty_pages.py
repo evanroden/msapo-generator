@@ -147,3 +147,18 @@ def test_logical_section_change_is_not_an_empty_physical_page_ending():
     pages=SimpleNamespace(live={heading},support=set(),headings={heading})
     plan.apply(doc.element.body,pages,{old})
     assert len(list(delimiter.iter(qn('w:br'))))==1
+
+
+@pytest.mark.parametrize('guard',['continuous','boundary-text','boundary-bookmark','boundary-live'])
+def test_boundary_with_current_payload_or_continuous_flow_does_not_end_page(guard):
+    doc=Document();doc.add_table(rows=1,cols=1);doc.add_page_break();old=doc.add_paragraph('Old source prose')._p
+    doc.add_section(WD_SECTION_START.CONTINUOUS if guard=='continuous' else WD_SECTION_START.NEW_PAGE)
+    boundary=old.getnext()
+    if guard=='boundary-text':
+        run=OxmlElement('w:r');text=OxmlElement('w:t');text.text='Current boundary note';run.append(text);boundary.append(run)
+    if guard=='boundary-bookmark':boundary.append(OxmlElement('w:bookmarkStart'))
+    roots=list(doc.element.body);plan=empty_scorecard_pages(roots,{n:'scorecards' for n in range(1,len(roots)+1)})
+    next(old.iter(qn('w:t'))).text=''
+    pages=SimpleNamespace(live={boundary} if guard=='boundary-live' else set(),support=set(),headings=set())
+    plan.apply(doc.element.body,pages,{old})
+    assert len(list(doc.element.iter(qn('w:br'))))==1
