@@ -260,3 +260,45 @@ def test_foundry_settings_replace_the_claude_key_in_the_settings_check(host, mon
     assert ("INFO  Claude runs through Microsoft Foundry at https://example-resource.services.ai.azure.com/"
             "anthropic/, signing in with the app's managed identity; ANTHROPIC_API_KEY is not needed") in out
     assert "secret ANTHROPIC_API_KEY is missing" not in out
+
+
+def test_swallowed_memory_failures_are_reported_as_a_warning(host, monkeypatch, capsys, tmp_path_factory):
+    """The app never stops for a memory failure, so the check must surface them."""
+    from app import memory
+    monkeypatch.setenv("EPC_MEMORY_STATUS_DIR", str(tmp_path_factory.mktemp("status")))
+    memory._reset_failure_state()
+    try:
+        assert host_check.main(OFFLINE) == 0
+        assert "INFO  learned memory: the running app has reported no failures" in capsys.readouterr().out
+        (host / "epc_memory.db").write_bytes(b"TEST ONLY corrupt")
+        assert memory.remembered_report_preparer("synthetic-browser", "SYNTHETIC ACCOUNT", "water") == ""
+        report = host_check.Report()
+        host_check.check_memory_health(report, host)
+        out = capsys.readouterr().out
+    finally:
+        memory._reset_failure_state()
+    assert report.warnings == 1 and report.failures == 0
+    assert "WARN  learned memory: 1 failure(s) since the app started" in out
+    assert "remembered_report_preparer/connect: DatabaseError" not in out  # code only, no message
+    assert "remembered_report_preparer/connect" in out
+    assert "synthetic-browser" not in out and "SYNTHETIC ACCOUNT" not in out
+
+
+def test_counts_left_by_a_process_that_has_ended_are_only_information(host, monkeypatch, capsys, tmp_path_factory):
+    from app import memory
+    monkeypatch.setenv("EPC_MEMORY_STATUS_DIR", str(tmp_path_factory.mktemp("status")))
+    path = memory._status_path(host)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"failures": 3, "pid": 2 ** 22 + 7, "counts": {"vendor_reps": 3}}))
+    report = host_check.Report()
+    host_check.check_memory_health(report, host)
+    assert report.warnings == 0
+    assert "INFO  learned memory: an earlier app process reported 3 failure(s)" in capsys.readouterr().out
+
+
+def test_a_data_folder_on_container_storage_warns_on_azure(host, monkeypatch, capsys):
+    monkeypatch.setenv("CONTAINER_APP_REVISION", "synthetic--rev1")
+    monkeypatch.setattr(host_check, "filesystem_type", lambda path, mountinfo=None: "overlay")
+    monkeypatch.setattr(host_check, "on_network_filesystem", lambda path, mountinfo=None: False)
+    assert host_check.main(OFFLINE) == 0
+    assert "WARN  the data folder is on overlay, not on a network share" in capsys.readouterr().out

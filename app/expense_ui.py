@@ -96,6 +96,8 @@ from app.expense_report import (
 )
 from app.job_numbers import job_numbers_for_contract
 from app.memory import (
+    _norm_email as _memory_norm_email,
+    _requester_key as _memory_requester_key,
     expense_approvers,
     record_expense_profile,
     record_expense_approver,
@@ -1856,7 +1858,10 @@ def _employee_name_key(name: object) -> str:
     approver email with the name currently in the field; comparing raw strings
     there means a stray trailing space silently loses the recall.
     """
-    return " ".join(str(name or "").split()).casefold()
+    # Delegates to memory's key so the two can never drift apart: a remembered
+    # employee number or approver email pairs with the field only when both
+    # sides normalize identically (Unicode form, invisible characters, spacing).
+    return _memory_requester_key(str(name or ""))
 
 
 def _recall_employee_number_for_name(
@@ -1894,7 +1899,7 @@ def _clear_employee_number_recall(recall_marker_key: str) -> None:
 
 
 def _approver_identity_key(name: str, email: str) -> str:
-    return f"{_employee_name_key(name)}\0{str(email or '').strip().casefold()}"
+    return f"{_employee_name_key(name)}\0{_memory_norm_email(str(email or ''))}"
 
 
 def _approver_options(

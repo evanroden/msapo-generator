@@ -36,7 +36,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.sqlite_storage import filesystem_type, journal_mode  # noqa: E402
+from app.sqlite_storage import filesystem_type, journal_mode, on_network_filesystem  # noqa: E402
 
 SECRETS = ("ANTHROPIC_API_KEY", "SMARTSHEET_FORM_URL", "EXPENSE_ACCOUNT_DIRECTORS_JSON")
 OPTIONAL_SECRETS = ("SMARTSHEET_API_TOKEN", "SMARTSHEET_SHEET_ID")
@@ -101,6 +101,13 @@ def check_storage(report: Report, data: Path) -> None:
         report.line("FAIL", f"data folder {data} does not exist (is the share mounted?)")
         return
     report.line("PASS", f"data folder {data} ({kind})")
+    if os.getenv("CONTAINER_APP_REVISION") and not on_network_filesystem(data.resolve()):
+        # On Azure the data folder must be the mounted share. If the share did
+        # not mount, the app creates the folder on the container's own disk and
+        # everything it learns or saves is lost on the next revision.
+        report.line("WARN", f"the data folder is on {kind}, not on a network share: "
+                    "learned memory and saved reports would be lost on the next revision "
+                    "(is the share mounted at this path?)")
     usage = shutil.disk_usage(data)
     report.line("PASS" if usage.free > 1 << 30 else "WARN",
                 f"free space in the data folder: {usage.free / (1 << 30):.1f} GiB")
@@ -176,6 +183,59 @@ def check_databases(report: Report, data: Path) -> None:
         status = "FAIL" if result != "ok" else ("PASS" if current == wanted else "WARN")
         note = "" if current == wanted else f"; the app switches it to {wanted} on next use (restart if it stays)"
         report.line(status, f"{name}: {current} mode, integrity {result}{note}")
+
+
+def check_memory_health(report: Report, data: Path) -> None:
+    """Warn when the running app has swallowed learned-memory failures.
+
+    The app never lets a memory failure stop a PO or an expense report, so the
+    only traces are its log lines and the counts it leaves in a status file
+    outside the data folder (app.memory._status_path). Only operation names,
+    error codes and counts are printed.
+    """
+    import json
+    from datetime import datetime, timezone
+    from app.memory import _status_path
+    path = _status_path(data)
+    try:
+        status = json.loads(path.read_text(encoding="utf-8"))
+        failures = int(status.get("failures", 0))
+        pid = int(status.get("pid", 0))
+        counts = {str(k): int(v) for k, v in dict(status.get("counts", {})).items()}
+    except FileNotFoundError:
+        report.line("INFO", "learned memory: the running app has reported no failures")
+        return
+    except (OSError, ValueError, TypeError, AttributeError):
+        report.line("WARN", "learned memory: the app's failure status file could not be read")
+        return
+    alive = False
+    if pid > 0:
+        try:
+            os.kill(pid, 0)
+            alive = True
+        except PermissionError:
+            alive = True
+        except OSError:
+            alive = False
+
+    def when(value) -> str:
+        try:
+            return datetime.fromtimestamp(float(value), timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        except (TypeError, ValueError, OverflowError, OSError):
+            return "unknown"
+
+    detail = ", ".join(f"{label} x{count}" for label, count in sorted(counts.items(), key=lambda item: -item[1])[:8])
+    if not alive:
+        report.line("INFO", f"learned memory: an earlier app process reported {failures} failure(s)"
+                    + (f" ({detail})" if detail else ""))
+        return
+    if failures <= 0:
+        report.line("PASS", "learned memory: no failures since the app started")
+        return
+    report.line("WARN", f"learned memory: {failures} failure(s) since the app started at "
+                f"{when(status.get('process_started_at'))}, last at {when(status.get('last_failure_at'))}; "
+                "nothing was learned or recalled for those requests (POs and reports were not affected). "
+                f"{detail}. The app log has a 'Learned memory ... failed' line for each kind.")
 
 
 def check_settings(report: Report) -> None:
@@ -346,6 +406,7 @@ def main(argv=()) -> int:
     print(f"Host check for {data}", flush=True)
     check_storage(report, data)
     check_databases(report, data)
+    check_memory_health(report, data)
     check_settings(report)
     if args.offline:
         report.line("INFO", "Anthropic API not checked (--offline)")
