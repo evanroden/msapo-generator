@@ -25,4 +25,5 @@ def test_summary_escapes_source_and_preserves_long_values():
     assert 'Unknown' in result
     assert result.count('<tbody>') == 1 and result.count('<td>') == 5
     assert 'overflow-x:auto' in result
-    assert ';height:' not in result and '{height:' not in result and 'ellipsis' not in result
+    assert '[data-enfra-training-summary]::-webkit-scrollbar{height:6px;width:6px}' in result
+    assert '[data-enfra-training-summary]{height:' not in result and 'ellipsis' not in result

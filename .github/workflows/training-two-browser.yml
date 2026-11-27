@@ -6,6 +6,7 @@ on:
       - 'scripts/qa_training_two_browser.py'
       - 'scripts/qa_training_two_browser_sessions.py'
       - 'scripts/qa_training_summary_hydration.py'
+      - 'scripts/qa_training_scrollbar_geometry.py'
       - '.github/workflows/training-two-browser.yml'
       - 'app/monthly_report_training*'
       - 'app/monthly_report_guided.py'
@@ -44,7 +45,9 @@ jobs:
           python -m playwright install --with-deps chromium webkit
       - name: Stable completed-session summary during native down and up
         timeout-minutes: 2
-        run: python scripts/qa_training_summary_hydration.py
+        run: |
+          python scripts/qa_training_summary_hydration.py
+          python scripts/qa_training_scrollbar_geometry.py
       - name: Two genuinely distinct browser contexts against one versioned synthetic Training store
         timeout-minutes: 13
         run: python -m scripts.qa_training_two_browser
@@ -59,5 +62,6 @@ jobs:
           path: |
             test-artifacts/training-two-browser/
             test-artifacts/training-summary-hydration/
+            test-artifacts/training-scrollbar-geometry/
           retention-days: 7
           if-no-files-found: warn

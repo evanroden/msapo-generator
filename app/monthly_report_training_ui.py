@@ -96,7 +96,10 @@ def _session_summary_html(rows):
     body = "".join("<tr>" + "".join("<td>" + escape(str(value)) + "</td>"
         for value in (title, when, mode, participants, _session_hours(hours))) + "</tr>"
         for title, when, mode, participants, hours in rows)
+    # Match the locked framework scrollbar at first paint. In WebKit, a late
+    # global pseudo-element style otherwise adds 6px at its next native layout.
     return ('<style>[data-enfra-training-summary]{overflow-x:auto;width:100%}'
+            '[data-enfra-training-summary]::-webkit-scrollbar{height:6px;width:6px}'
             '[data-enfra-training-summary] table{border-collapse:collapse;width:100%;min-width:36rem;font-size:1rem;line-height:1.25}'
             '[data-enfra-training-summary] th,[data-enfra-training-summary] td{padding:.625rem .5rem;'
             'border:1px solid var(--secondary-background-color,#e5e7eb);text-align:left;vertical-align:top;'
