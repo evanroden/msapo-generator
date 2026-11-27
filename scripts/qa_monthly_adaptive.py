@@ -187,13 +187,13 @@ def inject(page, segments):
     }""", segments)
 
 
-def snapshot(page):
-    return page.evaluate("() => {" + DEEP + """
+def snapshot(page, *, ready_pair=None):
+    script = "wanted => {" + DEEP + """
       const rect=n=>n?.getBoundingClientRect().toJSON() || null;
       const root=document.querySelector('.epc-workspace');
       const ids={}; for(const n of document.querySelectorAll('[id]'))
         ids[n.id]=(ids[n.id]||0)+1;
-      return {
+      const observed = {
         mode:root?.dataset.epcMode, reason:root?.dataset.epcReason,
         viewport:{width:innerWidth,height:innerHeight},
         root:rect(root), rootScroll:root?.scrollTop,
@@ -218,11 +218,26 @@ def snapshot(page):
         alerts:[...document.querySelectorAll('[data-testid="stAlert"]')].map(n=>n.textContent),
         inputCount:[...document.querySelectorAll('textarea')].filter(n=>n.getAttribute('aria-label')==='Activity summary').length
       };
-    }""")
+      if (wanted) {
+        const target=observed.pairs.find(pair=>pair.key===wanted);
+        if (!target?.surface || !target.images.some(image=>image.loaded)) return false;
+      }
+      return observed;
+    }"""
+    if ready_pair is not None:
+        # A fragment may replace image nodes after current_image returns.
+        # Wait and capture the same real DOM state atomically, within the
+        # existing image-ready ceiling, rather than sampling a loading gap.
+        handle = page.wait_for_function(script, arg=ready_pair, timeout=20000)
+        try:
+            return handle.json_value()
+        finally:
+            handle.dispose()
+    return page.evaluate(script, None)
 
 
-def capture(page, name, label):
-    observed = snapshot(page)
+def capture(page, name, label, *, ready_pair=None):
+    observed = snapshot(page, ready_pair=ready_pair)
     observed["runtime_observations"] = page.evaluate(CLIENT_SNAPSHOT)
     REPORT["browsers"].setdefault(name, {}).setdefault("states", {})[label] = observed
     page.screenshot(path=str(OUT / f"{name}-{label}.png"), timeout=30000)
@@ -775,7 +790,7 @@ def exercise(browser_type, name):
               page.locator(ACTIVITY).get_by_role("checkbox", name="Add reviewed vendor service pages", exact=True).count() == 0)
         scroll_pair(page, ACTIVITY)
         actual = current_image(page, ACTIVITY, selected_page=2)
-        baseline = capture(page, name, "actual-activity-current")
+        baseline = capture(page, name, "actual-activity-current", ready_pair="monthly_activity")
         activity = pair_state(baseline, "activity")
         check(name, "actual generated Activity imagery is mounted", bool(activity["surface"]) and any(i["loaded"] for i in activity["images"]), activity)
         check(name, "Activity preview is its section output", all(activity["heading"] in i["alt"] for i in activity["images"]), activity["images"])

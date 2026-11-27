@@ -133,6 +133,7 @@ class ImportItem:
     relationship_id: str = ""
     # Review evidence only, never editable geometry.
     drawing_labels: tuple[DrawingLabel, ...] = ()
+    table_bold_rows: tuple[int, ...] = ()
 
     @property
     def label(self) -> str:
@@ -801,6 +802,12 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 if cover_native_frame else set())
                             old_pictures = {relations.get(node.get(R + "embed") or node.get(R + "id"), ("", ""))[0]
                                             for node in element.iter() if node.tag in (A + "blip", V + "imagedata")}
+                            # Capture before final-view normalization removes revision XML.
+                            # Conservatively omit emphasis for the entire source unit.
+                            emphasis_revision = any(node.tag in {W + name for name in (
+                                'del', 'ins', 'moveFrom', 'moveTo', 'rPrChange',
+                                'trPrChange', 'tcPrChange', 'tblPrChange')}
+                                for node in element.iter())
                             normalized = _visible(element)
                             if normalized.revisions:
                                 current_pictures = {relations.get(node.get(R + "embed") or node.get(R + "id"), ("", ""))[0]
@@ -972,7 +979,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                                             note="Word table contains text boxes or unsupported drawings and needs manual layout review. "
                                                  "Retain its source page or add a reviewed replacement; extracted text does not preserve the layout.")
                                     elif grid.rows and (native_table is not table_element or not picture_table):
-                                        from app.monthly_report_word_table_bands import word_table_geometry
+                                        from app.monthly_report_word_table_bands import word_table_geometry, explicit_bold_rows
                                         try:
                                             geometry = word_table_geometry(native_table, grid.rows)
                                         except ValueError as exc:
@@ -986,6 +993,8 @@ def inspect_docx(path: Path) -> DocxInspection:
                                             table_cell_refs=geometry.cell_refs,
                                             table_row_roles=geometry.row_roles,
                                             table_row_groups=geometry.row_groups,
+                                            table_bold_rows=(() if emphasis_revision else
+                                                explicit_bold_rows(native_table, children=_controlled_children)),
                                             suggested_slot=content_slot or _suggest("table", direct_text, section),
                                             merged_title_rows=tuple(index for index, count in grid.full_width_bands
                                                                     if width >= 2 and count == width),
