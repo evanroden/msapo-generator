@@ -6,17 +6,20 @@ images on the caller thread; only prepared network requests enter receipt_jobs.
 
 from __future__ import annotations
 
+from collections import OrderedDict
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime
 from email import policy
 from email.parser import BytesParser
 from html.parser import HTMLParser
 from io import BytesIO, StringIO
-from contextlib import closing
+from contextlib import closing, contextmanager
 from itertools import groupby
 import codecs
 import csv
 import hashlib
+import os
 from pathlib import Path
 import re
 import time
@@ -31,6 +34,8 @@ from openpyxl import load_workbook
 
 from app import monthly_report_library as library, monthly_report_import as docx_import, ocr
 from app import monthly_report_pdf_reader as pdf_reader
+from app import monthly_source_parse_manifest as parse_manifest
+from app.content_cache import ContentDigests
 from app.extracted_text import normalize_extracted_text
 from app.monthly_latency_spans import measure_span, record_span
 from app.monthly_report_docx import ReportImage, normalize_report_image
@@ -96,7 +101,7 @@ def file_size_limit(suffix: str) -> int:
     return docx_import.MAX_DOCX_BYTES if suffix.casefold() == ".docx" else MAX_FILE_BYTES
 
 
-def source_bytes(profile: ReportProfile, source: ReportSource) -> bytes:
+def source_bytes(profile: ReportProfile, source: ReportSource, *, _digests: ContentDigests | None = None) -> bytes:
     path = _path(profile, source.sha256, source.suffix)
     limit = file_size_limit(source.suffix)
     if path.stat().st_size > limit:
@@ -107,9 +112,32 @@ def source_bytes(profile: ReportProfile, source: ReportSource) -> bytes:
         raw = stream.read(limit + 1)
     if len(raw) > limit:
         raise ValueError("Saved source exceeds the file limit. " + source_size_error(source.suffix, limit))
-    if hashlib.sha256(raw).hexdigest() != source.sha256:
+    checked_digest = _digests.digest(raw).hex() if _digests is not None else hashlib.sha256(raw).hexdigest()
+    if checked_digest != source.sha256:
         raise ValueError("A source file failed its integrity check.")
     return raw
+
+
+def _stream_verified_original(profile: ReportProfile, source: ReportSource) -> None:
+    """source_bytes' checks and messages, reading the original in 1 MiB chunks.
+
+    For a check whose bytes are not needed: reading the whole original to hash
+    it held a 100 MiB DOCX in memory at once (128 MiB peak, Codex on #955).
+    """
+    path = _path(profile, source.sha256, source.suffix)
+    limit = file_size_limit(source.suffix)
+    if path.stat().st_size > limit:
+        raise ValueError("Saved source exceeds the file limit. " + source_size_error(source.suffix, limit))
+    digest, total = hashlib.sha256(), 0
+    with path.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            total += len(chunk)
+            # The original may grow between stat and read: bound what is read.
+            if total > limit:
+                raise ValueError("Saved source exceeds the file limit. " + source_size_error(source.suffix, limit))
+            digest.update(chunk)
+    if digest.hexdigest() != source.sha256:
+        raise ValueError("A source file failed its integrity check.")
 
 
 def _date(value: str) -> str:
@@ -815,10 +843,18 @@ def _same_source_bytes(path, raw):
     return matches
 
 
-def ingest(profile: ReportProfile, filename: str, raw: bytes | StagedUpload, *, max_new_text: int | None = None) -> tuple[SourceContent, tuple[tuple[str, bytes], ...]]:
-    """Cache local extraction. Caller enforces aggregate count/byte/text budgets."""
+def ingest(profile: ReportProfile, filename: str, raw: bytes | StagedUpload, *,
+           max_new_text: int | None = None,
+           _digests: ContentDigests | None = None) -> tuple[SourceContent, tuple[tuple[str, bytes], ...]]:
+    """Verified input, one profile-scoped in-flight parse, atomic derived results.
+
+    Caller enforces aggregate count/byte/text budgets; a streamed upload passes
+    max_new_text so an over-budget extract is rejected before publication.
+    _digests is operation-owned: the exact immutable bytes object is retained
+    until the caller's batch/recovery action ends; callers cannot supply a
+    filename or unverified digest as authentication.
+    """
     mark("upload_received")
-    from app.monthly_report_content_policy import suggested_pages
     filename = Path(filename.replace("\\", "/")).name
     suffix = Path(filename).suffix.casefold()
     if suffix not in SUPPORTED:
@@ -830,20 +866,115 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes | StagedUpload, *, 
     limit = file_size_limit(suffix)
     if size > limit:
         raise ValueError(source_size_error(suffix, limit))
+    if _digests is not None and not isinstance(_digests, ContentDigests):
+        raise TypeError("Only an operation-owned immutable digest cache can be supplied.")
+    started = perf_counter()
     with span("hash_cache_lookup"):
-        digest = staged.sha256 if staged is not None else hashlib.sha256(raw).hexdigest()
+        digest = (staged.sha256 if staged is not None
+                  else _digests.digest(raw).hex() if _digests is not None
+                  else hashlib.sha256(raw).hexdigest())
+    # The lock is keyed by both the profile directory and exact source digest.
+    # Separate sites never share extraction or mutable report state. The lock
+    # also deduplicates in-flight parses in other worker processes on this disk.
+    lock = _path(profile, digest, ".json").parent / ".parse-locks" / digest
+    with _parse_lock(lock):
+        result = _ingest_locked(profile, filename, raw, digest, suffix,
+                                staged=staged, size=size, max_new_text=max_new_text)
+    parse_manifest.qa_stage("ingest", started, "complete")
+    return result
+
+
+@contextmanager
+def _parse_lock(directory: Path):
+    """Exclusive in-flight parse of one digest that leaves no lock residue.
+
+    A finished parse removes its lock file, so a caller that opened that file
+    while waiting holds a lock nobody else can see once it gets it. Each caller
+    therefore checks, after locking, that the path still names the file it
+    locked, and locks the current file otherwise. The holder removes the file
+    while it still holds it, so every waiter on that file retries.
+    """
+    if os.name == "nt":  # No POSIX locks: keep the library's lock and cleanup.
+        try:
+            with library._locked(directory):
+                yield
+        finally:
+            for remove in ((directory / ".write-lock").unlink, directory.rmdir, directory.parent.rmdir):
+                try:
+                    remove()
+                except OSError:
+                    pass
+        return
+    import fcntl
+    library._qa_path_guard(directory)
+    path = directory / ".write-lock"
+    try:
+        while True:
+            directory.mkdir(parents=True, exist_ok=True)
+            try:
+                handle = path.open("a+b")
+            except FileNotFoundError:  # A finishing holder removed the directory.
+                continue
+            with handle:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                try:
+                    named = os.stat(path)
+                except FileNotFoundError:
+                    named = None
+                held = os.fstat(handle.fileno())
+                if named is None or (named.st_dev, named.st_ino) != (held.st_dev, held.st_ino):
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                    continue
+                try:
+                    yield
+                finally:
+                    try:
+                        path.unlink()
+                    except FileNotFoundError:
+                        pass
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            break
+    finally:
+        # Also when the parse failed: a rejected upload leaves nothing behind.
+        # A directory another caller is using is not empty, so it stays.
+        try:
+            directory.rmdir()
+            directory.parent.rmdir()
+        except OSError:
+            pass
+
+
+def _ingest_locked(profile: ReportProfile, filename: str, raw: bytes | StagedUpload | None,
+                   digest: str, suffix: str, *, staged: StagedUpload | None, size: int,
+                   max_new_text: int | None) -> tuple[SourceContent, tuple[tuple[str, bytes], ...]]:
+    from app.monthly_report_content_policy import suggested_pages
+    limit = file_size_limit(suffix)
+    with span("hash_cache_lookup"):
         path, cache = _path(profile, digest, suffix), _path(profile, digest, ".json")
+        stage = cache.with_name(digest + ".parse-stage.json")
+        cache_started = perf_counter()
         attachments = ()
         # CSV policy requires bytes; warm cached non-CSV sources do not.
         if staged is not None:
             raw = staged.path.read_bytes() if suffix == ".csv" else None
         unicode_csv = suffix == ".csv" and _csv_unicode_encoding(raw) is not None
-        rebuild_cache = False
-        if cache.exists() and path.exists() and suffix not in (".eml", ".msg"):
+        # Every derived cache and parse checkpoint records these extraction
+        # policies. Raising any of them invalidates both, never an original.
+        policies = {"client_page_policy": 1, "native_action_policy": 1, "vendor_passage_policy": 8,
+            **({"pdf_scan_policy": 1, "pdf_reader_policy": 1} if suffix == ".pdf" else {}),
+            **({"xlsx_currency_policy": 1, "xlsx_provenance_policy": 2} if suffix == ".xlsx" else {}),
+            **({"csv_unicode_policy": 1} if unicode_csv else {}),
+            **({"csv_dialect_policy": 1, "csv_headerless_policy": 1} if suffix == ".csv" else {})}
+        cache_expired = cache.exists() and not parse_manifest.fresh(cache)
+        rebuild_cache = cache_expired
+        if cache.exists() and not cache_expired and path.exists() and suffix not in (".eml", ".msg"):
             library._qa_path_guard(cache)
             try:
                 data = library._read(cache)
                 content = _cached_extraction(data, digest, suffix)
+                if "parse_manifest" in data and not parse_manifest.valid(
+                        data["parse_manifest"], content, size):
+                    raise ValueError("Source parse manifest or parser policy changed.")
             except (ValueError, TypeError, LookupError, AttributeError):
                 # Cache damage is recoverable; a stale/foreign QA namespace is not.
                 library._qa_path_guard(cache)
@@ -887,13 +1018,31 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes | StagedUpload, *, 
                     # Correct only the disposable extraction view. Saved/manual
                     # sources are overlaid by restore_sources and remain unchanged.
                     source = replace(source, facility="")
+                parse_manifest.qa_stage("extraction", cache_started, "hit", artifact=cache)
                 return replace(content, source=replace(source, filename=filename)), ()
             rebuild_cache = True
     with span("parse"):
         if staged is None and (not rebuild_cache or not _same_source_bytes(path, raw)):
             library._atomic_write(path, raw)
+        parse_manifest.qa_stage("extraction", cache_started, "miss")
+        # A completed expensive parse survives a later suggestion/publish failure.
+        # Never trust or replay an incomplete or wrong-policy checkpoint. Previously
+        # damaged full caches deliberately get reparsed for existing recovery rules.
+        checkpoint = None
+        if (not rebuild_cache and not cache.exists() and stage.exists()
+                and parse_manifest.fresh(stage, ttl_seconds=parse_manifest.DISK_STAGE_TTL_SECONDS)
+                and suffix not in (".eml", ".msg")):
+            library._qa_path_guard(stage)
+            try:
+                record = library._read(stage)
+                if not parse_manifest.stage_valid(record, digest, suffix, policies=policies):
+                    raise ValueError("Stale or corrupt source parse stage.")
+                checkpoint = _cached_extraction(record, digest, suffix)
+            except (ValueError, TypeError, LookupError, AttributeError):
+                library._qa_path_guard(stage)
+                checkpoint = None
         # Native DOCX reads the stage; other parsers get one buffer after admission.
-        if staged is not None and suffix != ".docx" and raw is None:
+        if staged is not None and suffix != ".docx" and raw is None and checkpoint is None:
             with staged.path.open("rb") as stream:
                 raw = stream.read(limit + 1)
             if len(raw) != size:
@@ -903,7 +1052,14 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes | StagedUpload, *, 
         pdf_ocr_spans = []
         span_budget_exceeded = False
         extraction_started = perf_counter()
-        if suffix == ".pdf":
+        if checkpoint is not None:
+            parse_manifest.qa_stage("parse", cache_started, "stage_hit")
+            # The checkpoint keeps the interrupted upload's filename. This
+            # upload's name drives suggestions and the published cache.
+            source = replace(checkpoint.source, filename=filename)
+            tables, image_items = checkpoint.tables, list(checkpoint.image_items)
+            pdf_ocr_spans = list(checkpoint.ocr_spans)
+        elif suffix == ".pdf":
             with fitz.open(stream=raw, filetype="pdf") as pdf:
                 if pdf.is_encrypted and not pdf.authenticate(""):
                     raise ValueError("PDF needs a password. Upload an unlocked copy.")
@@ -1015,15 +1171,26 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes | StagedUpload, *, 
             text, attachments, extra = _email(raw) if suffix == ".eml" else _msg(raw)
             page_texts = [text]
             notices.extend(extra)
-        record_span("source_extraction", perf_counter() - extraction_started)
-        extracted_chars = sum(map(len, page_texts))
-        if extracted_chars > ocr._MAX_EXTRACTED_CHARS:
-            raise ValueError(f"Source text exceeds {ocr._MAX_EXTRACTED_CHARS:,} characters; split the input before reading.")
-        if max_new_text is not None and extracted_chars > max_new_text:
+        if checkpoint is None:
+            record_span("source_extraction", perf_counter() - extraction_started)
+            extracted_chars = sum(map(len, page_texts))
+            if extracted_chars > ocr._MAX_EXTRACTED_CHARS:
+                raise ValueError(f"Source text exceeds {ocr._MAX_EXTRACTED_CHARS:,} characters; split the input before reading.")
+            if max_new_text is not None and extracted_chars > max_new_text:
+                raise ValueError(f"Total extracted text exceeds {MAX_REPORT_TEXT:,} characters. Remove unused sources or split the report.")
+            source = ReportSource(digest, filename, digest, suffix, page_texts=tuple(page_texts),
+                                  pdf_text_blocks=tuple(pdf_text_blocks),
+                                  selected_pages=tuple(range(1, len(page_texts)+1)), needs_vision=tuple(needs_vision), notices=tuple(notices))
+            if suffix not in (".eml", ".msg"):
+                # The source is already stored and the expensive decode completed.
+                # An interrupted publication leaves only a disposable checkpoint.
+                parsed = SourceContent(source, tables, tuple(image_items), tuple(pdf_ocr_spans))
+                library._atomic_write(stage, library._json(
+                    parse_manifest.stage_record(parsed, policies=policies)))
+            parse_manifest.qa_stage("parse", extraction_started, "complete")
+        elif max_new_text is not None and sum(map(len, source.page_texts)) > max_new_text:
+            # A resumed checkpoint meets the same aggregate text budget.
             raise ValueError(f"Total extracted text exceeds {MAX_REPORT_TEXT:,} characters. Remove unused sources or split the report.")
-        source = ReportSource(digest, filename, digest, suffix, page_texts=tuple(page_texts),
-                              pdf_text_blocks=tuple(pdf_text_blocks),
-                              selected_pages=tuple(range(1, len(page_texts)+1)), needs_vision=tuple(needs_vision), notices=tuple(notices))
         if suffix not in (".csv", ".xlsx"):
             source = replace(source, selected_pages=suggested_pages(source))
         with measure_span("source_mapping"):
@@ -1033,12 +1200,14 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes | StagedUpload, *, 
             # Publish only after extraction and aggregate-text validation.
             from app.monthly_report_streamed_upload import publish_staged_original
             publish_staged_original(path, staged)
-        library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1,
-            "native_action_policy": 1, "vendor_passage_policy": 8,
-            **({"pdf_scan_policy": 1, "pdf_reader_policy": 1} if suffix == ".pdf" else {}),
-            **({"xlsx_currency_policy": 1, "xlsx_provenance_policy": 2} if suffix == ".xlsx" else {}),
-            **({"csv_unicode_policy": 1} if unicode_csv else {}),
-            **({"csv_dialect_policy": 1, "csv_headerless_policy": 1} if suffix == ".csv" else {}), **asdict(content)}))
+        library._atomic_write(cache, library._json({"schema": 1, **policies,
+            "parse_manifest": parse_manifest.make(content, size), **asdict(content)}))
+        parse_manifest.qa_stage("publish", cache_started, "complete", artifact=cache)
+        # Stages are transient and do not double persistent cache disk occupancy.
+        try:
+            stage.unlink(missing_ok=True)
+        except OSError:
+            pass
         return content, attachments
 
 
@@ -1058,7 +1227,8 @@ def _verified_original(profile, source) -> None:
         raise ValueError("Saved source failed integrity verification.")
 
 
-def _discard_rejected(path, cache, digest, already_present, existing_cache):
+def _discard_rejected(path, cache, digest, already_present, existing_cache, *,
+                      stage=None, existing_stage=False):
     """Delete only what a just-rejected upload wrote (#284 owner decision).
 
     Rejected uploads are removed right away. Older files and accepted originals
@@ -1078,9 +1248,20 @@ def _discard_rejected(path, cache, digest, already_present, existing_cache):
                 cache.unlink(missing_ok=True)
         except OSError:
             pass
+    # A rejected source must not leave its newly generated intermediate text
+    # behind, while a checkpoint from an earlier attempt is never removed.
+    if stage is not None and not existing_stage:
+        try:
+            if not stage.is_symlink():
+                stage.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], existing: tuple[SourceContent, ...] = ()) -> tuple[tuple[SourceContent, ...], tuple[str, ...]]:
+    # One action-private digest tier, retaining immutable bytes under a fixed
+    # 64-MiB budget; not a shared Streamlit/global mutable extraction object.
+    digests = ContentDigests()
     sources = {c.source.sha256: c for c in existing}
     sizes, messages = 0, []
     counted_sizes = {}
@@ -1098,7 +1279,7 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
     while queue:
         filename, raw, depth, parent_digest, attachment_index = queue.pop(0)
         filename = Path(filename.replace("\\", "/")).name
-        digest = raw.sha256 if isinstance(raw, StagedUpload) else hashlib.sha256(raw).hexdigest()
+        digest = raw.sha256 if isinstance(raw, StagedUpload) else digests.digest(raw).hex()
         size = raw.size if isinstance(raw, StagedUpload) else len(raw)
         parent = sources.get(parent_digest) if parent_digest else None
         parent_label = parent.source.filename if parent else parent_digest[:12]
@@ -1152,17 +1333,21 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
         already_present = path.exists()
         cache = _path(profile, digest, ".json")
         existing_cache = cache.exists()
+        stage = cache.with_name(digest + ".parse-stage.json")
+        existing_stage = stage.exists()
         try:
             if isinstance(raw, StagedUpload):
-                content, attachments = ingest(profile, filename, raw, max_new_text=MAX_REPORT_TEXT - text_size)
+                content, attachments = ingest(profile, filename, raw, max_new_text=MAX_REPORT_TEXT - text_size,
+                                              _digests=digests)
             else:
-                content, attachments = ingest(profile, filename, raw)
+                content, attachments = ingest(profile, filename, raw, _digests=digests)
             added = sum(map(len, content.source.page_texts))
             if text_size + added > MAX_REPORT_TEXT:
                 raise ValueError(f"Total extracted text exceeds {MAX_REPORT_TEXT:,} characters. Remove unused sources or split the report.")
         except (ValueError, OSError, LookupError, csv.Error, RuntimeError, BadZipFile,
                 zlib.error, fitz.mupdf.FzErrorBase) as exc:
-            _discard_rejected(path, cache, digest, already_present, existing_cache)
+            _discard_rejected(path, cache, digest, already_present, existing_cache,
+                              stage=stage, existing_stage=existing_stage)
             if isinstance(exc, OSError):
                 reason = "Storage or file reader was unavailable; retry this file."
             elif isinstance(exc, zlib.error):
@@ -1186,7 +1371,8 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
         except BaseException:
             # An unexpected fault is still raised (never hidden as a file
             # failure), but the upload it rejected must not stay on disk.
-            _discard_rejected(path, cache, digest, already_present, existing_cache)
+            _discard_rejected(path, cache, digest, already_present, existing_cache,
+                              stage=stage, existing_stage=existing_stage)
             raise
         if parent_digest:
             content = replace(content, source=replace(
@@ -1201,9 +1387,58 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
     return tuple(sources.values()), tuple(messages)
 
 
+# A single page-publication operation may need dozens of pages from the same
+# large source. Only one caller/thread owns this context: no cross-session
+# Streamlit objects, and nothing here grants report/source approval.
+_PAGE_READS = ContextVar("monthly_page_verified_sources", default=None)
+MAX_PAGE_READ_CACHE_BYTES = 64 * 1024 * 1024
+
+
+@contextmanager
+def _page_read_scope():
+    scope = {"raw": OrderedDict(), "bytes": 0,
+             "verified": {}, "docx": None}
+    token = _PAGE_READS.set(scope)
+    try:
+        yield
+        # Even an intact derived raster is never authority for a missing or
+        # replaced original. Reverify each *used* source once on publication.
+        # One exit check per source replaces N independent page-read hashes;
+        # it streams, so a large DOCX is not held in memory just to be hashed.
+        for profile, source in scope["verified"].values():
+            _stream_verified_original(profile, source)
+    finally:
+        _PAGE_READS.reset(token)
+
+
+def _page_verified_bytes(profile, source):
+    scope = _PAGE_READS.get()
+    if scope is None:
+        return source_bytes(profile, source)
+    key = (profile.contract, profile.key, source.sha256, source.suffix)
+    if key in scope["raw"]:
+        scope["raw"].move_to_end(key)
+        return scope["raw"][key]
+    raw = source_bytes(profile, source)
+    scope["verified"][key] = (profile, source)
+    if len(raw) <= MAX_PAGE_READ_CACHE_BYTES:
+        while scope["raw"] and scope["bytes"] + len(raw) > MAX_PAGE_READ_CACHE_BYTES:
+            _, evicted = scope["raw"].popitem(last=False)
+            scope["bytes"] -= len(evicted)
+        scope["raw"][key] = raw
+        scope["bytes"] += len(raw)
+    return raw
+
+
 @traced("optional_visual_read")
 def page_image(profile: ReportProfile, content: SourceContent, number: int, *, preview: bool = False, _pdf_image=None):
     source = content.source
+    active = _PAGE_READS.get()
+    if active is not None:
+        # Cached assets also require an authenticated original at the end of
+        # the current prepare_pages operation, even when no decode is needed.
+        key = (profile.contract, profile.key, source.sha256, source.suffix)
+        active["verified"][key] = (profile, source)
     if number < 1 or number > len(source.page_texts):
         raise ValueError("Source page does not exist.")
     directory = _path(profile, source.sha256, source.suffix).parent / "prepared" / source.sha256
@@ -1238,7 +1473,7 @@ def page_image(profile: ReportProfile, content: SourceContent, number: int, *, p
             # source is decoded and an atomic fresh derivative is published
             # only after it has been prepared successfully.
             pass
-    raw = source_bytes(profile, source) if source.suffix != ".docx" and _pdf_image is None else b""
+    raw = _page_verified_bytes(profile, source) if source.suffix != ".docx" and _pdf_image is None else b""
     if source.suffix == ".pdf":
         if _pdf_image is not None:
             # Only the internal verified process-worker path supplies this.
@@ -1261,7 +1496,16 @@ def page_image(profile: ReportProfile, content: SourceContent, number: int, *, p
         if not item_id:
             raise ValueError("This DOCX item has no raster image. Use its extracted text/table instead.")
         path = _path(profile, source.sha256, source.suffix)
-        inspected = inspect_docx(path)
+        active = _PAGE_READS.get()
+        key = (profile.contract, profile.key, source.sha256, source.suffix)
+        prior = active["docx"] if active is not None else None
+        if prior is not None and prior[0] == key:
+            inspected = prior[1]  # Explicit final verification covers this inventory.
+        else:
+            inspected = inspect_docx(path)
+            if active is not None:
+                active["verified"][key] = (profile, source)
+                active["docx"] = (key, inspected)
         if inspected.sha256 != source.sha256:
             raise ValueError("A source file failed its integrity check.")
         item = next(i for i in inspected.items if i.id == item_id)
@@ -1387,7 +1631,8 @@ def prepare_pages(profile: ReportProfile, contents: tuple[SourceContent, ...],
             raise ValueError(f"Check page {number} of {content.source.filename} before including it. Prices, legal-only and blank/signature-only pages cannot be included.")
     grouped, total = {}, 0
     # Explicit closing propagates aborted/stale requests into worker teardown.
-    with closing(_prepared_page_images(profile, planned)) as prepared:
+    # The read scope closes last: each used original is reverified on exit.
+    with _page_read_scope(), closing(_prepared_page_images(profile, planned)) as prepared:
         for content, slot, number, normalized in prepared:
             total += len(normalized.data)
             if total > 60 * 1024 * 1024:

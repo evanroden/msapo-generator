@@ -148,9 +148,9 @@ def test_catalog_does_not_read_original_or_ai_and_reuse_reads_only_on_click(prof
     source = make_source(profile, "inspect.txt", b"Synthetic inspected rooftop unit.")
     save(profile, period, (source,))
     with monkeypatch.context() as guard:
-        guard.setattr(recovery, "source_bytes", lambda *_: pytest.fail("Catalog read source bytes"))
-        guard.setattr(recovery, "ingest", lambda *_: pytest.fail("Catalog re-ingested"))
-        guard.setattr(sources, "source_bytes", lambda *_: pytest.fail("Catalog opened original"))
+        guard.setattr(recovery, "source_bytes", lambda *_, **__: pytest.fail("Catalog read source bytes"))
+        guard.setattr(recovery, "ingest", lambda *_, **__: pytest.fail("Catalog re-ingested"))
+        guard.setattr(sources, "source_bytes", lambda *_, **__: pytest.fail("Catalog opened original"))
         catalog = saved_source_choices(profile)
         assert len(catalog) == 1
         assert saved_source_choices(profile) == catalog
@@ -158,13 +158,13 @@ def test_catalog_does_not_read_original_or_ai_and_reuse_reads_only_on_click(prof
     read = recovery.source_bytes
     ingest = recovery.ingest
 
-    def spy_read(*args):
+    def spy_read(*args, **kwargs):
         counts["source_reads"] += 1
-        return read(*args)
+        return read(*args, **kwargs)
 
-    def spy_ingest(*args):
+    def spy_ingest(*args, **kwargs):
         counts["native_ingests"] += 1
-        return ingest(*args)
+        return ingest(*args, **kwargs)
 
     monkeypatch.setattr(recovery, "source_bytes", spy_read)
     monkeypatch.setattr(recovery, "ingest", spy_ingest)
