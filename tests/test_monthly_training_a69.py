@@ -1,5 +1,6 @@
 """A69: first-paint Monthly Training and conservative saved-source event preview."""
 from datetime import date
+from lxml import html
 
 from app.monthly_report_training import EVENT_REF, load_training
 from test_monthly_report_training_retention import training, current, widget, NOTE
@@ -8,15 +9,26 @@ from test_training_review_flow import report, storage
 from test_training_review_ui import open_app
 
 
+def completed_summary(app):
+    # Inspect the rendered semantic table, not the removed lazy native Table.
+    markup = next(item.value for item in app.markdown
+                  if 'data-enfra-training-summary' in item.value)
+    table, = html.fromstring(markup).xpath('.//table')
+    headings = table.xpath('./thead/tr/th/text()')
+    assert headings == ["Training", "Date", "Method", "Participants", "Hours"]
+    return {name: [row[index].text_content() for row in table.xpath('./tbody/tr')]
+            for index, name in enumerate(headings)}
+
+
 def test_month_first_open_entry_and_compact_event_table_survive_retries(training):
     app, draft, matrix, initial, standing, snapshot = training
     annual = next(item for item in app.expander if item.label == "Yearly training requirements")
     assert annual.proto.expanded is False
     add = next(item for item in app.expander if item.label == "Add completed training")
     assert add.proto.expanded is True
-    table = next(item.value for item in app.table if "Training" in item.value.columns)
-    assert table["Training"].tolist() == ["Accepted safety event"]
-    assert table["Hours"].tolist() == ["0.75 hours"]
+    table = completed_summary(app)
+    assert table["Training"] == ["Accepted safety event"]
+    assert table["Hours"] == ["0.75 hours"]
 
     widget(app, "text_input", "Training topic").set_value("Current safety refresher")
     widget(app, "date_input", "Training date").set_value(date(2026, 9, 26))
@@ -38,15 +50,15 @@ def test_month_first_open_entry_and_compact_event_table_survive_retries(training
     assert widget(app, "date_input", "Training date").value is None
     assert widget(app, "text_input", "Hours (optional)").value == ""
     assert widget(app, "text_area", "Training notes").value == "Retained during failed validation"
-    table = next(item.value for item in app.table if "Training" in item.value.columns)
-    assert table["Hours"].tolist() == ["0.75 hours", "1 hour"]
+    table = completed_summary(app)
+    assert table["Hours"] == ["0.75 hours", "1 hour"]
     fill_session(app, title="Second completed safety refresher", when=date(2026, 9, 27), hours="2")
     widget(app, "button", "Add completed training").click().run()
     assert not app.exception and not app.error
     app.run()
     assert len(rows(app)) == 3
-    table = next(item.value for item in app.table if "Training" in item.value.columns)
-    assert table["Hours"].tolist() == ["0.75 hours", "1 hour", "2 hours"]
+    table = completed_summary(app)
+    assert table["Hours"] == ["0.75 hours", "1 hour", "2 hours"]
     assert load_training(draft.profile.contract) == standing
     assert matrix in current(app).extra_tables
     assert current(app).text == "Retained during failed validation"
