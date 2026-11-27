@@ -2724,7 +2724,9 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             continue
         properties = node.find(qn("w:pPr"))
         for obsolete in list(properties.findall(qn("w:pageBreakBefore"))):
-            properties.remove(obsolete)
+            # False can suppress an inherited style break; retain that override.
+            if obsolete.get(qn("w:val"), "true").lower() not in {"0", "false", "off"}:
+                properties.remove(obsolete)
     from app.monthly_report_roster_pagination import keep_contact_groups
     from docx.table import Table
     for node in dict.fromkeys(roster_tables):

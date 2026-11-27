@@ -72,3 +72,27 @@ def test_retained_current_picture_cannot_lose_its_break(tmp_path):
     doc = Document(BytesIO(raw))
     assert breaks(doc)
     assert doc._element.xpath('//w:drawing')
+
+
+@pytest.mark.parametrize('false_value', ['0', 'false', 'off'])
+def test_explicit_false_break_override_is_preserved_against_inherited_true(tmp_path, false_value):
+    from docx.enum.style import WD_STYLE_TYPE
+    path, draft = setup(tmp_path)
+    doc = Document(path)
+    style = doc.styles.add_style('Synthetic break-before vendor style', WD_STYLE_TYPE.PARAGRAPH)
+    style.paragraph_format.page_break_before = True
+    paragraph = doc.paragraphs[-1]
+    paragraph.style = style
+    paragraph.paragraph_format.page_break_before = False
+    paragraph._p.pPr.find(qn('w:pageBreakBefore')).set(qn('w:val'), false_value)
+    doc.save(path)
+    # Refresh exact source identity after changing the fixture's formatting.
+    inspection = inspect_docx(path)
+    item = next(i for i in inspection.items if i.kind == 'table')
+    supplied, _ = table_without_prices(item)
+    supplied = replace(supplied, reference=f'docx:{inspection.sha256}:{item.id}')
+    draft = replace(draft, blocks=(replace(draft.blocks[0], extra_tables=(supplied,)),))
+    output = Document(BytesIO(build_native_docx(draft, path, section_key='subcontractors')))
+    overrides = [p for p in output.paragraphs if p.style.name == style.name]
+    assert len(overrides) == 1
+    assert overrides[0].paragraph_format.page_break_before is False
