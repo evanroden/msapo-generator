@@ -176,6 +176,20 @@ class AnchoredTable(ReportTable):
 
 
 @dataclass(frozen=True)
+class EmphasizedTable(AnchoredTable):
+    # Zero-based data-row position and exact reviewed cells. An edited row
+    # does not inherit a source-only emphasis assertion by position alone.
+    bold_rows: tuple[tuple[int, tuple[str, ...]], ...] = ()
+
+    def __post_init__(self):
+        # Native editing/deleting rows must retire stale evidence before save.
+        object.__setattr__(self, 'bold_rows', tuple(
+            (index, cells) for index, cells in self.bold_rows
+            if type(index) is int and 0 <= index < len(self.rows)
+            and tuple(self.rows[index]) == tuple(cells)))
+
+
+@dataclass(frozen=True)
 class TrainingSessionTable(ReportTable):
     # Identity of each accepted row snapshot. Only explicit session mutations
     # add this metadata; plain/legacy tables keep their historical fingerprints.

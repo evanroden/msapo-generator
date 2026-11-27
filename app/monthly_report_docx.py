@@ -829,6 +829,13 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
                 if spec.key == "subcontractor_matrix":
                     from app.monthly_report_roster_pagination import keep_contact_groups
                     keep_contact_groups(table, imported.columns)
+                for index, expected in getattr(imported, 'bold_rows', ()):
+                    if (0 <= index < len(imported.rows)
+                            and tuple(imported.rows[index]) == tuple(expected)):
+                        for cell in table.rows[index + 1].cells:
+                            for paragraph in cell.paragraphs:
+                                for run in paragraph.runs:
+                                    run.bold = True
                 placed_tables.append(((getattr(imported, "anchor", ""), _body_items(document)[table_start:]), imported))
             _follow_anchors(text_items, placed_tables)
             _after_pictures(text_items, picture_items, placed_tables)
