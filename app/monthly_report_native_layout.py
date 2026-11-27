@@ -1921,6 +1921,9 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     from app.monthly_report_native_empty_activity import empty_activity_panels
     empty_panels = empty_activity_panels(draft, original, section_by_pos, unchanged_positions, headings)
     cleared_activity_paragraphs = set()
+    from app.monthly_report_native_empty_pages import empty_scorecard_pages
+    empty_scorecard_plan = empty_scorecard_pages(original, section_by_pos)
+    cleared_scorecard_paragraphs = set()
     work_order_labels = _work_order_table_labels(original, items, section_by_pos)
     from app.monthly_report_native_text import (narrative_prototype, write_narrative,
                                                  header_contains_label)
@@ -2078,6 +2081,8 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                 _set_text(element, "")
                 if sec == "activity":
                     cleared_activity_paragraphs.add(element)
+                elif sec == "scorecards":
+                    cleared_scorecard_paragraphs.add(element)
                 if label:
                     region = page_plan.owner.get(element)
                     properties = page_plan.regions[region].properties if region is not None else document.sections[-1]._sectPr
@@ -2685,6 +2690,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             _remove_unapproved_header_images(part, approved, approved_header_nodes)
     for panel in empty_panels:
         panel.remove_if_empty(body, page_plan, cleared_activity_paragraphs)
+    empty_scorecard_plan.apply(body, page_plan, cleared_scorecard_paragraphs)
     page_plan.finish(document=document)
     from app.monthly_report_scorecard_seam import fill_scorecard_seam
     for divider in dict.fromkeys(scorecard_dividers):
