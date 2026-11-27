@@ -1507,7 +1507,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             unchanged_items.update(item.id for item, _ in image_values)
     retained_images = defaultdict(set)
     from app.monthly_report_native_empty_capital import raw_priority_prototypes, matches_priority_prototype
-    raw_priority_nodes = raw_priority_prototypes(source_path) if any(
+    raw_priority_nodes = raw_priority_prototypes(Path(original_path)) if any(
         b.key == "end_of_life" and b.source != "Omit" and any(t.rows for t in b.extra_tables)
         for b in draft.blocks) else {}
     document = Document(BytesIO(source_view.rendition_bytes if source_view is not None else passive_docx(source_path)))

@@ -96,3 +96,28 @@ def test_edited_schedule_is_not_unchanged_geometry_proof(tmp_path, monkeypatch):
     baseline = render(path, replace(draft, blocks=(replace(b, extra_tables=(extra,)),)))
     assert result._element.xml == baseline._element.xml
     assert 'Edited pump' in result._element.xml
+
+
+@pytest.mark.parametrize('special', [None, 'field'])
+def test_source_view_uses_immutable_original_before_passive_field_normalization(tmp_path, special):
+    from app.monthly_report_compatibility_view import derive_compatibility_view
+    from app.monthly_report_native_layout import _build_native_docx
+    from app.monthly_report_operational_source import rendition_file
+    path, draft = fixture(tmp_path, special)
+    from copy import deepcopy
+    from test_monthly_report_source_frame_logo_role import source
+    cover = Document(source(tmp_path, divergent=True, shared_outside=False))
+    original = Document(path)
+    for node in list(original._element.body)[:-1]:
+        cover._element.body.insert(len(cover._element.body) - 1, deepcopy(node))
+    cover.save(path)
+    inspection = inspect_docx(path)
+    item = [x for x in inspection.items if x.kind == 'table'][-1]
+    supplied, _ = table_without_prices(item)
+    supplied = replace(supplied, reference=f'docx:{inspection.sha256}:{item.id}')
+    draft = replace(draft, blocks=(replace(draft.blocks[0], extra_tables=(supplied,)),))
+    view = derive_compatibility_view(path.read_bytes())
+    with rendition_file(view) as derivative:
+        result = Document(BytesIO(_build_native_docx(
+            draft, derivative, source_view=view, original_path=path, section_key='capital')))
+    assert len(result.tables) == (2 if special == 'field' else 1)
