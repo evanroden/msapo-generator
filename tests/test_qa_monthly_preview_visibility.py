@@ -145,23 +145,28 @@ def test_general_snapshot_keeps_single_non_waiting_evaluation():
     assert not page.waits and len(page.evaluations) == 1
 
 
-def test_atomic_ready_snapshot_runs_real_browser_predicate_for_loading_and_loaded_images():
-    from playwright.sync_api import sync_playwright
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True)
-        try:
-            page = browser.new_page()
-            page.set_content('<section class="epc-workspace-pair"><span data-epc-pair="monthly_activity"></span>'
-                             '<div class="report-preview"><img alt="Synthetic Activity" src="missing.png"></div></section>')
-            probe = SnapshotPage()
-            snapshot_function()(probe, ready_pair='monthly_activity')
-            script = probe.waits[0][0]
-            assert page.evaluate(script, 'monthly_activity') is False
-            assert page.evaluate(script, 'different_section') is False
-            page.locator('img').evaluate("n=>n.src='data:image/svg+xml,'+encodeURIComponent('<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\"/>')")
-            state = snapshot_function()(page, ready_pair='monthly_activity')
-            image = state['pairs'][0]['images'][0]
-            assert image['loaded'] and image['width'] == 1
-            assert page.evaluate(script, 'different_section') is False
-        finally:
-            browser.close()
+def test_ready_snapshot_predicate_rejects_loading_images_and_other_sections():
+    probe = SnapshotPage()
+    snapshot_function()(probe, ready_pair='monthly_activity')
+    script = probe.waits[0][0]
+    js = r"""
+const loaded=process.argv[1]==='true', wanted=process.argv[2];
+const box={toJSON:()=>({width:100,height:100})};
+const image={alt:'Synthetic Activity',complete:loaded,naturalWidth:loaded?1:0,naturalHeight:loaded?1:0};
+const surface={getBoundingClientRect:()=>box};
+const pair={dataset:{},getBoundingClientRect:()=>box,
+ querySelector:selector=>selector==='[data-epc-pair]'?{dataset:{epcPair:'monthly_activity'}}:null,
+ querySelectorAll:selector=>selector==='.report-preview'?[surface]:selector==='.report-preview img'?[image]:[]};
+const document={querySelector:()=>null,querySelectorAll:selector=>selector==='.epc-workspace-pair'?[pair]:[]};
+const innerWidth=100,innerHeight=100;
+console.log(JSON.stringify(eval('('+process.argv[3]+')')(wanted)));
+"""
+    def run(loaded, key):
+        result = subprocess.run(['node', '-e', js, str(loaded).lower(), key, script],
+                                text=True, capture_output=True, check=True, timeout=5)
+        return json.loads(result.stdout)
+    assert run(False, 'monthly_activity') is False
+    assert run(True, 'other_section') is False
+    state = run(True, 'monthly_activity')
+    assert state['pairs'][0]['images'][0]['loaded']
+    assert state['pairs'][0]['images'][0]['width'] == 1
