@@ -2226,6 +2226,16 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
         if item is not None and item.section == "organization" and item.part == "word/document.xml"
         and 0 < item.position <= len(original) and original[item.position - 1].tag == qn("w:tbl")
     ]
+    # Only explicitly supplied, source-proved roster nodes may receive the
+    # contact-pair policy. Do not infer ownership from a nearby table's shape.
+    roster_tables = [
+        original[item.position - 1]
+        for block in render_blocks if block.key == "subcontractor_matrix" and block.source != "Omit"
+        for table in block.extra_tables if table.reference in preserved_table_refs
+        for item in [native_tables.get(table.reference)]
+        if item is not None and item.section == "subcontractors" and item.part == "word/document.xml"
+        and 0 < item.position <= len(original) and original[item.position - 1].tag == qn("w:tbl")
+    ]
     for block in render_blocks:
         if block.source == "Omit" or block.key not in specs or block.key in unchanged:
             continue
@@ -2396,6 +2406,8 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                 page_plan.emitted(anchor, kind="table")
                 if block.key == "contact_matrix":
                     organization_contact_tables.append(anchor)
+                elif block.key == "subcontractor_matrix":
+                    roster_tables.append(anchor)
                 label = work_order_labels.get(anchor)
                 if label is not None and table_reference == source_ref_by_id[label[1]]:
                     # Empty-row normalization can re-emit an otherwise unchanged
@@ -2692,6 +2704,13 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
         panel.remove_if_empty(body, page_plan, cleared_activity_paragraphs)
     empty_scorecard_plan.apply(body, page_plan, cleared_scorecard_paragraphs)
     page_plan.finish(document=document)
+    from app.monthly_report_roster_pagination import keep_contact_groups
+    from docx.table import Table
+    for node in dict.fromkeys(roster_tables):
+        if node.getparent() is body:
+            table = Table(node, document._body)
+            if table.rows:
+                keep_contact_groups(table, tuple(cell.text for cell in table.rows[0].cells))
     from app.monthly_report_scorecard_seam import fill_scorecard_seam
     for divider in dict.fromkeys(scorecard_dividers):
         fill_scorecard_seam(document, divider)
