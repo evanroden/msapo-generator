@@ -1920,6 +1920,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     page_plan = NativePages(body, original, section_by_pos, headings, unchanged_positions, fresh=master, source_header_scope=source_header_scope)
     from app.monthly_report_native_empty_activity import empty_activity_panels
     empty_panels = empty_activity_panels(draft, original, section_by_pos, unchanged_positions, headings)
+    cleared_roster_picture_tails = []
     cleared_activity_paragraphs = set()
     from app.monthly_report_native_empty_pages import empty_scorecard_pages
     empty_scorecard_plan = empty_scorecard_pages(original, section_by_pos)
@@ -2098,6 +2099,14 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                             numbering = OxmlElement("w:numPr")
                             number = OxmlElement("w:numId"); number.set(qn("w:val"), "0")
                             numbering.append(number); properties.append(numbering)
+        # Freeze exact old picture ownership before redaction, not from the
+        # empty output's appearance. Only a terminal subcontractor page may
+        # later lose its obsolete explicit break; physical sections stay put.
+        if (sec == "subcontractors" and element.tag == qn("w:p")
+                and any(item.kind == "image" for item in group)
+                and element.find(".//" + qn("w:sectPr")) is None
+                and element.find("./" + qn("w:pPr") + "/" + qn("w:pageBreakBefore")) is not None):
+            cleared_roster_picture_tails.append(element)
         # Every non-heading body picture/table is old report content.
         _clear_images(element, preserve_decoration=any(
             item.word_section in divider_word_sections for item in group))
@@ -2704,6 +2713,20 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
         panel.remove_if_empty(body, page_plan, cleared_activity_paragraphs)
     empty_scorecard_plan.apply(body, page_plan, cleared_scorecard_paragraphs)
     page_plan.finish(document=document)
+    for node in cleared_roster_picture_tails:
+        if (node.getparent() is not body or not _discardable_picture_anchor(node)
+                or node in page_plan.live or node in page_plan.support or node in page_plan.headings):
+            continue
+        tail = list(node.itersiblings())
+        if (not tail or tail[-1].tag != qn("w:sectPr")
+                or any(not _discardable_picture_anchor(part) or part in page_plan.live
+                       or part in page_plan.support or part in page_plan.headings for part in tail[:-1])):
+            continue
+        properties = node.find(qn("w:pPr"))
+        for obsolete in list(properties.findall(qn("w:pageBreakBefore"))):
+            # False can suppress an inherited style break; retain that override.
+            if obsolete.get(qn("w:val"), "true").lower() not in {"0", "false", "off"}:
+                properties.remove(obsolete)
     from app.monthly_report_roster_pagination import keep_contact_groups
     from docx.table import Table
     for node in dict.fromkeys(roster_tables):
