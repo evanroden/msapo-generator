@@ -72,11 +72,13 @@ jobs:
           assert len(root.findall('.//testcase')) >= 190, 'Missing warning acceptance cases'
           PY
           node --test tests/source_review_navigation_test.cjs tests/workspace_navigation_test.cjs tests/workspace_geometry_test.cjs tests/picture_correction_navigation_test.cjs tests/page_navigation_request_test.cjs
+      - name: Stable attention receipt native hit targets
+        timeout-minutes: 2
+        run: python scripts/qa_navigation_attention_geometry.py
       - name: Native wide-pointer and narrow-keyboard warning, persistence and output journeys
         timeout-minutes: 35
         run: |
           python scripts/ci_native_test_budget.py --minutes 33 <<'NATIVE_TEST'
-          python scripts/qa_navigation_attention_geometry.py
           python scripts/qa_warning_routes.py
           NATIVE_TEST
       - name: Preserve all original financial native admission and vendor-total gates
