@@ -222,3 +222,14 @@ for (const [name, segments] of [
     assert.deepEqual(snapshot, original);
   });
 }
+
+
+test("medium continuous pane minima support open portrait without crossing a known crease", () => {
+  const {paneMinimums} = require("../app/workspace_geometry.js");
+  assert.deepEqual(paneMinimums(637), {minEditor:320,minPreview:260,minHeight:240});
+  assert.equal(resolve(base({app:box(16,0,637,885),...paneMinimums(637)})).mode,"wide");
+  assert.equal(resolve(base({app:box(16,0,350,600),...paneMinimums(350)})).mode,"compact");
+  assert.equal(paneMinimums(637,1,[box(0,0,310,885),box(327,0,310,885)]).minEditor,360);
+  assert.ok(Math.abs(paneMinimums(637,1.4).minEditor-504)<1e-9);
+  assert.equal(resolve(base({app:box(16,0,637,885),...paneMinimums(637,1.4)})).mode,"compact");
+});

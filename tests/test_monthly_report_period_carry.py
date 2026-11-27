@@ -1,6 +1,9 @@
 """Monthly results retain their real period and evidence until expressly updated."""
 
 from dataclasses import replace
+from io import BytesIO
+
+from docx import Document
 
 import pytest
 
@@ -36,8 +39,6 @@ def results(draft, key):
 
 
 @pytest.mark.parametrize("key,text", [
-    ("mbcx_report", "The air handlers passed this month’s functional checks."),
-    ("mbcx_status", "The air handlers passed this month’s functional checks."),
     ("utility_analysis", "The utility results are within the expected operating range."),
 ])
 def test_prior_month_results_cannot_print_as_current_without_confirmation(key, text):
@@ -54,6 +55,22 @@ def test_prior_month_results_cannot_print_as_current_without_confirmation(key, t
     assert "September 2026" in check.message and "October 2026" in check.message
     with pytest.raises(ValueError, match="last confirmed for September 2026"):
         assemble_docx(following)
+    assert prior.period == SEPTEMBER and prior.blocks[0].text == text
+
+
+@pytest.mark.parametrize("key", ("mbcx_report", "mbcx_status"))
+def test_prior_month_mbcx_note_is_kept_but_left_out_of_the_new_month(key):
+    # MBCx has no status box (owner decision, 25 Nov 2026), so an earlier
+    # month's plain note cannot be confirmed; it is kept but never printed.
+    text = "The air handlers passed this month’s functional checks."
+    prior = report(key, text)
+    following = new_month_draft(prior, OCTOBER)
+    carried = results(following, "mbcx_status")
+    assert carried.text == text and carried.source == "Omit"
+    assert "report-origin:2026-09" in carried.references
+    assert not any(c.code == "carried_period" for c in preflight(following))
+    raw = assemble_docx(following, acknowledged_fingerprint=following.fingerprint)
+    assert text not in "\n".join(p.text for p in Document(BytesIO(raw)).paragraphs)
     assert prior.period == SEPTEMBER and prior.blocks[0].text == text
 
 
@@ -87,9 +104,10 @@ def test_current_period_confirmation_retains_original_period_and_true_evidence()
 
 
 def test_skipped_review_preserves_actual_older_period_across_another_rollover():
-    following = new_month_draft(report("mbcx_status", "Synthetic result."), OCTOBER)
+    # Utility results stand in here: MBCx notes are no longer carried (25 Nov 2026).
+    following = new_month_draft(report("utility_analysis", "Synthetic result."), OCTOBER)
     later = new_month_draft(following, ReportPeriod(2026, 11))
-    assert carried_period(results(later, "mbcx_status"), later.period) == SEPTEMBER
+    assert carried_period(results(later, "utility_analysis"), later.period) == SEPTEMBER
 
 
 @pytest.mark.parametrize("change", [{"source": "Omit"}, {"text": ""}])

@@ -146,14 +146,38 @@ def test_offline_skips_the_api(host, monkeypatch, capsys):
     assert "INFO  Anthropic API not checked (--offline)" in capsys.readouterr().out
 
 
-def test_an_empty_director_map_is_a_warning(host, monkeypatch, capsys):
+def test_an_empty_director_map_is_expected_not_a_warning(host, monkeypatch, capsys):
+    """Directors are learned from filed reports, so none configured is normal."""
     from app import config
     monkeypatch.setattr(config, "_ACCOUNT_DIRECTORS", {})
     monkeypatch.setattr(config, "_ACCOUNT_DIRECTOR_PROBLEMS", [])
     assert host_check.main(OFFLINE) == 0
-    assert any(line.startswith("WARN  expense directors configured for 0 of ")
-               and line.endswith(": expense forms will name no director")
-               for line in capsys.readouterr().out.splitlines())
+    out = capsys.readouterr().out
+    assert any(line.startswith("INFO  expense directors configured for 0 of ")
+               and line.endswith(": each account's first expense form asks for its director")
+               for line in out.splitlines())
+    assert "WARN  expense directors" not in out
+
+
+def test_learned_directors_are_counted_without_printing_them(host, monkeypatch, capsys):
+    from app import config, contracts, memory
+    learned_account = contracts.contract_names()[0]
+    monkeypatch.setattr(config, "_ACCOUNT_DIRECTORS", {})
+    monkeypatch.setattr(config, "_ACCOUNT_DIRECTOR_PROBLEMS", [])
+    assert memory.record_expense_approver(
+        account=learned_account, approver_name="Synthetic Learned",
+        approver_email="learned@example.invalid", context_id="report-1") == 1
+    before = (host / "epc_memory.db").read_bytes()
+    assert host_check.main(OFFLINE) == 0
+    out = capsys.readouterr().out
+    assert "learned from filed reports for 1 more" in out
+    assert "Synthetic Learned" not in out and "example.invalid" not in out
+    assert (host / "epc_memory.db").read_bytes() == before
+
+
+def test_the_director_count_never_creates_the_memory_database(host):
+    assert host_check.learned_director_accounts() == set()
+    assert not (host / "epc_memory.db").exists()
 
 
 def test_a_configured_director_map_passes(host, monkeypatch, capsys):
@@ -236,3 +260,45 @@ def test_foundry_settings_replace_the_claude_key_in_the_settings_check(host, mon
     assert ("INFO  Claude runs through Microsoft Foundry at https://example-resource.services.ai.azure.com/"
             "anthropic/, signing in with the app's managed identity; ANTHROPIC_API_KEY is not needed") in out
     assert "secret ANTHROPIC_API_KEY is missing" not in out
+
+
+def test_swallowed_memory_failures_are_reported_as_a_warning(host, monkeypatch, capsys, tmp_path_factory):
+    """The app never stops for a memory failure, so the check must surface them."""
+    from app import memory
+    monkeypatch.setenv("EPC_MEMORY_STATUS_DIR", str(tmp_path_factory.mktemp("status")))
+    memory._reset_failure_state()
+    try:
+        assert host_check.main(OFFLINE) == 0
+        assert "INFO  learned memory: the running app has reported no failures" in capsys.readouterr().out
+        (host / "epc_memory.db").write_bytes(b"TEST ONLY corrupt")
+        assert memory.remembered_report_preparer("synthetic-browser", "SYNTHETIC ACCOUNT", "water") == ""
+        report = host_check.Report()
+        host_check.check_memory_health(report, host)
+        out = capsys.readouterr().out
+    finally:
+        memory._reset_failure_state()
+    assert report.warnings == 1 and report.failures == 0
+    assert "WARN  learned memory: 1 failure(s) since the app started" in out
+    assert "remembered_report_preparer/connect: DatabaseError" not in out  # code only, no message
+    assert "remembered_report_preparer/connect" in out
+    assert "synthetic-browser" not in out and "SYNTHETIC ACCOUNT" not in out
+
+
+def test_counts_left_by_a_process_that_has_ended_are_only_information(host, monkeypatch, capsys, tmp_path_factory):
+    from app import memory
+    monkeypatch.setenv("EPC_MEMORY_STATUS_DIR", str(tmp_path_factory.mktemp("status")))
+    path = memory._status_path(host)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"failures": 3, "pid": 2 ** 22 + 7, "counts": {"vendor_reps": 3}}))
+    report = host_check.Report()
+    host_check.check_memory_health(report, host)
+    assert report.warnings == 0
+    assert "INFO  learned memory: an earlier app process reported 3 failure(s)" in capsys.readouterr().out
+
+
+def test_a_data_folder_on_container_storage_warns_on_azure(host, monkeypatch, capsys):
+    monkeypatch.setenv("CONTAINER_APP_REVISION", "synthetic--rev1")
+    monkeypatch.setattr(host_check, "filesystem_type", lambda path, mountinfo=None: "overlay")
+    monkeypatch.setattr(host_check, "on_network_filesystem", lambda path, mountinfo=None: False)
+    assert host_check.main(OFFLINE) == 0
+    assert "WARN  the data folder is on overlay, not on a network share" in capsys.readouterr().out

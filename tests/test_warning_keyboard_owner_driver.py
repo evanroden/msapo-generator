@@ -196,6 +196,15 @@ def caption_boundary(monkeypatch, *, initial='old', actual='old', receipt_owner=
     monkeypatch.setattr(qa,'select_native_option',select)
     # Keep the regression connected to the actual call site, including the fill.
     body=next(node for node in ast.parse(inspect.getsource(qa.exercise)).body[0].body if isinstance(node,ast.Try)).body
+    # The passive observer adds a context around the unchanged native fill.
+    # Inspect that real first action, not a duplicated substitute or navigation.
+    expanded=[]
+    for node in body:
+        if isinstance(node,ast.With) and any(isinstance(item.context_expr,ast.Call)
+                and getattr(item.context_expr.func,'id','')=='observe_navigation' for item in node.items):
+            expanded.extend(node.body)
+        else:expanded.append(node)
+    body=expanded
     start=next(i for i,node in enumerate(body) if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='manager' for t in node.targets))
     end=next(i for i,node in enumerate(body) if isinstance(node,ast.Expr) and isinstance(node.value,ast.Call)
              and isinstance(node.value.func,ast.Attribute) and node.value.func.attr=='fill'

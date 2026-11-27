@@ -24,7 +24,9 @@ def test_partition_preserves_all_adaptive_jobs_and_runs_fresh_water_exactly_once
     assert command not in lanes['synthetic-dom']
     assert '    timeout-minutes: 60\n' in lanes['synthetic-dom']
     budgets = re.findall(r'ci_native_test_budget.py --minutes (\d+)', lanes['synthetic-dom'])
-    assert budgets and set(budgets) == {'25'}
+    assert budgets and set(budgets) == {'26'}
+    command_caps = re.findall(r'--command-minutes (\d+)', lanes['synthetic-dom'])
+    assert len(command_caps) == len(budgets) and set(command_caps) == {'25'}
 
 
 def test_fresh_water_has_pinned_dependencies_both_engines_and_bounded_budgets():

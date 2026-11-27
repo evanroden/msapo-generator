@@ -146,8 +146,8 @@ def render(base, token, field, move):
         finally:
             pdf.unlink(missing_ok=True)
     if outputs := st.session_state.get('_logo_refresh_outputs'):
-        st.download_button('Download synthetic native Word', outputs[0], 'synthetic-logo.docx')
-        st.download_button('Download synthetic native PDF', outputs[1], 'synthetic-logo.pdf')
+        st.download_button('Download synthetic native Word', outputs[0], 'synthetic-logo.docx', on_click='ignore')
+        st.download_button('Download synthetic native PDF', outputs[1], 'synthetic-logo.pdf', on_click='ignore')
     record = snapshot(base, token)
     sequence = st.session_state.get('_logo_refresh_sequence', 0) + 1
     st.session_state['_logo_refresh_sequence'] = sequence

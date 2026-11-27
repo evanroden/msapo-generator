@@ -54,11 +54,12 @@ def test_conflicting_manual_notes_have_one_truthfully_named_reachable_editor():
     app = workspace()
     before = app.session_state["draft"]
     assert not app.exception
-    assert [widget.label for widget in app.text_area] == ["Status or findings", "Retained page notes (left out)"]
+    # The plain status note has no box (owner decision, 25 Nov 2026).
+    assert [widget.label for widget in app.text_area] == ["Retained page notes (left out)"]
     assert not any("Advanced layout" in widget.value for widget in (*app.warning, *app.caption, *app.info))
     assert not any(widget.value == parts(app)["mbcx_report"].text for widget in app.text)
     assert textbox(app, "Retained page notes (left out)").proto.default == parts(app)["mbcx_report"].text
-    assert textbox(app, "Status or findings").proto.default == parts(app)["mbcx_status"].text
+    assert parts(app)["mbcx_status"].source == "Omit"
     app.run()
     assert app.session_state["draft"] == before
 
@@ -85,34 +86,15 @@ def test_editing_omitted_legacy_notes_preserves_exclusion_originals_and_docx_non
     raw = assemble_docx(draft, acknowledged_fingerprint=draft.fingerprint, asset_loader=refuse_omitted_asset)
     document = Document(BytesIO(raw))
     text = "\n".join(paragraph.text for paragraph in document.paragraphs)
-    assert text.count(current["mbcx_status"].text) == 1
+    assert current["mbcx_status"].text not in text  # plain status note is left out
     assert "Synthetic excluded" not in text
     with ZipFile(BytesIO(raw)) as package:
         assert b"Synthetic excluded" not in package.read("word/document.xml")
 
 
-def test_editing_an_omitted_status_requires_its_existing_explicit_include_action():
-    status = ResolvedBlock("mbcx_status", "Omit", text="Synthetic omitted separate update.",
-                           references=("separate-source",))
-    pages = ResolvedBlock("mbcx_report", "This month", text="Synthetic included page notes.",
-                          references=("page-source",))
-    app = workspace(status=status, pages=pages)
-    textbox(app, "Status or findings").set_value("Synthetic corrected separate update.").run()
-    current = parts(app)
-    assert not app.exception and current["mbcx_status"].source == "Omit"
-    assert current["mbcx_report"] == pages
-    next(button for button in app.button if button.label == "Include this update").click().run()
-    current = parts(app)
-    assert not app.exception and current["mbcx_status"].source == "This month"
-    assert current["mbcx_status"].text == "Synthetic corrected separate update."
-    assert current["mbcx_status"].references == status.references
-    assert current["mbcx_report"] == pages
-
-
 @pytest.mark.parametrize("generation_key", ("mbcx_probe_rich_text_epoch", "_monthly_qa_generation"))
 def test_report_reset_rejects_old_native_status_and_retained_note_values(generation_key):
     app = workspace()
-    old_status = textbox(app, "Status or findings").key
     old_notes = textbox(app, "Retained page notes (left out)").key
     app.session_state[generation_key] = "new-mbcx-report-incarnation"
     current = parts(app)
@@ -120,11 +102,9 @@ def test_report_reset_rejects_old_native_status_and_retained_note_values(generat
         replace(current["mbcx_status"], text="Synthetic replacement status."),
         replace(current["mbcx_report"], text="Synthetic replacement retained notes.")))
     app.session_state["draft"] = replacement
-    app.session_state[old_status] = "Stale previous status"
     app.session_state[old_notes] = "Stale previous retained notes"
     app.run()
     assert not app.exception and app.session_state["draft"] == replacement
-    assert textbox(app, "Status or findings").key != old_status
     assert textbox(app, "Retained page notes (left out)").key != old_notes
 
 
@@ -151,7 +131,7 @@ def test_omitted_linked_page_notes_keep_their_provenance_without_a_competing_tex
                           ai_written=True, ai_paragraphs=(paragraph,), references=("source-one:1",),
                           ai_evidence_fingerprint="retained-evidence")
     app = workspace(pages=pages)
-    assert not app.exception and [widget.label for widget in app.text_area] == ["Status or findings"]
+    assert not app.exception and not app.text_area
     assert parts(app)["mbcx_report"] == pages
     assert any(widget.value == pages.text for widget in app.text)
     assert not any("wording and sources editor above" in widget.value for widget in app.caption)
@@ -159,7 +139,9 @@ def test_omitted_linked_page_notes_keep_their_provenance_without_a_competing_tex
 
 
 def test_include_update_action_is_bound_to_the_report_incarnation():
-    status = ResolvedBlock("mbcx_status", "Omit", text="Synthetic omitted separate update.")
+    paragraph = DraftParagraph("Synthetic omitted separate update.", ("fact-one",), ("source-one:1",))
+    status = ResolvedBlock("mbcx_status", "Omit", text="- " + paragraph.text, ai_written=True,
+                           ai_paragraphs=(paragraph,), references=("source-one:1",))
     pages = ResolvedBlock("mbcx_report", "This month", text="Synthetic included page notes.")
     app = workspace(status=status, pages=pages)
     old = next(button for button in app.button if button.label == "Include this update").key

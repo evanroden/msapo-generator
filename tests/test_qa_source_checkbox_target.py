@@ -112,7 +112,7 @@ def test_source_correction_evidence_uploads_before_later_browser_steps():
     path = Path(__file__).resolve().parents[1] / ".github/workflows/adaptive-workspaces.yml"
     workflow = path.read_text()
     expected = """        run: |
-          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/ci_native_test_budget.py --minutes 26 --command-minutes 25 <<'NATIVE_TEST'
           python scripts/qa_source_corrections.py
           NATIVE_TEST
       - name: Upload source correction evidence immediately, including first failures

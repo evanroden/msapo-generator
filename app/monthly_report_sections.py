@@ -8,7 +8,7 @@ import re
 from app.monthly_report_content_policy import contains_price, page_status, table_price_columns, proposal_price_columns, table_has_pricing, logical_table_columns
 from app.monthly_report_checks import placeholder_matches
 from app.monthly_report_import import MappedImport, ImportMapping, _heading, read_import_image, _read_import_image, MAX_NORMALIZED_BYTES, is_logo_artwork, is_header_artwork
-from app.monthly_report_model import AnchoredTable, ReportTable, ResolvedBlock, known_sections, layout_blocks
+from app.monthly_report_model import AnchoredTable, EmphasizedTable, ReportTable, ResolvedBlock, known_sections, layout_blocks
 from app.monthly_report_asset_review import approve_all_assets
 
 
@@ -96,6 +96,15 @@ def table_without_prices(item):
             # The original source remains immutable. Only a fully understood
             # multi-site year grid acquires an explicit Category column.
             return annual, ()
+    roles = getattr(item, "table_row_roles", ())
+    first = getattr(item, "table_header_row", 0)
+    if (getattr(item, "section", "") == "rfi" and first < len(roles)
+            and roles[first] == "data" and len(rows[0]) == 3
+            and re.fullmatch(r"[0-9]+", rows[0][0].strip())):
+        # A numbered RFI record in a native data-first continuation is not
+        # a column schema. Keep it unresolved rather than inventing headings
+        # or guessing that a preceding table has the same identity.
+        return ReportTable((), rows), ()
     headings = logical_table_columns(rows[0])
     removed = (proposal_price_columns(headings, rows[1:])
                if getattr(item, "section", "") == "proposals"
@@ -107,6 +116,15 @@ def table_without_prices(item):
     # Repeated/merged titles must not cause data_editor dictionaries to lose cells.
     columns = tuple(title + (f" ({n+1})" if title in columns[:n] else "") for n, title in enumerate(columns))
     values = tuple(tuple(row[i] if i < len(row) else "" for i in keep) for row in rows[1:])
+    first = getattr(item, 'table_header_row', 0)
+    roles = getattr(item, 'table_row_roles', ())
+    positions = [index for index in range(first, len(item.rows))
+                 if index >= len(roles) or roles[index] != 'repeated_header'][1:]
+    emphasized = set(getattr(item, 'table_bold_rows', ()))
+    bold = tuple((index, values[index]) for index, native in enumerate(positions)
+                 if native in emphasized)
+    if bold:
+        return EmphasizedTable(columns, values, bold_rows=bold), removed
     return ReportTable(columns, values), removed
 
 
@@ -306,11 +324,14 @@ def _build_section_import(path, inspection, plans, *, source_view=None, _operati
                         raise ValueError("Remove pricing from the section table before continuing.")
                     table = replace(table, reference=reference)
                     lines = [line.strip() for line in block.text.splitlines() if line.strip()]
-                    if lines and type(table) is ReportTable and _builtin_design(profile):
+                    if lines and type(table) in (ReportTable, EmphasizedTable) and _builtin_design(profile):
                         # Remember the paragraph this table followed so the
                         # built-in design can keep the source's order.
-                        table = AnchoredTable(table.columns, table.rows, table.reference, lines[-1],
-                                              after_pictures.get(slot) or "")
+                        if isinstance(table, EmphasizedTable):
+                            table = replace(table, anchor=lines[-1], lead=after_pictures.get(slot) or "")
+                        else:
+                            table = AnchoredTable(table.columns, table.rows, table.reference, lines[-1],
+                                                  after_pictures.get(slot) or "")
                     block = replace(block, extra_tables=(*block.extra_tables, table))
             else:
                 text = plan.get("texts", {}).get(identity, item.text)

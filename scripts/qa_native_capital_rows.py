@@ -102,6 +102,12 @@ def exercise(browser, name):
     context.route("**/*",route)
     context.tracing.start(screenshots=True,snapshots=True)
     page=context.new_page()
+    # Passive hashed wire evidence keeps the original first failure intact.
+    from scripts.qa_water_widget_delivery import WaterWidgetDelivery
+    delivery=[]
+    WaterWidgetDelivery(delivery.append, ports=(PORT,),
+        labels={'Facility','Priority','Recommendation','Edit capital item','Close editing'},
+        widget_types={'button','text_input','text_area'}).attach(page)
     page.on("pageerror",lambda error:report["page_errors"].append(str(error)))
     try:
         page.goto(URL,wait_until="domcontentloaded")
@@ -135,6 +141,11 @@ def exercise(browser, name):
         assert state["extra"][0]["columns"] == ["Asset","Decision","Decision",""]
         assert state["extra"][0]["rows"][0][2] == MARKER
         assert state["extra"][0]["reference"] == "synthetic-capital-table"
+        # The authoritative receipt can arrive before React removes the closed
+        # editor. Until then only the sibling has an Edit button, so .first
+        # would select the wrong row. Wait for both closed cards, not a delay.
+        expect(close).to_have_count(0, timeout=35000)
+        expect(capital.get_by_role("button",name="Edit capital item",exact=True)).to_have_count(2)
         # A separate rerender must not switch the imported editor back to grid.
         capital.get_by_role("button",name="Edit capital item",exact=True).first.click()
         expect(capital.get_by_role("textbox",name="Decision",exact=True).nth(1)).to_have_value(MARKER)
@@ -197,6 +208,7 @@ def exercise(browser, name):
         except Exception:pass
         raise
     finally:
+        report['widget_delivery']=delivery
         (path/"result.json").write_text(json.dumps(report,indent=2))
         context.tracing.stop(path=str(path/"trace.zip"))
         context.close()

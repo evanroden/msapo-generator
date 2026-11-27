@@ -9,7 +9,60 @@ EXPECTED_JOB = "  water-row-output:\n    runs-on: ubuntu-24.04\n    # Saved Wate
 ORIGINAL_WORKFLOW_SHA256 = '93cb2a0a6e15697491bdd4ec857f6a9d23da0ddade28c88f4f4ecac1bca4d9d3'
 COMMANDS = ('qa_water_page_journey.py', 'qa_report_row_cards.py')
 
+def _before_compact_portrait_additions(text):
+    """Reverse only the exact additive Duo checks; retain every old gate byte."""
+    trigger = "      - 'scripts/qa_duo_compact_portrait.py'\n"
+    if trigger not in text:
+        return text
+    assert text.count(trigger) == 2
+    text = text.replace(trigger, '')
+    step = ('      - name: Synthetic WebKit compact navigation and open portrait\n'
+            '        timeout-minutes: 3\n'
+            '        run: python scripts/qa_duo_compact_portrait.py\n')
+    assert text.count(step) == 1
+    text = text.replace(step, '')
+    upload = ('          path: |\n'
+              '            test-artifacts/workflow-shell-width/\n'
+              '            test-artifacts/duo-compact-portrait/\n')
+    assert text.count(upload) == 1
+    return text.replace(upload, '          path: test-artifacts/workflow-shell-width/\n')
+
+
+def _before_system_appearance_additions(text):
+    trigger = "      - 'scripts/qa_system_appearance.py'\n      - 'tests/test_system_appearance.py'\n      - '.streamlit/config.toml'\n"
+    if trigger not in text:
+        return text
+    assert text.count(trigger) == 2
+    text = text.replace(trigger, '')
+    step = ('      - name: Automatic system light and dark appearance\n'
+            '        timeout-minutes: 4\n'
+            '        run: python scripts/qa_system_appearance.py\n')
+    assert text.count(step) == 1
+    text = text.replace(step, '')
+    artifact = '            test-artifacts/system-appearance/\n'
+    assert text.count(artifact) == 1
+    return text.replace(artifact, '')
+
+
+def before_dom_runtime_allowance(text):
+    """Reverse only the exact 60-second aggregate increase, with command caps intact."""
+    start = text.index('  synthetic-dom:\n')
+    boundary = re.search(r'\n  [a-z][a-z-]+:', text[start + 1:])
+    assert boundary is not None
+    end = start + 1 + boundary.start()
+    lane = text[start:end]
+    changed = '--minutes 26 --command-minutes 25'
+    assert lane.count(changed) == 15
+    assert '--minutes 25' not in lane
+    assert '    timeout-minutes: 60\n' in lane
+    assert lane.count('        timeout-minutes: 26\n') == 15
+    return text[:start] + lane.replace(changed, '--minutes 25') + text[end:]
+
+
 def validate_partition(text):
+    text = before_dom_runtime_allowance(text)
+    text = _before_system_appearance_additions(text)
+    text = _before_compact_portrait_additions(text)
     parts = re.split(r'(?=^  [a-z][a-z-]+:\n)', text.split('jobs:\n', 1)[1], flags=re.M)
     jobs = {re.match(r'  ([\w-]+):', p).group(1):p for p in parts if p.strip()}
     assert 'water-row-output' in jobs
@@ -32,6 +85,14 @@ def validate_partition(text):
     restored = restored.replace(marker, '            test-artifacts/water-page-journey/\n            test-artifacts/report-row-cards/\n'+marker)
     reconstructed = text.replace(jobs['synthetic-dom'],restored).replace(EXPECTED_JOB,'')
     reconstructed = reconstructed.replace('# This lane retains its own 8-minute native ceiling; DOM remains25.', '# Native aggregate allowance rises from 25 to 33 minutes across these two jobs.')
+    # Approved later edit (#1081): the synthetic-dom job also runs when the
+    # shared Back/Next walk changes. Reverse only that path addition; every
+    # other byte of the original workflow is still compared below.
+    reconstructed = reconstructed.replace(
+        "      # Shared Back/Next walk used by the text-hydration and adaptive journeys.\n"
+        "      - 'scripts/monthly_sequential_navigation.py'\n"
+        "      - 'tests/test_monthly_sequential_navigation_harness.py'\n",
+        "")
     # Approved later edit (#820): pushes keep their active run instead of
     # cancelling it. Reverse only that concurrency block; every other byte
     # of the original workflow is still compared below.
@@ -91,3 +152,17 @@ def test_partition_rejects_duplicate_suite_or_conditional_job():
     text=(ROOT/'.github/workflows/adaptive-workspaces.yml').read_text()
     for changed in (text.replace('python scripts/qa_report_row_cards.py','python scripts/qa_report_row_cards.py\n          python scripts/qa_report_row_cards.py'), text.replace('  water-row-output:\n','  water-row-output:\n    if: false\n')):
         with pytest.raises(AssertionError):validate_partition(changed)
+
+
+def test_compact_portrait_additions_cannot_weaken_old_gates():
+    text = (ROOT/'.github/workflows/adaptive-workspaces.yml').read_text()
+    for old, new in (
+        ('timeout-minutes: 3\n        run: python scripts/qa_duo_compact_portrait.py',
+         'timeout-minutes: 30\n        run: python scripts/qa_duo_compact_portrait.py'),
+        ('run: python scripts/qa_duo_compact_portrait.py',
+         'if: false\n        run: python scripts/qa_duo_compact_portrait.py'),
+        ('test-artifacts/duo-compact-portrait/', 'test-artifacts/other/'),
+    ):
+        assert old in text
+        with pytest.raises(AssertionError):
+            validate_partition(text.replace(old, new))

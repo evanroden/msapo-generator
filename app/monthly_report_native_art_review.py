@@ -6,7 +6,7 @@ client asset, certifies an encoding, or waives pricing/unsupported-content gates
 Public entry points rederive the source view. Private entry points accept only a
 view already verified by their enclosing operation and still rehash its source.
 """
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from copy import deepcopy
 from dataclasses import asdict, dataclass
 from io import BytesIO
@@ -14,6 +14,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+from threading import Lock
 from types import SimpleNamespace
 from zipfile import BadZipFile, ZipFile
 
@@ -359,6 +360,52 @@ def native_art_inventory(original_path, source_view, profile, period):
     return _native_art_inventory(original_path, fresh, profile, period)
 
 
+# Section previews re-verify the same immutable original and rendition on
+# every render. The physical scan below is a pure function of those verified
+# bytes and the selected occurrence ids, so a small content-addressed cache
+# skips re-parsing both Word packages. Keys hold hashes and ids only: no
+# paths, packages or source items are retained. Errors are never cached.
+_PHYSICAL_CACHE = OrderedDict()
+_PHYSICAL_CACHE_LOCK = Lock()
+_PHYSICAL_CACHE_SIZE = 8
+
+
+def clear_physical_cache():
+    with _PHYSICAL_CACHE_LOCK:
+        _PHYSICAL_CACHE.clear()
+
+
+def _physical_pair(raw, source_view, selected):
+    key = (source_view.original_inspection.sha256, source_view.rendition_inspection.sha256,
+           _hash(source_view.rendition_bytes), source_view.receipt_sha256,
+           tuple((a.id, b.id) for a, b in selected))
+    with _PHYSICAL_CACHE_LOCK:
+        hit = _PHYSICAL_CACHE.get(key)
+        if hit is not None:
+            _PHYSICAL_CACHE.move_to_end(key)
+    if hit is not None:
+        # The scan's budget applies to every use, including a cached one.
+        for nodes in hit:
+            if sum(map(len, nodes.values())) > MAX_REPRESENTATIONS:
+                _error('physical artwork occurrence budget')
+        return dict(hit[0]), dict(hit[1])
+    original_nodes = _physical_inventory(Document(BytesIO(raw)), source_view.original_inspection,
+                                        {a.id: a for a, _ in selected})
+    # python-docx package relationships form cycles. These private temporary
+    # trees are no longer reachable from the immutable scalar proofs; release
+    # them before allocating the second package, not merely before rendering.
+    from app.monthly_report_pdf_image_budget import release_transient_word_memory
+    release_transient_word_memory()
+    rendition_nodes = _physical_inventory(Document(BytesIO(source_view.rendition_bytes)),
+                                         source_view.rendition_inspection, {b.id: b for _, b in selected})
+    release_transient_word_memory()
+    with _PHYSICAL_CACHE_LOCK:
+        _PHYSICAL_CACHE[key] = (dict(original_nodes), dict(rendition_nodes))
+        while len(_PHYSICAL_CACHE) > _PHYSICAL_CACHE_SIZE:
+            _PHYSICAL_CACHE.popitem(last=False)
+    return original_nodes, rendition_nodes
+
+
 def _native_art_inventory(original_path, source_view, profile, period):
     """Internal operation helper; source_view MUST already be independently verified."""
     if not isinstance(source_view, CompatibilityView):
@@ -404,17 +451,8 @@ def _native_art_inventory(original_path, source_view, profile, period):
             'source_view_receipt_sha256': source_view.receipt_sha256,
         }), ())
     scope = _scope(source_view, profile, period)
-    original_nodes = _physical_inventory(Document(BytesIO(raw)), source_view.original_inspection,
-                                        {a.id: a for a, _ in selected})
+    original_nodes, rendition_nodes = _physical_pair(raw, source_view, selected)
     del raw
-    # python-docx package relationships form cycles. These private temporary
-    # trees are no longer reachable from the immutable scalar proofs; release
-    # them before allocating the second package, not merely before rendering.
-    from app.monthly_report_pdf_image_budget import release_transient_word_memory
-    release_transient_word_memory()
-    rendition_nodes = _physical_inventory(Document(BytesIO(source_view.rendition_bytes)),
-                                         source_view.rendition_inspection, {b.id: b for _, b in selected})
-    release_transient_word_memory()
     result = []
     for original, target in selected:
         before, after = original_nodes[original.id], rendition_nodes[target.id]

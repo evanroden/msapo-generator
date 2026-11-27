@@ -19,8 +19,17 @@ gatherUsageStats = false
 showSidebarNavigation = false
 
 [theme]
+font = "sans serif"
+
+[theme.light]
 primaryColor = "#D6EF4B"
 backgroundColor = "#FFFFFF"
 secondaryBackgroundColor = "#D3E7E0"
 textColor = "#092B24"
-font = "sans serif"
+
+[theme.dark]
+primaryColor = "#D6EF4B"
+backgroundColor = "#111E1A"
+secondaryBackgroundColor = "#20342C"
+textColor = "#EDF5F0"
+borderColor = "#77938A"

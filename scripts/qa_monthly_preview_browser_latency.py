@@ -27,6 +27,7 @@ from scripts import qa_monthly_adaptive as qa
 from scripts import qa_issue_page_gallery as gallery
 from scripts import qa_monthly_live as live
 from scripts import blank_start
+from scripts import click_retry
 from scripts import image_decode
 
 URL = "http://127.0.0.1:8534"
@@ -44,14 +45,44 @@ def _decoded(image):
     # complete + naturalWidth can precede the actual decoded pixel. Browser
     # decode() awaits the image decoder before the first-useful-page clock ends.
     # A re-render can swap the image mid-decode; the wait then covers decoding
-    # the image the page shows now, and the attempts are recorded.
-    attempts = image_decode.decode_current(image, _ready)
+    # the image the page shows now, and the attempts are recorded. Size and
+    # source come from the element that was decoded (see image_decode).
+    measured = image_decode.decode_current(image, _ready)
     return {"decode_ready_wait_ms": round((time.monotonic_ns() - started_ns) / 1_000_000, 3),
-            "decode_attempts": attempts,
-            "width": image.evaluate("(node) => node.naturalWidth"),
-            "height": image.evaluate("(node) => node.naturalHeight"),
-            "src_sha256": sha256((image.get_attribute("src") or "").encode()).hexdigest(),
+            "decode_attempts": measured["attempts"],
+            "width": measured["width"],
+            "height": measured["height"],
+            "src_sha256": sha256(measured["src"].encode()).hexdigest(),
             "decoded_png_sha256": sha256(image.screenshot()).hexdigest()}
+
+
+def _idle(page):
+    """Wait until Streamlit has finished its current run, then two frames."""
+    page.wait_for_function("""() => document.querySelector('[data-testid="stApp"]')
+        ?.getAttribute('data-test-script-state') === 'notRunning'""", timeout=90000)
+    page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+
+
+def _open_preview(page, issue, label):
+    """Open the gallery's large preview of `label`; return the clicks taken."""
+    button = issue.get_by_role("button", name="Preview " + label, exact=True)
+    caption = issue.get_by_text(label + " · Preview only; original and issue links are unchanged.",
+                                exact=True)
+
+    def click():
+        # Click only once the run that drew the gallery has finished, so the
+        # button is not moving; a click lost anyway is retried (click_retry).
+        _idle(page)
+        button.click()
+
+    def shown():
+        try:
+            expect(caption).to_be_visible(timeout=30000)
+            return True
+        except AssertionError:
+            return False
+
+    return click_retry.click_until_shown(click, shown, report=lambda line: print(line, flush=True))
 
 
 def _exercise(browser_type, engine):
@@ -120,9 +151,7 @@ def _exercise(browser_type, engine):
                 issue = page.locator(gallery.ISSUES)
                 qa.scroll_pair(page, gallery.ISSUES)
                 gallery.open_gallery(issue)
-                issue.get_by_role("button", name="Preview synthetic-preview-latency.pdf · page 1", exact=True).click()
-                caption = "synthetic-preview-latency.pdf · page 1 · Preview only; original and issue links are unchanged."
-                expect(issue.get_by_text(caption, exact=True)).to_be_visible(timeout=90000)
+                preview_clicks = _open_preview(page, issue, "synthetic-preview-latency.pdf · page 1")
                 thumb = _decoded(issue.get_by_test_id("stImage").locator("img").first)
                 thumbnail_decoded_ns = time.monotonic_ns()
                 thumbnail_seconds = time.perf_counter() - upload_started
@@ -179,6 +208,9 @@ def _exercise(browser_type, engine):
                                          round((thumbnail_decoded_ns - upload_started_ns) / 1_000_000, 3)},
                                  "fresh_report_press_to_decoded_section_seconds": round(first_seconds, 4),
                                 "native_upload_to_requested_decoded_thumbnail_seconds": round(thumbnail_seconds, 4),
+                                # More than 1 means a lost click was retried; that
+                                # sample's upload-to-thumbnail time includes the wait.
+                                "preview_click_attempts": preview_clicks,
                                 "edit_commit_to_current_section_seconds": round(time.perf_counter() - update_started, 4),
                                 "first_section_image": first, "thumbnail": thumb, "latest_section_image": latest,
                                 "preview_generation_changed": before_generation != after_layout[0],

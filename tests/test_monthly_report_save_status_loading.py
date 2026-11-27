@@ -50,7 +50,7 @@ def _lines(markup):
 
 
 def _css_content(style, pseudo):
-    match = re.search(r'::' + pseudo + r'\{content:((?:"(?:[^"\\]|\\.)*"));', style)
+    match = re.search(r'::' + pseudo + r'\{[^}]*?content:((?:"(?:[^"\\]|\\.)*"));', style)
     assert match, style
     return json.loads(match.group(1))
 
@@ -64,9 +64,10 @@ def test_loading_reservation_tracks_exact_current_status_including_longest_messa
     styles = _styles(app)
     assert styles, "Cold native Markdown must reserve its status before raw HTML hydrates."
     style = styles[-1]
-    scope, message = _lines(_status_markup(app))
-    assert _css_content(style, "before") == scope
-    assert _css_content(style, "after") == message
+    message, = _lines(_status_markup(app))
+    assert _css_content(style, "before") == message
+    assert "::after" not in style
+    assert "Browser draft" not in _status_markup(app)
     assert '.st-key-synthetic_status_browser_save_status [data-testid="stMarkdownContainer"] > [data-testid="stSkeleton"]' in style
     assert 'height:auto;' in style
     assert 'font-size:.875rem;line-height:1.5;' in style
@@ -80,7 +81,7 @@ def test_loading_reservation_tracks_exact_current_status_including_longest_messa
     assert all(not item.proto.unsafe_allow_javascript for item in app.get("html"))
 
 
-def test_reserved_and_real_typography_have_the_same_two_line_arithmetic_at_text_scales():
+def test_reserved_and_real_typography_have_the_same_one_line_arithmetic_at_text_scales():
     app = _run(action="saved")
     style, markup = _styles(app)[-1], _status_markup(app)
     assert 'font-size:.875rem;line-height:1.5;' in style
@@ -88,7 +89,7 @@ def test_reserved_and_real_typography_have_the_same_two_line_arithmetic_at_text_
     # This is a source-bound box-model check, not a substitute for browser QA.
     # Neither reservation fixes the width or clips additional wrapped lines.
     for root_px in (16, 20, 24, 32):
-        assert 2 * .875 * 1.5 * root_px == 2.625 * root_px
+        assert .875 * 1.5 * root_px == 1.3125 * root_px
     assert 'width:' not in style and 'max-height:' not in style and 'overflow:hidden' not in style
 
 
@@ -108,13 +109,13 @@ def test_reservation_uses_event_container_and_leaves_one_markdown_status_path():
     html_paths = {path for kind, path, body in paths if kind == "html"}
     assert len(markdown_paths) == 1 and html_paths
     assert all(path[0] != next(iter(markdown_paths))[0] for path in html_paths)
-    assert _status_markup(app).endswith('Browser draft<br>Last saved · 22:45 UTC</p>')
+    assert _status_markup(app).endswith('>Saved 22:45 UTC</p>')
 
 
 def test_css_key_and_text_cannot_escape_the_reservation(monkeypatch):
     captured = []
     monkeypatch.setattr(status.st, 'html', captured.append)
-    status._reserve_status(' bad</style> key ', '</style><script>bad</script>', 'quoted " \\ & < >\n\t')
+    status._reserve_status(' bad</style> key ', '</style><script>bad</script> quoted " \\ & < >\n\t')
     style, = captured
     assert '.st-key-bad--style--key ' in style
     assert style.count('</style>') == 1
@@ -128,4 +129,4 @@ def test_other_streamlit_version_keeps_status_but_requires_fresh_geometry_review
     monkeypatch.setattr(status.st, '__version__', 'future-unreviewed')
     app = _run(action="saved")
     assert not _styles(app)
-    assert 'Last saved · 22:45 UTC' in _status_markup(app)
+    assert 'Saved 22:45 UTC' in _status_markup(app)

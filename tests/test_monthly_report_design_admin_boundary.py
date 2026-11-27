@@ -22,7 +22,8 @@ def test_monthly_cover_has_read_only_design_and_separate_admin_link(monkeypatch,
     app = monthly(monkeypatch, tmp_path)
     assert not app.exception
     labels = [e.label for e in app.expander]
-    assert "About this report" in labels
+    assert "About this report" not in labels
+    assert "Report design and artwork" in [e.label for e in app.sidebar.expander]
     assert "Administration" in [e.label for e in app.sidebar.expander]
     assert any(link.label == "Master design administration" and "monthly_admin=master" in link.url
                for link in app.sidebar.get("link_button"))

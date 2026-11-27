@@ -609,6 +609,28 @@ def _build_docx(draft, *, asset_loader=None, source_view=None):
         return _build_verified_docx(draft, asset_loader=asset_loader, source_view=operation.view)
 
 
+def _builtin_semantic_sections(draft):
+    blocks = {block.key: block for block in draft.blocks}
+    sections = included_sections(draft.sections)
+    # Built-in organization combines charts, contacts and outage procedures.
+    # Its contents, divider and page title must describe the actual blocks,
+    # rather than presenting outage diagrams as an organizational chart.
+    def has_content(key):
+        block = blocks.get(key)
+        return bool(block and block.source != "Omit" and (
+            block.text.strip() or block.org_nodes or block.rows or block.asset_hashes
+            or any(table.rows for table in block.extra_tables)))
+    workflows_present = any(has_content(key) for key in (
+        "business_hours_workflow", "after_hours_workflow"))
+    if workflows_present:
+        organization_title = ("Organization and outage procedures" if has_content("org_chart")
+                              or has_content("contact_matrix") else "Outage procedures")
+        sections = tuple(replace(section, title=organization_title)
+                         if section.key == "organization" and section.title == "Organizational Chart"
+                         else section for section in sections)
+    return sections
+
+
 def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
     from app.monthly_report_designs import source_for, is_master
     source = source_for(draft.profile)
@@ -666,7 +688,7 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
         _picture(document, photo, width=7, height=3, inset=0.75)
     configure_content(document.add_section(WD_SECTION_START.NEW_PAGE))
     document.add_heading("Table of contents", 0)
-    sections = included_sections(draft.sections)
+    sections = _builtin_semantic_sections(draft)
     from app.monthly_report_contents_pagination import add_entry, mark_target
     for section in sections:
         add_entry(document, section)
@@ -823,6 +845,16 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
                 if spec.key == "thermal_capacity":
                     _fit_imported_table_columns(table, imported.columns, imported.rows)
                 _format_table(table, True, header_rows=2 if titled else 1, partial_rows=partial)
+                if spec.key == "subcontractor_matrix":
+                    from app.monthly_report_roster_pagination import keep_contact_groups
+                    keep_contact_groups(table, imported.columns)
+                for index, expected in getattr(imported, 'bold_rows', ()):
+                    if (0 <= index < len(imported.rows)
+                            and tuple(imported.rows[index]) == tuple(expected)):
+                        for cell in table.rows[index + 1].cells:
+                            for paragraph in cell.paragraphs:
+                                for run in paragraph.runs:
+                                    run.bold = True
                 placed_tables.append(((getattr(imported, "anchor", ""), _body_items(document)[table_start:]), imported))
             _follow_anchors(text_items, placed_tables)
             _after_pictures(text_items, picture_items, placed_tables)
@@ -892,7 +924,7 @@ def _generate_verified_report(draft, *, acknowledged_fingerprint, asset_loader, 
     from app.monthly_report_contents_pagination import ensure_pdf_page_links, synchronize
     notice = contents_notice_for(draft.profile)
     if generated_contents:
-        selected = included_sections(draft.sections)
+        selected = _builtin_semantic_sections(draft)
         pdf = ensure_pdf_page_links(pdf, selected)
         updated, generated_notice = synchronize(docx, pdf, selected)
         if generated_notice is not None:
@@ -943,7 +975,8 @@ def _retry_verified_report_pdf(draft, package, operation):
     pdf, error = _convert_report_pdf(draft, package.docx)
     from app.monthly_report_contents_pagination import ensure_pdf_page_links, synchronize
     if package.generated_contents:
-        selected = included_sections(draft.sections)
+        selected = (_builtin_semantic_sections(draft) if operation.original is None
+                    else included_sections(draft.sections))
         pdf = ensure_pdf_page_links(pdf, selected)
         docx, notice = synchronize(package.docx, pdf, selected)
         if notice is not None:
