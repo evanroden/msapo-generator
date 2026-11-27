@@ -5,6 +5,7 @@ on:
     paths:
       - 'scripts/qa_training_two_browser.py'
       - 'scripts/qa_training_two_browser_sessions.py'
+      - 'scripts/qa_training_summary_hydration.py'
       - '.github/workflows/training-two-browser.yml'
       - 'app/monthly_report_training*'
       - 'app/monthly_report_guided.py'
@@ -40,7 +41,10 @@ jobs:
           python -m pip install -r requirements-dev.lock playwright==1.58.0
           python scripts/patch_streamlit_frontend.py
           python scripts/patch_streamlit_date_input.py
-          python -m playwright install --with-deps chromium
+          python -m playwright install --with-deps chromium webkit
+      - name: Stable completed-session summary during native down and up
+        timeout-minutes: 2
+        run: python scripts/qa_training_summary_hydration.py
       - name: Two genuinely distinct browser contexts against one versioned synthetic Training store
         timeout-minutes: 13
         run: python -m scripts.qa_training_two_browser
@@ -52,6 +56,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: training-two-browser-${{ github.run_attempt }}
-          path: test-artifacts/training-two-browser/
+          path: |
+            test-artifacts/training-two-browser/
+            test-artifacts/training-summary-hydration/
           retention-days: 7
           if-no-files-found: warn

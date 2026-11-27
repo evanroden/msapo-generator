@@ -55,7 +55,7 @@ def edit_session(page, old, new):
     expect(topic).to_have_value(new)
     page.get_by_role("button", name="Save session", exact=True).click()
     base.settled(page)
-    expect(page.locator('[data-testid="stTable"]').get_by_text(new, exact=True)).to_be_visible(timeout=30000)
+    expect(page.locator('[data-enfra-training-summary]').get_by_text(new, exact=True)).to_be_visible(timeout=30000)
 
 
 def save_shared(page, token, revision):
@@ -227,7 +227,7 @@ def journey():
             assert event_titles(base.snapshot_store(token)[2]) == [A_EDIT]
             # With A69 the topic text also appears outside the table (two
             # strict-mode matches); the pending row is the Training table's.
-            expect(b.locator('[data-testid="stTable"]').get_by_text(B_EDIT, exact=True)).to_be_visible(timeout=30000)
+            expect(b.locator('[data-enfra-training-summary]').get_by_text(B_EDIT, exact=True)).to_be_visible(timeout=30000)
             evidence["edits"].append({"stage": "B stale conflict", "saved_revision": 2,
                                       "pending_row_still_visible": True})
             keep_divergent_draft_for_recovery(b, token)
