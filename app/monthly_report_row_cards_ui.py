@@ -85,9 +85,19 @@ def _queue(key, expected, tokens, active, fields, action="edit", target=None, *,
                     other = dict(st.session_state[other_key])
                     other["group_closed"] = True
                     st.session_state[other_key] = other
+    input_active = active
+    prior_delivery = record.get("pending") or record.get("acknowledged_delivery")
+    same_input = _same_edit_lineage(prior_delivery, expected, tokens, active)
     rows, identities = list(expected), list(tokens)
     draft_token = record.get("draft_token")
     draft_index = record.get("draft_index", len(rows))
+    # A new row can materialize after the first field blur while the remaining
+    # blur/Close still names its original empty snapshot. Recover only that
+    # exact delivered draft token, never an unrelated or removed row.
+    if (same_input and active and active not in identities
+            and active in prior_delivery["tokens"] and draft_token is None):
+        draft_token = active
+        draft_index = prior_delivery["tokens"].index(active)
     changed_fields = False
     if active and fields:
         values = _values(fields)
@@ -146,10 +156,10 @@ def _queue(key, expected, tokens, active, fields, action="edit", target=None, *,
     # continue exact snapshots from the same row and token lineage.
     previous = record.get("pending")
     acknowledged = record.pop("acknowledged_delivery", None)
-    if (not previous and action == "edit"
-            and _same_edit_lineage(acknowledged, expected, tokens, active)):
+    if (not previous and action in {"edit", "close"}
+            and _same_edit_lineage(acknowledged, expected, tokens, input_active)):
         previous = acknowledged
-    same_lineage = action == "edit" and _same_edit_lineage(previous, expected, tokens, active)
+    same_lineage = action in {"edit", "close"} and _same_edit_lineage(previous, expected, tokens, input_active)
     continues_pending = previous and (previous["result"] == expected or (
         previous["expected"] == expected and previous["result"] == tuple(rows)
         and previous["tokens"] == tuple(identities)) or same_lineage)

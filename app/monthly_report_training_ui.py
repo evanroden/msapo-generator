@@ -1,6 +1,7 @@
 """Hospital training: local validation preserves independent monthly edits."""
 from dataclasses import replace
 from datetime import date
+from html import escape
 import math
 from uuid import uuid4
 
@@ -86,6 +87,26 @@ def _session_hours(hours):
     except (ValueError, TypeError):
         singular = False
     return f"{hours} {'hour' if singular else 'hours'}"
+
+
+def _session_summary_html(rows):
+    """Eager, naturally sized summary, with no lazy Table hydration above actions."""
+    headings = ("Training", "Date", "Method", "Participants", "Hours")
+    header = "".join('<th scope="col">' + name + "</th>" for name in headings)
+    body = "".join("<tr>" + "".join("<td>" + escape(str(value)) + "</td>"
+        for value in (title, when, mode, participants, _session_hours(hours))) + "</tr>"
+        for title, when, mode, participants, hours in rows)
+    # Match the locked framework scrollbar at first paint. In WebKit, a late
+    # global pseudo-element style otherwise adds 6px at its next native layout.
+    return ('<style>[data-enfra-training-summary]{overflow-x:auto;width:100%}'
+            '[data-enfra-training-summary]::-webkit-scrollbar{height:6px;width:6px}'
+            '[data-enfra-training-summary] table{border-collapse:collapse;width:100%;min-width:36rem;font-size:1rem;line-height:1.25}'
+            '[data-enfra-training-summary] th,[data-enfra-training-summary] td{padding:.625rem .5rem;'
+            'border:1px solid var(--secondary-background-color,#e5e7eb);text-align:left;vertical-align:top;'
+            'white-space:pre-wrap;overflow-wrap:break-word}'
+            '[data-enfra-training-summary] th{font-weight:600}'
+            '</style><div data-enfra-training-summary role="region" aria-label="Completed training, scroll for all columns" tabindex="0"><table aria-label="Completed training this month">'
+            '<thead><tr>' + header + '</tr></thead><tbody>' + body + '</tbody></table></div>')
 
 
 def _session_description(row):
@@ -229,9 +250,10 @@ def _render_monthly_sessions(events, matrix, period, key, scope):
     # A true pending conflict already shows both competing tables above.
     # Avoid a third duplicate table until that conflict has been resolved.
     if rows and not blocked:
-        st.table([{"Training": title, "Date": when, "Method": mode,
-                   "Participants": participants, "Hours": _session_hours(hours)}
-                  for title, when, mode, participants, hours in rows])
+        # Markdown is already painted throughout this page. Native Table is code-split:
+        # its 40px placeholder grew to 82px during a retained later-row press.
+        # Real markup also preserves arbitrary wrapping without guessing height.
+        st.markdown(_session_summary_html(rows), unsafe_allow_html=True)
     elif not rows:
         st.caption("No training sessions added this month.")
     label = "Edit training session" if editing else "Add completed training"
