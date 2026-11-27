@@ -51,6 +51,36 @@ def contents_kind(root):
     return ""
 
 
+# "Section 3: Monthly Scorecards", the form the native section numbering keeps
+# current (#902): it renumbers these lines and the divider pages when a section
+# is left out, and removes the left-out section's line.
+SECTION_ENTRY = re.compile(r"\s*Section\s+\d+\s*:\s*\S", re.I)
+# A page number at the end of a line, after a tab, dot leaders or an ellipsis.
+PAGE_NUMBER_TAIL = re.compile(r"(?:\t|\.{2,}|…)\s*\d{1,4}\s*$")
+
+
+def section_titles_only(root):
+    """True when the contents name sections only and no line ends in a page number.
+
+    Such a list has nothing that can go stale: its titles and order are the
+    design's own, and its section numbers follow the report's sections. Any
+    line anywhere that ends in a page number keeps the warning.
+    """
+    entries = 0
+    for paragraph in root.iter(W + "p"):
+        if paragraph.find(".//" + W + "p") is not None:
+            continue  # Read a text box's own paragraphs, not their anchor.
+        # A tab character is its own element in a run; keep it, so "Title<tab>3"
+        # shows. A tab *stop* (pPr/tabs/tab) is layout, not text.
+        text = "".join((node.text or "") if node.tag == W + "t"
+                       else ("\t" if node.getparent().tag == W + "r" else "")
+                       for node in paragraph.iter(W + "t", W + "tab"))
+        if PAGE_NUMBER_TAIL.search(text):
+            return False
+        entries += bool(SECTION_ENTRY.match(text))
+    return entries > 0
+
+
 def contents_notice_for(profile):
     """Read the pinned source once per generation; retain only a short notice."""
     from app.monthly_report_designs import source_for
@@ -63,6 +93,8 @@ def contents_notice_for(profile):
         with _package(source) as archive:
             root = parse_xml(archive.read("word/document.xml"))
         kind = contents_kind(root)
+        if kind == "static" and section_titles_only(root):
+            return ""  # Owner (27 Nov): no warning where nothing can be stale.
     except (OSError, ValueError, BadZipFile, etree.XMLSyntaxError):
         # Finished files must not disappear if their original becomes
         # unavailable after assembly. This does not bypass assembly's checks.

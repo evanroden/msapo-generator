@@ -41,6 +41,14 @@ def source(tmp_path, kind):
             else:
                 node.text = value
             run.append(node)
+    elif kind in {"sections", "sections_paged"}:
+        # The owner's designs: "TABLE OF CONTENTS", then "Section N: Title"
+        # lines, the number in its own coloured run, and no page numbers.
+        document.add_paragraph("TABLE OF CONTENTS")
+        for number, title in (("1", "Monthly Activity Summary"), ("2", "Training Summary")):
+            paragraph = document.add_paragraph()
+            paragraph.add_run("Section " + number).bold = True
+            paragraph.add_run(": " + title + ("\t" + str(int(number) + 2) if kind == "sections_paged" else ""))
     elif kind == "prose":
         document.add_paragraph("The contents of this report are confidential.")
         document.add_paragraph("See the table of contents for report navigation.")
@@ -87,6 +95,57 @@ def test_normal_prose_and_no_contents_do_not_acquire_warning(tmp_path, monkeypat
     monkeypatch.setattr(renderer, "_convert_report_pdf", lambda *args: (None, "Synthetic conversion unavailable"))
     result = renderer.generate_report(value, acknowledged_fingerprint=value.fingerprint)
     assert result.contents_notice == ""
+
+
+def test_section_list_without_page_numbers_has_no_warning(tmp_path, monkeypatch):
+    """Owner, 27 Nov: nothing on such a list can be stale, so do not warn.
+
+    Its titles and order are the design's, and the section numbering (#902)
+    keeps the numbers current: the left-out section's line is removed here.
+    """
+    path, value = draft(tmp_path, monkeypatch, "sections")
+    original = path.read_bytes()
+    # The first section unchecked, as the guided editor records it.
+    value = replace(value, sections=tuple(replace(section, included=section.key != "activity")
+                                          for section in value.sections),
+                    omitted_sections=("activity",))
+    monkeypatch.setattr(renderer, "_convert_report_pdf", lambda *args: (b"%PDF-synthetic", ""))
+    result = renderer.generate_report(value, acknowledged_fingerprint=value.fingerprint)
+    assert result.contents_notice == ""
+    lines = [paragraph.text for paragraph in Document(BytesIO(result.docx)).paragraphs]
+    assert "Section 1: Training Summary" in lines  # Renumbered from 2.
+    assert not any("Monthly Activity Summary" in line for line in lines)
+    assert path.read_bytes() == original
+
+
+def test_section_list_with_page_numbers_keeps_the_warning(tmp_path, monkeypatch):
+    _, value = draft(tmp_path, monkeypatch, "sections_paged")
+    monkeypatch.setattr(renderer, "_convert_report_pdf", lambda *args: (b"%PDF-synthetic", ""))
+    result = renderer.generate_report(value, acknowledged_fingerprint=value.fingerprint)
+    assert "titles, order and page numbers are not recalculated" in result.contents_notice
+
+
+@pytest.mark.parametrize("line,expected", [
+    ("Section 3: Monthly Scorecards", True),
+    ("Section 3: Monthly Scorecards\t7", False),
+    ("Section 3: Monthly Scorecards ........ 7", False),
+    ("Section 3: Monthly Scorecards … 7", False),
+    ("Monthly Scorecards", False),  # No section line: nothing the numbering keeps.
+])
+def test_only_title_lines_without_page_numbers_count_as_section_titles(line, expected):
+    from app.monthly_report_contents_review import section_titles_only
+    document = Document()
+    document.add_paragraph("TABLE OF CONTENTS")
+    document.add_paragraph(line)
+    # A right-aligned dot-leader tab stop is layout, not a page number.
+    stops = OxmlElement("w:tabs")
+    stop = OxmlElement("w:tab")
+    stop.set(qn("w:val"), "right")
+    stop.set(qn("w:leader"), "dot")
+    stop.set(qn("w:pos"), "9350")
+    stops.append(stop)
+    document.paragraphs[-1]._p.get_or_add_pPr().append(stops)
+    assert section_titles_only(document.element) is expected
 
 
 def test_contents_notice_survives_pdf_retry(tmp_path, monkeypatch):
