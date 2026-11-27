@@ -86,3 +86,82 @@ def test_wide_and_book_keep_section_scrolling_in_the_main_owner():
 def test_tabletop_keeps_the_real_lower_workspace_scroll_owner():
     assert run_scroll(mode="tabletop", pairTop=1400, rootTop=40) == {
         "result": True, "mainScroll": 0, "rootScroll": 1270}
+
+
+def snapshot_function():
+    tree = ast.parse((ROOT / 'scripts/qa_monthly_adaptive.py').read_text())
+    deep = next(node.value for node in tree.body if isinstance(node, ast.Assign)
+                and any(isinstance(target, ast.Name) and target.id == 'DEEP' for target in node.targets))
+    function = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                    and node.name == 'snapshot')
+    namespace = {'DEEP': ast.literal_eval(deep)}
+    exec(compile(ast.Module(body=[function], type_ignores=[]), '<snapshot>', 'exec'), namespace)
+    return namespace['snapshot']
+
+
+class SnapshotHandle:
+    def __init__(self, value):
+        self.value = value
+        self.disposed = False
+
+    def json_value(self):
+        return self.value
+
+    def dispose(self):
+        self.disposed = True
+
+
+class SnapshotPage:
+    def __init__(self):
+        self.waits = []
+        self.evaluations = []
+        self.handle = SnapshotHandle({'pairs': [{'key': 'monthly_activity', 'images': [{'loaded': True}]}]})
+
+    def wait_for_function(self, script, *, arg, timeout):
+        self.waits.append((script, arg, timeout))
+        return self.handle
+
+    def evaluate(self, script, arg):
+        self.evaluations.append((script, arg))
+        return {'pairs': []}
+
+
+def test_ready_snapshot_uses_one_bounded_atomic_wait_and_returned_dom_state():
+    page = SnapshotPage()
+    observed = snapshot_function()(page, ready_pair='monthly_activity')
+    assert observed is page.handle.value
+    assert page.handle.disposed
+    assert not page.evaluations
+    assert len(page.waits) == 1
+    script, key, ceiling = page.waits[0]
+    assert key == 'monthly_activity' and ceiling == 20000
+    assert 'target.images.some(image=>image.loaded)' in script
+    assert 'return observed' in script
+
+
+def test_general_snapshot_keeps_single_non_waiting_evaluation():
+    page = SnapshotPage()
+    assert snapshot_function()(page) == {'pairs': []}
+    assert not page.waits and len(page.evaluations) == 1
+
+
+def test_atomic_ready_snapshot_runs_real_browser_predicate_for_loading_and_loaded_images():
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            page = browser.new_page()
+            page.set_content('<section class="epc-workspace-pair"><span data-epc-pair="monthly_activity"></span>'
+                             '<div class="report-preview"><img alt="Synthetic Activity" src="missing.png"></div></section>')
+            probe = SnapshotPage()
+            snapshot_function()(probe, ready_pair='monthly_activity')
+            script = probe.waits[0][0]
+            assert page.evaluate(script, 'monthly_activity') is False
+            assert page.evaluate(script, 'different_section') is False
+            page.locator('img').evaluate("n=>n.src='data:image/svg+xml,'+encodeURIComponent('<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\"/>')")
+            state = snapshot_function()(page, ready_pair='monthly_activity')
+            image = state['pairs'][0]['images'][0]
+            assert image['loaded'] and image['width'] == 1
+            assert page.evaluate(script, 'different_section') is False
+        finally:
+            browser.close()
