@@ -21,7 +21,7 @@ import tempfile
 from app.memory import _data_dir
 from app.monthly_report_model import (
     BLOCK_SOURCES, BlockSpec, ColumnSpec, Facility, ReportDraft, ReportPeriod, ReportProfile,
-    ResolvedBlock, ReportTable, BandedWorkOrderTable, AnchoredTable, TrainingSessionTable, OrgChartNode, ReportFollowUp, SectionSpec, ReportSource, EvidenceFact, DraftParagraph, default_sections, known_sections, layout_blocks, used_asset_references,
+    ResolvedBlock, ReportTable, BandedWorkOrderTable, AnchoredTable, EmphasizedTable, TrainingSessionTable, OrgChartNode, ReportFollowUp, SectionSpec, ReportSource, EvidenceFact, DraftParagraph, default_sections, known_sections, layout_blocks, used_asset_references,
 )
 
 
@@ -241,6 +241,23 @@ def _report_table_from_dict(value: dict) -> ReportTable:
         return BandedWorkOrderTable(columns, rows, reference, site, category)
     if reference == "training:events:v1" and "row_tokens" in value:
         return TrainingSessionTable(columns, rows, reference, tuple(value["row_tokens"]))
+    if 'bold_rows' in value:
+        entries = value['bold_rows']
+        if not isinstance(entries, (list, tuple)) or len(entries) > len(rows):
+            raise ValueError('Invalid saved table emphasis.')
+        bold = []
+        for entry in entries:
+            if not isinstance(entry, (list, tuple)) or len(entry) != 2:
+                raise ValueError('Invalid saved table emphasis.')
+            index, cells = entry
+            if (type(index) is not int or not 0 <= index < len(rows)
+                    or not isinstance(cells, (list, tuple))
+                    or len(cells) != len(columns) or not all(isinstance(cell, str) for cell in cells)
+                    or any(index == previous[0] for previous in bold)):
+                raise ValueError('Invalid saved table emphasis.')
+            bold.append((index, tuple(cells)))
+        return EmphasizedTable(columns, rows, reference, str(value.get('anchor', '')),
+                               str(value.get('lead', '')), tuple(bold))
     if value.get("anchor"):
         return AnchoredTable(columns, rows, reference, str(value["anchor"]), str(value.get("lead", "")))
     return ReportTable(columns, rows, reference)

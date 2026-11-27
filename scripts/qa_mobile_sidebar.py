@@ -90,7 +90,7 @@ def close_after_open(page, label):
     wait_sidebar(page, True)
     screenshot(page, label + "-open")
     administration = sidebar.get_by_test_id("stExpander").filter(
-        has_text="Administration")
+        has=page.get_by_text("Administration", exact=True))
     expect(administration).to_be_visible()
     administration.get_by_text("Administration", exact=True).click()
     links = administration.get_by_role("link")
@@ -98,6 +98,9 @@ def close_after_open(page, label):
     for index in range(4):
         expect(links.nth(index)).to_be_visible()
     check(label + " native Administration links remain accessible", True)
+    design = sidebar.get_by_test_id("stExpander").filter(has=page.get_by_text("Report design and artwork", exact=True))
+    expect(design).to_be_visible()
+    hit(page, design.get_by_text("Report design and artwork", exact=True), label + " optional design disclosure hit")
     sidebar.get_by_test_id("stSidebarCollapseButton").get_by_role("button").click()
     wait_sidebar(page, False)
     settle(page)
@@ -202,8 +205,8 @@ def monthly(browser, engine, width, height, *, resize=False):
                   mode in ("wide", "book") and not preview.is_visible()
                   and cover.locator(".epc-workspace-reference").is_visible(),
                   {"mode": mode})
-            about = cover.get_by_text("About this report", exact=True)
-            hit(page, about, label + " visible Cover disclosure hit")
+            expect(cover.get_by_text("About this report", exact=True)).to_have_count(0)
+            check(label + " optional design controls stay outside Cover", True)
         next_xy = hit(page, next_button, label + " Next still receives pointer")
         progress_before = page.locator(".epc-section-progress").inner_text()
         tap(page, next_xy)

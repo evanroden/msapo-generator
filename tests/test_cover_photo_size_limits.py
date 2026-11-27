@@ -101,7 +101,7 @@ def test_other_resource_envelopes_unchanged():
     from app.monthly_report_compatibility_view import MAX_VIEW_SOURCE_BYTES, MAX_VIEW_MEDIA_BYTES
     from app.monthly_report_import import MAX_DOCX_BYTES, MAX_NORMALIZED_BYTES
     from app.ocr import _MAX_PIXELS_PER_FRAME
-    assert (MAX_VIEW_SOURCE_BYTES,MAX_VIEW_MEDIA_BYTES) == (24*MIB,16*MIB)
+    assert (MAX_VIEW_SOURCE_BYTES,MAX_VIEW_MEDIA_BYTES) == (32*MIB,16*MIB)
     assert (MAX_DOCX_BYTES,MAX_NORMALIZED_BYTES) == (128*MIB,60*MIB)
     assert _MAX_PIXELS_PER_FRAME == 40_000_000
 

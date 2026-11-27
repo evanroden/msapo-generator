@@ -86,3 +86,87 @@ def test_wide_and_book_keep_section_scrolling_in_the_main_owner():
 def test_tabletop_keeps_the_real_lower_workspace_scroll_owner():
     assert run_scroll(mode="tabletop", pairTop=1400, rootTop=40) == {
         "result": True, "mainScroll": 0, "rootScroll": 1270}
+
+
+def snapshot_function():
+    tree = ast.parse((ROOT / 'scripts/qa_monthly_adaptive.py').read_text())
+    deep = next(node.value for node in tree.body if isinstance(node, ast.Assign)
+                and any(isinstance(target, ast.Name) and target.id == 'DEEP' for target in node.targets))
+    function = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                    and node.name == 'snapshot')
+    namespace = {'DEEP': ast.literal_eval(deep)}
+    exec(compile(ast.Module(body=[function], type_ignores=[]), '<snapshot>', 'exec'), namespace)
+    return namespace['snapshot']
+
+
+class SnapshotHandle:
+    def __init__(self, value):
+        self.value = value
+        self.disposed = False
+
+    def json_value(self):
+        return self.value
+
+    def dispose(self):
+        self.disposed = True
+
+
+class SnapshotPage:
+    def __init__(self):
+        self.waits = []
+        self.evaluations = []
+        self.handle = SnapshotHandle({'pairs': [{'key': 'monthly_activity', 'images': [{'loaded': True}]}]})
+
+    def wait_for_function(self, script, *, arg, timeout):
+        self.waits.append((script, arg, timeout))
+        return self.handle
+
+    def evaluate(self, script, arg):
+        self.evaluations.append((script, arg))
+        return {'pairs': []}
+
+
+def test_ready_snapshot_uses_one_bounded_atomic_wait_and_returned_dom_state():
+    page = SnapshotPage()
+    observed = snapshot_function()(page, ready_pair='monthly_activity')
+    assert observed is page.handle.value
+    assert page.handle.disposed
+    assert not page.evaluations
+    assert len(page.waits) == 1
+    script, key, ceiling = page.waits[0]
+    assert key == 'monthly_activity' and ceiling == 20000
+    assert 'target.images.some(image=>image.loaded)' in script
+    assert 'return observed' in script
+
+
+def test_general_snapshot_keeps_single_non_waiting_evaluation():
+    page = SnapshotPage()
+    assert snapshot_function()(page) == {'pairs': []}
+    assert not page.waits and len(page.evaluations) == 1
+
+
+def test_ready_snapshot_predicate_rejects_loading_images_and_other_sections():
+    probe = SnapshotPage()
+    snapshot_function()(probe, ready_pair='monthly_activity')
+    script = probe.waits[0][0]
+    js = r"""
+const loaded=process.argv[1]==='true', wanted=process.argv[2];
+const box={toJSON:()=>({width:100,height:100})};
+const image={alt:'Synthetic Activity',complete:loaded,naturalWidth:loaded?1:0,naturalHeight:loaded?1:0};
+const surface={getBoundingClientRect:()=>box};
+const pair={dataset:{},getBoundingClientRect:()=>box,
+ querySelector:selector=>selector==='[data-epc-pair]'?{dataset:{epcPair:'monthly_activity'}}:null,
+ querySelectorAll:selector=>selector==='.report-preview'?[surface]:selector==='.report-preview img'?[image]:[]};
+const document={querySelector:()=>null,querySelectorAll:selector=>selector==='.epc-workspace-pair'?[pair]:[]};
+const innerWidth=100,innerHeight=100;
+console.log(JSON.stringify(eval('('+process.argv[3]+')')(wanted)));
+"""
+    def run(loaded, key):
+        result = subprocess.run(['node', '-e', js, str(loaded).lower(), key, script],
+                                text=True, capture_output=True, check=True, timeout=5)
+        return json.loads(result.stdout)
+    assert run(False, 'monthly_activity') is False
+    assert run(True, 'other_section') is False
+    state = run(True, 'monthly_activity')
+    assert state['pairs'][0]['images'][0]['loaded']
+    assert state['pairs'][0]['images'][0]['width'] == 1

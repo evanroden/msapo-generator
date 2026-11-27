@@ -17,12 +17,12 @@ from app.monthly_report_import import (
 from app.monthly_report_model import known_sections, layout_blocks
 from app.monthly_report_sections import (
     build_section_import, _build_section_import,
-    default_slot,
+    default_slot, is_formatting,
     section_reviews,
     small_artwork,
     table_without_prices,
 )
-from app.monthly_report_setup import MONTHLY_BLOCKS
+from app.monthly_report_setup import MONTHLY_BLOCKS, PERIOD_REVIEW_BLOCKS
 from app.monthly_report_source_content_roles import source_text_role, validate_role_reviews
 from app.monthly_report_source_table_roles import source_table_role, validate_table_role_reviews
 
@@ -155,6 +155,20 @@ def mentioned_periods(text):
     return periods
 
 
+def _names_earlier_month(text, source_period, requested):
+    """True when text names the source report's month or only earlier dates.
+
+    A bare month word ("October vendor evidence") has no year, so it is only
+    read against the source report's own cover month. "May" is skipped
+    because it is also an ordinary word.
+    """
+    periods = mentioned_periods(text)
+    if periods:
+        return all(p < requested for p in periods)
+    name = calendar.month_name[source_period[1]]
+    return name != "May" and re.search(rf"\b{name}\b", text) is not None
+
+
 # A source cover can be one month behind unfinished work. A *planned* event
 # mentioned for the requested month is not proof that the event happened.
 # Inspect clauses rather than all body dates together: a completed September
@@ -185,6 +199,23 @@ def _target_month_evidence(text, requested):
         else:
             current = True
     return current, planned
+
+
+def merge_source_site_choices(*groups):
+    """Keep saved identities without losing known aliases on the same key.
+
+    A target/saved site may have no aliases. Replacing the catalog entry with
+    that record must not erase distinctive cover abbreviations. Different
+    titles for one key remain ambiguous and are not silently combined.
+    """
+    choices = {}
+    for group in groups:
+        for site in group:
+            prior = choices.get(site.key)
+            if prior is not None and _words(prior.title) == _words(site.title):
+                site = replace(site, aliases=tuple(dict.fromkeys((*prior.aliases, *site.aliases))))
+            choices[site.key] = site
+    return tuple(choices.values())
 
 
 def analyze_starting_report(inspection, profile, period, known_sites=(), *, confirmed_sites=None,
@@ -229,8 +260,48 @@ def analyze_starting_report(inspection, profile, period, known_sites=(), *, conf
     else:
         # A plain date or print/issue timestamp cannot certify a report month.
         source_period = None
+    period_blocks = MONTHLY_BLOCKS | PERIOD_REVIEW_BLOCKS
+    known_slots = {b.key for section in known_sections() for b in section.blocks} | {
+        b.key for b in layout_blocks()}
+    known_section_keys = {section.key for section in known_sections()}
     for item in inspection.items:
-        if item.suggested_slot not in MONTHLY_BLOCKS:
+        if is_formatting(item):
+            continue
+        slot = item.suggested_slot
+        # Text with no recognized slot uses the same section fallback as the
+        # automatic import plan. Captions must not evade month review because
+        # the inspector left their individual routing hint empty. Do not infer
+        # a monthly role for cover/unknown sections or for standing tables.
+        if (item.kind == "text" and slot not in known_slots
+                and item.section in known_section_keys):
+            slot = default_slot(item.section)
+        if (item.section == "subcontractors" and item.kind in ("text", "image")
+                and source_period and source_period < requested
+                and not (slot or "").startswith("divider_")
+                and not source_text_role(item)):
+            # Section 6 carries a standing vendor roster (the table). Prose
+            # and report pages beside it are an earlier month's service
+            # evidence, not a new completion, so a new month keeps only the
+            # roster. The original file keeps the evidence unchanged.
+            older.append(item.id)
+            continue
+        if (slot == "mbcx_status" and item.kind == "text"
+                and source_period and source_period < requested):
+            # The MBCx status note has no editor (owner decision, 25 Nov
+            # 2026), so an earlier month's note is left out, not held for a
+            # month check. The original file keeps it unchanged.
+            older.append(item.id)
+            continue
+        if slot not in period_blocks:
+            # Prose in a section with no monthly text block (for example a
+            # vendor-status narrative under the subcontractor table) is still
+            # dated work. When it names the earlier source month, or only
+            # earlier dated months, hold it for the same month review.
+            if (item.kind == "text" and item.section in known_section_keys
+                    and source_period and source_period < requested
+                    and not source_text_role(item)
+                    and _names_earlier_month(item.text, source_period, requested)):
+                uncertain.append(item.id)
             continue
         # Explicit source examples, author instructions, and placeholders are
         # not evidence of completed work even when their cells contain this
@@ -250,7 +321,8 @@ def analyze_starting_report(inspection, profile, period, known_sites=(), *, conf
             current.append(item.id)
         # Only standalone dated prose is safely left out automatically. Tables
         # can contain cumulative history; images cannot inherit a nearby date.
-        elif item.kind == "text" and periods and all(p < requested for p in periods):
+        elif (slot in MONTHLY_BLOCKS and item.kind == "text" and periods
+              and all(p < requested for p in periods)):
             older.append(item.id)
         else:
             uncertain.append(item.id)
@@ -472,6 +544,44 @@ def reuse_identical_saved_cover(plan, section, inspection, path, existing_blocks
             "automatic_brand_identity_refs": tuple(sorted(trusted_used))}
 
 
+def _older_picture_titles(items, older_items):
+    """Map each older-dated picture title to the one picture in its paragraph.
+
+    Matches the builder's own caption pairing: exactly one picture and one
+    short single-line title in the same Word paragraph, with no price.
+    """
+    older = set(older_items)
+    places = {}
+    for item in items:
+        places.setdefault((item.part, item.word_section, item.position), []).append(item)
+    titles = {}
+    for group in places.values():
+        pictures = [i for i in group if i.kind == "image"]
+        texts = [i for i in group if i.kind == "text"]
+        if len(group) != 2 or len(pictures) != 1 or len(texts) != 1:
+            continue
+        text, picture = texts[0], pictures[0]
+        line = text.text.strip()
+        if (text.id not in older or picture.text.strip() or not line
+                or "\n" in line or len(line) > 160 or contains_price(line)):
+            continue
+        titles[text.id] = picture.id
+    return titles
+
+
+def _picture_fallback_slot(section, item):
+    """The destination a section picture takes when it has no slot of its own."""
+    slot = item.suggested_slot
+    if section.key == "organization" and re.search(
+            r"(?:^|[_-])contact[_-]matrix(?:[_.-]|$)",
+            item.image_part.rsplit("/", 1)[-1].casefold()):
+        return "contact_matrix"
+    if not slot and section.key not in ("cover", "other", "proposals", "accounts_receivable"):
+        from app.monthly_report_visual_preservation import VISUAL_SLOTS
+        slot = VISUAL_SLOTS.get(section.key, "")
+    return slot
+
+
 def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_design=False, source_view=None,
                             native_art_review=None, source_path=None, profile=None, period=None):
     """Pre-fill recognizable content; ask only about unresolved source content.
@@ -491,6 +601,7 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
         if preserved is not None:
             kept_native = {item.original_id for item in preserved.inventory.occurrences}
     known = {b.key for s in known_sections() for b in s.blocks} | {b.key for b in layout_blocks()}
+    single_picture = {b.key: b.type == "image_page" for s in known_sections() for b in s.blocks}
     result = {}
     for section in section_reviews(inspection, source_view=source_view):
         cover_default = suggested_cover_photo(section.items, native_furniture_ids=furniture_ids) if section.key == "cover" else None
@@ -504,6 +615,13 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
         if analysis.site_relation != "same":
             plan["unsupported_reviewed"] = True
         questions = []
+        # A dated title typed in the same Word paragraph as its one picture
+        # is that picture's caption (vendor, report type, date), not
+        # last month's narrative. Keep it with the picture when the picture
+        # itself is kept, so the writer updates a date rather than retyping
+        # the whole caption. The period check still flags the old month.
+        older_titles = _older_picture_titles(section.items, analysis.older_items)
+        deferred_titles = {}
         for item in section.items:
             slot = item.suggested_slot
             if native_design and slot.startswith("divider_"):
@@ -542,7 +660,13 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
                 plan.setdefault("table_role_required", []).append(item.id)
                 questions.append("Review source table instructions or examples.")
                 continue
-            if item.id in analysis.older_items and item.kind != "image":
+            if item.id in older_titles:
+                deferred_titles[item.id] = item
+                continue
+            if item.id in analysis.older_items and (
+                    item.kind != "image" or section.key == "subcontractors"):
+                # Subcontractor pictures beside the roster are an earlier
+                # month's vendor report pages (see analyze_starting_report).
                 # Old prose is not current-month work. Its photos are still
                 # source artwork belonging to this exact section, however:
                 # retain them with immutable source/month provenance so they
@@ -589,6 +713,18 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
                     # they can contain amounts only in pixels.
                     from app.monthly_report_visual_preservation import VISUAL_SLOTS
                     slot = VISUAL_SLOTS.get(section.key, "")
+                if (slot and section.key not in ("cover", "other")
+                        and single_picture.get(slot) and sum(
+                            other.kind == "image" and other.id not in kept_native
+                            and not other.suggested_slot.startswith("divider_")
+                            and not small_artwork(other)
+                            and _picture_fallback_slot(section, other) == slot
+                            for other in section.items) > 1):
+                    # Several pictures would all land on
+                    # one single-picture page (e.g. both workflow charts on
+                    # the org chart page). Ask instead of stacking them there.
+                    questions.append("A picture's purpose is not clear.")
+                    continue
                 if section.key == "cover" and slot not in ("brand_logo", "client_logo"):
                     # Optional cover photo is one chosen image; even when
                     # several pictures exist the gallery does not need one
@@ -647,6 +783,14 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
             plan["destinations"][item.id] = slot
             if item.kind == "text":
                 plan["texts"][item.id] = item.text
+        for title_id, picture_id in older_titles.items():
+            title = deferred_titles.get(title_id)
+            if title is None or picture_id not in plan["selected"]:
+                continue  # Without its picture the title is old narrative.
+            at = plan["selected"].index(picture_id) + 1
+            plan["selected"].insert(at, title_id)
+            plan["destinations"][title_id] = plan["destinations"].get(picture_id) or default_slot(section.key)
+            plan["texts"][title_id] = title.text
         plan["questions"] = tuple(dict.fromkeys(questions))
         plan["approved"] = not questions
         result[section.key] = plan

@@ -52,3 +52,27 @@ def test_evidence_write_failure_preserves_original():
         def evaluate(self,script): return payload()
     with pytest.raises(ValueError,match='original'):
         with observe_navigation(Page(),Reject()): raise ValueError('original')
+
+
+def test_warning_caption_diagnostics_preserve_original_native_actions():
+    tree=ast.parse(Path('scripts/qa_warning_routes.py').read_text())
+    context=next(n for n in ast.walk(tree) if isinstance(n,ast.With) and any(isinstance(x.context_expr,ast.Call) and getattr(x.context_expr.func,'id','')=='observe_navigation' for x in n.items))
+    assert len(context.body)==2
+    fill,navigate=[n.value for n in context.body]
+    assert fill.func.value.id=='caption' and fill.func.attr=='fill'
+    assert ast.literal_eval(fill.args[0])=='Synthetic pending old-source caption'
+    assert navigate.func.id=='navigate_sections'
+    assert ast.literal_eval(navigate.args[1])=='report_review'
+    assert len(navigate.keywords)==1 and navigate.keywords[0].arg=='keyboard'
+    assert navigate.keywords[0].value.id=='keyboard'
+
+
+def test_capital_wire_observer_does_not_change_original_clear_actions():
+    tree=ast.parse(Path('scripts/qa_native_capital_rows.py').read_text())
+    exercise=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='exercise')
+    fills=[n for n in ast.walk(exercise) if isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and n.func.attr=='fill']
+    assert [ast.literal_eval(n.args[0]) for n in fills[:3]]==['','','']
+    wire=next(n for n in ast.walk(exercise) if isinstance(n,ast.Call) and getattr(n.func,'id','')=='WaterWidgetDelivery')
+    kw={k.arg:ast.literal_eval(k.value) for k in wire.keywords if k.arg!='ports'}
+    assert kw['widget_types']=={'button','text_input','text_area'}
+    assert kw['labels']=={'Facility','Priority','Recommendation','Edit capital item','Close editing'}

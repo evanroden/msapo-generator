@@ -19,6 +19,7 @@ from pathlib import Path
 
 import anthropic
 
+from app.extracted_text import normalize_extracted_text
 from app.image_open import open_image, image_formats_for_suffix
 from app.ai_client import make_client
 from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
@@ -408,7 +409,7 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
         plan: list[str | None] = []
         scanned = native_size = 0
         for number, page in enumerate(pdf, 1):
-            native = page.get_text().strip()
+            native = normalize_extracted_text(page.get_text()).strip()
             needs_ocr, review_notice = _page_visual_decision(
                 page, native_text=native,
             )

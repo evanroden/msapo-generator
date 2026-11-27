@@ -576,6 +576,10 @@ def edit_linked_paragraphs(draft, blocks, prefix, field, allowed_keys=None):
                 selected = st.multiselect(
                     f"Evidence for paragraph {n + 1}",
                     available,
+                    # A changed evidence binding gets a distinct native widget.
+                    # Its first browser render must carry the saved selection,
+                    # not an empty default racing the session-state receipt.
+                    default=list(paragraph.fact_ids),
                     format_func=lambda k: (
                         f"{facts[k][0].filename} · page {facts[k][1].page} · {facts[k][1].text[:90]}"
                         if k in facts else "Unavailable saved fact · " + k

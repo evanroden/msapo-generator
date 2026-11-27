@@ -58,8 +58,8 @@ def exercise(engine,name,source,base):
         page.get_by_role('button',name='Install synthetic independent template',exact=True).click()
         upload=page.get_by_test_id('stFileUploader').filter(has=page.get_by_text('Starting report',exact=True))
         upload.locator('input[type=file]').set_input_files(str(source))
-        expect(page.get_by_text(re.compile('This file is within the 128 MiB upload limit'))).to_be_visible(timeout=120000)
-        expect(page.get_by_text(re.compile('limited to 24 MiB'))).to_be_visible()
+        expect(page.get_by_text(re.compile('uploads can be up to 128 MiB'))).to_be_visible(timeout=120000)
+        expect(page.get_by_text(re.compile('limited to 32 MiB'))).to_be_visible()
         proceed=page.get_by_role('button',name='Continue to this month’s updates',exact=True)
         expect(proceed).to_be_disabled()
         # Open the production activity review; no session-state injection.
@@ -120,7 +120,7 @@ def main():
     from playwright.sync_api import sync_playwright
     OUT.mkdir(parents=True,exist_ok=True)
     REPORT['tested_checkout']=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
-    assert MAX_VIEW_SOURCE_BYTES==24*1024*1024 and MAX_DOCX_BYTES==128*1024*1024
+    assert MAX_VIEW_SOURCE_BYTES==32*1024*1024 and MAX_DOCX_BYTES==128*1024*1024
     with tempfile.TemporaryDirectory(prefix='cover-fallback-synthetic-') as temp, ExitStack() as controller:
         base=Path(temp);(base/'monthly-dom-synthetic-only.marker').write_text('synthetic-monthly-dom-v1')
         source=make_source(base/'input')

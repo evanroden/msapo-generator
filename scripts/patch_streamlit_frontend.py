@@ -28,6 +28,7 @@ try:
     from scripts.streamlit_overlay_resize import OVERLAY_BUNDLE, OVERLAY_SHA256, repair_overlay
     from scripts.streamlit_virtualizer_resize import VIRTUALIZER_BUNDLE, VIRTUALIZER_SHA256, repair_virtualizer
     from scripts.streamlit_floating_resize import FLOATING_BUNDLE, FLOATING_SHA256, repair_floating
+    from scripts.streamlit_textarea_default import TEXTAREA_BUNDLE, repair_textarea_default
     from scripts.streamlit_text_input_default import TEXT_INPUT_BUNDLE, repair_text_input_default
     from scripts.streamlit_dataframe_action_owners import repair_dataframe_action_owners
 except ModuleNotFoundError:  # Direct `python scripts/...` entrypoint.
@@ -37,6 +38,7 @@ except ModuleNotFoundError:  # Direct `python scripts/...` entrypoint.
     from streamlit_overlay_resize import OVERLAY_BUNDLE, OVERLAY_SHA256, repair_overlay
     from streamlit_virtualizer_resize import VIRTUALIZER_BUNDLE, VIRTUALIZER_SHA256, repair_virtualizer
     from streamlit_floating_resize import FLOATING_BUNDLE, FLOATING_SHA256, repair_floating
+    from streamlit_textarea_default import TEXTAREA_BUNDLE, repair_textarea_default
     from streamlit_text_input_default import TEXT_INPUT_BUNDLE, repair_text_input_default
     from streamlit_dataframe_action_owners import repair_dataframe_action_owners
 
@@ -77,6 +79,7 @@ class Publication:
     text_input_default: bool
     dataframe_action_owners: bool
     cold_source_gesture: bool
+    textarea_default: bool
 
 
 def _references(raw):
@@ -154,7 +157,7 @@ def _locked_sources(scripts):
 def _publication(sources, members, scalar_date, *, virtualizer_resize=True,
                  floating_resize=True, queued_scroll=True, latest_scroll_close=True,
                  selection_safe_close=True, no_cache_advertisements=True, instant_expander=True,
-                 tab_navigation=True, text_input_default=None, dataframe_action_owners=None, cold_source_gesture=None):
+                 tab_navigation=True, text_input_default=None, dataframe_action_owners=None, cold_source_gesture=None, textarea_default=None, date_clear_focus=None):
     # Calls reconstructing a named historical recipe must retain its bytes.
     # An unqualified publication means the current recipe, including first
     # text-input display; explicit flags still reconstruct every old version.
@@ -168,6 +171,10 @@ def _publication(sources, members, scalar_date, *, virtualizer_resize=True,
             instant_expander, tab_navigation, text_input_default))
     if cold_source_gesture is None:
         cold_source_gesture = dataframe_action_owners
+    if textarea_default is None:
+        textarea_default = cold_source_gesture
+    if date_clear_focus is None:
+        date_clear_focus = textarea_default
     if not floating_resize:
         originals = json.loads(MANIFEST_PATH.read_bytes())["members"]
         sources = {name: raw for name, raw in sources.items() if name in originals}
@@ -194,8 +201,21 @@ def _publication(sources, members, scalar_date, *, virtualizer_resize=True,
         repaired[FLOATING_BUNDLE] = repair_floating(sources[FLOATING_BUNDLE])
     if scalar_date:
         repaired[DATE_BUNDLE] = sources[DATE_BUNDLE].replace(DATE_ORIGINAL, DATE_REPAIRED, 1)
+    if scalar_date and date_clear_focus:
+        # BaseWeb Clear normally blurs to its icon, then refocuses the input.
+        # That focus reopens the scalar calendar and can intercept the pointer
+        # release of the reader's next form action after scroll repositioning.
+        # Retain the existing input focus during mouse Clear only. Clear's
+        # native click, value update and keyboard activation remain unchanged.
+        boundary = b"ClearIcon:{props:{overrides:"
+        if repaired[DATE_BUNDLE].count(boundary) != 1:
+            raise RuntimeError("Unexpected native date Clear boundary; no bytes were changed.")
+        repaired[DATE_BUNDLE] = repaired[DATE_BUNDLE].replace(boundary,
+            b"ClearIcon:{props:{onMouseDown:e=>{if(!t.isRange)e.preventDefault()},overrides:", 1)
     if text_input_default:
         repaired[TEXT_INPUT_BUNDLE] = repair_text_input_default(sources[TEXT_INPUT_BUNDLE])
+    if textarea_default:
+        repaired[TEXTAREA_BUNDLE] = repair_textarea_default(sources[TEXTAREA_BUNDLE])
     # This digest binds all original source pins, their graph, exact repair
     # bytes, configuration and naming recipe. A whole-generation name handles
     # the five-chunk native ESM cycle without circular final-byte hashes.
@@ -219,7 +239,7 @@ def _publication(sources, members, scalar_date, *, virtualizer_resize=True,
     names[INDEX_BUNDLE] = _entry_name(payloads[INDEX_BUNDLE])
     return Publication(names, payloads, scalar_date, virtualizer_resize, floating_resize, queued_scroll,
                        queued_scroll and latest_scroll_close, generation, selection_safe_close, no_cache_advertisements, instant_expander,
-                       selection_safe_close and tab_navigation, text_input_default, dataframe_action_owners, cold_source_gesture)
+                       selection_safe_close and tab_navigation, text_input_default, dataframe_action_owners, cold_source_gesture, textarea_default)
 
 
 def _legacy_variants(sources):
@@ -251,21 +271,22 @@ def _validated_publications(static_dir, installed_version):
     # The first two are current outputs. The exact previous overlay-only
     # generations remain fully reconstructable upgrade inputs, including all
     # immutable members and preloads. Preserve their original identity recipe.
-    publications = tuple(_publication(sources, members, flag, virtualizer_resize=guard,
+    publications = tuple(_publication(sources, members, flag, date_clear_focus=True) for flag in (False, True)) + tuple(_publication(sources, members, flag, virtualizer_resize=guard,
                                      floating_resize=floating, queued_scroll=scroll,
                                      latest_scroll_close=latest, selection_safe_close=selection,
                                      no_cache_advertisements=no_refs, instant_expander=instant,
                                      tab_navigation=tab, text_input_default=text_default,
-                                     dataframe_action_owners=action_owners, cold_source_gesture=cold_gesture)
-                         for cold_gesture, action_owners, text_default, tab, instant, no_refs, selection, latest, scroll, floating, guard in (
-                             (True, True, True, True, True, True, True, True, True, True, True),
-                             (False, True, True, True, True, True, True, True, True, True, True),
-                             (False, False, True, True, True, True, True, True, True, True, True),
-                             (False, False, False, True, True, True, True, True, True, True, True),
-                             (False, False, False, False, True, True, True, True, True, True, True), (False, False, False, False, False, True, True, True, True, True, True),
-                             (False, False, False, False, False, False, True, True, True, True, True), (False, False, False, False, False, False, False, True, True, True, True),
-                             (False, False, False, False, False, False, False, False, True, True, True), (False, False, False, False, False, False, False, False, False, True, True),
-                             (False, False, False, False, False, False, False, False, False, False, True), (False, False, False, False, False, False, False, False, False, False, False))
+                                     dataframe_action_owners=action_owners, cold_source_gesture=cold_gesture, textarea_default=textarea, date_clear_focus=False)
+                         for textarea, cold_gesture, action_owners, text_default, tab, instant, no_refs, selection, latest, scroll, floating, guard in (
+                             (True, True, True, True, True, True, True, True, True, True, True, True),
+                             (False, True, True, True, True, True, True, True, True, True, True, True),
+                             (False, False, True, True, True, True, True, True, True, True, True, True),
+                             (False, False, False, True, True, True, True, True, True, True, True, True),
+                             (False, False, False, False, True, True, True, True, True, True, True, True),
+                             (False, False, False, False, False, True, True, True, True, True, True, True), (False, False, False, False, False, False, True, True, True, True, True, True),
+                             (False, False, False, False, False, False, False, True, True, True, True, True), (False, False, False, False, False, False, False, False, True, True, True, True),
+                             (False, False, False, False, False, False, False, False, False, True, True, True), (False, False, False, False, False, False, False, False, False, False, True, True),
+                             (False, False, False, False, False, False, False, False, False, False, False, True), (False, False, False, False, False, False, False, False, False, False, False, False))
                          for flag in (False, True))
     legacy, legacy_date_name, legacy_date = _legacy_variants(sources)
     variants = {**legacy, **{p.names[INDEX_BUNDLE]: (p.payloads[INDEX_BUNDLE], p.scalar_date) for p in publications}}
@@ -329,6 +350,7 @@ def _receipt(publication):
             "instant_expander": publication.instant_expander,
             "tab_navigation": publication.tab_navigation,
             "text_input_default": publication.text_input_default,
+            "textarea_default": publication.textarea_default,
             "dataframe_action_owners": publication.dataframe_action_owners,
             "cold_source_gesture": publication.cold_source_gesture,
             "combobox_bundle": publication.names[COMBOBOX_BUNDLE],
@@ -440,25 +462,37 @@ def main():
     try:
         from scripts.streamlit_string_trigger_coalescing import patch_script_requests
         from scripts.streamlit_cover_upload_copy import patch_cover_upload_copy
+        from scripts.streamlit_callback_delivery import patch_callback_delivery
+        from scripts.streamlit_shared_state_lock import patch_shared_state_lock
     except ModuleNotFoundError:  # Direct `python scripts/...` entrypoint.
         from streamlit_string_trigger_coalescing import patch_script_requests
         from streamlit_cover_upload_copy import patch_cover_upload_copy
+        from streamlit_callback_delivery import patch_callback_delivery
+        from streamlit_shared_state_lock import patch_shared_state_lock
     parser = argparse.ArgumentParser()
     parser.add_argument("--static-dir", type=Path)
     parser.add_argument("--scalar-date", action="store_true")
     args = parser.parse_args()
     runtime = None
     cover_runtime = None
+    callback_runtime = None
+    state_lock_runtime = None
     if args.static_dir is None:
         runtime = patch_script_requests(Path(streamlit.__file__).parent,
                                         installed_version=version("streamlit"))
         cover_runtime = patch_cover_upload_copy(Path(streamlit.__file__).parent,
                                                 installed_version=version("streamlit"))
+        callback_runtime = patch_callback_delivery(Path(streamlit.__file__).parent,
+                                                    installed_version=version("streamlit"))
+        state_lock_runtime = patch_shared_state_lock(Path(streamlit.__file__).parent,
+                                                    installed_version=version("streamlit"))
     result = patch_bundle(args.static_dir or Path(streamlit.__file__).parent / "static",
                           installed_version=version("streamlit"), scalar_date=args.scalar_date)
     if runtime is not None:
         result["native_trigger_runtime"] = runtime
         result["cover_upload_runtime"] = cover_runtime
+        result["callback_delivery_runtime"] = callback_runtime
+        result["shared_state_lock_runtime"] = state_lock_runtime
     print(json.dumps(result, sort_keys=True))
 
 

@@ -10,11 +10,12 @@ import hashlib
 import math
 import re
 import tempfile
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from copy import deepcopy
 from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
+from threading import Lock
 
 from docx import Document
 from docx.oxml import OxmlElement
@@ -125,6 +126,21 @@ def _clear_hyperlinks(element):
             link.getparent().remove(link)
 
 
+def _text_equivalent(node) -> str:
+    """Text the importer reads for a non-text run node, or "" if none.
+
+    A non-breaking hyphen and a known Symbol/Wingdings character are imported
+    as their Unicode text, so a writer replacing the reviewed value must drop
+    the node rather than keep it beside its own text.
+    """
+    if node.tag == qn("w:noBreakHyphen"):
+        return "-"
+    if node.tag == qn("w:sym"):
+        from app.extracted_text import word_symbol_text
+        return word_symbol_text(node.get(qn("w:font"), ""), node.get(qn("w:char"), ""))
+    return ""
+
+
 def _set_text(element, value):
     """Change run payloads while retaining paragraph/run/text-box properties."""
     _clear_hyperlinks(element)
@@ -148,8 +164,13 @@ def _set_text(element, value):
                     and node.get(qn("w:type"), "textWrapping") == "textWrapping")):
                 current.append("\n")
                 controls.append(node)
-            elif node.tag == qn("w:tab"):
+            elif node.tag in (qn("w:tab"), qn("w:ptab")):
                 current.append("\t")
+                controls.append(node)
+            elif _text_equivalent(node):
+                # Import reads these as text (see app.extracted_text); the
+                # reviewed value already carries that text, so the node goes.
+                current.append(_text_equivalent(node))
                 controls.append(node)
     if not raw_controls and "".join(current) == value:
         return
@@ -189,6 +210,25 @@ def _set_text(element, value):
             previous = node
         for node in group[1:]:
             node.text = ""
+    _clear_filled_placeholders(element)
+
+
+def _clear_filled_placeholders(element):
+    """A content control that now holds written text is no longer a prompt.
+
+    Import skips controls flagged w:showingPlcHdr (they show Word's prompt,
+    not report text). Once a writer has put the reviewed value inside one,
+    the flag must go, or the generated value would be dropped on reimport.
+    """
+    sdt, content_tag = qn("w:sdt"), qn("w:sdtContent")
+    controls = [ancestor for ancestor in element.iterancestors() if ancestor.tag == sdt]
+    controls += list(element.iter(sdt))
+    for control in controls:
+        flag = control.find(f"{qn('w:sdtPr')}/{qn('w:showingPlcHdr')}")
+        content = control.find(content_tag)
+        if flag is not None and content is not None and any(
+                (node.text or "").strip() for node in content.iter(qn("w:t"))):
+            flag.getparent().remove(flag)
 
 
 
@@ -219,8 +259,9 @@ def _set_reviewed_footer_text(paragraph, value):
               and node.getparent().tag == qn('w:r') and node.getparent().getparent() is paragraph):
             if node.tag == qn('w:t'):
                 texts.append(node)
-            elif (node.tag in (qn('w:tab'), qn('w:cr')) or node.tag == qn('w:br')
-                  and node.get(qn('w:type'), 'textWrapping') == 'textWrapping'):
+            elif (node.tag in (qn('w:tab'), qn('w:ptab'), qn('w:cr')) or node.tag == qn('w:br')
+                  and node.get(qn('w:type'), 'textWrapping') == 'textWrapping'
+                  or _text_equivalent(node)):
                 controls.append(node)
     if depth or not texts:
         return False
@@ -1124,6 +1165,38 @@ def _source_image_digest(source_path, source_digest, item, line_art, preserve_tr
     return hashlib.sha256(normalized.data).hexdigest() + "." + normalized.extension
 
 
+# Source-view renders read images from a disposable rendition path, so the
+# path cannot be a cache key. The verified content identity (original,
+# rendition and receipt hashes) plus a hash of the item and options fully
+# determine the normalized image, so repeat previews reuse the digest. Only
+# hashes are kept: never the path or the source item.
+_VIEW_DIGESTS = OrderedDict()
+_VIEW_DIGESTS_LOCK = Lock()
+_VIEW_DIGESTS_SIZE = 512
+
+
+def clear_view_image_digests():
+    with _VIEW_DIGESTS_LOCK:
+        _VIEW_DIGESTS.clear()
+
+
+def _view_image_digest(source_path, source_digest, item, line_art, preserve_transparency=None):
+    key = (source_digest, hashlib.sha256(repr(item).encode()).hexdigest(), bool(line_art),
+           preserve_transparency)
+    with _VIEW_DIGESTS_LOCK:
+        hit = _VIEW_DIGESTS.get(key)
+        if hit is not None:
+            _VIEW_DIGESTS.move_to_end(key)
+            return hit
+    digest = _source_image_digest.__wrapped__(source_path, source_digest, item, line_art,
+                                              preserve_transparency)
+    with _VIEW_DIGESTS_LOCK:
+        _VIEW_DIGESTS[key] = digest
+        while len(_VIEW_DIGESTS) > _VIEW_DIGESTS_SIZE:
+            _VIEW_DIGESTS.popitem(last=False)
+    return digest
+
+
 def _unchanged_blocks(draft, inspection, source_path, *, section_key=None, source_view=None, image_digest=None):
     """Prove source facts were explicitly supplied unchanged in current inputs."""
     from app.monthly_report_operational_source import original_reference, cache_identity
@@ -1332,8 +1405,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     image_cache_identity = cache_identity(inspection, source_view)
     # Experimental operation-local cache; never retain source-view paths/items
     # across requests. Legacy source cache behavior remains unchanged.
-    image_digest = (_source_image_digest if source_view is None else
-                    lru_cache(maxsize=128)(_source_image_digest.__wrapped__))
+    image_digest = (_source_image_digest if source_view is None else _view_image_digest)
     source_digest = source_view.original_inspection.sha256 if source_view is not None else inspection.sha256
     original_path = original_path or source_path
     source_ref = lambda item: original_reference(inspection, item, source_view)

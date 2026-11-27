@@ -105,3 +105,33 @@ def typed_data_rows(item, start: int):
     roles = getattr(item, "table_row_roles", ())
     return tuple(row for index, row in enumerate(item.rows)
                  if index >= start and (index >= len(roles) or roles[index] != "repeated_header"))
+
+
+def explicit_bold_rows(table, *, children=None):
+    """Conservative direct Word bold only, never infer emphasis from dates/text.
+
+    Mixed styling, inherited styles, hidden text and revision markup are not
+    promoted to whole-row emphasis. Extraction owns final-view cell text.
+    """
+    result = []
+    rows = children(table, W + 'tr') if children is not None else table.findall(W + 'tr')
+    for index, row in enumerate(rows):
+        if any(node.tag in {W + name for name in ('del', 'ins', 'moveFrom', 'moveTo', 'rPrChange')}
+               for node in row.iter()):
+            continue
+        runs = [run for run in row.iter(W + 'r')
+                if any((text.text or '').strip() for text in run.iter(W + 't'))]
+        if not runs:
+            continue
+        def bold(run):
+            props = run.find(W + 'rPr')
+            if props is None:
+                return False
+            hidden = props.find(W + 'vanish')
+            if hidden is not None and hidden.get(W + 'val', '1').casefold() not in ('0', 'false', 'off'):
+                return False
+            flag = props.find(W + 'b')
+            return flag is not None and flag.get(W + 'val', '1').casefold() in ('1', 'true', 'on')
+        if all(bold(run) for run in runs):
+            result.append(index)
+    return tuple(result)

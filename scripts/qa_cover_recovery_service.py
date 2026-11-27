@@ -90,7 +90,7 @@ def assert_resources(value):
 
 
 def runtime_bookkeeping(root, path):
-    """Validate exactly two ephemeral renderer records, never report content.
+    """Validate exact bounded renderer bookkeeping, never report content.
 
     These records can change during background previews. Do not compare their
     mtime/hash as user content, but reject links, unexpected bytes or scope.
@@ -98,7 +98,8 @@ def runtime_bookkeeping(root, path):
     import os
     import stat
     relative = path.relative_to(root).as_posix()
-    if relative not in ("render-jobs/.conversion-lock", "render-jobs/.active-office.json"):
+    lock_names = {".conversion-lock", ".conversion-mode.lock", ".office-janitor.lock"}
+    if relative not in tuple("render-jobs/" + name for name in (*lock_names, ".active-office.json")):
         return False
     assert not root.is_symlink() and not path.parent.is_symlink()
     assert path.parent.is_dir()
@@ -109,11 +110,11 @@ def runtime_bookkeeping(root, path):
     try:
         info = os.fstat(fd)
         assert stat.S_ISREG(info.st_mode) and info.st_nlink == 1
-        limit = 0 if path.name == ".conversion-lock" else 1024
+        limit = 0 if path.name in lock_names else 1024
         assert 0 <= info.st_size <= limit
         raw = os.read(fd, limit + 1)
         assert len(raw) <= limit
-        if path.name == ".conversion-lock":
+        if path.name in lock_names:
             assert raw == b""
         else:
             value = json.loads(raw)

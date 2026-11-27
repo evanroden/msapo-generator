@@ -1226,7 +1226,10 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
         pages = blocks.get("mbcx_report", ResolvedBlock("mbcx_report", "This month"))
         blocks["mbcx_status"], blocks["mbcx_report"] = render_mbcx(
             status, pages, prefix, field,
-            lambda block: _edit_content(specs["mbcx_report"], block, state, prefix, assets, field, draft))
+            # Owner review F14: the monthly MBCx report upload is the one way
+            # to add pages here, so the extra image-page control stays hidden.
+            lambda block: _edit_content(specs["mbcx_report"], block, state, prefix, assets, field, draft,
+                                        page_actions_open=False))
         blocks["mbcx_status"] = _review_carried_update(blocks["mbcx_status"], period, prefix)
         handled.update(("mbcx_status", "mbcx_report"))
     for original_spec in section.blocks:
@@ -1438,7 +1441,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         st.write("1. Choose sites and month.\n2. Update the sections below; sections without a new update can stay blank.\n3. Review source pages that need attention, then create and download Word/PDF.")
         st.caption("Selecting several sites combines them in one report. For separate reports, select each site individually.")
         st.write("Saved site details carry forward. Monthly files and progress photos start fresh. Browser drafts and shared report versions are separate.")
-        st.caption("MBCx means monitoring-based commissioning: reviewing equipment performance for operating issues and improvements. ENFRA Connect refers to the monitoring platform. Include only verified findings and savings; otherwise record the current status.")
+        st.caption("MBCx means monitoring-based commissioning: reviewing equipment performance for operating issues and improvements. ENFRA Connect refers to the monitoring platform. Upload the monthly MBCx report; include only verified findings and savings.")
         st.caption("Training covers hospital/client staff. ENFRA employees, asset managers and vendor personnel are outside its scope. Record only confirmed completed training in the monthly list. Enter hours only when known.")
         st.caption("Draft recovery keeps edits after they reach the app. Text still being typed may not be recoverable. Check the save status before leaving. Saving or creating files adds a shared version. Prepared by is report attribution, not a sign-in.")
     from app.monthly_report_admin_ui import render_administration_links
@@ -1827,7 +1830,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     )
                     draft = replace(draft, cover_recovery_request=st.session_state.pop(
                         prefix + "_cover_recovery_request_update", draft.cover_recovery_request))
-                with st.expander("About this report"):
+                with st.sidebar.expander("Report design and artwork"):
                     from app.monthly_report_designs_ui import render_design_status, render_apply_master_design
                     render_design_status(draft)
                     render_apply_master_design(replace(draft, blocks=tuple(blocks.values())), prefix)

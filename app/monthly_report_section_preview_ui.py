@@ -16,6 +16,7 @@ from app.monthly_report_preview import (
 from app.monthly_report_preview_store import STORE, PreviewTicket
 from app.monthly_report_source_view_runtime import source_revision_identity
 from app.monthly_report_preview_view import render_view, viewport
+from app.monthly_report_preview_preparation import eligible, refresh_preparation
 
 
 PREVIEW_HEIGHT = 760
@@ -93,6 +94,9 @@ def _reset_report_preview_identity(state, identity):
                   'generations', 'source_revisions'):
         state[field] = {}
     state['report_identity'] = identity
+    state['preparing'] = ()
+    state['raster_limited'] = set()
+    state['preparation_order'] = ()
     # A worker already running on the old report is discarded when complete,
     # because its obsolete wanted fingerprint is no longer registered.
 
@@ -114,6 +118,118 @@ def _is_visible(state, section):
     return state.get('visible', {}).get(section, 'visible' not in state)
 
 
+def _preparation_dpi(state, section, ticket):
+    view = _current_page_request(state, section, ticket)
+    return view['dpi'] if view and view.get('dpi') in (96, 120, 150) else 120
+
+
+def _prepare_raster_page(owner, ticket, dpi, is_current):
+    from app.monthly_report_render_jobs import work_slot
+    try:
+        # Fail fast behind visible conversions/exports, with existing cgroup
+        # memory admission. Each lease decodes only one bounded page.
+        with work_slot(preview=True, wait_seconds=0):
+            return STORE.prepare_next_page(owner, ticket, dpi=dpi, is_current=is_current)
+    except RenderBusy:
+        return 'busy'
+    except (OSError, ValueError):
+        return 'limited'
+    finally:
+        _PREVIEW_SLOT.release()
+
+
+def _advance_raster_preparation(state):
+    running = state.get('raster_running')
+    if running:
+        key, ticket, future = running
+        if not future.done():
+            return
+        try:
+            outcome = future.result()
+        except Exception:
+            outcome = 'limited'
+        state['raster_running'] = None
+        if outcome == 'limited':
+            state.setdefault('raster_limited', set()).add(ticket.key)
+        if outcome == 'busy':
+            state['raster_retry_after'] = monotonic() + 2
+    if (state.get('running')
+            or any(_is_visible(state, key) for key in state.get('queue', {}))
+            or monotonic() < state.get('raster_retry_after', 0)):
+        return
+    for key in state.get('preparation_order', ()):
+        if not state.get('visible', {}).get(key):
+            continue
+        if not isinstance(state.get('cache', {}).get(key, {}).get('ticket'), PreviewTicket):
+            continue
+        entry = _current_entry(state, key)
+        if not entry or entry.get('error'):
+            continue
+        ticket = entry['ticket']
+        # A one-page pane decodes its only page for visible delivery below.
+        # Speculation adds no readiness and would keep a finished pane polling.
+        if ticket.pages <= 1:
+            continue
+        if ticket.key in state.get('raster_limited', ()):
+            continue
+        dpi = _preparation_dpi(state, key, ticket)
+        warm = STORE.prepared_pages(state['owner'], ticket, dpi=dpi)
+        if warm is None or len(warm) == ticket.pages:
+            continue
+        if not _PREVIEW_SLOT.acquire(False):
+            return
+        owner, fingerprint = state['owner'], state['wanted'].get(key)
+        generation = state.get('generations', {}).get(key, 0)
+        def is_current(key=key, ticket=ticket, fingerprint=fingerprint, generation=generation, dpi=dpi):
+            return (state.get('owner') == owner
+                    and state.get('visible', {}).get(key)
+                    and state['wanted'].get(key) == fingerprint
+                    and state.get('generations', {}).get(key, 0) == generation
+                    and state.get('cache', {}).get(key, {}).get('ticket') == ticket
+                    and _preparation_dpi(state, key, ticket) == dpi)
+        try:
+            from app.monthly_report_testing import scope
+            if scope() is not None:
+                from contextvars import copy_context
+                future = _PREVIEW_WORKER.submit(copy_context().run, _prepare_raster_page,
+                                                owner, ticket, dpi, is_current)
+            else:
+                future = _PREVIEW_WORKER.submit(_prepare_raster_page, owner, ticket, dpi, is_current)
+        except Exception:
+            _PREVIEW_SLOT.release()
+            return
+        state['raster_running'] = (key, ticket, future)
+        return
+
+
+def _background_preparation_pending(state, section):
+    """Keep visible heartbeat alive through queued work and admission retries."""
+    if not state.get('visible', {}).get(section):
+        return False
+    if state.get('raster_running'):
+        return True
+    running = state.get('running')
+    if running and running[0] in state.get('preparing', ()):
+        return True
+    if any(eligible(state, key) for key in state.get('queue', {})):
+        return True
+    # A busy worker clears running before its retry deadline. Missing warm
+    # pages still need a receipt even when there is no next included section.
+    for key in state.get('preparation_order', ()):
+        if not state.get('visible', {}).get(key):
+            continue
+        entry = _current_entry(state, key)
+        ticket = entry.get('ticket') if entry and not entry.get('error') else None
+        if (not isinstance(ticket, PreviewTicket) or ticket.pages <= 1
+                or ticket.key in state.get('raster_limited', ())):
+            continue
+        dpi = _preparation_dpi(state, key, ticket)
+        warm = STORE.prepared_pages(state['owner'], ticket, dpi=dpi)
+        if warm is not None and len(warm) < ticket.pages:
+            return True
+    return False
+
+
 def _advance_preview_queue(state):
     running = state.get('running')
     if running and running[2].done():
@@ -125,12 +241,12 @@ def _advance_preview_queue(state):
         # Fingerprint equality alone is insufficient after A -> B -> A while
         # A#1 is in flight. Only the exact admitted request generation can
         # publish A#3's result, including its labels and raster ticket.
-        if (state['wanted'].get(section) == fingerprint
+        if (eligible(state, section) and state['wanted'].get(section) == fingerprint
                 and state.get('generations', {}).get(section, 0)
                     == state.get('running_generation', 0)):
             if entry.get('busy'):
                 request = state.get('running_request')
-                if request is not None and _is_visible(state, section):
+                if request is not None and eligible(state, section):
                     state['queue'].setdefault(section, request)
                     state['retry_after'] = monotonic() + 2
             else:
@@ -146,21 +262,29 @@ def _advance_preview_queue(state):
         state.pop('running_request', None)
         state.pop('running_generation', None)
         _bound_ordered_preview_cache(state)
+    _advance_raster_preparation(state)
+    if state.get('raster_running') and not any(
+            _is_visible(state, key) for key in state.get('queue', {})):
+        return
+    refresh_preparation(state)
     for section, request in list(state['queue'].items()):
-        if state['wanted'].get(section) != request[0] or not _is_visible(state, section):
+        if state['wanted'].get(section) != request[0] or not eligible(state, section):
             del state['queue'][section]
     if state.get('running') or not state['queue'] or monotonic() < state.get('retry_after', 0):
         return
-    ready = next((section for section in state['queue']
+    priority = sorted(state['queue'], key=lambda key: not _is_visible(state, key))
+    ready = next((section for section in priority
                   if monotonic() >= state.get('ready_after', {}).get(section, 0)), None)
     if ready is None or not _PREVIEW_SLOT.acquire(blocking=False):
         return
     fingerprint, draft, assets, title = state['queue'].pop(ready)
     owner = state.setdefault('owner', uuid4().hex)
+    generation = state.get('generations', {}).get(ready, 0)
     def is_current():
         return (state.get('owner') == owner and
                 state.get('wanted', {}).get(ready) == fingerprint and
-                _is_visible(state, ready))
+                state.get('generations', {}).get(ready, 0) == generation and
+                eligible(state, ready))
     try:
         # When the hidden QA workflow is active, the worker must inherit its
         # physical storage namespace. Ordinary live scheduling is unchanged.
@@ -179,7 +303,7 @@ def _advance_preview_queue(state):
     else:
         state['running'] = (ready, fingerprint, future)
         state['running_request'] = (fingerprint, draft, assets, title)
-        state['running_generation'] = state.get('generations', {}).get(ready, 0)
+        state['running_generation'] = generation
 
 
 def _ordered_preview_state(prefix):
@@ -257,6 +381,7 @@ def _viewport_changed(prefix, section, widget_key):
         _discard(state, prior)
     else:
         _enqueue_visible(state, section)
+    refresh_preparation(state)
 
 
 def _poll_changed(prefix, section, widget_key):
@@ -401,6 +526,7 @@ def _render_ordered_preview(section_key, prefix, title):
                 ticket=ticket, images=images, status=status, stale=stale,
                 acknowledged_viewport=_current_page_request(state, section_key, ticket),
                 pending=pending,
+                background_pending=_background_preparation_pending(state, section_key),
                 on_poll=_scoped_callback(_poll_changed, prefix, section_key, widget_key),
                 on_change=_scoped_callback(_viewport_changed, prefix, section_key, widget_key))
 
@@ -466,7 +592,10 @@ def render_ordered_section_preview(draft, section_key, assets, prefix):
     except Exception:
         st.warning('The section preview is unavailable. Your edits are still here.')
         return None
+    state['preparation_order'] = ('cover',) + tuple(
+        section.key for section in draft.sections if section.included)
     _register_preview_request(state, section_key, fingerprint, draft, assets, title)
+    refresh_preparation(state)
     _enqueue_visible(state, section_key)
     _advance_preview_queue(state)
     # Component polling reruns only its preview fragment while visible and

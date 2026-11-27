@@ -127,11 +127,13 @@ OUTPUT_READY = r'''wanted => {
 }'''
 
 
-def click_ready_native_output(page, prior):
+def click_ready_native_output(page, prior, *, before_click=None):
     """One native helper click; readiness shares its existing 30-second budget."""
     import time
     deadline = time.monotonic() + 30
     page.wait_for_function(OUTPUT_READY, arg={key: prior[key] for key in ('scope', 'generation', 'sequence')}, timeout=30000)
+    if before_click is not None:
+        before_click()
     remaining = (deadline - time.monotonic()) * 1000
     if remaining <= 0:
         raise TimeoutError('Synthetic native output readiness exhausted click deadline')

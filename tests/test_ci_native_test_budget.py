@@ -134,6 +134,9 @@ def validate_water_row_relocation(text, jobs, original):
 
 
 def validate_workflow(text):
+    from test_water_row_workflow_partition import before_dom_runtime_allowance
+    original_text = text
+    text = before_dom_runtime_allowance(text)
     jobs = parse_jobs(text)
     original = json.loads((ROOT / 'tests/fixtures/native_workflow_steps.json').read_text())
     # The contact journey moves intact to its own mandatory bounded job.
@@ -141,7 +144,7 @@ def validate_workflow(text):
     assert len(contact) == 1
     original['synthetic-dom'] = [step for step in original['synthetic-dom'] if step not in contact]
     validate_fresh_water_relocation(text, jobs, original)
-    validate_water_row_relocation(text, jobs, original)
+    validate_water_row_relocation(original_text, jobs, original)
     ceilings = {'literal-labels':10, 'synthetic-history':15, 'synthetic-progress-photos':15, 'synthetic-dom':25, 'training-date':15}
     for name, ceiling in ceilings.items():
         chunks = jobs[name]
@@ -173,7 +176,8 @@ def test_workflow_separates_setup_from_original_aggregate_test_budgets():
 
 
 @pytest.mark.parametrize(('old', 'new'), [
-    ('--minutes 25', '--minutes 26'),
+    ('--minutes 26 --command-minutes 25', '--minutes 27 --command-minutes 25'),
+    ('--command-minutes 25', '--command-minutes 26'),
     ('timeout-minutes: 26', 'timeout-minutes: 999'),
     ("EPC_MONTHLY_WATER_TASK: '1'", "EPC_MONTHLY_WATER_TASK: '0'"),
     ("python scripts/ci_native_test_budget.py --minutes 25", "cat"),
@@ -275,3 +279,23 @@ def test_fresh_water_duplicate_or_missing_mandatory_job_is_rejected():
     for changed in (text.replace(lane, ''), text + lane):
         with pytest.raises(AssertionError):
             validate_workflow(changed)
+
+
+def test_dom_allowance_adds_exactly_sixty_seconds_without_reset(tmp_path):
+    path = tmp_path / 'deadline'
+    assert budget.remaining_budget(path, 26 * 60, 100) == 1560
+    assert budget.remaining_budget(path, 26 * 60, 1600) == 60
+    assert budget.remaining_budget(path, 26 * 60, 1661) == 0
+    with pytest.raises(ValueError):
+        budget.remaining_budget(path, 27 * 60, 1600)
+
+
+def test_about_disposable_downloads_do_not_rerun_guided_preparation():
+    import ast
+    tree = ast.parse((ROOT / 'scripts/workspace_logo_refresh_observations.py').read_text())
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+             and isinstance(node.func, ast.Attribute) and node.func.attr == 'download_button']
+    assert len(calls) == 2
+    for call in calls:
+        options = {item.arg: ast.literal_eval(item.value) for item in call.keywords}
+        assert options['on_click'] == 'ignore'

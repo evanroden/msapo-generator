@@ -36,6 +36,7 @@ from app import monthly_report_library as library, monthly_report_import as docx
 from app import monthly_report_pdf_reader as pdf_reader
 from app import monthly_source_parse_manifest as parse_manifest
 from app.content_cache import ContentDigests
+from app.extracted_text import normalize_extracted_text
 from app.monthly_latency_spans import measure_span, record_span
 from app.monthly_report_docx import ReportImage, normalize_report_image
 from app.monthly_report_import import inspect_docx, read_import_image
@@ -223,6 +224,18 @@ def suggest_facts(source: ReportSource, profile: ReportProfile) -> ReportSource:
                 ("Training", ("training", "safety briefing")),
                 ("Vendor service", ("service report", "service visit", "maintenance report")))
     hits = [kind for kind, terms in patterns if any(term in sample for term in terms)]
+    # A document's own title decides its type. A vendor service report that
+    # mentions a quote or a water reading in its body is still a service
+    # report; the body words alone made it "Reference only", which left its
+    # completed work unrouted. Conflicting titles keep the word count rule.
+    from app.monthly_report_pre_model_routing import title_source_type
+    titled, titles = title_source_type(text)
+    title_text = "\n".join(titles).casefold()
+    # A title that itself names two types ("Utility analysis and maintenance
+    # report") is still mixed and waits for a person to choose.
+    if titled and [kind for kind, terms in patterns
+                   if any(term in title_text for term in terms)] in ([], [titled]):
+        hits = [titled]
     classification = hits[0] if len(hits) == 1 else "Reference only"
     if not hits and source.suffix in ocr.SUPPORTED_IMAGE_SUFFIXES:
         classification = "Improvement / training photo"
@@ -1035,7 +1048,9 @@ def _ingest_locked(profile: ReportProfile, filename: str, raw: bytes | StagedUpl
                 extracted_chars = 0
                 from app.monthly_report_vendor_passages import block_spans, MAX_VENDOR_BLOCK_SPANS, passage_notice
                 for number, page in enumerate(pdf, 1):
-                    native = page.get_text().strip()
+                    # Ligatures/zero-width marks are made plain here and in every
+                    # geometry reader that is compared with this page text.
+                    native = normalize_extracted_text(page.get_text()).strip()
                     needs_ocr, review_notice = ocr._page_visual_decision(page, native_text=native)
                     reading = pdf_reader.read_page(
                         page, number, native_text=native,

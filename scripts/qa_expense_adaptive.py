@@ -325,6 +325,47 @@ def packet_journey(page, first, name):
           page.get_by_text('Synthetic expense generation count: 1',exact=True).count()==1)
 
 
+
+def portrait_continuity(page, first, name):
+    """Exercise real Expense fields beside their source through portrait reflow."""
+    original = dict(page.viewport_size)
+    field = first.get_by_label('Description / business purpose *', exact=True).first
+    expect(field).to_be_focused()
+    before = field.evaluate("""node => {
+        window.__expensePortraitField = node;
+        return {value:node.value,start:node.selectionStart,end:node.selectionEnd};
+    }""")
+    source_before = preview_position(first)
+    try:
+        for width, height in ((669,885),(885,669),(669,420),(390,844),(320,700),(669,885)):
+            page.set_viewport_size({'width':width,'height':height})
+            mode(page,'compact' if width < 600 else 'wide')
+            page.wait_for_function('''() => {
+                const node=window.__expensePortraitField,box=node?.getBoundingClientRect();
+                return box && box.top>=0 && box.bottom<=innerHeight-7;
+            }''')
+            expect(field).to_be_focused()
+            observed = field.evaluate("""node => ({same:node===window.__expensePortraitField,
+                value:node.value,start:node.selectionStart,end:node.selectionEnd})""")
+            check(name+f' portrait {width}x{height} retains exact native editing state',
+                  observed.pop('same') and observed == before, observed)
+            editor = first.locator('.epc-workspace-editor').bounding_box()
+            reference = first.locator('.epc-workspace-reference').bounding_box()
+            source_after = preview_position(first)
+            check(name+f' portrait {width}x{height} keeps matching source beside editor',
+                  (width < 600 or editor['x']+editor['width'] <= reference['x']+2)
+                  and source_before['page']==source_after['page']
+                  and source_before['scope']==source_after['scope']
+                  and page.evaluate('document.documentElement.scrollWidth<=innerWidth+2'),
+                  {'editor':editor,'reference':reference,'source':source_after})
+            if width >= 600:
+                loaded_page(first,1)
+            page.screenshot(path=str(OUT/f'{name}-portrait-{width}-{height}.png'))
+    finally:
+        page.set_viewport_size(original)
+        mode(page,'wide')
+
+
 def run(browser_type,name):
     browser=browser_type.launch(headless=True)
     page=browser.new_page(viewport={'width':1440,'height':1000})
@@ -436,6 +477,7 @@ def run(browser_type,name):
         inject(page,None);mode(page,'wide')
         expect(amount).to_have_value('13.25')
         check(name+' split preserved',first.get_by_label('Split this receipt into multiple reimbursement lines',exact=True).is_checked())
+        portrait_continuity(page,first,name)
         packet_journey(page,first,name)
         mileage=browser.new_page(viewport={'width':1180,'height':820})
         wire.attach(mileage)
@@ -445,6 +487,10 @@ def run(browser_type,name):
         expect(mileage.get_by_label('Business miles *',exact=True)).to_be_visible()
         check(name+' mileage-only has actual trip review',mileage.get_by_text('Current trips and reimbursement',exact=True).count()==1)
         mileage.screenshot(path=str(OUT/f'{name}-mileage-only.png'))
+        from workspace_touch_acceptance import exercise_touch_targets
+        EVIDENCE.setdefault('touch_targets',{})[name]=exercise_touch_targets(page,output=OUT,name=name)
+        from workspace_text_acceptance import exercise_larger_text
+        EVIDENCE.setdefault('larger_text',{})[name]=exercise_larger_text(page,first.get_by_label('Reimbursable amount *',exact=True).first,output=OUT,name=name)
         check(name+' no browser errors',not errors,errors)
         check(name+' zero external browser requests',not blocked,blocked)
     except Exception:

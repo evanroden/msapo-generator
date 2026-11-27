@@ -92,7 +92,7 @@ def test_native_browser_regression_remains_in_hosted_dom_job():
     step = workflow.split("      - name: Native sidebar visibility and pointer/keyboard navigation\n", 1)[1].split("      - ", 1)[0]
     assert "if: ${{ !cancelled() }}" in step
     assert "timeout-minutes: 26" in step
-    assert "python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'" in step
+    assert "python scripts/ci_native_test_budget.py --minutes 26 --command-minutes 25 <<'NATIVE_TEST'" in step
     assert "          python scripts/qa_sidebar_navigation.py\n          NATIVE_TEST" in step
 
 

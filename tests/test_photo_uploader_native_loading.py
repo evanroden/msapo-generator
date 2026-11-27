@@ -37,7 +37,9 @@ def test_collapsed_label_reserves_dropzone_only_at_both_widths():
 def test_visible_label_retains_exact_existing_styles():
     css, = css_for('visible')
     # Frozen baseline bytes protect existing shared source upload slots.
-    assert hashlib.sha256(css.encode()).hexdigest() == BASELINE_VISIBLE_SHA
+    original = css.split('@media(max-width:900px),(pointer:coarse){')[0] + '</style>'
+    assert hashlib.sha256(original.encode()).hexdigest() == BASELINE_VISIBLE_SHA
+    assert 'height:7.65rem' in css
 
 
 @pytest.mark.parametrize('visibility', ['visible', 'collapsed'])

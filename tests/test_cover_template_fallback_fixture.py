@@ -12,7 +12,7 @@ def test_synthetic_source_hits_real_native_budget_not_upload_budget(tmp_path):
     from app.monthly_report_compatibility_view import MAX_VIEW_SOURCE_BYTES
     from app.monthly_report_source_view_runtime import derive_import_view
     source=make_source(tmp_path)
-    assert MAX_VIEW_SOURCE_BYTES==24*1024*1024
+    assert MAX_VIEW_SOURCE_BYTES==32*1024*1024
     assert MAX_VIEW_SOURCE_BYTES < source.stat().st_size < MAX_DOCX_BYTES
     inspection=inspect_docx(source)
     assert any(i.kind=='unsupported' for i in inspection.items)
@@ -52,7 +52,7 @@ app.session_state['_monthly_dom_app_test_token']='d'*32
 app.run();assert not app.exception
 next(b for b in app.button if b.label=='Install synthetic independent template').click().run()
 assert not app.exception,[e.message for e in app.exception]
-assert any('limited to 24 MiB' in w.value for w in app.warning)
+assert any('limited to 32 MiB' in w.value for w in app.warning)
 radio=next(r for r in app.radio if r.key.endswith('_section_activity_action'))
 radio.set_value('Edit text or change pictures').run()
 next(t for t in app.text_area if t.label=='Work completed this month').set_value(EDITED).run()

@@ -5,7 +5,7 @@ Word rendition, not equivalent pixels. Original inspection and every original
 ID remain immutable audit data; a separate occurrence map binds the rendition.
 A receipt is evidence only: consumers must rederive it from the original.
 """
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from copy import deepcopy
 from dataclasses import asdict, dataclass
 import hashlib
@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 import re
 from tempfile import TemporaryDirectory
+from threading import RLock
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from app.image_open import open_image
@@ -34,7 +35,9 @@ IMAGE_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships
 DPI_URI = '{28A0092B-C50C-407E-A947-70E740481C1C}'
 MAX_COORD = 50_000_000
 # Narrow prototype envelope, not the importer's much larger general limits.
-MAX_VIEW_SOURCE_BYTES = 24 * 1024 * 1024
+# Source admission may exceed the old 24 MiB envelope while the tighter
+# expanded/XML/media/complexity limits below still bound actual processing.
+MAX_VIEW_SOURCE_BYTES = 32 * 1024 * 1024
 MAX_VIEW_EXPANDED_BYTES = 32 * 1024 * 1024
 MAX_VIEW_XML_BYTES = 20 * 1024 * 1024
 MAX_VIEW_MEDIA_BYTES = 16 * 1024 * 1024
@@ -448,11 +451,49 @@ class CompatibilityView:
         return _hash(self.receipt_bytes)
 
 
+# Every Streamlit click reruns the page, and each rerun used to rebuild this
+# view twice from the same bytes (about 8 seconds for a large monthly report).
+# The derivation is a pure function of the bytes, so the result is keyed by the
+# SHA-256 of exactly those bytes and the limits in force. A changed or
+# replaced file, or a changed limit, is derived again; callers still compare
+# the full view for equality.
+_VIEW_CACHE = OrderedDict()
+_VIEW_CACHE_LOCK = RLock()
+_VIEW_CACHE_SIZE = 2
+
+
+def _limits_in_force():
+    """Every whole-number setting of this module (budgets, version, bounds)."""
+    return tuple(sorted((name, value) for name, value in globals().items()
+                        if name.isupper() and type(value) is int))
+
+
+def clear_view_cache():
+    with _VIEW_CACHE_LOCK:
+        _VIEW_CACHE.clear()
+
+
 def derive_compatibility_view(original_bytes):
     """Pure default-off derivation; no original or persistent state is written."""
     if not isinstance(original_bytes, bytes):
         _fail('source byte budget/type')
     _budget('source byte budget', len(original_bytes), MAX_VIEW_SOURCE_BYTES)
+    key = (len(original_bytes), _hash(original_bytes), _limits_in_force())
+    with _VIEW_CACHE_LOCK:
+        cached = _VIEW_CACHE.get(key)
+        if cached is not None:
+            _VIEW_CACHE.move_to_end(key)
+            return cached
+    view = _derive_compatibility_view(original_bytes)
+    with _VIEW_CACHE_LOCK:
+        _VIEW_CACHE[key] = view
+        _VIEW_CACHE.move_to_end(key)
+        while len(_VIEW_CACHE) > _VIEW_CACHE_SIZE:
+            _VIEW_CACHE.popitem(last=False)
+    return view
+
+
+def _derive_compatibility_view(original_bytes):
     with TemporaryDirectory(prefix='native-view-') as temporary:
         source = Path(temporary)/'original.docx'; source.write_bytes(original_bytes)
         with _package(source) as budget_archive:

@@ -20,6 +20,13 @@ CSS = """
 .report-preview-page img { position:absolute; inset:0; display:block; width:100%; height:100%; }
 .report-preview-placeholder { position:absolute; inset:20px; color:#64746d; text-align:center; }
 .report-preview figcaption { text-align:center; padding-top:7px; }
+@media (prefers-color-scheme:dark) {
+ .report-preview {color:#D6E7DF;}
+ .report-preview-scroll {background:#182A23;}
+ .report-preview-retry {background:#20342C;color:#EDF5F0;border-color:#9EBDB2;}
+ .report-preview-placeholder {color:#40524a;}
+}
+
 """
 HTML = '<div class="report-preview"><div class="report-preview-header"><span class="report-preview-status" role="status" aria-live="polite"></span><span class="report-preview-position" aria-label="Visible page"></span><button type="button" class="report-preview-retry" data-action="retry-request" hidden>Retry preview</button></div><div class="report-preview-scroll" tabindex="0" aria-label="Report preview — scroll to read all pages"></div></div>'
 JS = r"""
@@ -338,6 +345,14 @@ export default function(component) {
             figure.style.width = width + 'px';
             figure.style.marginInline = 'auto';
         });
+        // Let the final native page reach the reading line in a tall, narrow
+        // pane. Otherwise scroll clamping leaves the blank tail of its preceding
+        // divider above the requested content page. Keep every page reachable.
+        const finalPage = scroll.querySelectorAll('figure');
+        const finalBounds = finalPage.length ? finalPage[finalPage.length-1].getBoundingClientRect() : null;
+        const finalHeight = finalBounds ? finalBounds.bottom-finalBounds.top : 0;
+        const trailing = Math.max(12, scroll.clientHeight-finalHeight-16)+'px';
+        if (scroll.style.paddingBottom !== trailing) scroll.style.paddingBottom = trailing;
         if (state.restore && pagesKnown) {
             const figure = scroll.querySelector('figure[data-index="'+state.page+'"]');
             if (figure) scroll.scrollTop = figure.offsetTop - scroll.offsetTop + (state.offset || 0);
@@ -375,7 +390,7 @@ export default function(component) {
     function pollWhenPending() {
         if (pollTimer !== null) clearTimeout(pollTimer);
         pollTimer = null;
-        if (!active || frameworkBusy() || !data.pending || !visibleNow()) return;
+        if (!active || frameworkBusy() || !(data.pending || data.backgroundPending) || !visibleNow()) return;
         pollTimer = setTimeout(() => {
             pollTimer = null;
             if (!active || frameworkBusy() || !visibleNow()) return;
@@ -465,7 +480,16 @@ export default function(component) {
         }
     }, {rootMargin:'120px 0px', threshold:0.01});
     observer.observe(panel);
-    const resize = new ResizeObserver(() => {sizePages(); changed();});
+    // Padding changes the observed content box. Defer these writes out of
+    // ResizeObserver delivery so WebKit does not report an observation loop.
+    let resizeFrame = null;
+    const resize = new ResizeObserver(() => {
+        if (!active || resizeFrame !== null) return;
+        resizeFrame = requestAnimationFrame(() => {
+            resizeFrame = null;
+            if (active) {sizePages(); changed();}
+        });
+    });
     resize.observe(scroll);
     scroll.addEventListener('scroll', changed, {passive:true});
     function layoutChanged() {sizePages();changed();}
@@ -499,6 +523,8 @@ export default function(component) {
         workspace?.removeEventListener('epc-workspace-layout', layoutChanged);
         document.removeEventListener('visibilitychange', changed);
         resize.disconnect();
+        if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
+        resizeFrame = null;
         scroll.removeEventListener('scroll', changed);
         if (timer !== null) clearTimeout(timer);
         timer = null;
@@ -533,7 +559,7 @@ def _preview_component(_runtime):
     return st.components.v2.component('report_preview_surface', html=HTML, css=CSS, js=JS)
 
 
-def render_view(*, key, generation, title, ticket=None, images=(), status='', stale=False, on_change, view_scope=None, pending=False, on_poll=None, acknowledged_viewport=None, focus_on_open=False):
+def render_view(*, key, generation, title, ticket=None, images=(), status='', stale=False, on_change, view_scope=None, pending=False, on_poll=None, acknowledged_viewport=None, focus_on_open=False, background_pending=False):
     view = _preview_component(Runtime.instance())
     applied = acknowledged_viewport or {'visible': False, 'pages': (0,), 'dpi': 96}
     # The native container arrives before the asynchronous browser component.
@@ -544,6 +570,7 @@ def render_view(*, key, generation, title, ticket=None, images=(), status='', st
             'generation': generation, 'title': title, 'viewScope': str(view_scope or key), 'ready': ticket is not None and not stale, 'stale': bool(stale),
             'focusOnOpen': bool(focus_on_open),
             'sizes': ticket.sizes if ticket else (), 'status': status, 'pending': bool(pending),
+            'backgroundPending': bool(background_pending),
             'initialPage': ticket.initial_page if ticket else 0,
             'ticketKey': ticket.key if ticket else None,
             'acknowledgedViewport': {'visible': bool(applied['visible']), 'pages': list(applied['pages']),

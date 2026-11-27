@@ -144,3 +144,11 @@ reserve_period_selector(' test</style> key ', '</style><script>synthetic</script
     monkeypatch.setattr(loading.st, '__version__', 'future-unreviewed')
     app.run()
     assert not app.exception and not app.get('html')
+
+
+def test_compact_empty_upload_reservation_matches_enlarged_native_dropzone():
+    app = AppTest.from_string(APP).run()
+    css = app.get("html")[1].proto.body
+    assert '@media(max-width:900px),(pointer:coarse)' in css
+    assert 'height:4.5rem' in css and 'height:7.65rem' in css
+    assert 'button' not in css and 'input' not in css
