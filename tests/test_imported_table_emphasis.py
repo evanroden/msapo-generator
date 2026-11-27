@@ -149,3 +149,38 @@ def test_content_controlled_plain_row_cannot_shift_bold_identity(tmp_path):
     assert item.table_bold_rows == (2,)
     table, _ = table_without_prices(item)
     assert table.bold_rows == ((1,('Synthetic B','OK')),)
+
+
+@pytest.mark.parametrize('value', ['0', 'false', 'off'])
+def test_explicitly_visible_bold_source_rows_keep_emphasis(tmp_path, value):
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    path = source(tmp_path)
+    doc = Document(path)
+    for cell in doc.tables[0].rows[1].cells:
+        hidden = OxmlElement('w:vanish')
+        hidden.set(qn('w:val'), value)
+        cell.paragraphs[0].runs[0]._r.get_or_add_rPr().append(hidden)
+    doc.save(path)
+    item = next(i for i in inspect_docx(path).items if i.kind == 'table')
+    assert item.table_bold_rows == (1,)
+    table, _ = table_without_prices(item)
+    target = next(t for t in render(table).tables if t.cell(0,0).text == 'Equipment')
+    assert all(run.bold for cell in target.rows[1].cells for p in cell.paragraphs for run in p.runs)
+
+
+@pytest.mark.parametrize('value', [None, '1', 'true', 'on'])
+def test_enabled_hidden_property_never_promotes_row(value):
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    from app.monthly_report_word_table_bands import explicit_bold_rows
+    doc = Document()
+    table = doc.add_table(rows=1, cols=1)
+    table.cell(0,0).text = 'Synthetic'
+    run = table.cell(0,0).paragraphs[0].runs[0]
+    run.bold = True
+    hidden = OxmlElement('w:vanish')
+    if value is not None:
+        hidden.set(qn('w:val'), value)
+    run._r.get_or_add_rPr().append(hidden)
+    assert explicit_bold_rows(table._tbl) == ()

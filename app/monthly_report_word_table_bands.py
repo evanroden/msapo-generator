@@ -125,7 +125,10 @@ def explicit_bold_rows(table, *, children=None):
             continue
         def bold(run):
             props = run.find(W + 'rPr')
-            if props is None or props.find(W + 'vanish') is not None:
+            if props is None:
+                return False
+            hidden = props.find(W + 'vanish')
+            if hidden is not None and hidden.get(W + 'val', '1').casefold() not in ('0', 'false', 'off'):
                 return False
             flag = props.find(W + 'b')
             return flag is not None and flag.get(W + 'val', '1').casefold() in ('1', 'true', 'on')
