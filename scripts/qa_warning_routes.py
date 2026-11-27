@@ -648,6 +648,11 @@ def main():
                 process.terminate()
                 try:process.wait(timeout=20)
                 except subprocess.TimeoutExpired:process.kill();process.wait(timeout=5)
+                # Preserve bounded read-only handler receipts before the marked
+                # disposable root is deleted, including failed native cases.
+                observations=base/'synthetic-final-action-receipts.jsonl'
+                if observations.is_file():
+                    shutil.copy2(observations,OUT/'synthetic-final-action-receipts.jsonl')
                 REPORT['result']='passed' if all_cases_passed(REPORT) else 'failed'
                 (OUT/'results.json').write_text(json.dumps(REPORT,indent=2))
     if not all_cases_passed(REPORT):raise AssertionError('Warning-native acceptance incomplete: '+str(REPORT['failures']))

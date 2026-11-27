@@ -38,7 +38,10 @@ def conversion_slot(*, wait_seconds=10):
             try:
                 from app.office_process import OfficeCleanupPending, require_idle
                 try:
-                    require_idle()
+                    # The caller already declared it will wait this long for
+                    # admission; spend a bounded part of that budget waiting
+                    # for a previous conversion that is still stopping.
+                    require_idle(wait_seconds=wait_seconds)
                 except OfficeCleanupPending as exc:
                     raise RenderBusy(str(exc)) from exc
                 _CONVERSION_LOCAL.active = True

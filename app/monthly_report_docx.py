@@ -385,7 +385,8 @@ def estimated_output_ranges(estimated_bytes: int) -> tuple[tuple[int, int], tupl
 
 def _picture(document, raw: bytes, *, width: float = 7, height: float = 8,
              inset: float = 0, page_break_before: bool = False,
-             keep_with_next: bool = False, alt_text: str = "") -> None:
+             keep_with_next: bool = False, alt_text: str = "",
+             center_frame_height: float | None = None) -> None:
     paragraph = document.add_paragraph()
     paragraph.paragraph_format.left_indent = Inches(inset)
     paragraph.paragraph_format.space_after = Pt(0)
@@ -396,6 +397,15 @@ def _picture(document, raw: bytes, *, width: float = 7, height: float = 8,
         # caption paragraph that follows it; otherwise the renderer can
         # leave an orphan caption alone on the next page.
         paragraph.paragraph_format.keep_with_next = True
+    if center_frame_height is not None:
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        with open_image(BytesIO(raw), formats=("JPEG", "PNG")) as image:
+            scale = min(width / image.width, height / image.height)
+            picture_height = image.height * scale
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        paragraph.paragraph_format.right_indent = Inches(inset)
+        paragraph.paragraph_format.first_line_indent = Inches(0)
+        paragraph.paragraph_format.space_before = Inches(max(0, (center_frame_height - picture_height) / 2))
     _fit_picture(paragraph.add_run(), raw, width, height, alt_text=alt_text)
 
 
@@ -786,7 +796,11 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
                 else:
                     _picture(document, raw,
                              page_break_before=page > 0 or (workflow_starts_page and not text_items),
-                             keep_with_next=bool(captions[index]), alt_text=diagram_alt)
+                             keep_with_next=bool(captions[index]), alt_text=diagram_alt,
+                             center_frame_height=(8.5 if page == 0 else 9.5)
+                             if (spec.key in ("org_chart", "contact_matrix")
+                                 and not captions[index] and not block.text.strip()
+                                 and not block.rows) else None)
                     if captions[index]:
                         document.add_paragraph(captions[index], style="Caption")
                     index += 1

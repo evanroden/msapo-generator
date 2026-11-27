@@ -12,7 +12,7 @@ from app import monthly_report_render_jobs as jobs
 def test_reclaim_only_runs_inside_a_preview_conversion_lease(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(jobs, "_root", lambda: tmp_path)
-    monkeypatch.setattr("app.office_process.require_idle", lambda: None)
+    monkeypatch.setattr("app.office_process.require_idle", lambda wait_seconds=0: None)
     monkeypatch.setattr(jobs, "_reclaim_preview_heap", lambda: calls.append("preview"))
     try:
         jobs._WORK_LOCAL.active = True
