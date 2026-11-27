@@ -6,7 +6,9 @@ on:
       - 'app/monthly_report_*.py'
       - 'app/*navigation.js'
       - 'app/workspace_layout*'
+      - 'app/workspace_initial.css'
       - 'scripts/qa_warning_routes.py'
+      - 'scripts/qa_navigation_attention_geometry.py'
       - 'scripts/workspace_warning_routes.py'
       - 'scripts/monthly_sequential_navigation.py'
       - 'tests/test_warning_routes_fixture.py'
@@ -20,7 +22,9 @@ on:
       - 'app/monthly_report_*.py'
       - 'app/*navigation.js'
       - 'app/workspace_layout*'
+      - 'app/workspace_initial.css'
       - 'scripts/qa_warning_routes.py'
+      - 'scripts/qa_navigation_attention_geometry.py'
       - 'scripts/workspace_warning_routes.py'
       - 'scripts/monthly_sequential_navigation.py'
       - 'tests/test_warning_routes_fixture.py'
@@ -68,6 +72,9 @@ jobs:
           assert len(root.findall('.//testcase')) >= 190, 'Missing warning acceptance cases'
           PY
           node --test tests/source_review_navigation_test.cjs tests/workspace_navigation_test.cjs tests/workspace_geometry_test.cjs tests/picture_correction_navigation_test.cjs tests/page_navigation_request_test.cjs
+      - name: Stable attention receipt native hit targets
+        timeout-minutes: 2
+        run: python scripts/qa_navigation_attention_geometry.py
       - name: Native wide-pointer and narrow-keyboard warning, persistence and output journeys
         timeout-minutes: 35
         run: |
