@@ -256,22 +256,56 @@ def test_pdf_page_operation_uses_one_original_read_plus_final_integrity(profile,
     from test_monthly_report_sources import pdf_bytes
     raw = pdf_bytes(3)
     content, _ = sources.ingest(profile, "three-pages.pdf", raw)
-    original = sources.source_bytes
-    read_calls = []
+    original, original_check = sources.source_bytes, sources._stream_verified_original
+    read_calls, check_calls = [], []
 
     def measured(*args, **kwargs):
         read_calls.append(args[1].sha256)
         return original(*args, **kwargs)
 
+    def checked(*args, **kwargs):
+        check_calls.append(args[1].sha256)
+        return original_check(*args, **kwargs)
+
     monkeypatch.setattr(sources, "source_bytes", measured)
+    monkeypatch.setattr(sources, "_stream_verified_original", checked)
     with sources._page_read_scope():
         first = [sources.page_image(profile, content, i, preview=True) for i in (1, 2, 3)]
-    assert len(read_calls) == 2  # Not one full original read per PDF page.
+    # One full original read for all three pages, then one streamed check.
+    assert (len(read_calls), len(check_calls)) == (1, 1)
     read_calls.clear()
+    check_calls.clear()
     with sources._page_read_scope():
         warm = [sources.page_image(profile, content, i, preview=True) for i in (1, 2, 3)]
     assert warm == first
-    assert len(read_calls) == 1  # Warm images still reauthenticate original.
+    # Warm images read no original, but it is still reauthenticated.
+    assert (len(read_calls), len(check_calls)) == (0, 1)
+
+
+def test_final_integrity_check_streams_a_large_original(profile):
+    """The exit check needs no bytes: a large DOCX must not be held in memory.
+
+    Reading the whole original to hash it peaked at 128 MiB for a 100 MiB DOCX
+    (Codex on #955). The streamed check keeps source_bytes' messages.
+    """
+    import os
+    import tracemalloc
+    big = os.urandom(24 * 1024 * 1024)
+    source = SimpleNamespace(sha256=sha256(big).hexdigest(), suffix=".docx")
+    path = sources._path(profile, source.sha256, source.suffix)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(big)
+    del big
+    tracemalloc.start()
+    try:
+        sources._stream_verified_original(profile, source)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 4 * 1024 * 1024, peak
+    path.write_bytes(b"same saved path, different bytes")
+    with pytest.raises(ValueError, match="failed its integrity check"):
+        sources._stream_verified_original(profile, source)
 
 
 def test_warm_prepared_page_refuses_original_replacement_before_publication(profile):

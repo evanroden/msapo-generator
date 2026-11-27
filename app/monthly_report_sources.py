@@ -118,6 +118,28 @@ def source_bytes(profile: ReportProfile, source: ReportSource, *, _digests: Cont
     return raw
 
 
+def _stream_verified_original(profile: ReportProfile, source: ReportSource) -> None:
+    """source_bytes' checks and messages, reading the original in 1 MiB chunks.
+
+    For a check whose bytes are not needed: reading the whole original to hash
+    it held a 100 MiB DOCX in memory at once (128 MiB peak, Codex on #955).
+    """
+    path = _path(profile, source.sha256, source.suffix)
+    limit = file_size_limit(source.suffix)
+    if path.stat().st_size > limit:
+        raise ValueError("Saved source exceeds the file limit. " + source_size_error(source.suffix, limit))
+    digest, total = hashlib.sha256(), 0
+    with path.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            total += len(chunk)
+            # The original may grow between stat and read: bound what is read.
+            if total > limit:
+                raise ValueError("Saved source exceeds the file limit. " + source_size_error(source.suffix, limit))
+            digest.update(chunk)
+    if digest.hexdigest() != source.sha256:
+        raise ValueError("A source file failed its integrity check.")
+
+
 def _date(value: str) -> str:
     for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y"):
         try:
@@ -1381,9 +1403,10 @@ def _page_read_scope():
         yield
         # Even an intact derived raster is never authority for a missing or
         # replaced original. Reverify each *used* source once on publication.
-        # One exit read per source replaces N independent page-read hashes.
+        # One exit check per source replaces N independent page-read hashes;
+        # it streams, so a large DOCX is not held in memory just to be hashed.
         for profile, source in scope["verified"].values():
-            source_bytes(profile, source)
+            _stream_verified_original(profile, source)
     finally:
         _PAGE_READS.reset(token)
 
