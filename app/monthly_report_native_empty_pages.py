@@ -74,7 +74,10 @@ def empty_scorecard_pages(original, sections):
             if (_boundary(node) and _physical_ending(node) and current and starts_page
                     and previous is not None and not _boundary(previous)):
                 runs.append((current, previous, node, True))
-            current, previous, starts_page = {}, node, True
+            # A logical transition or paragraph section property is not a
+            # proven physical page start. Only explicit standalone breaks below
+            # can restore that proof within the document.
+            current, previous, starts_page = {}, node, False
             continue
         if not _plain(node):
             current, previous, starts_page = {}, node, False

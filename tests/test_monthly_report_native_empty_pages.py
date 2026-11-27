@@ -89,7 +89,7 @@ def test_exact_native_table_survives_while_cleared_shared_pages_reflow(tmp_path)
             result=Document(BytesIO(raw))
             # Preview slicing replaces its terminal Word boundary, so that
             # tail stays conservative. Full-document roots retain exact proof.
-            assert len(list(result.element.iter(qn('w:br')))) == (1 if section else 0)
+            assert len(list(result.element.iter(qn('w:br')))) == (2 if section else 1)
             assert [[c.text for c in r.cells] for r in result.tables[0].rows]==[['Campus','Capacity'],['Synthetic Campus','123']]
             assert 'Old monthly' not in '\n'.join(p.text for p in result.paragraphs)
 
@@ -162,3 +162,11 @@ def test_boundary_with_current_payload_or_continuous_flow_does_not_end_page(guar
     pages=SimpleNamespace(live={boundary} if guard=='boundary-live' else set(),support=set(),headings=set())
     plan.apply(doc.element.body,pages,{old})
     assert len(list(doc.element.iter(qn('w:br'))))==1
+
+
+def test_logical_section_start_does_not_prove_page_is_empty():
+    doc=Document();current=doc.add_paragraph('Current previous section')._p;old=doc.add_paragraph('Old scorecard prose')._p;delimiter=doc.add_page_break()._p;doc.add_paragraph('Current table context')
+    roots=list(doc.element.body);sections={n:('activity' if n==1 else 'scorecards') for n in range(1,len(roots)+1)}
+    plan=empty_scorecard_pages(roots,sections);next(old.iter(qn('w:t'))).text=''
+    plan.apply(doc.element.body,SimpleNamespace(live={current},support=set(),headings=set()),{old})
+    assert len(list(delimiter.iter(qn('w:br'))))==1
