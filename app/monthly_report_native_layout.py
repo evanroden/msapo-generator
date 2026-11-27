@@ -1506,6 +1506,10 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             image_proofs.update({item.id: (block.key, value) for item, value in image_values})
             unchanged_items.update(item.id for item, _ in image_values)
     retained_images = defaultdict(set)
+    from app.monthly_report_native_empty_capital import raw_priority_prototypes, matches_priority_prototype
+    raw_priority_nodes = raw_priority_prototypes(Path(original_path)) if any(
+        b.key == "end_of_life" and b.source != "Omit" and any(t.rows for t in b.extra_tables)
+        for b in draft.blocks) else {}
     document = Document(BytesIO(source_view.rendition_bytes if source_view is not None else passive_docx(source_path)))
     exact_client_nodes, preserved_contents_nodes = set(), set()
     source_node_items = {node:item for node, attr, item in _header_image_occurrences(
@@ -1921,6 +1925,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     from app.monthly_report_native_empty_activity import empty_activity_panels
     empty_panels = empty_activity_panels(draft, original, section_by_pos, unchanged_positions, headings)
     cleared_roster_picture_tails = []
+    unused_priority_prototypes = []
     cleared_activity_paragraphs = set()
     from app.monthly_report_native_empty_pages import empty_scorecard_pages
     empty_scorecard_plan = empty_scorecard_pages(original, section_by_pos)
@@ -2051,6 +2056,9 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             native_shape = master_by_position.get(position)
             prototype = deepcopy(element)
             table_prototypes[table_slot].append((element, prototype))
+            if sec == "capital" and table_slot == "capital_renewal":
+                if matches_priority_prototype(element, raw_priority_nodes.get(position)):
+                    unused_priority_prototypes.append(element)
             if native_shape is not None and native_shape.slot == table_slot:
                 table_by_reference[native_shape.reference] = (element, prototype, native_shape)
 
@@ -2586,6 +2594,9 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                 body.remove(existing)
             body.append(closing)
             page_plan.owner[closing] = page_plan.owner[last_selected]
+
+    from app.monthly_report_native_empty_capital import remove_unused_priority_prototypes
+    remove_unused_priority_prototypes(draft, unused_priority_prototypes, body, page_plan, original, native_tables, context_table_refs)
 
     contact = next((block for block in draft.blocks if block.key == "contact_matrix"), None)
     if contact is not None and not contact.rows and not any(table.rows for table in contact.extra_tables):
