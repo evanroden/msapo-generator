@@ -60,7 +60,8 @@ def empty_scorecard_pages(original, sections):
     runs, current, previous, starts_page = [], {}, None, True
     for pos, node in enumerate(original, 1):
         if sections.get(pos) != 'scorecards' or _boundary(node):
-            if current and starts_page and previous is not None and not _boundary(previous):
+            if (_boundary(node) and current and starts_page
+                    and previous is not None and not _boundary(previous)):
                 runs.append((current, previous, node, True))
             current, previous, starts_page = {}, node, True
             continue

@@ -137,3 +137,13 @@ def test_new_extra_tail_break_is_not_covered_by_single_break_proof():
     delimiter=old.getprevious();run=OxmlElement('w:r');br=OxmlElement('w:br');br.set(qn('w:type'),'page');run.append(br);delimiter.append(run)
     plan.apply(doc.element.body,pages,{old})
     assert len(list(doc.element.iter(qn('w:br'))))==2
+
+
+def test_logical_section_change_is_not_an_empty_physical_page_ending():
+    doc=Document();doc.add_table(rows=1,cols=1).cell(0,0).text='Current thermal table';delimiter=doc.add_page_break()._p
+    old=doc.add_paragraph('Old utility prose')._p;heading=doc.add_heading('MBCX REPORTS',1)._p
+    roots=list(doc.element.body);sections={n:('scorecards' if n<=3 else 'mbcx') for n in range(1,len(roots)+1)}
+    plan=empty_scorecard_pages(roots,sections);next(old.iter(qn('w:t'))).text=''
+    pages=SimpleNamespace(live={heading},support=set(),headings={heading})
+    plan.apply(doc.element.body,pages,{old})
+    assert len(list(delimiter.iter(qn('w:br'))))==1
