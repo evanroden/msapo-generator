@@ -1003,6 +1003,12 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
         st.session_state.pop(original_token_key, None)
         return False
     _, path, inspection = staged
+    if optional_import:
+        st.warning(
+            "Starting report review is pending. This review has not changed your report. "
+            "The editors still show your current report; source previews may show the pending file. "
+            "Finish this review to import it, or use Clear pending starting report in Starting report options. "
+            "Your current work and saved versions are unchanged by this file.")
     from app.monthly_report_start_file_card import render_loaded_file_card
 
     def _show_loaded_card(analysis=None, target=None, *, source_month_unconfirmed=False):
