@@ -12,6 +12,7 @@ from lxml import etree
 from app.monthly_report_xml_parser import parse_xml
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+MC = "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
 
 
 def contents_kind(root):
@@ -51,33 +52,83 @@ def contents_kind(root):
     return ""
 
 
+# The contents heading itself, as contents_kind() recognizes a static list.
+CONTENTS_HEADING = re.compile(r"\s*(?:table\s*of\s*)?contents\s*:?[\s.]*", re.I)
 # "Section 3: Monthly Scorecards", the form the native section numbering keeps
 # current (#902): it renumbers these lines and the divider pages when a section
 # is left out, and removes the left-out section's line.
-SECTION_ENTRY = re.compile(r"\s*Section\s+\d+\s*:\s*\S", re.I)
-# A page number at the end of a line, after a tab, dot leaders or an ellipsis.
-PAGE_NUMBER_TAIL = re.compile(r"(?:\t|\.{2,}|…)\s*\d{1,4}\s*$")
+SECTION_ENTRY = re.compile(r"\s*Section\s+\d+\s*:\s*(\S.*?)\s*", re.I)
+# A page number on its own, or ending a line: digits or a Roman numeral.
+PAGE_NUMBER = r"(?:\d{1,4}|[ivxlcdm]{1,7})"
+NUMBER_ONLY = re.compile(r"\s*" + PAGE_NUMBER + r"\s*", re.I)
+NUMBER_AT_END = re.compile(r"(?:^|[\s.\u2026])" + PAGE_NUMBER + r"$", re.I)
+
+
+def _own_text(paragraph):
+    """A paragraph's own text, with tab characters; not its text boxes' text.
+
+    A tab stop (pPr/tabs/tab) is layout, not text, and a text box's paragraphs
+    are read in their own turn.
+    """
+    parts = []
+    for node in paragraph.iter(W + "t", W + "tab"):
+        owner = node.getparent()
+        while owner is not None and owner.tag != W + "p":
+            owner = owner.getparent()
+        if owner is not paragraph:
+            continue
+        if node.tag == W + "t":
+            parts.append(node.text or "")
+        elif node.getparent().tag == W + "r":
+            parts.append("\t")
+    return "".join(parts)
+
+
+def _page_field(paragraph):
+    instructions = [node.get(W + "instr", "") for node in paragraph.iter(W + "fldSimple")]
+    instructions += [node.text or "" for node in paragraph.iter(W + "instrText")]
+    return any(re.search(r"\bPAGE(?:REF)?\b", value, re.I) for value in instructions)
 
 
 def section_titles_only(root):
-    """True when the contents name sections only and no line ends in a page number.
+    """True only for a contents list positively identified as section titles.
 
-    Such a list has nothing that can go stale: its titles and order are the
-    design's own, and its section numbers follow the report's sections. Any
-    line anywhere that ends in a page number keeps the warning.
+    That is: the contents heading, then nothing but "Section N: Title" lines
+    (blank lines allowed), each title a report section the importer
+    recognizes, with nothing after the title, none of them in a table and no
+    page field among them; and the first line after the list is not a page
+    number on its own. Such a list has nothing that can go stale: its titles
+    and order are the design's own and its numbers follow the report's
+    sections. Anything else keeps the warning (Codex on #1144: a page number
+    in another table cell, after a space or as a Roman numeral).
     """
+    from app.monthly_report_import import _heading
+
+    # A text box's legacy Fallback repeats its Choice; read each text once.
+    paragraphs = [paragraph for paragraph in root.iter(W + "p")
+                  if not any(ancestor.tag == MC + "Fallback" for ancestor in paragraph.iterancestors())]
+    texts = [_own_text(paragraph) for paragraph in paragraphs]
+    heading = next((index for index, text in enumerate(texts) if CONTENTS_HEADING.fullmatch(text)
+                    and text.strip()), None)
+    if heading is None:
+        return False
     entries = 0
-    for paragraph in root.iter(W + "p"):
-        if paragraph.find(".//" + W + "p") is not None:
-            continue  # Read a text box's own paragraphs, not their anchor.
-        # A tab character is its own element in a run; keep it, so "Title<tab>3"
-        # shows. A tab *stop* (pPr/tabs/tab) is layout, not text.
-        text = "".join((node.text or "") if node.tag == W + "t"
-                       else ("\t" if node.getparent().tag == W + "r" else "")
-                       for node in paragraph.iter(W + "t", W + "tab"))
-        if PAGE_NUMBER_TAIL.search(text):
+    for paragraph, text in zip(paragraphs[heading + 1:], texts[heading + 1:]):
+        if _page_field(paragraph):
             return False
-        entries += bool(SECTION_ENTRY.match(text))
+        if not text.strip():
+            continue
+        match = SECTION_ENTRY.fullmatch(text)
+        if match is None:
+            # The list has ended. A page number listed apart from the titles,
+            # e.g. in a frame after them, keeps the warning.
+            return entries > 0 and not NUMBER_ONLY.fullmatch(text)
+        title = match.group(1)
+        in_table = any(ancestor.tag == W + "tc" for ancestor in paragraph.iterancestors())
+        if (in_table or NUMBER_AT_END.search(title)
+                or _heading(title) in (None, "unmatched")):
+            return False
+        entries += 1
     return entries > 0
 
 

@@ -125,27 +125,86 @@ def test_section_list_with_page_numbers_keeps_the_warning(tmp_path, monkeypatch)
     assert "titles, order and page numbers are not recalculated" in result.contents_notice
 
 
-@pytest.mark.parametrize("line,expected", [
-    ("Section 3: Monthly Scorecards", True),
-    ("Section 3: Monthly Scorecards\t7", False),
-    ("Section 3: Monthly Scorecards ........ 7", False),
-    ("Section 3: Monthly Scorecards … 7", False),
-    ("Monthly Scorecards", False),  # No section line: nothing the numbering keeps.
+def _contents(lines, *, after="ORGANIZATIONAL CHART"):
+    document = Document()
+    document.add_paragraph("Synthetic Site")
+    document.add_paragraph("TABLE OF CONTENTS")
+    for line in lines:
+        paragraph = document.add_paragraph()
+        if line.startswith("Section "):
+            number, rest = line.split(":", 1)
+            paragraph.add_run(number).bold = True  # The owner's coloured number run.
+            paragraph.add_run(":" + rest)
+        else:
+            paragraph.add_run(line)
+        # A right-aligned dot-leader tab stop is layout, not a page number.
+        stops, stop = OxmlElement("w:tabs"), OxmlElement("w:tab")
+        for name, value in (("w:val", "right"), ("w:leader", "dot"), ("w:pos", "9350")):
+            stop.set(qn(name), value)
+        stops.append(stop)
+        paragraph._p.get_or_add_pPr().append(stops)
+    document.add_paragraph(after)
+    return document
+
+
+@pytest.mark.parametrize("lines,expected", [
+    (["Section 1: Organizational Chart", "", "Section 2: Monthly Activity Summary",
+      "Section 11: Training Summary"], True),
+    (["Section 1: Organizational Chart\t3"], False),              # Tab, then a page number.
+    (["Section 1: Organizational Chart ........ 3"], False),       # Dot leaders.
+    (["Section 1: Organizational Chart \u2026 3"], False),        # Ellipsis.
+    (["Section 1: Organizational Chart 3"], False),                # Codex: after a space.
+    (["Section 1: Organizational Chart\tiii"], False),            # Codex: Roman numeral.
+    (["Section 1: Organizational Chart", "3"], False),            # A number listed apart.
+    (["Section 1: Not A Report Section"], False),                 # Title the importer cannot prove.
+    (["Monthly Activity Summary"], False),                        # No section lines at all.
 ])
-def test_only_title_lines_without_page_numbers_count_as_section_titles(line, expected):
+def test_only_a_positively_identified_title_list_counts(lines, expected):
+    from app.monthly_report_contents_review import section_titles_only
+    assert section_titles_only(_contents(lines).element) is expected
+
+
+def test_section_titles_in_a_table_keep_the_warning():
+    """Codex on #1144: a page number can sit in another cell of the row."""
     from app.monthly_report_contents_review import section_titles_only
     document = Document()
     document.add_paragraph("TABLE OF CONTENTS")
-    document.add_paragraph(line)
-    # A right-aligned dot-leader tab stop is layout, not a page number.
-    stops = OxmlElement("w:tabs")
-    stop = OxmlElement("w:tab")
-    stop.set(qn("w:val"), "right")
-    stop.set(qn("w:leader"), "dot")
-    stop.set(qn("w:pos"), "9350")
-    stops.append(stop)
-    document.paragraphs[-1]._p.get_or_add_pPr().append(stops)
-    assert section_titles_only(document.element) is expected
+    row = document.add_table(rows=1, cols=2).rows[0]
+    row.cells[0].text = "Section 1: Organizational Chart"
+    row.cells[1].text = "3"
+    document.add_paragraph("ORGANIZATIONAL CHART")
+    assert section_titles_only(document.element) is False
+
+
+def test_page_field_among_section_titles_keeps_the_warning():
+    from app.monthly_report_contents_review import section_titles_only
+    document = _contents(["Section 1: Organizational Chart"])
+    field = OxmlElement("w:fldSimple")
+    field.set(qn("w:instr"), " PAGEREF _Toc1 \\h ")
+    document.paragraphs[2]._p.append(field)
+    assert section_titles_only(document.element) is False
+
+
+def test_text_box_heading_with_its_legacy_copy_is_read_once():
+    """A heading in a text box repeats in its VML fallback; that is one heading."""
+    from lxml import etree
+    from app.monthly_report_contents_review import section_titles_only
+    document = _contents(["Section 1: Organizational Chart"])
+    heading = document.paragraphs[1]._p
+    for run in heading.findall(qn("w:r")):
+        heading.remove(run)
+    box = (
+        '<w:r xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+        'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" '
+        'xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" '
+        'xmlns:v="urn:schemas-microsoft-com:vml"><mc:AlternateContent>'
+        '<mc:Choice Requires="wps"><w:drawing><wps:txbx><w:txbxContent><w:p><w:r><w:t>TABLE OF CONTENTS'
+        '</w:t></w:r></w:p></w:txbxContent></wps:txbx></w:drawing></mc:Choice>'
+        '<mc:Fallback><w:pict><v:textbox><w:txbxContent><w:p><w:r><w:t>TABLE OF CONTENTS'
+        '</w:t></w:r></w:p></w:txbxContent></v:textbox></w:pict></mc:Fallback>'
+        '</mc:AlternateContent></w:r>')
+    heading.append(etree.fromstring(box))
+    assert section_titles_only(document.element) is True
 
 
 def test_contents_notice_survives_pdf_retry(tmp_path, monkeypatch):
