@@ -1,6 +1,10 @@
 """Preserve Training geometry when the framework's 6px scrollbar style lands."""
 from pathlib import Path
 import json
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 from playwright.sync_api import sync_playwright
 from app.monthly_report_training_ui import _session_summary_html
 OUT=Path('test-artifacts/training-scrollbar-geometry')
