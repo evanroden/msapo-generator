@@ -343,7 +343,45 @@ def _remove_page_field_results(element, fields):
             node.text = ""
 
 
-def _text(element, *, exclude=()) -> str:
+_OFF = ("0", "false", "off")
+_PLACEHOLDER_NOTE = "Word placeholder prompt only; not report text."
+
+
+def _not_displayed(element):
+    """Content controls that show Word's placeholder prompt, not authored text.
+
+    A control flagged w:showingPlcHdr displays prompt text ("Click or tap
+    here to enter text.") until someone fills it in; that prompt is not report
+    content. Hidden (w:vanish) runs are deliberately still read: native note
+    and qualification safeguards are exercised with hidden source text.
+    """
+    hidden = set()
+    for control in element.iter(W + "sdt"):
+        flag = control.find(f"{W}sdtPr/{W}showingPlcHdr")
+        content = control.find(W + "sdtContent")
+        if (flag is not None and content is not None
+                and flag.get(W + "val", "1").casefold() not in _OFF):
+            hidden.add(content)
+    return hidden
+
+
+def _has_literal_text(element, exclude=()) -> bool:
+    """Whether any w:t outside ``exclude`` holds non-whitespace text."""
+    skipped = {id(node) for root in exclude for node in root.iter(W + "t")}
+    return any((node.text or "").strip() and id(node) not in skipped
+               for node in element.iter(W + "t"))
+
+
+def _text(element, *, exclude=(), displayed=True) -> str:
+    """Text of a Word element in reading order.
+
+    ``displayed=False`` keeps placeholder prompts and invisible characters; it
+    exists only to keep ordinal item IDs stable (see callers).
+    """
+    from app.extracted_text import normalize_extracted_text, word_symbol_text
+    if displayed:
+        exclude = set(exclude) | _not_displayed(element)
+
     def visible_nodes(node):
         if node in exclude:
             return
@@ -359,9 +397,17 @@ def _text(element, *, exclude=()) -> str:
             parts.append(node.text or "")
         elif node.tag in (W + "br", W + "cr"):
             parts.append("\n")
-        elif node.tag == W + "tab":
+        elif node.tag in (W + "tab", W + "ptab"):
+            # A positional (absolute) tab separates words exactly like a tab.
             parts.append("\t")
-    return "\n".join(re.sub(r"[ \t]+", " ", line).strip() for line in "".join(parts).splitlines() if line.strip())
+        elif node.tag == W + "noBreakHyphen":
+            parts.append("-")
+        elif node.tag == W + "sym":
+            parts.append(word_symbol_text(node.get(W + "font", ""), node.get(W + "char", "")))
+    text = "".join(parts)
+    if displayed:
+        text = normalize_extracted_text(text)
+    return "\n".join(re.sub(r"[ \t]+", " ", line).strip() for line in text.splitlines() if line.strip())
 
 
 _SECTION_TERMS = {
@@ -968,13 +1014,14 @@ def inspect_docx(path: Path) -> DocxInspection:
                                         element, word_section=word_section, position=position)
                                 add("unsupported", part, position, text=text, note=note,
                                     drawing_labels=drawing_labels)
-                            elif text:
+                            elif text or _text(element, displayed=False):
                                 # A floating Word textbox has separate layout/review
                                 # ownership. Do not also offer its words as ordinary
                                 # editable paragraph text. Keep actual outside prose.
                                 # Native cover/title and header/footer handling has
                                 # its own source geometry and stays unchanged.
                                 ordinary_text = text
+                                ordinary_exclude = ()
                                 if (element.tag == W + "p" and part == "word/document.xml"
                                         and not cover_native_frame and not detected):
                                     frames = {node for node in element.iter(W + "txbxContent")}
@@ -990,8 +1037,28 @@ def inspect_docx(path: Path) -> DocxInspection:
                                             word_section=word_section
                                         ) if alternatives_equivalent else "")
                                         if text_role != "Editable native text frames":
+                                            ordinary_exclude = frames
                                             ordinary_text = _text(element, exclude=frames)
-                                if ordinary_text:
+                                # Item membership follows the rule sources cached
+                                # before symbol/placeholder reading were read with:
+                                # a paragraph is an item iff a w:t holds text.
+                                # Saved reviews store one text per item, and
+                                # several workflows refuse a source whose fresh
+                                # inventory length differs, so a paragraph that
+                                # holds only a symbol or hyphen gains no item.
+                                listed = _has_literal_text(element, ordinary_exclude)
+                                prompt_text = ("" if ordinary_text or not listed else
+                                               _text(element, exclude=ordinary_exclude, displayed=False))
+                                if not listed:
+                                    pass
+                                elif prompt_text:
+                                    # Only a placeholder prompt or invisible
+                                    # characters: keep the item where it always
+                                    # was, with no suggested slot, so it is listed
+                                    # but not carried into the report.
+                                    add("text", part, position, text=prompt_text,
+                                        note=_PLACEHOLDER_NOTE, suggested_slot="")
+                                elif ordinary_text:
                                     add("text", part, position, text=ordinary_text, note=source_note,
                                         suggested_slot=(content_slot if content_slot and not detected else
                                                         _suggest("text", ordinary_text, section,

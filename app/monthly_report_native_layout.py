@@ -126,6 +126,21 @@ def _clear_hyperlinks(element):
             link.getparent().remove(link)
 
 
+def _text_equivalent(node) -> str:
+    """Text the importer reads for a non-text run node, or "" if none.
+
+    A non-breaking hyphen and a known Symbol/Wingdings character are imported
+    as their Unicode text, so a writer replacing the reviewed value must drop
+    the node rather than keep it beside its own text.
+    """
+    if node.tag == qn("w:noBreakHyphen"):
+        return "-"
+    if node.tag == qn("w:sym"):
+        from app.extracted_text import word_symbol_text
+        return word_symbol_text(node.get(qn("w:font"), ""), node.get(qn("w:char"), ""))
+    return ""
+
+
 def _set_text(element, value):
     """Change run payloads while retaining paragraph/run/text-box properties."""
     _clear_hyperlinks(element)
@@ -149,8 +164,13 @@ def _set_text(element, value):
                     and node.get(qn("w:type"), "textWrapping") == "textWrapping")):
                 current.append("\n")
                 controls.append(node)
-            elif node.tag == qn("w:tab"):
+            elif node.tag in (qn("w:tab"), qn("w:ptab")):
                 current.append("\t")
+                controls.append(node)
+            elif _text_equivalent(node):
+                # Import reads these as text (see app.extracted_text); the
+                # reviewed value already carries that text, so the node goes.
+                current.append(_text_equivalent(node))
                 controls.append(node)
     if not raw_controls and "".join(current) == value:
         return
@@ -190,6 +210,25 @@ def _set_text(element, value):
             previous = node
         for node in group[1:]:
             node.text = ""
+    _clear_filled_placeholders(element)
+
+
+def _clear_filled_placeholders(element):
+    """A content control that now holds written text is no longer a prompt.
+
+    Import skips controls flagged w:showingPlcHdr (they show Word's prompt,
+    not report text). Once a writer has put the reviewed value inside one,
+    the flag must go, or the generated value would be dropped on reimport.
+    """
+    sdt, content_tag = qn("w:sdt"), qn("w:sdtContent")
+    controls = [ancestor for ancestor in element.iterancestors() if ancestor.tag == sdt]
+    controls += list(element.iter(sdt))
+    for control in controls:
+        flag = control.find(f"{qn('w:sdtPr')}/{qn('w:showingPlcHdr')}")
+        content = control.find(content_tag)
+        if flag is not None and content is not None and any(
+                (node.text or "").strip() for node in content.iter(qn("w:t"))):
+            flag.getparent().remove(flag)
 
 
 
@@ -220,8 +259,9 @@ def _set_reviewed_footer_text(paragraph, value):
               and node.getparent().tag == qn('w:r') and node.getparent().getparent() is paragraph):
             if node.tag == qn('w:t'):
                 texts.append(node)
-            elif (node.tag in (qn('w:tab'), qn('w:cr')) or node.tag == qn('w:br')
-                  and node.get(qn('w:type'), 'textWrapping') == 'textWrapping'):
+            elif (node.tag in (qn('w:tab'), qn('w:ptab'), qn('w:cr')) or node.tag == qn('w:br')
+                  and node.get(qn('w:type'), 'textWrapping') == 'textWrapping'
+                  or _text_equivalent(node)):
                 controls.append(node)
     if depth or not texts:
         return False

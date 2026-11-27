@@ -31,6 +31,7 @@ from openpyxl import load_workbook
 
 from app import monthly_report_library as library, monthly_report_import as docx_import, ocr
 from app import monthly_report_pdf_reader as pdf_reader
+from app.extracted_text import normalize_extracted_text
 from app.monthly_latency_spans import measure_span, record_span
 from app.monthly_report_docx import ReportImage, normalize_report_image
 from app.monthly_report_import import inspect_docx, read_import_image
@@ -913,7 +914,9 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes | StagedUpload, *, 
                 extracted_chars = 0
                 from app.monthly_report_vendor_passages import block_spans, MAX_VENDOR_BLOCK_SPANS, passage_notice
                 for number, page in enumerate(pdf, 1):
-                    native = page.get_text().strip()
+                    # Ligatures/zero-width marks are made plain here and in every
+                    # geometry reader that is compared with this page text.
+                    native = normalize_extracted_text(page.get_text()).strip()
                     needs_ocr, review_notice = ocr._page_visual_decision(page, native_text=native)
                     reading = pdf_reader.read_page(
                         page, number, native_text=native,
