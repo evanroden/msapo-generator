@@ -41,7 +41,7 @@ def test_exact_source_rows_and_saved_metadata(tmp_path):
     assert type(_report_table_from_dict(asdict(ReportTable(table.columns, table.rows)))) is ReportTable
 
 
-@pytest.mark.parametrize('mixed,revision', [(True,False)])
+@pytest.mark.parametrize('mixed,revision', [(True,False),(False,True)])
 def test_mixed_and_revision_rows_not_promoted(tmp_path, mixed, revision):
     item = next(i for i in inspect_docx(source(tmp_path,mixed=mixed,revision=revision)).items if i.kind == 'table')
     assert item.table_bold_rows == ()
@@ -124,3 +124,28 @@ def test_native_edit_and_delete_retire_stale_emphasis_before_save():
     deleted = replace(table, rows=())
     assert deleted.bold_rows == ()
     assert _report_table_from_dict(asdict(deleted)) == deleted
+
+
+def test_content_controlled_plain_row_cannot_shift_bold_identity(tmp_path):
+    from docx.oxml import OxmlElement
+    path = source(tmp_path)
+    doc = Document(path)
+    table = doc.tables[0]
+    # Header, wrapped plain row, direct bold row.
+    table.rows[1].cells[0].paragraphs[0].runs[0].bold = False
+    table.rows[1].cells[1].paragraphs[0].runs[0].bold = False
+    for cell in table.rows[2].cells:
+        cell.paragraphs[0].runs[0].bold = True
+    row = table.rows[1]._tr
+    index = table._tbl.index(row)
+    table._tbl.remove(row)
+    control = OxmlElement('w:sdt')
+    content = OxmlElement('w:sdtContent')
+    content.append(row)
+    control.append(content)
+    table._tbl.insert(index, control)
+    doc.save(path)
+    item = next(i for i in inspect_docx(path).items if i.kind == 'table')
+    assert item.table_bold_rows == (2,)
+    table, _ = table_without_prices(item)
+    assert table.bold_rows == ((1,('Synthetic B','OK')),)

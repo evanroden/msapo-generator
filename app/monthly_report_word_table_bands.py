@@ -107,14 +107,15 @@ def typed_data_rows(item, start: int):
                  if index >= start and (index >= len(roles) or roles[index] != "repeated_header"))
 
 
-def explicit_bold_rows(table):
+def explicit_bold_rows(table, *, children=None):
     """Conservative direct Word bold only, never infer emphasis from dates/text.
 
     Mixed styling, inherited styles, hidden text and revision markup are not
     promoted to whole-row emphasis. Extraction owns final-view cell text.
     """
     result = []
-    for index, row in enumerate(table.findall(W + 'tr')):
+    rows = children(table, W + 'tr') if children is not None else table.findall(W + 'tr')
+    for index, row in enumerate(rows):
         if any(node.tag in {W + name for name in ('del', 'ins', 'moveFrom', 'moveTo', 'rPrChange')}
                for node in row.iter()):
             continue
