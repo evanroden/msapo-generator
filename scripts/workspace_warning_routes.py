@@ -143,7 +143,9 @@ def render(base,token,field,move):
     st.session_state['_monthly_qa_generation']=generation
     # Same existing field-mirror entry protocol as web_ui + monthly_report_ui.
     preserve_report_draft_state();restore_report_draft_state()
-    render_guided_workflow(token,'America/New_York',field,move)
+    from scripts.workspace_final_action_observations import observe_final_action
+    with observe_final_action(base):
+        render_guided_workflow(token,'America/New_York',field,move)
     preserve_report_draft_state(finalize=True)
     working=_working_report(saved)
     active=load(token,fixture.CONTRACT,fixture.profile().key,fixture.PERIOD)

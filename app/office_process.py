@@ -14,6 +14,10 @@ from collections.abc import Sequence
 
 _DIAGNOSTIC_BYTES = 16 * 1024
 _CLEANUP_SECONDS = 5
+# A previous conversion is still stopping when its marker is found; its
+# shutdown is momentary, so wait this long for its process group to exit
+# before failing the next conversion outright. Still fail closed after it.
+_IDLE_GRACE_SECONDS = 10
 _OFFICE_MARKER_LOCAL = threading.local()
 
 
@@ -38,16 +42,23 @@ def _boot_id() -> str:
         return ''
 
 
-def require_idle() -> None:
-    """Called under the cross-process lease before *any* office job is admitted."""
+def require_idle(*, wait_seconds: float = 0) -> None:
+    """Called under the cross-process lease before *any* office job is admitted.
+
+    A caller that declared it will wait for admission (wait_seconds > 0)
+    also tolerates a brief grace wait for a previous conversion that is
+    still stopping; a caller that demanded immediate admission (0) keeps
+    the fail-fast quarantine.
+    """
     marker = _marker()
-    _require_marker_idle(marker)
+    grace = min(_IDLE_GRACE_SECONDS, max(0.0, float(wait_seconds)))
+    _require_marker_idle(marker, grace_seconds=grace)
     if getattr(_OFFICE_MARKER_LOCAL, 'serial', True):
         # Legacy callers must not race an orphan from a previous two-lane run.
-        _require_marker_idle(marker.parent / '.active-office-1.json')
+        _require_marker_idle(marker.parent / '.active-office-1.json', grace_seconds=grace)
 
 
-def _require_marker_idle(marker: Path) -> None:
+def _require_marker_idle(marker: Path, *, grace_seconds: float = 0) -> None:
     try:
         with marker.open() as stream:
             raw = stream.read(1025)
@@ -61,7 +72,19 @@ def _require_marker_idle(marker: Path) -> None:
         current_boot = _boot_id()
         restarted = bool(previous_boot and current_boot and previous_boot != current_boot)
         if not restarted and _group_running(pid):
-            raise OfficeCleanupPending('The previous PDF conversion is still stopping. Your saved work is unchanged; try again shortly.')
+            if grace_seconds > 0:
+                # A previous conversion is still stopping. Its shutdown is
+                # momentary, so wait briefly for the group to exit instead
+                # of failing the next conversion outright for an overlap of
+                # seconds. Still fail closed if it has not died after the
+                # grace period.
+                deadline = time.monotonic() + grace_seconds
+                while _group_running(pid):
+                    if time.monotonic() >= deadline:
+                        break
+                    time.sleep(0.05)
+            if _group_running(pid):
+                raise OfficeCleanupPending('The previous PDF conversion is still stopping. Your saved work is unchanged; try again shortly.')
         marker.unlink()
     except FileNotFoundError:
         pass
