@@ -23,6 +23,8 @@ CONTENTS_NOTICE = (
 )
 # Owner decision (#304): a generated monthly report names itself a report.
 REPORT_NOTICE = CONTENTS_NOTICE.replace("within this proposal", "within this report")
+# The company address line on the contents page and in the footers.
+ADDRESS_LINE = re.compile(r"\d+ Galleria Blvd\..*\|.*enfrasolutions\.com", re.I)
 
 
 def name_report_in_contents_notice(root):
@@ -321,7 +323,7 @@ def native_layout_role(element, text, *, part, section, word_section):
             return "Native running-header text frames"
         return ""
     if part.startswith("word/footer"):
-        if plain and len(lines) == 1 and re.fullmatch(r"\d+ Galleria Blvd\..*\|.*enfrasolutions\.com", lines[0], re.I):
+        if plain and len(lines) == 1 and ADDRESS_LINE.fullmatch(lines[0]):
             return "Native footer text frames"
         return ""
     if part != "word/document.xml":
@@ -353,6 +355,6 @@ def native_layout_role(element, text, *, part, section, word_section):
             return "Native contents text frames"
         if (lines and lines[0] == "TABLE OF CONTENTS" and len(lines) == 3
                 and lines[1] in (CONTENTS_NOTICE, REPORT_NOTICE)
-                and re.fullmatch(r"\d+ Galleria Blvd\..*\|.*enfrasolutions\.com", lines[2], re.I)):
+                and ADDRESS_LINE.fullmatch(lines[2])):
             return "Native contents notice and artwork"
     return ""

@@ -3,6 +3,8 @@ from dataclasses import replace
 from io import BytesIO
 
 from docx import Document
+from docx.enum.section import WD_SECTION_START
+from docx.enum.text import WD_BREAK
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 import pytest
@@ -11,6 +13,9 @@ from app import monthly_report_designs as designs, monthly_report_docx as render
 from app.monthly_report_model import (
     BlockSpec, ReportDraft, ReportPeriod, ResolvedBlock, SectionSpec, synthetic_profiles,
 )
+from app.monthly_report_native_design import CONTENTS_NOTICE, REPORT_NOTICE
+
+ADDRESS = "1 Galleria Blvd., Synthetic Suite | enfrasolutions.com"
 
 
 def source(tmp_path, kind):
@@ -42,13 +47,16 @@ def source(tmp_path, kind):
                 node.text = value
             run.append(node)
     elif kind in {"sections", "sections_paged"}:
-        # The owner's designs: "TABLE OF CONTENTS", then "Section N: Title"
-        # lines, the number in its own coloured run, and no page numbers.
+        # The owner's designs: a contents page of its own with "TABLE OF
+        # CONTENTS", then "Section N: Title" lines, the number in its own
+        # coloured run, and no page numbers.
+        document.add_section()
         document.add_paragraph("TABLE OF CONTENTS")
         for number, title in (("1", "Monthly Activity Summary"), ("2", "Training Summary")):
             paragraph = document.add_paragraph()
             paragraph.add_run("Section " + number).bold = True
             paragraph.add_run(": " + title + ("\t" + str(int(number) + 2) if kind == "sections_paged" else ""))
+        document.add_section()
     elif kind == "prose":
         document.add_paragraph("The contents of this report are confidential.")
         document.add_paragraph("See the table of contents for report navigation.")
@@ -125,9 +133,31 @@ def test_section_list_with_page_numbers_keeps_the_warning(tmp_path, monkeypatch)
     assert "titles, order and page numbers are not recalculated" in result.contents_notice
 
 
-def _contents(lines, *, after="ORGANIZATIONAL CHART"):
+def _end_page(document, boundary):
+    """End the page as Word designs do; the next paragraph follows."""
+    if boundary == "section":
+        document.add_section()
+    elif boundary == "continuous":
+        document.add_section(WD_SECTION_START.CONTINUOUS)
+    elif boundary == "page":
+        document.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
+    elif boundary == "deleted":
+        # A page break removed with tracked changes no longer breaks the page.
+        paragraph = document.add_paragraph()
+        deleted = OxmlElement("w:del")
+        for name, value in (("w:id", "1"), ("w:author", "Synthetic Editor"), ("w:date", "2026-11-27T00:00:00Z")):
+            deleted.set(qn(name), value)
+        run, page_break = OxmlElement("w:r"), OxmlElement("w:br")
+        page_break.set(qn("w:type"), "page")
+        run.append(page_break)
+        deleted.append(run)
+        paragraph._p.append(deleted)
+
+
+def _contents(lines, *, after="ORGANIZATIONAL CHART", cover="section", boundary="section"):
     document = Document()
     document.add_paragraph("Synthetic Site")
+    _end_page(document, cover)
     document.add_paragraph("TABLE OF CONTENTS")
     for line in lines:
         paragraph = document.add_paragraph()
@@ -143,25 +173,116 @@ def _contents(lines, *, after="ORGANIZATIONAL CHART"):
             stop.set(qn(name), value)
         stops.append(stop)
         paragraph._p.get_or_add_pPr().append(stops)
-    document.add_paragraph(after)
+    _end_page(document, boundary)
+    following = document.add_paragraph(after)
+    if boundary == "before":
+        following.paragraph_format.page_break_before = True
     return document
+
+
+def _paragraph(document, start):
+    return next(paragraph._p for paragraph in document.paragraphs if paragraph.text.startswith(start))
 
 
 @pytest.mark.parametrize("lines,expected", [
     (["Section 1: Organizational Chart", "", "Section 2: Monthly Activity Summary",
       "Section 11: Training Summary"], True),
+    (["ENFRA", "Section 1: Organizational Chart", CONTENTS_NOTICE, ADDRESS], True),  # The native page's own lines.
+    (["Section 1: Organizational Chart", REPORT_NOTICE], True),
+    (["Section 1: Organizational\u00a0Chart"], True),                 # A non-breaking space.
+    (["Section 5: Maintenance Schedule \u2013 In-House Maintenance"], True),
     (["Section 1: Organizational Chart\t3"], False),              # Tab, then a page number.
     (["Section 1: Organizational Chart ........ 3"], False),       # Dot leaders.
     (["Section 1: Organizational Chart \u2026 3"], False),        # Ellipsis.
     (["Section 1: Organizational Chart 3"], False),                # Codex: after a space.
     (["Section 1: Organizational Chart\tiii"], False),            # Codex: Roman numeral.
+    (["Section 1: Organizational Chart3"], False),                 # A number run straight on.
     (["Section 1: Organizational Chart", "3"], False),            # A number listed apart.
+    (["Section 1: Organizational Chart", "Monthly Activity Summary\t4"], False),  # Codex: a further entry.
+    (["Section 1: Organizational Chart", "Monthly Activity Summary"], False),     # Not kept by the numbering.
+    (["Section 1: Organizational Chart", "Appendix A: Synthetic Appendix"], False),
+    (["Section 1: Organizational Chart", "Other synthetic prose"], False),      # Anything unidentified.
     (["Section 1: Not A Report Section"], False),                 # Title the importer cannot prove.
     (["Monthly Activity Summary"], False),                        # No section lines at all.
 ])
 def test_only_a_positively_identified_title_list_counts(lines, expected):
     from app.monthly_report_contents_review import section_titles_only
     assert section_titles_only(_contents(lines).element) is expected
+
+
+@pytest.mark.parametrize("cover,boundary,expected", [
+    ("section", "section", True),
+    ("section", "page", True),
+    ("section", "before", True),       # The next paragraph is set to start a page.
+    ("page", "section", True),
+    ("section", "continuous", False),  # The next section starts on the same page.
+    ("section", None, False),          # Nothing ends the page, so the heading after the list is on it.
+    ("section", "deleted", False),
+    (None, "section", False),          # The cover's lines share the page.
+])
+def test_the_contents_page_ends_only_at_a_page_or_section_break(cover, boundary, expected):
+    """Codex on #1144: a line that is not an entry does not prove the list has ended."""
+    from app.monthly_report_contents_review import section_titles_only
+    document = _contents(["Section 1: Organizational Chart", "Section 2: Monthly Activity Summary"],
+                         cover=cover, boundary=boundary)
+    assert section_titles_only(document.element) is expected
+
+
+def _native_contents(entries, *, notice=CONTENTS_NOTICE):
+    """The owner's contents page: a text frame for the brand line and for each
+    section line, then one frame with the heading, notice and address, which
+    the design anchors after them. Every frame is on the contents page."""
+    from test_monthly_report_native_design_import import frame
+    document = Document()
+    document.add_paragraph("Synthetic Site")
+    document.add_section()
+    anchor = document.add_paragraph()
+    for text in ("ENFRA", *entries):
+        anchor.add_run()._r.append(frame(text))
+    document.add_paragraph().add_run()._r.append(frame("\n".join(("TABLE OF CONTENTS", notice, ADDRESS))))
+    document.add_section()
+    document.add_paragraph("ORGANIZATIONAL CHART")
+    document.add_paragraph("1")
+    return document
+
+
+NATIVE_ENTRIES = ("Section 1: Organizational Chart", "Section 2: Monthly Activity Summary",
+                  "Section 3: Training Summary")
+
+
+@pytest.mark.parametrize("entries,notice,expected", [
+    (NATIVE_ENTRIES, CONTENTS_NOTICE, True),
+    (NATIVE_ENTRIES, REPORT_NOTICE, True),
+    (NATIVE_ENTRIES + ("Monthly Activity Summary\t4",), CONTENTS_NOTICE, False),
+    (NATIVE_ENTRIES + ("4",), CONTENTS_NOTICE, False),
+    (NATIVE_ENTRIES, "Synthetic prose that is not the notice.", False),
+])
+def test_native_contents_frames_are_read_wherever_they_are_anchored(tmp_path, monkeypatch, entries, notice, expected):
+    from app.monthly_report_contents_review import contents_notice_for, section_titles_only
+    document = _native_contents(entries, notice=notice)
+    assert section_titles_only(document.element) is expected
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "data"))
+    path = tmp_path / "native.docx"
+    document.save(path)
+    profile = designs.install(path, synthetic_profiles()[0], actor="Synthetic Editor", expected_revision=0)
+    assert (contents_notice_for(profile) == "") is expected
+
+
+@pytest.mark.parametrize("separator", ["w:ptab", "w:br", "w:cr", "w:sym"])
+def test_a_page_number_after_any_run_separator_keeps_the_warning(separator):
+    """A positional tab, a line break or a symbol is not part of a title."""
+    from app.monthly_report_contents_review import section_titles_only
+    document = _contents(["Section 1: Organizational Chart"])
+    run, node, number = OxmlElement("w:r"), OxmlElement(separator), OxmlElement("w:t")
+    attributes = {"w:ptab": (("w:relativeTo", "margin"), ("w:alignment", "right"), ("w:leader", "dot")),
+                  "w:sym": (("w:font", "Wingdings"), ("w:char", "F0E0"))}.get(separator, ())
+    for name, value in attributes:
+        node.set(qn(name), value)
+    number.text = "3"
+    run.append(node)
+    run.append(number)
+    _paragraph(document, "Section 1").append(run)
+    assert section_titles_only(document.element) is False
 
 
 def test_section_titles_in_a_table_keep_the_warning():
@@ -172,6 +293,7 @@ def test_section_titles_in_a_table_keep_the_warning():
     row = document.add_table(rows=1, cols=2).rows[0]
     row.cells[0].text = "Section 1: Organizational Chart"
     row.cells[1].text = "3"
+    document.add_section()
     document.add_paragraph("ORGANIZATIONAL CHART")
     assert section_titles_only(document.element) is False
 
@@ -181,7 +303,16 @@ def test_page_field_among_section_titles_keeps_the_warning():
     document = _contents(["Section 1: Organizational Chart"])
     field = OxmlElement("w:fldSimple")
     field.set(qn("w:instr"), " PAGEREF _Toc1 \\h ")
-    document.paragraphs[2]._p.append(field)
+    _paragraph(document, "Section 1").append(field)
+    assert section_titles_only(document.element) is False
+
+
+def test_contents_styled_lines_on_another_page_keep_the_warning():
+    from app.monthly_report_contents_review import section_titles_only
+    document = _contents(["Section 1: Organizational Chart"])
+    style = OxmlElement("w:pStyle")
+    style.set(qn("w:val"), "TOC1")
+    _paragraph(document, "ORGANIZATIONAL CHART").get_or_add_pPr().insert(0, style)
     assert section_titles_only(document.element) is False
 
 
@@ -190,7 +321,7 @@ def test_text_box_heading_with_its_legacy_copy_is_read_once():
     from lxml import etree
     from app.monthly_report_contents_review import section_titles_only
     document = _contents(["Section 1: Organizational Chart"])
-    heading = document.paragraphs[1]._p
+    heading = _paragraph(document, "TABLE OF CONTENTS")
     for run in heading.findall(qn("w:r")):
         heading.remove(run)
     box = (
