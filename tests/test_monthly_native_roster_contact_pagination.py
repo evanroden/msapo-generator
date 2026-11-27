@@ -69,3 +69,29 @@ def test_omitted_roster_cannot_retain_old_contacts(tmp_path):
     draft = replace(draft, blocks=(replace(draft.blocks[0], source='Omit'),))
     doc = Document(BytesIO(build_native_docx(draft, path, section_key='subcontractors')))
     assert all('Synthetic Person' not in t._tbl.xml for t in doc.tables)
+
+
+def test_unrelated_native_table_is_not_grouped_from_matching_shape(tmp_path):
+    path, draft = fixture(tmp_path)
+    # An unproved reference must not acquire ownership of a same-shaped source table.
+    block = draft.blocks[0]
+    supplied = replace(block.extra_tables[0], reference='synthetic:unrelated')
+    draft = replace(draft, blocks=(replace(block, key='unassigned', extra_tables=(supplied,)),))
+    raw = build_native_docx(draft, path, section_key='subcontractors')
+    assert 'Synthetic Person' not in Document(BytesIO(raw))._element.xml
+
+
+def test_unrecognized_native_schema_retains_existing_pagination(tmp_path):
+    path, draft = fixture(tmp_path)
+    doc = Document(path)
+    doc.tables[0].cell(0, 0).text = 'Other label'
+    doc.save(path)
+    inspection = inspect_docx(path)
+    from app.monthly_report_sections import table_without_prices
+    item = next(item for item in inspection.items if item.kind == 'table')
+    supplied, _ = table_without_prices(item)
+    supplied = replace(supplied, reference=f'docx:{inspection.sha256}:{item.id}')
+    draft = replace(draft, blocks=(replace(draft.blocks[0], extra_tables=(supplied,)),))
+    raw = build_native_docx(draft, path, section_key='subcontractors')
+    table = Document(BytesIO(raw)).tables[0]
+    assert not any(keeps(table)[1:])
