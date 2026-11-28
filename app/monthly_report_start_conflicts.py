@@ -72,7 +72,7 @@ def image_conflicts(existing: ReportDraft | None, incoming: ReportDraft,
     for block in incoming.blocks:
         present = old.get(block.key)
         if (block.key not in LABELS or not present or not _picture_only(present)
-                or not _picture_only(block) or present.asset_hashes == block.asset_hashes
+                or not _picture_only(block)
                 or not same_replacement_page_spec(specs.get(block.key), new_specs.get(block.key))):
             continue
         # Reuse the actual three-way policy: unchanged consumed source content
