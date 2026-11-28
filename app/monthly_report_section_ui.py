@@ -1519,7 +1519,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             # previews/exports. Keep one normalized import only in this rerun,
             # never a second decoded copy or a cross-rerun/session asset cache.
             from app.monthly_report_render_jobs import work_slot
-            with work_slot(preview=True) if recovery_preflight else nullcontext():
+            with work_slot(preview=True, review=comparison_retry) if recovery_preflight else nullcontext():
                 prepared_import = build_starting_import(
                     path, inspection, tuple(plans[s.key] for s in sections),
                     source_view=source_view, profile=candidate, period=period)
@@ -1583,6 +1583,10 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     review_scope = _signature((inspection.sha256, tuple(plan_signature(plan) for plan in plans.values()),
                                candidate, actor, working_draft, working_revision,
                                state.revision if state else 0))
+    # A deliberate retry belongs only to this exact source/report review.
+    # Consume it once; automatic reruns retain fail-fast preview admission.
+    comparison_retry = st.session_state.pop(prefix + "_comparison_retry", None) == review_scope
+
     if st.session_state.get(prefix + "_image_review_scope") != review_scope:
         decisions.clear()
         incarnation = uuid4().hex
@@ -1646,8 +1650,10 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             st.session_state[incarnation_key] = uuid4().hex
             st.error(str(exc))
             if isinstance(exc, RenderBusy):
-                if st.button("Retry report page comparison", key=p + "_retry_page_comparison"):
-                    st.rerun()
+                st.button("Retry report page comparison",
+                          key=p + "_retry_page_comparison_" + review_scope,
+                          on_click=st.session_state.__setitem__,
+                          args=(prefix + "_comparison_retry", review_scope))
                 todo.append("Report page comparison is waiting for capacity. Your report and upload are unchanged.")
             else:
                 todo.append("Resolve the existing report conflict before continuing; your report and upload are unchanged.")
