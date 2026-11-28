@@ -10,6 +10,8 @@ build and fixture. Does not modify production data or claim browser paint.
 from __future__ import annotations
 
 from hashlib import sha256
+from io import BytesIO
+from zipfile import ZipFile
 import gc
 import json
 import os
@@ -26,6 +28,27 @@ from scripts.qa_monthly_report_resources import _fixture, _memory, _memory_event
 from app import monthly_report_native_layout as native
 from app.monthly_report_preview import preview_section
 from app import monthly_report_section_assembly_cache as cache
+
+
+def package_content_sha256(raw):
+    """Compare exact member names/bytes, excluding archive timestamps/order.
+
+    Raw hashes remain in the receipt. Duplicate names are rejected because
+    readers can disagree about which occurrence owns that package part.
+    """
+    digest = sha256()
+    with ZipFile(BytesIO(raw)) as package:
+        names = package.namelist()
+        if len(names) != len(set(names)):
+            raise ValueError("Duplicate package member names cannot prove assembly identity.")
+        for name in sorted(names):
+            encoded = name.encode("utf-8")
+            content = package.read(name)
+            digest.update(len(encoded).to_bytes(8, "big"))
+            digest.update(encoded)
+            digest.update(len(content).to_bytes(8, "big"))
+            digest.update(content)
+    return digest.hexdigest()
 
 
 def _cpu_quota():
@@ -60,7 +83,7 @@ def main():
     def timed_native(*args, **kwargs):
         started = monotonic()
         raw = original(*args, **kwargs)
-        trace.append((round(monotonic() - started, 3), sha256(raw).hexdigest(), len(raw)))
+        trace.append((round(monotonic() - started, 3), sha256(raw).hexdigest(), len(raw), package_content_sha256(raw)))
         return raw
 
     with tempfile.TemporaryDirectory(prefix="synthetic-native-assembly-") as directory:
@@ -92,6 +115,7 @@ def main():
                     "native_seconds": [sample[0] for sample in trace],
                     "native_sha256": [sample[1] for sample in trace],
                     "native_bytes": [sample[2] for sample in trace],
+                    "native_package_content_sha256": [sample[3] for sample in trace],
                 }
             assert result["runs"]["no_reuse"]["native_assembly_count"] == 3
             assert result["runs"]["owner_scoped"]["native_assembly_count"] == 1
@@ -101,7 +125,11 @@ def main():
             )
             hashes = (result["runs"]["no_reuse"]["native_sha256"]
                       + result["runs"]["owner_scoped"]["native_sha256"])
-            assert len(set(hashes)) == 1, "Uncached native assembly bytes are not deterministic."
+            result["raw_archive_bytes_identical"] = len(set(hashes)) == 1
+            content_hashes = (result["runs"]["no_reuse"]["native_package_content_sha256"]
+                              + result["runs"]["owner_scoped"]["native_package_content_sha256"])
+            assert len(set(content_hashes)) == 1, "Native assembly package member names/content changed."
+            result["package_content_identical"] = True
             baseline = sorted(sample["seconds"] for sample in result["runs"]["no_reuse"]["samples"][1:])[0:2]
             reuse = sorted(sample["seconds"] for sample in result["runs"]["owner_scoped"]["samples"][1:])[0:2]
             result["median_repeat_no_reuse_seconds"] = round(sum(baseline) / 2, 3)
