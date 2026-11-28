@@ -1587,6 +1587,10 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     # Consume it once; automatic reruns retain fail-fast preview admission.
     comparison_retry = st.session_state.pop(prefix + "_comparison_retry", None) == review_scope
 
+    choice_admission = st.session_state.pop(prefix + "_comparison_choice", None)
+    comparison_retry = comparison_retry or bool(decisions and choice_admission == (
+        review_scope, incarnation, tuple(sorted(decisions.items()))))
+
     if st.session_state.get(prefix + "_image_review_scope") != review_scope:
         decisions.clear()
         incarnation = uuid4().hex
@@ -1636,9 +1640,17 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                             st.caption("Picture caption: " + (block.asset_captions[0] if block.asset_captions else "(none)"))
                         if decisions.get(conflict.slot) == conflict.binding:
                             st.caption("Incoming page selected. Nothing changes until you continue and the import saves successfully.")
-                        if st.button("Use incoming " + conflict.label.lower(), key=p + "_replace_" + conflict.binding):
-                            decisions[conflict.slot] = conflict.binding
-                            st.rerun()
+                        def choose_incoming(slot, binding, expected_review, expected_incarnation, expected_scope):
+                            if (st.session_state.get(prefix + "_image_review_scope") != expected_review
+                                    or st.session_state.get(incarnation_key) != expected_incarnation
+                                    or st.session_state.get(scope_key) != expected_scope):
+                                return
+                            decisions[slot] = binding
+                            st.session_state[prefix + "_comparison_choice"] = (
+                                expected_review, expected_incarnation, tuple(sorted(decisions.items())))
+                        st.button("Use incoming " + conflict.label.lower(), key=p + "_replace_" + conflict.binding,
+                                  on_click=choose_incoming,
+                                  args=(conflict.slot, conflict.binding, review_scope, incarnation, scope))
                         if st.button("Keep current " + conflict.label.lower() + " and return to review", key=p + "_keep_" + conflict.binding):
                             decisions.clear()
                             st.session_state[incarnation_key] = uuid4().hex
