@@ -864,7 +864,24 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
         if original and st.button("Open the saved original for section review",
                                   key=prefix + "_original", disabled=not prepared.strip()):
             from app.monthly_report_import import inspect_docx
-            st.session_state[prefix + "_stage"] = (None, original, inspect_docx(original))
+            try:
+                inspection = inspect_docx(original)
+            except (ValueError, OSError) as exc:
+                from app.monthly_report_starting_errors import starting_docx_failure_notice
+                st.warning(starting_docx_failure_notice(exc))
+                return
+            from app.monthly_report_entry_upload import ENTRY_STAGE, remove_entry_upload
+            if (st.session_state.get(ENTRY_STAGE) is not None
+                    or entry_active and entry_upload is not None
+                    and st.session_state.get("report_entry_failed_digest") is not None):
+                # Opening the saved original deliberately replaces the pending
+                # first-use file. Retire its picker and shared stage before the
+                # next run can reinstall that temporary review over this one.
+                try:
+                    remove_entry_upload()
+                except OSError:
+                    st.session_state[prefix + "_removed_cleanup_warning"] = True
+            st.session_state[prefix + "_stage"] = (None, original, inspection)
             st.session_state[original_token_key] = uuid4().hex
             st.session_state[prefix + "_image_conflict_incarnation"] = uuid4().hex
             st.session_state.pop(prefix + "_image_replacements", None)
@@ -886,7 +903,8 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             loaded_card_slot = st.empty()
             if state:
                 with st.sidebar.expander("Saved starting report"):
-                    st.caption("Open the unchanged saved original for deliberate section review.")
+                    st.caption("Replace the pending file review with the unchanged saved original. "
+                               "The pending file will be cleared; current work and saved reports stay unchanged.")
                     _open_saved_original()
         else:
             # The picker stays in the same native parent across every rerun. Before
@@ -1007,8 +1025,10 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
         st.warning(
             "Starting report review is pending. This review has not changed your report. "
             "The editors still show your current report; source previews may show the pending file. "
-            "Finish this review to import it, or use Clear pending starting report in Starting report options. "
-            "Your current work and saved versions are unchanged by this file.")
+            + ("Finish this review to import it, or choose Cancel saved-original review below. "
+               if staged[0] is None else
+               "Finish this review to import it, or use Clear pending starting report in Starting report options. ")
+            + "Your current work and saved versions are unchanged by this file.")
     from app.monthly_report_start_file_card import render_loaded_file_card
 
     def _show_loaded_card(analysis=None, target=None, *, source_month_unconfirmed=False):

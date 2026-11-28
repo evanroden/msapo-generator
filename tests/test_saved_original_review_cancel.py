@@ -152,3 +152,130 @@ def test_saved_original_commit_retires_token_and_keeps_mounted_upload_receipt(mo
     assert app.session_state[prefix + "_committed_upload_digest"] == stage[2].sha256
     app.run()
     assert not app.exception and stage_key not in app.session_state.filtered_state
+
+
+@pytest.mark.parametrize('cleanup_fails', [False, True])
+@pytest.mark.parametrize('failed_replacement', [False, True])
+def test_first_use_sidebar_original_retires_pending_entry_before_review(monkeypatch, tmp_path, cleanup_fails, failed_replacement):
+    from app.monthly_report_entry_upload import ENTRY_STAGE
+    from io import BytesIO
+    app, source, incoming = stage_source(monkeypatch, tmp_path)
+    next(b for b in app.button if b.label == 'Continue to this month’s updates').click().run()
+    assert not app.exception
+    incoming.clear()
+    app.run()
+    pending = BytesIO()
+    incoming_doc = Document(source)
+    incoming_doc.add_paragraph('Different pending synthetic file, never committed.')
+    incoming_doc.save(pending)
+    pending.seek(0)
+    pending.name, pending.size = 'pending-source.docx', len(pending.getvalue())
+    incoming['Starting report'] = pending
+    app.run()
+    assert not app.exception
+    assert ENTRY_STAGE in app.session_state.filtered_state
+    stage = app.session_state[ENTRY_STAGE]
+    assert stage[0] is not None
+    if failed_replacement:
+        malformed = BytesIO(b'not a Word package')
+        malformed.name, malformed.size = 'malformed.docx', len(malformed.getvalue())
+        incoming['Starting report'] = malformed
+        app.run()
+        assert not app.exception
+        assert app.session_state[ENTRY_STAGE] is stage
+        assert 'report_entry_failed_digest' in app.session_state.filtered_state
+    if cleanup_fails:
+        def failed_cleanup():
+            raise OSError('Synthetic temporary cleanup failure')
+        monkeypatch.setattr(stage[0], 'cleanup', failed_cleanup)
+    before = current(app)
+    stored = library.load_imported_draft(before.profile.contract, before.profile.key)
+    original = library.imported_original(before.profile.contract, before.profile.key).read_bytes()
+    action = next(b for b in app.sidebar.button if b.label == 'Open the saved original for section review')
+    from app import monthly_report_import as importer
+    real_inspect = importer.inspect_docx
+    def rejected_original(path):
+        if path == library.imported_original(before.profile.contract, before.profile.key):
+            raise ValueError('Synthetic unreadable saved original')
+        return real_inspect(path)
+    monkeypatch.setattr(importer, 'inspect_docx', rejected_original)
+    epoch = app.session_state.filtered_state.get('report_entry_upload_epoch', 0)
+    action.click().run()
+    assert not app.exception
+    assert app.session_state[ENTRY_STAGE] is stage
+    assert stage[1].exists()
+    assert app.session_state.filtered_state.get('report_entry_upload_epoch', 0) == epoch
+    assert current(app) == before
+    monkeypatch.setattr(importer, 'inspect_docx', real_inspect)
+    action = next(b for b in app.sidebar.button if b.label == 'Open the saved original for section review')
+    # Model the native upload identity: the pending bytes stay mounted until
+    # the product rotates the first-use picker, then the new picker is empty.
+    from app import monthly_report_section_ui as section_ui
+    upload = section_ui.st.file_uploader
+    def keyed_upload(label, *args, **kwargs):
+        if (str(kwargs.get('key', '')).startswith('report_entry_upload_v')
+                or str(kwargs.get('key', '')).startswith('report_setup_')):
+            return None
+        return upload(label, *args, **kwargs)
+    monkeypatch.setattr(section_ui.st, 'file_uploader', keyed_upload)
+    action.click().run()
+    assert not app.exception
+    assert ENTRY_STAGE not in app.session_state.filtered_state
+    assert 'report_entry_failed_digest' not in app.session_state.filtered_state
+    assert stage[1].exists() is cleanup_fails
+    if cleanup_fails:
+        assert any('temporary copy could not be cleaned up' in w.value for w in app.warning)
+    saved_stage = next(value for key, value in app.session_state.filtered_state.items()
+                       if key.startswith('report_setup_') and key.endswith('_stage'))
+    assert saved_stage[0] is None
+    assert any(b.label == 'Cancel saved-original review' for b in app.button)
+    assert current(app) == before
+    next(b for b in app.button if b.label == 'Cancel saved-original review').click().run()
+    assert not app.exception
+    assert not any(b.label == 'Cancel saved-original review' for b in app.button)
+    assert current(app) == before
+    assert library.load_imported_draft(before.profile.contract, before.profile.key) == stored
+    assert library.imported_original(before.profile.contract, before.profile.key).read_bytes() == original
+
+
+def test_failed_entry_without_stage_rotates_picker_when_saved_original_opens(monkeypatch, tmp_path):
+    from streamlit.testing.v1 import AppTest
+    app, source, incoming = stage_source(monkeypatch, tmp_path)
+    next(b for b in app.button if b.label == 'Continue to this month’s updates').click().run()
+    draft = current(app)
+    stored = library.load_imported_draft(draft.profile.contract, draft.profile.key)
+    raw = library.imported_original(draft.profile.contract, draft.profile.key).read_bytes()
+    recovered = AppTest.from_string('''
+import hashlib
+from io import BytesIO
+import streamlit as st
+from app import monthly_report_library as library
+from app.monthly_report_section_ui import render_section_setup
+from app.monthly_report_ui import _field
+state = library.load_profile(st.session_state['contract'], st.session_state['profile'])
+upload = None
+if not st.session_state.get('report_entry_upload_epoch'):
+    upload = BytesIO(b'not a Word package')
+    st.session_state['report_entry_failed_digest'] = hashlib.sha256(upload.getvalue()).hexdigest()
+    st.session_state['report_entry_failed_notice'] = 'Synthetic rejected first-use file'
+render_section_setup(state.profile.contract, st.session_state['period'], 'Synthetic Editor', _field,
+    state=state, identity=state.profile, working_draft=st.session_state['working'],
+    entry_active=True, entry_upload=upload)
+''', default_timeout=30)
+    recovered.session_state['contract'] = draft.profile.contract
+    recovered.session_state['profile'] = draft.profile.key
+    recovered.session_state['period'] = draft.period
+    recovered.session_state['working'] = draft
+    recovered.run()
+    assert not recovered.exception
+    assert 'report_entry_stage' not in recovered.session_state.filtered_state
+    assert 'report_entry_failed_digest' in recovered.session_state.filtered_state
+    next(b for b in recovered.sidebar.button if b.label == 'Open the saved original for section review').click().run()
+    assert not recovered.exception
+    assert recovered.session_state['report_entry_upload_epoch'] == 1
+    assert 'report_entry_failed_digest' not in recovered.session_state.filtered_state
+    assert 'report_entry_failed_notice' not in recovered.session_state.filtered_state
+    assert any(b.label == 'Cancel saved-original review' for b in recovered.button)
+    assert recovered.session_state['working'] == draft
+    assert library.load_imported_draft(draft.profile.contract, draft.profile.key) == stored
+    assert library.imported_original(draft.profile.contract, draft.profile.key).read_bytes() == raw
