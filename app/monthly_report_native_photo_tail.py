@@ -46,7 +46,10 @@ def _normalized_label(node):
     # The builder suppresses Word's inherited numbering on static labels.
     pr = clone.find(qn('w:pPr'))
     if pr is not None:
-        for num in list(pr.findall(qn('w:numPr'))):
+        numbering = pr.findall(qn('w:numPr'))
+        if len(numbering) > 1:
+            return None
+        for num in numbering:
             if (len(num) == 1 and num[0].tag == qn('w:numId')
                     and dict(num[0].attrib) == {qn('w:val'): '0'}
                     and not num.attrib and not len(num[0])):

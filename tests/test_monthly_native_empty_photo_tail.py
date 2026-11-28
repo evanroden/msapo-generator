@@ -178,3 +178,11 @@ def test_malformed_raw_caption_refused(tmp_path,kind):
 def test_uncleared_caption_has_no_authority(tmp_path):
     p,d,label,pic,end=fixture(tmp_path);plan,=plans(p,d);clear(pic)
     before=d.element.xml;plan.apply(d.element.body,state(),set());assert d.element.xml==before
+
+
+def test_duplicate_final_numbering_is_not_builder_normalization(tmp_path):
+    from copy import deepcopy
+    p,d,label,pic,end=fixture(tmp_path);plan,=plans(p,d);clear(pic)
+    num=OxmlElement('w:numPr');n=OxmlElement('w:numId');n.set(qn('w:val'),'0');num.append(n)
+    label.get_or_add_pPr().append(num);label.get_or_add_pPr().append(deepcopy(num))
+    before=d.element.xml;apply(plan,d,state());assert d.element.xml==before
