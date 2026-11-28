@@ -141,17 +141,6 @@ def _end_page(document, boundary):
         document.add_section(WD_SECTION_START.CONTINUOUS)
     elif boundary == "page":
         document.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
-    elif boundary == "deleted":
-        # A page break removed with tracked changes no longer breaks the page.
-        paragraph = document.add_paragraph()
-        deleted = OxmlElement("w:del")
-        for name, value in (("w:id", "1"), ("w:author", "Synthetic Editor"), ("w:date", "2026-11-27T00:00:00Z")):
-            deleted.set(qn(name), value)
-        run, page_break = OxmlElement("w:r"), OxmlElement("w:br")
-        page_break.set(qn("w:type"), "page")
-        run.append(page_break)
-        deleted.append(run)
-        paragraph._p.append(deleted)
 
 
 def _contents(lines, *, after="ORGANIZATIONAL CHART", cover="section", boundary="section"):
@@ -212,19 +201,33 @@ def test_only_a_positively_identified_title_list_counts(lines, expected):
 
 @pytest.mark.parametrize("cover,boundary,expected", [
     ("section", "section", True),
-    ("section", "page", True),
-    ("section", "before", True),       # The next paragraph is set to start a page.
-    ("page", "section", True),
     ("section", "continuous", False),  # The next section starts on the same page.
-    ("section", None, False),          # Nothing ends the page, so the heading after the list is on it.
-    ("section", "deleted", False),
-    (None, "section", False),          # The cover's lines share the page.
+    ("section", "page", False),        # A page break inside the Word section does not end it.
+    ("section", "before", False),      # Nor does a paragraph set to start a page.
+    ("section", None, False),          # Nothing ends it, so the heading after the list is in it.
+    ("page", "section", False),        # The cover shares the contents' Word section.
+    (None, "section", False),
 ])
-def test_the_contents_page_ends_only_at_a_page_or_section_break(cover, boundary, expected):
+def test_the_contents_page_ends_only_at_a_section_break_that_starts_a_page(cover, boundary, expected):
     """Codex on #1144: a line that is not an entry does not prove the list has ended."""
     from app.monthly_report_contents_review import section_titles_only
     document = _contents(["Section 1: Organizational Chart", "Section 2: Monthly Activity Summary"],
                          cover=cover, boundary=boundary)
+    assert section_titles_only(document.element) is expected
+
+
+@pytest.mark.parametrize("boundary,continued,expected", [
+    ("page", "Section 2: Monthly Activity Summary\t4", False),  # Codex: its page number is checked too.
+    ("page", "Section 2: Monthly Activity Summary", True),      # Still nothing that can go stale.
+    ("section", "Section 2: Monthly Activity Summary\t4", False),
+    ("section", "Section 2: Monthly Activity Summary", False),  # No section line outside the contents page.
+])
+def test_contents_continued_on_another_page_is_checked_too(boundary, continued, expected):
+    """Codex on #1144: a contents list can go on after a page break, in Normal style."""
+    from app.monthly_report_contents_review import section_titles_only
+    document = _contents(["Section 1: Organizational Chart"], boundary=boundary, after=continued)
+    _end_page(document, "section")
+    document.add_paragraph("ORGANIZATIONAL CHART")
     assert section_titles_only(document.element) is expected
 
 

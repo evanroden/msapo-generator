@@ -67,18 +67,17 @@ NUMBER_AT_END = re.compile(r"(?:^|[\s.\u2026])(?:\d{1,4}|[ivxlcdm]{1,7})$", re.I
 PAGE_STARTS = {"nextPage", "oddPage", "evenPage"}
 
 
-def _in_order(node):
-    """A node's content in document order, each text box paragraph in its place.
+def _own_nodes(node):
+    """A paragraph's own content in document order.
 
-    A text box's paragraphs are read in their own turn, so their runs are not
-    returned with the paragraph around them. Legacy Fallback copies repeat
-    their Choice and are never read.
+    A text box's paragraphs are read in their own turn, and a legacy Fallback
+    copy repeats its Choice, so neither is returned.
     """
     for child in node:
-        if not isinstance(child.tag, str) or child.tag == MC + "Fallback":
+        if not isinstance(child.tag, str) or child.tag in (W + "p", MC + "Fallback"):
             continue
         yield child
-        yield from (_boxes(child) if child.tag == W + "p" else _in_order(child))
+        yield from _own_nodes(child)
 
 
 def _boxes(node):
@@ -110,8 +109,7 @@ def _character(node):
 
 def _own_text(paragraph):
     """A paragraph's own text, with tabs and line breaks; not its text boxes' text."""
-    return "".join(value for node in _in_order(paragraph) if node.tag != W + "p"
-                   for value in [_character(node)] if value is not None)
+    return "".join(value for node in _own_nodes(paragraph) for value in [_character(node)] if value is not None)
 
 
 def _page_field(paragraph):
@@ -135,58 +133,31 @@ def _current_section(properties):
             and not any(ancestor.tag in (W + "txbxContent", W + "tc") for ancestor in paragraph.iterancestors()))
 
 
-def _deleted(node, paragraph):
-    """A page break removed with tracked changes no longer breaks the page."""
-    while node is not None and node is not paragraph:
-        if node.tag in (W + "del", W + "moveFrom"):
-            return True
-        node = node.getparent()
-    return False
+def _sections(body):
+    """The body's text by Word section: [(paragraph, text), ...] for each.
 
-
-def _pages(body):
-    """The body's text page by page: [(paragraph, text), ...] for each page.
-
-    A page starts at a page break, at a paragraph set to start a page and
-    after a section break whose next section starts a page. Text that flows
-    on to a further page stays with its page here, and a break this does not
-    read (in a table, or a content control) joins two pages: either only adds
-    lines to the check, and can never take one away from it.
+    The importer reads a static contents list as the Word section that holds
+    its heading. Here only a section break whose next section starts a page
+    ends one; a page break or a continuous section break never does. Joining
+    two sections only adds lines to the check, and can never take one away.
     """
     marks = [node for node in body.iter(W + "sectPr") if _current_section(node)]
-    section_ends = {current.getparent().getparent() for current, following in zip(marks, marks[1:])
-                    if current.getparent().tag == W + "pPr"
-                    and current.getparent().getparent().getparent().tag == W + "body"
-                    and _starts_page(following)}
-    pages, page = [], []
+    ends = {current.getparent().getparent() for current, following in zip(marks, marks[1:])
+            if current.getparent().tag == W + "pPr"
+            and current.getparent().getparent().getparent().tag == W + "body"
+            and _starts_page(following)}
+    sections, lines = [], []
     for block in body:
         if not isinstance(block.tag, str) or block.tag == W + "sectPr":
             continue
-        if block.tag != W + "p":
-            page += [(paragraph, _own_text(paragraph)) for paragraph in _boxes(block)]
-            continue
-        before = block.find(W + "pPr/" + W + "pageBreakBefore")
-        if before is not None and before.get(W + "val", "true").lower() not in {"0", "false", "off"}:
-            pages.append(page)
-            page = []
-        text = []
-        for node in _in_order(block):
-            if node.tag == W + "p":
-                page.append((node, _own_text(node)))  # A text box on this page.
-            elif node.tag == W + "br" and node.get(W + "type") == "page" and not _deleted(node, block):
-                page.append((block, "".join(text)))
-                pages.append(page)
-                page, text = [], []
-            else:
-                value = _character(node)
-                if value is not None:
-                    text.append(value)
-        page.append((block, "".join(text)))
-        if block in section_ends:
-            pages.append(page)
-            page = []
-    pages.append(page)
-    return pages
+        if block.tag == W + "p":
+            lines.append((block, _own_text(block)))
+        lines += [(paragraph, _own_text(paragraph)) for paragraph in _boxes(block)]
+        if block in ends:
+            sections.append(lines)
+            lines = []
+    sections.append(lines)
+    return sections
 
 
 def _furniture(line):
@@ -208,18 +179,20 @@ def _toc_style(paragraph):
 def section_titles_only(root):
     """True only for a contents page positively identified as section titles.
 
-    The contents page is the page that holds the contents heading, from the
-    page break or section break before it to the one after it. Every line on
-    it must be the heading, a "Section N: Title" line or the native page's
-    brand line, notice or address. Each title must be a report section the
-    importer recognizes, written as a name with nothing after it, and no line
-    may sit in a table or carry a page field. No paragraph styled as a
-    contents entry may appear on any other page. Such a page has nothing that
-    can go stale: its titles and order are the design's own and its numbers
-    follow the report's sections (#902). Anything else keeps the warning
-    (Codex on #1144: a page number in another table cell, after a space or as
-    a Roman numeral, and a further entry such as "Monthly Activity Summary"
-    with its page number after the section lines).
+    The contents page is the Word section that holds the contents heading,
+    between the section breaks before and after it that start a page. Every
+    line in it must be the heading, a "Section N: Title" line or the
+    native page's brand line, notice or address. Each title must be a report
+    section the importer recognizes, written as a name with nothing after it,
+    and no line may sit in a table or carry a page field. No other part of
+    the report may hold a "Section N: Title" line or a paragraph styled as a
+    contents entry, so contents cannot continue elsewhere. Such a page has
+    nothing that can go stale: its titles and order are the design's own and
+    its numbers follow the report's sections (#902). Anything else keeps the
+    warning (Codex on #1144: a page number in another table cell, after a
+    space or as a Roman numeral; a further entry such as "Monthly Activity
+    Summary" with its page number after the section lines; and contents
+    continued on the next page).
     """
     from app.monthly_report_import import _heading
 
@@ -227,13 +200,14 @@ def section_titles_only(root):
     if body is None:
         return False
     checked = False
-    for page in _pages(body):
-        if not any(CONTENTS_HEADING.fullmatch(value) for _, text in page for value in (text, *text.split("\n"))):
-            if any(_toc_style(paragraph) for paragraph, _ in page):
-                return False
+    for section in _sections(body):
+        if not any(CONTENTS_HEADING.fullmatch(value) for _, text in section for value in (text, *text.split("\n"))):
+            if any(_toc_style(paragraph) or any(SECTION_ENTRY.fullmatch(line) for line in text.split("\n"))
+                   for paragraph, text in section):
+                return False  # Contents continued, or listed again, outside the contents page.
             continue
         entries = 0
-        for paragraph, text in page:
+        for paragraph, text in section:
             if _page_field(paragraph):
                 return False
             if CONTENTS_HEADING.fullmatch(text):
