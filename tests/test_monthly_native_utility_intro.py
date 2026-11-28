@@ -224,3 +224,18 @@ def test_detached_or_unknown_activity_blocks_intro(tmp_path, activity):
     f = fixture(tmp_path); c = plan(f); raw, proof, receipt = output(f)
     receipt = replace(receipt, activities=(*receipt.activities, activity))
     assert c.apply(raw, proof, {3}, decoration_receipt=receipt) == (raw, f[2], proof)
+
+
+@pytest.mark.parametrize('case', ['root-text', 'run-text', 'property-text', 'text-tail', 'root-tail'])
+def test_hidden_final_xml_values_are_not_ignored(tmp_path, case):
+    f = fixture(tmp_path); c = plan(f); raw, proof, receipt = output(f)
+    with ZipFile(BytesIO(raw)) as z: parts = {n:z.read(n) for n in z.namelist()}
+    root = etree.fromstring(parts['word/document.xml']); body = root.find(W+'body')
+    label = body[f[2].source_section_ends[1]]
+    if case == 'root-text': label.text = 'Hidden'
+    elif case == 'run-text': label.find(W+'r').text = 'Hidden'
+    elif case == 'property-text': label.find(W+'pPr').text = 'Hidden'
+    elif case == 'text-tail': label.find('.//'+W+'t').tail = 'Hidden'
+    else: label.tail = 'Hidden'
+    parts['word/document.xml'] = etree.tostring(root); changed = pack(parts)
+    assert c.apply(changed, proof, {3}, decoration_receipt=receipt) == (changed, f[2], proof)

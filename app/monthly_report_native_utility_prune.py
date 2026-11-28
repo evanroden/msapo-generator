@@ -15,7 +15,12 @@ from app.monthly_report_native_art_scope import (
     _package, _routing, NativeEmissionProof,
     verify_header_routing, W,
 )
-from app.monthly_report_native_interior_tail import _signature
+def _signature(node):
+    # Removal requires the entire XML value, including non-text-node payloads
+    # and tails. A hidden insertion must not disappear from the final receipt.
+    return (node.tag, tuple(sorted(node.attrib.items())), node.text or '', node.tail or '',
+            tuple(_signature(child) for child in node))
+
 
 _PLAIN = {qn('w:' + n) for n in (
     'p', 'pPr', 'r', 'rPr', 't', 'rFonts', 'b', 'bCs', 'i', 'iCs', 'sz',

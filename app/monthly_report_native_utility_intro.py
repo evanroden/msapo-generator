@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import re
 
 from app.monthly_report_native_art_scope import W
-from app.monthly_report_native_interior_tail import _signature
+
 
 
 @dataclass(frozen=True)
@@ -63,7 +63,7 @@ def intro_envelope(roots, start, draft):
     from app.monthly_report_import import _text
     from app.monthly_report_native_layout import _MONTH, _set_text
     from app.monthly_report_native_rate_label import _label
-    from app.monthly_report_native_utility_prune import _empty_signature
+    from app.monthly_report_native_utility_prune import _empty_signature, _signature
     expected, labels, months = [], [], []
     for offset, node in enumerate(roots):
         position = start + offset + 1
