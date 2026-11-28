@@ -1339,17 +1339,27 @@ def _build_verified_native_docx(draft, source_path, *, asset_loader=None, sectio
         raise NativeLayoutError("Experimental native source views do not support master or foreign-branding reuse.")
     from app.monthly_report_operational_source import rendition_file
     header_scope = None
+    utility_prune = None
     emission_proofs = []
+    active_source_sections = set()
+    def observe_regions(body, pages):
+        from app.monthly_report_native_art_scope import source_emission_proof
+        emission_proofs.append(source_emission_proof(header_scope, body, pages))
+        for node in pages.live | pages.support | pages.headings:
+            region = pages.owner.get(node)
+            if region is not None:
+                active_source_sections.add(pages.source_word_sections[region])
     if native_art is not None:
         from app.monthly_report_native_art_scope import expected_header_scope, source_emission_proof
         header_scope = expected_header_scope(source_view, section_key, omitted_sections=draft.omitted_sections)
+        from app.monthly_report_native_utility_prune import plan_utility_section_prune
+        utility_prune = plan_utility_section_prune(Path(source_path), source_view, draft, header_scope)
     with rendition_file(source_view) as derivative:
         result = _build_native_docx(draft, derivative, asset_loader=asset_loader, section_key=section_key,
                                     master=master, source_view=source_view, original_path=Path(source_path),
                                     source_section_plan=header_scope.source_plan if header_scope else None,
                                     source_header_scope=header_scope,
-                                    source_region_observer=(lambda body, pages: emission_proofs.append(
-                                        source_emission_proof(header_scope, body, pages))) if header_scope else None)
+                                    source_region_observer=observe_regions if header_scope else None)
     if native_art is not None:
         from app.monthly_report_pdf_image_budget import release_transient_word_memory
         release_transient_word_memory()
@@ -1358,6 +1368,11 @@ def _build_verified_native_docx(draft, source_path, *, asset_loader=None, sectio
             raise NativeLayoutError("Native source-region emission proof is unavailable.")
         verify_native_art_output(result, native_art, source_scope=header_scope,
                                  emission_proof=emission_proofs[0])
+        if utility_prune is not None:
+            result, reduced_scope, reduced_proof = utility_prune.apply(
+                result, emission_proofs[0], active_source_sections)
+            verify_native_art_output(result, native_art, source_scope=reduced_scope,
+                                     emission_proof=reduced_proof)
     return result
 
 
