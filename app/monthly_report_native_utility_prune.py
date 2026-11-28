@@ -29,6 +29,8 @@ def _properties(node):
 
 
 def _plain(node, boundary=False):
+    # Deliberately stricter than interior_tail._plain: this closed grammar
+    # grants section-deletion permission, not a local empty-tail adjustment.
     clone = deepcopy(node)
     if boundary:
         props = _properties(clone)
@@ -65,7 +67,10 @@ def _plain(node, boundary=False):
 
 
 def _empty_signature(node):
-    """Only the documented old-text clearing is predicted from immutable source."""
+    """Predict production clearing exactly; writer changes make pruning inert.
+
+    Never broaden this prediction by normalizing the rendered output.
+    """
     clone = deepcopy(node)
     text = ''.join(n.text or '' for n in clone.iter(W+'t'))
     if text.strip():
@@ -125,8 +130,12 @@ def plan_utility_section_prune(source_path, view, draft, scope):
     utility=[b for b in draft.blocks if b.key=='utility_analysis']
     if (scope.section_key is not None or scope.omitted_sections or len(utility)>1
             or any(b.source!='Omit' and any((b.text.strip(),b.rows,b.extra_tables,
-                b.asset_hashes,b.asset_instances,b.org_nodes)) for b in utility)):
+                b.asset_hashes,b.asset_instances,b.org_nodes,b.ai_paragraphs,
+                b.references)) for b in utility)):
         return None
+    # References alone are not rendered content, but they can encode an
+    # unresolved source decision. Conservatively retain that region too.
+    # AI paragraph records likewise block even when their current text is blank.
     raw=source_path.read_bytes()
     from hashlib import sha256
     if sha256(raw).hexdigest()!=scope.original_sha256:
@@ -144,6 +153,8 @@ def plan_utility_section_prune(source_path, view, draft, scope):
         positions=range(start+1,end+1)
         roots=original[start:end]
         source_items=[i for i in items if i.part=='word/document.xml' and i.position in positions]
+        # Intentionally narrow: only unheaded scorecards subregions qualify.
+        # Other source layouts need their own positive proof, not a looser rule.
         if (1<section<len(ends) and len(roots)<=64
                 and all(mapping.get(p)=='scorecards' and p not in scope.source_plan.headings for p in positions)
                 and any(i.kind=='text' and i.text.strip() for i in source_items)

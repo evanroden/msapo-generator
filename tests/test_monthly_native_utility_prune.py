@@ -12,7 +12,7 @@ from lxml import etree
 from app.monthly_report_compatibility_view import derive_compatibility_view
 from app.monthly_report_native_art_scope import expected_header_scope,NativeEmissionProof,verify_header_routing,W
 from app.monthly_report_native_utility_prune import plan_utility_section_prune,_empty_signature
-from app.monthly_report_model import ResolvedBlock
+from app.monthly_report_model import ResolvedBlock,DraftParagraph
 from test_monthly_report_source_frame_logo_role import source
 
 
@@ -71,7 +71,7 @@ def test_positive_scope_and_exact_output(tmp_path):
         assert [n for n in a.namelist() if a.read(n)!=b.read(n)]==['word/document.xml']
 
 
-@pytest.mark.parametrize('field,value',[('text','Current'),('rows',(('Current',),)),('extra_tables',('table',)),('asset_hashes',('asset',)),('asset_instances',('occurrence',)),('org_nodes',('node',))])
+@pytest.mark.parametrize('field,value',[('text','Current'),('rows',(('Current',),)),('extra_tables',('table',)),('asset_hashes',('asset',)),('asset_instances',('occurrence',)),('org_nodes',('node',)),('ai_paragraphs',(DraftParagraph('Synthetic current analysis.',(),()),)),('ai_paragraphs',(DraftParagraph('',(),()),)),('references',('source:synthetic',))])
 def test_any_current_utility_payload_blocks_scope(tmp_path,field,value):
     assert plan(fixture(tmp_path),(replace(ResolvedBlock('utility_analysis','This month'),**{field:value}),)) is None
 
