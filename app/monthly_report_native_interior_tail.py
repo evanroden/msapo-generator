@@ -57,6 +57,15 @@ _FORBIDDEN = {
 }
 
 
+def _section_properties(node):
+    """Only body-level section properties define physical section flow."""
+    if node.tag == qn("w:sectPr"):
+        return node
+    if node.tag == qn("w:p"):
+        return node.find("./" + qn("w:pPr") + "/" + qn("w:sectPr"))
+    return None
+
+
 def _signature(n):
     return (
         n.tag,
@@ -126,9 +135,9 @@ class InteriorTail:
             return
         next_props = next(
             (
-                n if n.tag == qn("w:sectPr") else n.find(".//" + qn("w:sectPr"))
+                _section_properties(n)
                 for n in self.nodes[-1].itersiblings()
-                if n.tag == qn("w:sectPr") or n.find(".//" + qn("w:sectPr")) is not None
+                if _section_properties(n) is not None
             ),
             None,
         )
@@ -178,10 +187,9 @@ def interior_picture_tails(path, original, sections):
                 # The next section, not the ending section, owns transition type.
                 next_props = next(
                     (
-                        n if n.tag == qn("w:sectPr") else n.find(".//" + qn("w:sectPr"))
+                        _section_properties(n)
                         for n in raw[j + 1 :]
-                        if n.tag == qn("w:sectPr")
-                        or n.find(".//" + qn("w:sectPr")) is not None
+                        if _section_properties(n) is not None
                     ),
                     None,
                 )
@@ -193,14 +201,9 @@ def interior_picture_tails(path, original, sections):
                 next_index = next(
                     k
                     for k in range(j + 1, len(raw))
-                    if raw[k] is next_props
-                    or raw[k].find(".//" + qn("w:sectPr")) is next_props
+                    if _section_properties(raw[k]) is next_props
                 )
-                live_next = (
-                    original[next_index]
-                    if original[next_index].tag == qn("w:sectPr")
-                    else original[next_index].find(".//" + qn("w:sectPr"))
-                )
+                live_next = _section_properties(original[next_index])
                 if live_next is None or _signature(live_next) != _signature(next_props):
                     break
                 if j + 1 < len(original):

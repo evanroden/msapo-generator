@@ -160,3 +160,35 @@ def test_current_content_after_proof_blocks_cleanup(tmp_path):
     p.append(r)
     plans[0].apply(doc.element.body, pages())
     assert p.find("./" + qn("w:pPr") + "/" + qn("w:pageBreakBefore")) is not None
+
+
+def test_nested_section_in_table_does_not_grant_physical_flow(tmp_path):
+    path, doc, p, end = fixture(tmp_path, transition="continuous")
+    table = doc.add_table(rows=1, cols=1)
+    nested = OxmlElement("w:sectPr")
+    table.cell(0, 0).paragraphs[0]._p.get_or_add_pPr().append(nested)
+    doc.save(path)
+    assert not prove(path, doc)
+
+
+def test_new_physical_boundary_after_proof_blocks_cleanup(tmp_path):
+    path, doc, p, end = fixture(tmp_path)
+    plans = prove(path, doc)
+    clear(p)
+    inserted = OxmlElement("w:p")
+    props = OxmlElement("w:pPr")
+    props.append(OxmlElement("w:sectPr"))
+    inserted.append(props)
+    doc.element.body[-1].addprevious(inserted)
+    plans[0].apply(doc.element.body, pages())
+    assert p.find("./" + qn("w:pPr") + "/" + qn("w:pageBreakBefore")) is not None
+
+
+def test_missing_final_properties_returns_without_mutation(tmp_path):
+    path, doc, p, end = fixture(tmp_path)
+    plans = prove(path, doc)
+    clear(p)
+    p.remove(p.find(qn("w:pPr")))
+    before = doc.element.xml
+    plans[0].apply(doc.element.body, pages())
+    assert doc.element.xml == before
