@@ -204,6 +204,13 @@ def plan_utility_section_prune(source_path, view, draft, scope):
         start=end
     if not candidates:
         return None
+    return _source_prune_plan(view, scope, candidates, expected, decorations)
+
+
+def _source_prune_plan(view, scope, candidates, expected, decorations):
+    """Simulate retained routes from source, before rendering any output."""
+    with _package(view.rendition_bytes) as archive:
+        rendition, routes, ends, even = _routing(archive)
     removed=set(candidates);keep=tuple(s for s in scope.source_word_sections if s not in removed)
     removed_positions={p for s in candidates for p in range((ends[s-2] if s>1 else 0)+1,ends[s-1]+1)}
     selected=tuple(p for p in scope.selected_positions if p not in removed_positions)
