@@ -136,7 +136,7 @@ def test_real_public_builder_saved_reopened_prunes_only_unused_region(tmp_path,m
     assert draft==saved
     draft=replace(draft,blocks=tuple(b for b in draft.blocks if b.key!='utility_analysis'))
     before=path.read_bytes();fingerprint=draft.fingerprint
-    with patch.object(cleanup.UtilitySectionPrune,'apply',lambda self,raw,proof,active:(raw,self.full_scope,proof)):
+    with patch.object(cleanup.UtilitySectionPrune,'apply',lambda self,raw,proof,active,**kw:(raw,self.full_scope,proof)):
         base=build_native_docx(draft,path,asset_loader=loader,source_view=view)
     fixed=build_native_docx(draft,path,asset_loader=loader,source_view=view)
     assert len(Document(BytesIO(base)).sections)==5

@@ -89,11 +89,15 @@ class UtilitySectionPrune:
     reduced_scope: object
     source_sections: tuple[int, ...]
     expected_roots: tuple[tuple[int, tuple], ...]
+    decoration_sources: tuple = ()
 
-    def apply(self, raw, proof, active_source_sections):
+    def apply(self, raw, proof, active_source_sections, *, decoration_receipt=None):
         """Return the full output unchanged unless every precomputed root matches."""
         verify_header_routing(raw,self.full_scope,emission_proof=proof)
-        if set(self.source_sections) & set(active_source_sections):
+        decorations = {section: (positions, support) for section, positions, support in self.decoration_sources}
+        if (set(self.source_sections) - set(decorations)) & set(active_source_sections):
+            return raw, self.full_scope, proof
+        if set(self.source_sections) & set(proof.reserved_source_sections):
             return raw, self.full_scope, proof
         with _package(raw) as archive:
             units,_,_,_=_routing(archive)
@@ -103,6 +107,24 @@ class UtilitySectionPrune:
         for section in self.source_sections:
             positions=[i for i,o in enumerate(owners) if o==section]
             signatures=expected[section]
+            if section in decorations:
+                from app.monthly_report_native_utility_intro import UtilityDecorationReceipt
+                if (not isinstance(decoration_receipt, UtilityDecorationReceipt)
+                        or decoration_receipt.scope_sha256 != self.full_scope.sha256
+                        or len(decoration_receipt.roots) != len(units)):
+                    return raw, self.full_scope, proof
+                source_positions, supports = decorations[section]
+                activities = decoration_receipt.activities
+                if (any(a[0] is None for a in activities)
+                        or any(a[2] or a[4] for a in activities if a[0] == section)
+                        or tuple(sorted(a[1] for a in activities if a[0] == section and a[3] and a[1] is not None)) != supports
+                        or any(a[1] is None for a in activities if a[0] == section)):
+                    return raw, self.full_scope, proof
+                records = [decoration_receipt.roots[i] for i in positions]
+                if (tuple(r[0] for r in records) != source_positions
+                        or any(r[1] or r[3] for r in records)
+                        or tuple(r[0] for r in records if r[2]) != supports):
+                    return raw, self.full_scope, proof
             if len(positions)!=len(signatures) or any(_signature(units[i])!=sig for i,sig in zip(positions,signatures)):
                 return raw, self.full_scope, proof
             remove.extend(positions)
@@ -148,7 +170,7 @@ def plan_utility_section_prune(source_path, view, draft, scope):
         return None
     mapping=dict(scope.source_plan.section_by_position)
     items=view.original_inspection.items
-    candidates=[];expected=[];start=0
+    candidates=[];expected=[];decorations=[];start=0
     for section,end in enumerate(ends,1):
         positions=range(start+1,end+1)
         roots=original[start:end]
@@ -159,14 +181,21 @@ def plan_utility_section_prune(source_path, view, draft, scope):
                 and all(mapping.get(p)=='scorecards' and p not in scope.source_plan.headings for p in positions)
                 and any(i.kind=='text' and i.text.strip() for i in source_items)
                 and all(i.kind=='text' and i.suggested_slot=='utility_analysis' for i in source_items)
-                and all(_plain(n,boundary=j==len(roots)-1) for j,n in enumerate(roots))
                 and all(_signature(a)==_signature(b) for a,b in zip(roots,rendition[start:end]))):
+            from app.monthly_report_native_utility_intro import intro_envelope
+            plain = all(_plain(n,boundary=j==len(roots)-1) for j,n in enumerate(roots))
+            intro = None if plain else intro_envelope(roots,start,draft)
+            if not plain and intro is None:
+                start=end
+                continue
             # Both adjacent transitions must be normal next-page, with no
             # inherited odd/even restart semantics silently changed.
             props=[_properties(original[end-1]),_properties(original[ends[section]-1])]
             if all(p is not None and (p.find(W+'type') is None or p.find(W+'type').get(W+'val')=='nextPage') for p in props):
                 candidates.append(section)
-                expected.append((section,tuple(_empty_signature(n) for n in roots)))
+                expected.append((section, intro[0] if intro else tuple(_empty_signature(n) for n in roots)))
+                if intro:
+                    decorations.append((section, tuple(positions), intro[1]))
         start=end
     if not candidates:
         return None
@@ -191,4 +220,4 @@ def plan_utility_section_prune(source_path, view, draft, scope):
         routes=retained,expected_parts=tuple(sorted({p for r in retained for p in r.parts if p})),
         reserved_routes=tuple(scope.reserved_routes[s-1] for s in keep),
         reserved_top_margins=tuple(scope.reserved_top_margins[s-1] for s in keep))
-    return UtilitySectionPrune(scope,reduced,tuple(candidates),tuple(expected))
+    return UtilitySectionPrune(scope,reduced,tuple(candidates),tuple(expected),tuple(decorations))
