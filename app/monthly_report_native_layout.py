@@ -1927,6 +1927,9 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     from app.monthly_report_native_interior_tail import interior_picture_tails
     interior_roster_tails = interior_picture_tails(Path(original_path), original, section_by_pos)
     cleared_roster_picture_tails = []
+    from app.monthly_report_native_photo_tail import empty_photo_tails
+    unused_photo_tail_plan = empty_photo_tails(
+        Path(original_path), draft, original, section_by_pos, unchanged_positions)
     unused_priority_prototypes = []
     cleared_activity_paragraphs = set()
     from app.monthly_report_native_empty_pages import empty_scorecard_pages
@@ -2731,6 +2734,8 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
         plan.apply(body, page_plan)
     empty_scorecard_plan.apply(body, page_plan, cleared_scorecard_paragraphs)
     page_plan.finish(document=document)
+    for plan in unused_photo_tail_plan:
+        plan.apply(body, page_plan, cleared_activity_paragraphs)
     for plan in interior_roster_tails:
         plan.apply(body, page_plan)
     for node in cleared_roster_picture_tails:
