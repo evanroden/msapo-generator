@@ -1,6 +1,7 @@
 """Contents warnings describe retained source text, never certify pagination."""
 from dataclasses import replace
 from io import BytesIO
+from zipfile import ZipFile
 
 from docx import Document
 from docx.enum.section import WD_SECTION_START
@@ -351,6 +352,42 @@ def test_entries_the_numbering_cannot_update_keep_the_warning(tmp_path, monkeypa
     monkeypatch.setattr(renderer, "_convert_report_pdf", lambda *args: (b"%PDF-synthetic", ""))
     result = renderer.generate_report(value, acknowledged_fingerprint=value.fingerprint)
     assert ("not recalculated" in result.contents_notice) is expected_notice
+
+
+@pytest.mark.parametrize("omitted", [(), ("organization",), ("activity",)])
+def test_native_frame_contents_page_needs_no_note_after_any_omission(tmp_path, monkeypatch, omitted):
+    """The owner's layout through generate_report: frames anchored before the
+    heading frame, a contents page of its own, and the numbering (#902)
+    removing the left-out section's line and renumbering the rest."""
+    from app.monthly_report_contents_review import contents_entries
+    from app.monthly_report_xml_parser import parse_xml
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "data"))
+    document = _native_contents(NATIVE_ENTRIES)
+    for index, title in enumerate(("ORGANIZATIONAL CHART", "MONTHLY ACTIVITY SUMMARY", "TRAINING SUMMARY")):
+        if index:
+            document.add_section()
+        document.add_heading(title, 1)
+        document.add_paragraph("Prior synthetic content")
+    path = tmp_path / "native.docx"
+    document.save(path)
+    original = path.read_bytes()
+    profile = designs.install(path, synthetic_profiles()[0], actor="Synthetic Editor", expected_revision=0)
+    sections = tuple(SectionSpec(key, str(number), title, (BlockSpec(block, "rich_text"),), included=key not in omitted)
+                     for number, (key, title, block) in enumerate((
+                         ("organization", "Organizational Chart", "organization_chart_notes"),
+                         ("activity", "Monthly Activity Summary", "activity_summary"),
+                         ("training", "Training Summary", "training_summary")), 1))
+    value = ReportDraft(profile, ReportPeriod(2026, 10), "Synthetic Editor", sections,
+                        (ResolvedBlock("activity_summary", "This month", text="Current synthetic work."),),
+                        omitted_sections=omitted)
+    monkeypatch.setattr(renderer, "_convert_report_pdf", lambda *args: (b"%PDF-synthetic", ""))
+    result = renderer.generate_report(value, acknowledged_fingerprint=value.fingerprint)
+    with ZipFile(BytesIO(result.docx)) as archive:
+        entries = contents_entries(parse_xml(archive.read("word/document.xml")))
+    kept = [key for key in ("organization", "activity", "training") if key not in omitted]
+    assert entries == [(str(number), key) for number, key in enumerate(kept, 1)]
+    assert result.contents_notice == ""
+    assert path.read_bytes() == original
 
 
 def test_section_titles_in_a_table_keep_the_warning():
