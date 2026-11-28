@@ -1342,9 +1342,12 @@ def _build_verified_native_docx(draft, source_path, *, asset_loader=None, sectio
     utility_prune = None
     emission_proofs = []
     active_source_sections = set()
+    decoration_receipts = []
     def observe_regions(body, pages):
         from app.monthly_report_native_art_scope import source_emission_proof
         emission_proofs.append(source_emission_proof(header_scope, body, pages))
+        from app.monthly_report_native_utility_intro import decoration_receipt
+        decoration_receipts.append(decoration_receipt(header_scope, body, pages))
         for node in pages.live | pages.support | pages.headings:
             region = pages.owner.get(node)
             if region is not None:
@@ -1370,7 +1373,8 @@ def _build_verified_native_docx(draft, source_path, *, asset_loader=None, sectio
                                  emission_proof=emission_proofs[0])
         if utility_prune is not None:
             result, reduced_scope, reduced_proof = utility_prune.apply(
-                result, emission_proofs[0], active_source_sections)
+                result, emission_proofs[0], active_source_sections,
+                decoration_receipt=decoration_receipts[0])
             verify_native_art_output(result, native_art, source_scope=reduced_scope,
                                      emission_proof=reduced_proof)
     return result

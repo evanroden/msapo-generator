@@ -46,6 +46,7 @@ class NativePages:
         self.body, self.fresh = body, fresh
         self.owner, self.live, self.kinds, self.regions = {}, set(), {}, []
         self.logical_owner = {node: section_by_pos.get(i + 1) for i, node in enumerate(original)}
+        self.source_positions = {node: i for i, node in enumerate(original, 1)}
         self.source_word_sections = []
         self.source_header_scope = source_header_scope
         self.reserved_source_sections = set()
