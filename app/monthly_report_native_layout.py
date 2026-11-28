@@ -1924,6 +1924,8 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     page_plan = NativePages(body, original, section_by_pos, headings, unchanged_positions, fresh=master, source_header_scope=source_header_scope)
     from app.monthly_report_native_empty_activity import empty_activity_panels
     empty_panels = empty_activity_panels(draft, original, section_by_pos, unchanged_positions, headings)
+    from app.monthly_report_native_interior_tail import interior_picture_tails
+    interior_roster_tails = interior_picture_tails(Path(original_path), original, section_by_pos)
     cleared_roster_picture_tails = []
     unused_priority_prototypes = []
     cleared_activity_paragraphs = set()
@@ -2724,6 +2726,8 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
         panel.remove_if_empty(body, page_plan, cleared_activity_paragraphs)
     empty_scorecard_plan.apply(body, page_plan, cleared_scorecard_paragraphs)
     page_plan.finish(document=document)
+    for plan in interior_roster_tails:
+        plan.apply(body, page_plan)
     for node in cleared_roster_picture_tails:
         if (node.getparent() is not body or not _discardable_picture_anchor(node)
                 or node in page_plan.live or node in page_plan.support or node in page_plan.headings):
