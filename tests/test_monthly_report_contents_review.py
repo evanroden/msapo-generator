@@ -57,6 +57,18 @@ def source(tmp_path, kind):
             paragraph.add_run("Section " + number).bold = True
             paragraph.add_run(": " + title + ("\t" + str(int(number) + 2) if kind == "sections_paged" else ""))
         document.add_section()
+    elif kind == "sections_one_paragraph":
+        # Codex on #1144: the brand line and the entries in one paragraph,
+        # split by line breaks. The section numbering reads each paragraph's
+        # text from its start, so it cannot update these entries.
+        document.add_section()
+        document.add_paragraph("TABLE OF CONTENTS")
+        paragraph = document.add_paragraph()
+        for index, line in enumerate(("ENFRA", "Section 1: Monthly Activity Summary", "Section 2: Training Summary")):
+            run = paragraph.add_run(line)
+            if index < 2:
+                run.add_break()
+        document.add_section()
     elif kind == "prose":
         document.add_paragraph("The contents of this report are confidential.")
         document.add_paragraph("See the table of contents for report navigation.")
@@ -169,6 +181,12 @@ def _contents(lines, *, after="ORGANIZATIONAL CHART", cover="section", boundary=
     return document
 
 
+def _identified(root):
+    """The contents page alone: positively identified as section titles."""
+    from app.monthly_report_contents_review import contents_entries
+    return contents_entries(root) is not None
+
+
 def _paragraph(document, start):
     return next(paragraph._p for paragraph in document.paragraphs if paragraph.text.startswith(start))
 
@@ -195,8 +213,7 @@ def _paragraph(document, start):
     (["Monthly Activity Summary"], False),                        # No section lines at all.
 ])
 def test_only_a_positively_identified_title_list_counts(lines, expected):
-    from app.monthly_report_contents_review import section_titles_only
-    assert section_titles_only(_contents(lines).element) is expected
+    assert _identified(_contents(lines).element) is expected
 
 
 @pytest.mark.parametrize("cover,boundary,expected", [
@@ -210,10 +227,9 @@ def test_only_a_positively_identified_title_list_counts(lines, expected):
 ])
 def test_the_contents_page_ends_only_at_a_section_break_that_starts_a_page(cover, boundary, expected):
     """Codex on #1144: a line that is not an entry does not prove the list has ended."""
-    from app.monthly_report_contents_review import section_titles_only
     document = _contents(["Section 1: Organizational Chart", "Section 2: Monthly Activity Summary"],
                          cover=cover, boundary=boundary)
-    assert section_titles_only(document.element) is expected
+    assert _identified(document.element) is expected
 
 
 @pytest.mark.parametrize("boundary,continued,expected", [
@@ -224,11 +240,10 @@ def test_the_contents_page_ends_only_at_a_section_break_that_starts_a_page(cover
 ])
 def test_contents_continued_on_another_page_is_checked_too(boundary, continued, expected):
     """Codex on #1144: a contents list can go on after a page break, in Normal style."""
-    from app.monthly_report_contents_review import section_titles_only
     document = _contents(["Section 1: Organizational Chart"], boundary=boundary, after=continued)
     _end_page(document, "section")
     document.add_paragraph("ORGANIZATIONAL CHART")
-    assert section_titles_only(document.element) is expected
+    assert _identified(document.element) is expected
 
 
 def _native_contents(entries, *, notice=CONTENTS_NOTICE):
@@ -261,20 +276,21 @@ NATIVE_ENTRIES = ("Section 1: Organizational Chart", "Section 2: Monthly Activit
     (NATIVE_ENTRIES, "Synthetic prose that is not the notice.", False),
 ])
 def test_native_contents_frames_are_read_wherever_they_are_anchored(tmp_path, monkeypatch, entries, notice, expected):
-    from app.monthly_report_contents_review import contents_notice_for, section_titles_only
+    from app.monthly_report_contents_review import contents_notice_for
     document = _native_contents(entries, notice=notice)
-    assert section_titles_only(document.element) is expected
+    assert _identified(document.element) is expected
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "data"))
     path = tmp_path / "native.docx"
     document.save(path)
     profile = designs.install(path, synthetic_profiles()[0], actor="Synthetic Editor", expected_revision=0)
-    assert (contents_notice_for(profile) == "") is expected
+    notice = contents_notice_for(profile, finished=path.read_bytes(), sections=_sections("organization", "activity", "training"))
+    assert (notice == "") is expected
+    assert contents_notice_for(profile) != ""  # Without the finished file nothing is proved.
 
 
 @pytest.mark.parametrize("separator", ["w:ptab", "w:br", "w:cr", "w:sym"])
 def test_a_page_number_after_any_run_separator_keeps_the_warning(separator):
     """A positional tab, a line break or a symbol is not part of a title."""
-    from app.monthly_report_contents_review import section_titles_only
     document = _contents(["Section 1: Organizational Chart"])
     run, node, number = OxmlElement("w:r"), OxmlElement(separator), OxmlElement("w:t")
     attributes = {"w:ptab": (("w:relativeTo", "margin"), ("w:alignment", "right"), ("w:leader", "dot")),
@@ -285,12 +301,60 @@ def test_a_page_number_after_any_run_separator_keeps_the_warning(separator):
     run.append(node)
     run.append(number)
     _paragraph(document, "Section 1").append(run)
-    assert section_titles_only(document.element) is False
+    assert _identified(document.element) is False
+
+
+def _sections(*keys, excluded=()):
+    from app.monthly_report_model import default_sections
+    chosen = {key: index for index, key in enumerate(keys)}
+    sections = sorted((section for section in default_sections() if section.key in chosen), key=lambda s: chosen[s.key])
+    return tuple(replace(section, included=section.key not in excluded) for section in sections)
+
+
+def _finished(document):
+    stream = BytesIO()
+    document.save(stream)
+    return stream.getvalue()
+
+
+@pytest.mark.parametrize("entries,sections,expected", [
+    (NATIVE_ENTRIES, _sections("organization", "activity", "training"), True),
+    (NATIVE_ENTRIES[::-1], _sections("organization", "activity", "training"), True),  # Frames in any order.
+    (NATIVE_ENTRIES, _sections("organization", "activity", "training", "rfi"), True),  # Appendices are not listed.
+    # The numbering could not update the page: a section left out is still listed, at its old number.
+    (NATIVE_ENTRIES, _sections("organization", "activity", "training", excluded=("organization",)), False),
+    (NATIVE_ENTRIES[:2] + ("Section 4: Training Summary",), _sections("organization", "activity", "training"), False),
+    (NATIVE_ENTRIES[:2], _sections("organization", "activity", "training"), False),  # A section not listed.
+    (NATIVE_ENTRIES + ("Section 3: Training Summary",), _sections("organization", "activity", "training"), False),
+])
+def test_finished_contents_must_list_exactly_the_reports_numbered_sections(entries, sections, expected):
+    from app.monthly_report_contents_review import finished_contents_current
+    assert finished_contents_current(_finished(_native_contents(entries)), sections) is expected
+
+
+def test_an_unreadable_finished_file_keeps_the_warning():
+    from app.monthly_report_contents_review import finished_contents_current
+    assert finished_contents_current(b"not a Word file", _sections("organization")) is False
+
+
+@pytest.mark.parametrize("omitted,expected_notice", [((), False), (("activity",), True)])
+def test_entries_the_numbering_cannot_update_keep_the_warning(tmp_path, monkeypatch, omitted, expected_notice):
+    """Codex on #1144: the brand line and the entries in one paragraph.
+
+    The numbering reads each paragraph from its start, so with a section left
+    out the finished contents still lists it at its old number, and the note
+    stays. With nothing left out the finished page is current.
+    """
+    _, value = draft(tmp_path, monkeypatch, "sections_one_paragraph")
+    value = replace(value, sections=tuple(replace(section, included=section.key not in omitted)
+                                          for section in value.sections), omitted_sections=omitted)
+    monkeypatch.setattr(renderer, "_convert_report_pdf", lambda *args: (b"%PDF-synthetic", ""))
+    result = renderer.generate_report(value, acknowledged_fingerprint=value.fingerprint)
+    assert ("not recalculated" in result.contents_notice) is expected_notice
 
 
 def test_section_titles_in_a_table_keep_the_warning():
     """Codex on #1144: a page number can sit in another cell of the row."""
-    from app.monthly_report_contents_review import section_titles_only
     document = Document()
     document.add_paragraph("TABLE OF CONTENTS")
     row = document.add_table(rows=1, cols=2).rows[0]
@@ -298,31 +362,28 @@ def test_section_titles_in_a_table_keep_the_warning():
     row.cells[1].text = "3"
     document.add_section()
     document.add_paragraph("ORGANIZATIONAL CHART")
-    assert section_titles_only(document.element) is False
+    assert _identified(document.element) is False
 
 
 def test_page_field_among_section_titles_keeps_the_warning():
-    from app.monthly_report_contents_review import section_titles_only
     document = _contents(["Section 1: Organizational Chart"])
     field = OxmlElement("w:fldSimple")
     field.set(qn("w:instr"), " PAGEREF _Toc1 \\h ")
     _paragraph(document, "Section 1").append(field)
-    assert section_titles_only(document.element) is False
+    assert _identified(document.element) is False
 
 
 def test_contents_styled_lines_on_another_page_keep_the_warning():
-    from app.monthly_report_contents_review import section_titles_only
     document = _contents(["Section 1: Organizational Chart"])
     style = OxmlElement("w:pStyle")
     style.set(qn("w:val"), "TOC1")
     _paragraph(document, "ORGANIZATIONAL CHART").get_or_add_pPr().insert(0, style)
-    assert section_titles_only(document.element) is False
+    assert _identified(document.element) is False
 
 
 def test_text_box_heading_with_its_legacy_copy_is_read_once():
     """A heading in a text box repeats in its VML fallback; that is one heading."""
     from lxml import etree
-    from app.monthly_report_contents_review import section_titles_only
     document = _contents(["Section 1: Organizational Chart"])
     heading = _paragraph(document, "TABLE OF CONTENTS")
     for run in heading.findall(qn("w:r")):
@@ -338,7 +399,7 @@ def test_text_box_heading_with_its_legacy_copy_is_read_once():
         '</w:t></w:r></w:p></w:txbxContent></v:textbox></w:pict></mc:Fallback>'
         '</mc:AlternateContent></w:r>')
     heading.append(etree.fromstring(box))
-    assert section_titles_only(document.element) is True
+    assert _identified(document.element) is True
 
 
 def test_contents_notice_survives_pdf_retry(tmp_path, monkeypatch):

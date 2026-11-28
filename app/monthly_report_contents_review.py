@@ -3,9 +3,13 @@
 The passive native clone deliberately flattens TOC fields. Neither that clone
 nor PDF conversion proves a fresh index. Report this on the finished package
 instead of letting a cached source index appear to have been recalculated.
+The note is left out only where the finished Word file's contents page lists
+exactly the report's numbered sections, at their current numbers, and nothing
+that could go stale.
 """
+from io import BytesIO
 import re
-from zipfile import BadZipFile
+from zipfile import BadZipFile, ZipFile
 
 from lxml import etree
 
@@ -57,7 +61,7 @@ CONTENTS_HEADING = re.compile(r"\s*(?:table\s*of\s*)?contents\s*:?[\s.]*", re.I)
 # "Section 3: Monthly Scorecards", the form the native section numbering keeps
 # current (#902): it renumbers these lines and the divider pages when a section
 # is left out, and removes the left-out section's line.
-SECTION_ENTRY = re.compile(r"\s*Section\s+\d+\s*:\s*(\S.*?)\s*", re.I)
+SECTION_ENTRY = re.compile(r"\s*Section\s+(\d+)\s*:\s*(\S.*?)\s*", re.I)
 # A title as a section's own name is written: words, spaces, "/", "&", dashes,
 # apostrophes and commas. No digit, leader or symbol can hide in it.
 TITLE = re.compile(r"[A-Za-z][A-Za-z /&'\u2019,\u2013\u2014-]*")
@@ -65,6 +69,10 @@ TITLE = re.compile(r"[A-Za-z][A-Za-z /&'\u2019,\u2013\u2014-]*")
 NUMBER_AT_END = re.compile(r"(?:^|[\s.\u2026])(?:\d{1,4}|[ivxlcdm]{1,7})$", re.I)
 # A section whose type is absent starts on a new page, as in Word.
 PAGE_STARTS = {"nextPage", "oddPage", "evenPage"}
+# Run content that shows a symbol, or text Word writes itself: a page number,
+# a note reference or a date.
+GENERATED = {W + name for name in ("sym", "pgNum", "footnoteReference", "endnoteReference", "dayShort",
+                                   "dayLong", "monthShort", "monthLong", "yearShort", "yearLong")}
 
 
 def _own_nodes(node):
@@ -102,8 +110,8 @@ def _character(node):
         return "\n"
     if node.tag == W + "noBreakHyphen":
         return "-"
-    if node.tag == W + "sym":
-        return "\ufffd"  # A symbol glyph: never part of a title.
+    if node.tag in GENERATED:
+        return "\ufffd"  # A symbol, or text Word writes itself: never part of a title.
     return None
 
 
@@ -176,40 +184,38 @@ def _toc_style(paragraph):
     return style is not None and re.fullmatch(r"TOC(?:Heading|[1-9])", style.get(W + "val", ""), re.I) is not None
 
 
-def section_titles_only(root):
-    """True only for a contents page positively identified as section titles.
+def contents_entries(root):
+    """The (number, key) entries of a contents page identified as section titles, else None.
 
     The contents page is the Word section that holds the contents heading,
     between the section breaks before and after it that start a page. Every
-    line in it must be the heading, a "Section N: Title" line or the
-    native page's brand line, notice or address. Each title must be a report
-    section the importer recognizes, written as a name with nothing after it,
-    and no line may sit in a table or carry a page field. No other part of
-    the report may hold a "Section N: Title" line or a paragraph styled as a
-    contents entry, so contents cannot continue elsewhere. Such a page has
-    nothing that can go stale: its titles and order are the design's own and
-    its numbers follow the report's sections (#902). Anything else keeps the
-    warning (Codex on #1144: a page number in another table cell, after a
-    space or as a Roman numeral; a further entry such as "Monthly Activity
-    Summary" with its page number after the section lines; and contents
-    continued on the next page).
+    line in it must be the heading, a "Section N: Title" line or the native
+    page's brand line, notice or address. Each title must be a report section
+    the importer recognizes, written as a name with nothing after it, and no
+    line may sit in a table or carry a page field. No other part of the
+    report may hold a "Section N: Title" line or a paragraph styled as a
+    contents entry, so contents cannot continue elsewhere. Anything else is
+    not identified (Codex on #1144: a page number in another table cell,
+    after a space or as a Roman numeral; a further entry such as "Monthly
+    Activity Summary" with its page number after the section lines; and
+    contents continued on the next page).
     """
     from app.monthly_report_import import _heading
 
     body = root if root.tag == W + "body" else root.find(W + "body")
     if body is None:
-        return False
-    checked = False
+        return None
+    entries, found = [], False
     for section in _sections(body):
         if not any(CONTENTS_HEADING.fullmatch(value) for _, text in section for value in (text, *text.split("\n"))):
             if any(_toc_style(paragraph) or any(SECTION_ENTRY.fullmatch(line) for line in text.split("\n"))
                    for paragraph, text in section):
-                return False  # Contents continued, or listed again, outside the contents page.
+                return None  # Contents continued, or listed again, outside the contents page.
             continue
-        entries = 0
+        count = len(entries)
         for paragraph, text in section:
             if _page_field(paragraph):
-                return False
+                return None
             if CONTENTS_HEADING.fullmatch(text):
                 continue  # The heading, even across a line break.
             in_table = any(ancestor.tag == W + "tc" for ancestor in paragraph.iterancestors())
@@ -217,19 +223,46 @@ def section_titles_only(root):
                 if not line.strip() or CONTENTS_HEADING.fullmatch(line) or _furniture(line):
                     continue
                 match = SECTION_ENTRY.fullmatch(line)
-                if (match is None or in_table or NUMBER_AT_END.search(match.group(1))
-                        or not TITLE.fullmatch(" ".join(match.group(1).split()))
-                        or _heading(match.group(1)) in (None, "unmatched")):
-                    return False
-                entries += 1
-        if not entries:
-            return False
-        checked = True
-    return checked
+                key = _heading(match.group(2)) if match else None
+                if (match is None or in_table or NUMBER_AT_END.search(match.group(2))
+                        or not TITLE.fullmatch(" ".join(match.group(2).split()))
+                        or key in (None, "unmatched")):
+                    return None
+                entries.append((match.group(1), key))
+        if len(entries) == count:
+            return None
+        found = True
+    return entries if found else None
 
 
-def contents_notice_for(profile):
-    """Read the pinned source once per generation; retain only a short notice."""
+def finished_contents_current(docx, sections):
+    """True only if the finished Word file's contents page is current.
+
+    That is a contents page positively identified as section titles whose
+    entries are exactly the report's numbered sections, each at its current
+    number, as the section numbering (#902) should leave them. The finished
+    file is read rather than the design, so an entry the numbering could not
+    update, or a section the contents page never listed, keeps the note
+    (Codex on #1144).
+    """
+    from app.monthly_report_model import included_sections
+
+    try:
+        with ZipFile(BytesIO(docx)) as archive:
+            root = parse_xml(archive.read("word/document.xml"))
+    except (KeyError, ValueError, BadZipFile, etree.XMLSyntaxError):
+        return False  # Unreadable here: keep the note, never lose the files.
+    entries = contents_entries(root)
+    expected = [(section.number, section.key) for section in included_sections(sections) if not section.appendix]
+    return entries is not None and bool(expected) and sorted(entries) == sorted(expected)
+
+
+def contents_notice_for(profile, finished=None, sections=()):
+    """Read the pinned source once per generation; retain only a short notice.
+
+    With the finished Word file and the report's sections, a static contents
+    page that finished_contents_current() proves current needs no note.
+    """
     from app.monthly_report_designs import source_for
     from app.monthly_report_import import _package
 
@@ -240,7 +273,7 @@ def contents_notice_for(profile):
         with _package(source) as archive:
             root = parse_xml(archive.read("word/document.xml"))
         kind = contents_kind(root)
-        if kind == "static" and section_titles_only(root):
+        if kind == "static" and finished is not None and finished_contents_current(finished, sections):
             return ""  # Owner (27 Nov): no warning where nothing can be stale.
     except (OSError, ValueError, BadZipFile, etree.XMLSyntaxError):
         # Finished files must not disappear if their original becomes

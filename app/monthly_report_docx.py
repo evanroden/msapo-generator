@@ -936,7 +936,7 @@ def _generate_verified_report(draft, *, acknowledged_fingerprint, asset_loader, 
         pdf, error = _convert_report_pdf(draft, docx)
     from app.monthly_report_contents_review import contents_notice_for
     from app.monthly_report_contents_pagination import ensure_pdf_page_links, synchronize
-    notice = contents_notice_for(draft.profile)
+    notice = contents_notice_for(draft.profile, finished=docx, sections=draft.sections)
     if generated_contents:
         selected = _builtin_semantic_sections(draft)
         pdf = ensure_pdf_page_links(pdf, selected)
