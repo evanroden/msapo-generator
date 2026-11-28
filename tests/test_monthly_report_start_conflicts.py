@@ -408,3 +408,66 @@ def test_native_preserved_single_page_gets_same_explicit_recovery(collision, mon
 
     replayed = save_start(repeat_saved_start())
     assert block(replayed) == block(saved)
+
+
+def test_equal_bytes_independent_source_requires_explicit_bound_recovery():
+    current, incoming = pair()
+    incoming = replace(incoming, blocks=(replace(block(incoming),
+        asset_hashes=block(current).asset_hashes, asset_provenance=()),))
+    conflicts = image_conflicts(current, incoming, None, **context())
+    assert len(conflicts) == 1
+    with pytest.raises(ValueError, match="single-image"):
+        merge_starting_drafts(current, incoming)
+    revised = apply_replacements(current, incoming, None,
+        {conflicts[0].slot: conflicts[0].binding}, **context())
+    saved = merge_starting_drafts(revised, incoming)
+    assert block(saved).asset_hashes == block(current).asset_hashes
+    assert block(saved).references == block(incoming).references
+    assert len(block(saved).asset_hashes) == 1
+    assert block(current).references == ("human:separate",)
+    assert image_conflicts(saved, incoming, incoming, **context()) == ()
+
+
+def test_exact_source_equal_picture_never_offers_replacement():
+    current, _ = pair()
+    assert image_conflicts(current, current, current, **context()) == ()
+
+
+def test_real_ui_equal_picture_different_docx_keep_use_save_reopen(monkeypatch, tmp_path):
+    from app import monthly_report_section_ui as ui
+    from hashlib import sha256
+    first = source_file(tmp_path, "navy")
+    initial = save_start(start_app(monkeypatch, tmp_path, first))
+    library.save_snapshot(initial, expected_revision=0, entered_editor="Synthetic")
+    second = tmp_path / "independent-source.docx"
+    doc = Document(first)
+    doc.core_properties.subject = "A distinct synthetic source with the same chart bytes"
+    doc.save(second)
+    assert sha256(first.read_bytes()).hexdigest() != sha256(second.read_bytes()).hexdigest()
+    real = ui.st.file_uploader
+    def upload(label, *args, **kwargs):
+        if label != "Starting report": return real(label, *args, **kwargs)
+        data=BytesIO(second.read_bytes());data.name=second.name;data.size=len(data.getvalue());return data
+    monkeypatch.setattr(ui.st, "file_uploader", upload)
+    before=manifest(initial).read_bytes()
+    snapshot=library.load_snapshot(initial.profile.contract,initial.profile.key,PERIOD)
+    app=repeat_saved_start()
+    assert not app.exception and not app.error
+    assert button(app,"Continue to this month’s updates").disabled
+    button(app,"Keep current organization chart and return to review").click().run()
+    assert button(app,"Continue to this month’s updates").disabled
+    assert manifest(initial).read_bytes()==before
+    assert library.load_snapshot(initial.profile.contract,initial.profile.key,PERIOD)==snapshot
+    button(app,"Use incoming organization chart").click().run()
+    assert not button(app,"Continue to this month’s updates").disabled
+    assert manifest(initial).read_bytes()==before
+    saved=save_start(app)
+    assert block(saved).asset_hashes==block(initial).asset_hashes
+    assert len(block(saved).asset_hashes)==1
+    assert block(saved).references!=block(initial).references
+    assert pending_asset_indexes(block(saved))==(0,)
+    assert library.load_snapshot(initial.profile.contract,initial.profile.key,PERIOD)==snapshot
+    reopened=repeat_saved_start()
+    assert not any(b.label=="Use incoming organization chart" for b in reopened.button)
+    replayed=save_start(reopened)
+    assert block(replayed)==block(saved)

@@ -1625,8 +1625,8 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                 decisions.clear()
                 st.warning("The report or incoming picture changed. Review both pictures again before replacing anything.")
             if conflicts:
-                st.subheader("A report page already has a different picture")
-                st.caption("Your current report is unchanged. Compare the two pages before explicitly replacing one. This does not approve the incoming picture’s contents.")
+                st.subheader("A report page already has an independent picture source")
+                st.caption("Your current report is unchanged. These pages have independent source identities, even when they look the same. Compare both pages before explicitly choosing the incoming source. This does not approve its contents.")
                 assets = dict((*working_assets, *mapped.assets))
                 for conflict in conflicts:
                     with st.container(border=True):

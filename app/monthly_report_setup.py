@@ -371,7 +371,14 @@ def merge_drafts(existing: ReportDraft | None, incoming: ReportDraft) -> ReportD
         spec = old_specs.get(block.key)
         if old and spec and spec.type == "image_page" and old.asset_hashes and block.asset_hashes and old.asset_hashes != block.asset_hashes:
             raise ValueError("Two different images target a single-image item. Keep the existing one and save the incoming image for reference, then explicitly replace it after import.")
-        old_blocks[block.key] = merge_blocks(old_blocks.get(block.key), block)
+        merged = merge_blocks(old_blocks.get(block.key), block)
+        if spec and spec.type == "image_page" and len(merged.asset_hashes) > 1:
+            raise ValueError(
+                "Independent picture occurrences target a single-image item. "
+                "Keep the existing report unchanged and explicitly choose its incoming page "
+                "before importing again; no picture or saved report was replaced."
+            )
+        old_blocks[block.key] = merged
     incoming_sections = {s.key: s for s in incoming.sections}
     sections = tuple(replace(s, included=s.included or incoming_sections.get(s.key, s).included,
                              blocks=tuple(new_specs.get(b.key, b) if b.key not in occupied else b for b in s.blocks)) for s in existing.sections)
