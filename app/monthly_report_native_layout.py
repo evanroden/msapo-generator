@@ -1355,8 +1355,8 @@ def _build_verified_native_docx(draft, source_path, *, asset_loader=None, sectio
     if native_art is not None:
         from app.monthly_report_native_art_scope import expected_header_scope, source_emission_proof
         header_scope = expected_header_scope(source_view, section_key, omitted_sections=draft.omitted_sections)
-        from app.monthly_report_native_utility_prune import plan_utility_section_prune
-        utility_prune = plan_utility_section_prune(Path(source_path), source_view, draft, header_scope)
+        from app.monthly_report_native_organization_prune import plan_native_unused_sections
+        utility_prune = plan_native_unused_sections(Path(source_path), source_view, draft, header_scope)
     with rendition_file(source_view) as derivative:
         result = _build_native_docx(draft, derivative, asset_loader=asset_loader, section_key=section_key,
                                     master=master, source_view=source_view, original_path=Path(source_path),
